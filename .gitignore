@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+.wrangler/
+.vercel/
+.env
+.env.local
+*.log
+.DS_Store
+.env.production
+.env.staging
+apps/web/out/
+dist/
+apps/web/out/
+docs/superpowers/
+apps/liff/dist/

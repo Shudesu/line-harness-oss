@@ -1,0 +1,26 @@
+{
+  "name": "@line-crm/db",
+  "version": "0.2.0",
+  "description": "D1 database query helpers for LINE CRM",
+  "license": "MIT",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "src",
+    "schema.sql",
+    "migrations"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "line",
+    "crm",
+    "d1",
+    "cloudflare"
+  ]
+}

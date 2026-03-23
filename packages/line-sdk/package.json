@@ -1,0 +1,41 @@
+{
+  "name": "@line-crm/line-sdk",
+  "version": "0.2.0",
+  "description": "Typed LINE Messaging API wrapper with rich message builders",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "line",
+    "messaging-api",
+    "line-bot",
+    "line-sdk",
+    "flex-message",
+    "crm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/line-oss-crm",
+    "directory": "packages/line-sdk"
+  }
+}
