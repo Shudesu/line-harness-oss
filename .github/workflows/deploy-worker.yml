@@ -1,14 +1,8 @@
 name: Deploy Worker
 
+# Manual trigger only — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets first
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/worker/**'
-      - 'packages/db/**'
-      - 'packages/shared/**'
-      - 'packages/line-sdk/**'
-      - '.github/workflows/deploy-worker.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:
