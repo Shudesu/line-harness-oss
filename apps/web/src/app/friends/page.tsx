@@ -7,6 +7,7 @@ import type { FriendWithTags } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FriendTable from '@/components/friends/friend-table'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { useAccount } from '@/contexts/account-context'
 
 const ccPrompts = [
   {
@@ -30,6 +31,7 @@ const ccPrompts = [
 const PAGE_SIZE = 20
 
 export default function FriendsPage() {
+  const { selectedAccountId } = useAccount()
   const [friends, setFriends] = useState<FriendWithTags[]>([])
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [total, setTotal] = useState(0)
@@ -57,6 +59,7 @@ export default function FriendsPage() {
         limit: String(PAGE_SIZE),
       }
       if (selectedTagId) params.tagId = selectedTagId
+      if (selectedAccountId) params.accountId = selectedAccountId
 
       const res = await api.friends.list(params)
       if (res.success) {
@@ -71,7 +74,7 @@ export default function FriendsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, selectedTagId])
+  }, [page, selectedTagId, selectedAccountId])
 
   useEffect(() => {
     loadTags()
@@ -79,7 +82,7 @@ export default function FriendsPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [selectedTagId])
+  }, [selectedTagId, selectedAccountId])
 
   useEffect(() => {
     loadFriends()

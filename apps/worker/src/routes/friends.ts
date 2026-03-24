@@ -47,26 +47,33 @@ friends.get('/api/friends', async (c) => {
     const limit = Number(c.req.query('limit') ?? '50');
     const offset = Number(c.req.query('offset') ?? '0');
     const tagId = c.req.query('tagId');
+    const lineAccountId = c.req.query('lineAccountId');
 
     const db = c.env.DB;
 
-    // When filtering by tag, count only friends with that tag for accurate pagination
-    const totalPromise = tagId
-      ? db
-          .prepare(
-            `SELECT COUNT(*) as count FROM friends f
-             INNER JOIN friend_tags ft ON ft.friend_id = f.id
-             WHERE ft.tag_id = ?`,
-          )
-          .bind(tagId)
-          .first<{ count: number }>()
-          .then((row) => row?.count ?? 0)
-      : getFriendCount(db);
+    // Build WHERE conditions
+    const conditions: string[] = [];
+    const binds: unknown[] = [];
+    if (tagId) {
+      conditions.push('EXISTS (SELECT 1 FROM friend_tags ft WHERE ft.friend_id = f.id AND ft.tag_id = ?)');
+      binds.push(tagId);
+    }
+    if (lineAccountId) {
+      conditions.push('f.line_account_id = ?');
+      binds.push(lineAccountId);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const [items, total] = await Promise.all([
-      getFriends(db, { limit, offset, tagId }),
-      totalPromise,
-    ]);
+    const countStmt = db.prepare(`SELECT COUNT(*) as count FROM friends f ${where}`);
+    const totalRow = await (binds.length > 0 ? countStmt.bind(...binds) : countStmt).first<{ count: number }>();
+    const total = totalRow?.count ?? 0;
+
+    const listStmt = db.prepare(
+      `SELECT f.* FROM friends f ${where} ORDER BY f.created_at DESC LIMIT ? OFFSET ?`,
+    );
+    const listBinds = [...binds, limit, offset];
+    const listResult = await listStmt.bind(...listBinds).all<DbFriend>();
+    const items = listResult.results;
 
     // Fetch tags for each friend in parallel so the list response includes tags
     const itemsWithTags = await Promise.all(
@@ -95,7 +102,15 @@ friends.get('/api/friends', async (c) => {
 // GET /api/friends/count - friend count (must be before /:id)
 friends.get('/api/friends/count', async (c) => {
   try {
-    const count = await getFriendCount(c.env.DB);
+    const lineAccountId = c.req.query('lineAccountId');
+    let count: number;
+    if (lineAccountId) {
+      const row = await c.env.DB.prepare('SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?')
+        .bind(lineAccountId).first<{ count: number }>();
+      count = row?.count ?? 0;
+    } else {
+      count = await getFriendCount(c.env.DB);
+    }
     return c.json({ success: true, data: { count } });
   } catch (err) {
     console.error('GET /api/friends/count error:', err);

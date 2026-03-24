@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { useAccount } from '@/contexts/account-context'
 
 const ccPrompts = [
   {
@@ -71,6 +72,7 @@ function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }
 }
 
 export default function DashboardPage() {
+  const { selectedAccountId, selectedAccount } = useAccount()
   const [stats, setStats] = useState<DashboardStats>({
     friendCount: null,
     activeScenarioCount: null,
@@ -88,7 +90,7 @@ export default function DashboardPage() {
       setError('')
       try {
         const [friendCountRes, scenariosRes, broadcastsRes, templatesRes, automationsRes, scoringRes] = await Promise.allSettled([
-          api.friends.count(),
+          api.friends.count({ accountId: selectedAccountId ?? undefined }),
           api.scenarios.list(),
           api.broadcasts.list(),
           api.templates.list(),
@@ -130,13 +132,17 @@ export default function DashboardPage() {
     }
 
     load()
-  }, [])
+  }, [selectedAccountId])
 
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">ダッシュボード</h1>
-        <p className="text-sm text-gray-500 mt-1">LINE公式アカウント CRM 管理画面</p>
+        <p className="text-sm text-gray-500 mt-1">
+          {selectedAccount
+            ? `${selectedAccount.displayName || selectedAccount.name} の管理画面`
+            : 'LINE公式アカウント CRM 管理画面'}
+        </p>
       </div>
 
       {error && (

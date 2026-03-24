@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Scenario, ScenarioTriggerType } from '@line-crm/shared'
 import { api } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import ScenarioList from '@/components/scenarios/scenario-list'
 import CcPromptButton from '@/components/cc-prompt-button'
@@ -44,6 +45,7 @@ interface CreateFormState {
 }
 
 export default function ScenariosPage() {
+  const { selectedAccountId } = useAccount()
   const [scenarios, setScenarios] = useState<ScenarioWithCount[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -62,7 +64,7 @@ export default function ScenariosPage() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.scenarios.list()
+      const res = await api.scenarios.list({ accountId: selectedAccountId || undefined })
       if (res.success) {
         setScenarios(res.data)
       } else {
@@ -73,7 +75,7 @@ export default function ScenariosPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selectedAccountId])
 
   useEffect(() => {
     loadScenarios()

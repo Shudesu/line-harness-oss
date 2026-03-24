@@ -35,7 +35,17 @@ function serializeBroadcast(row: DbBroadcast) {
 // GET /api/broadcasts - list all
 broadcasts.get('/api/broadcasts', async (c) => {
   try {
-    const items = await getBroadcasts(c.env.DB);
+    const lineAccountId = c.req.query('lineAccountId');
+    let items: DbBroadcast[];
+    if (lineAccountId) {
+      const result = await c.env.DB
+        .prepare(`SELECT * FROM broadcasts WHERE line_account_id = ? ORDER BY created_at DESC`)
+        .bind(lineAccountId)
+        .all<DbBroadcast>();
+      items = result.results;
+    } else {
+      items = await getBroadcasts(c.env.DB);
+    }
     return c.json({ success: true, data: items.map(serializeBroadcast) });
   } catch (err) {
     console.error('GET /api/broadcasts error:', err);
@@ -70,6 +80,7 @@ broadcasts.post('/api/broadcasts', async (c) => {
       targetType: BroadcastTargetType;
       targetTagId?: string | null;
       scheduledAt?: string | null;
+      lineAccountId?: string | null;
     }>();
 
     if (!body.title || !body.messageType || !body.messageContent || !body.targetType) {
@@ -94,6 +105,12 @@ broadcasts.post('/api/broadcasts', async (c) => {
       targetTagId: body.targetTagId ?? null,
       scheduledAt: body.scheduledAt ?? null,
     });
+
+    // Save line_account_id if provided
+    if (body.lineAccountId) {
+      await c.env.DB.prepare(`UPDATE broadcasts SET line_account_id = ? WHERE id = ?`)
+        .bind(body.lineAccountId, broadcast.id).run();
+    }
 
     return c.json({ success: true, data: serializeBroadcast(broadcast) }, 201);
   } catch (err) {

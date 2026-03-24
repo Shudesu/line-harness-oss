@@ -11,25 +11,19 @@ import {
   advanceFriendScenario,
   completeFriendScenario,
   upsertChatOnMessage,
+  getLineAccounts,
   jstNow,
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
-import { buildMessage } from '../services/step-delivery.js';
+import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
 
 webhook.post('/webhook', async (c) => {
-  const channelSecret = c.env.LINE_CHANNEL_SECRET;
-  const signature = c.req.header('X-Line-Signature') ?? '';
   const rawBody = await c.req.text();
-
-  // Always return 200 to LINE, but verify signature first
-  const valid = await verifySignature(channelSecret, rawBody, signature);
-  if (!valid) {
-    console.error('Invalid LINE signature');
-    return c.json({ status: 'ok' }, 200);
-  }
+  const signature = c.req.header('X-Line-Signature') ?? '';
+  const db = c.env.DB;
 
   let body: WebhookRequestBody;
   try {
@@ -39,15 +33,40 @@ webhook.post('/webhook', async (c) => {
     return c.json({ status: 'ok' }, 200);
   }
 
-  const db = c.env.DB;
-  const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+  // Multi-account: resolve credentials from DB by destination (channel user ID)
+  // or fall back to environment variables (default account)
+  let channelSecret = c.env.LINE_CHANNEL_SECRET;
+  let channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+  let matchedAccountId: string | null = null;
+
+  if ((body as { destination?: string }).destination) {
+    const accounts = await getLineAccounts(db);
+    for (const account of accounts) {
+      if (!account.is_active) continue;
+      const isValid = await verifySignature(account.channel_secret, rawBody, signature);
+      if (isValid) {
+        channelSecret = account.channel_secret;
+        channelAccessToken = account.channel_access_token;
+        matchedAccountId = account.id;
+        break;
+      }
+    }
+  }
+
+  // Verify with resolved secret
+  const valid = await verifySignature(channelSecret, rawBody, signature);
+  if (!valid) {
+    console.error('Invalid LINE signature');
+    return c.json({ status: 'ok' }, 200);
+  }
+
+  const lineClient = new LineClient(channelAccessToken);
 
   // 非同期処理 — LINE は ~1s 以内のレスポンスを要求
-  const lineAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, lineAccessToken);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -64,6 +83,7 @@ async function handleEvent(
   lineClient: LineClient,
   event: WebhookEvent,
   lineAccessToken: string,
+  lineAccountId: string | null = null,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -85,6 +105,12 @@ async function handleEvent(
       statusMessage: profile?.statusMessage ?? null,
     });
 
+    // Set line_account_id for multi-account tracking
+    if (lineAccountId) {
+      await db.prepare('UPDATE friends SET line_account_id = ? WHERE id = ? AND line_account_id IS NULL')
+        .bind(lineAccountId, friend.id).run();
+    }
+
     // friend_add シナリオに登録
     const scenarios = await getScenarios(db);
     for (const scenario of scenarios) {
@@ -97,17 +123,14 @@ async function handleEvent(
           if (!existing) {
             const friendScenario = await enrollFriendInScenario(db, friend.id, scenario.id);
 
-            // Immediate delivery: if the first step has delay=0, send it now
-            // instead of waiting for the next cron run (up to 5 minutes)
-            // NOTE: Uses pushMessage (not replyMessage) because replyToken can only be used once
-            // and may be needed for competing immediate deliveries. Future optimization could
-            // prioritize reply if available and only one step is due immediately.
+            // Immediate delivery: if the first step has delay=0, send it now via replyMessage (free)
             const steps = await getScenarioSteps(db, scenario.id);
             const firstStep = steps[0];
             if (firstStep && firstStep.delay_minutes === 0 && friendScenario.status === 'active') {
               try {
-                const message = buildMessage(firstStep.message_type, firstStep.message_content);
-                await lineClient.pushMessage(userId, [message]);
+                const expandedContent = expandVariables(firstStep.message_content, friend as { id: string; display_name: string | null; user_id: string | null });
+                const message = buildMessage(firstStep.message_type, expandedContent);
+                await lineClient.replyMessage(event.replyToken, [message]);
                 console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
 
                 // Log outgoing message
@@ -125,6 +148,12 @@ async function handleEvent(
                 if (secondStep) {
                   const nextDeliveryDate = new Date(Date.now() + 9 * 60 * 60_000);
                   nextDeliveryDate.setMinutes(nextDeliveryDate.getMinutes() + secondStep.delay_minutes);
+                  // Enforce 9:00-21:00 JST delivery window
+                  const h = nextDeliveryDate.getUTCHours();
+                  if (h < 9 || h >= 21) {
+                    if (h >= 21) nextDeliveryDate.setUTCDate(nextDeliveryDate.getUTCDate() + 1);
+                    nextDeliveryDate.setUTCHours(9, 0, 0, 0);
+                  }
                   await advanceFriendScenario(db, friendScenario.id, firstStep.step_order, nextDeliveryDate.toISOString().slice(0, -1) + '+09:00');
                 } else {
                   await completeFriendScenario(db, friendScenario.id);
@@ -178,6 +207,30 @@ async function handleEvent(
 
     // チャットを作成/更新（オペレーター機能連携）
     await upsertChatOnMessage(db, friend.id);
+
+    // 配信時間設定: 「配信時間は○時」「○時に届けて」等のパターンを検出
+    const timeMatch = incomingText.match(/(?:配信時間|配信|届けて|通知)[はを]?\s*(\d{1,2})\s*時/);
+    if (timeMatch) {
+      const hour = parseInt(timeMatch[1], 10);
+      if (hour >= 6 && hour <= 22) {
+        // Save preferred_hour to friend metadata
+        const existing = await db.prepare('SELECT metadata FROM friends WHERE id = ?').bind(friend.id).first<{ metadata: string }>();
+        const meta = JSON.parse(existing?.metadata || '{}');
+        meta.preferred_hour = hour;
+        await db.prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
+          .bind(JSON.stringify(meta), jstNow(), friend.id).run();
+
+        // Reply with confirmation
+        try {
+          await lineClient.replyMessage(event.replyToken, [
+            { type: 'text', text: `⏰ 配信時間を ${hour}時 に設定しました！\n\n今後のステップ配信は ${hour}:00 以降にお届けします。` },
+          ]);
+        } catch (err) {
+          console.error('Failed to reply for time setting', err);
+        }
+        return;
+      }
+    }
 
     // 自動返信チェック
     // NOTE: Auto-replies use replyMessage (free, no quota) instead of pushMessage

@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useAccount } from '@/contexts/account-context'
+import type { AccountWithStats } from '@/contexts/account-context'
 
 // ─── メニュー定義（ユーザー目線のカテゴリ） ───
 
@@ -51,6 +53,104 @@ const menuSections = [
   },
 ]
 
+function AccountAvatar({ account, size = 32 }: { account: AccountWithStats; size?: number }) {
+  const displayName = account.displayName || account.name
+  if (account.pictureUrl) {
+    return (
+      <img
+        src={account.pictureUrl}
+        alt={displayName}
+        className="rounded-full object-cover shrink-0"
+        style={{ width: size, height: size }}
+      />
+    )
+  }
+  return (
+    <div
+      className="rounded-full flex items-center justify-center text-white font-bold shrink-0"
+      style={{ width: size, height: size, backgroundColor: '#06C755', fontSize: size * 0.4 }}
+    >
+      {displayName.charAt(0)}
+    </div>
+  )
+}
+
+function AccountSwitcher() {
+  const { accounts, selectedAccount, setSelectedAccountId, loading } = useAccount()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  if (loading || accounts.length === 0) return null
+
+  const displayName = selectedAccount?.displayName || selectedAccount?.name || ''
+
+  return (
+    <div ref={ref} className="px-3 py-3 border-b border-gray-200">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+      >
+        {selectedAccount && <AccountAvatar account={selectedAccount} size={28} />}
+        <div className="flex-1 text-left min-w-0">
+          <p className="text-sm font-medium text-gray-900 truncate">{displayName}</p>
+        </div>
+        <svg
+          className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+          {accounts.map((account) => {
+            const isSelected = account.id === selectedAccount?.id
+            const name = account.displayName || account.name
+            return (
+              <button
+                key={account.id}
+                onClick={() => {
+                  setSelectedAccountId(account.id)
+                  setOpen(false)
+                }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${
+                  isSelected ? 'bg-green-50' : 'hover:bg-gray-50'
+                }`}
+              >
+                <AccountAvatar account={account} size={24} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm truncate ${isSelected ? 'font-semibold text-green-700' : 'text-gray-700'}`}>
+                    {name}
+                  </p>
+                  {account.basicId && (
+                    <p className="text-xs text-gray-400 truncate">{account.basicId}</p>
+                  )}
+                </div>
+                {isSelected && (
+                  <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NavIcon({ d }: { d: string }) {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -85,6 +185,9 @@ export default function Sidebar() {
           </div>
         </div>
       </div>
+
+      {/* アカウント切替 */}
+      <AccountSwitcher />
 
       {/* ナビゲーション */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">

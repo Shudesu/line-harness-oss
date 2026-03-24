@@ -31,11 +31,58 @@ function serializeLineAccountFull(row: DbLineAccount) {
   };
 }
 
-// GET /api/line-accounts - list all
+// Fetch bot profile (displayName, pictureUrl) from LINE API
+async function fetchBotProfile(accessToken: string): Promise<{ displayName?: string; pictureUrl?: string; basicId?: string }> {
+  try {
+    const res = await fetch('https://api.line.me/v2/bot/info', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return {};
+    const data = await res.json() as { displayName?: string; pictureUrl?: string; basicId?: string };
+    return { displayName: data.displayName, pictureUrl: data.pictureUrl, basicId: data.basicId };
+  } catch {
+    return {};
+  }
+}
+
+// GET /api/line-accounts - list all (with LINE profile + stats)
 lineAccounts.get('/api/line-accounts', async (c) => {
   try {
-    const items = await getLineAccounts(c.env.DB);
-    return c.json({ success: true, data: items.map(serializeLineAccount) });
+    const db = c.env.DB;
+    const items = await getLineAccounts(db);
+
+    // Get stats for all accounts in parallel
+    const results = await Promise.all(
+      items.map(async (item) => {
+        const [profile, friendCount, scenarioCount, msgCount] = await Promise.all([
+          fetchBotProfile(item.channel_access_token),
+          db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?`).bind(item.id).first<{ count: number }>(),
+          db.prepare(
+            `SELECT COUNT(*) as count FROM friend_scenarios fs
+             INNER JOIN friends f ON f.id = fs.friend_id
+             WHERE fs.status = 'active' AND f.line_account_id = ?`,
+          ).bind(item.id).first<{ count: number }>(),
+          db.prepare(
+            `SELECT COUNT(*) as count FROM messages_log ml
+             INNER JOIN friends f ON f.id = ml.friend_id
+             WHERE ml.direction = 'outgoing' AND ml.created_at >= date('now', '-30 days') AND f.line_account_id = ?`,
+          ).bind(item.id).first<{ count: number }>(),
+        ]);
+
+        return {
+          ...serializeLineAccount(item),
+          displayName: profile.displayName || item.name,
+          pictureUrl: profile.pictureUrl || null,
+          basicId: profile.basicId || null,
+          stats: {
+            friendCount: friendCount?.count ?? 0,
+            activeScenarios: scenarioCount?.count ?? 0,
+            messagesThisMonth: msgCount?.count ?? 0,
+          },
+        };
+      }),
+    );
+    return c.json({ success: true, data: results });
   } catch (err) {
     console.error('GET /api/line-accounts error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);

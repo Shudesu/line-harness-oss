@@ -10,10 +10,61 @@ import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 
+/**
+ * Replace template variables in message content.
+ *
+ * Supported variables:
+ * - {{name}}                → friend's display name
+ * - {{uid}}                 → friend's user UUID
+ * - {{friend_id}}           → friend's internal ID
+ * - {{auth_url:CHANNEL_ID}} → full /auth/line URL with uid for cross-account linking
+ */
+export function expandVariables(
+  content: string,
+  friend: { id: string; display_name: string | null; user_id: string | null },
+  apiOrigin = 'https://your-worker.your-subdomain.workers.dev',
+): string {
+  let result = content;
+  result = result.replace(/\{\{name\}\}/g, friend.display_name || '');
+  result = result.replace(/\{\{uid\}\}/g, friend.user_id || '');
+  result = result.replace(/\{\{friend_id\}\}/g, friend.id);
+  result = result.replace(/\{\{auth_url:([^}]+)\}\}/g, (_match, channelId) => {
+    const params = new URLSearchParams({ account: channelId, ref: 'cross-link' });
+    if (friend.user_id) params.set('uid', friend.user_id);
+    return `${apiOrigin}/auth/line?${params.toString()}`;
+  });
+  return result;
+}
+
+/** Default delivery window: 9:00-23:00 JST. If outside, push to next 9:00 AM. */
+const DEFAULT_START_HOUR = 9;
+const DEFAULT_END_HOUR = 23;
+
+function enforceDeliveryWindow(date: Date, preferredHour?: number): Date {
+  // date is already shifted to JST epoch (+9h)
+  const hours = date.getUTCHours();
+  const startHour = preferredHour ?? DEFAULT_START_HOUR;
+  const endHour = DEFAULT_END_HOUR;
+
+  if (hours >= startHour && hours < endHour) return date;
+
+  // Outside window: push to next preferred start hour
+  const result = new Date(date);
+  if (hours >= endHour) {
+    result.setUTCDate(result.getUTCDate() + 1);
+  }
+  result.setUTCHours(startHour, 0, 0, 0);
+  return result;
+}
+
 export async function processStepDeliveries(
   db: D1Database,
   lineClient: LineClient,
 ): Promise<void> {
+  // Skip delivery outside 9:00-23:00 JST window
+  const jstHour = new Date(Date.now() + 9 * 60 * 60_000).getUTCHours();
+  if (jstHour < DEFAULT_START_HOUR || jstHour >= DEFAULT_END_HOUR) return;
+
   const now = jstNow();
   const dueFriendScenarios = await getFriendScenariosDueForDelivery(db, now);
 
@@ -44,6 +95,15 @@ async function processSingleDelivery(
     next_delivery_at: string | null;
   },
 ): Promise<void> {
+  // Get friend first to read preferred delivery hour from metadata
+  const friend = await getFriendById(db, fs.friend_id);
+  if (!friend || !friend.is_following) {
+    await completeFriendScenario(db, fs.id);
+    return;
+  }
+  const metadata = JSON.parse((friend as { metadata?: string }).metadata || '{}') as Record<string, unknown>;
+  const preferredHour = typeof metadata.preferred_hour === 'number' ? metadata.preferred_hour : undefined;
+
   // Get all steps for this scenario
   const steps = await getScenarioSteps(db, fs.scenario_id);
   if (steps.length === 0) {
@@ -56,7 +116,6 @@ async function processSingleDelivery(
   const currentStep = steps.find((s) => s.step_order > fs.current_step_order);
 
   if (!currentStep) {
-    // No more steps — scenario is complete
     await completeFriendScenario(db, fs.id);
     return;
   }
@@ -66,23 +125,23 @@ async function processSingleDelivery(
     const conditionMet = await evaluateCondition(db, fs.friend_id, currentStep);
     if (!conditionMet) {
       if (currentStep.next_step_on_false !== null && currentStep.next_step_on_false !== undefined) {
-        // Jump to the specified step_order on failure
         const jumpStep = steps.find((s) => s.step_order === currentStep.next_step_on_false);
         if (jumpStep) {
           const nextDate = new Date(Date.now() + 9 * 60 * 60_000);
           nextDate.setMinutes(nextDate.getMinutes() + jumpStep.delay_minutes);
-          const jitteredDate = jitterDeliveryTime(nextDate);
+          const windowedDate = enforceDeliveryWindow(nextDate, preferredHour);
+          const jitteredDate = jitterDeliveryTime(windowedDate);
           await advanceFriendScenario(db, fs.id, currentStep.step_order, jitteredDate.toISOString().slice(0, -1) + '+09:00');
           return;
         }
       }
-      // No jump target — skip this step and advance to next sequential
       const nextIndex = steps.indexOf(currentStep) + 1;
       if (nextIndex < steps.length) {
         const nextStep = steps[nextIndex];
         const nextDate = new Date(Date.now() + 9 * 60 * 60_000);
         nextDate.setMinutes(nextDate.getMinutes() + nextStep.delay_minutes);
-        const jitteredDate = jitterDeliveryTime(nextDate);
+        const windowedDate = enforceDeliveryWindow(nextDate, preferredHour);
+        const jitteredDate = jitterDeliveryTime(windowedDate);
         await advanceFriendScenario(db, fs.id, currentStep.step_order, jitteredDate.toISOString().slice(0, -1) + '+09:00');
       } else {
         await completeFriendScenario(db, fs.id);
@@ -91,16 +150,9 @@ async function processSingleDelivery(
     }
   }
 
-  // Get friend's LINE user ID
-  const friend = await getFriendById(db, fs.friend_id);
-  if (!friend || !friend.is_following) {
-    // Friend unfollowed or not found — complete the scenario
-    await completeFriendScenario(db, fs.id);
-    return;
-  }
-
-  // Build and send the message
-  const message = buildMessage(currentStep.message_type, currentStep.message_content);
+  // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, etc.)
+  const expandedContent = expandVariables(currentStep.message_content, friend);
+  const message = buildMessage(currentStep.message_type, expandedContent);
   await lineClient.pushMessage(friend.line_user_id, [message]);
 
   // Log outgoing message
@@ -118,10 +170,11 @@ async function processSingleDelivery(
   const nextStep = currentIndex + 1 < steps.length ? steps[currentIndex + 1] : null;
 
   if (nextStep) {
-    // Schedule next delivery with stealth jitter
+    // Schedule next delivery with stealth jitter + delivery window enforcement
     const nextDeliveryDate = new Date(Date.now() + 9 * 60 * 60_000);
     nextDeliveryDate.setMinutes(nextDeliveryDate.getMinutes() + nextStep.delay_minutes);
-    const jitteredDate = jitterDeliveryTime(nextDeliveryDate);
+    const windowedDate = enforceDeliveryWindow(nextDeliveryDate, preferredHour);
+    const jitteredDate = jitterDeliveryTime(windowedDate);
     await advanceFriendScenario(db, fs.id, currentStep.step_order, jitteredDate.toISOString().slice(0, -1) + '+09:00');
   } else {
     // This was the last step

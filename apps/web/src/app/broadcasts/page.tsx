@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Tag } from '@line-crm/shared'
 import { api, type ApiBroadcast } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import BroadcastForm from '@/components/broadcasts/broadcast-form'
 import CcPromptButton from '@/components/cc-prompt-button'
@@ -48,6 +49,7 @@ function formatDatetime(iso: string | null): string {
 }
 
 export default function BroadcastsPage() {
+  const { selectedAccountId } = useAccount()
   const [broadcasts, setBroadcasts] = useState<ApiBroadcast[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
@@ -60,7 +62,7 @@ export default function BroadcastsPage() {
     setError('')
     try {
       const [broadcastsRes, tagsRes] = await Promise.all([
-        api.broadcasts.list(),
+        api.broadcasts.list({ accountId: selectedAccountId || undefined }),
         api.tags.list(),
       ])
       if (broadcastsRes.success) setBroadcasts(broadcastsRes.data)
@@ -71,7 +73,7 @@ export default function BroadcastsPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selectedAccountId])
 
   useEffect(() => { load() }, [load])
 

@@ -9,6 +9,9 @@ export interface LineAccount {
   name: string;
   channel_access_token: string;
   channel_secret: string;
+  login_channel_id: string | null;
+  login_channel_secret: string | null;
+  liff_id: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 
@@ -90,6 +91,7 @@ const ccPrompts = [
 ]
 
 export default function AutomationsPage() {
+  const { selectedAccountId } = useAccount()
   const [automations, setAutomations] = useState<Automation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -102,7 +104,7 @@ export default function AutomationsPage() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.automations.list()
+      const res = await api.automations.list({ accountId: selectedAccountId || undefined })
       if (res.success) {
         setAutomations(res.data)
       } else {
@@ -113,7 +115,7 @@ export default function AutomationsPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selectedAccountId])
 
   useEffect(() => {
     loadAutomations()

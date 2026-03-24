@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { LineClient } from '@line-crm/line-sdk';
+import { getLineAccounts } from '@line-crm/db';
 import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts } from './services/broadcast.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
@@ -84,20 +85,39 @@ app.route('/', forms);
 // 404 fallback
 app.notFound((c) => c.json({ success: false, error: 'Not found' }, 404));
 
-// Scheduled handler for cron triggers
+// Scheduled handler for cron triggers — runs for all active LINE accounts
 async function scheduled(
   _event: ScheduledEvent,
   env: Env['Bindings'],
   _ctx: ExecutionContext,
 ): Promise<void> {
-  const lineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
+  // Get all active accounts from DB, plus the default env account
+  const dbAccounts = await getLineAccounts(env.DB);
+  const activeTokens = new Set<string>();
 
-  await Promise.allSettled([
-    processStepDeliveries(env.DB, lineClient),
-    processScheduledBroadcasts(env.DB, lineClient),
-    processReminderDeliveries(env.DB, lineClient),
-    checkAccountHealth(env.DB),
-  ]);
+  // Default account from env
+  activeTokens.add(env.LINE_CHANNEL_ACCESS_TOKEN);
+
+  // DB accounts
+  for (const account of dbAccounts) {
+    if (account.is_active) {
+      activeTokens.add(account.channel_access_token);
+    }
+  }
+
+  // Run delivery for each account
+  const jobs = [];
+  for (const token of activeTokens) {
+    const lineClient = new LineClient(token);
+    jobs.push(
+      processStepDeliveries(env.DB, lineClient),
+      processScheduledBroadcasts(env.DB, lineClient),
+      processReminderDeliveries(env.DB, lineClient),
+    );
+  }
+  jobs.push(checkAccountHealth(env.DB));
+
+  await Promise.allSettled(jobs);
 }
 
 export default {

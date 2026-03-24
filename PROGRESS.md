@@ -13,7 +13,7 @@ L-step/Utage代替。AI（CC）ネイティブ設計。
 ## デプロイ先
 - **API**: https://your-worker.your-subdomain.workers.dev
 - **管理画面**: https://your-admin.pages.dev
-- **D1**: line-crm (your-database-id)
+- **D1**: line-crm (YOUR_D1_DATABASE_ID) APAC/KIX
 - **Cron**: 5分毎ステップ配信チェック + リマインダー配信
 
 ## 実装状況

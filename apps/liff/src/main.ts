@@ -29,7 +29,14 @@ declare const liff: {
   closeWindow(): void;
 };
 
-const LIFF_ID = import.meta.env?.VITE_LIFF_ID || '';
+// Resolve LIFF ID: check query param first, then fallback to env var
+function detectLiffId(): string {
+  const params = new URLSearchParams(window.location.search);
+  const fromParam = params.get('liffId');
+  if (fromParam) return fromParam;
+  return import.meta.env?.VITE_LIFF_ID || '';
+}
+const LIFF_ID = detectLiffId();
 const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:8787';
 const UUID_STORAGE_KEY = 'lh_uuid';
 // LINE公式アカウントの友だち追加URL（LINE Developers Console → Messaging API → Bot basic ID）

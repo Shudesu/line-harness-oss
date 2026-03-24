@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 
@@ -83,6 +84,7 @@ const ccPrompts = [
 ]
 
 export default function RemindersPage() {
+  const { selectedAccountId } = useAccount()
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -110,7 +112,7 @@ export default function RemindersPage() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.reminders.list()
+      const res = await api.reminders.list({ accountId: selectedAccountId || undefined })
       if (res.success) {
         setReminders(res.data)
       } else {
@@ -121,7 +123,7 @@ export default function RemindersPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selectedAccountId])
 
   useEffect(() => {
     loadReminders()

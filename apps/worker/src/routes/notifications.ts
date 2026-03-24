@@ -15,7 +15,17 @@ const notifications = new Hono<Env>();
 
 notifications.get('/api/notifications/rules', async (c) => {
   try {
-    const items = await getNotificationRules(c.env.DB);
+    const lineAccountId = c.req.query('lineAccountId');
+    let items;
+    if (lineAccountId) {
+      const result = await c.env.DB
+        .prepare(`SELECT * FROM notification_rules WHERE line_account_id = ? ORDER BY created_at DESC`)
+        .bind(lineAccountId)
+        .all();
+      items = result.results as unknown as Awaited<ReturnType<typeof getNotificationRules>>;
+    } else {
+      items = await getNotificationRules(c.env.DB);
+    }
     return c.json({
       success: true,
       data: items.map((r) => ({
@@ -105,7 +115,24 @@ notifications.get('/api/notifications', async (c) => {
   try {
     const status = c.req.query('status') ?? undefined;
     const limit = Number(c.req.query('limit') ?? '100');
-    const items = await getNotifications(c.env.DB, { status, limit });
+    const lineAccountId = c.req.query('lineAccountId') ?? undefined;
+    let items;
+    if (lineAccountId) {
+      const conditions: string[] = ['line_account_id = ?'];
+      const bindings: unknown[] = [lineAccountId];
+      if (status) {
+        conditions.push('status = ?');
+        bindings.push(status);
+      }
+      bindings.push(limit);
+      const result = await c.env.DB
+        .prepare(`SELECT * FROM notifications WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`)
+        .bind(...bindings)
+        .all();
+      items = result.results as unknown as Awaited<ReturnType<typeof getNotifications>>;
+    } else {
+      items = await getNotifications(c.env.DB, { status, limit });
+    }
     return c.json({
       success: true,
       data: items.map((n) => ({

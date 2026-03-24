@@ -9,9 +9,17 @@ interface LineAccountListItem {
   id: string
   channelId: string
   name: string
+  displayName: string
+  pictureUrl: string | null
+  basicId: string | null
   isActive: boolean
   createdAt: string
   updatedAt: string
+  stats: {
+    friendCount: number
+    activeScenarios: number
+    messagesThisMonth: number
+  }
 }
 
 const ccPrompts = [
@@ -169,15 +177,25 @@ export default function AccountsPage() {
             <div key={account.id} className="bg-white rounded-lg border border-gray-200 p-6">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-                    style={{ backgroundColor: account.isActive ? '#06C755' : '#9CA3AF' }}
-                  >
-                    L
-                  </div>
+                  {account.pictureUrl ? (
+                    <img
+                      src={account.pictureUrl}
+                      alt={account.displayName}
+                      className="w-10 h-10 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div
+                      className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm"
+                      style={{ backgroundColor: account.isActive ? '#06C755' : '#9CA3AF' }}
+                    >
+                      {account.displayName?.charAt(0) || 'L'}
+                    </div>
+                  )}
                   <div>
-                    <h3 className="text-sm font-bold text-gray-900">{account.name}</h3>
-                    <p className="text-xs text-gray-400 font-mono">Channel: {account.channelId}</p>
+                    <h3 className="text-sm font-bold text-gray-900">{account.displayName}</h3>
+                    <p className="text-xs text-gray-400 font-mono">
+                      {account.basicId ? `${account.basicId} · ` : ''}Channel: {account.channelId}
+                    </p>
                   </div>
                 </div>
                 <button
@@ -186,6 +204,20 @@ export default function AccountsPage() {
                 >
                   {account.isActive ? '有効' : '無効'}
                 </button>
+              </div>
+              <div className="grid grid-cols-3 gap-3 mb-4 py-3 border-t border-b border-gray-100">
+                <div className="text-center">
+                  <p className="text-lg font-bold text-gray-900">{account.stats.friendCount}</p>
+                  <p className="text-xs text-gray-400">友だち</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-lg font-bold text-blue-600">{account.stats.activeScenarios}</p>
+                  <p className="text-xs text-gray-400">配信中</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-lg font-bold text-green-600">{account.stats.messagesThisMonth}</p>
+                  <p className="text-xs text-gray-400">今月送信</p>
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-400">

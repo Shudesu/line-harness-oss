@@ -80,6 +80,7 @@ chats.get('/api/chats', async (c) => {
   try {
     const status = c.req.query('status') ?? undefined;
     const operatorId = c.req.query('operatorId') ?? undefined;
+    const lineAccountId = c.req.query('lineAccountId') ?? undefined;
 
     // JOIN friends to get display_name and picture_url
     let sql = `SELECT c.*, f.display_name, f.picture_url, f.line_user_id
@@ -95,6 +96,10 @@ chats.get('/api/chats', async (c) => {
     if (operatorId) {
       conditions.push('c.operator_id = ?');
       bindings.push(operatorId);
+    }
+    if (lineAccountId) {
+      conditions.push('f.line_account_id = ?');
+      bindings.push(lineAccountId);
     }
 
     if (conditions.length > 0) {
@@ -174,9 +179,14 @@ chats.get('/api/chats/:id', async (c) => {
 
 chats.post('/api/chats', async (c) => {
   try {
-    const body = await c.req.json<{ friendId: string; operatorId?: string }>();
+    const body = await c.req.json<{ friendId: string; operatorId?: string; lineAccountId?: string | null }>();
     if (!body.friendId) return c.json({ success: false, error: 'friendId is required' }, 400);
     const item = await createChat(c.env.DB, body);
+    // Save line_account_id if provided
+    if (body.lineAccountId) {
+      await c.env.DB.prepare(`UPDATE chats SET line_account_id = ? WHERE id = ?`)
+        .bind(body.lineAccountId, item.id).run();
+    }
     return c.json({ success: true, data: { id: item.id, friendId: item.friend_id, status: item.status } }, 201);
   } catch (err) {
     console.error('POST /api/chats error:', err);

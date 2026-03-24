@@ -60,20 +60,29 @@ export type FriendListParams = {
   offset?: string
   limit?: string
   tagId?: string
+  accountId?: string
 }
 
 export type FriendWithTags = Friend & { tags: Tag[] }
 
 export const api = {
   friends: {
-    list: (params?: FriendListParams) =>
-      fetchApi<ApiResponse<PaginatedResponse<FriendWithTags>>>(
-        '/api/friends?' + new URLSearchParams(params as Record<string, string>)
-      ),
+    list: (params?: FriendListParams) => {
+      const query: Record<string, string> = {}
+      if (params?.offset) query.offset = params.offset
+      if (params?.limit) query.limit = params.limit
+      if (params?.tagId) query.tagId = params.tagId
+      if (params?.accountId) query.lineAccountId = params.accountId
+      return fetchApi<ApiResponse<PaginatedResponse<FriendWithTags>>>(
+        '/api/friends?' + new URLSearchParams(query)
+      )
+    },
     get: (id: string) =>
       fetchApi<ApiResponse<FriendWithTags>>(`/api/friends/${id}`),
-    count: () =>
-      fetchApi<ApiResponse<{ count: number }>>('/api/friends/count'),
+    count: (params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<{ count: number }>>('/api/friends/count' + query)
+    },
     addTag: (friendId: string, tagId: string) =>
       fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/tags`, {
         method: 'POST',
@@ -96,8 +105,10 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/tags/${id}`, { method: 'DELETE' }),
   },
   scenarios: {
-    list: () =>
-      fetchApi<ApiResponse<(Scenario & { stepCount?: number })[]>>('/api/scenarios'),
+    list: (params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<(Scenario & { stepCount?: number })[]>>('/api/scenarios' + query)
+    },
     get: (id: string) =>
       fetchApi<ApiResponse<Scenario & { steps: ScenarioStep[] }>>(`/api/scenarios/${id}`),
     create: (data: Omit<Scenario, 'id' | 'createdAt' | 'updatedAt'>) =>
@@ -132,8 +143,10 @@ export const api = {
       }),
   },
   broadcasts: {
-    list: () =>
-      fetchApi<ApiResponse<ApiBroadcast[]>>('/api/broadcasts'),
+    list: (params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<ApiBroadcast[]>>('/api/broadcasts' + query)
+    },
     get: (id: string) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}`),
     create: (data: {
@@ -281,8 +294,10 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/templates/${id}`, { method: 'DELETE' }),
   },
   automations: {
-    list: () =>
-      fetchApi<ApiResponse<Automation[]>>('/api/automations'),
+    list: (params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<Automation[]>>('/api/automations' + query)
+    },
     get: (id: string) =>
       fetchApi<ApiResponse<Automation & { logs?: AutomationLog[] }>>(`/api/automations/${id}`),
     create: (data: {
@@ -310,10 +325,15 @@ export const api = {
       ),
   },
   chats: {
-    list: (params?: { status?: string; operatorId?: string }) =>
-      fetchApi<ApiResponse<Chat[]>>(
-        '/api/chats?' + new URLSearchParams(params as Record<string, string>),
-      ),
+    list: (params?: { status?: string; operatorId?: string; accountId?: string }) => {
+      const query: Record<string, string> = {}
+      if (params?.status) query.status = params.status
+      if (params?.operatorId) query.operatorId = params.operatorId
+      if (params?.accountId) query.lineAccountId = params.accountId
+      return fetchApi<ApiResponse<Chat[]>>(
+        '/api/chats?' + new URLSearchParams(query),
+      )
+    },
     get: (id: string) =>
       fetchApi<ApiResponse<Chat & { messages?: { id: string; content: string; senderType: string; createdAt: string }[] }>>(
         `/api/chats/${id}`,
@@ -335,8 +355,10 @@ export const api = {
       }),
   },
   reminders: {
-    list: () =>
-      fetchApi<ApiResponse<Reminder[]>>('/api/reminders'),
+    list: (params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<Reminder[]>>('/api/reminders' + query)
+    },
     get: (id: string) =>
       fetchApi<ApiResponse<Reminder & { steps: ReminderStep[] }>>(`/api/reminders/${id}`),
     create: (data: { name: string; description?: string | null }) =>

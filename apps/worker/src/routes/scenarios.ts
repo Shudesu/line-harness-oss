@@ -70,7 +70,24 @@ function serializeFriendScenario(row: DbFriendScenario) {
 // GET /api/scenarios - list all
 scenarios.get('/api/scenarios', async (c) => {
   try {
-    const items = await getScenarios(c.env.DB);
+    const lineAccountId = c.req.query('lineAccountId');
+    let items: DbScenarioWithStepCount[];
+    if (lineAccountId) {
+      const result = await c.env.DB
+        .prepare(
+          `SELECT s.*, COUNT(ss.id) as step_count
+           FROM scenarios s
+           LEFT JOIN scenario_steps ss ON s.id = ss.scenario_id
+           WHERE s.line_account_id = ?
+           GROUP BY s.id
+           ORDER BY s.created_at DESC`,
+        )
+        .bind(lineAccountId)
+        .all<DbScenarioWithStepCount>();
+      items = result.results;
+    } else {
+      items = await getScenarios(c.env.DB);
+    }
     return c.json({
       success: true,
       data: items.map((row) => ({
@@ -116,6 +133,7 @@ scenarios.post('/api/scenarios', async (c) => {
       triggerType: ScenarioTriggerType;
       triggerTagId?: string | null;
       isActive?: boolean;
+      lineAccountId?: string | null;
     }>();
 
     if (!body.name || !body.triggerType) {
@@ -128,6 +146,12 @@ scenarios.post('/api/scenarios', async (c) => {
       triggerType: body.triggerType,
       triggerTagId: body.triggerTagId ?? null,
     });
+
+    // Save line_account_id if provided
+    if (body.lineAccountId) {
+      await c.env.DB.prepare(`UPDATE scenarios SET line_account_id = ? WHERE id = ?`)
+        .bind(body.lineAccountId, scenario.id).run();
+    }
 
     // createScenario() always sets is_active=1; override if the caller requested inactive
     if (body.isActive === false) {

@@ -10,7 +10,3 @@ dist/
 .env.production
 .env.staging
 apps/web/out/
-dist/
-apps/web/out/
-docs/superpowers/
-apps/liff/dist/
