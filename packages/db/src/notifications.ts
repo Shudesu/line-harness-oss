@@ -7,6 +7,7 @@ export interface NotificationRuleRow {
   event_type: string;
   conditions: string;  // JSON
   channels: string;    // JSON配列
+  line_account_id: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;

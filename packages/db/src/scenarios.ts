@@ -9,6 +9,7 @@ export interface Scenario {
   description: string | null;
   trigger_type: ScenarioTriggerType;
   trigger_tag_id: string | null;
+  line_account_id: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;

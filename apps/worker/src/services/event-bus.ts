@@ -35,12 +35,13 @@ export async function fireEvent(
   eventType: string,
   payload: EventPayload,
   lineAccessToken?: string,
+  lineAccountId?: string | null,
 ): Promise<void> {
   await Promise.allSettled([
     fireOutgoingWebhooks(db, eventType, payload),
     processScoring(db, eventType, payload),
-    processAutomations(db, eventType, payload, lineAccessToken),
-    processNotifications(db, eventType, payload),
+    processAutomations(db, eventType, payload, lineAccessToken, lineAccountId),
+    processNotifications(db, eventType, payload, lineAccountId),
   ]);
 }
 
@@ -109,9 +110,14 @@ async function processAutomations(
   eventType: string,
   payload: EventPayload,
   lineAccessToken?: string,
+  lineAccountId?: string | null,
 ): Promise<void> {
   try {
-    const automations = await getActiveAutomationsByEvent(db, eventType);
+    const allAutomations = await getActiveAutomationsByEvent(db, eventType);
+    // Filter by account: match this account's automations + unassigned (backward compat)
+    const automations = allAutomations.filter(
+      (a) => !a.line_account_id || !lineAccountId || a.line_account_id === lineAccountId,
+    );
 
     for (const automation of automations) {
       const conditions = JSON.parse(automation.conditions) as Record<string, unknown>;
@@ -282,12 +288,18 @@ async function processNotifications(
   db: D1Database,
   eventType: string,
   payload: EventPayload,
+  lineAccountId?: string | null,
 ): Promise<void> {
   try {
-    const rules = await getActiveNotificationRulesByEvent(db, eventType);
+    const allRules = await getActiveNotificationRulesByEvent(db, eventType);
+    const rules = allRules.filter(
+      (r) => !r.line_account_id || !lineAccountId || r.line_account_id === lineAccountId,
+    );
 
     for (const rule of rules) {
-      const channels: string[] = JSON.parse(rule.channels);
+      let channels: string[] = JSON.parse(rule.channels);
+      // Guard against double-encoded JSON strings (e.g. "\"[\\\"webhook\\\"]\"")
+      if (typeof channels === 'string') channels = JSON.parse(channels);
 
       for (const channel of channels) {
         await createNotification(db, {

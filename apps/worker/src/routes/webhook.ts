@@ -111,10 +111,12 @@ async function handleEvent(
         .bind(lineAccountId, friend.id).run();
     }
 
-    // friend_add シナリオに登録
+    // friend_add シナリオに登録（このアカウントのシナリオのみ）
     const scenarios = await getScenarios(db);
     for (const scenario of scenarios) {
-      if (scenario.trigger_type === 'friend_add' && scenario.is_active) {
+      // Only trigger scenarios belonging to this account (or unassigned for backward compat)
+      const scenarioAccountMatch = !scenario.line_account_id || !lineAccountId || scenario.line_account_id === lineAccountId;
+      if (scenario.trigger_type === 'friend_add' && scenario.is_active && scenarioAccountMatch) {
         try {
           const existing = await db
             .prepare(`SELECT id FROM friend_scenarios WHERE friend_id = ? AND scenario_id = ?`)
@@ -170,7 +172,7 @@ async function handleEvent(
     }
 
     // イベントバス発火: friend_add
-    await fireEvent(db, 'friend_add', { friendId: friend.id, eventData: { displayName: friend.display_name } }, lineAccessToken);
+    await fireEvent(db, 'friend_add', { friendId: friend.id, eventData: { displayName: friend.display_name } }, lineAccessToken, lineAccountId);
     return;
   }
 
@@ -232,11 +234,11 @@ async function handleEvent(
       }
     }
 
-    // 自動返信チェック
+    // 自動返信チェック（このアカウントのルール + グローバルルールのみ）
     // NOTE: Auto-replies use replyMessage (free, no quota) instead of pushMessage
     // The replyToken is only valid for ~1 minute after the message event
     const autoReplies = await db
-      .prepare(`SELECT * FROM auto_replies WHERE is_active = 1 ORDER BY created_at ASC`)
+      .prepare(`SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL${lineAccountId ? ` OR line_account_id = '${lineAccountId}'` : ''}) ORDER BY created_at ASC`)
       .all<{
         id: string;
         keyword: string;
@@ -256,24 +258,8 @@ async function handleEvent(
 
       if (isMatch) {
         try {
-          if (rule.response_type === 'text') {
-            await lineClient.replyMessage(event.replyToken, [
-              { type: 'text', text: rule.response_content },
-            ]);
-          } else if (rule.response_type === 'image') {
-            const parsed = JSON.parse(rule.response_content) as {
-              originalContentUrl: string;
-              previewImageUrl: string;
-            };
-            await lineClient.replyMessage(event.replyToken, [
-              { type: 'image', originalContentUrl: parsed.originalContentUrl, previewImageUrl: parsed.previewImageUrl },
-            ]);
-          } else if (rule.response_type === 'flex') {
-            const contents = JSON.parse(rule.response_content);
-            await lineClient.replyMessage(event.replyToken, [
-              { type: 'flex', altText: 'Message', contents },
-            ]);
-          }
+          const replyMsg = buildMessage(rule.response_type, rule.response_content);
+          await lineClient.replyMessage(event.replyToken, [replyMsg]);
 
           // 送信ログ
           const outLogId = crypto.randomUUID();
@@ -297,7 +283,7 @@ async function handleEvent(
     await fireEvent(db, 'message_received', {
       friendId: friend.id,
       eventData: { text: incomingText, matched },
-    }, lineAccessToken);
+    }, lineAccessToken, lineAccountId);
 
     return;
   }

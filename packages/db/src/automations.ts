@@ -8,6 +8,7 @@ export interface AutomationRow {
   event_type: string;
   conditions: string;  // JSON
   actions: string;     // JSON配列
+  line_account_id: string | null;
   is_active: number;
   priority: number;
   created_at: string;

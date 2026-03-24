@@ -12,6 +12,7 @@ import {
 } from '@line-crm/db';
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
+import { buildMessage } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 
 const friends = new Hono<Env>();
@@ -261,19 +262,8 @@ friends.post('/api/friends/:id/messages', async (c) => {
     const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
     const messageType = body.messageType ?? 'text';
 
-    if (messageType === 'text') {
-      await lineClient.pushMessage(friend.line_user_id, [{ type: 'text', text: body.content }]);
-    } else if (messageType === 'flex') {
-      const contents = JSON.parse(body.content);
-      await lineClient.pushMessage(friend.line_user_id, [{ type: 'flex', altText: 'Message', contents }]);
-    } else if (messageType === 'image') {
-      const parsed = JSON.parse(body.content);
-      await lineClient.pushMessage(friend.line_user_id, [{
-        type: 'image',
-        originalContentUrl: parsed.originalContentUrl,
-        previewImageUrl: parsed.previewImageUrl,
-      }]);
-    }
+    const message = buildMessage(messageType, body.content);
+    await lineClient.pushMessage(friend.line_user_id, [message]);
 
     // Log outgoing message
     const logId = crypto.randomUUID();

@@ -227,6 +227,28 @@ async function evaluateCondition(
   }
 }
 
+/** Recursively find the first text element in a Flex Message for altText */
+function extractFlexAltText(obj: unknown, depth = 0): string | null {
+  if (depth > 10 || !obj || typeof obj !== 'object') return null;
+  const node = obj as Record<string, unknown>;
+  if (node.type === 'text' && typeof node.text === 'string') {
+    return node.text.slice(0, 100);
+  }
+  if (Array.isArray(node.contents)) {
+    for (const child of node.contents) {
+      const found = extractFlexAltText(child, depth + 1);
+      if (found) return found;
+    }
+  }
+  for (const key of ['header', 'body', 'footer']) {
+    if (node[key]) {
+      const found = extractFlexAltText(node[key], depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export function buildMessage(messageType: string, messageContent: string): Message {
   if (messageType === 'text') {
     return { type: 'text', text: messageContent };
@@ -253,7 +275,9 @@ export function buildMessage(messageType: string, messageContent: string): Messa
   if (messageType === 'flex') {
     try {
       const contents = JSON.parse(messageContent);
-      return { type: 'flex', altText: 'Message', contents };
+      // Extract first text element for altText (shown in notifications)
+      const altText = extractFlexAltText(contents) || 'お知らせ';
+      return { type: 'flex', altText, contents };
     } catch {
       return { type: 'text', text: messageContent };
     }
