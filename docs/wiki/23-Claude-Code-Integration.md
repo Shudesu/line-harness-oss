@@ -280,6 +280,53 @@ pnpm db:migrate
 
 ---
 
+## Miyabi MCP Bundle 経由での操作 (推奨)
+
+curl 直叩きより簡単な方法として、**Miyabi MCP Bundle に統合された LINE Harness ツール**を使う方法がある。Claude Code から自然言語で LINE 操作が可能になる。
+
+### 環境変数の設定
+
+```bash
+# ~/.zshenv または wrangler.toml に追加
+export LINE_HARNESS_URL="https://miyabi-line-crm.supernovasyun.workers.dev"
+export LINE_HARNESS_API_KEY="your-api-key"
+```
+
+### 利用可能な MCP ツール (6 ツール)
+
+| ツール名 | 説明 | 必須パラメータ |
+|---------|------|--------------|
+| `line_broadcast_text` | テキスト一斉配信 | `title`, `text` |
+| `line_broadcast_segment` | セグメント条件配信 | `broadcastId`, `operator`, `rules` |
+| `line_add_tag` | フレンドにタグ付与 | `friendId`, `tagId` |
+| `line_create_scenario` | シナリオ作成 | `name`, `triggerType` |
+| `line_list_friends` | フレンド一覧取得 | なし |
+| `line_list_tags` | タグ一覧取得 | なし |
+
+### 使用例
+
+Claude Code に話しかけるだけで操作できる:
+
+```
+「全フレンドにテキスト配信して。タイトル: お知らせ、メッセージ: 明日のイベントをお楽しみに！」
+→ line_broadcast_text が実行される
+
+「PPALタグが付いているフレンドの一覧を見せて」
+→ line_list_friends が実行される (tagId フィルタ付き)
+
+「セミナー参加者というタグを作って」
+→ curl POST /api/tags または line_create_scenario などで対応
+
+「フレンドID abc123 にタグID def456 を付けて」
+→ line_add_tag が実行される
+```
+
+### 対応リポジトリ
+
+MCP ツールのソースは [miyabi-mcp-bundle](https://github.com/ShunsukeHayashi/miyabi-mcp-bundle) の `src/handlers/line-harness.ts` に実装されている。
+
+---
+
 ## AI ファースト運用のティップス
 
 ### 1. 全操作を API 経由で行う

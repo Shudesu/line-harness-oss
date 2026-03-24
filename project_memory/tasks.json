@@ -9,11 +9,13 @@
     "P3": "MCP Integration",
     "P4": "SaaS Launch"
   },
+  "completed_tasks": ["T01","T02","T03","T04","T05","T06","T07","T08","T09","T17","T18"],
   "tasks": [
     {
       "id": "T01",
       "phase": "P1",
       "priority": "critical",
+      "status": "done",
       "subject": "CORS設定を管理画面オリジン固定に修正",
       "description": "apps/worker/src/index.ts:51 の cors({ origin: '*' }) を、管理画面の実際のオリジンのみ許可するよう変更。wrangler.toml に ALLOWED_ORIGIN 変数を追加。",
       "file": "apps/worker/src/index.ts:51",
