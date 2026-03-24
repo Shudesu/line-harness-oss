@@ -86,7 +86,7 @@ npx wrangler d1 create line-crm
 
 # 出力例:
 # ✅ Successfully created DB 'line-crm'
-# database_id = "b2712617-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# database_id = "YOUR_D1_DATABASE_ID"
 ```
 
 出力される `database_id` を `apps/worker/wrangler.toml` に記入:
