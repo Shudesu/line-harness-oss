@@ -21,13 +21,20 @@ import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
  */
 export function expandVariables(
   content: string,
-  friend: { id: string; display_name: string | null; user_id: string | null },
+  friend: { id: string; display_name: string | null; user_id: string | null; ref_code?: string | null },
   apiOrigin?: string,
 ): string {
   let result = content;
   result = result.replace(/\{\{name\}\}/g, friend.display_name || '');
   result = result.replace(/\{\{uid\}\}/g, friend.user_id || '');
   result = result.replace(/\{\{friend_id\}\}/g, friend.id);
+  result = result.replace(/\{\{ref\}\}/g, friend.ref_code || '');
+  // Conditional block: {{#if_ref}}...{{/if_ref}} — only shown if ref_code exists
+  if (friend.ref_code) {
+    result = result.replace(/\{\{#if_ref\}\}([\s\S]*?)\{\{\/if_ref\}\}/g, '$1');
+  } else {
+    result = result.replace(/\{\{#if_ref\}\}[\s\S]*?\{\{\/if_ref\}\}/g, '');
+  }
   if (apiOrigin) {
     result = result.replace(/\{\{auth_url:([^}]+)\}\}/g, (_match, channelId) => {
       const params = new URLSearchParams({ account: channelId, ref: 'cross-link' });
