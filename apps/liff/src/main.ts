@@ -150,14 +150,10 @@ function showCompletion(profile: { displayName: string; pictureUrl?: string }, i
     </div>
   `;
 
-  // 2秒後にトーク画面に遷移（LINE内でもブラウザでも）
+  // 2秒後にトーク画面に遷移
   setTimeout(() => {
-    if (liff.isInClient()) {
-      try { liff.closeWindow(); } catch { /* ignore */ }
-    } else {
-      // ブラウザの場合はLINEのトーク画面を開く
-      window.location.href = 'https://line.me/R/oaMessage/@086cdqiw/';
-    }
+    // LINE内でもブラウザでも、トーク画面URLに遷移
+    window.location.href = 'https://line.me/R/oaMessage/@086cdqiw/';
   }, 2000);
 }
 

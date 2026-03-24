@@ -80,21 +80,21 @@ liffRoutes.get('/auth/line', async (c) => {
   loginUrl.searchParams.set('bot_prompt', 'aggressive');
   loginUrl.searchParams.set('state', encodedState);
 
-  // Detect mobile vs PC via User-Agent
-  const ua = (c.req.header('user-agent') || '').toLowerCase();
-  const isMobile = /iphone|ipad|android|mobile/.test(ua);
-
-  if (isMobile) {
-    return c.redirect(loginUrl.toString());
-  }
-
-  // PC: show QR code page with LIFF URL (opens LINE app directly when scanned)
+  // Build LIFF URL with params (opens LINE app directly on mobile + QR on PC)
   const qrParams = new URLSearchParams();
   if (ref) qrParams.set('ref', ref);
   if (uidParam) qrParams.set('uid', uidParam);
   if (accountParam) qrParams.set('account', accountParam);
   const qrUrl = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
 
+  // Mobile: redirect to LIFF URL (opens LINE app directly)
+  const ua = (c.req.header('user-agent') || '').toLowerCase();
+  const isMobile = /iphone|ipad|android|mobile/.test(ua);
+  if (isMobile) {
+    return c.redirect(qrUrl);
+  }
+
+  // PC: show QR code page
   return c.html(`<!DOCTYPE html>
 <html lang="ja">
 <head>
