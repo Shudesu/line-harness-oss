@@ -19,6 +19,7 @@ export class LineHarness {
   readonly forms: FormsResource
 
   private readonly apiUrl: string
+  private readonly defaultAccountId: string | undefined
   private readonly workflows: Workflows
 
   readonly createStepScenario: (name: string, triggerType: ScenarioTriggerType, steps: StepDefinition[]) => Promise<ScenarioWithSteps>
@@ -30,6 +31,7 @@ export class LineHarness {
 
   constructor(config: LineHarnessConfig) {
     this.apiUrl = config.apiUrl.replace(/\/$/, '')
+    this.defaultAccountId = config.lineAccountId
 
     const http = new HttpClient({
       baseUrl: this.apiUrl,
@@ -37,10 +39,10 @@ export class LineHarness {
       timeout: config.timeout ?? 30_000,
     })
 
-    this.friends = new FriendsResource(http)
+    this.friends = new FriendsResource(http, this.defaultAccountId)
     this.tags = new TagsResource(http)
-    this.scenarios = new ScenariosResource(http)
-    this.broadcasts = new BroadcastsResource(http)
+    this.scenarios = new ScenariosResource(http, this.defaultAccountId)
+    this.broadcasts = new BroadcastsResource(http, this.defaultAccountId)
     this.richMenus = new RichMenusResource(http)
     this.trackedLinks = new TrackedLinksResource(http)
     this.forms = new FormsResource(http)

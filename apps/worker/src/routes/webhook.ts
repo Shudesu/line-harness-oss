@@ -224,8 +224,20 @@ async function handleEvent(
 
         // Reply with confirmation
         try {
+          const period = hour < 12 ? '午前' : '午後';
+          const displayHour = hour <= 12 ? hour : hour - 12;
           await lineClient.replyMessage(event.replyToken, [
-            { type: 'text', text: `⏰ 配信時間を ${hour}時 に設定しました！\n\n今後のステップ配信は ${hour}:00 以降にお届けします。` },
+            buildMessage('flex', JSON.stringify({
+              type: 'bubble',
+              body: { type: 'box', layout: 'vertical', contents: [
+                { type: 'text', text: '配信時間を設定しました', size: 'lg', weight: 'bold', color: '#1e293b' },
+                { type: 'box', layout: 'vertical', contents: [
+                  { type: 'text', text: `${period} ${displayHour}:00`, size: 'xxl', weight: 'bold', color: '#f59e0b', align: 'center' },
+                  { type: 'text', text: `（${hour}:00〜）`, size: 'sm', color: '#64748b', align: 'center', margin: 'sm' },
+                ], backgroundColor: '#fffbeb', cornerRadius: 'md', paddingAll: '20px', margin: 'lg' },
+                { type: 'text', text: '今後のステップ配信はこの時間以降にお届けします。', size: 'xs', color: '#64748b', wrap: true, margin: 'lg' },
+              ], paddingAll: '20px' },
+            })),
           ]);
         } catch (err) {
           console.error('Failed to reply for time setting', err);

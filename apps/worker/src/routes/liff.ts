@@ -572,7 +572,7 @@ liffRoutes.post('/api/links/wrap', async (c) => {
 // ─── HTML Templates ─────────────────────────────────────────────
 
 function authLandingPage(liffUrl: string, oauthUrl: string): string {
-  // Extract LIFF ID from URL like https://liff.line.me/YOUR_LIFF_ID?ref=test
+  // Extract LIFF ID from URL like https://liff.line.me/{LIFF_ID}?ref=test
   const liffIdMatch = liffUrl.match(/liff\.line\.me\/([^?]+)/);
   const liffId = liffIdMatch ? liffIdMatch[1] : '';
   // Query string part (e.g., ?ref=test)

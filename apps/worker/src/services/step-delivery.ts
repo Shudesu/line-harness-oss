@@ -22,17 +22,19 @@ import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 export function expandVariables(
   content: string,
   friend: { id: string; display_name: string | null; user_id: string | null },
-  apiOrigin = 'https://your-worker.your-subdomain.workers.dev',
+  apiOrigin?: string,
 ): string {
   let result = content;
   result = result.replace(/\{\{name\}\}/g, friend.display_name || '');
   result = result.replace(/\{\{uid\}\}/g, friend.user_id || '');
   result = result.replace(/\{\{friend_id\}\}/g, friend.id);
-  result = result.replace(/\{\{auth_url:([^}]+)\}\}/g, (_match, channelId) => {
-    const params = new URLSearchParams({ account: channelId, ref: 'cross-link' });
-    if (friend.user_id) params.set('uid', friend.user_id);
-    return `${apiOrigin}/auth/line?${params.toString()}`;
-  });
+  if (apiOrigin) {
+    result = result.replace(/\{\{auth_url:([^}]+)\}\}/g, (_match, channelId) => {
+      const params = new URLSearchParams({ account: channelId, ref: 'cross-link' });
+      if (friend.user_id) params.set('uid', friend.user_id);
+      return `${apiOrigin}/auth/line?${params.toString()}`;
+    });
+  }
   return result;
 }
 
@@ -60,6 +62,7 @@ function enforceDeliveryWindow(date: Date, preferredHour?: number): Date {
 export async function processStepDeliveries(
   db: D1Database,
   lineClient: LineClient,
+  workerUrl?: string,
 ): Promise<void> {
   // Skip delivery outside 9:00-23:00 JST window
   const jstHour = new Date(Date.now() + 9 * 60 * 60_000).getUTCHours();
@@ -75,7 +78,7 @@ export async function processStepDeliveries(
       if (i > 0) {
         await sleep(addJitter(50, 200));
       }
-      await processSingleDelivery(db, lineClient, fs);
+      await processSingleDelivery(db, lineClient, fs, workerUrl);
     } catch (err) {
       console.error(`Error processing friend_scenario ${fs.id}:`, err);
       // Continue with next one
@@ -94,6 +97,7 @@ async function processSingleDelivery(
     status: string;
     next_delivery_at: string | null;
   },
+  workerUrl?: string,
 ): Promise<void> {
   // Get friend first to read preferred delivery hour from metadata
   const friend = await getFriendById(db, fs.friend_id);
@@ -151,7 +155,7 @@ async function processSingleDelivery(
   }
 
   // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, etc.)
-  const expandedContent = expandVariables(currentStep.message_content, friend);
+  const expandedContent = expandVariables(currentStep.message_content, friend, workerUrl);
   const message = buildMessage(currentStep.message_type, expandedContent);
   await lineClient.pushMessage(friend.line_user_id, [message]);
 

@@ -2,13 +2,18 @@ import type { HttpClient } from '../http.js'
 import type { ApiResponse, PaginatedData, Friend, FriendListParams, MessageType } from '../types.js'
 
 export class FriendsResource {
-  constructor(private readonly http: HttpClient) {}
+  constructor(
+    private readonly http: HttpClient,
+    private readonly defaultAccountId?: string,
+  ) {}
 
   async list(params?: FriendListParams): Promise<PaginatedData<Friend>> {
     const query = new URLSearchParams()
     if (params?.limit !== undefined) query.set('limit', String(params.limit))
     if (params?.offset !== undefined) query.set('offset', String(params.offset))
     if (params?.tagId) query.set('tagId', params.tagId)
+    const accountId = params?.accountId ?? this.defaultAccountId
+    if (accountId) query.set('lineAccountId', accountId)
     const qs = query.toString()
     const path = qs ? `/api/friends?${qs}` : '/api/friends'
     const res = await this.http.get<ApiResponse<PaginatedData<Friend>>>(path)

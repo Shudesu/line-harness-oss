@@ -3,6 +3,7 @@ export interface LineHarnessConfig {
   apiUrl: string
   apiKey: string
   timeout?: number  // default: 30000ms
+  lineAccountId?: string  // default account for multi-account setups
 }
 
 // ─── API Response ───────────────────────────────────────
@@ -44,6 +45,7 @@ export interface FriendListParams {
   limit?: number
   offset?: number
   tagId?: string
+  accountId?: string
 }
 
 // ─── Tag ────────────────────────────────────────────────

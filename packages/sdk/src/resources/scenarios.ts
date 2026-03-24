@@ -13,10 +13,15 @@ import type {
 } from '../types.js'
 
 export class ScenariosResource {
-  constructor(private readonly http: HttpClient) {}
+  constructor(
+    private readonly http: HttpClient,
+    private readonly defaultAccountId?: string,
+  ) {}
 
-  async list(): Promise<ScenarioListItem[]> {
-    const res = await this.http.get<ApiResponse<ScenarioListItem[]>>('/api/scenarios')
+  async list(params?: { accountId?: string }): Promise<ScenarioListItem[]> {
+    const accountId = params?.accountId ?? this.defaultAccountId
+    const query = accountId ? `?lineAccountId=${accountId}` : ''
+    const res = await this.http.get<ApiResponse<ScenarioListItem[]>>(`/api/scenarios${query}`)
     return res.data
   }
 
@@ -25,8 +30,12 @@ export class ScenariosResource {
     return res.data
   }
 
-  async create(input: CreateScenarioInput): Promise<Scenario> {
-    const res = await this.http.post<ApiResponse<Scenario>>('/api/scenarios', input)
+  async create(input: CreateScenarioInput & { lineAccountId?: string }): Promise<Scenario> {
+    const body = { ...input }
+    if (!body.lineAccountId && this.defaultAccountId) {
+      body.lineAccountId = this.defaultAccountId
+    }
+    const res = await this.http.post<ApiResponse<Scenario>>('/api/scenarios', body)
     return res.data
   }
 

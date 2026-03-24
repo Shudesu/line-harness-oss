@@ -43,6 +43,7 @@ export type Env = {
     LINE_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
+    WORKER_URL: string;
   };
 };
 
@@ -110,7 +111,7 @@ async function scheduled(
   for (const token of activeTokens) {
     const lineClient = new LineClient(token);
     jobs.push(
-      processStepDeliveries(env.DB, lineClient),
+      processStepDeliveries(env.DB, lineClient, env.WORKER_URL),
       processScheduledBroadcasts(env.DB, lineClient),
       processReminderDeliveries(env.DB, lineClient),
     );
