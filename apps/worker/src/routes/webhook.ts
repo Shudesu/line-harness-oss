@@ -144,6 +144,22 @@ async function handleEvent(
 
     // イベントバス発火: friend_add
     await fireEvent(db, 'friend_add', { friendId: friend.id, eventData: { displayName: friend.display_name } }, lineAccessToken);
+
+    // Onboarding:Started タグ付与 → PPAL_GuestToStage0 automation が Stage0 リッチメニューに切替
+    const allFollowTags = await getTags(db);
+    const onboardingStartedTag = allFollowTags.find((t) => t.name === 'Onboarding:Started');
+    if (onboardingStartedTag) {
+      try {
+        await addTagToFriend(db, friend.id, onboardingStartedTag.id);
+        await fireEvent(db, 'tag_change', {
+          friendId: friend.id,
+          eventData: { tagId: onboardingStartedTag.id, action: 'add' },
+        }, lineAccessToken);
+      } catch (err) {
+        console.error('Failed to add Onboarding:Started tag on follow', err);
+      }
+    }
+
     return;
   }
 

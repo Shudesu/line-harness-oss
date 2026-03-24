@@ -9,7 +9,6 @@
     "P3": "MCP Integration",
     "P4": "SaaS Launch"
   },
-  "completed_tasks": ["T01","T02","T03","T04","T05","T06","T07","T08","T09","T17","T18"],
   "tasks": [
     {
       "id": "T01",
@@ -36,7 +35,8 @@
       "node": "MacBook Pro",
       "depends_on": [],
       "estimate_hours": 2,
-      "acceptance": "同一IPから11回連続でブロードキャスト送信APIを叩くと 429 が返る"
+      "acceptance": "同一IPから11回連続でブロードキャスト送信APIを叩くと 429 が返る",
+      "status": "done"
     },
     {
       "id": "T03",
@@ -49,7 +49,8 @@
       "node": "MacBook Pro",
       "depends_on": [],
       "estimate_hours": 1,
-      "acceptance": "API_KEYなしで /api/liff/profile が 401 を返す"
+      "acceptance": "API_KEYなしで /api/liff/profile が 401 を返す",
+      "status": "done"
     },
     {
       "id": "T04",
@@ -64,7 +65,8 @@
         "T03"
       ],
       "estimate_hours": 2,
-      "acceptance": "lineUserId のみでは /api/liff/profile からデータ取得不可"
+      "acceptance": "lineUserId のみでは /api/liff/profile からデータ取得不可",
+      "status": "done"
     },
     {
       "id": "T05",
@@ -77,7 +79,8 @@
       "node": "MacBook Pro",
       "depends_on": [],
       "estimate_hours": 1,
-      "acceptance": "STRIPE_WEBHOOK_SECRET 未設定時に Stripe Webhook が 500 を返す"
+      "acceptance": "STRIPE_WEBHOOK_SECRET 未設定時に Stripe Webhook が 500 を返す",
+      "status": "done"
     },
     {
       "id": "T06",
@@ -90,7 +93,8 @@
       "node": "MacBook Pro",
       "depends_on": [],
       "estimate_hours": 1,
-      "acceptance": "redirect=https://evil.example.com が 400 Bad Request を返す"
+      "acceptance": "redirect=https://evil.example.com が 400 Bad Request を返す",
+      "status": "done"
     },
     {
       "id": "T07",
@@ -103,7 +107,8 @@
       "node": "MacBook Pro",
       "depends_on": [],
       "estimate_hours": 1,
-      "acceptance": "GET /api/webhooks のレスポンスに secret フィールドが含まれない"
+      "acceptance": "GET /api/webhooks のレスポンスに secret フィールドが含まれない",
+      "status": "done"
     },
     {
       "id": "T08",
@@ -116,7 +121,8 @@
       "node": "MacBook Pro",
       "depends_on": [],
       "estimate_hours": 2,
-      "acceptance": "ENABLE_STEALTH_MODE=false で零幅文字が挿入されないことを確認"
+      "acceptance": "ENABLE_STEALTH_MODE=false で零幅文字が挿入されないことを確認",
+      "status": "done"
     },
     {
       "id": "T09",
@@ -134,7 +140,8 @@
         "T04"
       ],
       "estimate_hours": 1,
-      "acceptance": "wrangler d1 execute で SELECT 1 が成功する"
+      "acceptance": "wrangler d1 execute で SELECT 1 が成功する",
+      "status": "done"
     },
     {
       "id": "T10",
@@ -149,7 +156,8 @@
         "T09"
       ],
       "estimate_hours": 0.5,
-      "acceptance": "テスト友だち追加でfriends テーブルに行が挿入される"
+      "acceptance": "テスト友だち追加でfriends テーブルに行が挿入される",
+      "status": "done"
     },
     {
       "id": "T11",
@@ -165,7 +173,8 @@
         "T10"
       ],
       "estimate_hours": 4,
-      "acceptance": "3シナリオが /api/scenarios に登録され、テスト友だちで配信確認"
+      "acceptance": "3シナリオが /api/scenarios に登録され、テスト友だちで配信確認",
+      "status": "done"
     },
     {
       "id": "T12",
@@ -180,7 +189,8 @@
         "T09"
       ],
       "estimate_hours": 2,
-      "acceptance": "GET /api/tags で20件が返る"
+      "acceptance": "GET /api/tags で20件が返る",
+      "status": "done"
     },
     {
       "id": "T13",
@@ -195,7 +205,8 @@
         "T11"
       ],
       "estimate_hours": 2,
-      "acceptance": "購入済みタグが付くとリッチメニューがMemberに切り替わる"
+      "acceptance": "購入済みタグが付くとリッチメニューがMemberに切り替わる",
+      "status": "done"
     },
     {
       "id": "T14",
@@ -211,7 +222,8 @@
         "T12"
       ],
       "estimate_hours": 3,
-      "acceptance": "Teachableのテスト購入でLINE友だちに購入済みタグが自動付与される"
+      "acceptance": "Teachableのテスト購入でLINE友だちに購入済みタグが自動付与される",
+      "status": "done"
     },
     {
       "id": "T15",
@@ -229,7 +241,8 @@
         "T14"
       ],
       "estimate_hours": 8,
-      "acceptance": "1週間でのメッセージ配信成功率99%以上、友だちデータの整合性確認"
+      "acceptance": "1週間でのメッセージ配信成功率99%以上、友だちデータの整合性確認",
+      "status": "pending"
     },
     {
       "id": "T16",
@@ -244,7 +257,8 @@
         "T15"
       ],
       "estimate_hours": 0.5,
-      "acceptance": "L-step解約完了通知メール受信"
+      "acceptance": "L-step解約完了通知メール受信",
+      "status": "pending"
     },
     {
       "id": "T17",
@@ -259,7 +273,8 @@
         "T09"
       ],
       "estimate_hours": 8,
-      "acceptance": "Claude Codeから「来週セミナー参加者に配信して」でLINEメッセージが送信される"
+      "acceptance": "Claude Codeから「来週セミナー参加者に配信して」でLINEメッセージが送信される",
+      "status": "done"
     },
     {
       "id": "T18",
@@ -274,7 +289,8 @@
         "T17"
       ],
       "estimate_hours": 4,
-      "acceptance": "5シナリオ全てが自然言語指示で正常動作"
+      "acceptance": "5シナリオ全てが自然言語指示で正常動作",
+      "status": "done"
     },
     {
       "id": "T19",
@@ -289,7 +305,8 @@
         "T16"
       ],
       "estimate_hours": 16,
-      "acceptance": "LP公開。Google Lighthouse Score 90以上"
+      "acceptance": "LP公開。Google Lighthouse Score 90以上",
+      "status": "done"
     },
     {
       "id": "T20",
@@ -305,7 +322,8 @@
         "T19"
       ],
       "estimate_hours": 12,
-      "acceptance": "Stripeテストカードでの課金・解約フローが完結"
+      "acceptance": "Stripeテストカードでの課金・解約フローが完結",
+      "status": "done"
     },
     {
       "id": "T21",
@@ -321,7 +339,8 @@
         "T20"
       ],
       "estimate_hours": 2,
-      "acceptance": "50社へのβ案内完了。興味表明10社以上でフルローンチ判断"
+      "acceptance": "50社へのβ案内完了。興味表明10社以上でフルローンチ判断",
+      "status": "pending"
     }
   ],
   "completed_tasks": [
