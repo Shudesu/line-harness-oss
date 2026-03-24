@@ -143,18 +143,23 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
     if (msg.messageType === 'flex') {
       try {
         const parsed = JSON.parse(msg.content)
-        // Extract first text from flex
-        const findText = (obj: Record<string, unknown>): string | null => {
-          if (obj.type === 'text' && typeof obj.text === 'string') return obj.text as string
+        // Extract ALL text from flex (up to 200 chars)
+        const texts: string[] = []
+        const collectText = (obj: Record<string, unknown>) => {
+          if (texts.join(' ').length > 200) return
+          if (obj.type === 'text' && typeof obj.text === 'string') {
+            const t = (obj.text as string).trim()
+            if (t && !t.startsWith('{{')) texts.push(t)
+          }
           for (const key of ['header', 'body', 'footer']) {
-            if (obj[key]) { const r = findText(obj[key] as Record<string, unknown>); if (r) return r }
+            if (obj[key]) collectText(obj[key] as Record<string, unknown>)
           }
           if (Array.isArray(obj.contents)) {
-            for (const c of obj.contents) { const r = findText(c as Record<string, unknown>); if (r) return r }
+            for (const c of obj.contents) collectText(c as Record<string, unknown>)
           }
-          return null
         }
-        return findText(parsed) || '[Flex Message]'
+        collectText(parsed)
+        return texts.slice(0, 4).join('\n') || '[Flex Message]'
       } catch { return '[Flex Message]' }
     }
     return `[${msg.messageType}]`
