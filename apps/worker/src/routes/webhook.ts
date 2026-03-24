@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { verifySignature, LineClient } from '@line-crm/line-sdk';
-import type { WebhookRequestBody, WebhookEvent, TextEventMessage } from '@line-crm/line-sdk';
+import type { WebhookRequestBody, WebhookEvent, TextEventMessage, PostbackEvent } from '@line-crm/line-sdk';
 import {
   upsertFriend,
   updateFriendFollowStatus,
@@ -11,6 +11,8 @@ import {
   advanceFriendScenario,
   completeFriendScenario,
   upsertChatOnMessage,
+  addTagToFriend,
+  getTags,
   jstNow,
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
@@ -245,6 +247,52 @@ async function handleEvent(
       friendId: friend.id,
       eventData: { text: incomingText, matched },
     }, lineAccessToken);
+
+    return;
+  }
+
+  if (event.type === 'postback') {
+    const postbackEvent = event as PostbackEvent;
+    const userId =
+      postbackEvent.source.type === 'user' ? postbackEvent.source.userId : undefined;
+    if (!userId) return;
+
+    const friend = await getFriendByLineUserId(db, userId);
+    if (!friend) return;
+
+    const params = new URLSearchParams(postbackEvent.postback.data);
+    const action = params.get('action');
+
+    // Stage0 リッチメニュー「講座にアクセス」ボタンタップ
+    // → Onboarding:Step0_Clicked タグ付与 → オートメーションがStage1へ切替
+    if (action === 'rm_stage0_course') {
+      const allTags = await getTags(db);
+      const tag = allTags.find((t) => t.name === 'Onboarding:Step0_Clicked');
+      if (tag) {
+        try {
+          await addTagToFriend(db, friend.id, tag.id);
+          // tag_change イベント発火 → automation が Stage1 リッチメニューに切替
+          await fireEvent(db, 'tag_change', {
+            friendId: friend.id,
+            eventData: { tagId: tag.id, action: 'add' },
+          }, lineAccessToken);
+        } catch (err) {
+          console.error('Failed to add Onboarding:Step0_Clicked tag', err);
+        }
+      }
+
+      // Teachable 講座 URL をリプライ（タップで遷移）
+      try {
+        await lineClient.replyMessage(postbackEvent.replyToken, [
+          {
+            type: 'text',
+            text: '講座ページを開きます👇\nhttps://shuhayas-s-school.teachable.com/courses/enrolled/2925864',
+          },
+        ]);
+      } catch (err) {
+        console.error('Failed to reply for rm_stage0_course', err);
+      }
+    }
 
     return;
   }
