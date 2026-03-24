@@ -80,9 +80,51 @@ liffRoutes.get('/auth/line', async (c) => {
   loginUrl.searchParams.set('bot_prompt', 'aggressive');
   loginUrl.searchParams.set('state', encodedState);
 
-  // Redirect directly to LINE Login OAuth (works on both mobile and PC)
-  // bot_prompt=aggressive handles friend-add, no LIFF needed for auth flow
-  return c.redirect(loginUrl.toString());
+  // Detect mobile vs PC via User-Agent
+  const ua = (c.req.header('user-agent') || '').toLowerCase();
+  const isMobile = /iphone|ipad|android|mobile/.test(ua);
+
+  if (isMobile) {
+    return c.redirect(loginUrl.toString());
+  }
+
+  // PC: show QR code page with LIFF URL (opens LINE app directly when scanned)
+  const qrParams = new URLSearchParams();
+  if (ref) qrParams.set('ref', ref);
+  if (uidParam) qrParams.set('uid', uidParam);
+  if (accountParam) qrParams.set('account', accountParam);
+  const qrUrl = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
+
+  return c.html(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LINE で友だち追加</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Hiragino Sans', system-ui, sans-serif; background: #0d1117; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 48px; text-align: center; max-width: 480px; width: 90%; }
+    h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; }
+    .sub { font-size: 14px; color: rgba(255,255,255,0.5); margin-bottom: 32px; }
+    .qr { background: #fff; border-radius: 16px; padding: 24px; display: inline-block; margin-bottom: 24px; }
+    .qr img { display: block; width: 240px; height: 240px; }
+    .hint { font-size: 13px; color: rgba(255,255,255,0.4); line-height: 1.6; }
+    .badge { display: inline-block; margin-top: 24px; padding: 8px 20px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #06C755; background: rgba(6,199,85,0.1); border: 1px solid rgba(6,199,85,0.2); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>LINE Harness を体験</h1>
+    <p class="sub">スマートフォンで QR コードを読み取ってください</p>
+    <div class="qr">
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(qrUrl)}" alt="QR Code">
+    </div>
+    <p class="hint">LINE アプリのカメラまたは<br>スマートフォンのカメラで読み取れます</p>
+    <div class="badge">LINE Harness OSS</div>
+  </div>
+</body>
+</html>`);
 });
 
 /**

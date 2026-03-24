@@ -150,12 +150,15 @@ function showCompletion(profile: { displayName: string; pictureUrl?: string }, i
     </div>
   `;
 
-  // LINE内ブラウザなら3秒後に自動で閉じる
-  if (liff.isInClient()) {
-    setTimeout(() => {
+  // 2秒後にトーク画面に遷移（LINE内でもブラウザでも）
+  setTimeout(() => {
+    if (liff.isInClient()) {
       try { liff.closeWindow(); } catch { /* ignore */ }
-    }, 3000);
-  }
+    } else {
+      // ブラウザの場合はLINEのトーク画面を開く
+      window.location.href = 'https://line.me/R/oaMessage/@086cdqiw/';
+    }
+  }, 2000);
 }
 
 function showError(message: string) {

@@ -6,6 +6,8 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 
 **コンセプト**: AIがLINEを安全に操作するための基盤。人間は監視し、AI（Claude Code等）がAPIを通じて操作します。全機能がREST APIとして公開されており、管理画面はデータの可視化専用です。
 
+**[LINE で体験する](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=wiki)** — 友だち追加するだけでステップ配信・フォーム・自動返信を体験できます。
+
 ## 主要機能
 
 | 機能 | 説明 |
