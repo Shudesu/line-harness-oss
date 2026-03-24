@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { api } from '@/lib/api'
+import { api, fetchApi } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
@@ -78,10 +78,160 @@ const ccPrompts = [
   },
 ]
 
+interface FriendItem {
+  id: string
+  displayName: string
+  pictureUrl: string | null
+  isFollowing: boolean
+}
+
+interface MessageLog {
+  id: string
+  direction: 'incoming' | 'outgoing'
+  messageType: string
+  content: string
+  createdAt: string
+}
+
+function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
+  friendId: string
+  friend: FriendItem | null
+  onBack: () => void
+  onSent: () => void
+}) {
+  const [message, setMessage] = useState('')
+  const [sending, setSending] = useState(false)
+  const [messages, setMessages] = useState<MessageLog[]>([])
+  const [loadingMessages, setLoadingMessages] = useState(true)
+
+  useEffect(() => {
+    const loadMessages = async () => {
+      setLoadingMessages(true)
+      try {
+        const res = await fetchApi<{ success: boolean; data: MessageLog[] }>(
+          `/api/friends/${friendId}/messages`
+        )
+        if (res.success) setMessages(res.data)
+      } catch { /* silent */ }
+      setLoadingMessages(false)
+    }
+    loadMessages()
+  }, [friendId])
+
+  const handleSend = async () => {
+    if (!message.trim() || sending) return
+    setSending(true)
+    try {
+      await fetchApi(`/api/friends/${friendId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content: message, messageType: 'text' }),
+      })
+      setMessages((prev) => [...prev, {
+        id: crypto.randomUUID(),
+        direction: 'outgoing',
+        messageType: 'text',
+        content: message,
+        createdAt: new Date().toISOString(),
+      }])
+      setMessage('')
+    } catch { /* silent */ }
+    setSending(false)
+  }
+
+  function renderContent(msg: MessageLog) {
+    if (msg.messageType === 'text') return msg.content
+    if (msg.messageType === 'flex') {
+      try {
+        const parsed = JSON.parse(msg.content)
+        // Extract first text from flex
+        const findText = (obj: Record<string, unknown>): string | null => {
+          if (obj.type === 'text' && typeof obj.text === 'string') return obj.text as string
+          for (const key of ['header', 'body', 'footer']) {
+            if (obj[key]) { const r = findText(obj[key] as Record<string, unknown>); if (r) return r }
+          }
+          if (Array.isArray(obj.contents)) {
+            for (const c of obj.contents) { const r = findText(c as Record<string, unknown>); if (r) return r }
+          }
+          return null
+        }
+        return findText(parsed) || '[Flex Message]'
+      } catch { return '[Flex Message]' }
+    }
+    return `[${msg.messageType}]`
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-4 border-b border-gray-200 flex items-center gap-3">
+        <button onClick={onBack} className="lg:hidden text-gray-400 hover:text-gray-600">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        {friend?.pictureUrl ? (
+          <img src={friend.pictureUrl} alt="" className="w-8 h-8 rounded-full" />
+        ) : (
+          <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
+            <span className="text-gray-500 text-xs">{(friend?.displayName || '?').charAt(0)}</span>
+          </div>
+        )}
+        <div>
+          <p className="text-sm font-bold text-gray-900">{friend?.displayName || '不明'}</p>
+          <p className="text-xs text-gray-400">メッセージ履歴</p>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {loadingMessages ? (
+          <p className="text-center text-gray-400 text-sm">読み込み中...</p>
+        ) : messages.length === 0 ? (
+          <p className="text-center text-gray-400 text-sm">メッセージ履歴がありません</p>
+        ) : (
+          messages.map((msg) => (
+            <div key={msg.id} className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                msg.direction === 'outgoing'
+                  ? 'bg-green-500 text-white'
+                  : 'bg-gray-100 text-gray-900'
+              }`}>
+                <p className="text-sm whitespace-pre-wrap break-words">{renderContent(msg)}</p>
+                <p className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-200' : 'text-gray-400'}`}>
+                  {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="px-4 py-3 border-t border-gray-200">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+            placeholder="メッセージを入力..."
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!message.trim() || sending}
+            className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
+            style={{ backgroundColor: '#06C755' }}
+          >
+            {sending ? '...' : '送信'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ChatsPage() {
   const { selectedAccountId } = useAccount()
   const [chats, setChats] = useState<Chat[]>([])
+  const [allFriends, setAllFriends] = useState<FriendItem[]>([])
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
+  const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null)
   const [chatDetail, setChatDetail] = useState<ChatDetail | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [loading, setLoading] = useState(true)
@@ -99,11 +249,15 @@ export default function ChatsPage() {
       const params: { status?: string; accountId?: string } = {}
       if (statusFilter !== 'all') params.status = statusFilter
       if (selectedAccountId) params.accountId = selectedAccountId
-      const res = await api.chats.list(params)
-      if (res.success) {
-        setChats(res.data as unknown as Chat[])
-      } else {
-        setError(res.error)
+      const [chatRes, friendRes] = await Promise.allSettled([
+        api.chats.list(params),
+        api.friends.list({ accountId: selectedAccountId || undefined, limit: '100' }),
+      ])
+      if (chatRes.status === 'fulfilled' && chatRes.value.success) {
+        setChats(chatRes.value.data as unknown as Chat[])
+      }
+      if (friendRes.status === 'fulfilled' && friendRes.value.success) {
+        setAllFriends((friendRes.value.data as unknown as { items: FriendItem[] }).items)
       }
     } catch {
       setError('チャットの読み込みに失敗しました。もう一度お試しください。')
@@ -238,55 +392,86 @@ export default function ChatsPage() {
                   </div>
                 ))}
               </div>
-            ) : chats.length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-gray-500 text-sm">チャットがありません。</p>
-              </div>
             ) : (
-              chats.map((chat) => {
-                const statusInfo = statusConfig[chat.status]
-                const isSelected = selectedChatId === chat.id
-
-                return (
-                  <button
-                    key={chat.id}
-                    onClick={() => handleSelectChat(chat.id)}
-                    className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors ${
-                      isSelected ? 'bg-green-50' : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      {chat.friendPictureUrl ? (
-                        <img src={chat.friendPictureUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                          <span className="text-gray-500 text-sm">{chat.friendName.charAt(0)}</span>
+              <>
+                {chats.map((chat) => {
+                  const statusInfo = statusConfig[chat.status]
+                  const isSelected = selectedChatId === chat.id
+                  return (
+                    <button
+                      key={chat.id}
+                      onClick={() => { setSelectedFriendId(null); handleSelectChat(chat.id); }}
+                      className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors ${
+                        isSelected && !selectedFriendId ? 'bg-green-50' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {chat.friendPictureUrl ? (
+                          <img src={chat.friendPictureUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                            <span className="text-gray-500 text-sm">{chat.friendName.charAt(0)}</span>
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-gray-900 truncate">{chat.friendName}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{formatDatetime(chat.lastMessageAt)}</p>
                         </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {chat.friendName}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {formatDatetime(chat.lastMessageAt)}
-                        </p>
+                        <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${statusInfo.className}`}>
+                          {statusInfo.label}
+                        </span>
                       </div>
-                      <span
-                        className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${statusInfo.className}`}
+                    </button>
+                  )
+                })}
+                {/* Friends without chats */}
+                {allFriends
+                  .filter((f) => f.isFollowing && !chats.some((c) => c.friendId === f.id))
+                  .map((friend) => {
+                    const isSelected = selectedFriendId === friend.id
+                    return (
+                      <button
+                        key={friend.id}
+                        onClick={() => { setSelectedChatId(null); setChatDetail(null); setSelectedFriendId(friend.id); }}
+                        className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors ${
+                          isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
+                        }`}
                       >
-                        {statusInfo.label}
-                      </span>
-                    </div>
-                  </button>
-                )
-              })
+                        <div className="flex items-center gap-3">
+                          {friend.pictureUrl ? (
+                            <img src={friend.pictureUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                              <span className="text-gray-500 text-sm">{(friend.displayName || '?').charAt(0)}</span>
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-900 truncate">{friend.displayName}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">会話なし</p>
+                          </div>
+                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 bg-gray-100 text-gray-500">
+                            新規
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+              </>
             )}
           </div>
         </div>
 
         {/* Right Panel: Chat Detail */}
-        <div className={`flex-1 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'flex' : 'hidden lg:flex'}`}>
-          {!selectedChatId ? (
+        <div className={`flex-1 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId || selectedFriendId ? 'flex' : 'hidden lg:flex'}`}>
+          {selectedFriendId && !selectedChatId ? (
+            /* Direct message to friend without existing chat */
+            <DirectMessagePanel
+              friendId={selectedFriendId}
+              friend={allFriends.find((f) => f.id === selectedFriendId) || null}
+              onBack={() => setSelectedFriendId(null)}
+              onSent={() => { setSelectedFriendId(null); loadChats(); }}
+            />
+          ) : !selectedChatId ? (
             <div className="flex-1 flex items-center justify-center">
               <p className="text-gray-400 text-sm">チャットを選択してください</p>
             </div>

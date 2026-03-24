@@ -66,7 +66,7 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -84,6 +84,7 @@ async function handleEvent(
   event: WebhookEvent,
   lineAccessToken: string,
   lineAccountId: string | null = null,
+  workerUrl?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -270,7 +271,9 @@ async function handleEvent(
 
       if (isMatch) {
         try {
-          const replyMsg = buildMessage(rule.response_type, rule.response_content);
+          // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}})
+          const expandedContent = expandVariables(rule.response_content, friend as { id: string; display_name: string | null; user_id: string | null }, workerUrl);
+          const replyMsg = buildMessage(rule.response_type, expandedContent);
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
 
           // 送信ログ

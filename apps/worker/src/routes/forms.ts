@@ -259,8 +259,10 @@ forms.post('/api/forms/:id/submit', async (c) => {
       // Send confirmation message with submitted data back to user
       sideEffects.push(
         (async () => {
+          console.log('Form reply: starting for friendId', friendId);
           const friend = await getFriendById(db, friendId!);
-          if (!friend?.line_user_id) return;
+          if (!friend?.line_user_id) { console.log('Form reply: no line_user_id'); return; }
+          console.log('Form reply: sending to', friend.line_user_id);
           const { LineClient } = await import('@line-crm/line-sdk');
           const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
 
@@ -269,7 +271,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
           const answerRows = entries.map(([key, value]) => {
             const field = form.fields ? (JSON.parse(form.fields) as Array<{ name: string; label: string }>).find((f: { name: string }) => f.name === key) : null;
             const label = field?.label || key;
-            const val = Array.isArray(value) ? value.join(', ') : String(value || '');
+            const val = Array.isArray(value) ? value.join(', ') : String(value || '-') || '-';
             return {
               type: 'box' as const, layout: 'vertical' as const, margin: 'md' as const,
               contents: [
@@ -310,7 +312,10 @@ forms.post('/api/forms/:id/submit', async (c) => {
       );
 
       if (sideEffects.length > 0) {
-        await Promise.allSettled(sideEffects);
+        const results = await Promise.allSettled(sideEffects);
+        for (const r of results) {
+          if (r.status === 'rejected') console.error('Form side-effect failed:', r.reason);
+        }
       }
     }
 

@@ -119,6 +119,32 @@ friends.get('/api/friends/count', async (c) => {
   }
 });
 
+// GET /api/friends/ref-stats - ref code attribution stats
+friends.get('/api/friends/ref-stats', async (c) => {
+  try {
+    const lineAccountId = c.req.query('lineAccountId');
+    const where = lineAccountId ? 'WHERE line_account_id = ?' : 'WHERE ref_code IS NOT NULL';
+    const binds = lineAccountId ? [lineAccountId] : [];
+    const stmt = c.env.DB.prepare(
+      `SELECT ref_code, COUNT(*) as count FROM friends ${where} AND ref_code IS NOT NULL GROUP BY ref_code ORDER BY count DESC`,
+    );
+    const result = await (binds.length > 0 ? stmt.bind(...binds) : stmt).all<{ ref_code: string; count: number }>();
+    const total = await c.env.DB.prepare(
+      `SELECT COUNT(*) as count FROM friends ${lineAccountId ? 'WHERE line_account_id = ?' : ''} ${lineAccountId ? 'AND' : 'WHERE'} ref_code IS NOT NULL`,
+    ).bind(...(lineAccountId ? [lineAccountId] : [])).first<{ count: number }>();
+    return c.json({
+      success: true,
+      data: {
+        routes: result.results.map((r) => ({ refCode: r.ref_code, friendCount: r.count })),
+        totalWithRef: total?.count ?? 0,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/friends/ref-stats error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/friends/:id - get single friend with tags
 friends.get('/api/friends/:id', async (c) => {
   try {
@@ -235,6 +261,24 @@ friends.put('/api/friends/:id/metadata', async (c) => {
     });
   } catch (err) {
     console.error('PUT /api/friends/:id/metadata error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/friends/:id/messages - get message history
+friends.get('/api/friends/:id/messages', async (c) => {
+  try {
+    const friendId = c.req.param('id');
+    const result = await c.env.DB
+      .prepare(
+        `SELECT id, direction, message_type as messageType, content, created_at as createdAt
+         FROM messages_log WHERE friend_id = ? ORDER BY created_at ASC LIMIT 200`,
+      )
+      .bind(friendId)
+      .all<{ id: string; direction: string; messageType: string; content: string; createdAt: string }>();
+    return c.json({ success: true, data: result.results });
+  } catch (err) {
+    console.error('GET /api/friends/:id/messages error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

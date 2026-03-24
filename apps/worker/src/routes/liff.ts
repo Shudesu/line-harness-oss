@@ -88,9 +88,15 @@ liffRoutes.get('/auth/line', async (c) => {
   const qrUrl = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
 
   // Mobile: redirect to LIFF URL (opens LINE app directly)
+  // Exception: cross-account links (account param) use OAuth directly
+  // because Account A's LIFF can't open from Account B's LINE chat
   const ua = (c.req.header('user-agent') || '').toLowerCase();
   const isMobile = /iphone|ipad|android|mobile/.test(ua);
   if (isMobile) {
+    if (accountParam) {
+      // Cross-account: use OAuth (LIFF won't work across accounts)
+      return c.redirect(loginUrl.toString());
+    }
     return c.redirect(qrUrl);
   }
 
@@ -336,6 +342,54 @@ liffRoutes.get('/auth/callback', async (c) => {
         .run();
     }
 
+    // Auto-enroll in friend_add scenarios + immediate delivery (skip delivery window)
+    try {
+      const { getScenarios, enrollFriendInScenario: enroll, getScenarioSteps } = await import('@line-crm/db');
+      const { LineClient } = await import('@line-crm/line-sdk');
+      const { buildMessage, expandVariables } = await import('../services/step-delivery.js');
+
+      // Resolve which account this friend belongs to
+      const matchedAccountId = accountParam
+        ? (await getLineAccountByChannelId(db, accountParam))?.id ?? null
+        : null;
+
+      // Get access token for this account
+      let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+      if (accountParam) {
+        const acct = await getLineAccountByChannelId(db, accountParam);
+        if (acct) accessToken = acct.channel_access_token;
+      }
+      const lineClient = new LineClient(accessToken);
+
+      const scenarios = await getScenarios(db);
+      for (const scenario of scenarios) {
+        const scenarioAccountMatch = !scenario.line_account_id || !matchedAccountId || scenario.line_account_id === matchedAccountId;
+        if (scenario.trigger_type === 'friend_add' && scenario.is_active && scenarioAccountMatch) {
+          const existing = await db
+            .prepare('SELECT id FROM friend_scenarios WHERE friend_id = ? AND scenario_id = ?')
+            .bind(friend.id, scenario.id)
+            .first<{ id: string }>();
+          if (!existing) {
+            await enroll(db, friend.id, scenario.id);
+
+            // Immediate delivery of first step (skip delivery window)
+            const steps = await getScenarioSteps(db, scenario.id);
+            const firstStep = steps[0];
+            if (firstStep && firstStep.delay_minutes === 0) {
+              const expandedContent = expandVariables(
+                firstStep.message_content,
+                friend as { id: string; display_name: string | null; user_id: string | null },
+                c.env.WORKER_URL,
+              );
+              await lineClient.pushMessage(lineUserId, [buildMessage(firstStep.message_type, expandedContent)]);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('OAuth scenario enrollment error:', err);
+    }
+
     // Redirect or show completion
     if (redirect) {
       return c.redirect(redirect);
@@ -476,6 +530,9 @@ liffRoutes.post('/api/liff/link', async (c) => {
 liffRoutes.get('/api/analytics/ref-summary', async (c) => {
   try {
     const db = c.env.DB;
+    const lineAccountId = c.req.query('lineAccountId');
+    const accountFilter = lineAccountId ? 'AND f.line_account_id = ?' : '';
+    const accountBinds = lineAccountId ? [lineAccountId] : [];
 
     const rows = await db
       .prepare(
@@ -487,9 +544,11 @@ liffRoutes.get('/api/analytics/ref-summary', async (c) => {
           MAX(rt.created_at) as latest_at
         FROM entry_routes er
         LEFT JOIN ref_tracking rt ON er.ref_code = rt.ref_code
+        LEFT JOIN friends f ON f.id = rt.friend_id ${accountFilter ? `${accountFilter}` : ''}
         GROUP BY er.ref_code, er.name
         ORDER BY friend_count DESC`,
       )
+      .bind(...accountBinds)
       .all<{
         ref_code: string;
         name: string;
@@ -498,13 +557,15 @@ liffRoutes.get('/api/analytics/ref-summary', async (c) => {
         latest_at: string | null;
       }>();
 
-    const totalFriendsRes = await db
-      .prepare(`SELECT COUNT(*) as count FROM friends`)
-      .first<{ count: number }>();
+    const totalStmt = lineAccountId
+      ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE line_account_id = ?`).bind(lineAccountId)
+      : db.prepare(`SELECT COUNT(*) as count FROM friends`);
+    const totalFriendsRes = await totalStmt.first<{ count: number }>();
 
-    const friendsWithRefRes = await db
-      .prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != ''`)
-      .first<{ count: number }>();
+    const refStmt = lineAccountId
+      ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != '' AND line_account_id = ?`).bind(lineAccountId)
+      : db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != ''`);
+    const friendsWithRefRes = await refStmt.first<{ count: number }>();
 
     const totalFriends = totalFriendsRes?.count ?? 0;
     const friendsWithRef = friendsWithRefRes?.count ?? 0;
@@ -547,6 +608,10 @@ liffRoutes.get('/api/analytics/ref/:refCode', async (c) => {
       return c.json({ success: false, error: 'Entry route not found' }, 404);
     }
 
+    const lineAccountId = c.req.query('lineAccountId');
+    const accountFilter = lineAccountId ? 'AND f.line_account_id = ?' : '';
+    const binds = lineAccountId ? [refCode, refCode, lineAccountId] : [refCode, refCode];
+
     const friends = await db
       .prepare(
         `SELECT
@@ -556,10 +621,10 @@ liffRoutes.get('/api/analytics/ref/:refCode', async (c) => {
           rt.created_at as tracked_at
         FROM friends f
         LEFT JOIN ref_tracking rt ON f.id = rt.friend_id AND rt.ref_code = ?
-        WHERE f.ref_code = ?
+        WHERE f.ref_code = ? ${accountFilter}
         ORDER BY rt.created_at DESC`,
       )
-      .bind(refCode, refCode)
+      .bind(...binds)
       .all<{
         id: string;
         display_name: string;

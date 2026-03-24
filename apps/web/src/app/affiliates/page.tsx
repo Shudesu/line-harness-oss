@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
 
 import { fetchApi } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 
 const WORKER_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'
 
@@ -35,6 +36,7 @@ interface RefDetailData {
 }
 
 export default function AttributionPage() {
+  const { selectedAccountId } = useAccount()
   const [summary, setSummary] = useState<RefSummaryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedRef, setSelectedRef] = useState<string | null>(null)
@@ -45,16 +47,21 @@ export default function AttributionPage() {
   const loadSummary = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetchApi<{ success: boolean; data: RefSummaryData }>('/api/analytics/ref-summary')
+      const query = selectedAccountId ? `?lineAccountId=${selectedAccountId}` : ''
+      const res = await fetchApi<{ success: boolean; data: RefSummaryData }>(`/api/analytics/ref-summary${query}`)
       setSummary(res.data)
     } catch {
       // silent
     }
     setLoading(false)
-  }, [])
+  }, [selectedAccountId])
 
   useEffect(() => {
     loadSummary()
+    // Refresh when tab becomes visible
+    const handleVisibility = () => { if (document.visibilityState === 'visible') loadSummary() }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [loadSummary])
 
   const handleRowClick = async (refCode: string) => {
@@ -66,7 +73,8 @@ export default function AttributionPage() {
     setSelectedRef(refCode)
     setDetailLoading(true)
     try {
-      const res = await fetchApi<{ success: boolean; data: RefDetailData }>(`/api/analytics/ref/${encodeURIComponent(refCode)}`)
+      const query = selectedAccountId ? `?lineAccountId=${selectedAccountId}` : ''
+      const res = await fetchApi<{ success: boolean; data: RefDetailData }>(`/api/analytics/ref/${encodeURIComponent(refCode)}${query}`)
       setDetail(res.data)
     } catch {
       setDetail(null)
