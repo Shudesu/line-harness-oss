@@ -216,10 +216,10 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
     }
 
-    // Save submission
+    // Save submission (friendId null if not resolved — avoids FK constraint)
     const submission = await createFormSubmission(c.env.DB, {
       formId,
-      friendId,
+      friendId: friendId || null,
       data: JSON.stringify(submissionData),
     });
 

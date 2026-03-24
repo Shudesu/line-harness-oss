@@ -260,6 +260,25 @@ function extractFlexAltText(obj: unknown, depth = 0): string | null {
   return null;
 }
 
+/** Remove empty text nodes from Flex JSON (caused by conditional blocks) */
+function cleanEmptyNodes(obj: unknown): void {
+  if (!obj || typeof obj !== 'object') return;
+  const node = obj as Record<string, unknown>;
+  for (const key of ['header', 'body', 'footer']) {
+    if (node[key]) cleanEmptyNodes(node[key]);
+  }
+  if (Array.isArray(node.contents)) {
+    node.contents = (node.contents as unknown[]).filter((c) => {
+      if (c && typeof c === 'object' && (c as Record<string, unknown>).type === 'text') {
+        const text = (c as Record<string, unknown>).text;
+        return typeof text === 'string' && text.trim().length > 0;
+      }
+      return true;
+    });
+    for (const c of node.contents as unknown[]) cleanEmptyNodes(c);
+  }
+}
+
 export function buildMessage(messageType: string, messageContent: string): Message {
   if (messageType === 'text') {
     return { type: 'text', text: messageContent };
@@ -286,6 +305,8 @@ export function buildMessage(messageType: string, messageContent: string): Messa
   if (messageType === 'flex') {
     try {
       const contents = JSON.parse(messageContent);
+      // Remove empty text nodes (from {{#if_ref}} conditional blocks)
+      cleanEmptyNodes(contents);
       // Extract first text element for altText (shown in notifications)
       const altText = extractFlexAltText(contents) || 'お知らせ';
       return { type: 'flex', altText, contents };
