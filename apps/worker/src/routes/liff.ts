@@ -9,6 +9,7 @@ import {
   recordRefTracking,
   addTagToFriend,
   getLineAccountByChannelId,
+  getLineAccounts,
   jstNow,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
@@ -468,16 +469,26 @@ liffRoutes.post('/api/liff/link', async (c) => {
       return c.json({ success: false, error: 'idToken is required' }, 400);
     }
 
-    const verifyRes = await fetch('https://api.line.me/oauth2/v2.1/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        id_token: body.idToken,
-        client_id: c.env.LINE_LOGIN_CHANNEL_ID,
-      }),
-    });
+    // Try verifying with default Login channel, then DB accounts
+    const loginChannelIds = [c.env.LINE_LOGIN_CHANNEL_ID];
+    const dbAccounts = await getLineAccounts(c.env.DB);
+    for (const acct of dbAccounts) {
+      if (acct.login_channel_id && !loginChannelIds.includes(acct.login_channel_id)) {
+        loginChannelIds.push(acct.login_channel_id);
+      }
+    }
 
-    if (!verifyRes.ok) {
+    let verifyRes: Response | null = null;
+    for (const channelId of loginChannelIds) {
+      verifyRes = await fetch('https://api.line.me/oauth2/v2.1/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ id_token: body.idToken, client_id: channelId }),
+      });
+      if (verifyRes.ok) break;
+    }
+
+    if (!verifyRes?.ok) {
       return c.json({ success: false, error: 'Invalid ID token' }, 401);
     }
 
