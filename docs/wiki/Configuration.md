@@ -189,7 +189,7 @@ app.use('*', cors({ origin: '*' }));
 
 ```typescript
 app.use('*', cors({
-  origin: ['https://line-crm-admin.pages.dev', 'https://your-domain.com'],
+  origin: ['https://your-admin.pages.dev', 'https://your-domain.com'],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Authorization', 'Content-Type'],
 }));
