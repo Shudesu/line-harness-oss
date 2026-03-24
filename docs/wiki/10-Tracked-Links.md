@@ -59,7 +59,7 @@ CREATE INDEX idx_link_clicks_friend ON link_clicks (friend_id);
 ### トラッキングURL形式
 
 ```
-https://your-worker.your-subdomain.workers.dev/t/{linkId}?f={friendId}
+https://line-crm-worker.line-crm-api.workers.dev/t/{linkId}?f={friendId}
 ```
 
 - `linkId`: tracked_linksのID（UUID）
@@ -94,7 +94,7 @@ https://your-worker.your-subdomain.workers.dev/t/{linkId}?f={friendId}
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "セミナーLP",
   "originalUrl": "https://example.com/seminar",
-  "trackingUrl": "https://your-worker.your-subdomain.workers.dev/t/550e8400-e29b-41d4-a716-446655440000",
+  "trackingUrl": "https://line-crm-worker.line-crm-api.workers.dev/t/550e8400-e29b-41d4-a716-446655440000",
   "tagId": "tag-uuid-or-null",
   "scenarioId": "scenario-uuid-or-null",
   "isActive": true,
@@ -113,7 +113,7 @@ https://your-worker.your-subdomain.workers.dev/t/{linkId}?f={friendId}
   "id": "550e8400-...",
   "name": "セミナーLP",
   "originalUrl": "https://example.com/seminar",
-  "trackingUrl": "https://your-worker.your-subdomain.workers.dev/t/550e8400-...",
+  "trackingUrl": "https://line-crm-worker.line-crm-api.workers.dev/t/550e8400-...",
   "tagId": null,
   "scenarioId": null,
   "isActive": true,
@@ -144,7 +144,7 @@ https://your-worker.your-subdomain.workers.dev/t/{linkId}?f={friendId}
 ### トラッキングリンク一覧取得
 
 ```bash
-curl -X GET "https://your-worker.your-subdomain.workers.dev/api/tracked-links" \
+curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/tracked-links" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -158,7 +158,7 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/tracked-links" \
       "id": "uuid-1",
       "name": "セミナーLP",
       "originalUrl": "https://example.com/seminar",
-      "trackingUrl": "https://your-worker.your-subdomain.workers.dev/t/uuid-1",
+      "trackingUrl": "https://line-crm-worker.line-crm-api.workers.dev/t/uuid-1",
       "tagId": "tag-uuid",
       "scenarioId": null,
       "isActive": true,
@@ -173,7 +173,7 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/tracked-links" \
 ### トラッキングリンク作成
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/tracked-links" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/tracked-links" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -193,7 +193,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/tracked-links" 
     "id": "new-uuid",
     "name": "3月セミナー申込LP",
     "originalUrl": "https://example.com/seminar-march",
-    "trackingUrl": "https://your-worker.your-subdomain.workers.dev/t/new-uuid",
+    "trackingUrl": "https://line-crm-worker.line-crm-api.workers.dev/t/new-uuid",
     "tagId": "tag-uuid-seminar-interested",
     "scenarioId": "scenario-uuid-seminar-followup",
     "isActive": true,
@@ -207,7 +207,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/tracked-links" 
 ### トラッキングリンク詳細取得（クリック履歴付き）
 
 ```bash
-curl -X GET "https://your-worker.your-subdomain.workers.dev/api/tracked-links/LINK_UUID" \
+curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/tracked-links/LINK_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -220,7 +220,7 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/tracked-links/LI
     "id": "LINK_UUID",
     "name": "セミナーLP",
     "originalUrl": "https://example.com/seminar",
-    "trackingUrl": "https://your-worker.your-subdomain.workers.dev/t/LINK_UUID",
+    "trackingUrl": "https://line-crm-worker.line-crm-api.workers.dev/t/LINK_UUID",
     "tagId": "tag-uuid",
     "scenarioId": null,
     "isActive": true,
@@ -248,7 +248,7 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/tracked-links/LI
 ### トラッキングリンク削除
 
 ```bash
-curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/tracked-links/LINK_UUID" \
+curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/tracked-links/LINK_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -264,10 +264,10 @@ curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/tracked-links
 
 ```bash
 # 友だち特定（メッセージ内で動的にfriendIdを埋め込む）
-curl -L "https://your-worker.your-subdomain.workers.dev/t/LINK_UUID?f=FRIEND_UUID"
+curl -L "https://line-crm-worker.line-crm-api.workers.dev/t/LINK_UUID?f=FRIEND_UUID"
 
 # 匿名（リッチメニューやWebページに配置）
-curl -L "https://your-worker.your-subdomain.workers.dev/t/LINK_UUID"
+curl -L "https://line-crm-worker.line-crm-api.workers.dev/t/LINK_UUID"
 ```
 
 レスポンス: `302 Found` → `Location: https://example.com/seminar` にリダイレクト
@@ -282,7 +282,7 @@ curl -L "https://your-worker.your-subdomain.workers.dev/t/LINK_UUID"
 
 ```
 セミナーの詳細はこちら:
-https://your-worker.your-subdomain.workers.dev/t/LINK_UUID?f={friendId}
+https://line-crm-worker.line-crm-api.workers.dev/t/LINK_UUID?f={friendId}
 ```
 
 `{friendId}` はステップ配信時にシステムが自動で実際のfriendIdに置換する想定。

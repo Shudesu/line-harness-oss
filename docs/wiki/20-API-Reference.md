@@ -35,7 +35,7 @@ API キーは環境変数 `API_KEY` で設定 (`wrangler secret put API_KEY`)。
 ## ベース URL
 
 ```
-https://your-worker.your-subdomain.workers.dev
+https://line-crm-worker.line-crm-api.workers.dev
 ```
 
 ---

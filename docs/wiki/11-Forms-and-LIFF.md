@@ -102,7 +102,7 @@ LIFF (LINE Front-end Framework) は、LINEアプリ内でWebアプリを開く�
 
 1. LINE Developers Consoleで LIFF アプリを作成
 2. エンドポイントURLにフォーム表示ページを設定
-3. `LIFF_URL` 環境変数に LIFF URL（例: `https://liff.line.me/YOUR_LIFF_ID`）を設定
+3. `LIFF_URL` 環境変数に LIFF URL（例: `https://liff.line.me/2009554425-xxxxxxxx`）を設定
 
 ### フォーム表示URL
 
@@ -173,7 +173,7 @@ LINE HarnessはGoogle Calendar連携機能も備えており、LIFF内で予約�
 ### フォーム一覧取得
 
 ```bash
-curl -X GET "https://your-worker.your-subdomain.workers.dev/api/forms" \
+curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/forms" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -206,14 +206,14 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/forms" \
 ### フォーム詳細取得
 
 ```bash
-curl -X GET "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID" \
+curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/forms/FORM_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ### フォーム作成
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/forms" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/forms" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -257,7 +257,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/forms" \
 ### フォーム更新
 
 ```bash
-curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID" \
+curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/forms/FORM_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -269,14 +269,14 @@ curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID"
 ### フォーム削除
 
 ```bash
-curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID" \
+curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/forms/FORM_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ### フォーム回答一覧取得
 
 ```bash
-curl -X GET "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID/submissions" \
+curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/forms/FORM_UUID/submissions" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -308,7 +308,7 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID/
 認証不要。LIFFアプリから呼び出される。
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID/submit" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/forms/FORM_UUID/submit" \
   -H "Content-Type: application/json" \
   -d '{
     "lineUserId": "U1234567890abcdef",
@@ -324,7 +324,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID
 `friendId` で直接指定することも可能:
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/forms/FORM_UUID/submit" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/forms/FORM_UUID/submit" \
   -H "Content-Type: application/json" \
   -d '{
     "friendId": "friend-uuid-123",

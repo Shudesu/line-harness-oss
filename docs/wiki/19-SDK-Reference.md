@@ -30,7 +30,7 @@ npm install github:your-org/line-harness#main --workspace=packages/sdk
 import { LineHarness } from '@line-harness/sdk'
 
 const lh = new LineHarness({
-  apiUrl: 'https://your-worker.your-subdomain.workers.dev',
+  apiUrl: 'https://line-crm-worker.line-crm-api.workers.dev',
   apiKey: 'your-api-key-here',
   timeout: 30000,  // オプション。デフォルト: 30000ms
 })
@@ -567,7 +567,7 @@ LineHarnessError
 import { LineHarness } from '@line-harness/sdk'
 
 const lh = new LineHarness({
-  apiUrl: 'https://your-worker.your-subdomain.workers.dev',
+  apiUrl: 'https://line-crm-worker.line-crm-api.workers.dev',
   apiKey: process.env.LINE_HARNESS_API_KEY!,
 })
 

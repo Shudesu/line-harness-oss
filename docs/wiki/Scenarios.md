@@ -153,7 +153,7 @@ if (i > 0) {
 ### GET /api/scenarios — シナリオ一覧
 
 ```bash
-curl -s "https://your-worker.your-subdomain.workers.dev/api/scenarios" \
+curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -181,7 +181,7 @@ curl -s "https://your-worker.your-subdomain.workers.dev/api/scenarios" \
 ### GET /api/scenarios/:id — シナリオ詳細（ステップ付き）
 
 ```bash
-curl -s "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID" \
+curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -232,7 +232,7 @@ curl -s "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_U
 ### POST /api/scenarios — シナリオ作成
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scenarios" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -256,7 +256,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scenarios" \
 ### PUT /api/scenarios/:id — シナリオ更新
 
 ```bash
-curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID" \
+curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -268,7 +268,7 @@ curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENAR
 ### DELETE /api/scenarios/:id — シナリオ削除
 
 ```bash
-curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID" \
+curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -276,7 +276,7 @@ curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCE
 
 ```bash
 # テキストステップ（即時配信）
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID/steps" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID/steps" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -287,7 +287,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENA
   }'
 
 # 1日後に Flex メッセージ（条件分岐付き）
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID/steps" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID/steps" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -328,7 +328,7 @@ delay_minutes の参考値:
 ### PUT /api/scenarios/:id/steps/:stepId — ステップ更新
 
 ```bash
-curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID/steps/STEP_UUID" \
+curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID/steps/STEP_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -340,7 +340,7 @@ curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENAR
 ### DELETE /api/scenarios/:id/steps/:stepId — ステップ削除
 
 ```bash
-curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID/steps/STEP_UUID" \
+curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID/steps/STEP_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -349,7 +349,7 @@ curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCE
 `manual` トリガーのシナリオに友だちを手動登録:
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENARIO_UUID/enroll/FRIEND_UUID" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/scenarios/SCENARIO_UUID/enroll/FRIEND_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -377,7 +377,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scenarios/SCENA
 import { LineHarness } from '@line-harness/sdk'
 
 const client = new LineHarness({
-  apiUrl: 'https://your-worker.your-subdomain.workers.dev',
+  apiUrl: 'https://line-crm-worker.line-crm-api.workers.dev',
   apiKey: 'YOUR_API_KEY',
 })
 

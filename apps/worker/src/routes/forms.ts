@@ -256,6 +256,59 @@ forms.post('/api/forms/:id/submit', async (c) => {
         sideEffects.push(enrollFriendInScenario(db, friendId, form.on_submit_scenario_id));
       }
 
+      // Send confirmation message with submitted data back to user
+      sideEffects.push(
+        (async () => {
+          const friend = await getFriendById(db, friendId!);
+          if (!friend?.line_user_id) return;
+          const { LineClient } = await import('@line-crm/line-sdk');
+          const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+
+          // Build Flex card showing their answers
+          const entries = Object.entries(submissionData as Record<string, unknown>);
+          const answerRows = entries.map(([key, value]) => {
+            const field = form.fields ? (JSON.parse(form.fields) as Array<{ name: string; label: string }>).find((f: { name: string }) => f.name === key) : null;
+            const label = field?.label || key;
+            const val = Array.isArray(value) ? value.join(', ') : String(value || '');
+            return {
+              type: 'box' as const, layout: 'vertical' as const, margin: 'md' as const,
+              contents: [
+                { type: 'text' as const, text: label, size: 'xxs' as const, color: '#64748b' },
+                { type: 'text' as const, text: val, size: 'sm' as const, color: '#1e293b', weight: 'bold' as const, wrap: true },
+              ],
+            };
+          });
+
+          const flex = {
+            type: 'bubble', size: 'giga',
+            header: {
+              type: 'box', layout: 'vertical',
+              contents: [
+                { type: 'text', text: '診断結果', size: 'lg', weight: 'bold', color: '#1e293b' },
+                { type: 'text', text: `${friend.display_name || ''}さんのプロフィール`, size: 'xs', color: '#64748b', margin: 'sm' },
+              ],
+              paddingAll: '20px', backgroundColor: '#f0fdf4',
+            },
+            body: {
+              type: 'box', layout: 'vertical',
+              contents: [
+                ...answerRows,
+                { type: 'separator', margin: 'lg' },
+                { type: 'box', layout: 'vertical', margin: 'lg', backgroundColor: '#eff6ff', cornerRadius: 'md', paddingAll: '12px',
+                  contents: [
+                    { type: 'text', text: 'この情報はメタデータに自動保存済み。今後の配信があなたに最適化されます。L-step ではフォーム回答をリアルタイムで返すことはできません。', size: 'xxs', color: '#2563EB', wrap: true },
+                  ],
+                },
+              ],
+              paddingAll: '20px',
+            },
+          };
+
+          const { buildMessage } = await import('../services/step-delivery.js');
+          await lineClient.pushMessage(friend.line_user_id, [buildMessage('flex', JSON.stringify(flex))]);
+        })(),
+      );
+
       if (sideEffects.length > 0) {
         await Promise.allSettled(sideEffects);
       }

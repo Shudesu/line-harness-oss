@@ -149,7 +149,7 @@ Content-Type: image/png
 ### 全リッチメニュー一覧取得
 
 ```bash
-curl -X GET "https://your-worker.your-subdomain.workers.dev/api/rich-menus" \
+curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/rich-menus" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -187,7 +187,7 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/rich-menus" \
 ### リッチメニュー作成
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/rich-menus" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -233,7 +233,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus" \
 ### リッチメニュー画像アップロード（Base64）
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus/richmenu-xxx/image" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/rich-menus/richmenu-xxx/image" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "image": "/9j/4AAQSkZJRg...(base64)...", "contentType": "image/jpeg" }'
@@ -242,7 +242,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus/rich
 ### リッチメニュー画像アップロード（バイナリ）
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus/richmenu-xxx/image" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/rich-menus/richmenu-xxx/image" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: image/png" \
   --data-binary @menu-image.png
@@ -257,7 +257,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus/rich
 ### デフォルトリッチメニュー設定
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus/richmenu-xxx/default" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/rich-menus/richmenu-xxx/default" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -270,7 +270,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/rich-menus/rich
 ### 友だちにリッチメニューをアサイン
 
 ```bash
-curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/rich-menu" \
+curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/rich-menu" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "richMenuId": "richmenu-xxx" }'
@@ -285,7 +285,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_
 ### 友だちのリッチメニューアサイン解除
 
 ```bash
-curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/rich-menu" \
+curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/rich-menu" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -298,7 +298,7 @@ curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEN
 ### リッチメニュー削除
 
 ```bash
-curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/rich-menus/richmenu-xxx" \
+curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/rich-menus/richmenu-xxx" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 

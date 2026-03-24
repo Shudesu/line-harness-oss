@@ -89,7 +89,7 @@ Next.js 管理画面で必要な環境変数。Vercel / CF Pages のダッシュ
 
 | 変数名 | 説明 | 例 |
 |--------|------|-----|
-| `NEXT_PUBLIC_API_URL` | Workers API URL | `https://your-worker.your-subdomain.workers.dev` |
+| `NEXT_PUBLIC_API_URL` | Workers API URL | `https://line-crm-worker.line-crm-api.workers.dev` |
 | `NEXT_PUBLIC_API_KEY` | API 認証キー（API_KEY と同値） | `sk-my-secret-key` |
 
 ## D1 データベースセットアップ
@@ -189,7 +189,7 @@ app.use('*', cors({ origin: '*' }));
 
 ```typescript
 app.use('*', cors({
-  origin: ['https://your-admin.pages.dev', 'https://your-domain.com'],
+  origin: ['https://line-crm-admin.pages.dev', 'https://your-domain.com'],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Authorization', 'Content-Type'],
 }));
@@ -244,7 +244,7 @@ isTimeBefore(a: string, b: string): boolean
 配信予約はJST文字列で指定:
 
 ```bash
-curl -X POST https://your-worker.your-subdomain.workers.dev/api/broadcasts \
+curl -X POST https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
