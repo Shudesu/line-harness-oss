@@ -460,6 +460,8 @@ liffRoutes.post('/api/liff/link', async (c) => {
     const body = await c.req.json<{
       idToken: string;
       displayName?: string | null;
+      ref?: string;
+      existingUuid?: string;
     }>();
 
     if (!body.idToken) {
@@ -490,6 +492,11 @@ liffRoutes.post('/api/liff/link', async (c) => {
     }
 
     if ((friend as unknown as Record<string, unknown>).user_id) {
+      // Still save ref even if already linked
+      if (body.ref) {
+        await db.prepare('UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL')
+          .bind(body.ref, friend.id).run();
+      }
       return c.json({
         success: true,
         data: { userId: (friend as unknown as Record<string, unknown>).user_id, alreadyLinked: true },
@@ -511,6 +518,23 @@ liffRoutes.post('/api/liff/link', async (c) => {
     }
 
     await linkFriendToUser(db, friend.id, userId);
+
+    // Save ref_code from LIFF (first touch wins)
+    if (body.ref) {
+      await db.prepare('UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL')
+        .bind(body.ref, friend.id).run();
+
+      // Record ref tracking
+      try {
+        const route = await getEntryRouteByRefCode(db, body.ref);
+        await recordRefTracking(db, {
+          refCode: body.ref,
+          friendId: friend.id,
+          entryRouteId: route?.id ?? null,
+          sourceUrl: null,
+        });
+      } catch { /* silent */ }
+    }
 
     return c.json({
       success: true,

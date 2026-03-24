@@ -89,7 +89,7 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
               ステータス
             </th>
             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              タグ
+              タグ / 流入
             </th>
             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
               登録日
@@ -148,14 +148,19 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                     )}
                   </td>
 
-                  {/* Tags */}
+                  {/* Tags + Ref */}
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
+                      {(friend as unknown as { refCode?: string }).refCode && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                          {(friend as unknown as { refCode: string }).refCode}
+                        </span>
+                      )}
                       {friend.tags.length > 0 ? (
                         friend.tags.map((tag) => <TagBadge key={tag.id} tag={tag} />)
-                      ) : (
+                      ) : !((friend as unknown as { refCode?: string }).refCode) ? (
                         <span className="text-xs text-gray-400">なし</span>
-                      )}
+                      ) : null}
                     </div>
                   </td>
 
