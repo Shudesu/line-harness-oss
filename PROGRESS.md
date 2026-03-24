@@ -13,7 +13,7 @@ L-step/Utage代替。AI（CC）ネイティブ設計。
 ## デプロイ先
 - **API**: https://line-crm-worker.line-crm-api.workers.dev
 - **管理画面**: https://line-crm-admin.pages.dev
-- **D1**: line-crm (YOUR_D1_DATABASE_ID) APAC/KIX
+- **D1**: line-crm (b2712617-31c4-47c2-accd-4eec906c44ce) APAC/KIX
 - **Cron**: 5分毎ステップ配信チェック + リマインダー配信
 
 ## 実装状況

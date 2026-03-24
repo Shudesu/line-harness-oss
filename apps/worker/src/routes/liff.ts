@@ -473,7 +473,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         id_token: body.idToken,
-        client_id: c.env.LINE_CHANNEL_ID,
+        client_id: c.env.LINE_LOGIN_CHANNEL_ID,
       }),
     });
 
