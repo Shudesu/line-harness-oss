@@ -26,7 +26,7 @@ webhooks.get('/api/webhooks/incoming', async (c) => {
         id: w.id,
         name: w.name,
         sourceType: w.source_type,
-        secret: w.secret,
+        // secret is intentionally omitted from GET responses — write-only field
         isActive: Boolean(w.is_active),
         createdAt: w.created_at,
         updatedAt: w.updated_at,
@@ -86,7 +86,7 @@ webhooks.get('/api/webhooks/outgoing', async (c) => {
         name: w.name,
         url: w.url,
         eventTypes: JSON.parse(w.event_types),
-        secret: w.secret,
+        // secret is intentionally omitted from GET responses — write-only field
         isActive: Boolean(w.is_active),
         createdAt: w.created_at,
         updatedAt: w.updated_at,

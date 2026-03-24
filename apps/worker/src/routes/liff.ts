@@ -257,7 +257,8 @@ liffRoutes.get('/auth/callback', async (c) => {
     }
 
     // Redirect or show completion
-    if (redirect) {
+    // Only allow relative redirects (starting with '/') to prevent open redirect attacks
+    if (redirect && redirect.startsWith('/')) {
       return c.redirect(redirect);
     }
 

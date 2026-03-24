@@ -21,7 +21,9 @@ export async function processSegmentSend(
   lineClient: LineClient,
   broadcastId: string,
   condition: SegmentCondition,
+  options: { stealthMode?: boolean } = {},
 ): Promise<Broadcast> {
+  const stealthMode = options.stealthMode ?? false;
   // Mark as sending
   await updateBroadcastStatus(db, broadcastId, 'sending');
 
@@ -60,9 +62,9 @@ export async function processSegmentSend(
         await sleep(delay);
       }
 
-      // Stealth: add slight variation to text messages
+      // Stealth: add slight variation to text messages (only when ENABLE_STEALTH_MODE=true)
       let batchMessage = message;
-      if (message.type === 'text' && totalBatches > 1) {
+      if (stealthMode && message.type === 'text' && totalBatches > 1) {
         batchMessage = { ...message, text: addMessageVariation(message.text, batchIndex) };
       }
 

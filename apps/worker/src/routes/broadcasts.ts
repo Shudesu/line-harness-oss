@@ -175,7 +175,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     }
 
     const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
-    await processBroadcastSend(c.env.DB, lineClient, id);
+    await processBroadcastSend(c.env.DB, lineClient, id, { stealthMode: c.env.ENABLE_STEALTH_MODE === 'true' });
 
     const result = await getBroadcastById(c.env.DB, id);
     return c.json({ success: true, data: result ? serializeBroadcast(result) : null });
@@ -209,7 +209,7 @@ broadcasts.post('/api/broadcasts/:id/send-segment', async (c) => {
     }
 
     const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
-    await processSegmentSend(c.env.DB, lineClient, id, body.conditions);
+    await processSegmentSend(c.env.DB, lineClient, id, body.conditions, { stealthMode: c.env.ENABLE_STEALTH_MODE === 'true' });
 
     const result = await getBroadcastById(c.env.DB, id);
     return c.json({ success: true, data: result ? serializeBroadcast(result) : null });
