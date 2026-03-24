@@ -15,6 +15,7 @@ export * from './templates';
 export * from './chats';
 export * from './notifications';
 export * from './stripe';
+export * from './subscriptions';
 export * from './health';
 export * from './automations';
 export * from './entry-routes';

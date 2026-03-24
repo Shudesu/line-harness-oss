@@ -33,3 +33,10 @@ database_id  = "2b9355ee-ddef-45d1-bca1-06a0a029ff83"
 
 [triggers]
 crons = ["*/5 * * * *"]
+
+# Stripe プランの Price ID（wrangler secret put で設定推奨）
+# STRIPE_PRO_PRICE_ID     = "price_xxx"   # Pro プラン ¥2,980/月
+# STRIPE_BUSINESS_PRICE_ID = "price_xxx"  # Business プラン ¥9,800/月
+# Secrets（wrangler secret put で設定）:
+#   STRIPE_WEBHOOK_SECRET  — Stripe ダッシュボードの Webhook signing secret
+#   STRIPE_SECRET_KEY      — Stripe Secret Key (sk_live_xxx / sk_test_xxx)

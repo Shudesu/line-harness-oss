@@ -3,6 +3,8 @@ import {
   getStripeEvents,
   getStripeEventByStripeId,
   createStripeEvent,
+  upsertSubscription,
+  cancelSubscription,
   jstNow,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
@@ -20,8 +22,22 @@ interface StripeWebhookBody {
       metadata?: Record<string, string>;
       customer?: string;
       status?: string;
+      items?: { data: Array<{ price: { id: string; product: string } }> };
+      current_period_start?: number;
+      current_period_end?: number;
+      cancel_at_period_end?: boolean;
     };
   };
+}
+
+function resolvePlan(
+  priceId: string,
+  proPriceId: string | undefined,
+  businessPriceId: string | undefined,
+): 'pro' | 'business' | null {
+  if (proPriceId && priceId === proPriceId) return 'pro';
+  if (businessPriceId && priceId === businessPriceId) return 'business';
+  return null;
 }
 
 // ========== Stripeイベント一覧 ==========
@@ -51,11 +67,71 @@ stripe.get('/api/integrations/stripe/events', async (c) => {
   }
 });
 
-// ========== Stripe Webhookレシーバー ==========
+// ========== サブスクリプション照会 ==========
 
-/** Stripe署名検証 */
+stripe.get('/api/subscriptions/:userId', async (c) => {
+  try {
+    const userId = c.req.param('userId');
+    const sub = await (async () => {
+      const { getSubscriptionByUserId } = await import('@line-crm/db');
+      return getSubscriptionByUserId(c.env.DB, userId);
+    })();
+    if (!sub) {
+      return c.json({
+        success: true,
+        data: { plan: 'free', status: 'active', cancelAtPeriodEnd: false, currentPeriodEnd: null },
+      });
+    }
+    return c.json({
+      success: true,
+      data: {
+        id: sub.id,
+        plan: sub.plan,
+        status: sub.status,
+        cancelAtPeriodEnd: sub.cancel_at_period_end === 1,
+        currentPeriodStart: sub.current_period_start,
+        currentPeriodEnd: sub.current_period_end,
+        stripeCustomerId: sub.stripe_customer_id,
+        stripeSubscriptionId: sub.stripe_subscription_id,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/subscriptions/:userId error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ========== サブスクリプション手動登録（管理用） ==========
+
+stripe.post('/api/subscriptions', async (c) => {
+  try {
+    const body = await c.req.json<{
+      userId: string;
+      plan: 'free' | 'pro' | 'business';
+      status?: 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid';
+      stripeCustomerId?: string;
+      stripeSubscriptionId?: string;
+    }>();
+    if (!body.userId || !body.plan) {
+      return c.json({ success: false, error: 'userId and plan are required' }, 400);
+    }
+    const sub = await upsertSubscription(c.env.DB, {
+      userId: body.userId,
+      plan: body.plan,
+      status: body.status ?? 'active',
+      stripeCustomerId: body.stripeCustomerId,
+      stripeSubscriptionId: body.stripeSubscriptionId,
+    });
+    return c.json({ success: true, data: sub }, 201);
+  } catch (err) {
+    console.error('POST /api/subscriptions error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ========== Stripe署名検証 ==========
+
 async function verifyStripeSignature(secret: string, rawBody: string, sigHeader: string): Promise<boolean> {
-  // Stripe署名形式: t=timestamp,v1=signature
   const parts = Object.fromEntries(
     sigHeader.split(',').map((p) => {
       const [k, ...v] = p.split('=');
@@ -82,30 +158,29 @@ async function verifyStripeSignature(secret: string, rawBody: string, sigHeader:
   return computedSig === expectedSig;
 }
 
+// ========== Stripe Webhook ==========
+
 stripe.post('/api/integrations/stripe/webhook', async (c) => {
   try {
-    const stripeSecret = (c.env as unknown as Record<string, string | undefined>).STRIPE_WEBHOOK_SECRET;
+    const env = c.env as unknown as Record<string, string | undefined>;
+    const stripeSecret = env.STRIPE_WEBHOOK_SECRET;
     let body: StripeWebhookBody;
 
     if (stripeSecret) {
-      // 署名検証モード（本番環境）
       const sigHeader = c.req.header('Stripe-Signature') ?? '';
       const rawBody = await c.req.text();
-
       const valid = await verifyStripeSignature(stripeSecret, rawBody, sigHeader);
       if (!valid) {
         return c.json({ success: false, error: 'Stripe signature verification failed' }, 401);
       }
       body = JSON.parse(rawBody) as StripeWebhookBody;
     } else {
-      // STRIPE_WEBHOOK_SECRET is required — fail explicitly rather than silently skipping verification
       return c.json(
         { success: false, error: 'STRIPE_WEBHOOK_SECRET is not configured. Webhook rejected.' },
         500,
       );
     }
 
-    // 冪等性チェック
     const existing = await getStripeEventByStripeId(c.env.DB, body.id);
     if (existing) {
       return c.json({ success: true, data: { message: 'Already processed' } });
@@ -113,11 +188,10 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
 
     const obj = body.data.object;
     const db = c.env.DB;
-
-    // メタデータからfriendIdを取得（Stripeのメタデータにline_friend_idを設定している想定）
     const friendId = obj.metadata?.line_friend_id ?? null;
+    const proPriceId = env.STRIPE_PRO_PRICE_ID;
+    const businessPriceId = env.STRIPE_BUSINESS_PRICE_ID;
 
-    // イベントを記録
     const event = await createStripeEvent(db, {
       stripeEventId: body.id,
       eventType: body.type,
@@ -127,12 +201,11 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
       metadata: JSON.stringify(obj.metadata ?? {}),
     });
 
-    // 決済成功時の自動処理
+    // payment_intent.succeeded
     if (body.type === 'payment_intent.succeeded' && friendId) {
       const { applyScoring } = await import('@line-crm/db');
       await applyScoring(db, friendId, 'purchase');
 
-      // 自動タグ付け（product_idベース）
       const productId = obj.metadata?.product_id;
       if (productId) {
         const tag = await db
@@ -147,27 +220,75 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
         }
       }
 
-      // イベントバスに発火（自動化ルール用）
       const { fireEvent } = await import('../services/event-bus.js');
-      await fireEvent(db, 'cv_fire', { friendId, eventData: { type: 'purchase', amount: obj.amount, stripeEventId: body.id } });
+      await fireEvent(db, 'cv_fire', {
+        friendId,
+        eventData: { type: 'purchase', amount: obj.amount, stripeEventId: body.id },
+      });
     }
 
-    // サブスクリプションイベント処理
-    if (body.type === 'customer.subscription.deleted' && friendId) {
-      const cancelledTag = await db
-        .prepare(`SELECT id FROM tags WHERE name = 'subscription_cancelled'`)
-        .first<{ id: string }>();
-      if (cancelledTag) {
+    // subscription created / updated
+    if (
+      (body.type === 'customer.subscription.created' || body.type === 'customer.subscription.updated') &&
+      obj.customer
+    ) {
+      const userId = obj.metadata?.miyabi_user_id;
+      if (userId) {
+        const priceId = obj.items?.data?.[0]?.price?.id ?? '';
+        const plan = resolvePlan(priceId, proPriceId, businessPriceId) ?? 'free';
+        const status = (obj.status ?? 'active') as 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid';
+        await upsertSubscription(db, {
+          userId,
+          stripeCustomerId: obj.customer,
+          stripeSubscriptionId: obj.id,
+          plan,
+          status,
+          currentPeriodStart: obj.current_period_start
+            ? new Date(obj.current_period_start * 1000).toISOString()
+            : undefined,
+          currentPeriodEnd: obj.current_period_end
+            ? new Date(obj.current_period_end * 1000).toISOString()
+            : undefined,
+          cancelAtPeriodEnd: obj.cancel_at_period_end ?? false,
+        });
+      }
+    }
+
+    // subscription deleted
+    if (body.type === 'customer.subscription.deleted') {
+      await cancelSubscription(db, obj.id);
+
+      if (friendId) {
+        const cancelledTag = await db
+          .prepare(`SELECT id FROM tags WHERE name = 'subscription_cancelled'`)
+          .first<{ id: string }>();
+        if (cancelledTag) {
+          await db
+            .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
+            .bind(friendId, cancelledTag.id, jstNow())
+            .run();
+        }
+      }
+
+      if (!friendId && obj.customer) {
         await db
-          .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
-          .bind(friendId, cancelledTag.id, jstNow())
+          .prepare(
+            `UPDATE subscriptions SET status = 'canceled', cancel_at_period_end = 1, updated_at = ?
+             WHERE stripe_customer_id = ?`,
+          )
+          .bind(jstNow(), obj.customer)
           .run();
       }
     }
 
     return c.json({
       success: true,
-      data: { id: event.id, stripeEventId: event.stripe_event_id, eventType: event.event_type, processedAt: event.processed_at },
+      data: {
+        id: event.id,
+        stripeEventId: event.stripe_event_id,
+        eventType: event.event_type,
+        processedAt: event.processed_at,
+      },
     });
   } catch (err) {
     console.error('POST /api/integrations/stripe/webhook error:', err);

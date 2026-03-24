@@ -504,3 +504,24 @@ CREATE TABLE IF NOT EXISTS automation_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_automation_logs_automation ON automation_logs (automation_id);
+
+-- ============================================================
+-- Subscriptions (みやびライン SaaS プラン管理)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id                   TEXT PRIMARY KEY,
+  user_id              TEXT NOT NULL,
+  stripe_customer_id   TEXT,
+  stripe_subscription_id TEXT UNIQUE,
+  plan                 TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro', 'business')),
+  status               TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'trialing', 'past_due', 'canceled', 'unpaid')),
+  current_period_start TEXT,
+  current_period_end   TEXT,
+  cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+  created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions (user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions (stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_sub ON subscriptions (stripe_subscription_id);
