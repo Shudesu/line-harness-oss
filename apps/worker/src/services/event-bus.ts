@@ -169,6 +169,15 @@ function matchConditions(
     if (payload.eventData.tagId !== conditions.tag_id) return false;
   }
 
+  // keyword チェック (message_received イベントの属性アンケート対応)
+  if (conditions.keyword !== undefined && payload.eventData) {
+    const text = payload.eventData.text as string | undefined;
+    if (text === undefined) return false;
+    const matchType = (conditions.match_type as string) ?? 'contains';
+    if (matchType === 'exact' && text !== conditions.keyword) return false;
+    if (matchType === 'contains' && !text.includes(conditions.keyword as string)) return false;
+  }
+
   return true;
 }
 
