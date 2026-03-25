@@ -365,7 +365,9 @@
       "file": null,
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T22"],
+      "depends_on": [
+        "T22"
+      ],
       "estimate_hours": 3,
       "acceptance": "pnpm --filter worker typecheck がエラーなし、CI green",
       "status": "in_progress"
@@ -379,7 +381,9 @@
       "file": "ppal/ (新規ディレクトリ)",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T23"],
+      "depends_on": [
+        "T23"
+      ],
       "estimate_hours": 2,
       "acceptance": "ppal/配下にPPAL固有ファイルが集約され、汎用コードと分離されている",
       "status": "pending"
@@ -393,7 +397,9 @@
       "file": "apps/worker/src/services/event-bus.ts",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T22"],
+      "depends_on": [
+        "T22"
+      ],
       "estimate_hours": 1,
       "acceptance": "https://github.com/Shudesu/line-harness-oss/pull/46 がマージされる",
       "status": "done"
@@ -421,7 +427,9 @@
       "file": "apps/worker/src/routes/webhook.ts",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T25"],
+      "depends_on": [
+        "T25"
+      ],
       "estimate_hours": 8,
       "acceptance": "PRがShudesuリポジトリに作成され、AIプロバイダーをenv varで切替可能",
       "status": "pending"
@@ -435,7 +443,9 @@
       "file": "apps/worker/src/**/*.test.ts",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T25"],
+      "depends_on": [
+        "T25"
+      ],
       "estimate_hours": 8,
       "acceptance": "npm test でテストが全パス、カバレッジ60%以上",
       "status": "pending"
@@ -449,7 +459,9 @@
       "file": "CLAUDE.md.template (新規)",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T25"],
+      "depends_on": [
+        "T25"
+      ],
       "estimate_hours": 2,
       "acceptance": "PRがShudesuリポジトリに作成",
       "status": "pending"
@@ -463,7 +475,9 @@
       "file": "https://github.com/Shudesu/line-harness-oss/pull/46",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T25"],
+      "depends_on": [
+        "T25"
+      ],
       "estimate_hours": 1,
       "acceptance": "PR #46 がマージ or クローズされる",
       "status": "pending"
@@ -477,7 +491,9 @@
       "file": "apps/web/src/app/(dashboard)/scoring/",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T23"],
+      "depends_on": [
+        "T23"
+      ],
       "estimate_hours": 6,
       "acceptance": "管理画面からスコアリングルールの追加・編集・削除が可能",
       "status": "pending"
@@ -491,7 +507,9 @@
       "file": "apps/worker/src/routes/friends.ts",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T23"],
+      "depends_on": [
+        "T23"
+      ],
       "estimate_hours": 3,
       "acceptance": "管理画面からCSVをダウンロードでき、Excelで開ける形式",
       "status": "pending"
@@ -505,7 +523,9 @@
       "file": "README.ja.md (新規)",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": ["T30"],
+      "depends_on": [
+        "T30"
+      ],
       "estimate_hours": 3,
       "acceptance": "PRがShudesuリポジトリに作成",
       "status": "pending"
@@ -519,15 +539,202 @@
       "file": null,
       "agent": "main",
       "node": "MacBook Pro",
-      "depends_on": ["T19", "T20"],
+      "depends_on": [
+        "T19",
+        "T20"
+      ],
       "estimate_hours": 2,
       "acceptance": "10名以上がβ申込み完了",
+      "status": "pending"
+    },
+    {
+      "id": "T35",
+      "phase": "P7",
+      "priority": "critical",
+      "subject": "[今すぐ] 管理画面・LP 再デプロイ — /landing を本番に反映",
+      "description": "T19(LP)・T20(Stripe UI)追加後、Cloudflare Pagesに再デプロイされていない。apps/webをビルドしてCloudflare Pagesに再push。/landingルートが200で返ることを確認。",
+      "steps": [
+        "cd apps/web && pnpm build",
+        "npx wrangler pages deploy out --project-name line-harness-admin",
+        "curl -s -o /dev/null -w \"%{http_code}\" https://line-harness-admin.pages.dev/landing → 200確認"
+      ],
+      "file": "apps/web/",
+      "agent": "kotowari-dev",
+      "node": "MacBook Pro",
+      "depends_on": [],
+      "estimate_hours": 0.5,
+      "acceptance": "https://line-harness-admin.pages.dev/landing が200を返し、日本語LPが表示される",
+      "status": "pending"
+    },
+    {
+      "id": "T36",
+      "phase": "P7",
+      "priority": "critical",
+      "subject": "[本物のAI統合] CcPromptButton → Claude API実接続",
+      "description": "現状のCcPromptButtonはテキストコピーボタン。POST /api/ai/analyze エンドポイントを新規作成し、友だちデータをD1から取得してAnthropic APIに渡し、分析結果をモーダル内に表示する。これが競合優位性の核心。",
+      "steps": [
+        "apps/worker/src/routes/ai.ts 新規作成: POST /api/ai/analyze",
+        "D1から友だち・タグ・シナリオデータを取得してコンテキスト構築",
+        "ANTHROPIC_API_KEY を wrangler secret put で設定",
+        "Anthropic SDK呼び出し → ストリーミングレスポンス返却",
+        "apps/web/src/components/prompt-modal.tsx をAPI呼び出しに改修",
+        "モーダル内にAI回答をストリーミング表示"
+      ],
+      "file": "apps/worker/src/routes/ai.ts, apps/web/src/components/prompt-modal.tsx",
+      "agent": "kotowari-dev",
+      "node": "MacBook Pro",
+      "depends_on": [
+        "T35"
+      ],
+      "estimate_hours": 8,
+      "acceptance": "ダッシュボードの「CCに依頼」ボタンを押すとClaude APIが実際に呼ばれ、CRM分析結果がモーダル内に表示される",
+      "status": "pending"
+    },
+    {
+      "id": "T37",
+      "phase": "P7",
+      "priority": "high",
+      "subject": "Stripe本番設定 — wrangler secrets + テスト決済通過",
+      "description": "T20でStripeコードは実装済みだが、wrangler secretsが未設定のため実際に課金できない。Stripeダッシュボードで商品・価格作成→ secrets設定→ テスト決済1件通過まで完了させる。",
+      "steps": [
+        "Stripe Dashboard: Products → Pro(2980円/月) / Business(9800円/月) 作成",
+        "wrangler secret put STRIPE_PRO_PRICE_ID",
+        "wrangler secret put STRIPE_BUSINESS_PRICE_ID",
+        "wrangler secret put STRIPE_WEBHOOK_SECRET",
+        "stripe listen --forward-to localhost:8787/api/stripe/webhook でローカルテスト",
+        "本番Webhook URL を Stripe Dashboardに登録",
+        "テストカードで決済→サブスクリプション作成を確認"
+      ],
+      "file": "apps/worker/src/routes/subscriptions.ts",
+      "agent": "kotowari-dev",
+      "node": "MacBook Pro",
+      "depends_on": [
+        "T35"
+      ],
+      "estimate_hours": 3,
+      "acceptance": "Stripeテストモードで Pro プラン購入→D1のsubscriptionsテーブルにレコード作成まで確認",
+      "status": "pending"
+    },
+    {
+      "id": "T38",
+      "phase": "P7",
+      "priority": "high",
+      "subject": "法務ページ実装 — プライバシーポリシー・特定商取引法",
+      "description": "有料プランを販売するための必須法的ページ。特商法（合同会社みやび情報）・プライバシーポリシー（LINE友だちデータの取扱い・Cloudflare米国サーバー所在地）・利用規約を実装。",
+      "steps": [
+        "apps/web/src/app/legal/privacy/page.tsx 新規作成",
+        "apps/web/src/app/legal/terms/page.tsx 新規作成",
+        "apps/web/src/app/legal/tokutei/page.tsx 新規作成（特商法）",
+        "LP(/landing)フッターにリンク追加",
+        "ログイン画面に利用規約同意チェックボックス追加"
+      ],
+      "file": "apps/web/src/app/legal/",
+      "agent": "kotowari-dev",
+      "node": "MacBook Pro",
+      "depends_on": [
+        "T35"
+      ],
+      "estimate_hours": 4,
+      "acceptance": "/legal/privacy, /legal/terms, /legal/tokutei が200で返り、合同会社みやび情報が記載されている",
+      "status": "pending"
+    },
+    {
+      "id": "T39",
+      "phase": "P7",
+      "priority": "high",
+      "subject": "LP改修 — L-step比較・AI統合デモ・訴求軸を刷新",
+      "description": "現LPの訴求が弱い。PPALのThe Promotionコンセプトを転用し「L-step卒業→自社CRM保有」の変身ストーリーに改修。L-step比較表・AI統合デモ動画(GIF)・PPAL会員割引バナーを追加。",
+      "steps": [
+        "Hero section: 「L-stepに月3万払い続けますか？」に変更",
+        "Feature section: L-step vs みやびライン 比較表追加",
+        "AI section: 「CCに依頼」ボタンのデモGIF埋め込み（T36完了後）",
+        "PPAL section: 「PPALメンバー限定 Pro初月無料」バナー追加",
+        "CTA: 「無料で始める」→「L-stepを卒業する」に変更",
+        "フッター: 特商法・プライバシーポリシーリンク追加（T38依存）"
+      ],
+      "file": "apps/web/src/app/landing/page.tsx",
+      "agent": "kotowari-dev",
+      "node": "MacBook Pro",
+      "depends_on": [
+        "T35",
+        "T38"
+      ],
+      "estimate_hours": 6,
+      "acceptance": "L-step比較表・PPAL会員バナー・法務リンクが表示され、CTAクリックで登録フローに遷移する",
+      "status": "pending"
+    },
+    {
+      "id": "T40",
+      "phase": "P7",
+      "priority": "medium",
+      "subject": "オンボーディングウィザード — LINEチャネル接続3ステップ",
+      "description": "非技術者が使えない問題を解消。初回ログイン後に「LINEチャネルID入力→Webhook URL表示→テスト送信確認」の3ステップウィザードを表示。Cloudflare/wrangler知識不要でセットアップ完了できるようにする。",
+      "steps": [
+        "apps/web/src/app/onboarding/page.tsx 新規作成",
+        "Step1: LINE Channel ID / Channel Secret 入力フォーム",
+        "Step2: Webhook URL をコピーボタン付きで表示",
+        "Step3: テストメッセージ送信 → 受信確認",
+        "初回ログイン時に /onboarding へリダイレクト（localStorage判定）"
+      ],
+      "file": "apps/web/src/app/onboarding/",
+      "agent": "kotowari-dev",
+      "node": "MacBook Pro",
+      "depends_on": [
+        "T35"
+      ],
+      "estimate_hours": 8,
+      "acceptance": "LINE Developers Console の知識がなくてもウィザードに従うだけでWebhook受信が確認できる",
+      "status": "pending"
+    },
+    {
+      "id": "T41",
+      "phase": "P7",
+      "priority": "medium",
+      "subject": "PPALメンバー向けβ案内 + 早期アクセスフロー",
+      "description": "T34の再定義版。T35/T37/T38/T39完了後に実施。PPALコミュニティ（Discord + LINE）に「みやびライン Pro 初月無料」を案内。10名のβユーザーを獲得しフィードバックを収集する。",
+      "steps": [
+        "Discord PPALチャンネルに告知文投稿（discord-community スキル使用）",
+        "LINE公式アカウントからPPALメンバーに一斉配信",
+        "beta-feedback エンドポイントでフィードバック収集",
+        "GitHub Issuesにフィードバックが自動作成されることを確認",
+        "1週間後のフォローアップメッセージをシナリオで自動配信"
+      ],
+      "file": null,
+      "agent": "main",
+      "node": "MacBook Pro",
+      "depends_on": [
+        "T35",
+        "T37",
+        "T38",
+        "T39"
+      ],
+      "estimate_hours": 2,
+      "acceptance": "10名以上がβ申込み完了、フィードバック5件以上収集",
       "status": "pending"
     }
   ],
   "completed_tasks": [
-    "T01","T02","T03","T04","T05","T06","T07","T08","T09","T10",
-    "T11","T12","T13","T14","T15","T16","T17","T18","T19","T20",
-    "T22","T25"
+    "T01",
+    "T02",
+    "T03",
+    "T04",
+    "T05",
+    "T06",
+    "T07",
+    "T08",
+    "T09",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15",
+    "T16",
+    "T17",
+    "T18",
+    "T19",
+    "T20",
+    "T22",
+    "T25"
   ]
 }
