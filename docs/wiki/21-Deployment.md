@@ -107,7 +107,7 @@ workers_dev = true
 [[d1_databases]]
 binding = "DB"
 database_name = "line-crm"
-database_id = "b2712617-31c4-47c2-accd-4eec906c44ce"
+database_id = "YOUR_D1_DATABASE_ID"
 
 [triggers]
 crons = ["*/5 * * * *"]

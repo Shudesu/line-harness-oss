@@ -6,7 +6,6 @@ import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts } from './services/broadcast.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
 import { checkAccountHealth } from './services/ban-monitor.js';
-import { refreshLineAccessTokens } from './services/token-refresh.js';
 import { authMiddleware } from './middleware/auth.js';
 import { webhook } from './routes/webhook.js';
 import { friends } from './routes/friends.js';
@@ -152,7 +151,6 @@ async function scheduled(
     );
   }
   jobs.push(checkAccountHealth(env.DB));
-  jobs.push(refreshLineAccessTokens(env.DB));
 
   await Promise.allSettled(jobs);
 }
