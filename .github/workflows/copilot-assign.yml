@@ -1,58 +1,64 @@
-name: Auto-trigger Copilot
+name: Auto-assign Copilot Coding Agent
 
-# copilot ラベルが付いた Issue に /assign @copilot コメントを投稿してトリガーする。
-# GitHub REST API の assignees: ['Copilot'] は copilot[bot] に効かないため、
-# コメントベースのトリガーを使用する。
+# copilot ラベルが付いた Issue に GitHub Copilot Coding Agent を GraphQL でアサインする。
+# 正しい API: GraphQL replaceActorsForAssignable + agentAssignment フィールド
+# (REST API の assignees や @github-copilot コメントは Coding Agent を起動しない)
 on:
   issues:
     types: [labeled, opened]
 
 jobs:
-  trigger:
-    name: Trigger Copilot Coding Agent
+  assign:
+    name: Assign Copilot Coding Agent
     runs-on: ubuntu-latest
     # copilot ラベルが付いている Issue のみ対象
     if: contains(github.event.issue.labels.*.name, 'copilot')
     permissions:
       issues: write
     steps:
-      - name: Check if already triggered
+      - name: Check if Copilot already assigned
         id: check
         uses: actions/github-script@v7
         with:
           result-encoding: string
           script: |
-            const comments = await github.rest.issues.listComments({
+            const timeline = await github.rest.issues.listEventsForTimeline({
               owner:        context.repo.owner,
               repo:         context.repo.repo,
               issue_number: context.issue.number,
-              per_page:     50,
+              per_page:     100,
+              mediaType:    { previews: ['mockingbird'] },
             });
-            const already = comments.data.some(c =>
-              c.body.includes('@github-copilot') || c.body.includes('Copilot Coding Agent')
+            // "assigned" イベントで assignee.login === "Copilot" が存在すれば既に割り当て済み
+            const already = timeline.data.some(
+              e => e.event === 'assigned' && e.assignee?.login === 'Copilot'
             );
             return already ? 'yes' : 'no';
 
-      - name: Post Copilot trigger comment
+      - name: Assign Copilot via GraphQL
         if: steps.check.outputs.result == 'no'
         uses: actions/github-script@v7
         with:
           script: |
-            const issue = context.payload.issue;
+            const issueNodeId = context.payload.issue.node_id;
 
-            await github.rest.issues.createComment({
-              owner:        context.repo.owner,
-              repo:         context.repo.repo,
-              issue_number: context.issue.number,
-              body: [
-                '@github-copilot このIssueを実装してください。',
-                '',
-                '## 実装方針',
-                '1. 上記の要件を満たすコードを実装する',
-                '2. `pnpm --filter worker typecheck` がエラーなしで通ること',
-                '3. `pnpm -r build` が成功すること',
-                '4. 実装完了後に Draft PR を作成してレビューを依頼すること',
-              ].join('\n'),
+            await github.graphql(`
+              mutation AssignCopilot($input: ReplaceActorsForAssignableInput!) {
+                replaceActorsForAssignable(input: $input) {
+                  assignable {
+                    ... on Issue { number title }
+                  }
+                }
+              }
+            `, {
+              input: {
+                assignableId: issueNodeId,
+                actorLogins: [],      // 空配列必須（バリデーション要件）
+                agentAssignment: {
+                  baseRef: 'main',
+                  customInstructions: '',
+                },
+              },
             });
 
-            console.log(`Triggered Copilot on #${context.issue.number}`);
+            console.log(`Assigned Copilot Coding Agent to #${context.issue.number}`);
