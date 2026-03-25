@@ -1,10 +1,10 @@
 # LINE Harness
 
-**LINE公式アカウントの完全オープンソース CRM。L社 / U社 の無料代替。**
+> ### **[LINE で無料体験する](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)** 👈
+
+LINE公式アカウントの完全オープンソース CRM。L社 / U社 の無料代替。
 
 Cloudflare 無料枠で動く。サーバー代 0 円。Claude Code から全操作可能。
-
-**[LINE で無料体験する](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)**
 
 ---
 
