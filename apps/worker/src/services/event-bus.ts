@@ -19,7 +19,6 @@ import {
   removeTagFromFriend,
   enrollFriendInScenario,
   jstNow,
-  getFriendScore,
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 
@@ -50,23 +49,23 @@ export async function fireEvent(
     processScoring(db, eventType, payload),
   ]);
 
-  // Build an enriched payload with the freshly-updated score.
-  // This ensures score_threshold conditions in Phase 2 automations evaluate
-  // against the score just written above, not a stale or undefined value.
-  const enrichedPayload: EventPayload = payload.friendId
-    ? {
-        ...payload,
-        eventData: {
-          ...payload.eventData,
-          currentScore: await getFriendScore(db, payload.friendId),
-        },
-      }
-    : payload;
+  // Inject the freshly-updated score so that score_threshold conditions in
+  // Phase 2 automations evaluate against the score written by Phase 1, not a
+  // stale or undefined value.
+  if (payload.friendId) {
+    const row = await db
+      .prepare('SELECT score FROM friends WHERE id = ?')
+      .bind(payload.friendId)
+      .first<{ score: number }>();
+    if (row) {
+      payload.eventData = { ...(payload.eventData ?? {}), currentScore: row.score };
+    }
+  }
 
   // Phase 2: evaluate automations and create notifications concurrently.
   await Promise.allSettled([
-    processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId),
-    processNotifications(db, eventType, enrichedPayload, lineAccountId),
+    processAutomations(db, eventType, payload, lineAccessToken, lineAccountId),
+    processNotifications(db, eventType, payload, lineAccountId),
   ]);
 }
 
