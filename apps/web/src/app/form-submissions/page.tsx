@@ -49,23 +49,33 @@ export default function FormSubmissionsPage() {
     try {
       // Load form definition for field labels
       const formRes = await fetchApi<{ success: boolean; data: { fields: Array<{ name: string; label: string }> } }>(`/api/forms/${formId}`)
-      if (formRes.success && formRes.data.fields) {
-        const labels: Record<string, string> = {}
-        const fields = typeof formRes.data.fields === 'string' ? JSON.parse(formRes.data.fields) : formRes.data.fields
-        for (const f of fields) labels[f.name] = f.label
-        setFieldLabels(labels)
-      }
 
-      const res = await fetchApi<{ success: boolean; data: (Submission & { friend_name?: string })[] }>(`/api/forms/${formId}/submissions`)
-      if (res.success) {
-        setSubmissions(res.data.map((s) => ({
-          ...s,
-          data: typeof s.data === 'string' ? JSON.parse(s.data) : s.data,
-          friendName: s.friend_name || '不明',
-        })))
-      }
+      const res = await fetchApi<{ success: boolean; data: (Submission & { friendName?: string })[] }>(`/api/forms/${formId}/submissions`)
+
+      // Guard against race condition: only update if this form is still selected
+      setSelectedFormId((current) => {
+        if (current !== formId) return current
+        if (formRes.success && formRes.data.fields) {
+          const labels: Record<string, string> = {}
+          const fields = typeof formRes.data.fields === 'string' ? JSON.parse(formRes.data.fields) : formRes.data.fields
+          for (const f of fields) labels[f.name] = f.label
+          setFieldLabels(labels)
+        }
+        if (res.success) {
+          setSubmissions(res.data.map((s) => ({
+            ...s,
+            data: typeof s.data === 'string' ? JSON.parse(s.data) : s.data,
+            friendName: s.friendName || '不明',
+          })))
+        }
+        return current
+      })
     } catch { /* silent */ }
-    setSubLoading(false)
+    // Only clear loading if this form is still selected
+    setSelectedFormId((current) => {
+      if (current === formId) setSubLoading(false)
+      return current
+    })
   }, [selectedAccountId])
 
   const handleSelectForm = (formId: string) => {
@@ -151,7 +161,7 @@ export default function FormSubmissionsPage() {
                         <td key={key} className="px-4 py-3 text-sm text-gray-700 max-w-[200px] truncate">
                           {Array.isArray(sub.data[key])
                             ? (sub.data[key] as string[]).join(', ')
-                            : String(sub.data[key] || '-')}
+                            : (sub.data[key] !== null && sub.data[key] !== undefined && sub.data[key] !== '') ? String(sub.data[key]) : '-'}
                         </td>
                       ))}
                     </tr>

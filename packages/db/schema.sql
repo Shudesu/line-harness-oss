@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS messages_log (
   content          TEXT NOT NULL,
   broadcast_id     TEXT REFERENCES broadcasts (id) ON DELETE SET NULL,
   scenario_step_id TEXT REFERENCES scenario_steps (id) ON DELETE SET NULL,
+  delivery_type    TEXT CHECK (delivery_type IN ('push', 'reply')),
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
