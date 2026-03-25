@@ -2,17 +2,9 @@
 
 **LINE公式アカウントの完全オープンソース CRM。L社 / U社 の無料代替。**
 
-Claude Code から自然言語で全操作できる、AI ネイティブ設計。
+Cloudflare 無料枠で動く。サーバー代 0 円。Claude Code から全操作可能。
 
-```
-> 「来週セミナー参加者に3日前と前日にリマインド送って」
-> 「友だち全員に明日10時にセール告知して」
-> 「フォーム作って申込者にVIPタグつけてフォローシナリオ開始して」
-```
-
-管理画面を開く必要なし。
-
-**[LINE で体験する](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)** — 友だち追加するだけで、ステップ配信・フォーム・自動返信を実際に体験できます。
+**[LINE で無料体験する](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)**
 
 ---
 
