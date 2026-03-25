@@ -19,6 +19,7 @@ import {
   removeTagFromFriend,
   enrollFriendInScenario,
   jstNow,
+  getFriendScore,
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 
@@ -28,7 +29,13 @@ interface EventPayload {
 }
 
 /**
- * イベントを発火し、登録された全ハンドラーを実行
+ * Fire an event and run all registered handlers.
+ *
+ * Execution is split into two sequential phases so that score_threshold
+ * conditions in automation rules see the score already updated by this event:
+ *
+ *   Phase 1 (concurrent): outgoing webhooks + scoring
+ *   Phase 2 (concurrent): automations + notifications, with currentScore injected
  */
 export async function fireEvent(
   db: D1Database,
@@ -37,11 +44,29 @@ export async function fireEvent(
   lineAccessToken?: string,
   lineAccountId?: string | null,
 ): Promise<void> {
+  // Phase 1: fire webhooks and apply scoring rules concurrently.
   await Promise.allSettled([
     fireOutgoingWebhooks(db, eventType, payload),
     processScoring(db, eventType, payload),
-    processAutomations(db, eventType, payload, lineAccessToken, lineAccountId),
-    processNotifications(db, eventType, payload, lineAccountId),
+  ]);
+
+  // Build an enriched payload with the freshly-updated score.
+  // This ensures score_threshold conditions in Phase 2 automations evaluate
+  // against the score just written above, not a stale or undefined value.
+  const enrichedPayload: EventPayload = payload.friendId
+    ? {
+        ...payload,
+        eventData: {
+          ...payload.eventData,
+          currentScore: await getFriendScore(db, payload.friendId),
+        },
+      }
+    : payload;
+
+  // Phase 2: evaluate automations and create notifications concurrently.
+  await Promise.allSettled([
+    processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId),
+    processNotifications(db, eventType, enrichedPayload, lineAccountId),
   ]);
 }
 
