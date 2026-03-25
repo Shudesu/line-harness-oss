@@ -15,6 +15,35 @@ import type { Env } from '../index.js';
 
 const chats = new Hono<Env>();
 
+function clampLoadingSeconds(value: number | undefined): number {
+  const n = Number.isFinite(value) ? Math.floor(value as number) : 5;
+  return Math.min(60, Math.max(5, n));
+}
+
+async function startLoadingAnimation(
+  accessToken: string,
+  chatId: string,
+  loadingSeconds: number,
+): Promise<void> {
+  const response = await fetch('https://api.line.me/v2/bot/chat/loading/start', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ chatId, loadingSeconds }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(
+      detail
+        ? `LINE API error: ${response.status} - ${detail}`
+        : `LINE API error: ${response.status}`,
+    );
+  }
+}
+
 // ========== オペレーターCRUD ==========
 
 chats.get('/api/operators', async (c) => {
@@ -209,6 +238,42 @@ chats.put('/api/chats/:id', async (c) => {
   } catch (err) {
     console.error('PUT /api/chats/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// オペレーター入力中のローディング表示を開始
+chats.post('/api/chats/:id/loading', async (c) => {
+  try {
+    const chatId = c.req.param('id');
+    const chat = await getChatById(c.env.DB, chatId);
+    if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
+
+    let loadingSecondsInput: number | undefined;
+    try {
+      const body = await c.req.json<{ loadingSeconds?: number }>();
+      loadingSecondsInput = body.loadingSeconds;
+    } catch {
+      loadingSecondsInput = undefined;
+    }
+    const loadingSeconds = clampLoadingSeconds(loadingSecondsInput);
+
+    const friend = await c.env.DB
+      .prepare(`SELECT * FROM friends WHERE id = ?`)
+      .bind(chat.friend_id)
+      .first<{ id: string; line_user_id: string }>();
+    if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
+
+    await startLoadingAnimation(
+      c.env.LINE_CHANNEL_ACCESS_TOKEN,
+      friend.line_user_id,
+      loadingSeconds,
+    );
+
+    return c.json({ success: true, data: { started: true, loadingSeconds } });
+  } catch (err) {
+    console.error('POST /api/chats/:id/loading error:', err);
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    return c.json({ success: false, error: message }, 500);
   }
 });
 
