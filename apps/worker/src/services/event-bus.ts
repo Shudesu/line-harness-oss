@@ -22,6 +22,19 @@ import {
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 
+/** プライベートIPレンジ / ローカルホストへのSSRF攻撃を防ぐURLバリデーション */
+const PRIVATE_IP_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|169\.254\.|0\.0\.0\.0|::1$|\[::1\])/;
+
+function isSafeUrl(raw: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(raw); } catch { return false; }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost') return false;
+  if (PRIVATE_IP_RE.test(host)) return false;
+  return true;
+}
+
 interface EventPayload {
   friendId?: string;
   eventData?: Record<string, unknown>;
@@ -104,6 +117,10 @@ async function fireOutgoingWebhooks(
           headers['X-Webhook-Signature'] = hexSignature;
         }
 
+        if (!isSafeUrl(wh.url)) {
+          console.error(`SSRF guard: 送信Webhook ${wh.id} のURL ${wh.url} はブロックされました`);
+          continue;
+        }
         await fetch(wh.url, { method: 'POST', headers, body });
       } catch (err) {
         console.error(`送信Webhook ${wh.id} への通知失敗:`, err);
@@ -259,6 +276,9 @@ async function executeAction(
     case 'send_webhook': {
       const url = action.params.url;
       if (url) {
+        if (!isSafeUrl(url)) {
+          throw new Error(`SSRF guard: send_webhook アクションのURL ${url} はブロックされました`);
+        }
         await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -44,13 +44,23 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
+    /** CORSで許可するオリジン (例: https://your-app.pages.dev)。未設定時は全オリジン拒否。 */
+    ALLOWED_ORIGIN?: string;
   };
 };
 
 const app = new Hono<Env>();
 
-// CORS — allow all origins for MVP
-app.use('*', cors({ origin: '*' }));
+// CORS — 環境変数 ALLOWED_ORIGIN で許可オリジンを制限する
+// wrangler.toml の [vars] に ALLOWED_ORIGIN = "https://your-app.pages.dev" を設定すること
+app.use('*', async (c, next) => {
+  const allowed = c.env.ALLOWED_ORIGIN;
+  return cors({
+    origin: allowed ? (origin) => (origin === allowed ? origin : undefined) : '*',
+    allowHeaders: ['Content-Type', 'Authorization'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  })(c, next);
+});
 
 // Auth middleware — skips /webhook and /docs automatically
 app.use('*', authMiddleware);

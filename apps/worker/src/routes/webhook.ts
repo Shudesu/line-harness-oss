@@ -302,17 +302,22 @@ async function handleEvent(
     // 自動返信チェック（このアカウントのルール + グローバルルールのみ）
     // NOTE: Auto-replies use replyMessage (free, no quota) instead of pushMessage
     // The replyToken is only valid for ~1 minute after the message event
-    const autoReplies = await db
-      .prepare(`SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL${lineAccountId ? ` OR line_account_id = '${lineAccountId}'` : ''}) ORDER BY created_at ASC`)
-      .all<{
-        id: string;
-        keyword: string;
-        match_type: 'exact' | 'contains';
-        response_type: string;
-        response_content: string;
-        is_active: number;
-        created_at: string;
-      }>();
+    const autoRepliesStmt = lineAccountId
+      ? db.prepare(
+          `SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?) ORDER BY created_at ASC`,
+        ).bind(lineAccountId)
+      : db.prepare(
+          `SELECT * FROM auto_replies WHERE is_active = 1 AND line_account_id IS NULL ORDER BY created_at ASC`,
+        );
+    const autoReplies = await autoRepliesStmt.all<{
+      id: string;
+      keyword: string;
+      match_type: 'exact' | 'contains';
+      response_type: string;
+      response_content: string;
+      is_active: number;
+      created_at: string;
+    }>();
 
     let matched = false;
     for (const rule of autoReplies.results) {

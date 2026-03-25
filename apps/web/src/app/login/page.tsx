@@ -21,7 +21,7 @@ export default function LoginPage() {
       })
 
       if (res.ok) {
-        localStorage.setItem('lh_api_key', apiKey)
+        sessionStorage.setItem('lh_api_key', apiKey)
         router.push('/')
       } else {
         setError('APIキーが正しくありません')
