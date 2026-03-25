@@ -136,12 +136,12 @@ async function handleEvent(
                 await lineClient.replyMessage(event.replyToken, [message]);
                 console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
 
-                // Log outgoing message
+                // Log outgoing message (replyMessage = 無料)
                 const logId = crypto.randomUUID();
                 await db
                   .prepare(
-                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, ?)`,
+                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, created_at)
+                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', ?)`,
                   )
                   .bind(logId, friend.id, firstStep.message_type, firstStep.message_content, firstStep.id, jstNow())
                   .run();
@@ -328,12 +328,12 @@ async function handleEvent(
           const replyMsg = buildMessage(rule.response_type, expandedContent);
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
 
-          // 送信ログ
+          // 送信ログ（replyMessage = 無料）
           const outLogId = crypto.randomUUID();
           await db
             .prepare(
-              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, ?)`,
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, created_at)
+               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', ?)`,
             )
             .bind(outLogId, friend.id, rule.response_type, rule.response_content, jstNow())
             .run();

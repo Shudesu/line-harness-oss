@@ -65,7 +65,7 @@ lineAccounts.get('/api/line-accounts', async (c) => {
           db.prepare(
             `SELECT COUNT(*) as count FROM messages_log ml
              INNER JOIN friends f ON f.id = ml.friend_id
-             WHERE ml.direction = 'outgoing' AND ml.created_at >= date('now', '-30 days') AND f.line_account_id = ?`,
+             WHERE ml.direction = 'outgoing' AND (ml.delivery_type IS NULL OR ml.delivery_type = 'push') AND ml.created_at >= date('now', '-30 days') AND f.line_account_id = ?`,
           ).bind(item.id).first<{ count: number }>(),
         ]);
 
