@@ -298,7 +298,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
                 { type: 'separator', margin: 'lg' },
                 { type: 'box', layout: 'vertical', margin: 'lg', backgroundColor: '#eff6ff', cornerRadius: 'md', paddingAll: '12px',
                   contents: [
-                    { type: 'text', text: 'この情報はメタデータに自動保存済み。今後の配信があなたに最適化されます。L-step ではフォーム回答をリアルタイムで返すことはできません。', size: 'xxs', color: '#2563EB', wrap: true },
+                    { type: 'text', text: 'この情報はメタデータに自動保存済み。今後の配信があなたに最適化されます。L社 ではフォーム回答をリアルタイムで返すことはできません。', size: 'xxs', color: '#2563EB', wrap: true },
                   ],
                 },
               ],

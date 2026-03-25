@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 LINE公式アカウント向けOSS CRM / マーケティングオートメーション
-L-step/Utage代替。AI（CC）ネイティブ設計。
+L社/U社代替。AI（CC）ネイティブ設計。
 
 ## コンセプト
 - **LINE Harness** = AIがLINEを安全に操作するための基盤
@@ -121,4 +121,4 @@ templates, tracked_links, users
 
 ## 参考資料
 - SPEC.md - 技術仕様
-- LSTEP_FEATURES.md - L-step/Utage全機能調査
+- COMPETITOR_FEATURES.md - L社/U社全機能調査

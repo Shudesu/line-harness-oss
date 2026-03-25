@@ -109,7 +109,7 @@ h1{font-size:28px;font-weight:800;margin-bottom:8px}
 <body>
 <div class="card">
 <h1>LINE Harness</h1>
-<p class="sub">L-step / Utage の無料代替 OSS</p>
+<p class="sub">L社 / U社 の無料代替 OSS</p>
 <a href="${target}" class="btn">LINE で体験する</a>
 <p class="note">友だち追加するだけで<br>ステップ配信・フォーム・自動返信を体験できます</p>
 </div>

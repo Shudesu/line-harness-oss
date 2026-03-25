@@ -1,6 +1,6 @@
 import { jstNow } from './utils.js';
 // =============================================================================
-// Forms — Survey / questionnaire system (L-step 回答フォーム equivalent)
+// Forms — Survey / questionnaire system (L社 回答フォーム equivalent)
 // =============================================================================
 
 export interface Form {

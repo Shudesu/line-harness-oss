@@ -1,4 +1,4 @@
-# LINE OSS CRM - L-step/Utage Alternative
+# LINE OSS CRM - L社/U社 Alternative
 
 ## Overview
 Open-source LINE Official Account CRM/marketing automation tool.
@@ -123,7 +123,7 @@ This is an **API-first platform** where the admin UI is just one client.
 - All endpoints return JSON, well-documented with OpenAPI spec
 - API key auth for programmatic access
 
-### Full Feature List (L-step + Utage parity)
+### Full Feature List (L社 + U社 parity)
 
 #### Friend Management
 - GET/POST/PUT/DELETE friends

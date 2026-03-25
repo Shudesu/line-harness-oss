@@ -2,7 +2,7 @@
 
 ## LINE Harness とは
 
-LINE Harness は、LINE公式アカウント向けのオープンソース CRM / マーケティングオートメーションツールです。L-step や Utage の代替として、無料（または低コスト）で運用できます。
+LINE Harness は、LINE公式アカウント向けのオープンソース CRM / マーケティングオートメーションツールです。L社 や U社 の代替として、無料（または低コスト）で運用できます。
 
 **コンセプト**: AIがLINEを安全に操作するための基盤。人間は監視し、AI（Claude Code等）がAPIを通じて操作します。全機能がREST APIとして公開されており、管理画面はデータの可視化専用です。
 
@@ -51,9 +51,9 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 | 管理画面 | `https://line-crm-admin.pages.dev` |
 | D1 | `line-crm` (APAC/KIX) |
 
-## L-step / Utage との比較
+## L社 / U社 との比較
 
-| 項目 | L-step | Utage | LINE Harness |
+| 項目 | L社 | U社 | LINE Harness |
 |------|--------|-------|-------------|
 | 月額 | 2,980円〜 | 9,700円〜 | 無料〜$5 |
 | ステップ配信 | あり | あり | あり |

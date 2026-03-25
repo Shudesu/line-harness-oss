@@ -2,7 +2,7 @@
 
 AI-native SDK for LINE Harness — programmatic LINE official account automation.
 
-Replaces L-step/Utage with a fully API-driven approach designed for AI agents (Claude Code).
+Replaces L社/U社 with a fully API-driven approach designed for AI agents (Claude Code).
 
 ## Install
 

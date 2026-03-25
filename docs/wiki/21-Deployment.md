@@ -334,7 +334,7 @@ https://line-crm-worker.line-crm-api.workers.dev/webhook
 
 - 友だち 1,000 人以下: Cloudflare 無料枠 + LINE スタンダードで月額 ~15,000 円
 - 友だち 10,000 人以下: Cloudflare $5/月 + LINE スタンダード
-- L-step/Utage の月額 30,000円〜と比較して大幅にコスト削減可能
+- L社/U社 の月額 30,000円〜と比較して大幅にコスト削減可能
 
 ---
 
