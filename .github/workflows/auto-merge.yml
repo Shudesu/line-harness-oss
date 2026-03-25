@@ -1,38 +1,124 @@
 name: Auto-merge Copilot PRs
 
-# Copilot Coding Agent が作成した PR が CI 通過したら自動マージ
+# Copilot Coding Agent が作成した PR が
+# 1) CI 通過 かつ
+# 2) AI レビュー (ai-review.yml) で APPROVE された
+# 場合に自動マージする。
 
 on:
+  pull_request_review:
+    types: [submitted]
   pull_request:
     types: [opened, synchronize, ready_for_review]
-  check_suite:
-    types: [completed]
 
 jobs:
   auto-merge:
-    name: Enable auto-merge for Copilot PRs
+    name: Auto-merge if CI + AI Review passed
     runs-on: ubuntu-latest
-    # Copilot が作成した PR のみ対象
+    # Copilot PR の APPROVE レビュー投稿時、または Copilot の PR 更新時
     if: |
-      github.event_name == 'pull_request' &&
-      github.actor == 'Copilot' &&
-      github.event.pull_request.draft == false
+      github.actor == 'Copilot' ||
+      github.event.pull_request.user.login == 'Copilot' ||
+      github.event.review.user.login == 'github-actions[bot]'
     permissions:
       pull-requests: write
       contents: write
     steps:
-      - name: Enable auto-merge (squash)
+      - name: Check CI status and AI review approval
+        id: checks
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.pulls.merge({
+            // PR 番号を取得
+            const prNumber = context.payload.pull_request?.number
+              || context.payload.review?.pull_request_url?.match(/\/pulls\/(\d+)$/)?.[1];
+
+            if (!prNumber) {
+              console.log('No PR number found, skipping');
+              return;
+            }
+
+            const pr = await github.rest.pulls.get({
               owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              merge_method: 'squash',
-            }).catch(async err => {
+              repo:  context.repo.repo,
+              pull_number: Number(prNumber),
+            });
+
+            // Draft PR はスキップ
+            if (pr.data.draft) {
+              console.log(`PR #${prNumber} is still Draft, skipping`);
+              return;
+            }
+
+            // Copilot 作成でなければスキップ
+            if (pr.data.user.login !== 'Copilot') {
+              console.log(`PR #${prNumber} is not from Copilot, skipping`);
+              return;
+            }
+
+            // ── CI チェックの状態を確認 ──────────────────────────────
+            const checks = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              ref:   pr.data.head.sha,
+              per_page: 50,
+            });
+
+            const ciChecks = checks.data.check_runs.filter(c =>
+              c.name === 'Type Check' || c.name === 'Build Check'
+            );
+
+            const ciPassed = ciChecks.length > 0 &&
+              ciChecks.every(c => c.status === 'completed' && c.conclusion === 'success');
+
+            if (!ciPassed) {
+              console.log(`PR #${prNumber}: CI not passed yet (${ciChecks.map(c => `${c.name}:${c.conclusion}`).join(', ')})`);
+              return;
+            }
+
+            // ── AI レビューの APPROVE を確認 ─────────────────────────
+            const reviews = await github.rest.pulls.listReviews({
+              owner:       context.repo.owner,
+              repo:        context.repo.repo,
+              pull_number: Number(prNumber),
+              per_page: 50,
+            });
+
+            // レビュアーごとの最新状態を取得
+            const latestByReviewer = {};
+            for (const r of reviews.data) {
+              if (r.state !== 'COMMENTED') {
+                latestByReviewer[r.user.login] = r.state;
+              }
+            }
+
+            const hasApproval = Object.values(latestByReviewer).includes('APPROVED');
+            const hasChangesRequested = Object.values(latestByReviewer).includes('CHANGES_REQUESTED');
+
+            if (hasChangesRequested) {
+              console.log(`PR #${prNumber}: AI review requested changes, skipping merge`);
+              return;
+            }
+
+            if (!hasApproval) {
+              console.log(`PR #${prNumber}: No APPROVE review yet, waiting for AI review`);
+              return;
+            }
+
+            console.log(`PR #${prNumber}: CI passed + AI review approved. Proceeding to merge.`);
+
+            // ── マージ実行（squash） ──────────────────────────────────
+            try {
+              await github.rest.pulls.merge({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                pull_number:  Number(prNumber),
+                merge_method: 'squash',
+              });
+              console.log(`Merged PR #${prNumber}`);
+            } catch (err) {
               if (err.status === 405) {
-                // CI がまだ通っていない場合は auto-merge を有効化
+                // まだマージ可能状態でない場合は auto-merge を有効化
                 await github.graphql(`
                   mutation EnableAutoMerge($prId: ID!) {
                     enablePullRequestAutoMerge(input: {
@@ -42,9 +128,9 @@ jobs:
                       pullRequest { number state }
                     }
                   }
-                `, { prId: context.payload.pull_request.node_id });
-                console.log(`✅ Auto-merge enabled for PR #${context.payload.pull_request.number}`);
+                `, { prId: pr.data.node_id });
+                console.log(`Enabled auto-merge for PR #${prNumber}`);
               } else {
                 throw err;
               }
-            });
+            }

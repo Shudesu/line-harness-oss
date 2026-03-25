@@ -1,0 +1,136 @@
+name: AI Code Review
+
+# Copilot が作成した PR を Claude Opus で自動レビュー。
+# APPROVE されたものだけ auto-merge.yml がマージする。
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: [main]
+
+jobs:
+  ai-review:
+    name: Claude Opus Review
+    runs-on: ubuntu-latest
+    # Copilot PR または ai-review ラベル付き PR が対象
+    if: |
+      github.actor == 'Copilot' ||
+      contains(github.event.pull_request.labels.*.name, 'ai-review')
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        run: |
+          git fetch origin main
+          git diff origin/main...HEAD > /tmp/pr.diff
+          echo "Diff size: $(wc -c < /tmp/pr.diff) bytes, $(wc -l < /tmp/pr.diff) lines"
+
+      - name: Claude Opus AI Review
+        uses: actions/github-script@v7
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          script: |
+            const fs = require('fs');
+
+            // diff を最大 18000 文字に制限（Claude のコンテキスト節約）
+            let diff = fs.readFileSync('/tmp/pr.diff', 'utf8');
+            const MAX_CHARS = 18000;
+            const truncated = diff.length > MAX_CHARS;
+            if (truncated) diff = diff.substring(0, MAX_CHARS) + '\n...[diff truncated due to length]';
+
+            const pr = context.payload.pull_request;
+
+            const systemPrompt = `You are a principal engineer reviewing code for "miyabi-line" (line-harness-oss).
+Stack: Cloudflare Workers (Hono) + D1 (SQLite) + Next.js 15 + TypeScript strict + LIFF.
+Rules:
+- NO Node.js APIs in Workers (no fs, path, buffer, etc.)
+- D1 queries must use prepared statements (.prepare().bind())
+- TypeScript: no 'any', no implicit any, proper return types
+- Hono route handlers must validate all input
+- SQL: no raw string interpolation (SQLi prevention)
+- Never expose internal errors to LINE users`;
+
+            const userPrompt = `PR #${pr.number}: ${pr.title}
+Branch: ${pr.head.ref}
+
+## Diff:
+\`\`\`diff
+${diff}
+\`\`\`
+
+Review this change against the rules above. Your output MUST follow this exact format:
+
+## Verdict
+**[APPROVE]** <- write exactly this if production-ready
+OR
+**[REQUEST_CHANGES]** <- write exactly this if issues found
+
+## Summary
+(2-3 sentences, plain language)
+
+## Findings
+(use: OK good  WARNING warning  CRITICAL critical)
+
+## Required Changes
+(numbered list -- only if REQUEST_CHANGES; write "None" if APPROVE)
+
+Be strict. Only APPROVE if the code is genuinely safe and correct for production Cloudflare Workers.`;
+
+            // Claude Opus API call
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'claude-opus-4-6',
+                max_tokens: 2048,
+                system: systemPrompt,
+                messages: [{ role: 'user', content: userPrompt }],
+              }),
+            });
+
+            if (!response.ok) {
+              const errText = await response.text();
+              throw new Error(`Claude API ${response.status}: ${errText}`);
+            }
+
+            const data = await response.json();
+            const review = data.content[0].text;
+
+            // Determine verdict
+            const isApprove = /\*\*\[APPROVE\]\*\*/.test(review);
+            const event = isApprove ? 'APPROVE' : 'REQUEST_CHANGES';
+
+            const body = [
+              '## AI Code Review -- Claude Opus 4.6',
+              '',
+              review,
+              '',
+              '---',
+              `_Model: claude-opus-4-6 | Diff: ${truncated ? 'truncated' : 'full'} | PR: #${pr.number}_`,
+            ].join('\n');
+
+            // Post review to PR
+            await github.rest.pulls.createReview({
+              owner:       context.repo.owner,
+              repo:        context.repo.repo,
+              pull_number: pr.number,
+              event,
+              body,
+            });
+
+            console.log(`Posted ${event} review for PR #${pr.number}`);
+
+            // If REQUEST_CHANGES, fail the job to block auto-merge
+            if (event === 'REQUEST_CHANGES') {
+              core.setFailed('AI review requested changes. Fix the issues before merging.');
+            }
