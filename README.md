@@ -1,6 +1,6 @@
 # LINE Harness
 
-> ### **[LINE で無料体験する](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)** 👈
+> ### **[LINE で無料体験する](https://shudesu.github.io/line-harness-oss/)** 👈
 
 LINE公式アカウントの完全オープンソース CRM。L社 / U社 の無料代替。
 
