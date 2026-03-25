@@ -256,7 +256,7 @@ export default function ChatsPage() {
       if (selectedAccountId) params.accountId = selectedAccountId
       const [chatRes, friendRes] = await Promise.allSettled([
         api.chats.list(params),
-        api.friends.list({ accountId: selectedAccountId || undefined, limit: '100' }),
+        api.friends.list({ accountId: selectedAccountId || undefined, limit: '800' }),
       ])
       if (chatRes.status === 'fulfilled' && chatRes.value.success) {
         setChats(chatRes.value.data as unknown as Chat[])
@@ -429,38 +429,6 @@ export default function ChatsPage() {
                     </button>
                   )
                 })}
-                {/* Friends without chats */}
-                {allFriends
-                  .filter((f) => f.isFollowing && !chats.some((c) => c.friendId === f.id))
-                  .map((friend) => {
-                    const isSelected = selectedFriendId === friend.id
-                    return (
-                      <button
-                        key={friend.id}
-                        onClick={() => { setSelectedChatId(null); setChatDetail(null); setSelectedFriendId(friend.id); }}
-                        className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors ${
-                          isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          {friend.pictureUrl ? (
-                            <img src={friend.pictureUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0" />
-                          ) : (
-                            <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                              <span className="text-gray-500 text-sm">{(friend.displayName || '?').charAt(0)}</span>
-                            </div>
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-gray-900 truncate">{friend.displayName}</p>
-                            <p className="text-xs text-gray-400 mt-0.5">会話なし</p>
-                          </div>
-                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 bg-gray-100 text-gray-500">
-                            新規
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  })}
               </>
             )}
           </div>

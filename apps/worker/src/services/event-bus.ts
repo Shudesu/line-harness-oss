@@ -22,32 +22,13 @@ import {
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 
-/** プライベートIPレンジ / ローカルホストへのSSRF攻撃を防ぐURLバリデーション */
-const PRIVATE_IP_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|169\.254\.|0\.0\.0\.0|::1$|\[::1\])/;
-
-function isSafeUrl(raw: string): boolean {
-  let parsed: URL;
-  try { parsed = new URL(raw); } catch { return false; }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
-  const host = parsed.hostname.toLowerCase();
-  if (host === 'localhost') return false;
-  if (PRIVATE_IP_RE.test(host)) return false;
-  return true;
-}
-
 interface EventPayload {
   friendId?: string;
   eventData?: Record<string, unknown>;
 }
 
 /**
- * Fire an event and run all registered handlers.
- *
- * Execution is split into two sequential phases so that score_threshold
- * conditions in automation rules see the score already updated by this event:
- *
- *   Phase 1 (concurrent): outgoing webhooks + scoring
- *   Phase 2 (concurrent): automations + notifications, with currentScore injected
+ * イベントを発火し、登録された全ハンドラーを実行
  */
 export async function fireEvent(
   db: D1Database,
@@ -56,27 +37,9 @@ export async function fireEvent(
   lineAccessToken?: string,
   lineAccountId?: string | null,
 ): Promise<void> {
-  // Phase 1: fire webhooks and apply scoring rules concurrently.
   await Promise.allSettled([
     fireOutgoingWebhooks(db, eventType, payload),
     processScoring(db, eventType, payload),
-  ]);
-
-  // Inject the freshly-updated score so that score_threshold conditions in
-  // Phase 2 automations evaluate against the score written by Phase 1, not a
-  // stale or undefined value.
-  if (payload.friendId) {
-    const row = await db
-      .prepare('SELECT score FROM friends WHERE id = ?')
-      .bind(payload.friendId)
-      .first<{ score: number }>();
-    if (row) {
-      payload.eventData = { ...(payload.eventData ?? {}), currentScore: row.score };
-    }
-  }
-
-  // Phase 2: evaluate automations and create notifications concurrently.
-  await Promise.allSettled([
     processAutomations(db, eventType, payload, lineAccessToken, lineAccountId),
     processNotifications(db, eventType, payload, lineAccountId),
   ]);
@@ -117,10 +80,6 @@ async function fireOutgoingWebhooks(
           headers['X-Webhook-Signature'] = hexSignature;
         }
 
-        if (!isSafeUrl(wh.url)) {
-          console.error(`SSRF guard: 送信Webhook ${wh.id} のURL ${wh.url} はブロックされました`);
-          continue;
-        }
         await fetch(wh.url, { method: 'POST', headers, body });
       } catch (err) {
         console.error(`送信Webhook ${wh.id} への通知失敗:`, err);
@@ -276,9 +235,6 @@ async function executeAction(
     case 'send_webhook': {
       const url = action.params.url;
       if (url) {
-        if (!isSafeUrl(url)) {
-          throw new Error(`SSRF guard: send_webhook アクションのURL ${url} はブロックされました`);
-        }
         await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

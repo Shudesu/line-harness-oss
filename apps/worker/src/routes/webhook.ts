@@ -208,8 +208,13 @@ async function handleEvent(
       .bind(logId, friend.id, incomingText, now)
       .run();
 
-    // チャットを作成/更新（オペレーター機能連携）
-    await upsertChatOnMessage(db, friend.id);
+    // チャットを作成/更新（ユーザーの自発的メッセージのみ unread にする）
+    // ボタンタップ等の自動応答キーワードは除外
+    const autoKeywords = ['料金', '機能', 'API', 'フォーム', 'ヘルプ', 'UUID', 'UUID連携について教えて', 'UUID連携を確認', '配信時間', '導入支援を希望します', 'アカウント連携を見る', '体験を完了する', 'BAN対策を見る', '連携確認'];
+    const isAutoKeyword = autoKeywords.some(k => incomingText === k || incomingText.startsWith(k));
+    if (!isAutoKeyword) {
+      await upsertChatOnMessage(db, friend.id);
+    }
 
     // 配信時間設定: 「配信時間は○時」「○時に届けて」等のパターンを検出
     const timeMatch = incomingText.match(/(?:配信時間|配信|届けて|通知)[はを]?\s*(\d{1,2})\s*時/);
@@ -302,22 +307,17 @@ async function handleEvent(
     // 自動返信チェック（このアカウントのルール + グローバルルールのみ）
     // NOTE: Auto-replies use replyMessage (free, no quota) instead of pushMessage
     // The replyToken is only valid for ~1 minute after the message event
-    const autoRepliesStmt = lineAccountId
-      ? db.prepare(
-          `SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?) ORDER BY created_at ASC`,
-        ).bind(lineAccountId)
-      : db.prepare(
-          `SELECT * FROM auto_replies WHERE is_active = 1 AND line_account_id IS NULL ORDER BY created_at ASC`,
-        );
-    const autoReplies = await autoRepliesStmt.all<{
-      id: string;
-      keyword: string;
-      match_type: 'exact' | 'contains';
-      response_type: string;
-      response_content: string;
-      is_active: number;
-      created_at: string;
-    }>();
+    const autoReplies = await db
+      .prepare(`SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL${lineAccountId ? ` OR line_account_id = '${lineAccountId}'` : ''}) ORDER BY created_at ASC`)
+      .all<{
+        id: string;
+        keyword: string;
+        match_type: 'exact' | 'contains';
+        response_type: string;
+        response_content: string;
+        is_active: number;
+        created_at: string;
+      }>();
 
     let matched = false;
     for (const rule of autoReplies.results) {

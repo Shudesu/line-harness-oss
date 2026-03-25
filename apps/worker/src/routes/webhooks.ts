@@ -11,25 +11,7 @@ import {
   updateOutgoingWebhook,
   deleteOutgoingWebhook,
 } from '@line-crm/db';
-import { timingSafeEqual } from '../middleware/auth.js';
 import type { Env } from '../index.js';
-
-/** 受信WebhookのHMAC-SHA256署名を検証する */
-async function verifyIncomingSignature(secret: string, rawBody: string, sigHeader: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(rawBody));
-  const computedSig = Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  return timingSafeEqual(computedSig, sigHeader);
-}
 
 const webhooks = new Hono<Env>();
 
@@ -44,7 +26,7 @@ webhooks.get('/api/webhooks/incoming', async (c) => {
         id: w.id,
         name: w.name,
         sourceType: w.source_type,
-        hasSecret: Boolean(w.secret),
+        secret: w.secret,
         isActive: Boolean(w.is_active),
         createdAt: w.created_at,
         updatedAt: w.updated_at,
@@ -104,7 +86,7 @@ webhooks.get('/api/webhooks/outgoing', async (c) => {
         name: w.name,
         url: w.url,
         eventTypes: JSON.parse(w.event_types),
-        hasSecret: Boolean(w.secret),
+        secret: w.secret,
         isActive: Boolean(w.is_active),
         createdAt: w.created_at,
         updatedAt: w.updated_at,
@@ -163,17 +145,7 @@ webhooks.post('/api/webhooks/incoming/:id/receive', async (c) => {
     const wh = await getIncomingWebhookById(c.env.DB, id);
     if (!wh || !wh.is_active) return c.json({ success: false, error: 'Webhook not found or inactive' }, 404);
 
-    const rawBody = await c.req.text();
-
-    // secretが設定されている場合はHMAC署名を検証する
-    if (wh.secret) {
-      const sigHeader = c.req.header('X-Webhook-Signature') ?? '';
-      const valid = await verifyIncomingSignature(wh.secret, rawBody, sigHeader);
-      if (!valid) return c.json({ success: false, error: 'Invalid signature' }, 401);
-    }
-
-    let body: unknown;
-    try { body = JSON.parse(rawBody); } catch { return c.json({ success: false, error: 'Invalid JSON' }, 400); }
+    const body = await c.req.json();
 
     // イベントバスに発火: source_type をイベントタイプとして使用
     const { fireEvent } = await import('../services/event-bus.js');

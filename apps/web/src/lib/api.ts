@@ -37,7 +37,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'
  */
 function getApiKey(): string {
   if (typeof window !== 'undefined') {
-    const stored = sessionStorage.getItem('lh_api_key')
+    const stored = localStorage.getItem('lh_api_key')
     if (stored) return stored
   }
   return process.env.NEXT_PUBLIC_API_KEY || ''

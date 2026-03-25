@@ -23,11 +23,11 @@ function serializeLineAccount(row: DbLineAccount) {
   };
 }
 
-function serializeLineAccountMasked(row: DbLineAccount) {
+function serializeLineAccountFull(row: DbLineAccount) {
   return {
     ...serializeLineAccount(row),
-    hasChannelAccessToken: Boolean(row.channel_access_token),
-    hasChannelSecret: Boolean(row.channel_secret),
+    channelAccessToken: row.channel_access_token,
+    channelSecret: row.channel_secret,
   };
 }
 
@@ -96,7 +96,7 @@ lineAccounts.get('/api/line-accounts/:id', async (c) => {
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
-    return c.json({ success: true, data: serializeLineAccountMasked(account) });
+    return c.json({ success: true, data: serializeLineAccountFull(account) });
   } catch (err) {
     console.error('GET /api/line-accounts/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -121,7 +121,7 @@ lineAccounts.post('/api/line-accounts', async (c) => {
     }
 
     const account = await createLineAccount(c.env.DB, body);
-    return c.json({ success: true, data: serializeLineAccountMasked(account) }, 201);
+    return c.json({ success: true, data: serializeLineAccountFull(account) }, 201);
   } catch (err) {
     console.error('POST /api/line-accounts error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -149,7 +149,7 @@ lineAccounts.put('/api/line-accounts/:id', async (c) => {
     if (!updated) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
-    return c.json({ success: true, data: serializeLineAccountMasked(updated) });
+    return c.json({ success: true, data: serializeLineAccountFull(updated) });
   } catch (err) {
     console.error('PUT /api/line-accounts/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
