@@ -36,11 +36,10 @@ jobs:
         run: |
           git fetch origin main
           git diff origin/main...HEAD > /tmp/pr.diff
-          LINES=$(wc -l < /tmp/pr.diff)
           BYTES=$(wc -c < /tmp/pr.diff)
-          echo "Diff: ${BYTES} bytes, ${LINES} lines"
+          echo "Diff size: ${BYTES} bytes"
 
-          # 18000文字に制限
+          # 18000文字に制限（Opus のコンテキスト節約）
           python3 -c "
           with open('/tmp/pr.diff') as f:
               diff = f.read()
@@ -88,6 +87,9 @@ jobs:
 
           Be strict. Only APPROVE if safe and correct for production."
 
+          # .claude/ ディレクトリの影響を避けるため /tmp から実行
+          cd /tmp
+
           # 3トークンをローテーションして試みる
           USED_KEY=0
           for i in 1 2 3; do
@@ -113,6 +115,7 @@ jobs:
                 --model claude-opus-4-6 \
                 --print "$USER_PROMPT" \
                 --system-prompt "$SYSTEM_PROMPT" \
+                --no-session-persistence \
                 2>/tmp/claude_stderr.txt)
             EXIT_CODE=$?
             set -e
@@ -123,7 +126,12 @@ jobs:
               break
             else
               echo "Token $i failed (exit: $EXIT_CODE):"
-              cat /tmp/claude_stderr.txt 2>/dev/null | head -5 || true
+              head -5 /tmp/claude_stderr.txt 2>/dev/null || true
+              # 429 (rate limit) の場合は少し待つ
+              if grep -q "429\|rate.limit\|overloaded" /tmp/claude_stderr.txt 2>/dev/null; then
+                echo "Rate limited, waiting 10s before next token..."
+                sleep 10
+              fi
             fi
           done
 
@@ -144,6 +152,8 @@ jobs:
           echo "Verdict: $(grep -o '\*\*\[.*\]\*\*' /tmp/review_output.txt | head -1)"
 
       - name: Post review to PR
+        # Run AI Review が成功した場合のみ実行
+        if: steps.review.outcome == 'success'
         uses: actions/github-script@v7
         with:
           script: |
@@ -178,3 +188,17 @@ jobs:
             if (event === 'REQUEST_CHANGES') {
               core.setFailed('AI review requested changes. Fix the issues before merging.');
             }
+
+      - name: Notify review failure
+        # Run AI Review が失敗した場合にPRにコメントを残す
+        if: steps.review.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: pr.number,
+              body: '⚠️ AI Code Review failed (all 3 OAuth tokens exhausted or rate-limited). Manual review required.',
+            });
