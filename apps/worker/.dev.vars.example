@@ -1,0 +1,18 @@
+# ローカル開発用シークレット（wrangler dev で使用）
+# 本番は `wrangler secret put <KEY>` で設定すること
+# このファイルを .dev.vars にコピーして値を記入する
+
+# LINE Messaging API チャネルシークレット
+LINE_CHANNEL_SECRET=your_channel_secret_here
+
+# LINE Messaging API チャネルアクセストークン（長期）
+LINE_CHANNEL_ACCESS_TOKEN=your_channel_access_token_here
+
+# 管理画面 API 認証キー（openssl rand -hex 32 で生成）
+API_KEY=your_random_api_key_here
+
+# LINE Login チャネル ID（/auth/line による UUID 取得に必須）
+LINE_LOGIN_CHANNEL_ID=your_line_login_channel_id
+
+# LINE Login チャネルシークレット
+LINE_LOGIN_CHANNEL_SECRET=your_line_login_channel_secret

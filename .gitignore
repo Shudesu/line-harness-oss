@@ -3,10 +3,24 @@ dist/
 .next/
 .wrangler/
 .vercel/
+
+# 環境変数ファイル（.example はコミット対象）
 .env
 .env.local
-*.log
-.DS_Store
+.env.*.local
 .env.production
 .env.staging
+
+# Wrangler 設定（個人の database_id 等を含むためgitignore）
+apps/worker/wrangler.toml
+
+# Wrangler ローカル開発シークレット
+.dev.vars
+apps/worker/.dev.vars
+
+# ビルド成果物
 apps/web/out/
+apps/liff/dist/
+
+*.log
+.DS_Store

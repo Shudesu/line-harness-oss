@@ -1,0 +1,25 @@
+name = "line-crm-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+workers_dev = true
+
+# Secrets are set via `wrangler secret put <KEY>` (never hardcode here)
+# Required secrets:
+#   LINE_CHANNEL_SECRET
+#   LINE_CHANNEL_ACCESS_TOKEN
+#   API_KEY
+#   LINE_LOGIN_CHANNEL_ID
+#   LINE_LOGIN_CHANNEL_SECRET
+
+[vars]
+# Set to your Worker URL after first deploy
+WORKER_URL = "https://line-crm-worker.YOUR_SUBDOMAIN.workers.dev"
+
+[[d1_databases]]
+binding = "line_crm_dev"
+database_name = "line-crm-dev"
+# Run `wrangler d1 create line-crm-dev` and paste the database_id here
+database_id = "YOUR_DATABASE_ID"
+
+[triggers]
+crons = ["*/5 * * * *"]

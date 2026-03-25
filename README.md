@@ -108,15 +108,16 @@ Claude Code ──→ Workers API ──→ D1
 ### 前提条件
 
 - Node.js 20+, pnpm 9+
-- [Cloudflare アカウント](https://dash.cloudflare.com/sign-up)
+- [Cloudflare アカウント](https://dash.cloudflare.com/sign-up)（Workers・D1・Pages すべて無料枠で動作）
 - [LINE Developers アカウント](https://developers.line.biz/)
 
-### 1. セットアップ
+### 1. クローン & インストール
 
 ```bash
 git clone https://github.com/Shudesu/line-harness-oss.git
 cd line-harness-oss
 pnpm install
+pnpm setup   # .env / wrangler.toml などの設定ファイルを自動生成
 ```
 
 ### 2. LINE チャネル設定
@@ -132,27 +133,37 @@ pnpm install
 ### 3. D1 データベース作成
 
 ```bash
+# Cloudflare 上にDBを作成（初回のみ）
+cd apps/worker
 npx wrangler d1 create line-crm
-# → 出力される database_id を apps/worker/wrangler.toml に記入
+# → 出力される database_id を apps/worker/wrangler.toml の database_id に記入
 
-npx wrangler d1 execute line-crm --file=packages/db/schema.sql
+# スキーマ適用（ローカル）
+npx wrangler d1 execute line_crm_dev --file=../../packages/db/schema.sql
+
+# スキーマ適用（本番リモート）
+npx wrangler d1 execute line_crm_dev --file=../../packages/db/schema.sql --remote
 ```
+
+> ⚠️ wrangler コマンドは `apps/worker/` ディレクトリ内で実行してください（`wrangler.toml` の場所）。
 
 ### 4. シークレット設定
 
 ```bash
-npx wrangler secret put LINE_CHANNEL_SECRET
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-npx wrangler secret put API_KEY
-npx wrangler secret put LINE_LOGIN_CHANNEL_ID
-npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
+# apps/worker/ ディレクトリで実行
+npx wrangler secret put LINE_CHANNEL_SECRET        # Messaging API チャネルシークレット
+npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN  # Messaging API アクセストークン
+npx wrangler secret put API_KEY                    # 任意の強力なランダム文字列（openssl rand -hex 32 で生成）
+npx wrangler secret put LINE_LOGIN_CHANNEL_ID      # LINE Login チャネル ID
+npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET  # LINE Login チャネルシークレット
 ```
 
-### 5. デプロイ
+### 5. Worker デプロイ（Cloudflare Workers）
 
 ```bash
-pnpm deploy:worker
-# → https://your-worker.your-subdomain.workers.dev
+# リポジトリルートで実行
+pnpm build           # 依存パッケージ（line-sdk 等）を先にビルド
+pnpm deploy:worker   # → https://your-worker.your-subdomain.workers.dev
 ```
 
 ### 6. LINE Webhook 設定
@@ -162,15 +173,46 @@ LINE Developers Console → Messaging API → Webhook URL:
 https://your-worker.your-subdomain.workers.dev/webhook
 ```
 
-### 7. 動作確認
+### 7. 管理画面デプロイ（Cloudflare Pages）
 
 ```bash
-# 友だち追加URL（これを LP や SNS に貼る）
-https://your-worker.your-subdomain.workers.dev/auth/line?ref=test
+# apps/web/.env.local を作成
+cp docs/.env.example apps/web/.env.local
+# NEXT_PUBLIC_API_URL と NEXT_PUBLIC_API_KEY を編集
 
+cd apps/web
+npm run build                                         # → out/ に静的ファイルを生成
+npx wrangler pages deploy out --project-name=line-crm-web
+# → https://line-crm-web.pages.dev
+```
+
+> `NEXT_PUBLIC_*` はビルド時に埋め込まれるため、**ビルド前に `.env.local` を設定** する必要があります。
+
+### 8. LIFF デプロイ（Cloudflare Pages）
+
+LIFF は Vite 製 SPA です。**HTTPS が必須**なので Cloudflare Pages が最適です。
+
+```bash
+cd apps/liff
+npm run build                                         # → dist/ に静的ファイルを生成
+npx wrangler pages deploy dist --project-name=line-crm-liff
+# → https://line-crm-liff.pages.dev
+```
+
+デプロイ後、LINE Developers Console → LINE Login チャネル → LIFF タブで URL を登録:
+```
+https://line-crm-liff.pages.dev
+```
+
+### 9. 動作確認
+
+```bash
 # API 疎通確認
 curl -H "Authorization: Bearer YOUR_API_KEY" \
   https://your-worker.your-subdomain.workers.dev/api/friends/count
+
+# 友だち追加URL（LP や SNS に貼る）
+https://your-worker.your-subdomain.workers.dev/auth/line?ref=test
 ```
 
 ---
