@@ -1,0 +1,63 @@
+name: "[auto] Copilot Task"
+description: "Copilot Coding Agent に実装を依頼する Issue テンプレート"
+title: "[auto] "
+labels:
+  - auto
+  - copilot
+  - fork-only
+assignees:
+  - Copilot
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Copilot Coding Agent** がこの Issue を検知して Draft PR を自動作成します。
+        > アサインは自動で `@Copilot` に設定されます。
+
+  - type: textarea
+    id: what
+    attributes:
+      label: "やりたいこと"
+      description: "1行で概要を説明してください"
+      placeholder: "例: ユーザーごとのタグ集計APIを追加する"
+    validations:
+      required: true
+
+  - type: textarea
+    id: prereq
+    attributes:
+      label: "前提条件"
+      description: "依存する Issue や完了済み作業があれば記載"
+      placeholder: "- #XX が完了済みであること"
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: "具体的な要件"
+      description: "箇条書きで 3〜7 項目"
+      placeholder: |
+        - apps/worker/src/... にエンドポイントを追加
+        - Hono ルーターに登録
+        - D1 クエリで集計
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: "対象ファイル（既知の場合）"
+      placeholder: |
+        - `apps/worker/src/routes/tags.ts` — 新規作成
+        - `apps/worker/src/index.ts` — ルート登録
+
+  - type: textarea
+    id: done
+    attributes:
+      label: "完了条件"
+      description: "テスト可能な条件を記載"
+      placeholder: |
+        - [ ] `pnpm --filter worker typecheck` がエラーなし
+        - [ ] `pnpm -r build` が成功
+        - [ ] curl で動作確認済み
+    validations:
+      required: true

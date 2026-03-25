@@ -1,0 +1,51 @@
+name: Auto-assign Copilot
+
+# copilot ラベルが付いた瞬間に @Copilot をアサインする
+# → Issue テンプレート以外（CLI・API 経由など）で作られた場合も確実に起動
+on:
+  issues:
+    types: [labeled, opened]
+
+jobs:
+  assign:
+    name: Assign to Copilot
+    runs-on: ubuntu-latest
+    # copilot ラベルが付いている Issue のみ対象
+    if: |
+      contains(github.event.issue.labels.*.name, 'copilot')
+    permissions:
+      issues: write
+    steps:
+      - name: Assign @Copilot
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const assignees = context.payload.issue.assignees.map(a => a.login);
+
+            // すでにアサイン済みなら skip
+            if (assignees.includes('Copilot')) {
+              console.log('Copilot already assigned — skip');
+              return;
+            }
+
+            await github.rest.issues.addAssignees({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: context.issue.number,
+              assignees:    ['Copilot'],
+            });
+
+            console.log(`Assigned Copilot to #${context.issue.number}`);
+
+            // アサイン完了コメントを追記
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '🤖 **Copilot Coding Agent** をアサインしました。',
+                '',
+                'Copilot が要件を解析して Draft PR を作成します。',
+                'しばらくお待ちください（通常 5〜15 分）。',
+              ].join('\n'),
+            });

@@ -288,22 +288,30 @@ export default function LandingPage() {
 
       {/* ─── フッター ─── */}
       <footer className="py-10 px-4 bg-gray-900 text-gray-400 text-sm">
-        <div className="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="font-bold text-white">みやびライン</div>
-          <div className="flex gap-6">
-            <a
-              href="https://github.com/ShunsukeHayashi/line-harness-oss"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-white transition"
-            >
-              GitHub
-            </a>
-            <Link href="/login" className="hover:text-white transition">
-              ログイン
-            </Link>
+        <div className="max-w-4xl mx-auto flex flex-col gap-6">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="font-bold text-white">みやびライン</div>
+            <div className="flex gap-6">
+              <a
+                href="https://github.com/ShunsukeHayashi/line-harness-oss"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-white transition"
+              >
+                GitHub
+              </a>
+              <Link href="/login" className="hover:text-white transition">
+                ログイン
+              </Link>
+            </div>
+            <div>© 2026 合同会社みやび / MIT License</div>
           </div>
-          <div>© 2026 みやびライン / MIT License</div>
+          <div className="flex flex-wrap gap-4 justify-center border-t border-gray-800 pt-4 text-xs">
+            <Link href="/privacy" className="hover:text-white transition">プライバシーポリシー</Link>
+            <Link href="/terms" className="hover:text-white transition">利用規約</Link>
+            <Link href="/tokutei" className="hover:text-white transition">特定商取引法に基づく表記</Link>
+            <a href="mailto:support@ambitiousai.co.jp" className="hover:text-white transition">お問い合わせ</a>
+          </div>
         </div>
       </footer>
 

@@ -5,6 +5,7 @@ import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts } from './services/broadcast.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
 import { checkAccountHealth } from './services/ban-monitor.js';
+import { refreshLineAccessTokens } from './services/token-refresh.js';
 import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { webhook } from './routes/webhook.js';
@@ -33,6 +34,7 @@ import { richMenus } from './routes/rich-menus.js';
 import { trackedLinks } from './routes/tracked-links.js';
 import { forms } from './routes/forms.js';
 import { betaFeedback } from './routes/beta-feedback.js';
+import { ai } from './routes/ai.js';
 
 export type Env = {
   Bindings: {
@@ -53,6 +55,8 @@ export type Env = {
     // Set with: wrangler secret put GITHUB_TOKEN / GITHUB_REPO
     GITHUB_TOKEN: string;
     GITHUB_REPO: string; // e.g. "ShunsukeHayashi/line-harness-oss"
+    // Claude AI integration
+    ANTHROPIC_API_KEY: string;
   };
 };
 
@@ -122,6 +126,7 @@ app.route('/', richMenus);
 app.route('/', trackedLinks);
 app.route('/', forms);
 app.route('/', betaFeedback);
+app.route('/', ai);
 
 // 404 fallback
 app.notFound((c) => c.json({ success: false, error: 'Not found' }, 404));
@@ -139,6 +144,7 @@ async function scheduled(
     processScheduledBroadcasts(env.DB, lineClient),
     processReminderDeliveries(env.DB, lineClient),
     checkAccountHealth(env.DB),
+    refreshLineAccessTokens(env.DB),
   ]);
 }
 

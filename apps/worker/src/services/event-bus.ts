@@ -36,9 +36,26 @@ export async function fireEvent(
   payload: EventPayload,
   lineAccessToken?: string,
 ): Promise<void> {
+  // Phase 1: Webhook通知とスコアリングを並行実行
   await Promise.allSettled([
     fireOutgoingWebhooks(db, eventType, payload),
     processScoring(db, eventType, payload),
+  ]);
+
+  // スコアリング完了後、最新スコアをpayload.eventDataに注入
+  // score_threshold 条件付き automation が正しく評価されるために必要
+  if (payload.friendId) {
+    const row = await db
+      .prepare('SELECT score FROM friends WHERE id = ?')
+      .bind(payload.friendId)
+      .first<{ score: number }>();
+    if (row) {
+      payload.eventData = { ...(payload.eventData ?? {}), currentScore: row.score };
+    }
+  }
+
+  // Phase 2: 最新スコアを保持した状態で自動化と通知を並行実行
+  await Promise.allSettled([
     processAutomations(db, eventType, payload, lineAccessToken),
     processNotifications(db, eventType, payload),
   ]);

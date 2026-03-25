@@ -1,7 +1,41 @@
+<!-- contribution-rules:start -->
+# UPSTREAM CONTRIBUTION RULES (P0 — 絶対遵守)
+
+**PRを切る前に `project_memory/CONTRIBUTION_RULES.md` を必ず読め。以下はその要約。**
+
+## PR作成前チェック（必須、例外なし）
+
+```bash
+git fetch upstream
+git log upstream/main --oneline -20   # upstream の方向性を必ず確認
+gh pr list --repo Shudesu/line-harness-oss --state open
+```
+
+## upstream のコアゴール（2026-03-25 確認済み）
+
+- 汎用 LINE CRM OSS（PPAL/みやび固有機能は絶対NG）
+- マルチアカウント対応・トークン自動管理・配信統計強化
+- Cloudflare Workers + D1 無料枠での動作
+
+## 絶対ルール
+
+1. **1PR = 1機能のみ**（複数機能の混在禁止）
+2. **フォーク固有コード禁止**（PPAL専用スクリプト等は upstream にPR不可）
+3. **upstream のゴールに合致するクリティカルなものだけ出す**（アグレッシブに出さない）
+4. **upstream 動向は毎日確認**（週1は遅すぎる）
+
+```bash
+# セッション開始時に毎回実行
+bash project_memory/scripts/check-upstream.sh
+```
+
+詳細: `project_memory/CONTRIBUTION_RULES.md`
+<!-- contribution-rules:end -->
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **line-harness-oss** (1211 symbols, 2525 relationships, 91 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **line-harness-oss** (2528 symbols, 3901 relationships, 102 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

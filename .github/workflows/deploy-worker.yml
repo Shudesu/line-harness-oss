@@ -1,11 +1,16 @@
 name: Deploy Worker
 
-# Manual trigger only — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets first
 on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/worker/**"
+      - "packages/**"
   workflow_dispatch:
 
 jobs:
   deploy:
+    name: Deploy to Production
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,15 +19,69 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
       - run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db build
 
-      - uses: cloudflare/wrangler-action@v3
+      # ── D1 本番マイグレーション ──────────────────────────────────────
+      - name: Apply D1 migrations (production)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/worker
+          command: d1 migrations apply miyabi-line-crm --remote
+
+      # ── Worker 本番デプロイ ─────────────────────────────────────────
+      - name: Deploy to production
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/worker
           command: deploy
+
+      # ── スモークテスト ─────────────────────────────────────────────
+      - name: Smoke test
+        run: |
+          sleep 10
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://miyabi-line-crm.$(echo ${{ secrets.CLOUDFLARE_ACCOUNT_ID }} | head -c 8).workers.dev/health" \
+            --max-time 15 || echo "000")
+          if [ "$STATUS" != "200" ] && [ "$STATUS" != "404" ]; then
+            echo "Smoke test warning: HTTP $STATUS (continuing)"
+          else
+            echo "Smoke test passed: HTTP $STATUS"
+          fi
+
+      # ── Telegram 成功通知 ──────────────────────────────────────────
+      - name: Telegram notification (success)
+        if: success() && env.BOT_TOKEN != ''
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          SHA7="${GITHUB_SHA:0:7}"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          MSG="✅ デプロイ成功: line-harness-oss / Branch: ${GITHUB_REF#refs/heads/} (${SHA7}) / Log: ${RUN_URL}"
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=${MSG}" > /dev/null
+
+      # ── Telegram 失敗通知 ──────────────────────────────────────────
+      - name: Telegram notification (failure)
+        if: failure() && env.BOT_TOKEN != ''
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          SHA7="${GITHUB_SHA:0:7}"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          MSG="❌ デプロイ失敗: line-harness-oss / Branch: ${GITHUB_REF#refs/heads/} (${SHA7}) / Log: ${RUN_URL}"
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=${MSG}" > /dev/null

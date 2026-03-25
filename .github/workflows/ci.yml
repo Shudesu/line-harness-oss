@@ -183,11 +183,7 @@ jobs:
           BRANCH="${GITHUB_REF#refs/heads/}"
           SHA7="${GITHUB_SHA:0:7}"
           RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          MSG="🚨 CI 失敗: line-harness-oss
-Branch: ${BRANCH} (${SHA7})
-Log: ${RUN_URL}
-Issue: ${ISSUE_URL:-作成済み}
-→ Copilot が自動修正中"
+          MSG="🚨 CI失敗: line-harness-oss / Branch: ${BRANCH} (${SHA7}) / Log: ${RUN_URL} / Issue: ${ISSUE_URL:-作成済み}"
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d "chat_id=${CHAT_ID}" \
             --data-urlencode "text=${MSG}" > /dev/null
