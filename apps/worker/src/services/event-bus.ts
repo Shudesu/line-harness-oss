@@ -28,7 +28,13 @@ interface EventPayload {
 }
 
 /**
- * イベントを発火し、登録された全ハンドラーを実行
+ * Fire an event and run all registered handlers.
+ *
+ * Execution is split into two sequential phases so that score_threshold
+ * conditions in automation rules see the score already updated by this event:
+ *
+ *   Phase 1 (concurrent): outgoing webhooks + scoring
+ *   Phase 2 (concurrent): automations + notifications, with currentScore injected
  */
 export async function fireEvent(
   db: D1Database,
@@ -37,9 +43,27 @@ export async function fireEvent(
   lineAccessToken?: string,
   lineAccountId?: string | null,
 ): Promise<void> {
+  // Phase 1: fire webhooks and apply scoring rules concurrently.
   await Promise.allSettled([
     fireOutgoingWebhooks(db, eventType, payload),
     processScoring(db, eventType, payload),
+  ]);
+
+  // Inject the freshly-updated score so that score_threshold conditions in
+  // Phase 2 automations evaluate against the score written by Phase 1, not a
+  // stale or undefined value.
+  if (payload.friendId) {
+    const row = await db
+      .prepare('SELECT score FROM friends WHERE id = ?')
+      .bind(payload.friendId)
+      .first<{ score: number }>();
+    if (row) {
+      payload.eventData = { ...(payload.eventData ?? {}), currentScore: row.score };
+    }
+  }
+
+  // Phase 2: evaluate automations and create notifications concurrently.
+  await Promise.allSettled([
     processAutomations(db, eventType, payload, lineAccessToken, lineAccountId),
     processNotifications(db, eventType, payload, lineAccountId),
   ]);
