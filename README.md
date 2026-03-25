@@ -27,6 +27,9 @@ Cloudflare 無料枠で動く。サーバー代 0 円。Claude Code から全操
 
 ---
 
+<details>
+<summary><strong>全機能一覧（クリックで展開）</strong></summary>
+
 ## 全機能一覧
 
 ### 配信
@@ -262,7 +265,7 @@ pnpm db:migrate:local
 
 Issue・PR 歓迎。[Wiki](https://github.com/Shudesu/line-harness-oss/wiki) を読んでからの参加を推奨。
 
----
+</details>
 
 ## ライセンス
 
