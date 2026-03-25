@@ -4,12 +4,12 @@
   "private": true,
   "description": "Open-source LINE Official Account CRM/marketing automation",
   "scripts": {
-    "setup": "node scripts/setup.js",
+    "dev:setup": "node scripts/setup.js",
     "dev:worker": "pnpm --filter worker dev",
     "dev:web": "pnpm --filter web dev",
     "build": "pnpm -r build",
-    "deploy:worker": "pnpm --filter worker deploy",
-    "deploy:web": "pnpm --filter web build",
+    "deploy:worker": "pnpm --filter worker run deploy",
+    "deploy:web": "pnpm --filter web run build",
     "db:migrate": "wrangler d1 execute line-crm --file=packages/db/schema.sql",
     "db:migrate:local": "wrangler d1 execute line-crm --file=packages/db/schema.sql --local"
   },
