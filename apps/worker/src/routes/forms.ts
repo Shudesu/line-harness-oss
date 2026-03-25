@@ -298,11 +298,17 @@ forms.post('/api/forms/:id/submit', async (c) => {
                 { type: 'separator', margin: 'lg' },
                 { type: 'box', layout: 'vertical', margin: 'lg', backgroundColor: '#eff6ff', cornerRadius: 'md', paddingAll: '12px',
                   contents: [
-                    { type: 'text', text: 'この情報はメタデータに自動保存済み。今後の配信があなたに最適化されます。L社 ではフォーム回答をリアルタイムで返すことはできません。', size: 'xxs', color: '#2563EB', wrap: true },
+                    { type: 'text', text: 'メタデータに自動保存済み。今後の配信があなたに最適化されます。', size: 'xxs', color: '#2563EB', wrap: true },
                   ],
                 },
               ],
               paddingAll: '20px',
+            },
+            footer: {
+              type: 'box', layout: 'vertical', paddingAll: '16px',
+              contents: [
+                { type: 'button', action: { type: 'message', label: 'アカウント連携を見る', text: 'アカウント連携を見る' }, style: 'primary', color: '#14b8a6' },
+              ],
             },
           };
 

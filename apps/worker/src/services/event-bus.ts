@@ -175,6 +175,12 @@ function matchConditions(
     if (payload.eventData.tagId !== conditions.tag_id) return false;
   }
 
+  // keyword チェック（message_received イベント用）
+  if (conditions.keyword !== undefined && payload.eventData) {
+    const text = payload.eventData.text as string | undefined;
+    if (!text || !text.includes(conditions.keyword as string)) return false;
+  }
+
   return true;
 }
 
