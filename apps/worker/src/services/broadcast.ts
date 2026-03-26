@@ -16,6 +16,8 @@ export async function processBroadcastSend(
   db: D1Database,
   lineClient: LineClient,
   broadcastId: string,
+  workerUrl?: string,
+  liffUrl?: string,
 ): Promise<Broadcast> {
   // Mark as sending
   await updateBroadcastStatus(db, broadcastId, 'sending');
@@ -25,7 +27,13 @@ export async function processBroadcastSend(
     throw new Error(`Broadcast ${broadcastId} not found`);
   }
 
-  const message = buildMessage(broadcast.message_type, broadcast.message_content);
+  // Auto-wrap URLs with tracking links
+  let finalContent = broadcast.message_content;
+  if (workerUrl && liffUrl) {
+    const { autoTrackContent } = await import('./auto-track.js');
+    finalContent = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl, liffUrl);
+  }
+  const message = buildMessage(broadcast.message_type, finalContent);
   let totalCount = 0;
   let successCount = 0;
 
@@ -100,6 +108,8 @@ export async function processBroadcastSend(
 export async function processScheduledBroadcasts(
   db: D1Database,
   lineClient: LineClient,
+  workerUrl?: string,
+  liffUrl?: string,
 ): Promise<void> {
   const now = jstNow();
   const allBroadcasts = await getBroadcasts(db);
@@ -114,7 +124,7 @@ export async function processScheduledBroadcasts(
 
   for (const broadcast of scheduled) {
     try {
-      await processBroadcastSend(db, lineClient, broadcast.id);
+      await processBroadcastSend(db, lineClient, broadcast.id, workerUrl, liffUrl);
     } catch (err) {
       console.error(`Failed to send scheduled broadcast ${broadcast.id}:`, err);
       // Continue with next broadcast

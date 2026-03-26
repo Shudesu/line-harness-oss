@@ -145,8 +145,8 @@ async function scheduled(
   for (const token of activeTokens) {
     const lineClient = new LineClient(token);
     jobs.push(
-      processStepDeliveries(env.DB, lineClient, env.WORKER_URL),
-      processScheduledBroadcasts(env.DB, lineClient),
+      processStepDeliveries(env.DB, lineClient, env.WORKER_URL, env.LIFF_URL),
+      processScheduledBroadcasts(env.DB, lineClient, env.WORKER_URL, env.LIFF_URL),
       processReminderDeliveries(env.DB, lineClient),
     );
   }
