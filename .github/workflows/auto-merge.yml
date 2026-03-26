@@ -1,181 +1,114 @@
-name: Auto-merge Copilot PRs
-
-# Copilot Coding Agent が作成した PR が
-# 1) CI 通過 かつ
-# 2) AI レビュー (ai-review.yml) で APPROVE された
-# 場合に自動マージする。
+name: Auto Merge
 
 on:
   pull_request_review:
     types: [submitted]
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
-  check_run:
+  check_suite:
     types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   auto-merge:
-    name: Auto-merge if CI + AI Review passed
     runs-on: ubuntu-latest
     if: |
-      github.actor == 'Copilot' ||
-      github.event.pull_request.user.login == 'Copilot' ||
-      github.event.review.user.login == 'github-actions[bot]' ||
-      github.event_name == 'check_run'
-    permissions:
-      pull-requests: write
-      contents: write
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
+      (github.event_name == 'check_suite' && github.event.check_suite.conclusion == 'success')
     steps:
-      - name: Check CI status and AI review approval
-        uses: actions/github-script@v7
-        with:
-          script: |
-            let prNumber;
+      - name: Get PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request_review" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            PR_NUMBER=$(gh pr list --repo ${{ github.repository }} --json number,headRefName --jq ".[] | select(.headRefName == \"${{ github.event.check_suite.head_branch }}\") | .number")
+            echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-            // イベント種別に応じて PR 番号を取得
-            if (context.eventName === 'check_run') {
-              // check_run 自体の名前でフィルタ（自己トリガーループを防止）
-              const runName = context.payload.check_run.name;
-              if (runName === 'Auto-merge if CI + AI Review passed') {
-                console.log('Skipping self-triggered check_run');
-                return;
-              }
-              const prs = context.payload.check_run.pull_requests;
-              if (!prs || prs.length === 0) {
-                console.log('check_run: no associated PRs, skipping');
-                return;
-              }
-              prNumber = prs[0].number;
-              console.log(`check_run "${runName}" completed: checking PR #${prNumber}`);
-            } else {
-              prNumber = context.payload.pull_request?.number
-                || context.payload.review?.pull_request_url?.match(/\/pulls\/(\d+)$/)?.[1];
-            }
+      - name: Check merge conditions
+        id: check
+        run: |
+          PR_NUMBER=${{ steps.pr.outputs.number }}
+          
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR found"
+            exit 0
+          fi
+          
+          PR_DATA=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json state,mergeable,reviewDecision,statusCheckRollup,labels)
+          
+          STATE=$(echo "$PR_DATA" | jq -r '.state')
+          MERGEABLE=$(echo "$PR_DATA" | jq -r '.mergeable')
+          REVIEW_DECISION=$(echo "$PR_DATA" | jq -r '.reviewDecision')
+          CHECKS_PASS=$(echo "$PR_DATA" | jq -r '[.statusCheckRollup[] | select(.conclusion != "SUCCESS" and .conclusion != "SKIPPED")] | length == 0')
+          HAS_NEEDS_HUMAN=$(echo "$PR_DATA" | jq -r '[.labels[] | select(.name == "needs-human")] | length > 0')
+          
+          echo "State: $STATE"
+          echo "Mergeable: $MERGEABLE"
+          echo "Review Decision: $REVIEW_DECISION"
+          echo "Checks Pass: $CHECKS_PASS"
+          echo "Has needs-human: $HAS_NEEDS_HUMAN"
+          
+          if [ "$STATE" != "OPEN" ]; then
+            echo "PR is not open"
+            exit 0
+          fi
+          
+          if [ "$HAS_NEEDS_HUMAN" == "true" ]; then
+            echo "PR has needs-human label, skipping auto-merge"
+            exit 0
+          fi
+          
+          if [ "$MERGEABLE" == "MERGEABLE" ] && [ "$REVIEW_DECISION" == "APPROVED" ] && [ "$CHECKS_PASS" == "true" ]; then
+            echo "can_merge=true" >> $GITHUB_OUTPUT
+          else
+            echo "can_merge=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-            if (!prNumber) {
-              console.log('No PR number found, skipping');
-              return;
-            }
-
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              pull_number: Number(prNumber),
-            });
-
-            // すでに closed/merged の PR はスキップ
-            if (pr.data.state !== 'open') {
-              console.log(`PR #${prNumber} is ${pr.data.state}, skipping`);
-              return;
-            }
-
-            // Draft PR はスキップ
-            if (pr.data.draft) {
-              console.log(`PR #${prNumber} is still Draft, skipping`);
-              return;
-            }
-
-            // Copilot 作成でなければスキップ
-            if (pr.data.user.login !== 'Copilot') {
-              console.log(`PR #${prNumber} is not from Copilot (${pr.data.user.login}), skipping`);
-              return;
-            }
-
-            // ── CI チェックの状態を確認 ──────────────────────────────
-            const checks = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              ref:   pr.data.head.sha,
-              per_page: 100,
-            });
-
-            // 同名の check_run が複数ある場合（re-run）は最新のものだけを使う
-            const latestByName = {};
-            for (const c of checks.data.check_runs) {
-              if (c.name === 'Type Check' || c.name === 'Build Check') {
-                const prev = latestByName[c.name];
-                if (!prev || new Date(c.started_at) > new Date(prev.started_at)) {
-                  latestByName[c.name] = c;
+      - name: Enable auto-merge via GraphQL
+        if: steps.check.outputs.can_merge == 'true'
+        run: |
+          PR_NUMBER=${{ steps.pr.outputs.number }}
+          
+          PR_ID=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json id -q .id)
+          
+          gh api graphql -f query='
+            mutation($pullRequestId: ID!) {
+              enablePullRequestAutoMerge(input: {
+                pullRequestId: $pullRequestId,
+                mergeMethod: SQUASH
+              }) {
+                pullRequest {
+                  id
+                  number
                 }
               }
-            }
-            const ciChecks = Object.values(latestByName);
+            }' -f pullRequestId="$PR_ID"
+          
+          echo "Auto-merge enabled for PR #$PR_NUMBER"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-            const ciPassed = ciChecks.length >= 2 &&
-              ciChecks.every(c => c.status === 'completed' && c.conclusion === 'success');
-
-            const ciStatus = ciChecks.map(c => `${c.name}:${c.conclusion ?? c.status}`).join(', ');
-            console.log(`PR #${prNumber} CI (latest runs): ${ciStatus || 'no checks found'}`);
-
-            if (!ciPassed) {
-              console.log(`PR #${prNumber}: CI not fully passed yet, skipping`);
-              return;
-            }
-
-            // ── AI レビューの APPROVE を確認 ─────────────────────────
-            const reviews = await github.rest.pulls.listReviews({
-              owner:       context.repo.owner,
-              repo:        context.repo.repo,
-              pull_number: Number(prNumber),
-              per_page: 100,
-            });
-
-            // レビュアーごとの最新状態を取得
-            const latestByReviewer = {};
-            for (const r of reviews.data) {
-              if (r.state !== 'COMMENTED') {
-                latestByReviewer[r.user.login] = r.state;
-              }
-            }
-
-            const hasApproval = Object.values(latestByReviewer).includes('APPROVED');
-            const hasChangesRequested = Object.values(latestByReviewer).includes('CHANGES_REQUESTED');
-
-            console.log(`PR #${prNumber} reviews: ${JSON.stringify(latestByReviewer)}`);
-
-            if (hasChangesRequested) {
-              console.log(`PR #${prNumber}: AI review requested changes, skipping merge`);
-              return;
-            }
-
-            if (!hasApproval) {
-              console.log(`PR #${prNumber}: No APPROVE review yet, waiting for AI review`);
-              return;
-            }
-
-            console.log(`PR #${prNumber}: CI passed + AI review approved. Proceeding to merge.`);
-
-            // ── マージ実行（squash） ──────────────────────────────────
-            try {
-              await github.rest.pulls.merge({
-                owner:        context.repo.owner,
-                repo:         context.repo.repo,
-                pull_number:  Number(prNumber),
-                merge_method: 'squash',
-              });
-              console.log(`✅ Merged PR #${prNumber}`);
-            } catch (err) {
-              if (err.status === 405) {
-                // Branch protection: GitHub native auto-merge を有効化
-                try {
-                  await github.graphql(`
-                    mutation EnableAutoMerge($prId: ID!) {
-                      enablePullRequestAutoMerge(input: {
-                        pullRequestId: $prId
-                        mergeMethod: SQUASH
-                      }) {
-                        pullRequest { number state }
-                      }
-                    }
-                  `, { prId: pr.data.node_id });
-                  console.log(`Enabled GitHub auto-merge for PR #${prNumber}`);
-                } catch (graphqlErr) {
-                  console.log(`Auto-merge enable failed (repo setting may be disabled): ${graphqlErr.message}`);
-                }
-              } else if (err.status === 404 || err.status === 422) {
-                // 404 = PR already merged/deleted, 422 = not mergeable (merge conflict等)
-                console.log(`PR #${prNumber} not mergeable (${err.status}): ${err.message}`);
-              } else {
-                throw err;
-              }
-            }
+      - name: Fallback manual merge
+        if: steps.check.outputs.can_merge == 'true'
+        run: |
+          PR_NUMBER=${{ steps.pr.outputs.number }}
+          
+          sleep 10
+          
+          PR_STATE=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json state -q .state)
+          
+          if [ "$PR_STATE" == "OPEN" ]; then
+            echo "Auto-merge did not trigger, performing manual squash merge"
+            gh pr merge $PR_NUMBER --repo ${{ github.repository }} --squash --delete-branch
+          else
+            echo "PR already merged via auto-merge"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}

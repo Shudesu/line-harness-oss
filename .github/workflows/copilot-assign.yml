@@ -1,78 +1,132 @@
-name: Auto-assign Copilot Coding Agent
+name: Copilot Assign
 
-# copilot ラベルが付いた Issue に GitHub Copilot Coding Agent を GraphQL でアサインする。
-# 正しい API: GraphQL replaceActorsForAssignable + agentAssignment フィールド
-# (REST API の assignees や @github-copilot コメントは Coding Agent を起動しない)
 on:
   issues:
-    types: [labeled, opened]
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
-  assign:
-    name: Assign Copilot Coding Agent
+  assign-copilot:
     runs-on: ubuntu-latest
-    # copilot ラベルが付いている Issue のみ対象
-    if: contains(github.event.issue.labels.*.name, 'copilot')
-    permissions:
-      issues: write
+    if: |
+      github.event.label.name == 'copilot' ||
+      github.event.label.name == 'atomic'
     steps:
-      - name: Check if Copilot already assigned
-        id: check
-        uses: actions/github-script@v7
-        with:
-          result-encoding: string
-          script: |
-            const timeline = await github.rest.issues.listEventsForTimeline({
-              owner:        context.repo.owner,
-              repo:         context.repo.repo,
-              issue_number: context.issue.number,
-              per_page:     100,
-              mediaType:    { previews: ['mockingbird'] },
-            });
-            // "assigned" イベントで assignee.login === "Copilot" が存在すれば既に割り当て済み
-            const already = timeline.data.some(
-              e => e.event === 'assigned' && e.assignee?.login === 'Copilot'
-            );
-            return already ? 'yes' : 'no';
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Assign Copilot via GraphQL
-        if: steps.check.outputs.result == 'no'
-        uses: actions/github-script@v7
-        with:
-          # GITHUB_TOKEN で動作（COPILOT_PAT 不要）
-          # 修正: agentAssignment.targetRepositoryId が必須。ないと silent fail する。
-          script: |
-            const issueNodeId = context.payload.issue.node_id;
+      - name: Get default branch
+        id: default_branch
+        run: |
+          DEFAULT_BRANCH=$(gh repo view ${{ github.repository }} --json defaultBranchRef -q .defaultBranchRef.name)
+          echo "branch=$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-            // リポジトリの Node ID を取得（agentAssignment に必須）
-            const repoData = await github.graphql(`
-              query GetRepoId($owner: String!, $name: String!) {
-                repository(owner: $owner, name: $name) { id }
+      - name: Load DESIGN_CONSTRAINTS.md
+        id: constraints
+        run: |
+          if [ -f "DESIGN_CONSTRAINTS.md" ]; then
+            echo "CONSTRAINTS<<EOF" >> $GITHUB_ENV
+            cat DESIGN_CONSTRAINTS.md >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "CONSTRAINTS=No design constraints defined. Follow general best practices." >> $GITHUB_ENV
+          fi
+
+      # W3/W4: Get issue details via file (injection-safe)
+      - name: Get issue details
+        id: issue
+        run: |
+          gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }} --json body -q .body > /tmp/issue_body.txt
+          gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }} --json title -q .title > /tmp/issue_title.txt
+          
+          echo "ISSUE_BODY<<EOF" >> $GITHUB_ENV
+          cat /tmp/issue_body.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          echo "ISSUE_TITLE<<EOF" >> $GITHUB_ENV
+          cat /tmp/issue_title.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Get repository ID
+        id: repo_id
+        run: |
+          REPO_ID=$(gh api graphql -f query='
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                id
               }
-            `, {
-              owner: context.repo.owner,
-              name: context.repo.repo,
-            });
-            const repoId = repoData.repository.id;
+            }' -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -q .data.repository.id)
+          
+          echo "id=$REPO_ID" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-            await github.graphql(`
-              mutation AssignCopilot($input: ReplaceActorsForAssignableInput!) {
-                replaceActorsForAssignable(input: $input) {
-                  assignable {
-                    ... on Issue { number title }
+      # C4, C5: Add actorLogins and baseRef
+      - name: Assign GitHub Copilot via GraphQL
+        run: |
+          ISSUE_NODE_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }} -q .node_id)
+          
+          CUSTOM_INSTRUCTIONS="**Repository Design Constraints:**
+
+$CONSTRAINTS
+
+---
+
+**Task Instructions:**
+
+$ISSUE_BODY
+
+**Important:**
+- Follow the design constraints above strictly
+- Create a new branch from ${{ steps.default_branch.outputs.branch }}
+- Implement the changes described in the issue
+- Write tests if applicable
+- Create a draft PR when complete"
+
+          gh api graphql -f query='
+            mutation($issueId: ID!, $repositoryId: ID!, $baseRef: String!, $customInstructions: String!) {
+              replaceActorsForAssignable(input: {
+                assignableId: $issueId
+                actorLogins: []
+                agentAssignment: {
+                  targetRepositoryId: $repositoryId
+                  baseRef: $baseRef
+                  customInstructions: $customInstructions
+                }
+              }) {
+                assignable {
+                  ... on Issue {
+                    number
+                    title
                   }
                 }
               }
-            `, {
-              input: {
-                assignableId: issueNodeId,
-                actorLogins: [],
-                agentAssignment: {
-                  targetRepositoryId: repoId,   // 必須: これがないと Copilot が起動しない
-                  baseRef: 'main',
-                  customInstructions: 'IMPORTANT: Every PR MUST contain at least one executable code file (.js .ts .py .sh etc). Do NOT create PRs with only .md documentation files. Implement exactly what the Issue acceptance criteria require. Write tests for new functions. Follow TypeScript strict mode. Use prepared statements for all D1 queries.',
-                },
-              },
-            });
+            }' \
+            -f issueId="$ISSUE_NODE_ID" \
+            -f repositoryId="${{ steps.repo_id.outputs.id }}" \
+            -f baseRef="${{ steps.default_branch.outputs.branch }}" \
+            -f customInstructions="$CUSTOM_INSTRUCTIONS"
+          
+          echo "GitHub Copilot assigned to issue #${{ github.event.issue.number }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-            console.log(`✅ Copilot Coding Agent assigned to #${context.issue.number}`);
+      - name: Comment assignment confirmation
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --repo ${{ github.repository }} --body "🤖 GitHub Copilot has been assigned to this issue.
+
+**Configuration:**
+- Base branch: \`${{ steps.default_branch.outputs.branch }}\`
+- Design constraints: Loaded from DESIGN_CONSTRAINTS.md
+- Custom instructions: Injected
+
+Copilot will create a branch and draft PR when implementation is complete."
+        env:
+          GH_TOKEN: ${{ github.token }}
