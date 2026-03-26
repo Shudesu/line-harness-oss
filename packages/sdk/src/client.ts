@@ -6,6 +6,7 @@ import { BroadcastsResource } from './resources/broadcasts.js'
 import { RichMenusResource } from './resources/rich-menus.js'
 import { TrackedLinksResource } from './resources/tracked-links.js'
 import { FormsResource } from './resources/forms.js'
+import { ChatsResource } from './resources/chats.js'
 import { Workflows } from './workflows.js'
 import type { LineHarnessConfig, StepDefinition, ScenarioTriggerType, ScenarioWithSteps, Broadcast, MessageType, SegmentCondition } from './types.js'
 
@@ -17,6 +18,7 @@ export class LineHarness {
   readonly richMenus: RichMenusResource
   readonly trackedLinks: TrackedLinksResource
   readonly forms: FormsResource
+  readonly chats: ChatsResource
 
   private readonly apiUrl: string
   private readonly defaultAccountId: string | undefined
@@ -46,6 +48,7 @@ export class LineHarness {
     this.richMenus = new RichMenusResource(http)
     this.trackedLinks = new TrackedLinksResource(http)
     this.forms = new FormsResource(http)
+    this.chats = new ChatsResource(http)
     this.workflows = new Workflows(this.friends, this.scenarios, this.broadcasts)
 
     this.createStepScenario = this.workflows.createStepScenario.bind(this.workflows)

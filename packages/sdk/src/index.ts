@@ -10,6 +10,7 @@ export { BroadcastsResource } from './resources/broadcasts.js'
 export { RichMenusResource } from './resources/rich-menus.js'
 export { TrackedLinksResource } from './resources/tracked-links.js'
 export { FormsResource } from './resources/forms.js'
+export { ChatsResource } from './resources/chats.js'
 
 // All types
 export type {
@@ -52,4 +53,15 @@ export type {
   CreateFormInput,
   UpdateFormInput,
   FormSubmission,
+  Operator,
+  CreateOperatorInput,
+  UpdateOperatorInput,
+  ChatStatus,
+  Chat,
+  ChatMessage,
+  ChatWithMessages,
+  ChatListParams,
+  CreateChatInput,
+  UpdateChatInput,
+  SendMessageInput,
 } from './types.js'

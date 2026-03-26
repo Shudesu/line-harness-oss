@@ -333,6 +333,79 @@ export interface CalendarBooking {
   createdAt: string
 }
 
+// ─── Operator ────────────────────────────────────────────
+export interface Operator {
+  id: string
+  name: string
+  email: string
+  role: 'admin' | 'operator'
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateOperatorInput {
+  name: string
+  email: string
+  role?: 'admin' | 'operator'
+}
+
+export interface UpdateOperatorInput {
+  name?: string
+  email?: string
+  role?: 'admin' | 'operator'
+  isActive?: boolean
+}
+
+// ─── Chat ─────────────────────────────────────────────────
+export type ChatStatus = 'unread' | 'in_progress' | 'resolved'
+
+export interface Chat {
+  id: string
+  friendId: string
+  friendName: string
+  friendPictureUrl: string | null
+  operatorId: string | null
+  status: ChatStatus
+  notes: string | null
+  lastMessageAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ChatMessage {
+  id: string
+  direction: 'incoming' | 'outgoing'
+  messageType: MessageType
+  content: string
+  createdAt: string
+}
+
+export interface ChatWithMessages extends Chat {
+  messages: ChatMessage[]
+}
+
+export interface ChatListParams {
+  status?: ChatStatus
+  operatorId?: string
+}
+
+export interface CreateChatInput {
+  friendId: string
+  operatorId?: string
+}
+
+export interface UpdateChatInput {
+  operatorId?: string | null
+  status?: ChatStatus
+  notes?: string
+}
+
+export interface SendMessageInput {
+  content: string
+  messageType?: MessageType
+}
+
 // ─── High-Level ─────────────────────────────────────────
 export interface StepDefinition {
   delay: string
