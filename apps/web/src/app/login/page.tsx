@@ -6,6 +6,7 @@ export default function LoginPage() {
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [agreed, setAgreed] = useState(false)
   const router = useRouter()
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -61,9 +62,25 @@ export default function LoginPage() {
             <p className="text-sm text-red-600 mb-4">{error}</p>
           )}
 
+          <div className="mb-4 flex items-start gap-2">
+            <input
+              type="checkbox"
+              id="agree"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-500 focus:ring-green-500"
+            />
+            <label htmlFor="agree" className="text-xs text-gray-600 leading-relaxed">
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-green-600 underline">利用規約</a>
+              および
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-green-600 underline">プライバシーポリシー</a>
+              に同意します
+            </label>
+          </div>
+
           <button
             type="submit"
-            disabled={loading || !apiKey}
+            disabled={loading || !apiKey || !agreed}
             className="w-full py-3 text-white font-medium rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
             style={{ backgroundColor: '#06C755' }}
           >

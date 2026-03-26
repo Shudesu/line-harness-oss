@@ -26,6 +26,11 @@ LINE_LOGIN_CHANNEL_ID = "2008491323"
 ALLOWED_ORIGINS    = "https://miyabi-line-admin.pages.dev"
 ENABLE_STEALTH_MODE = "false"
 WORKER_URL = "https://miyabi-line-crm.supernovasyun.workers.dev"
+VERSION            = "0.3.0"
+# PPAL Identity Hub Phase 4 (Discord OAuth) vars are declared optional in Env type.
+# Do NOT add DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / LIFF_LINK_URL here —
+# use `wrangler secret put` for secrets and Dashboard vars for plain values
+# when Phase 4 is deployed to avoid accidental plaintext secret commits.
 
 [[d1_databases]]
 binding      = "DB"

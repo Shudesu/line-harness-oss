@@ -11,6 +11,21 @@ import type { Env } from '../index.js';
 
 const health = new Hono<Env>();
 
+// ========== システムヘルスチェック ==========
+// Route resolution: `app.route('/', health)` in index.ts mounts this router at root,
+// so this handler is reachable as GET /health (verified: index.ts line 93).
+//
+// CORS: The app-level `cors({ origin: '*' })` middleware (index.ts line 66) runs on
+// every route including /health, so uptime monitors receive Access-Control-Allow-Origin: *.
+// This is intentional for the MVP — restrict origins when moving to production.
+
+health.get('/health', (c) => {
+  // Public endpoint — no auth required (intended for uptime monitors).
+  // Cache-Control: no-store prevents CDN/browser from serving stale health data.
+  c.header('Cache-Control', 'no-store');
+  return c.json({ status: 'ok', version: c.env.VERSION ?? 'unknown' });
+});
+
 // ========== アカウントヘルス ==========
 
 health.get('/api/accounts/:id/health', async (c) => {

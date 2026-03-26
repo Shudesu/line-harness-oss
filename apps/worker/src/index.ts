@@ -44,6 +44,19 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
+    VERSION?: string;
+    STRIPE_SECRET_KEY?: string;       // secret — use `wrangler secret put`
+    STRIPE_WEBHOOK_SECRET?: string;   // secret — use `wrangler secret put`
+    STRIPE_PRO_PRICE_ID?: string;
+    STRIPE_BUSINESS_PRICE_ID?: string;
+    GITHUB_TOKEN?: string;            // secret — use `wrangler secret put`
+    GITHUB_REPO?: string;
+    ENABLE_STEALTH_MODE?: string;
+    TELEGRAM_BOT_TOKEN?: string;      // secret — use `wrangler secret put`
+    TELEGRAM_CHAT_ID?: string;
+    DISCORD_CLIENT_ID?: string;
+    DISCORD_CLIENT_SECRET?: string;   // secret — use `wrangler secret put`
+    LIFF_LINK_URL?: string;
   };
 };
 
