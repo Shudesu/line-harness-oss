@@ -1,0 +1,130 @@
+@startuml miyabi-line-task-dag
+' ============================================================
+' みやびライン — タスク依存グラフ v3
+' 方向: top→bottom (左上→右下の自然な時系列)
+' ============================================================
+
+skinparam backgroundColor #F8F9FA
+skinparam defaultFontSize 14
+skinparam defaultFontName "Noto Sans JP"
+skinparam ArrowColor #444444
+skinparam ArrowThickness 2
+skinparam ArrowFontSize 12
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 50
+
+skinparam rectangle {
+  RoundCorner 10
+  BorderThickness 2
+  Padding 12
+}
+
+skinparam package {
+  BorderThickness 2.5
+  FontSize 14
+  FontStyle bold
+  Padding 18
+}
+
+legend bottom right
+  <b>凡例</b>
+  |<#6DBF6D> ✅ 完了 |
+  |<#5BA8D8> 🔵 進行中 |
+  |<#E85454> 🔴 Critical（最優先）|
+  |<#E89020> 🟠 High |
+  |<#D4B400> 🟡 Medium |
+  ──→ 必須依存
+  ···→ 推奨依存
+endlegend
+
+' ============================================================
+' P1–P3: 最上部（全完了・基盤）
+' ============================================================
+package "✅  P1–P3  基盤フェーズ（全完了）" #DDF5DD {
+  rectangle "T01–08\nSecurity\nFoundation" as P1 #6DBF6D
+  rectangle "T09–16\nPPAL\nMigration" as P2 #6DBF6D
+  rectangle "T17–18\nMCP\nIntegration" as P3 #6DBF6D
+  P1 --> P2
+  P2 --> P3
+}
+
+' ============================================================
+' P4: SaaS ローンチ基盤（P1–P3 完了後）
+' ============================================================
+package "P4  SaaS ローンチ基盤" #FFFBE6 {
+  rectangle "T19 ✅\nLP 作成" as T19 #6DBF6D
+  rectangle "T20 ✅\nStripe 基本統合" as T20 #6DBF6D
+  rectangle "T34 🟠\nPPAL β案内準備" as T34 #E89020
+  T19 --> T20
+  T19 --> T34
+  T20 --> T34
+}
+
+' ============================================================
+' P5: Upstream Sync（P4 と並行）
+' ============================================================
+package "P5  Upstream Sync" #E3F0FF {
+  rectangle "T22 ✅\nevent-bus fix" as T22 #6DBF6D
+  rectangle "PR#36 🔵\nPPAL コード分離\n[AI レビュー中]" as T24 #5BA8D8
+  rectangle "PR#37 🔵\nunit tests\n[AI レビュー中]" as PR37 #5BA8D8
+  rectangle "Issue#43 🔵\nv0.3.0 sync\n42 commits" as I43 #5BA8D8
+  rectangle "T28 🟡\nE2E テスト整備\n33件全パス\n★ Step 2.5 必須" as T28 #D4B400
+  rectangle "PR#42 🔵\nSDK ChatsResource\n[sync 後 ready]" as PR42 #5BA8D8
+  T22 --> I43
+  T22 --> PR37
+  T24 ..> I43 : "並行可"
+  I43 --> T28 : "sync 完了後"
+  I43 --> PR42
+}
+
+' ============================================================
+' P6: 機能追加（独立・並行可）
+' ============================================================
+package "P6  機能追加（独立）" #F4EEFF {
+  rectangle "Issue#44 🔵\n/health version fix\n[Copilot PR 待ち]" as I44 #5BA8D8
+  rectangle "T31 🟡\nスコアリング\nルール管理 UI" as T31 #D4B400
+  rectangle "T32 🟡\n友だちデータ\nCSV エクスポート" as T32 #D4B400
+}
+
+' ============================================================
+' P7: 本番ローンチ（最終ゴール・最下部）
+' ============================================================
+package "🚀  P7  本番ローンチ（最終ゴール）" #FFE8EC {
+  rectangle "T35 ✅\nLP 再デプロイ\n(本番反映済み)" as T35 #6DBF6D
+  rectangle "T36 ✅\nAI 実接続\n(claude-haiku)" as T36 #6DBF6D
+  rectangle "T38 🔴\n法務ページ\nPP・特商法\n← Stripe の前提" as T38 #E85454
+  rectangle "T39 🟠\nLP 改修\n(AI 統合デモ)" as T39 #E89020
+  rectangle "T37 🟠\nStripe 本番設定\nsecrets + 決済テスト" as T37 #E89020
+  rectangle "T40 🟡\nオンボーディング\nウィザード 3step" as T40 #D4B400
+  rectangle "T41 🎯\nPPAL β\n早期アクセスフロー" as T41 #E89020
+  T35 --> T36
+  T35 --> T38
+  T35 --> T40
+  T38 --> T37
+  T38 --> T39
+  T37 --> T41
+  T38 --> T41
+  T39 --> T41
+  T40 ..> T41 : "optional"
+}
+
+' ============================================================
+' フェーズ間の依存（縦方向の時系列フロー）
+' ============================================================
+' P1–P3 → P4
+P2 --> T19
+
+' P1–P3 → P5
+P2 --> T22
+
+' P4 → P7（Stripe 基盤）
+T20 --> T37 : "Stripe 基盤"
+
+' P4 → P7（PPAL リスト）
+T34 ..> T41 : "PPAL リスト"
+
+' P5 → P7（E2E 品質担保）
+T28 --> T41 : "E2E 全パス後"
+
+@enduml

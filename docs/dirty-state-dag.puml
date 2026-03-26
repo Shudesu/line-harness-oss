@@ -1,0 +1,122 @@
+@startuml dirty-state-dag
+' みやびライン — Context & Impact DAG（ダーティー状態分析）
+' 生成日: 2026-03-26
+
+skinparam backgroundColor #F8F9FA
+skinparam defaultFontSize 13
+skinparam defaultFontName "Noto Sans JP"
+skinparam ArrowColor #555555
+skinparam ArrowThickness 2
+skinparam ArrowFontSize 11
+skinparam linetype ortho
+skinparam nodesep 28
+skinparam ranksep 45
+
+skinparam rectangle {
+  RoundCorner 10
+  BorderThickness 2
+  Padding 10
+}
+
+skinparam package {
+  BorderThickness 2.5
+  FontSize 14
+  FontStyle bold
+  Padding 16
+}
+
+legend bottom right
+  |<#6DBF6D> P1: 即コミット（LOW リスク）|
+  |<#5BA8D8> P2: コミット（MEDIUM リスク）|
+  |<#E85454> 削除 / .gitignore 対象 |
+  |<#D4B400> タスク変更済み |
+  |<#E89020> タスク待ち（クリティカル）|
+endlegend
+
+' ============================================================
+' LAYER 1: 変更済みファイル (M)
+' ============================================================
+package "M  変更済みファイル  5 files" #EEF2FF {
+  rectangle "AGENTS.md\nGitNexus 統計更新\n+ガイド拡充" as A1 #6DBF6D
+  rectangle "CLAUDE.md\nGitNexus 統計更新\n+ガイド拡充" as A2 #6DBF6D
+  rectangle "docs/SPEC.md\nみやびライン v2.1.0\n仕様書全面改訂 (+1291行)" as A3 #6DBF6D
+  rectangle "project_memory/\ntasks.json\nT36 done / upstream cancelled\n(+45行)" as A4 #6DBF6D
+  rectangle "prompt-modal.tsx\nAI_URL=localhost:4747\nT36 完了実装" as A5 #5BA8D8
+}
+
+' ============================================================
+' LAYER 2: 未追跡ファイル (新規)
+' ============================================================
+package "??  未追跡ファイル（新規）" #FFF8E1 {
+  rectangle "miyabi-ai-router.ts\nT36 AI 業種別ルーター\n本体実装 (Worker)" as B1 #5BA8D8
+  rectangle "HEARTBEAT.md\nエージェント状態\nプロジェクト情報" as B2 #6DBF6D
+  rectangle ".github/workflows/\npr-preview.yml\ncopilot-instructions.md" as B3 #6DBF6D
+  rectangle "renovate.json\nvercel.json\nインフラ設定" as B4 #6DBF6D
+  rectangle "docs/task-dag.puml\n.claude/skills/\nline-harness-ops/" as B5 #5BA8D8
+}
+
+' ============================================================
+' LAYER 3: コミット計画 (4 commits)
+' ============================================================
+package "COMMIT  コミット計画" #E8F5E9 {
+  rectangle "COMMIT-1\ndocs + tasks\n方針変更記録\nSPEC / HEARTBEAT / tasks" as C1 #6DBF6D
+  rectangle "COMMIT-2\nfeat: T36 完了\nAI 返信ルーター\nprompt-modal + ai-router" as C2 #5BA8D8
+  rectangle "COMMIT-3\nci + infra\nGitHub Actions\nrenovate / vercel" as C3 #6DBF6D
+  rectangle "COMMIT-4\ndocs: DAG +\nスキル追加\ntask-dag.puml / line-harness-ops" as C4 #5BA8D8
+
+  C1 --> C2 : "順次"
+  C2 --> C3
+  C3 --> C4
+}
+
+' ============================================================
+' LAYER 4: クリーンアップ
+' ============================================================
+package "CLEANUP  クリーンアップ対象" #FFEBEE {
+  rectangle "docs/docs/\n誤作成 subdir\n→ rm -rf" as D1 #E85454
+  rectangle "docs/nanobanana_*.jpg\ndocs/*.png (バイナリ)\n→ .gitignore" as D2 #E85454
+  rectangle "project_memory/\n*.pdf  *.html\n→ .gitignore" as D3 #E85454
+}
+
+' ============================================================
+' LAYER 5: タスク依存 & クリティカルパス
+' ============================================================
+package "TASKS  タスク状態 & クリティカルパス" #FFF3E0 {
+  rectangle "T36 done\nAI 返信実装\ncritical_path 追加済" as T36 #6DBF6D
+  rectangle "T23/26/29\nT30/T33\nUpstream PR\ncancelled" as Tc #E85454
+  rectangle "T28\nE2E テスト\ndepends T22\n(T25 → T22 修正)" as T28 #D4B400
+  rectangle "T38 CRITICAL\n法務 PP / 特商法\nStripe 本番の前提" as T38 #E85454
+  rectangle "T37\nStripe 本番設定\n← T38 先行必須" as T37 #E89020
+  rectangle "T41 GOAL\nPPAL beta\n早期アクセスフロー" as T41 #E89020
+
+  T38 -[#E85454,thickness=3]-> T37 : "CP"
+  T37 -[#E85454,thickness=3]-> T41 : "CP"
+  T28 ..> T41 : "E2E 品質担保"
+  T36 ..> T37 : "AI 基盤"
+}
+
+' ============================================================
+' レイヤー間 依存
+' ============================================================
+' 変更済みファイル → コミット
+A1 --> C1
+A2 --> C1
+A3 --> C1
+A4 --> C1
+B2 --> C1
+
+A5 --> C2
+B1 --> C2
+
+B3 --> C3
+B4 --> C3
+
+B5 --> C4
+
+' コミット → タスク状態反映
+C2 ..> T36 : "T36 完了証跡"
+C1 ..> Tc : "cancelled 記録"
+C1 ..> T28 : "depends 修正"
+C1 ..> T37 : "T38 依存追加"
+
+@enduml
