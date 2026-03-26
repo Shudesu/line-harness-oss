@@ -12,6 +12,7 @@ import {
 
 export async function checkAccountHealth(
   db: D1Database,
+  opts?: { adminLineUserId?: string; lineAccessToken?: string },
 ): Promise<void> {
   const accounts = await getLineAccounts(db);
 
@@ -19,7 +20,7 @@ export async function checkAccountHealth(
     if (!account.is_active) continue;
 
     try {
-      await checkSingleAccount(db, account);
+      await checkSingleAccount(db, account, opts);
     } catch (err) {
       console.error(`ヘルスチェックエラー (account ${account.id}):`, err);
     }
@@ -29,6 +30,7 @@ export async function checkAccountHealth(
 async function checkSingleAccount(
   db: D1Database,
   account: { id: string; channel_access_token: string },
+  opts?: { adminLineUserId?: string; lineAccessToken?: string },
 ): Promise<void> {
   const jstMs = Date.now() + 9 * 60 * 60_000;
   const now = new Date(jstMs);
@@ -83,6 +85,29 @@ async function checkSingleAccount(
     checkPeriod,
     riskLevel,
   });
+
+  // 管理者へのLINE通知（danger/warningレベル）
+  if ((riskLevel === 'danger' || riskLevel === 'warning') && opts?.adminLineUserId && opts?.lineAccessToken) {
+    const emoji = riskLevel === 'danger' ? '🚨' : '⚠️';
+    const label = riskLevel === 'danger' ? 'BAN検知（403）' : 'レート制限（429）';
+    const message = `${emoji} ${label}\nアカウント: ${account.id}\nエラーコード: ${errorCode}\n直近1h送信数: ${totalSent}\n確認時刻: ${checkPeriod}`;
+
+    try {
+      await fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${opts.lineAccessToken}`,
+        },
+        body: JSON.stringify({
+          to: opts.adminLineUserId,
+          messages: [{ type: 'text', text: message }],
+        }),
+      });
+    } catch (notifyErr) {
+      console.error('管理者通知の送信に失敗:', notifyErr);
+    }
+  }
 
   if (riskLevel === 'danger') {
     console.error(`⚠️ BAN検知: アカウント ${account.id} で403エラー発生。即座に確認が必要。`);

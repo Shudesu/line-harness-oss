@@ -7,12 +7,16 @@ workers_dev = true
 # Do NOT hardcode secrets here
 
 [vars]
-WORKER_URL = "https://line-crm-worker.line-crm-api.workers.dev"
+WORKER_URL = "https://line-crm-worker.spothoiku-test.workers.dev"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "line-crm"
-database_id = "YOUR_D1_DATABASE_ID"
+database_name = "line-crm-test"
+database_id = "94726520-4bf1-4353-bd01-8ec33de3d830"
+
+[[r2_buckets]]
+binding = "DOCUMENTS"
+bucket_name = "spothoiku-documents"
 
 [triggers]
 crons = ["*/5 * * * *"]

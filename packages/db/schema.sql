@@ -504,3 +504,135 @@ CREATE TABLE IF NOT EXISTS automation_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_automation_logs_automation ON automation_logs (automation_id);
+
+-- ============================================================
+-- Jobs (求人) — スポットほいく求人管理
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id             TEXT PRIMARY KEY,
+  connection_id  TEXT NOT NULL REFERENCES google_calendar_connections (id) ON DELETE CASCADE,
+  nursery_name   TEXT NOT NULL,
+  address        TEXT,
+  station        TEXT,
+  hourly_rate    INTEGER,
+  description    TEXT,
+  requirements   TEXT,
+  capacity       INTEGER NOT NULL DEFAULT 1,
+  work_date      TEXT NOT NULL,
+  start_time     TEXT NOT NULL,
+  end_time       TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'filled', 'cancelled', 'completed')),
+  metadata       TEXT,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_work_date ON jobs (work_date);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);
+CREATE INDEX IF NOT EXISTS idx_jobs_connection ON jobs (connection_id);
+
+-- calendar_bookings に job_id を追加（求人と予約の紐付け）
+-- NOTE: SQLite の ALTER TABLE は ADD COLUMN のみ対応。既存テーブルに列追加
+ALTER TABLE calendar_bookings ADD COLUMN job_id TEXT REFERENCES jobs (id) ON DELETE SET NULL;
+ALTER TABLE calendar_bookings ADD COLUMN reminder_day_before_sent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE calendar_bookings ADD COLUMN reminder_day_of_sent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE calendar_bookings ADD COLUMN review_request_sent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE calendar_bookings ADD COLUMN check_in_at TEXT;
+ALTER TABLE calendar_bookings ADD COLUMN check_out_at TEXT;
+ALTER TABLE calendar_bookings ADD COLUMN actual_hours REAL;
+
+-- jobs に勤怠用トークン追加
+ALTER TABLE jobs ADD COLUMN attendance_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_attendance_token ON jobs (attendance_token);
+
+-- ============================================================
+-- User Profiles — プロフィール（応募時の本人情報）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_profiles (
+  id                 TEXT PRIMARY KEY,
+  friend_id          TEXT UNIQUE NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  real_name          TEXT NOT NULL,
+  real_name_kana     TEXT,
+  phone              TEXT,
+  qualification_type TEXT,
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_profiles_friend ON user_profiles (friend_id);
+
+-- ============================================================
+-- User Documents — 書類アップロード（R2保存）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_documents (
+  id          TEXT PRIMARY KEY,
+  friend_id   TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  doc_type    TEXT NOT NULL CHECK (doc_type IN ('id_card', 'qualification_cert')),
+  r2_key      TEXT NOT NULL DEFAULT '',
+  file_name   TEXT,
+  status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'verified', 'rejected')),
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_documents_friend ON user_documents (friend_id);
+
+-- ============================================================
+-- Favorite Nurseries — お気に入り園
+-- ============================================================
+CREATE TABLE IF NOT EXISTS favorite_nurseries (
+  id           TEXT PRIMARY KEY,
+  friend_id    TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  nursery_name TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE (friend_id, nursery_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_favorite_nurseries_friend ON favorite_nurseries (friend_id);
+
+-- ============================================================
+-- Reviews — 相互評価（園⇔ワーカー）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS reviews (
+  id             TEXT PRIMARY KEY,
+  booking_id     TEXT NOT NULL REFERENCES calendar_bookings (id) ON DELETE CASCADE,
+  job_id         TEXT NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+  reviewer_type  TEXT NOT NULL CHECK (reviewer_type IN ('worker', 'nursery')),
+  reviewer_id    TEXT NOT NULL,
+  target_id      TEXT NOT NULL,
+  overall_rating INTEGER NOT NULL CHECK (overall_rating BETWEEN 1 AND 5),
+  punctuality    INTEGER CHECK (punctuality BETWEEN 1 AND 5),
+  communication  INTEGER CHECK (communication BETWEEN 1 AND 5),
+  skill          INTEGER CHECK (skill BETWEEN 1 AND 5),
+  attitude       INTEGER CHECK (attitude BETWEEN 1 AND 5),
+  comment        TEXT,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_booking ON reviews (booking_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_job ON reviews (job_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews (target_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_reviewer ON reviews (reviewer_id, reviewer_type);
+
+-- friends テーブルに信用スコアカラム追加
+ALTER TABLE friends ADD COLUMN credit_score INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE friends ADD COLUMN total_completed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE friends ADD COLUMN total_cancelled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE friends ADD COLUMN no_show_count INTEGER NOT NULL DEFAULT 0;
+
+-- ============================================================
+-- Cancellation Log — キャンセル履歴
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cancellation_log (
+  id             TEXT PRIMARY KEY,
+  booking_id     TEXT NOT NULL REFERENCES calendar_bookings (id) ON DELETE CASCADE,
+  friend_id      TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
+  job_id         TEXT REFERENCES jobs (id) ON DELETE SET NULL,
+  cancel_type    TEXT NOT NULL CHECK (cancel_type IN ('early', 'late', 'day_of', 'no_show')),
+  hours_before   REAL,
+  score_change   INTEGER NOT NULL,
+  score_after    INTEGER NOT NULL,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cancellation_log_friend ON cancellation_log (friend_id);

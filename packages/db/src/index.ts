@@ -20,6 +20,11 @@ export * from './automations';
 export * from './entry-routes';
 export * from './tracked-links';
 export * from './forms';
+export * from './jobs';
+export * from './profiles';
+export * from './attendance';
+export * from './reviews';
+export * from './credit-score';
 
 /**
  * Thin wrapper around D1Database.

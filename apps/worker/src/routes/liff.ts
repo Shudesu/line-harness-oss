@@ -510,7 +510,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
       }
       return c.json({
         success: true,
-        data: { userId: (friend as unknown as Record<string, unknown>).user_id, alreadyLinked: true },
+        data: { userId: (friend as unknown as Record<string, unknown>).user_id, friendId: friend.id, alreadyLinked: true },
       });
     }
 
@@ -549,10 +549,74 @@ liffRoutes.post('/api/liff/link', async (c) => {
 
     return c.json({
       success: true,
-      data: { userId, alreadyLinked: false },
+      data: { userId, friendId: friend.id, alreadyLinked: false },
     });
   } catch (err) {
     console.error('POST /api/liff/link error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── My Page (LIFF public) ──────────────────────────────────────
+
+// GET /api/liff/mypage/:friendId — 応募履歴・報酬サマリ（LIFF公開）
+liffRoutes.get('/api/liff/mypage/:friendId', async (c) => {
+  try {
+    const friendId = c.req.param('friendId');
+    const db = c.env.DB;
+
+    // 応募一覧（job情報をJOIN）
+    const { results: bookings } = await db
+      .prepare(`
+        SELECT
+          cb.id, cb.status, cb.approval_status, cb.created_at,
+          cb.start_at, cb.end_at, cb.job_id,
+          j.nursery_name, j.work_date, j.start_time, j.end_time,
+          j.hourly_rate, j.address
+        FROM calendar_bookings cb
+        LEFT JOIN jobs j ON cb.job_id = j.id
+        WHERE cb.friend_id = ?
+        ORDER BY j.work_date DESC, cb.created_at DESC
+      `)
+      .bind(friendId)
+      .all();
+
+    const now = new Date().toISOString().slice(0, 10);
+
+    const active: typeof bookings = [];
+    const past: typeof bookings = [];
+    let totalEarnings = 0;
+
+    for (const b of bookings) {
+      const record = b as Record<string, unknown>;
+      const workDate = (record.work_date as string) || '';
+      const approvalStatus = record.approval_status as string;
+      const status = record.status as string;
+
+      if (status === 'cancelled' || approvalStatus === 'denied') {
+        continue; // キャンセル・拒否は除外
+      }
+
+      if (workDate >= now) {
+        active.push(b);
+      } else {
+        past.push(b);
+        // 承認済み＆完了の勤務のみ報酬計算
+        if (approvalStatus === 'approved' && record.hourly_rate && record.start_time && record.end_time) {
+          const [sh, sm] = (record.start_time as string).split(':').map(Number);
+          const [eh, em] = (record.end_time as string).split(':').map(Number);
+          const hours = (eh * 60 + em - sh * 60 - sm) / 60;
+          totalEarnings += hours * (record.hourly_rate as number);
+        }
+      }
+    }
+
+    return c.json({
+      success: true,
+      data: { active, past, totalEarnings, totalBookings: active.length + past.length },
+    });
+  } catch (err) {
+    console.error('GET /api/liff/mypage error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

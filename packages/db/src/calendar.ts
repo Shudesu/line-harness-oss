@@ -25,6 +25,11 @@ export interface CalendarBookingRow {
   metadata: string | null;
   created_at: string;
   updated_at: string;
+  // 承認制フロー（011_lstep_migration）
+  approval_status: string | null;
+  approved_at: string | null;
+  approval_note: string | null;
+  job_id: string | null;
 }
 
 // --- 接続管理 ---
@@ -104,6 +109,32 @@ export async function getBookingsInRange(db: D1Database, connectionId: string, s
   const result = await db
     .prepare(`SELECT * FROM calendar_bookings WHERE connection_id = ? AND start_at >= ? AND end_at <= ? AND status != 'cancelled' ORDER BY start_at ASC`)
     .bind(connectionId, startAt, endAt)
+    .all<CalendarBookingRow>();
+  return result.results;
+}
+
+// --- 承認制フロー ---
+
+export async function approveBooking(db: D1Database, id: string, note?: string): Promise<void> {
+  const now = jstNow();
+  await db
+    .prepare(`UPDATE calendar_bookings SET approval_status = 'approved', approved_at = ?, approval_note = ?, status = 'confirmed', updated_at = ? WHERE id = ?`)
+    .bind(now, note ?? null, now, id)
+    .run();
+}
+
+export async function denyBooking(db: D1Database, id: string, note?: string): Promise<void> {
+  const now = jstNow();
+  await db
+    .prepare(`UPDATE calendar_bookings SET approval_status = 'denied', approved_at = ?, approval_note = ?, status = 'cancelled', updated_at = ? WHERE id = ?`)
+    .bind(now, note ?? null, now, id)
+    .run();
+}
+
+/** 承認待ちの予約一覧を取得 */
+export async function getPendingBookings(db: D1Database): Promise<CalendarBookingRow[]> {
+  const result = await db
+    .prepare(`SELECT * FROM calendar_bookings WHERE approval_status = 'pending' AND status != 'cancelled' ORDER BY start_at ASC`)
     .all<CalendarBookingRow>();
   return result.results;
 }

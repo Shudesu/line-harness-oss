@@ -253,6 +253,32 @@ calendar.put('/api/integrations/google-calendar/bookings/:id/status', async (c) 
     }
 
     await updateCalendarBookingStatus(c.env.DB, id, status);
+
+    // キャンセル時に信用スコアを減算
+    if (status === 'cancelled') {
+      const booking = await getCalendarBookingById(c.env.DB, id);
+      if (booking?.friend_id) {
+        try {
+          const { determineCancelType, processCancellation } = await import('@line-crm/db');
+          // 勤務開始時刻までの残り時間を計算
+          const startTime = new Date(booking.start_at).getTime();
+          const now = Date.now();
+          const hoursBefore = (startTime - now) / (1000 * 60 * 60);
+          const cancelType = determineCancelType(hoursBefore);
+          await processCancellation(
+            c.env.DB,
+            booking.friend_id,
+            id,
+            booking.job_id || null,
+            cancelType,
+            hoursBefore,
+          );
+        } catch (creditErr) {
+          console.error('Credit score update error (status still updated):', creditErr);
+        }
+      }
+    }
+
     return c.json({ success: true, data: null });
   } catch (err) {
     console.error('PUT /api/integrations/google-calendar/bookings/:id/status error:', err);

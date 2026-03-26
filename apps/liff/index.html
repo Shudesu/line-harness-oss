@@ -410,6 +410,527 @@
     .close-btn:active {
       background: #e8faf0;
     }
+
+    /* ========== Jobs Page ========== */
+    .jobs-page {
+      animation: fadeIn 0.3s ease;
+    }
+    .jobs-header {
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .jobs-header h1 {
+      font-size: 22px;
+      color: #333;
+      margin-bottom: 4px;
+    }
+    .jobs-header p {
+      font-size: 13px;
+      color: #999;
+    }
+    .jobs-loading {
+      text-align: center;
+      padding: 40px 0;
+    }
+    .jobs-loading p {
+      font-size: 13px;
+      color: #999;
+      margin-top: 8px;
+    }
+    .jobs-empty {
+      text-align: center;
+      padding: 40px 16px;
+      background: #fff;
+      border-radius: 12px;
+    }
+    .jobs-empty p {
+      font-size: 15px;
+      color: #666;
+    }
+    .jobs-empty-sub {
+      font-size: 13px;
+      color: #999;
+      margin-top: 8px;
+    }
+
+    /* Nursery Cards (園一覧) */
+    .nursery-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .nursery-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    .nursery-card:active {
+      transform: scale(0.98);
+    }
+    .nursery-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: #333;
+      margin-bottom: 8px;
+    }
+    .nursery-rate {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .rate-label {
+      font-size: 12px;
+      color: #f06292;
+      font-weight: 600;
+    }
+    .rate-value {
+      font-size: 20px;
+      font-weight: 800;
+      color: #f06292;
+    }
+    .nursery-station {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .nursery-bottom {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .nursery-slots {
+      font-size: 12px;
+      color: #06C755;
+      font-weight: 600;
+    }
+    .nursery-next {
+      font-size: 12px;
+      color: #999;
+    }
+
+    /* Back button */
+    .back-btn {
+      display: inline-block;
+      border: none;
+      background: none;
+      color: #06C755;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 8px 0;
+      margin-bottom: 12px;
+      font-family: inherit;
+    }
+
+    /* Nursery Detail */
+    .nursery-detail {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px 16px;
+    }
+    .nursery-detail-header {
+      margin-bottom: 16px;
+    }
+    .nursery-detail-header h2 {
+      font-size: 20px;
+      color: #333;
+    }
+    .nursery-detail-station {
+      font-size: 13px;
+      color: #888;
+      margin-top: 4px;
+    }
+
+    /* Section titles */
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f06292;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #f06292;
+    }
+
+    /* Slot Cards (募集日時) */
+    .slot-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .slot-card {
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .slot-card:active {
+      transform: scale(0.98);
+    }
+    .slot-card.selected {
+      border-color: #f06292;
+      background: #fce4ec;
+    }
+    .slot-card.full {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .slot-date-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .slot-date {
+      font-size: 15px;
+      font-weight: 700;
+      color: #333;
+    }
+    .slot-urgent {
+      font-size: 11px;
+      font-weight: 700;
+      color: #e53e3e;
+      background: #fff5f5;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .slot-full-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: #999;
+      background: #f0f0f0;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .slot-last {
+      font-size: 11px;
+      font-weight: 700;
+      color: #e53e3e;
+      background: #fff5f5;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .slot-time {
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 6px;
+    }
+    .slot-pay {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .slot-pay-total {
+      font-size: 13px;
+      color: #333;
+    }
+    .slot-pay-total strong {
+      font-size: 16px;
+      color: #f06292;
+    }
+    .slot-pay-hourly {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .select-hint {
+      text-align: center;
+      font-size: 13px;
+      color: #999;
+      padding: 12px 0;
+    }
+
+    /* Nursery Info Sections */
+    .nursery-info {
+      margin-top: 20px;
+      border-top: 1px solid #f0f0f0;
+      padding-top: 16px;
+    }
+    .info-section {
+      margin-bottom: 16px;
+    }
+    .info-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      background: #999;
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .info-section-body {
+      font-size: 14px;
+      color: #555;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+
+    /* Apply button */
+    .apply-btn {
+      width: 100%;
+      padding: 16px;
+      border: none;
+      border-radius: 10px;
+      background: #f06292;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      font-family: inherit;
+      margin-top: 16px;
+    }
+    .apply-btn:active {
+      opacity: 0.85;
+    }
+    .apply-btn.disabled,
+    .apply-btn:disabled {
+      background: #bbb;
+      cursor: not-allowed;
+    }
+    .confirm-note {
+      font-size: 12px;
+      color: #999;
+      line-height: 1.6;
+      margin-top: 12px;
+      margin-bottom: 16px;
+    }
+    .cancel-link {
+      display: block;
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px;
+      border: none;
+      background: none;
+      color: #999;
+      font-size: 14px;
+      cursor: pointer;
+      text-align: center;
+      font-family: inherit;
+    }
+    .cancel-link:active {
+      color: #666;
+    }
+
+    /* ========== Profile Form ========== */
+    .profile-form-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px 16px;
+      animation: fadeIn 0.3s ease;
+    }
+    .profile-form-card h3 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #333;
+      text-align: center;
+      margin-bottom: 4px;
+    }
+    .profile-form-sub {
+      font-size: 13px;
+      color: #999;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 6px;
+    }
+    .required {
+      font-size: 11px;
+      color: #e53e3e;
+      margin-left: 4px;
+    }
+    .uploaded-badge {
+      font-size: 11px;
+      color: #06C755;
+      background: #e8faf0;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-left: 4px;
+    }
+    .form-hint {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 6px;
+    }
+    .form-input {
+      width: 100%;
+      padding: 12px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 15px;
+      font-family: inherit;
+      color: #333;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus {
+      outline: none;
+      border-color: #f06292;
+    }
+    .form-select {
+      width: 100%;
+      padding: 12px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 15px;
+      font-family: inherit;
+      color: #333;
+      background: #fff;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+    }
+    .form-select:focus {
+      outline: none;
+      border-color: #f06292;
+    }
+    .file-upload-btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border: 1.5px dashed #ccc;
+      border-radius: 8px;
+      text-align: center;
+      cursor: pointer;
+      color: #888;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+    .file-upload-btn:active {
+      border-color: #f06292;
+      color: #f06292;
+    }
+
+    /* ========== Filter Bar ========== */
+    .filter-bar {
+      margin-bottom: 16px;
+    }
+    .filter-chips {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .filter-chip,
+    .sort-chip {
+      padding: 8px 14px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 20px;
+      background: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .filter-chip.active,
+    .filter-chip:active {
+      border-color: #f06292;
+      color: #f06292;
+      background: #fce4ec;
+    }
+    .sort-chip:active {
+      border-color: #f06292;
+      color: #f06292;
+    }
+    .filter-panel {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 8px;
+      animation: fadeIn 0.2s ease;
+    }
+    .filter-row {
+      margin-bottom: 12px;
+    }
+    .filter-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #888;
+      margin-bottom: 6px;
+      display: block;
+    }
+    .filter-select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #333;
+      background: #fff;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+    }
+    .filter-date-range {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .filter-date {
+      flex: 1;
+      padding: 10px 8px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #333;
+    }
+    .filter-date-sep {
+      font-size: 13px;
+      color: #999;
+    }
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .filter-reset-btn {
+      flex: 1;
+      padding: 10px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      color: #888;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .filter-apply-btn {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      background: #f06292;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .filter-result-count {
+      font-size: 12px;
+      color: #999;
+      text-align: right;
+    }
   </style>
 </head>
 <body>
