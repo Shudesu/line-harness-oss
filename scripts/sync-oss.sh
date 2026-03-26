@@ -8,7 +8,7 @@ PRIVATE_DIR="/Users/axpr/claudecode/tools/line-harness"
 echo "=== Syncing to OSS ==="
 
 # Rsync with exclusions
-rsync -av \
+rsync -av --delete \
   --exclude='.git' \
   --exclude='node_modules' \
   --exclude='.next' \

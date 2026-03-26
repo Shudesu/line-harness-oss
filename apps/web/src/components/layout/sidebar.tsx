@@ -226,7 +226,7 @@ export default function Sidebar() {
 
       {/* フッター */}
       <div className="px-6 py-4 border-t border-gray-200 space-y-3">
-        <p className="text-xs text-gray-400">LINE Harness v0.1</p>
+        <p className="text-xs text-gray-400">LINE Harness v{process.env.APP_VERSION || '0.0.0'}</p>
         <button
           onClick={() => {
             localStorage.removeItem('lh_api_key')

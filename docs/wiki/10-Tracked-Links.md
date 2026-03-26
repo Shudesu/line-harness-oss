@@ -10,17 +10,29 @@
 
 L社の「URLクリック計測」に相当する機能。
 
-## アーキテクチャ
+## アーキテクチャ (v0.4.0)
 
 ```
-友だち → /t/:linkId?f=friendId → 302リダイレクト → オリジナルURL
-              ↓ (waitUntil非同期)
-         クリック記録
-         タグ付与
-         シナリオ登録
+[LINEアプリ内]
+友だち → /t/:linkId → User-Agent検知(LINE) → LIFF経由 → ?lu=lineUserId付与
+  → /t/:linkId?lu=xxx → friendId解決 → 302リダイレクト → オリジナルURL
+                          ↓ (waitUntil非同期)
+                     クリック記録(ユーザー特定済み)
+                     タグ付与 / シナリオ登録
+
+[PCブラウザ]
+友だち → /t/:linkId → User-Agent検知(PC) → 302リダイレクト → オリジナルURL
+                          ↓ (waitUntil非同期)
+                     クリック記録(friendId=null)
 ```
 
-リダイレクトは即座に返し、副作用（記録・タグ付与・シナリオ登録）は `waitUntil` で非同期実行される。友だちの体感レイテンシは最小限。
+- **LINEアプリ**: LIFF SDK でユーザーを自動特定、`friendDisplayName` 付きで記録
+- **PCブラウザ**: ログイン不要で直リダイレクト、クリック数のみ記録
+- リダイレクトは即座に返し、副作用は `waitUntil` で非同期実行
+
+### URL自動追跡 (v0.4.0)
+
+`send_message` / `broadcast` / ステップ配信で送信するメッセージ中の URL は自動的にトラッキングリンクに変換される。テキストメッセージの場合は Flex メッセージ（ボタン付き）に自動変換され、長いURLが表示されない。
 
 ## データモデル
 

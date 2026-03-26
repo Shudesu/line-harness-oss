@@ -211,8 +211,9 @@ async function handleEvent(
     // チャットを作成/更新（ユーザーの自発的メッセージのみ unread にする）
     // ボタンタップ等の自動応答キーワードは除外
     const autoKeywords = ['料金', '機能', 'API', 'フォーム', 'ヘルプ', 'UUID', 'UUID連携について教えて', 'UUID連携を確認', '配信時間', '導入支援を希望します', 'アカウント連携を見る', '体験を完了する', 'BAN対策を見る', '連携確認'];
-    const isAutoKeyword = autoKeywords.some(k => incomingText === k || incomingText.startsWith(k));
-    if (!isAutoKeyword) {
+    const isAutoKeyword = autoKeywords.some(k => incomingText === k);
+    const isTimeCommand = /(?:配信時間|配信|届けて|通知)[はを]?\s*\d{1,2}\s*時/.test(incomingText);
+    if (!isAutoKeyword && !isTimeCommand) {
       await upsertChatOnMessage(db, friend.id);
     }
 

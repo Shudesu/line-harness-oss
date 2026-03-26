@@ -192,7 +192,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     }
 
     const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
-    await processBroadcastSend(c.env.DB, lineClient, id);
+    await processBroadcastSend(c.env.DB, lineClient, id, c.env.WORKER_URL);
 
     const result = await getBroadcastById(c.env.DB, id);
     return c.json({ success: true, data: result ? serializeBroadcast(result) : null });

@@ -6,6 +6,7 @@ import {
   deleteTrackedLink,
   recordLinkClick,
   getLinkClicks,
+  getFriendByLineUserId,
 } from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { TrackedLink } from '@line-crm/db';
@@ -14,11 +15,12 @@ import type { Env } from '../index.js';
 const trackedLinks = new Hono<Env>();
 
 function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
+  const trackingUrl = `${baseUrl}/t/${row.id}`;
   return {
     id: row.id,
     name: row.name,
     originalUrl: row.original_url,
-    trackingUrl: `${baseUrl}/t/${row.id}`,
+    trackingUrl,
     tagId: row.tag_id,
     scenarioId: row.scenario_id,
     isActive: Boolean(row.is_active),
@@ -121,13 +123,31 @@ trackedLinks.delete('/api/tracked-links/:id', async (c) => {
 // GET /t/:linkId — click tracking redirect (no auth, fast redirect)
 trackedLinks.get('/t/:linkId', async (c) => {
   const linkId = c.req.param('linkId');
-  const friendId = c.req.query('f') ?? null;
+  const lineUserId = c.req.query('lu') ?? null;
+  let friendId = c.req.query('f') ?? null;
 
   // Look up the link first
   const link = await getTrackedLinkById(c.env.DB, linkId);
 
   if (!link || !link.is_active) {
     return c.json({ success: false, error: 'Link not found' }, 404);
+  }
+
+  // If no user ID yet, check if this is LINE's in-app browser → redirect to LIFF for identification
+  const ua = c.req.header('user-agent') || '';
+  const isLineApp = /\bLine\b/i.test(ua);
+  if (!lineUserId && !friendId && isLineApp && c.env.LIFF_URL) {
+    const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
+    const liffRedirect = `${c.env.LIFF_URL}?redirect=${encodeURIComponent(directUrl)}`;
+    return c.redirect(liffRedirect, 302);
+  }
+
+  // Resolve friendId from LINE user ID if provided
+  if (!friendId && lineUserId) {
+    const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
+    if (friend) {
+      friendId = friend.id;
+    }
   }
 
   // Redirect immediately, run side-effects async

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { Tag } from '@line-crm/shared'
 import { api, type ApiBroadcast } from '@/lib/api'
+import FlexPreviewComponent from '@/components/flex-preview'
 
 interface BroadcastFormProps {
   tags: Tag[]
@@ -180,6 +181,14 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
           />
           {form.messageType === 'image' && (
             <p className="text-xs text-gray-400 mt-1">上のURLフォームか、直接JSONを編集できます</p>
+          )}
+          {form.messageType === 'flex' && form.messageContent && (() => {
+            try { JSON.parse(form.messageContent); return true } catch { return false }
+          })() && (
+            <div className="mt-3">
+              <p className="text-xs font-medium text-gray-500 mb-2">プレビュー</p>
+              <FlexPreviewComponent content={form.messageContent} maxWidth={300} />
+            </div>
           )}
         </div>
 

@@ -233,7 +233,13 @@ async function linkAndAddFlow() {
         linkPromise,
         new Promise((r) => setTimeout(r, 500)),
       ]);
-      window.location.href = redirectUrl;
+      // Append LINE userId to tracking links so clicks are attributed
+      if (redirectUrl.includes('/t/')) {
+        const sep = redirectUrl.includes('?') ? '&' : '?';
+        window.location.href = `${redirectUrl}${sep}lu=${encodeURIComponent(profile.userId)}`;
+      } else {
+        window.location.href = redirectUrl;
+      }
       return;
     }
 

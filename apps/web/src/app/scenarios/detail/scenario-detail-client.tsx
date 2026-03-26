@@ -6,6 +6,7 @@ import Link from 'next/link'
 import type { Scenario, ScenarioStep, ScenarioTriggerType, MessageType } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
+import FlexPreviewComponent from '@/components/flex-preview'
 
 type ScenarioWithSteps = Scenario & { steps: ScenarioStep[] }
 
@@ -51,41 +52,7 @@ const emptyStepForm: StepFormState = {
 }
 
 function FlexPreview({ content }: { content: string }) {
-  try {
-    const parsed = JSON.parse(content)
-    // Extract visible text from Flex JSON
-    const texts: string[] = []
-    const extractTexts = (obj: Record<string, unknown>) => {
-      if (obj.type === 'text' && obj.text) texts.push(obj.text as string)
-      if (obj.type === 'button' && obj.action && (obj.action as Record<string, unknown>).label) {
-        texts.push(`[${(obj.action as Record<string, unknown>).label}]`)
-      }
-      for (const val of Object.values(obj)) {
-        if (Array.isArray(val)) val.forEach((v) => { if (v && typeof v === 'object') extractTexts(v as Record<string, unknown>) })
-        else if (val && typeof val === 'object') extractTexts(val as Record<string, unknown>)
-      }
-    }
-    extractTexts(parsed)
-
-    return (
-      <div>
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs font-medium text-orange-600 bg-orange-50 px-2 py-0.5 rounded">Flex Message</span>
-          <span className="text-xs text-gray-400">{content.length.toLocaleString()} bytes</span>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-lg p-3 space-y-1">
-          {texts.slice(0, 8).map((t, i) => (
-            <p key={i} className={`text-sm ${i === 0 ? 'font-medium text-gray-900' : 'text-gray-600'}`}>
-              {t}
-            </p>
-          ))}
-          {texts.length > 8 && <p className="text-xs text-gray-400">...他 {texts.length - 8} 要素</p>}
-        </div>
-      </div>
-    )
-  } catch {
-    return <p className="text-xs text-red-500">Flex JSON パースエラー</p>
-  }
+  return <FlexPreviewComponent content={content} maxWidth={300} />
 }
 
 function ImagePreview({ content }: { content: string }) {
