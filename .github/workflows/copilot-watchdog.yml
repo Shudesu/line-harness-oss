@@ -3,16 +3,14 @@ name: Copilot CI Watchdog
 # app/copilot-swe-agent が作成した PR の CI/AI-review が
 # "action_required" (0 jobs) でブロックされる構造的問題を自動修復する。
 #
-# 根本原因:
-#   GitHub が app/copilot-swe-agent を "outside collaborator" と判定し、
-#   pull_request トリガーのワークフローを実行前にブロックする。
-#   → action_required (0 jobs) となり CI/AI-review が一切動かない。
-#
-# 対策:
-#   15分ごとに copilot/** ブランチの action_required ランを自動 rerun する。
-#   rerun は GITHUB_TOKEN で実行できるため人手不要。
+# 対策（イベント駆動 + schedule フォールバック）:
+#   1. workflow_run: CI/AI Code Review が action_required で完了した瞬間に即 rerun
+#   2. schedule(15分): 取りこぼし防止フォールバック
 
 on:
+  workflow_run:
+    workflows: ["CI", "AI Code Review"]
+    types: [completed]
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
@@ -33,28 +31,36 @@ jobs:
           REPO="${{ github.repository }}"
           RERUN_COUNT=0
 
+          # イベント駆動: トリガーになったランが action_required なら即 rerun
+          TRIGGER_RUN_ID="${{ github.event.workflow_run.id }}"
+          TRIGGER_CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          TRIGGER_BRANCH="${{ github.event.workflow_run.head_branch }}"
+
+          if [ -n "$TRIGGER_RUN_ID" ] && [ "$TRIGGER_CONCLUSION" = "action_required" ]; then
+            if echo "$TRIGGER_BRANCH" | grep -q "^copilot/"; then
+              echo "Event-driven: rerunning run #$TRIGGER_RUN_ID (branch: $TRIGGER_BRANCH)"
+              gh run rerun "$TRIGGER_RUN_ID" --repo "$REPO" 2>&1 && RERUN_COUNT=$((RERUN_COUNT + 1)) || echo "  -> Skipped"
+              echo "Total reruns triggered: $RERUN_COUNT"
+              exit 0
+            fi
+          fi
+
+          # schedule/dispatch: 全ブランチをスキャン
           for WF in "CI" "AI Code Review"; do
             echo "=== Checking: $WF ==="
-
             IDS=$(gh run list --repo "$REPO" --workflow "$WF" --limit 20 \
               --json databaseId,conclusion,headBranch,createdAt \
               --jq '[group_by(.headBranch)[] | max_by(.createdAt) | select(.conclusion == "action_required" and (.headBranch | startswith("copilot/")))] | .[].databaseId' \
               2>/dev/null || true)
-
             if [ -z "$IDS" ]; then
               echo "  No blocked runs for \"$WF\""
               continue
             fi
-
             while IFS= read -r RUN_ID; do
               [ -z "$RUN_ID" ] && continue
               echo "  Rerunning run #$RUN_ID ($WF)..."
-              gh run rerun "$RUN_ID" --repo "$REPO" 2>&1 && RERUN_COUNT=$((RERUN_COUNT + 1)) || echo "  -> Skipped (already running or not rerunnable)"
+              gh run rerun "$RUN_ID" --repo "$REPO" 2>&1 && RERUN_COUNT=$((RERUN_COUNT + 1)) || echo "  -> Skipped"
             done <<< "$IDS"
           done
 
-          echo ""
           echo "Total reruns triggered: $RERUN_COUNT"
-          if [ "$RERUN_COUNT" -eq 0 ]; then
-            echo "All Copilot workflows are healthy."
-          fi
