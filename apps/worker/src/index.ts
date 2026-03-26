@@ -8,6 +8,7 @@ import { processReminderDeliveries } from './services/reminder-delivery.js';
 import { checkAccountHealth } from './services/ban-monitor.js';
 import { authMiddleware } from './middleware/auth.js';
 import { webhook } from './routes/webhook.js';
+import { fugueBridge } from './routes/fugue-bridge.js';
 import { friends } from './routes/friends.js';
 import { tags } from './routes/tags.js';
 import { scenarios } from './routes/scenarios.js';
@@ -57,6 +58,7 @@ app.use('*', authMiddleware);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
+app.route('/', fugueBridge);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
