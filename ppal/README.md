@@ -27,7 +27,7 @@ LINE ─────(webhook)────▶ Cloudflare Worker ──▶ LINE Me
 ## ステップ1: ワンコマンドセットアップ
 
 ```bash
-cd scripts
+cd ppal/scripts
 bash ppal-setup.sh
 ```
 
@@ -87,7 +87,7 @@ npx wrangler deploy
 L-stepの20タグをLINE Harnessに作成します。
 
 ```bash
-cd scripts
+cd ppal/scripts
 WORKER_URL=https://miyabi-line-crm.YOUR_ACCOUNT.workers.dev \
 API_KEY=your-api-key \
 npx tsx migrate-ppal-tags.ts

@@ -2,9 +2,9 @@
 # PPAL リッチメニュー登録スクリプト
 set -euo pipefail
 
-API_KEY="miyabi-ppal-5e5be18c9f2d90aba4a5203b184171da"
-WORKER_URL="https://miyabi-line-crm.supernovasyun.workers.dev"
-IMAGE_DIR="$HOME/dev/products/PPAL/L-Step-Setup/assets/generated-images/richmenu"
+API_KEY="${LINE_CRM_API_KEY:?LINE_CRM_API_KEY environment variable is required}"
+WORKER_URL="${WORKER_URL:-https://miyabi-line-crm.supernovasyun.workers.dev}"
+IMAGE_DIR="${PPAL_IMAGE_DIR:-$HOME/dev/products/PPAL/L-Step-Setup/assets/generated-images/richmenu}"
 
 TEACHABLE_COURSE="https://shuhayas-s-school.teachable.com/courses/enrolled/2925864"
 DISCORD_INVITE="https://discord.gg/ppal-lab"

@@ -10,9 +10,9 @@
 # =============================================================================
 set -euo pipefail
 
-WORKER_DIR="$(cd "$(dirname "$0")/../apps/worker" && pwd)"
-MIGRATIONS_DIR="$(cd "$(dirname "$0")/../packages/db/migrations" && pwd)"
-SCHEMA_FILE="$(cd "$(dirname "$0")/../packages/db" && pwd)/schema.sql"
+WORKER_DIR="$(cd "$(dirname "$0")/../../apps/worker" && pwd)"
+MIGRATIONS_DIR="$(cd "$(dirname "$0")/../../packages/db/migrations" && pwd)"
+SCHEMA_FILE="$(cd "$(dirname "$0")/../../packages/db" && pwd)/schema.sql"
 DB_NAME="miyabi-line-crm"
 
 echo ""
@@ -114,11 +114,11 @@ echo "  1. LINE Developers Console で Webhook URL を設定:"
 echo "     ${WORKER_URL:-https://your-worker.workers.dev}/webhook"
 echo ""
 echo "  2. PPAL タグを移行:"
-echo "     cd scripts && npx tsx migrate-ppal-tags.ts"
+echo "     cd ppal/scripts && npx tsx migrate-ppal-tags.ts"
 echo ""
 echo "  3. PPAL シナリオを移行:"
-echo "     cd scripts && npx tsx migrate-ppal-scenarios.ts"
+echo "     cd ppal/scripts && npx tsx migrate-ppal-scenarios.ts"
 echo ""
 echo "  4. Teachable Webhook 自動化を設定:"
-echo "     cd scripts && npx tsx ppal-automation-rules.ts"
+echo "     cd ppal/scripts && npx tsx ppal-automation-rules.ts"
 echo ""

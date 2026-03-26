@@ -216,7 +216,7 @@ async function createScenario(scenario: Scenario): Promise<string> {
 
     if (!stepRes.success) {
       console.warn(
-        `    WARNING: ステップ${step.stepNumber}の追加失敗: ${stepRes.error}`,
+        `    WARNING: ステップ${step.stepOrder}の追加失敗: ${stepRes.error}`,
       );
     } else {
       const hours = Math.floor(step.delayMinutes / 60);

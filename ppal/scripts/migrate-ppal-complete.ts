@@ -10,10 +10,13 @@
  *   npx tsx migrate-ppal-complete.ts
  */
 
-const WORKER_URL =
-  process.env.WORKER_URL ??
-  'https://miyabi-line-crm.supernovasyun.workers.dev';
-const API_KEY = process.env.API_KEY ?? 'my-super-secret-key-123';
+const WORKER_URL = process.env.WORKER_URL ?? 'http://localhost:8787';
+const API_KEY = process.env.API_KEY ?? '';
+
+if (!API_KEY) {
+  console.error('ERROR: API_KEY 環境変数を設定してください');
+  process.exit(1);
+}
 
 // ============================================================
 // 残り22タグ (all-tags-master.csv 行22-43)

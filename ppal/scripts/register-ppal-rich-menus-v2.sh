@@ -8,7 +8,7 @@
 set -e
 
 BASE_URL="${WORKER_URL:-https://miyabi-line-crm.supernovasyun.workers.dev}"
-API_KEY="${LINE_CRM_API_KEY:-miyabi-ppal-5e5be18c9f2d90aba4a5203b184171da}"
+API_KEY="${LINE_CRM_API_KEY:?LINE_CRM_API_KEY environment variable is required}"
 IMAGE_DIR="${PPAL_IMAGE_DIR:-$(cd "$(dirname "$0")/../../products/PPAL/L-Step-Setup/assets/generated-images/richmenu" 2>/dev/null && pwd || echo "/Users/shunsukehayashi/dev/products/PPAL/L-Step-Setup/assets/generated-images/richmenu")}"
 
 AUTH_HEADER="Authorization: Bearer ${API_KEY}"
