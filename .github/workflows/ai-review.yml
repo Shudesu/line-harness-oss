@@ -12,6 +12,8 @@ permissions:
 jobs:
   ai-review:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -24,211 +26,86 @@ jobs:
           ref: ${{ github.event.pull_request.base.ref }}
           path: base-branch
 
-      - name: Load DESIGN_CONSTRAINTS.md
+      - name: Load DESIGN_CONSTRAINTS
         id: constraints
         run: |
           if [ -f "base-branch/DESIGN_CONSTRAINTS.md" ]; then
-            echo "constraints_exist=true" >> $GITHUB_OUTPUT
-            echo "CONSTRAINTS<<EOF" >> $GITHUB_ENV
-            cat base-branch/DESIGN_CONSTRAINTS.md >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
+            {
+              echo "CONSTRAINTS<<CONSTRAINTS_EOF"
+              cat base-branch/DESIGN_CONSTRAINTS.md
+              echo "CONSTRAINTS_EOF"
+            } >> "$GITHUB_ENV"
           else
-            echo "constraints_exist=false" >> $GITHUB_OUTPUT
-            echo "CONSTRAINTS=No design constraints defined for this repository." >> $GITHUB_ENV
+            echo "CONSTRAINTS=No design constraints defined." >> "$GITHUB_ENV"
           fi
 
-      # W1: Generate review prompt (if script exists)
-      - name: Generate dynamic review prompt
-        id: review_prompt
-        run: |
-          if [ -f "scripts/generate-review-prompt.sh" ]; then
-            REVIEW_PROMPT=$(bash scripts/generate-review-prompt.sh)
-            echo "REVIEW_PROMPT<<EOF" >> $GITHUB_ENV
-            echo "$REVIEW_PROMPT" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
-            echo "has_prompt=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_prompt=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Detect doc-only PR
-        id: doc_check
-        run: |
-          FILES=$(gh pr view ${{ github.event.pull_request.number }} --json files -q '.files[].path')
-          DOC_ONLY=true
-          
-          while IFS= read -r file; do
-            if [[ ! "$file" =~ \.(md|txt|rst|adoc)$ ]] && [[ ! "$file" =~ ^docs/ ]]; then
-              DOC_ONLY=false
-              break
-            fi
-          done <<< "$FILES"
-          
-          echo "doc_only=$DOC_ONLY" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Detect repository type
-        id: repo_type
-        run: |
-          if [ -f "package.json" ] || [ -f "tsconfig.json" ] || [ -f "go.mod" ] || [ -f "Cargo.toml" ]; then
-            echo "repo_type=code" >> $GITHUB_OUTPUT
-          else
-            echo "repo_type=knowledge" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Reject doc-only PR in code repo
-        if: steps.doc_check.outputs.doc_only == 'true' && steps.repo_type.outputs.repo_type == 'code'
-        run: |
-          gh pr review ${{ github.event.pull_request.number }} --request-changes --body "**CRITICAL: Documentation-only PR in code repository**
-
-This PR only modifies documentation files but is submitted to a code repository. Please include corresponding code changes or submit to a documentation repository instead."
-          gh pr edit ${{ github.event.pull_request.number }} --add-label "needs-human"
-          exit 1
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      # C2: Token fallback (try 1→2→3 on failure)
-      - name: Select Claude Code token (fallback)
-        id: token
-        run: |
-          echo "token=${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_1 }}" >> $GITHUB_OUTPUT
-          echo "fallback_token_2=${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}" >> $GITHUB_OUTPUT
-          echo "fallback_token_3=${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_3 }}" >> $GITHUB_OUTPUT
-
-      # C1: Install Claude Code CLI
       - name: Install Claude Code CLI
-        run: |
-          npm install -g @anthropic-ai/claude-code@latest
+        run: npm install -g @anthropic-ai/claude-code@latest
 
-      # W1: Get PR diff and run reviewer assignment (if script exists)
       - name: Get PR diff
-        id: diff
         run: |
           gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr.diff
-          echo "diff_path=/tmp/pr.diff" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ github.token }}
 
-      - name: Run reviewer assignment agent
-        id: reviewer_assign
-        run: |
-          if [ -f "scripts/reviewer-assignment-agent.sh" ]; then
-            REVIEWER_ASSIGNMENT=$(bash scripts/reviewer-assignment-agent.sh /tmp/pr.diff)
-            echo "REVIEWER_ASSIGNMENT<<EOF" >> $GITHUB_ENV
-            echo "$REVIEWER_ASSIGNMENT" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
-            echo "has_assignment=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_assignment=false" >> $GITHUB_OUTPUT
-          fi
-
-      # C1, C3: Run Claude via stdin, with proper CLI syntax
-      - name: Run AI Review with Claude Code
+      - name: Run AI Review
         id: review
         run: |
-          # Build system prompt
-          SYSTEM_PROMPT="You are a senior code reviewer. Review this PR against the following design constraints:
+          cat > /tmp/review_prompt.txt << 'PROMPT_EOF'
+          You are a senior code reviewer. Review this PR diff against design constraints.
 
-$CONSTRAINTS"
+          Review Guidelines:
+          - Start CRITICAL issues with "CRITICAL:"
+          - Start warnings with "WARNING:"
+          - CRITICAL: security vulnerabilities, auth issues, data loss, breaking changes
+          - WARNING: code quality, style, minor bugs
+          PROMPT_EOF
 
-          # Add dynamic review prompt if available (W1)
-          if [ "${{ steps.review_prompt.outputs.has_prompt }}" == "true" ]; then
-            SYSTEM_PROMPT="$SYSTEM_PROMPT
+          echo "Design Constraints: ${CONSTRAINTS}" >> /tmp/review_prompt.txt
+          echo "" >> /tmp/review_prompt.txt
+          echo "PR Title: ${{ github.event.pull_request.title }}" >> /tmp/review_prompt.txt
+          echo "PR Author: ${{ github.event.pull_request.user.login }}" >> /tmp/review_prompt.txt
+          echo "" >> /tmp/review_prompt.txt
+          echo "--- DIFF ---" >> /tmp/review_prompt.txt
+          cat /tmp/pr.diff >> /tmp/review_prompt.txt
 
-$REVIEW_PROMPT"
+          REVIEW=""
+          for TOKEN_VAR in CLAUDE_CODE_OAUTH_TOKEN_1 CLAUDE_CODE_OAUTH_TOKEN_2 CLAUDE_CODE_OAUTH_TOKEN_3; do
+            TOK="${!TOKEN_VAR}"
+            if [ -z "$TOK" ]; then
+              continue
+            fi
+            REVIEW=$(ANTHROPIC_API_KEY="" CLAUDE_CODE_OAUTH_TOKEN="$TOK" CLAUDE_NO_ANALYTICS=1 \
+              claude --print --model claude-opus-4-6 --no-session-persistence \
+              < /tmp/review_prompt.txt 2>/tmp/claude_err.txt) && break
+            echo "Token $TOKEN_VAR failed, trying next..."
+          done
+
+          if [ -z "$REVIEW" ]; then
+            REVIEW="AI review unavailable: all tokens failed or not configured."
           fi
 
-          # Build user prompt
-          USER_PROMPT="**PR Details:**
-- Title: ${{ github.event.pull_request.title }}
-- Author: ${{ github.event.pull_request.user.login }}
+          {
+            echo "REVIEW_BODY<<REVIEW_EOF"
+            echo "$REVIEW"
+            echo "REVIEW_EOF"
+          } >> "$GITHUB_ENV"
 
-**Diff:**
-\`\`\`diff
-$(cat /tmp/pr.diff)
-\`\`\`"
-
-          # Add reviewer assignment if available (W1)
-          if [ "${{ steps.reviewer_assign.outputs.has_assignment }}" == "true" ]; then
-            USER_PROMPT="$USER_PROMPT
-
-**Reviewer Assignment:**
-$REVIEWER_ASSIGNMENT"
-          fi
-
-          USER_PROMPT="$USER_PROMPT
-
-**Review Guidelines:**
-1. Check compliance with DESIGN_CONSTRAINTS.md
-2. Identify security issues, bugs, performance problems
-3. Rate each issue as CRITICAL or WARNING
-4. CRITICAL: security vulnerabilities, auth issues, data loss, breaking changes
-5. WARNING: code quality, style, minor bugs, improvement suggestions
-
-**Output Format:**
-- Start CRITICAL issues with \"CRITICAL:\"
-- Start warnings with \"WARNING:\"
-- Be specific and actionable
-
-Provide your review:"
-
-          # Try token 1
-          REVIEW_BODY=$(echo "$USER_PROMPT" | claude --print --model claude-opus-4-6 --system-prompt "$SYSTEM_PROMPT" --no-session-persistence 2>&1)
-          EXIT_CODE=$?
-
-          # Fallback to token 2
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Token 1 failed, trying token 2..."
-            export CLAUDE_CODE_OAUTH_TOKEN="${{ steps.token.outputs.fallback_token_2 }}"
-            REVIEW_BODY=$(echo "$USER_PROMPT" | claude --print --model claude-opus-4-6 --system-prompt "$SYSTEM_PROMPT" --no-session-persistence 2>&1)
-            EXIT_CODE=$?
-          fi
-
-          # Fallback to token 3
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Token 2 failed, trying token 3..."
-            export CLAUDE_CODE_OAUTH_TOKEN="${{ steps.token.outputs.fallback_token_3 }}"
-            REVIEW_BODY=$(echo "$USER_PROMPT" | claude --print --model claude-opus-4-6 --system-prompt "$SYSTEM_PROMPT" --no-session-persistence 2>&1)
-            EXIT_CODE=$?
-          fi
-
-          # All tokens failed
-          if [ $EXIT_CODE -ne 0 ]; then
-            REVIEW_BODY="AI review failed: all tokens exhausted or invalid"
-          fi
-          
-          echo "REVIEW_BODY<<EOF" >> $GITHUB_ENV
-          echo "$REVIEW_BODY" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-          
-          if echo "$REVIEW_BODY" | grep -q "CRITICAL:"; then
-            echo "has_critical=true" >> $GITHUB_OUTPUT
+          if echo "$REVIEW" | grep -q "^CRITICAL:"; then
+            echo "has_critical=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_critical=false" >> $GITHUB_OUTPUT
+            echo "has_critical=false" >> "$GITHUB_OUTPUT"
           fi
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ steps.token.outputs.token }}
-          GH_TOKEN: ${{ github.token }}
+          CLAUDE_CODE_OAUTH_TOKEN_1: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_1 }}
+          CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+          CLAUDE_CODE_OAUTH_TOKEN_3: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_3 }}
 
-      - name: Post CRITICAL review
+      - name: Post review (request changes - CRITICAL found)
         if: steps.review.outputs.has_critical == 'true'
         run: |
           gh pr review ${{ github.event.pull_request.number }} --request-changes --body "$REVIEW_BODY"
           gh pr edit ${{ github.event.pull_request.number }} --add-label "needs-human"
-        env:
-          GH_TOKEN: ${{ github.token }}
 
-      - name: Post WARNING-only review
+      - name: Post review (approve - no CRITICAL)
         if: steps.review.outputs.has_critical == 'false'
         run: |
           gh pr review ${{ github.event.pull_request.number }} --approve --body "$REVIEW_BODY"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Comment on doc-only PR in knowledge repo
-        if: steps.doc_check.outputs.doc_only == 'true' && steps.repo_type.outputs.repo_type == 'knowledge'
-        run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "✅ Documentation-only PR in knowledge repository. Auto-approved."
-        env:
-          GH_TOKEN: ${{ github.token }}
