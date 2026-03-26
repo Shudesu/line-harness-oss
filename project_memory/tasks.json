@@ -370,20 +370,19 @@
       ],
       "estimate_hours": 3,
       "acceptance": "pnpm --filter worker typecheck がエラーなし、CI green",
-      "status": "in_progress"
+      "status": "cancelled",
+      "cancelled_reason": "Upstream貢献方針変更: みやびライン独自路線に完全移行 (2026-03-26)"
     },
     {
       "id": "T24",
       "phase": "P5",
       "priority": "medium",
       "subject": "PPAL固有コードをppal/ディレクトリに分離",
-      "description": "PPALに特化したシナリオ・タグ・設定ファイルをppal/配下に整理。upstreamへのPR提出時にPPAL固有コードが混入しないよう分離する。",
+      "description": "PPALに特化したシナリオ・タグ・設定ファイルをppal/配下に整理。みやびライン独自路線のため汎用コードとPPAL固有コードを明確に分離する（upstream連携不要）。",
       "file": "ppal/ (新規ディレクトリ)",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": [
-        "T23"
-      ],
+      "depends_on": [],
       "estimate_hours": 2,
       "acceptance": "ppal/配下にPPAL固有ファイルが集約され、汎用コードと分離されている",
       "status": "pending"
@@ -432,19 +431,20 @@
       ],
       "estimate_hours": 8,
       "acceptance": "PRがShudesuリポジトリに作成され、AIプロバイダーをenv varで切替可能",
-      "status": "pending"
+      "status": "cancelled",
+      "cancelled_reason": "Upstream貢献方針変更: みやびライン独自路線に完全移行 (2026-03-26)"
     },
     {
       "id": "T28",
       "phase": "P6",
       "priority": "medium",
-      "subject": "Upstream PR-3: E2Eテストスイート",
+      "subject": "E2Eテストスイート整備（内部品質向上）",
       "description": "apps/worker/src/配下の主要エンドポイントにVitest E2Eテストを追加。webhook処理・event-bus・automationのテストカバレッジを60%以上に。",
       "file": "apps/worker/src/**/*.test.ts",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
       "depends_on": [
-        "T25"
+        "T22"
       ],
       "estimate_hours": 8,
       "acceptance": "npm test でテストが全パス、カバレッジ60%以上",
@@ -464,7 +464,8 @@
       ],
       "estimate_hours": 2,
       "acceptance": "PRがShudesuリポジトリに作成",
-      "status": "pending"
+      "status": "cancelled",
+      "cancelled_reason": "Upstream貢献方針変更: みやびライン独自路線に完全移行 (2026-03-26)"
     },
     {
       "id": "T30",
@@ -480,7 +481,8 @@
       ],
       "estimate_hours": 1,
       "acceptance": "PR #46 がマージ or クローズされる",
-      "status": "pending"
+      "status": "cancelled",
+      "cancelled_reason": "Upstream貢献方針変更: みやびライン独自路線に完全移行 (2026-03-26)"
     },
     {
       "id": "T31",
@@ -491,9 +493,7 @@
       "file": "apps/web/src/app/(dashboard)/scoring/",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": [
-        "T23"
-      ],
+      "depends_on": [],
       "estimate_hours": 6,
       "acceptance": "管理画面からスコアリングルールの追加・編集・削除が可能",
       "status": "pending"
@@ -507,9 +507,7 @@
       "file": "apps/worker/src/routes/friends.ts",
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
-      "depends_on": [
-        "T23"
-      ],
+      "depends_on": [],
       "estimate_hours": 3,
       "acceptance": "管理画面からCSVをダウンロードでき、Excelで開ける形式",
       "status": "pending"
@@ -528,7 +526,8 @@
       ],
       "estimate_hours": 3,
       "acceptance": "PRがShudesuリポジトリに作成",
-      "status": "pending"
+      "status": "cancelled",
+      "cancelled_reason": "Upstream貢献方針変更: みやびライン独自路線に完全移行 (2026-03-26)"
     },
     {
       "id": "T34",
@@ -589,14 +588,16 @@
       ],
       "estimate_hours": 8,
       "acceptance": "ダッシュボードの「CCに依頼」ボタンを押すとClaude APIが実際に呼ばれ、CRM分析結果がモーダル内に表示される",
-      "status": "pending"
+      "status": "done",
+      "completed_at": "2026-03-25",
+      "note": "ローカルAIサーバー(tools/local-ai-server/server.mjs)をClaude Code Agent SDK経由で実装。prompt-modal.tsxをAI_URL=localhost:4747向けに改修済み。"
     },
     {
       "id": "T37",
       "phase": "P7",
       "priority": "high",
       "subject": "Stripe本番設定 — wrangler secrets + テスト決済通過",
-      "description": "T20でStripeコードは実装済みだが、wrangler secretsが未設定のため実際に課金できない。Stripeダッシュボードで商品・価格作成→ secrets設定→ テスト決済1件通過まで完了させる。",
+      "description": "T20でStripeコードは実装済みだが、wrangler secretsが未設定のため実際に課金できない。Stripeダッシュボードで商品・価格作成→ secrets設定→ テスト決済1件通過まで完了させる。※T38(法務ページ)が先行必須（Stripe本番申請にプライバシーポリシーURL必要）",
       "steps": [
         "Stripe Dashboard: Products → Pro(2980円/月) / Business(9800円/月) 作成",
         "wrangler secret put STRIPE_PRO_PRICE_ID",
@@ -610,7 +611,8 @@
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
       "depends_on": [
-        "T35"
+        "T35",
+        "T38"
       ],
       "estimate_hours": 3,
       "acceptance": "Stripeテストモードで Pro プラン購入→D1のsubscriptionsテーブルにレコード作成まで確認",
@@ -737,6 +739,7 @@
     "T20",
     "T22",
     "T25",
-    "T35"
+    "T35",
+    "T36"
   ]
 }

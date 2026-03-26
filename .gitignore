@@ -13,3 +13,9 @@ apps/web/out/
 .env.local
 apps/worker/.dev.vars
 .gitnexus/
+
+# Generated/binary files (みやびライン)
+docs/nanobanana_*.jpg
+project_memory/*.pdf
+project_memory/*.html
+project_memory/gen_*.py
