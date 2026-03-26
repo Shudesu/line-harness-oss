@@ -297,8 +297,18 @@ jobs.post('/api/jobs/:id/book', async (c) => {
       .bind(jobId, 'pending', booking.id)
       .run();
 
+    // 楽観的ロック: INSERT後に再カウントし、capacity超過なら予約を取り消す
+    const recount = await getJobBookingCount(c.env.DB, jobId);
+    if (recount > job.capacity) {
+      await c.env.DB
+        .prepare("UPDATE calendar_bookings SET status = 'cancelled' WHERE id = ?")
+        .bind(booking.id)
+        .run();
+      return c.json({ success: false, error: 'No remaining slots' }, 400);
+    }
+
     // capacity 到達で自動クローズ
-    if (booked + 1 >= job.capacity) {
+    if (recount >= job.capacity) {
       await updateJobStatus(c.env.DB, jobId, 'filled');
     }
 

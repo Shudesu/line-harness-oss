@@ -10,6 +10,7 @@ import {
   getFriendById,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { assertOwnFriendId } from '../middleware/liff-auth.js';
 
 const attendance = new Hono<Env>();
 
@@ -52,6 +53,11 @@ attendance.post('/api/attendance/checkin', async (c) => {
     const { token, friendId } = await c.req.json<{ token: string; friendId: string }>();
     if (!token || !friendId) {
       return c.json({ success: false, error: 'token and friendId are required' }, 400);
+    }
+
+    // LIFF認証時は自分のfriendIdのみ
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
     }
 
     // トークンから求人を特定
@@ -104,6 +110,11 @@ attendance.post('/api/attendance/checkout', async (c) => {
       return c.json({ success: false, error: 'token and friendId are required' }, 400);
     }
 
+    // LIFF認証時は自分のfriendIdのみ
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
+
     const job = await getJobByAttendanceToken(c.env.DB, token);
     if (!job) return c.json({ success: false, error: 'Invalid attendance token' }, 404);
 
@@ -151,6 +162,11 @@ attendance.get('/api/attendance/status', async (c) => {
     const friendId = c.req.query('friendId');
     if (!token || !friendId) {
       return c.json({ success: false, error: 'token and friendId are required' }, 400);
+    }
+
+    // LIFF認証時は自分のfriendIdのみ
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
     }
 
     const job = await getJobByAttendanceToken(c.env.DB, token);

@@ -67,9 +67,14 @@ const state: MypageState = {
 };
 
 function apiCall(path: string, options?: RequestInit): Promise<Response> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const idToken = liff.getIDToken();
+    if (idToken) headers['X-LIFF-Token'] = idToken;
+  } catch { /* LIFF not initialized */ }
   return fetch(`${API_URL}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: { ...headers, ...options?.headers },
   });
 }
 

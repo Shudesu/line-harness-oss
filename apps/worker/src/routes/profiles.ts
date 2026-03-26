@@ -12,14 +12,19 @@ import {
   addFavoriteNursery,
   removeFavoriteNursery,
 } from '@line-crm/db';
+import { assertOwnFriendId } from '../middleware/liff-auth.js';
 
 const profiles = new Hono<Env>();
 
-// ========== プロフィール取得（公開: LIFF用） ==========
+// ========== プロフィール取得（LIFF: 自分のデータのみ） ==========
 
 profiles.get('/api/profiles/:friendId', async (c) => {
   try {
     const friendId = c.req.param('friendId');
+    // LIFF認証時は自分のデータのみアクセス可能
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
     const profile = await getProfileByFriendId(c.env.DB, friendId);
     const documents = await getDocumentsByFriendId(c.env.DB, friendId);
     return c.json({ success: true, data: { profile, documents } });
@@ -50,6 +55,11 @@ profiles.post('/api/profiles', async (c) => {
 
     if (!body.friendId || !body.realName) {
       return c.json({ success: false, error: 'friendId and realName are required' }, 400);
+    }
+
+    // LIFF認証時は自分のデータのみ作成可能
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, body.friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
     }
 
     // friendsテーブルに存在するか確認（FK制約対策）
@@ -94,6 +104,10 @@ profiles.post('/api/profiles', async (c) => {
 profiles.put('/api/profiles/:friendId', async (c) => {
   try {
     const friendId = c.req.param('friendId');
+    // LIFF認証時は自分のデータのみ更新可能
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
     const body = await c.req.json<{
       realName?: string;
       realNameKana?: string;
@@ -140,6 +154,11 @@ profiles.post('/api/documents/upload', async (c) => {
 
       if (!body.friendId || !body.docType || !body.image) {
         return c.json({ success: false, error: 'friendId, docType, and image are required' }, 400);
+      }
+
+      // LIFF認証時は自分のデータのみアップロード可能
+      if (c.get('liffFriendId') && !assertOwnFriendId(c, body.friendId)) {
+        return c.json({ success: false, error: 'Access denied' }, 403);
       }
 
       // Validate docType
@@ -193,6 +212,11 @@ profiles.post('/api/documents/upload', async (c) => {
       return c.json({ success: false, error: 'friendId, docType, and file are required' }, 400);
     }
 
+    // LIFF認証時は自分のデータのみアップロード可能
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
+
     // Validate docType
     if (!ALLOWED_DOC_TYPES.includes(docType as typeof ALLOWED_DOC_TYPES[number])) {
       return c.json({ success: false, error: 'Invalid docType. Must be id_card or qualification_cert' }, 400);
@@ -238,6 +262,10 @@ profiles.post('/api/documents/upload', async (c) => {
 profiles.get('/api/documents/:friendId', async (c) => {
   try {
     const friendId = c.req.param('friendId');
+    // LIFF認証時は自分のデータのみ
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
     const docs = await getDocumentsByFriendId(c.env.DB, friendId);
     return c.json({ success: true, data: docs });
   } catch (err) {
@@ -306,6 +334,9 @@ profiles.get('/api/documents/file/:docId', async (c) => {
 profiles.get('/api/favorites/:friendId', async (c) => {
   try {
     const friendId = c.req.param('friendId');
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
     const favorites = await getFavoritesByFriendId(c.env.DB, friendId);
     return c.json({ success: true, data: favorites });
   } catch (err) {
@@ -320,6 +351,9 @@ profiles.post('/api/favorites', async (c) => {
     if (!body.friendId || !body.nurseryName) {
       return c.json({ success: false, error: 'friendId and nurseryName are required' }, 400);
     }
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, body.friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
     const fav = await addFavoriteNursery(c.env.DB, body.friendId, body.nurseryName);
     return c.json({ success: true, data: fav }, 201);
   } catch (err) {
@@ -331,6 +365,9 @@ profiles.post('/api/favorites', async (c) => {
 profiles.delete('/api/favorites/:friendId/:nurseryName', async (c) => {
   try {
     const friendId = c.req.param('friendId');
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
     const nurseryName = decodeURIComponent(c.req.param('nurseryName'));
     await removeFavoriteNursery(c.env.DB, friendId, nurseryName);
     return c.json({ success: true });

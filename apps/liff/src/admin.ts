@@ -193,7 +193,7 @@ function renderLogin(): void {
   `;
 
   const input = document.getElementById('apiKeyInput') as HTMLInputElement;
-  const savedKey = localStorage.getItem(API_KEY_STORAGE);
+  const savedKey = sessionStorage.getItem(API_KEY_STORAGE);
   if (savedKey) input.value = savedKey;
 
   document.getElementById('loginBtn')!.addEventListener('click', () => tryLogin());
@@ -209,7 +209,7 @@ async function tryLogin(): Promise<void> {
   const res = await apiCall('/api/friends/count').catch(() => null);
   if (res?.ok) {
     state.authenticated = true;
-    localStorage.setItem(API_KEY_STORAGE, key);
+    sessionStorage.setItem(API_KEY_STORAGE, key);
     await loadDashboard();
   } else {
     document.getElementById('loginError')!.style.display = 'block';
@@ -889,7 +889,7 @@ export async function initAdmin(): Promise<void> {
   document.head.appendChild(style);
 
   // Check saved API key
-  const savedKey = localStorage.getItem(API_KEY_STORAGE);
+  const savedKey = sessionStorage.getItem(API_KEY_STORAGE);
   if (savedKey) {
     state.apiKey = savedKey;
     const res = await apiCall('/api/friends/count').catch(() => null);

@@ -11,6 +11,7 @@ import {
   processCompletion,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { assertOwnFriendId } from '../middleware/liff-auth.js';
 
 const reviews = new Hono<Env>();
 
@@ -32,6 +33,11 @@ reviews.post('/api/reviews', async (c) => {
 
     if (!body.bookingId || !body.reviewerType || !body.reviewerId || !body.overallRating) {
       return c.json({ success: false, error: 'bookingId, reviewerType, reviewerId, overallRating are required' }, 400);
+    }
+
+    // LIFF認証時はレビュアーIDが自分のfriendIdであることを検証
+    if (c.get('liffFriendId') && body.reviewerType === 'worker' && !assertOwnFriendId(c, body.reviewerId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
     }
 
     if (body.overallRating < 1 || body.overallRating > 5) {
@@ -162,6 +168,10 @@ reviews.get('/api/reviews/target/:targetId', async (c) => {
 reviews.get('/api/credit-score/:friendId', async (c) => {
   try {
     const friendId = c.req.param('friendId');
+    // LIFF認証時は自分のスコアのみ閲覧可能
+    if (c.get('liffFriendId') && !assertOwnFriendId(c, friendId)) {
+      return c.json({ success: false, error: 'Access denied' }, 403);
+    }
     const score = await getCreditScore(c.env.DB, friendId);
     return c.json({
       success: true,
