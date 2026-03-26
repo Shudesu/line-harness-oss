@@ -1,0 +1,217 @@
+name: Decompose Issue for Copilot
+
+# copilot ラベルが付いた Issue を Claude Opus で分析。
+# 粗粒度（vague / multi-part / doc-only になりそう）なら原子的サブタスクに分解して
+# GitHub Sub-issues API で子 Issue として親に紐づける（サブイシュー化）。
+# 粒度が適切（atomic）なら何もせず copilot-assign.yml に任せる。
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  decompose:
+    name: Analyze & Decompose
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'copilot'
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Write issue data to file
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const issue = context.payload.issue;
+            fs.writeFileSync('/tmp/issue.json', JSON.stringify({
+              number: issue.number,
+              title:  issue.title,
+              body:   issue.body || '(no description provided)',
+            }));
+            console.log(`Issue #${issue.number} written to /tmp/issue.json`);
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Claude CLI
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      - name: Analyze Issue with Claude Opus
+        id: analyze
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN_1: ${{ secrets.CLAUDE_CODE_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_TOKEN_2 }}
+          CLAUDE_CODE_OAUTH_TOKEN_3: ${{ secrets.CLAUDE_CODE_TOKEN_3 }}
+        run: |
+          set -euo pipefail
+          cd /tmp
+
+          ISSUE_NUM=$(python3 -c "import json; print(json.load(open('issue.json'))['number'])")
+          ISSUE_TITLE=$(python3 -c "import json; print(json.load(open('issue.json'))['title'])")
+
+          # Issue body を安全にファイルへ書き出してstdinでClaudeに渡す
+          python3 -c "import json; print(json.load(open('issue.json'))['body'])" > /tmp/issue_body.txt
+
+          SYSTEM_PROMPT="You are a software engineering task decomposer. Given a GitHub Issue, classify it as atomic or coarse, then return ONLY valid JSON with no extra text or markdown fences."
+
+          USER_PROMPT="Classify GitHub Issue #${ISSUE_NUM}: ${ISSUE_TITLE}
+
+ATOMIC = single concrete implementation: creates/modifies 1-3 specific code files, clear acceptance criteria, produces runnable code (not just .md docs).
+COARSE = vague, large scope (4+ files), multi-step, or would produce documentation-only output.
+
+Return ONLY this JSON (no other text):
+
+If atomic:
+{\"atomic\":true,\"reason\":\"one sentence\",\"subtasks\":[]}
+
+If coarse (2-4 subtasks):
+{\"atomic\":false,\"reason\":\"one sentence\",\"subtasks\":[{\"title\":\"feat: specific verb + object + target file\",\"body\":\"## What to implement\n- Create src/X.js with function Y that does Z\n\n## Acceptance Criteria\n- [ ] src/X.js exists with working implementation\n- [ ] Tests pass\n\n## Expected output files\n- src/X.js\n\n## Do NOT\n- Create .md-only PRs\n- Write placeholder implementations\"}]}
+
+The issue body follows:"
+
+          RESULT='{"atomic":true,"reason":"Defaulting to atomic (analysis unavailable)","subtasks":[]}'
+
+          for i in 1 2 3; do
+            case $i in
+              1) TOK="${CLAUDE_CODE_OAUTH_TOKEN_1:-}" ;;
+              2) TOK="${CLAUDE_CODE_OAUTH_TOKEN_2:-}" ;;
+              3) TOK="${CLAUDE_CODE_OAUTH_TOKEN_3:-}" ;;
+            esac
+            [ -z "${TOK:-}" ] && { echo "Token $i empty, skipping."; continue; }
+
+            echo "Trying token $i/3..."
+            set +e
+            OUT=$(cat /tmp/issue_body.txt | \
+              ANTHROPIC_API_KEY="" \
+              CLAUDE_CODE_OAUTH_TOKEN="$TOK" \
+              CLAUDE_NO_ANALYTICS=1 \
+              NO_UPDATE_NOTIFIER=1 \
+              claude \
+                --model claude-opus-4-6 \
+                --print "$USER_PROMPT" \
+                --system-prompt "$SYSTEM_PROMPT" \
+                --no-session-persistence \
+                2>/tmp/decompose_err.txt)
+            CODE=$?
+            set -e
+
+            if [ $CODE -eq 0 ] && python3 -c "import json,sys; json.loads(sys.stdin.read())" <<< "$OUT" 2>/dev/null; then
+              RESULT="$OUT"
+              echo "Token $i succeeded."
+              break
+            fi
+            echo "Token $i failed (exit=$CODE). stderr: $(head -3 /tmp/decompose_err.txt 2>/dev/null || true)"
+            if grep -q "429\|rate.limit" /tmp/decompose_err.txt 2>/dev/null; then
+              echo "Rate limited, waiting 10s..."
+              sleep 10
+            fi
+          done
+
+          echo "$RESULT" > /tmp/analysis.json
+          cat /tmp/analysis.json
+
+          IS_ATOMIC=$(python3 -c "import json; d=json.load(open('/tmp/analysis.json')); print('true' if d.get('atomic', True) else 'false')")
+          echo "atomic=$IS_ATOMIC" >> $GITHUB_OUTPUT
+          echo "Analysis complete: atomic=$IS_ATOMIC"
+
+      - name: Create atomic sub-issues
+        if: steps.analyze.outputs.atomic == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const analysis = JSON.parse(fs.readFileSync('/tmp/analysis.json', 'utf8'));
+            const parent = context.payload.issue;
+            const created = [];
+
+            for (const task of (analysis.subtasks || [])) {
+              const body = [
+                `> Decomposed from: #${parent.number} — ${parent.title}`,
+                '',
+                task.body || '',
+                '',
+                '---',
+                `_Auto-decomposed from #${parent.number} by Claude Opus_`,
+              ].join('\n');
+
+              const { data } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                title: task.title,
+                body,
+                labels: ['copilot'],
+              });
+              created.push({ number: data.number, title: task.title });
+              console.log(`Created #${data.number}: ${task.title}`);
+
+              // GitHub Sub-issues API で親 Issue の子として紐づける
+              try {
+                await github.graphql(`
+                  mutation AddSubIssue($issueId: ID!, $subIssueId: ID!) {
+                    addSubIssue(input: {issueId: $issueId, subIssueId: $subIssueId}) {
+                      issue    { number }
+                      subIssue { number }
+                    }
+                  }
+                `, {
+                  issueId:    parent.node_id,
+                  subIssueId: data.node_id,
+                });
+                console.log(`Linked #${data.number} as sub-issue of #${parent.number}`);
+              } catch (e) {
+                // Sub-issues が未対応リポジトリの場合はスキップ（スタンドアロン Issue として残る）
+                console.log(`Sub-issue linking skipped: ${e.message}`);
+              }
+            }
+
+            // 親 Issue に decomposed ラベル追加・copilot ラベル除去
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: parent.number,
+              labels: ['decomposed'],
+            });
+            await github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: parent.number,
+              name: 'copilot',
+            }).catch(() => {});
+
+            // 親 Issue にサマリーコメント
+            const list = created.map(t => `- #${t.number}: ${t.title}`).join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: parent.number,
+              body: [
+                '## Issue Decomposed by Claude Opus',
+                '',
+                `**Reason**: ${analysis.reason}`,
+                '',
+                `This issue was split into ${created.length} atomic subtasks:`,
+                list,
+                '',
+                'Each sub-issue has been labeled `copilot` and will be assigned to Copilot Coding Agent individually.',
+                '',
+                '_Tip: If a subtask is still too vague, edit its body to add specific file paths before adding the `copilot` label._',
+              ].join('\n'),
+            });
+
+      - name: Mark as atomic (no decomposition needed)
+        if: steps.analyze.outputs.atomic == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // atomic ラベルを追加。copilot-assign.yml がそのまま処理する。
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ['atomic'],
+            }).catch(() => {});
+            console.log('Issue is atomic, proceeding to copilot-assign.');
