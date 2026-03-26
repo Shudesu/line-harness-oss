@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '@/lib/api'
 import CcPromptButton from '@/components/cc-prompt-button'
 import { useAccount } from '@/contexts/account-context'
+import { useEventSource } from '@/hooks/use-event-source'
 
 const ccPrompts = [
   {
@@ -73,6 +74,9 @@ function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }
 
 export default function DashboardPage() {
   const { selectedAccountId, selectedAccount } = useAccount()
+  const { messages: liveEvents, connected: sseConnected } = useEventSource({
+    url: '/api/events',
+  })
   const [stats, setStats] = useState<DashboardStats>({
     friendCount: null,
     activeScenarioCount: null,
@@ -338,6 +342,39 @@ export default function DashboardPage() {
             </div>
           </Link>
         </div>
+      </div>
+
+      {/* Realtime events */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
+        <div className="flex items-center gap-2 mb-4">
+          <h2 className="text-sm font-semibold text-gray-800">リアルタイムイベント</h2>
+          {sseConnected ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              LIVE
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+              接続中...
+            </span>
+          )}
+        </div>
+        {liveEvents.length === 0 ? (
+          <p className="text-sm text-gray-400">新しいイベントを待っています...</p>
+        ) : (
+          <ul className="space-y-2 max-h-60 overflow-y-auto">
+            {liveEvents.map((event) => (
+              <li key={event.id} className="flex items-start gap-3 p-2 rounded-lg bg-gray-50 text-sm">
+                <span className="shrink-0 w-2 h-2 mt-1.5 rounded-full bg-green-400" />
+                <div className="min-w-0">
+                  <span className="font-medium text-gray-700">{event.type}</span>
+                  <p className="text-gray-500 truncate">{event.data}</p>
+                  <p className="text-xs text-gray-400">{event.createdAt}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <CcPromptButton prompts={ccPrompts} />

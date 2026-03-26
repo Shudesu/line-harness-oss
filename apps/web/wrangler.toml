@@ -1,0 +1,7 @@
+name = "line-crm-web"
+compatibility_date = "2024-12-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "line-crm"
+database_id = "943ecbca-3a59-4c6b-bcf1-011aabc85721"

@@ -5,21 +5,26 @@
   "scripts": {
     "dev": "next dev --port 3001",
     "build": "next build",
+    "build:cf": "npx @opennextjs/cloudflare build",
     "start": "next start"
   },
   "dependencies": {
+    "@line-crm/db": "workspace:*",
     "@line-crm/shared": "workspace:*",
+    "@opennextjs/cloudflare": "^1.17.3",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "25.5.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "wrangler": "^4.65.0"
   }
 }

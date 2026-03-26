@@ -14,14 +14,13 @@ export default function LoginPage() {
     setError('')
 
     try {
-      // Validate by calling a simple endpoint
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'
-      const res = await fetch(`${apiUrl}/api/friends/count`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
       })
 
       if (res.ok) {
-        localStorage.setItem('lh_api_key', apiKey)
         router.push('/')
       } else {
         setError('APIキーが正しくありません')
