@@ -1,0 +1,108 @@
+name: PR Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - "apps/worker/**"
+      - "packages/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy-preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db build
+
+      # ── Worker プレビューデプロイ ────────────────────────────────────
+      # 事前準備:
+      #   1. wrangler.toml に [env.preview] セクションを追加
+      #   2. wrangler d1 create miyabi-line-crm-preview でプレビューDB作成
+      - name: Deploy to preview
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/worker
+          command: deploy --env preview
+        continue-on-error: true
+
+      # ── PR にコメント ────────────────────────────────────────────────
+      - name: Comment preview URL on PR
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_STATUS: ${{ steps.deploy.outcome }}
+        with:
+          script: |
+            const sha7 = context.sha.slice(0, 7);
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const success = process.env.DEPLOY_STATUS === 'success';
+
+            const body = success
+              ? [
+                  '## Preview Deployment',
+                  '',
+                  '| 項目 | 値 |',
+                  '|------|-----|',
+                  `| コミット | \`${sha7}\` |`,
+                  `| ステータス | ✅ デプロイ成功 |`,
+                  `| デプロイ時刻 | ${new Date().toISOString()} |`,
+                  `| Actions Log | [Run](${runUrl}) |`,
+                  '',
+                  '> Worker URL は Cloudflare Dashboard で確認できます',
+                  '> このコメントは PR 更新のたびに自動更新されます',
+                ].join('\n')
+              : [
+                  '## Preview Deployment',
+                  '',
+                  `| 項目 | 値 |`,
+                  '|------|-----|',
+                  `| コミット | \`${sha7}\` |`,
+                  `| ステータス | ❌ デプロイ失敗 |`,
+                  `| Actions Log | [Run](${runUrl}) |`,
+                  '',
+                  '> プレビュー環境の設定が必要な場合は project_memory/CI_CD_BEST_PRACTICES.md を参照してください',
+                ].join('\n');
+
+            // 既存コメントを更新（重複防止）
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.body.includes('## Preview Deployment') &&
+              c.user.type === 'Bot'
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

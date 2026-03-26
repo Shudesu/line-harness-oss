@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base", ":dependencyDashboard"],
+  "labels": ["dependencies"],
+  "schedule": ["after 3am and before 5am on monday"],
+  "timezone": "Asia/Tokyo",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "automerge": false,
+  "packageRules": [
+    {
+      "description": "patch/minor は自動マージ",
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash"
+    },
+    {
+      "description": "major は手動マージ",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "breaking-change"]
+    },
+    {
+      "description": "Cloudflare 関連は手動マージ",
+      "matchPackagePatterns": ["^@cloudflare/", "^wrangler$", "^cloudflare$"],
+      "groupName": "Cloudflare packages",
+      "automerge": false
+    },
+    {
+      "description": "Hono は手動マージ",
+      "matchPackageNames": ["hono"],
+      "automerge": false
+    },
+    {
+      "description": "Next.js は手動マージ",
+      "matchPackagePatterns": ["^next$", "^@next/"],
+      "automerge": false
+    }
+  ]
+}
