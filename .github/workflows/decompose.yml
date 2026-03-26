@@ -1,11 +1,5 @@
 name: Decompose Issue for Copilot
 
-# copilot ラベルが付いた Issue を Claude Opus で分析。
-# 粗粒度（vague / multi-part / doc-only になりそう）なら原子的なサブタスクに分解して
-# GitHub Sub-issues API で子 Issue として親に紐づける（サブイシュー化）。
-# 粒度が適切（atomic）なら何もせず copilot-assign.yml に任せる。
-# タスク5 (B5): Context Sufficiency Check ステップを追加
-
 on:
   issues:
     types: [labeled]
@@ -42,262 +36,159 @@ jobs:
             const body = issue.body || '';
             const title = issue.title || '';
             const combined = title + '\n' + body;
-            
-            // ファイルパス（拡張子）の検出
+
+            // Check for file paths (extensions)
             const codeFilePattern = /\.(ts|js|py|sh|sql|yml|yaml|json|go|rb|java|cpp|c|rs)\b/i;
             const hasFilePath = codeFilePattern.test(combined);
-            
-            // DB/認証関連キーワード
-            const sensitivePattern = /\b(migration|oauth|webhook|auth|trigger|sql|database|schema|security|authentication|authorization)\b/i;
-            const hasSensitiveKeyword = sensitivePattern.test(combined);
-            
-            // DESIGN_CONSTRAINTS.md への言及
-            const hasConstraintRef = /DESIGN_CONSTRAINTS|design constraint|architecture constraint/i.test(combined);
-            
-            let issues = [];
-            let shouldWarn = false;
-            
-            // ルール1: コードファイルパスが含まれていない場合
+
+            // Check for DB/auth keywords
+            const dbAuthPattern = /database|db\b|auth|oauth|jwt|token|password|secret|schema|migration/i;
+            const hasDbAuth = dbAuthPattern.test(combined);
+
+            // Check for DESIGN_CONSTRAINTS reference
+            const hasDesignConstraints = /DESIGN_CONSTRAINTS/i.test(combined);
+
+            const issues = [];
+
+            // Rule 1: No file paths in code-related issue
             if (!hasFilePath) {
-              issues.push('⚠️ **Missing file paths**: This issue does not mention any specific code files (`.ts`, `.js`, `.py`, `.sh`, etc.). Copilot needs concrete file paths to produce working code.');
-              shouldWarn = true;
+              issues.push('**Missing file paths**: This issue does not mention any specific code files. Copilot needs concrete file paths to produce working code.');
             }
-            
-            // ルール2: DB/認証関連で設計制約への言及がない場合
-            if (hasSensitiveKeyword && !hasConstraintRef) {
-              issues.push('⚠️ **Missing design constraints**: This issue involves database/auth/security work but does not reference `DESIGN_CONSTRAINTS.md` or architectural guidelines. Critical decisions may be made without proper guardrails.');
-              shouldWarn = true;
+
+            // Rule 2: DB/auth work without design constraints reference
+            if (hasDbAuth && !hasDesignConstraints) {
+              issues.push('**Missing design constraints**: This issue involves database/auth/security work but does not reference `DESIGN_CONSTRAINTS.md`.');
             }
-            
-            core.setOutput('should_warn', shouldWarn.toString());
-            core.setOutput('issues', JSON.stringify(issues));
-            console.log(`Context check: should_warn=${shouldWarn}, issues=${issues.length}`);
 
-      - name: Warn and remove copilot label if context insufficient
-        if: steps.context_check.outputs.should_warn == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issue = context.payload.issue;
-            const issues = JSON.parse('${{ steps.context_check.outputs.issues }}');
-            
-            // copilot ラベルを除去
-            await github.rest.issues.removeLabel({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              name: 'copilot'
-            }).catch(() => {});
-            
-            // 警告コメントを投稿
-            const body = [
-              '## ⚠️ Context Sufficiency Check Failed',
-              '',
-              'This issue does not provide enough context for Copilot Coding Agent to succeed. The `copilot` label has been removed.',
-              '',
-              '### Issues Detected',
-              ...issues.map(i => `- ${i}`),
-              '',
-              '### How to Fix',
-              '1. **Add specific file paths** (e.g., `src/auth.js`, `scripts/migrate.sh`) to the issue body',
-              '2. For database/auth/security work: reference `DESIGN_CONSTRAINTS.md` or include architectural guidelines',
-              '3. Re-add the `copilot` label after updating the issue',
-              '',
-              '_Automated by Context Sufficiency Check (decompose.yml)_'
-            ].join('\n');
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              body
-            });
-            
-            core.setFailed('Context sufficiency check failed. Issue needs more details.');
-
-      - name: Setup Node.js
-        if: steps.context_check.outputs.should_warn != 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Claude CLI
-        if: steps.context_check.outputs.should_warn != 'true'
-        run: npm install -g @anthropic-ai/claude-code@latest
-
-      - name: Analyze Issue with Claude Opus
-        if: steps.context_check.outputs.should_warn != 'true'
-        id: analyze
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN_1: ${{ secrets.CLAUDE_CODE_TOKEN }}
-          CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_TOKEN_2 }}
-          CLAUDE_CODE_OAUTH_TOKEN_3: ${{ secrets.CLAUDE_CODE_TOKEN_3 }}
-        run: |
-          set -euo pipefail
-          cd /tmp
-
-          ISSUE_NUM=$(python3 -c "import json; print(json.load(open('issue.json'))['number'])")
-          ISSUE_TITLE=$(python3 -c "import json; print(json.load(open('issue.json'))['title'])")
-
-          # Issue body を完全にファイルへ書き出してstdinでClaudeに渡す
-          python3 -c "import json; print(json.load(open('issue.json'))['body'])" > /tmp/issue_body.txt
-
-          SYSTEM_PROMPT="You are a software engineering task decomposer. Given a GitHub Issue, classify it as atomic or coarse, then return ONLY valid JSON with no extra text or markdown fences."
-
-          USER_PROMPT="Classify GitHub Issue #${ISSUE_NUM}: ${ISSUE_TITLE}
-
-ATOMIC = single concrete implementation: creates/modifies 1-3 specific code files, clear acceptance criteria, produces runnable code (not just .md docs).
-COARSE = vague, large scope (4+ files), multi-step, or would produce documentation-only output.
-
-Return ONLY this JSON (no other text):
-
-If atomic:
-{\"atomic\":true,\"reason\":\"one sentence\",\"subtasks\":[]}
-
-If coarse (2-4 subtasks):
-{\"atomic\":false,\"reason\":\"one sentence\",\"subtasks\":[{\"title\":\"feat: specific verb + object + target file\",\"body\":\"## What to implement\n- Create src/X.js with function Y that does Z\n\n## Acceptance Criteria\n- [ ] src/X.js exists with working implementation\n- [ ] Tests pass\n\n## Expected output files\n- src/X.js\n\n## Do NOT\n- Create .md-only PRs\n- Write placeholder implementations\"}]}
-
-The issue body follows:"
-
-          RESULT='{"atomic":true,"reason":"Defaulting to atomic (analysis unavailable)","subtasks":[]}'
-
-          for i in 1 2 3; do
-            case $i in
-              1) TOK="${CLAUDE_CODE_OAUTH_TOKEN_1:-}" ;;
-              2) TOK="${CLAUDE_CODE_OAUTH_TOKEN_2:-}" ;;
-              3) TOK="${CLAUDE_CODE_OAUTH_TOKEN_3:-}" ;;
-            esac
-            [ -z "${TOK:-}" ] && { echo "Token $i empty, skipping."; continue; }
-
-            echo "Trying token $i/3..."
-            set +e
-            OUT=$(cat /tmp/issue_body.txt | \
-              ANTHROPIC_API_KEY="" \
-              CLAUDE_CODE_OAUTH_TOKEN="$TOK" \
-              CLAUDE_NO_ANALYTICS=1 \
-              NO_UPDATE_NOTIFIER=1 \
-              claude \
-                --model claude-opus-4-6 \
-                --print "$USER_PROMPT" \
-                --system-prompt "$SYSTEM_PROMPT" \
-                --no-session-persistence \
-                2>/tmp/decompose_err.txt)
-            CODE=$?
-            set -e
-
-            if [ $CODE -eq 0 ] && python3 -c "import json,sys; json.loads(sys.stdin.read())" <<< "$OUT" 2>/dev/null; then
-              RESULT="$OUT"
-              echo "Token $i succeeded."
-              break
-            fi
-            echo "Token $i failed (exit=$CODE). stderr: $(head -3 /tmp/decompose_err.txt 2>/dev/null || true)"
-            if grep -q "429\|rate.limit" /tmp/decompose_err.txt 2>/dev/null; then
-              echo "Rate limited, waiting 10s..."
-              sleep 10
-            fi
-          done
-
-          echo "$RESULT" > /tmp/analysis.json
-          cat /tmp/analysis.json
-
-          IS_ATOMIC=$(python3 -c "import json; d=json.load(open('/tmp/analysis.json')); print('true' if d.get('atomic', True) else 'false')")
-          echo "atomic=$IS_ATOMIC" >> $GITHUB_OUTPUT
-          echo "Analysis complete: atomic=$IS_ATOMIC"
-
-      - name: Create atomic sub-issues
-        if: steps.analyze.outputs.atomic == 'false'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const analysis = JSON.parse(fs.readFileSync('/tmp/analysis.json', 'utf8'));
-            const parent = context.payload.issue;
-            const created = [];
-
-            for (const task of (analysis.subtasks || [])) {
-              const body = [
-                `> Decomposed from: #${parent.number} — ${parent.title}`,
+            if (issues.length > 0) {
+              // Post comment and remove copilot label
+              const commentBody = [
+                '## Context Sufficiency Check Failed',
                 '',
-                task.body || '',
+                'This issue needs more context before Copilot can implement it:',
                 '',
-                '---',
-                `_Auto-decomposed from #${parent.number} by Claude Opus_`,
+                ...issues.map(i => `- ${i}`),
+                '',
+                'Please update the issue with the missing information and re-add the `copilot` label.',
               ].join('\n');
 
-              const { data } = await github.rest.issues.create({
+              await github.rest.issues.createComment({
                 owner: context.repo.owner,
-                repo:  context.repo.repo,
-                title: task.title,
-                body,
-                labels: ['copilot'],
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: commentBody,
               });
-              created.push({ number: data.number, title: task.title });
-              console.log(`Created #${data.number}: ${task.title}`);
 
-              // GitHub Sub-issues API で親 Issue の子として紐づける
-              try {
-                await github.graphql(`
-                  mutation AddSubIssue($issueId: ID!, $subIssueId: ID!) {
-                    addSubIssue(input: {issueId: $issueId, subIssueId: $subIssueId}) {
-                      issue    { number }
-                      subIssue { number }
-                    }
-                  }
-                `, {
-                  issueId:    parent.node_id,
-                  subIssueId: data.node_id,
-                });
-                console.log(`Linked #${data.number} as sub-issue of #${parent.number}`);
-              } catch (e) {
-                // Sub-issues が未対応リポジトリの場合はスキップ（スタンドアロン Issue として残る）
-                console.log(`Sub-issue linking skipped: ${e.message}`);
-              }
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: 'copilot',
+              }).catch(() => {});
+
+              core.setOutput('passed', 'false');
+            } else {
+              core.setOutput('passed', 'true');
             }
 
-            // 親 Issue に decomposed ラベル追加・copilot ラベル除去
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              issue_number: parent.number,
-              labels: ['decomposed'],
-            });
-            await github.rest.issues.removeLabel({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              issue_number: parent.number,
-              name: 'copilot',
-            }).catch(() => {});
+      - name: Checkout repository
+        if: steps.context_check.outputs.passed == 'true'
+        uses: actions/checkout@v4
 
-            // 親 Issue にサマリーコメント
-            const list = created.map(t => `- #${t.number}: ${t.title}`).join('\n');
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              issue_number: parent.number,
-              body: [
-                '## Issue Decomposed by Claude Opus',
-                '',
-                `**Reason**: ${analysis.reason}`,
-                '',
-                `This issue was split into ${created.length} atomic subtasks:`,
-                list,
-                '',
-                'Each sub-issue has been labeled `copilot` and will be assigned to Copilot Coding Agent individually.',
-                '',
-                '_Tip: If a subtask is still too vague, edit its body to add specific file paths before adding the `copilot` label._',
-              ].join('\n'),
-            });
+      - name: Install Claude Code CLI
+        if: steps.context_check.outputs.passed == 'true'
+        run: npm install -g @anthropic-ai/claude-code@latest
 
-      - name: Mark as atomic (no decomposition needed)
-        if: steps.analyze.outputs.atomic == 'true'
+      - name: Analyze granularity with Claude
+        if: steps.context_check.outputs.passed == 'true'
+        id: analyze
+        run: |
+          ISSUE_BODY=$(gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }} --json body -q .body)
+          ISSUE_TITLE=$(gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }} --json title -q .title)
+
+          cat > /tmp/decompose_prompt.txt << 'PROMPT_EOF'
+          You are a technical project manager. Analyze this GitHub issue and determine if it should be decomposed into sub-issues.
+
+          Respond with JSON only:
+          {
+            "atomic": true/false,
+            "reason": "brief explanation",
+            "subtasks": ["subtask 1", "subtask 2"]
+          }
+
+          atomic=true means the issue is small enough for Copilot to implement in one PR.
+          atomic=false means it should be split into smaller sub-issues.
+          PROMPT_EOF
+
+          echo "Issue Title: $ISSUE_TITLE" >> /tmp/decompose_prompt.txt
+          echo "Issue Body: $ISSUE_BODY" >> /tmp/decompose_prompt.txt
+
+          ANALYSIS=""
+          for TOKEN_VAR in CLAUDE_CODE_OAUTH_TOKEN_1 CLAUDE_CODE_OAUTH_TOKEN_2 CLAUDE_CODE_OAUTH_TOKEN_3; do
+            TOK="${!TOKEN_VAR}"
+            if [ -z "$TOK" ]; then continue; fi
+            ANALYSIS=$(ANTHROPIC_API_KEY="" CLAUDE_CODE_OAUTH_TOKEN="$TOK" CLAUDE_NO_ANALYTICS=1 \
+              claude --print --model claude-opus-4-6 --no-session-persistence \
+              < /tmp/decompose_prompt.txt 2>/dev/null) && break
+          done
+
+          if [ -z "$ANALYSIS" ]; then
+            echo "Claude unavailable, defaulting to atomic=true"
+            ANALYSIS='{"atomic":true,"reason":"Claude unavailable","subtasks":[]}'
+          fi
+
+          echo "analysis=$ANALYSIS" >> $GITHUB_OUTPUT
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN_1: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_1 }}
+          CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+          CLAUDE_CODE_OAUTH_TOKEN_3: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_3 }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Handle decomposition result
+        if: steps.context_check.outputs.passed == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            // atomic ラベルを追加。copilot-assign.yml がそのまま処理する。
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              issue_number: context.payload.issue.number,
-              labels: ['atomic'],
-            }).catch(() => {});
-            console.log('Issue is atomic, proceeding to copilot-assign.');
+            const analysisRaw = `${{ steps.analyze.outputs.analysis }}`;
+            let analysis;
+            try {
+              analysis = JSON.parse(analysisRaw);
+            } catch(e) {
+              analysis = { atomic: true, reason: 'parse error', subtasks: [] };
+            }
+
+            const issue = context.payload.issue;
+
+            if (analysis.atomic) {
+              // Issue is atomic - add comment and let copilot-assign.yml handle it
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Issue analyzed: **atomic** (${analysis.reason}). Proceeding with Copilot assignment.`,
+              });
+            } else {
+              // Decompose into sub-issues
+              for (const subtask of (analysis.subtasks || [])) {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: subtask,
+                  body: `Sub-task decomposed from #${issue.number}: ${issue.title}\n\n_Auto-decomposed by Claude Opus_`,
+                  labels: ['copilot'],
+                });
+              }
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `## Issue Decomposed\n\nThis issue was split into ${analysis.subtasks.length} sub-issues. Reason: ${analysis.reason}`,
+              });
+              // Remove copilot label from parent
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: 'copilot',
+              }).catch(() => {});
+            }

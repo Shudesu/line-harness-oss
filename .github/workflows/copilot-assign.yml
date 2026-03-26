@@ -37,17 +37,14 @@ jobs:
             echo "CONSTRAINTS=No design constraints defined. Follow general best practices." >> $GITHUB_ENV
           fi
 
-      # W3/W4: Get issue details via file (injection-safe)
       - name: Get issue details
         id: issue
         run: |
           gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }} --json body -q .body > /tmp/issue_body.txt
           gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }} --json title -q .title > /tmp/issue_title.txt
-          
           echo "ISSUE_BODY<<EOF" >> $GITHUB_ENV
           cat /tmp/issue_body.txt >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-          
           echo "ISSUE_TITLE<<EOF" >> $GITHUB_ENV
           cat /tmp/issue_title.txt >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
@@ -59,36 +56,37 @@ jobs:
         run: |
           REPO_ID=$(gh api graphql -f query='
             query($owner: String!, $name: String!) {
-              repository(owner: $owner, name: $name) {
-                id
-              }
-            }' -f owner="${{ github.repository_owner }}" -f name="${{ github.event.repository.name }}" -q .data.repository.id)
-          
+              repository(owner: $owner, name: $name) { id }
+            }' \
+            -f owner="${{ github.repository_owner }}" \
+            -f name="${{ github.event.repository.name }}" \
+            -q .data.repository.id)
           echo "id=$REPO_ID" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ github.token }}
 
-      # C4, C5: Add actorLogins and baseRef
       - name: Assign GitHub Copilot via GraphQL
         run: |
           ISSUE_NODE_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }} -q .node_id)
-          
-          CUSTOM_INSTRUCTIONS="**Repository Design Constraints:**
 
-$CONSTRAINTS
+          cat > /tmp/instructions.txt << 'INSTRUCTIONS_EOF'
+          Repository Design Constraints:
+          INSTRUCTIONS_EOF
+          echo "$CONSTRAINTS" >> /tmp/instructions.txt
+          echo "" >> /tmp/instructions.txt
+          echo "Task Instructions:" >> /tmp/instructions.txt
+          cat /tmp/issue_body.txt >> /tmp/instructions.txt
+          echo "" >> /tmp/instructions.txt
+          cat >> /tmp/instructions.txt << 'IMPORTANT_EOF'
+          Important:
+          - Follow the design constraints above strictly
+          - Create a new branch from the default branch
+          - Implement the changes described in the issue
+          - Write tests if applicable
+          - Create a draft PR when complete
+          IMPORTANT_EOF
 
----
-
-**Task Instructions:**
-
-$ISSUE_BODY
-
-**Important:**
-- Follow the design constraints above strictly
-- Create a new branch from ${{ steps.default_branch.outputs.branch }}
-- Implement the changes described in the issue
-- Write tests if applicable
-- Create a draft PR when complete"
+          CUSTOM_INSTRUCTIONS=$(cat /tmp/instructions.txt)
 
           gh api graphql -f query='
             mutation($issueId: ID!, $repositoryId: ID!, $baseRef: String!, $customInstructions: String!) {
@@ -102,10 +100,7 @@ $ISSUE_BODY
                 }
               }) {
                 assignable {
-                  ... on Issue {
-                    number
-                    title
-                  }
+                  ... on Issue { number title }
                 }
               }
             }' \
@@ -113,20 +108,15 @@ $ISSUE_BODY
             -f repositoryId="${{ steps.repo_id.outputs.id }}" \
             -f baseRef="${{ steps.default_branch.outputs.branch }}" \
             -f customInstructions="$CUSTOM_INSTRUCTIONS"
-          
+
           echo "GitHub Copilot assigned to issue #${{ github.event.issue.number }}"
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Comment assignment confirmation
         run: |
-          gh issue comment ${{ github.event.issue.number }} --repo ${{ github.repository }} --body "🤖 GitHub Copilot has been assigned to this issue.
-
-**Configuration:**
-- Base branch: \`${{ steps.default_branch.outputs.branch }}\`
-- Design constraints: Loaded from DESIGN_CONSTRAINTS.md
-- Custom instructions: Injected
-
-Copilot will create a branch and draft PR when implementation is complete."
+          gh issue comment ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --body "GitHub Copilot has been assigned to this issue. It will create a branch and draft PR when implementation is complete."
         env:
           GH_TOKEN: ${{ github.token }}
