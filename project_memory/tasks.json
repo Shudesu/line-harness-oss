@@ -1,13 +1,14 @@
 {
   "project": "line-harness-oss",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "created": "2026-03-25",
   "owner": "ShunsukeHayashi",
   "phases": {
     "P1": "Security Foundation",
     "P2": "PPAL Migration",
     "P3": "MCP Integration",
-    "P4": "SaaS Launch"
+    "P4": "SaaS Launch",
+    "P7": "SaaS Launch & Identity Hub"
   },
   "tasks": [
     {
@@ -611,7 +612,6 @@
       "agent": "kotowari-dev",
       "node": "MacBook Pro",
       "depends_on": [
-        "T35",
         "T38"
       ],
       "estimate_hours": 3,
@@ -624,7 +624,7 @@
       "phase": "P7",
       "priority": "high",
       "subject": "法務ページ実装 — プライバシーポリシー・特定商取引法",
-      "description": "有料プランを販売するための必須法的ページ。特商法（合同会社みやび情報）・プライバシーポリシー（LINE友だちデータの取扱い・Cloudflare米国サーバー所在地）・利用規約を実装。",
+      "description": "法務3ページ(privacy/terms/tokutei)の内容充実 + 011_ai_consent.sql適用確認。現在はコードのみ(各ページが167バイトの空実装)。合同会社みやびの実情報を記載する。",
       "steps": [
         "apps/web/src/app/legal/privacy/page.tsx 新規作成",
         "apps/web/src/app/legal/terms/page.tsx 新規作成",
@@ -709,9 +709,10 @@
       "agent": "main",
       "node": "MacBook Pro",
       "depends_on": [
-        "T35",
+        "T37",
         "T38",
-        "T39"
+        "T39",
+        "T40"
       ],
       "estimate_hours": 2,
       "acceptance": "10名以上がβ申込み完了、フィードバック5件以上収集",
@@ -911,6 +912,134 @@
       "estimate_hours": 2,
       "acceptance": "本番モードでの実際の課金が成功し、銀行口座への入金が確認できる",
       "status": "pending"
+    },
+    {
+      "id": "T42",
+      "phase": "P7",
+      "priority": "critical",
+      "subject": "/health バージョン注入 — build-time define (Issue #44/#46統合)",
+      "description": "wrangler.toml の [define] で APP_VERSION を注入。package.json の直接バンドルを除去。CI での version 検証を追加。",
+      "file": "apps/worker/src/routes/health.ts, apps/worker/wrangler.toml",
+      "agent": "copilot",
+      "node": "GitHub Cloud",
+      "depends_on": [],
+      "estimate_hours": 1,
+      "acceptance": "GET /health に version フィールドあり。package.json バンドルなし",
+      "status": "pending",
+      "github_issues": [
+        "#44",
+        "#46"
+      ]
+    },
+    {
+      "id": "T43",
+      "phase": "P7",
+      "priority": "high",
+      "subject": "ログインページ利用規約同意チェックボックス (Issue #45)",
+      "description": "apps/web/src/app/login/page.tsx に利用規約・プライバシーポリシー同意チェックボックス追加。チェックなしはサブミット不可。",
+      "file": "apps/web/src/app/login/page.tsx",
+      "agent": "copilot",
+      "node": "GitHub Cloud",
+      "depends_on": [],
+      "estimate_hours": 2,
+      "acceptance": "ログインページに同意チェックボックスがあり、チェックなしは送信できない",
+      "status": "pending",
+      "github_issues": [
+        "#45"
+      ]
+    },
+    {
+      "id": "T44",
+      "phase": "P7",
+      "priority": "medium",
+      "subject": "Identity Hub: unified_profiles migration (Issue #47)",
+      "description": "packages/db/migrations/ に unified_profiles テーブルを追加するマイグレーション。Teachable/Discord/LINE の統合IDシステムの基盤。",
+      "file": "packages/db/migrations/011_unified_profiles.sql",
+      "agent": "copilot",
+      "node": "GitHub Cloud",
+      "depends_on": [],
+      "estimate_hours": 2,
+      "acceptance": "マイグレーション適用でunified_profilesテーブル作成成功",
+      "status": "pending",
+      "github_issues": [
+        "#47"
+      ]
+    },
+    {
+      "id": "T45",
+      "phase": "P7",
+      "priority": "medium",
+      "subject": "Discord OAuth エンドポイント (Issue #48)",
+      "description": "GET /api/discord/oauth + POST /api/discord/callback エンドポイント追加。PPAL Identity Hub の Discord認証フロー。",
+      "file": "apps/worker/src/routes/discord.ts",
+      "agent": "copilot",
+      "node": "GitHub Cloud",
+      "depends_on": [
+        "T44"
+      ],
+      "estimate_hours": 4,
+      "acceptance": "Discord OAuth フロー完了でunified_profilesにレコード作成",
+      "status": "pending",
+      "github_issues": [
+        "#48"
+      ]
+    },
+    {
+      "id": "T46",
+      "phase": "P7",
+      "priority": "medium",
+      "subject": "Teachable Webhook LIFF連携案内 (Issue #49)",
+      "description": "POST /webhook/incoming でTeachableイベント受信 → LINE LIFF連携案内メッセージ自動送信。",
+      "file": "apps/worker/src/routes/webhook.ts",
+      "agent": "copilot",
+      "node": "GitHub Cloud",
+      "depends_on": [
+        "T44",
+        "T45"
+      ],
+      "estimate_hours": 3,
+      "acceptance": "Teachable購入完了イベント → LINEユーザーにLIFF連携案内メッセージ送信",
+      "status": "pending",
+      "github_issues": [
+        "#49"
+      ]
+    },
+    {
+      "id": "T47",
+      "phase": "P7",
+      "priority": "medium",
+      "subject": "Teachable バイパス決済 getPlan() ミドルウェア (Issue #52)",
+      "description": "Teachableサブスクリプションユーザーを Proプラン相当として認識する getPlan() ミドルウェア追加。",
+      "file": "apps/worker/src/middleware/get-plan.ts",
+      "agent": "copilot",
+      "node": "GitHub Cloud",
+      "depends_on": [
+        "T44",
+        "T46"
+      ],
+      "estimate_hours": 3,
+      "acceptance": "Teachable有料ユーザー = Pro扱いでAPI制限が解除される",
+      "status": "pending",
+      "github_issues": [
+        "#52"
+      ]
+    },
+    {
+      "id": "T48",
+      "phase": "P7",
+      "priority": "medium",
+      "subject": "upstream v0.3.0 (Domino Flow) sync (Issue #43)",
+      "description": "upstream Shudesu/line-harness-oss v0.3.0 の差分を取り込む。コンフリクト解決後にビルド確認。",
+      "file": "*",
+      "agent": "copilot",
+      "node": "GitHub Cloud",
+      "depends_on": [],
+      "estimate_hours": 3,
+      "acceptance": "pnpm -r build 通過。独自機能(T36 AI等)と競合なし",
+      "status": "pending",
+      "github_issues": [
+        "#43"
+      ]
     }
   ],
   "completed_tasks": [
