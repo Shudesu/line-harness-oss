@@ -639,7 +639,9 @@
       ],
       "estimate_hours": 4,
       "acceptance": "/legal/privacy, /legal/terms, /legal/tokutei が200で返り、合同会社みやび情報が記載されている",
-      "status": "pending"
+      "status": "in_progress",
+      "github_issue": 45,
+      "note": "法務3ページ+LPフッターリンク実装済み。残: ログイン同意チェックボックス(Issue #45)"
     },
     {
       "id": "T39",
