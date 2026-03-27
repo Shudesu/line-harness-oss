@@ -1,0 +1,192 @@
+@startuml line-harness-oss-fine-dag
+title みやびライン — Issue/PR 全粒度 依存関係 DAG (2026-03-26)
+
+top to bottom direction
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 10
+skinparam ArrowColor #555555
+skinparam ArrowThickness 1.5
+skinparam linetype ortho
+skinparam nodesep 15
+skinparam ranksep 35
+skinparam rectangle {
+  RoundCorner 6
+  BorderThickness 1.5
+  Padding 5
+}
+skinparam package {
+  BorderThickness 2
+  FontSize 11
+  FontStyle bold
+  Padding 12
+}
+
+' === 色定義 ===
+' #FF6B6B = CRITICAL / WRONG / BLOCKER (red)
+' #FFD93D = IN-PROGRESS / PENDING (yellow)
+' #6BCB77 = OK / CORRECT / INDEPENDENT (green)
+' #4D96FF = IMPLEMENTED / REVIEW (blue)
+' #FF922B = SECURITY FIX NEEDED (orange)
+' #CCCCCC = CLOSE / SUPERSEDED (gray)
+
+' ============================================================
+' COLUMN A: ROOT — 依存なし
+' ============================================================
+
+package "独立タスク (依存なし)" #F0F0F0 {
+  rectangle "I#44\nfix: /health version\nbuild-time define" as I44 #6BCB77
+  rectangle "I#45\nfeat(T38):\n利用規約チェックボックス" as I45 #6BCB77
+  rectangle "PR#58\ndocs: DAG\n→ 即マージ可 ✅" as PR58 #6BCB77
+  rectangle "I#43\nchore: upstream sync\nv0.3.0" as I43 #CCCCCC
+}
+
+' ============================================================
+' COLUMN B: ROOT BLOCKER — Migration 011
+' ============================================================
+
+package "Layer 0: ROOT BLOCKER — Migration 011" #FFE0E0 {
+  rectangle "I#47\nfeat: unified_profiles\nmigration 011\n★ 全後続の前提" as I47 #FF6B6B
+}
+
+' ============================================================
+' COLUMN C: Migration fix 連鎖 (全て WRONG direction)
+' ============================================================
+
+package "Migration 失敗連鎖 (trigger方向は全て誤り)" #FFE8E8 {
+  rectangle "PR#54\nmigration 011 v1\nAFTER UPDATE trigger\n[AI Review ❌ CRITICAL]" as PR54 #FF6B6B
+
+  rectangle "I#60\n[auto] fix PR#54:\nUUID+trigger+UNIQUE\n[wrong direction]" as I60 #FF6B6B
+  rectangle "I#66\nfix migration-011:\ntrigger再帰バグ修正\n[wrong direction]" as I66 #FF6B6B
+
+  rectangle "PR#70\nmigration 011 v2\nWHEN guard trigger\n[AI Review ❌ CRITICAL]" as PR70 #FF6B6B
+
+  rectangle "I#71\nfix PR#70:\nBEFORE UPDATE trigger\n[wrong direction]" as I71 #FF6B6B
+
+  rectangle "PR#72\nmigration 011 v3\nBEFORE UPDATE trigger\n[CI pending — still wrong]" as PR72 #FFD93D
+}
+
+package "★ 正解: trigger 不要" #E0FFE8 {
+  rectangle "fix/migration-011-no-trigger\n→ NEW PR (未作成)\nNO TRIGGER\napp が jstNow() で更新\ndiscord_roles CHECK追加" as PRFIX #6BCB77
+}
+
+' ============================================================
+' COLUMN D: Identity Hub (Migration 完了後に unblock)
+' ============================================================
+
+package "Layer 1: Identity Hub (I#47 完了後に解放)" #E8F4FF {
+  rectangle "I#48\nfeat: Discord OAuth\nPPAL Identity Hub" as I48 #4D96FF
+  rectangle "I#49\nfeat: Teachable Webhook\n→ LINE LIFF 案内" as I49 #4D96FF
+  rectangle "I#52\nfeat(T49): getPlan()\nミドルウェア" as I52 #4D96FF
+
+  rectangle "PR#55\nDiscord OAuth 実装\n[AI Review ❌\nCSRF / secret reuse\n/ 認証バイパス]" as PR55 #FF6B6B
+  rectangle "PR#56\nTeachable Webhook 実装\n[AI Review ❌\nsecret in query\n/ 認証なし]" as PR56 #FF6B6B
+}
+
+' ============================================================
+' COLUMN E: Security Fix Issues (Layer 1 からの修正連鎖)
+' ============================================================
+
+package "Layer 2: セキュリティ修正 (PR#55/56 指摘対応)" #FFF3E0 {
+  rectangle "I#61\n[auto] fix PR#55 review:\nCSRF+lineUserId+Teachable\n[superseded by #67]" as I61 #CCCCCC
+  rectangle "I#67\nfix: Discord OAuth\nCSRF・認証バイパス修正\n[正しい修正 — 要コンテキスト付与]" as I67 #FF922B
+
+  rectangle "I#62\n[auto] fix PR#56 review:\nauth+idempotency\n[superseded by #68]" as I62 #CCCCCC
+  rectangle "I#68\nfix: Teachable Webhook\n認証・冪等性・DB更新順序\n[正しい修正 — 要コンテキスト付与]" as I68 #FF922B
+}
+
+' ============================================================
+' COLUMN F: /health + T38 独立チェーン
+' ============================================================
+
+package "/health + T38 独立チェーン" #F0FFF0 {
+  rectangle "PR#40\n/health version v1\n[AI Review ❌\npackage.json bundled]" as PR40 #FF6B6B
+  rectangle "I#46\nfix(#44): /health\n[duplicate of #44]" as I46 #CCCCCC
+  rectangle "PR#53\nT38 terms checkbox\n[AI Review ❌\nCONSENT未永続化]" as PR53 #FF6B6B
+
+  rectangle "PR#50\nmanual impl:\n/health + consent + getPlan\n(T38+T49+/health)\n[CI pending — correct impl]" as PR50 #FFD93D
+}
+
+' ============================================================
+' COLUMN G: 即クローズ対象
+' ============================================================
+
+package "即クローズ / 廃止対象" #F5F5F5 {
+  rectangle "PR#63\nci(watchdog) event-driven\n[superseded by #69 merged]" as PR63 #CCCCCC
+  rectangle "I#51\ndocs test\n[CLOSE]" as I51 #CCCCCC
+  rectangle "I#57\nタスク整理\n[meta issue]" as I57 #CCCCCC
+  rectangle "I#39\n/health v0\n[pre-existing old]" as I39 #CCCCCC
+}
+
+' ============================================================
+' DEPENDENCY ARROWS
+' ============================================================
+
+' I#47 (ROOT BLOCKER) → Migration PR chain
+I47 -[#FF6B6B,thickness=2]-> PR54 : Copilot が実装
+
+' PR#54 失敗 → 修正Issues自動生成
+PR54 -[#FF6B6B,thickness=2]-> I60 : AI Review\n[CRITICAL] →\nfix Issue自動生成
+PR54 -[#FF6B6B,thickness=2]-> I66 : AI Review\n[CRITICAL] →\nfix Issue自動生成
+
+' I#60 + I#66 → PR#70
+I60 -[#FF6B6B,thickness=2]-> PR70 : Copilot が実装
+I66 -[#FF6B6B,thickness=2]-> PR70 : Copilot が実装
+
+' PR#70 失敗 → I#71
+PR70 -[#FF6B6B,thickness=2]-> I71 : AI Review\n[CRITICAL] →\nfix Issue自動生成
+
+' I#71 → PR#72
+I71 -[#FF6B6B,thickness=2]-> PR72 : Copilot が実装
+
+' PR#72 → 正解方向
+PR72 -[#555555,thickness=1,dashed]-> PRFIX : 全triggerを削除\n正解に書き直す
+
+' I#47 → Identity Hub issues (migration が前提)
+I47 -[#4D96FF,thickness=2]-> I48 : unified_profiles\nテーブルが必要
+I47 -[#4D96FF,thickness=2]-> I49 : unified_profiles\nテーブルが必要
+I47 -[#4D96FF,thickness=2]-> I52 : unified_profiles\nテーブルが必要
+
+' Identity Hub Issues → PRs
+I48 -[#4D96FF,thickness=2]-> PR55 : Copilot が実装
+I49 -[#4D96FF,thickness=2]-> PR56 : Copilot が実装
+
+' PR#55 失敗 → Security fix Issues
+PR55 -[#FF922B,thickness=2]-> I61 : AI Review\n[CRITICAL] →\nfix自動生成
+PR55 -[#FF922B,thickness=2]-> I67 : 正しい修正Issue\n(要コンテキスト)
+
+' PR#56 失敗 → Security fix Issues
+PR56 -[#FF922B,thickness=2]-> I62 : AI Review\n[CRITICAL] →\nfix自動生成
+PR56 -[#FF922B,thickness=2]-> I68 : 正しい修正Issue\n(要コンテキスト)
+
+' Superseded relations (dashed)
+I61 -[#AAAAAA,dashed]-> I67 : superseded by
+I62 -[#AAAAAA,dashed]-> I68 : superseded by
+
+' /health + T38 chain
+I44 -[#6BCB77,thickness=2]-> PR40 : Copilot が実装
+I44 -[#6BCB77,thickness=1]-> I46 : dup issue
+I45 -[#6BCB77,thickness=2]-> PR53 : Copilot が実装
+
+' PR#40 + PR#53 superseded by PR#50
+PR40 -[#AAAAAA,dashed]-> PR50 : superseded by
+PR53 -[#AAAAAA,dashed]-> PR50 : superseded by
+I44 -[#FFD93D,thickness=2]-> PR50 : manual impl で解決
+I45 -[#FFD93D,thickness=2]-> PR50 : manual impl で解決
+I52 -[#FFD93D,thickness=2]-> PR50 : manual impl で解決
+
+' ============================================================
+' Legend
+' ============================================================
+
+legend bottom
+  |= ノード色 |= 意味 |
+  | <#FF6B6B> | ❌ 失敗 / CRITICAL / ブロッカー / 誤り方向 |
+  | <#FFD93D> | 🔄 進行中 / CI pending |
+  | <#6BCB77> | ✅ 正解 / 独立 / 即対応 |
+  | <#4D96FF> | 🔵 実装済み (AI Review 待ち) |
+  | <#FF922B> | 🟠 セキュリティ修正 必要 |
+  | <#CCCCCC> | ⚪ クローズ / 廃止 / superseded |
+endlegend
+
+@enduml

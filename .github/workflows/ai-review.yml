@@ -83,6 +83,14 @@ jobs:
             REVIEW="AI review unavailable: all tokens failed or not configured."
           fi
 
+          # GitHub Reviews API body limit: ~65535 chars — truncate to 64000 to avoid HTTP 500
+          if [ ${#REVIEW} -gt 64000 ]; then
+            REVIEW="${REVIEW:0:64000}"$'\n\n...[review truncated due to GitHub API body limit]'
+            echo "review_truncated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "review_truncated=false" >> "$GITHUB_OUTPUT"
+          fi
+
           {
             echo "REVIEW_BODY<<REVIEW_EOF"
             echo "$REVIEW"

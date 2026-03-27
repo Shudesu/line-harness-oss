@@ -1,0 +1,127 @@
+@startuml miyabi-line-replan
+title みやびライン 復旧リプラン — 現在の進捗 (2026-03-26 updated)
+
+top to bottom direction
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 10
+skinparam ArrowColor #555555
+skinparam ArrowThickness 2
+skinparam linetype ortho
+skinparam nodesep 20
+skinparam ranksep 40
+skinparam rectangle {
+  RoundCorner 8
+  BorderThickness 1.5
+  Padding 6
+}
+skinparam package {
+  BorderThickness 2
+  FontSize 11
+  FontStyle bold
+  Padding 10
+}
+
+' === 色 ===
+' #6BCB77 = 完了
+' #4D96FF = 実行中 / 進行中
+' #FFD93D = 待機中
+' #FF6B6B = クローズ対象
+' #CCCCCC = クローズ済
+
+' ============================================================
+' PHASE 0: 即時クリーンアップ ✅ COMPLETE
+' ============================================================
+
+package "Phase 0: 即時クリーンアップ ✅ COMPLETE" #D4EDDA {
+  rectangle "✅ PR#58 MERGED\ndocs: DAG / タスク分解" as P0_PR58 #6BCB77
+  rectangle "✅ PR#63 CLOSED\nwatchdog superseded" as P0_PR63 #6BCB77
+  rectangle "✅ I#51 CLOSED\ndocs test ephemeral" as P0_I51 #6BCB77
+  rectangle "✅ I#57 CLOSED\nタスク整理 meta" as P0_I57 #6BCB77
+}
+
+' ============================================================
+' PHASE 1: 誤り連鎖クリーンアップ ✅ COMPLETE
+' ============================================================
+
+package "Phase 1: 誤り連鎖クリーンアップ ✅ COMPLETE" #D4EDDA {
+  rectangle "✅ PR#54 CLOSED\nmigration v1 (trigger)" as P1_PR54 #6BCB77
+  rectangle "✅ PR#70 CLOSED\nmigration v2 (trigger)" as P1_PR70 #6BCB77
+  rectangle "✅ PR#72 CLOSED\nmigration v3 (trigger)" as P1_PR72 #6BCB77
+  rectangle "✅ I#60/#66/#71\nCLOSED 誤り方向" as P1_ISSUES #6BCB77
+  rectangle "✅ PR#40/#53\nCLOSED superseded" as P1_OLD #6BCB77
+}
+
+' ============================================================
+' PHASE 2: Migration 011 ✅ COMPLETE — PR#73 merged
+' ============================================================
+
+package "Phase 2: Migration 011 ✅ COMPLETE" #D4EDDA {
+  rectangle "✅ PR#73 MERGED\nmigration-011: unified_profiles\nNO TRIGGER / app-layer updated_at" as P2_MERGE #6BCB77
+}
+
+' ============================================================
+' PHASE 3: /health + T38 + plan ✅ COMPLETE — PR#74 merged
+' ============================================================
+
+package "Phase 3: /health + T38 + plan ✅ COMPLETE" #D4EDDA {
+  rectangle "✅ PR#74 MERGED\n/health version fix\nT38 consent checkbox\nplan middleware" as P3_MERGE #6BCB77
+}
+
+' ============================================================
+' PHASE 4: Discord OAuth ✅ COMPLETE — PR#76 merged
+' ============================================================
+
+package "Phase 4 (R4): Discord OAuth ✅ COMPLETE" #D4EDDA {
+  rectangle "✅ PR#76 MERGED\nHMAC-signed state (10min+nonce)\nLINE ID token server verify\ndiscord_id UNIQUE INDEX\nWORKER_URL callbackUrl fix\ntoken revocation\nMigration 012" as P4_MERGE #6BCB77
+}
+
+' ============================================================
+' PHASE 5: Teachable Webhook 🔵 IN REVIEW — PR#80
+' ============================================================
+
+package "Phase 5 (R5): Teachable Webhook 🔵 IN REVIEW" #E3F2FD {
+  rectangle "✅ CI PASSED\nType Check ✅\nBuild Check ✅\nDeploy Preview ✅" as P5_CI #6BCB77
+  rectangle "🔵 PR#80 OPEN\nAuthorization: Bearer header\nTiming-safe comparison\nEmail regex validation\nDB UPDATE first → pushMessage\nIdempotency: line_message_sent_at\nMigration 013" as P5_PR #4D96FF
+  rectangle "⏳ AI Review\n手動トリガー必要\n(Copilot PR 以外は skip)" as P5_REVIEW #FFD93D
+  rectangle "⏳ MERGE待ち\nI#68 クローズ\nI#49 クローズ" as P5_MERGE #FFD93D
+}
+
+' ============================================================
+' CI/CD 基盤 (全フェーズ並列で稼働)
+' ============================================================
+
+package "CI/CD パイプライン基盤 ✅" #D4EDDA {
+  rectangle "✅ PR#59 MERGED\nCopilot CI Watchdog" as CI_WATCH #6BCB77
+  rectangle "✅ PR#64/#69 MERGED\nWatchdog 改善 (5min)" as CI_WATCH2 #6BCB77
+  rectangle "✅ PR#65 MERGED\nCopilot assign\ncustomInstructions" as CI_ASSIGN #6BCB77
+  rectangle "✅ PR#75 MERGED\ndecompose.yml\nIssue 粒度チェック" as CI_DECOMPOSE #6BCB77
+  rectangle "✅ PR#77 MERGED\ndecompose B5\nContext Sufficiency" as CI_B5 #6BCB77
+}
+
+' ============================================================
+' 依存関係の矢印
+' ============================================================
+
+P0_PR58 -[#6BCB77,thickness=2]-> P1_PR54 : 完了
+P1_ISSUES -[#6BCB77,thickness=2]-> P2_MERGE : 完了
+P2_MERGE -[#6BCB77,thickness=2]-> P3_MERGE : 完了
+P2_MERGE -[#6BCB77,thickness=2]-> P4_MERGE : 完了
+P4_MERGE -[#6BCB77,thickness=2]-> P5_PR : Phase 4完了後
+
+P5_PR -[#4D96FF,thickness=2]-> P5_CI
+P5_CI -[#4D96FF,thickness=2]-> P5_REVIEW
+P5_REVIEW -[#FFD93D,thickness=2]-> P5_MERGE : APPROVE後
+
+' ============================================================
+' Legend
+' ============================================================
+
+legend right
+  |= 色 |= 意味 |
+  | <#6BCB77> | ✅ 完了 / MERGED / CLOSED |
+  | <#4D96FF> | 🔵 実行中 / IN REVIEW |
+  | <#FFD93D> | ⏳ 待機中 / 手動操作必要 |
+endlegend
+
+@enduml

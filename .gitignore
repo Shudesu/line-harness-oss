@@ -20,3 +20,8 @@ project_memory/*.pdf
 project_memory/*.html
 project_memory/gen_*.py
 docs/みやびライン*.png
+
+# Agent runtime files (non-source)
+.claude/scheduled_tasks.lock
+project_memory/agent-sync/
+project_memory/replan-*.md

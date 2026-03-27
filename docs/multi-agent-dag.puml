@@ -1,0 +1,141 @@
+@startuml miyabi-line-multi-agent-dag
+' ============================================================
+' みやびライン — マルチエージェントオーケストレーション DAG v1
+' 生成日: 2026-03-26
+' ============================================================
+
+skinparam backgroundColor #F8F9FA
+skinparam defaultFontSize 13
+skinparam defaultFontName "Noto Sans JP"
+skinparam ArrowColor #555555
+skinparam ArrowThickness 2
+skinparam ArrowFontSize 11
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 45
+
+skinparam rectangle {
+  RoundCorner 10
+  BorderThickness 2
+  Padding 10
+}
+
+skinparam package {
+  BorderThickness 2.5
+  FontSize 14
+  FontStyle bold
+  Padding 16
+}
+
+legend bottom right
+  |<#6DBF6D> ✅ 完了 |
+  |<#5BA8D8> 🔵 進行中 |
+  |<#E85454> 🔴 Critical（最優先）|
+  |<#E89020> 🟠 High |
+  |<#D4B400> 🟡 Medium |
+  |<#9B59B6> 🤖 Claude Code（オーケストレーター）|
+  |<#2ECC71> 🌐 OpenClaw main（開発者）|
+  |<#E67E22> ⚙️ 手動（ブラウザ作業）|
+endlegend
+
+' ============================================================
+' LAYER 0: GNI — 共有インパクト基盤
+' ============================================================
+package "🔬  GNI Impact Backbone（全エージェント共通）" #F0F0F0 {
+  rectangle "GitNexus\nline-harness-oss\n99 flows / 1351 symbols\ncommit: d7a3f30 ✅" as GNI #6DBF6D
+  rectangle "agent-sync/\ngni-impact-snapshot.json\n共有インパクト台帳" as SNAP #5BA8D8
+  GNI --> SNAP : "analyze → write"
+}
+
+' ============================================================
+' LAYER 1: オーケストレーター（Claude Code）
+' ============================================================
+package "🤖  Claude Code — Orchestrator" #EDE7F6 {
+  rectangle "Context &\nImpact 分析\nPhase A" as ORC_A #9B59B6
+  rectangle "Issue 作成\nPR レビュー\nマージ判断" as ORC_B #9B59B6
+  rectangle "tasks.json\n更新・管理" as ORC_C #9B59B6
+  ORC_A --> ORC_B
+  ORC_B --> ORC_C
+}
+
+' ============================================================
+' LAYER 2: OpenClaw main（開発担当）
+' ============================================================
+package "🌐  OpenClaw main — Senior Dev (Remote)" #E8F5E9 {
+  rectangle "T38 🔴\n法務ページ\nPP・特商法\nみやび合同会社" as MC_T38 #E85454
+  rectangle "T49 🟠\nTeachable\nバイパス手順書\n+ plan_pro tag" as MC_T49 #E89020
+  rectangle "Identity Hub\n🔵 Discord OAuth\nunified_profiles\n011 migration" as MC_IH #5BA8D8
+  MC_T38 --> MC_T49 : "完了後"
+}
+
+' ============================================================
+' LAYER 3: 手動作業（ブラウザ）
+' ============================================================
+package "⚙️  手動作業（ユーザー / ブラウザ）" #FFF8E1 {
+  rectangle "T42 🟠\nStripe KYC\n本人確認\n銀行口座" as MAN_T42 #E89020
+  rectangle "T43 🟠\nドメイン認証\nmiyabi-ai.jp" as MAN_T43 #E89020
+  rectangle "T44 🟠\n商品作成\nPro/Business\nPrice ID" as MAN_T44 #E89020
+  rectangle "T45 🟠\nWebhook登録\nSecret設定" as MAN_T45 #E89020
+  rectangle "T46 🟡\nテスト決済\n4242 card" as MAN_T46 #D4B400
+  rectangle "T48 🟡\n本番切替\nsk_live_" as MAN_T48 #D4B400
+
+  MAN_T42 --> MAN_T43
+  MAN_T42 --> MAN_T44
+  MAN_T44 --> MAN_T45
+  MAN_T45 --> MAN_T46
+  MAN_T46 --> MAN_T48
+}
+
+' ============================================================
+' LAYER 4: クリティカルパス → β ローンチ
+' ============================================================
+package "🚀  β ローンチ クリティカルパス" #FFE8EC {
+  rectangle "T39 🟠\nLP 改修\nAI デモ統合" as CP_T39 #E89020
+  rectangle "T37 🟡\nStripe 本番設定\nsecrets + test" as CP_T37 #D4B400
+  rectangle "T41 🎯\nPPAL β\n早期アクセス\nフロー" as CP_T41 #E85454
+
+  CP_T39 -[#E85454,thickness=3]-> CP_T41 : "CP"
+  CP_T37 ..> CP_T41 : "optional"
+}
+
+' ============================================================
+' PR / CI パイプライン
+' ============================================================
+package "⚡  CI/CD パイプライン" #E3F0FF {
+  rectangle "PR 作成\n(feat branch)" as CI_PR #5BA8D8
+  rectangle "Build +\nTypeCheck\nCI pass ✅" as CI_BUILD #6DBF6D
+  rectangle "Claude Opus\nAI Review\n(APPROVE)" as CI_REVIEW #5BA8D8
+  rectangle "Auto\nMerge\nsquash" as CI_MERGE #6DBF6D
+
+  CI_PR --> CI_BUILD
+  CI_BUILD -[#E85454,thickness=3]-> CI_REVIEW : "CP"
+  CI_REVIEW -[#E85454,thickness=3]-> CI_MERGE : "CP"
+}
+
+' ============================================================
+' レイヤー間依存
+' ============================================================
+' GNI → 全エージェント
+SNAP --> ORC_A : "インパクト確認"
+SNAP --> MC_T38 : "変更前確認"
+SNAP --> MC_IH : "変更前確認"
+
+' Orchestrator → OpenClaw main
+ORC_B -[#9B59B6,thickness=2]-> MC_T38 : "タスク\nディスパッチ"
+ORC_B -[#9B59B6,thickness=2]-> MC_IH : "タスク\nディスパッチ"
+ORC_C --> SNAP : "更新"
+
+' OpenClaw main → CI
+MC_T38 --> CI_PR : "PR作成"
+MC_IH --> CI_PR : "PR作成"
+
+' CI → Critical Path
+CI_MERGE -[#E85454,thickness=3]-> CP_T39 : "CP\n(T38完了後)"
+CI_MERGE ..> MC_T49 : "plan.ts 使用可"
+
+' Manual → Critical Path
+MAN_T45 --> CP_T37
+MC_T49 ..> CP_T41 : "Teachable\nbypass"
+CP_T39 --> CP_T41
+
+@enduml

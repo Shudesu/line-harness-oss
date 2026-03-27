@@ -1,0 +1,145 @@
+@startuml line-harness-oss-issue-pr-dag
+title みやびライン — Issue/PR 依存関係 DAG (2026-03-26)
+
+skinparam backgroundColor #F8F9FA
+skinparam defaultFontSize 13
+skinparam ArrowColor #444444
+skinparam ArrowThickness 2
+skinparam linetype ortho
+skinparam nodesep 35
+skinparam ranksep 55
+skinparam rectangle {
+  RoundCorner 12
+  BorderThickness 2
+  Padding 10
+}
+skinparam package {
+  BorderThickness 2.5
+  FontSize 13
+  FontStyle bold
+  Padding 16
+}
+
+' ============================================================
+' LAYER 0: Foundation — Migration 011 (全後続タスクの前提)
+' ============================================================
+package "Layer 0: 基盤 Migration (ブロッカー)" #FDECEA {
+
+  rectangle "#47\nfeat: unified_profiles\n移行 011" as I47 #E85454
+  rectangle "PR #54\nCopilot v1\n(AFTER UPDATE trigger)\n→ AI Review ❌ CRITICAL" as PR54 #FFB3B3
+  rectangle "PR #70\nCopilot v2\n(WHEN guard)\n→ AI Review ❌ CRITICAL" as PR70 #FFB3B3
+  rectangle "PR #72\nCopilot v3\n(BEFORE UPDATE)\n→ CI pending" as PR72 #FFD580
+
+  note right of PR54
+    根本原因:
+    ①コンテキスト未取得
+    ②app の updated_at=?
+    バインドパターン未確認
+    ③AI Review が誤って
+    trigger 追加を指示
+  end note
+
+  I47 -[#E85454,thickness=3]-> PR54 : Copilot\n自動実装
+  PR54 -[#E85454,thickness=3]-> PR70 : fix Issue\n#60/#66
+  PR70 -[#E85454,thickness=3]-> PR72 : fix Issue\n#71
+}
+
+' ============================================================
+' LAYER 1: Core Features (Layer 0 完了後に unblock)
+' ============================================================
+package "Layer 1: コア機能 (Migration 依存)" #EAF4FB {
+
+  rectangle "#48\nfeat: Discord OAuth\nPPAL Identity Hub" as I48 #5BA8D8
+  rectangle "PR #55\nDiscord OAuth\n→ AI Review ❌\nCRITICAL: CSRF・secret reuse" as PR55 #B3D4E8
+
+  rectangle "#49\nfeat: Teachable Webhook\n→ LINE LIFF 案内" as I49 #5BA8D8
+  rectangle "PR #56\nTeachable Webhook\n→ AI Review ❌\nCRITICAL: secret in query" as PR56 #B3D4E8
+}
+
+' ============================================================
+' LAYER 2: Security Fixes (Layer 1 の問題修正)
+' ============================================================
+package "Layer 2: セキュリティ修正 (Layer 1 依存)" #FFF8E1 {
+
+  rectangle "#67\nfix: Discord OAuth\nCSRF・認証バイパス修正" as I67 #E89020
+  rectangle "#68\nfix: Teachable Webhook\n認証・冪等性・DB順序修正" as I68 #E89020
+
+  note bottom of I67
+    必要: HMAC secret を
+    専用 ENV に分離 +
+    state 検証を POST body へ
+  end note
+
+  note bottom of I68
+    必要: secret を
+    Authorization header へ +
+    Content-Type validation
+  end note
+}
+
+' ============================================================
+' LAYER 3: 独立機能 (Migration と並列実行可能)
+' ============================================================
+package "Layer 3: 独立機能 (並列実行可)" #EDF9ED {
+
+  rectangle "#45\nfeat(T38): 利用規約\nチェックボックス" as I45 #6DBF6D
+  rectangle "PR #53\nCopilot T38\n→ AI Review ❌\nCONSENT 未永続化" as PR53 #C8E6C9
+
+  rectangle "#44\nfix: /health version\nbuild-time 注入" as I44 #6DBF6D
+  rectangle "PR #40\nCopilot /health\n→ AI Review ❌\npackage.json bundled" as PR40 #C8E6C9
+
+  rectangle "PR #50\nmanual impl\n/health+consent+plan\n(CI pending)" as PR50 #A5D6A7
+
+  note right of PR50
+    Claude Code 手動実装
+    T38 + T49 を正しく解決
+    → merge すれば #45/#44 解決
+  end note
+}
+
+' ============================================================
+' LAYER 4: 即マージ可 & クローズ対象
+' ============================================================
+package "Layer 4: 即対応可能" #F3E5F5 {
+
+  rectangle "PR #58\ndocs: タスク分解DAG\nCI ✅ AI ✅ → 即マージ可" as PR58 #9C27B0
+  rectangle "PR #63\nwatchdog event-driven\n→ CLOSE (superseded by #69)" as PR63 #E0E0E0
+}
+
+' ============================================================
+' 依存関係の矢印
+' ============================================================
+
+' Layer 0 → Layer 1 (ブロック依存)
+PR72 -[#E85454,thickness=3]-> I48 : migration\n完了待ち
+PR72 -[#E85454,thickness=3]-> I49 : migration\n完了待ち
+
+' Layer 1 → PR
+I48 -[#5BA8D8,thickness=2]-> PR55 : Copilot\n実装済み
+I49 -[#5BA8D8,thickness=2]-> PR56 : Copilot\n実装済み
+
+' Layer 1 → Layer 2 (セキュリティ修正依存)
+PR55 -[#E89020,thickness=2]-> I67 : AI Review\n指摘修正
+PR56 -[#E89020,thickness=2]-> I68 : AI Review\n指摘修正
+
+' Layer 3 独立
+I45 --> PR53
+I44 --> PR40
+I45 ..> PR50 : PR#50 で\n並行解決
+I44 ..> PR50 : PR#50 で\n並行解決
+
+' ============================================================
+' 凡例
+' ============================================================
+legend right
+  |= 色 |= 意味 |
+  | <#E85454> | ❌ Critical / ブロッカー |
+  | <#FFD580> | 🔄 進行中 (CI pending) |
+  | <#5BA8D8> | 🔵 実装済み・AI Review 待ち |
+  | <#E89020> | 🟠 セキュリティ修正必要 |
+  | <#6DBF6D> | ✅ 独立・並列実行可 |
+  | <#9C27B0> | 🟣 即マージ可 |
+  | <#E0E0E0> | ⚪ クローズ対象 |
+endlegend
+
+@enduml
