@@ -8,7 +8,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [checked, setChecked] = useState(false)
 
   useEffect(() => {
-    if (pathname === '/login') {
+    if (pathname === '/login' || pathname === '/login/') {
       setChecked(true)
       return
     }
