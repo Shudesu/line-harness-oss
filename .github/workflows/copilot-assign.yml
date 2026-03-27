@@ -85,6 +85,15 @@ jobs:
       - name: Assign GitHub Copilot via GraphQL
         if: steps.check_assigned.outputs.already_assigned == 'false'
         run: |
+          # COPILOT_PAT is required — github.token lacks Copilot agent permissions
+          if [ -z "$GH_TOKEN" ]; then
+            echo "ERROR: COPILOT_PAT secret is not set. Cannot trigger Copilot Coding Agent."
+            gh issue comment ${{ github.event.issue.number }} \
+              --repo ${{ github.repository }} \
+              --body "⚠️ **Copilot assignment failed**: \`COPILOT_PAT\` secret is not configured. Please add a PAT with \`repo\` + \`copilot\` scopes to repository secrets."
+            exit 1
+          fi
+
           ISSUE_NODE_ID=$(gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }} -q .node_id)
 
           cat > /tmp/instructions.txt << 'INSTRUCTIONS_EOF'
@@ -136,7 +145,7 @@ jobs:
 
           echo "GitHub Copilot assigned to issue #${{ github.event.issue.number }}"
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.COPILOT_PAT }}
 
       - name: Comment assignment confirmation
         if: steps.check_assigned.outputs.already_assigned == 'false'
