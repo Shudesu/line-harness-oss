@@ -8,6 +8,8 @@ import {
   getAttendanceByJob,
   getJobById,
   getFriendById,
+  createPayrollRecord,
+  getPayrollByBookingId,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { assertOwnFriendId } from '../middleware/liff-auth.js';
@@ -137,6 +139,38 @@ attendance.post('/api/attendance/checkout', async (c) => {
 
     const result = await checkOut(c.env.DB, booking.booking_id);
 
+    // チェックアウト完了時に報酬レコードを自動作成
+    let payrollData = null;
+    try {
+      const existingPayroll = await getPayrollByBookingId(c.env.DB, booking.booking_id);
+      if (!existingPayroll) {
+        const fullJob = await getJobById(c.env.DB, job.id);
+        if (fullJob && fullJob.hourly_rate) {
+          const record = await createPayrollRecord(c.env.DB, {
+            friendId,
+            bookingId: booking.booking_id,
+            jobId: job.id,
+            nurseryName: job.nursery_name,
+            workDate: job.work_date,
+            startTime: job.start_time,
+            endTime: job.end_time,
+            actualHours: result.actual_hours,
+            hourlyRate: fullJob.hourly_rate,
+            transportFee: fullJob.metadata ? JSON.parse(fullJob.metadata as unknown as string)?.transportFee || 0 : 0,
+          });
+          payrollData = {
+            grossAmount: record.gross_amount,
+            withholdingTax: record.withholding_tax,
+            netAmount: record.net_amount,
+            paymentMethod: record.payment_method,
+          };
+        }
+      }
+    } catch (err) {
+      console.error('Auto payroll creation error:', err);
+      // 報酬レコード作成失敗はチェックアウト自体には影響させない
+    }
+
     return c.json({
       success: true,
       data: {
@@ -146,6 +180,7 @@ attendance.post('/api/attendance/checkout', async (c) => {
         checkInAt: booking.check_in_at,
         checkOutAt: result.check_out_at,
         actualHours: result.actual_hours,
+        payroll: payrollData,
       },
     });
   } catch (err) {

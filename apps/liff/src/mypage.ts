@@ -57,6 +57,33 @@ interface ProfileData {
   qualification_type: string | null;
 }
 
+interface PayrollRecord {
+  id: string;
+  workDate: string;
+  nurseryName: string;
+  startTime: string;
+  endTime: string;
+  actualHours: number | null;
+  hourlyRate: number;
+  grossAmount: number;
+  transportFee: number;
+  withholdingTax: number;
+  netAmount: number;
+  paymentMethod: 'spot' | 'monthly';
+  paymentStatus: 'pending' | 'processing' | 'paid';
+  paidAt: string | null;
+}
+
+interface PayrollSummary {
+  totalGross: number;
+  totalTransport: number;
+  totalWithholding: number;
+  totalNet: number;
+  totalPaid: number;
+  totalPending: number;
+  recordCount: number;
+}
+
 interface MypageState {
   friendId: string | null;
   displayName: string;
@@ -66,8 +93,10 @@ interface MypageState {
   totalEarnings: number;
   totalBookings: number;
   profile: ProfileData | null;
+  payrollRecords: PayrollRecord[];
+  payrollSummary: PayrollSummary | null;
   loading: boolean;
-  activeTab: 'active' | 'past' | 'profile';
+  activeTab: 'active' | 'past' | 'earnings' | 'profile';
 }
 
 const state: MypageState = {
@@ -79,6 +108,8 @@ const state: MypageState = {
   totalEarnings: 0,
   totalBookings: 0,
   profile: null,
+  payrollRecords: [],
+  payrollSummary: null,
   loading: true,
   activeTab: 'active',
 };
@@ -150,6 +181,51 @@ function renderBookingCard(b: BookingRecord): string {
   `;
 }
 
+function renderPayrollCard(p: PayrollRecord): string {
+  const date = p.workDate ? formatDate(p.workDate) : '';
+  const time = p.startTime && p.endTime ? `${formatTime(p.startTime)}〜${formatTime(p.endTime)}` : '';
+  const hours = p.actualHours ? `${p.actualHours.toFixed(1)}h` : '';
+  const statusLabel: Record<string, string> = { pending: '振込待ち', processing: '処理中', paid: '振込済' };
+  const statusClass: Record<string, string> = { pending: 'badge-pending', processing: 'badge-pending', paid: 'badge-approved' };
+  const methodLabel = p.paymentMethod === 'spot' ? 'スポット' : '月末';
+
+  return `
+    <div class="booking-card">
+      <div class="booking-header">
+        <div class="booking-nursery">${escapeHtml(p.nurseryName)}</div>
+        <span class="badge ${statusClass[p.paymentStatus] || 'badge-pending'}">${statusLabel[p.paymentStatus] || p.paymentStatus}</span>
+      </div>
+      <div class="booking-details">
+        <div>📅 ${date}</div>
+        <div>⏰ ${time}</div>
+        ${hours ? `<div>⏱ ${hours}</div>` : ''}
+        <div>💴 ${methodLabel}振込</div>
+      </div>
+      <div class="payroll-breakdown">
+        <div class="payroll-row"><span>報酬</span><span>¥${p.grossAmount.toLocaleString()}</span></div>
+        ${p.transportFee > 0 ? `<div class="payroll-row"><span>交通費</span><span>+¥${p.transportFee.toLocaleString()}</span></div>` : ''}
+        ${p.withholdingTax > 0 ? `<div class="payroll-row"><span>源泉徴収</span><span style="color:#c62828">-¥${p.withholdingTax.toLocaleString()}</span></div>` : ''}
+        <div class="payroll-row payroll-total"><span>手取り</span><span>¥${p.netAmount.toLocaleString()}</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPayrollSummary(s: PayrollSummary): string {
+  return `
+    <div class="payroll-summary">
+      <div class="payroll-summary-row"><span>総報酬</span><span>¥${s.totalGross.toLocaleString()}</span></div>
+      <div class="payroll-summary-row"><span>交通費合計</span><span>+¥${s.totalTransport.toLocaleString()}</span></div>
+      <div class="payroll-summary-row"><span>源泉徴収合計</span><span style="color:#c62828">-¥${s.totalWithholding.toLocaleString()}</span></div>
+      <div class="payroll-summary-row payroll-total"><span>手取り合計</span><span>¥${s.totalNet.toLocaleString()}</span></div>
+      <div class="payroll-status-row">
+        <div><span class="badge badge-approved">振込済</span> ¥${s.totalPaid.toLocaleString()}</div>
+        <div><span class="badge badge-pending">未振込</span> ¥${s.totalPending.toLocaleString()}</div>
+      </div>
+    </div>
+  `;
+}
+
 function render(): void {
   const app = document.getElementById('app')!;
 
@@ -184,6 +260,14 @@ function render(): void {
     <a href="https://liff.line.me/${LIFF_ID}?page=jobs&view=profile" class="btn-edit-profile">プロフィールを登録する</a>
   `;
 
+  const earningsSection = state.payrollSummary
+    ? renderPayrollSummary(state.payrollSummary) + (
+        state.payrollRecords.length > 0
+          ? state.payrollRecords.map(renderPayrollCard).join('')
+          : '<div class="empty-state">まだ報酬データがありません</div>'
+      )
+    : '<div class="empty-state">報酬データを読み込み中...</div>';
+
   app.innerHTML = `
     <div class="mypage-container" style="padding-bottom:70px;">
       <div class="mypage-header">
@@ -203,15 +287,16 @@ function render(): void {
           <div class="stat-label">過去のお仕事</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">¥${state.totalEarnings.toLocaleString()}</div>
+          <div class="stat-value">¥${(state.payrollSummary?.totalNet || state.totalEarnings).toLocaleString()}</div>
           <div class="stat-label">累計報酬</div>
         </div>
       </div>
 
       <div class="tab-bar">
-        <button class="tab ${state.activeTab === 'active' ? 'active' : ''}" data-tab="active">予定 (${state.active.length})</button>
-        <button class="tab ${state.activeTab === 'past' ? 'active' : ''}" data-tab="past">履歴 (${state.past.length})</button>
-        <button class="tab ${state.activeTab === 'profile' ? 'active' : ''}" data-tab="profile">プロフィール</button>
+        <button class="tab ${state.activeTab === 'active' ? 'active' : ''}" data-tab="active">予定</button>
+        <button class="tab ${state.activeTab === 'past' ? 'active' : ''}" data-tab="past">履歴</button>
+        <button class="tab ${state.activeTab === 'earnings' ? 'active' : ''}" data-tab="earnings">報酬</button>
+        <button class="tab ${state.activeTab === 'profile' ? 'active' : ''}" data-tab="profile">設定</button>
       </div>
 
       <div class="tab-content">
@@ -225,6 +310,7 @@ function render(): void {
             ? state.past.map(renderBookingCard).join('')
             : '<div class="empty-state">まだ勤務履歴がありません</div>'
         ) : ''}
+        ${state.activeTab === 'earnings' ? earningsSection : ''}
         ${state.activeTab === 'profile' ? profileSection : ''}
       </div>
     </div>
@@ -271,10 +357,11 @@ export async function initMypage(): Promise<void> {
     return;
   }
 
-  // マイページデータ＆プロフィールを並列取得
-  const [mypageRes, profileRes] = await Promise.all([
+  // マイページデータ＆プロフィール＆報酬明細を並列取得
+  const [mypageRes, profileRes, payrollRes] = await Promise.all([
     apiCall(`/api/liff/mypage/${state.friendId}`).catch(() => null),
     apiCall(`/api/profiles/${state.friendId}`).catch(() => null),
+    apiCall(`/api/payroll/${state.friendId}`).catch(() => null),
   ]);
 
   if (mypageRes?.ok) {
@@ -291,9 +378,24 @@ export async function initMypage(): Promise<void> {
   }
 
   if (profileRes?.ok) {
-    const data = await profileRes.json() as { success: boolean; data?: ProfileData };
+    const data = await profileRes.json() as { success: boolean; data?: { profile?: ProfileData } | ProfileData };
     if (data.success && data.data) {
-      state.profile = data.data;
+      // APIは { profile, documents } を返すので、profile をアンラップする
+      const profileData = (data.data as { profile?: ProfileData }).profile || data.data as ProfileData;
+      if (profileData && (profileData.real_name || profileData.phone || profileData.qualification_type)) {
+        state.profile = profileData;
+      }
+    }
+  }
+
+  if (payrollRes?.ok) {
+    const data = await payrollRes.json() as {
+      success: boolean;
+      data?: { records: PayrollRecord[]; summary: PayrollSummary };
+    };
+    if (data.success && data.data) {
+      state.payrollRecords = data.data.records;
+      state.payrollSummary = data.data.summary;
     }
   }
 
@@ -348,6 +450,15 @@ function injectStyles(): void {
 
     .empty-state { text-align: center; padding: 40px 0; color: #888; font-size: 14px; line-height: 2; }
     .empty-state a { color: #f06292; text-decoration: none; font-weight: 600; }
+
+    .payroll-breakdown { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0f0f0; }
+    .payroll-row { display: flex; justify-content: space-between; font-size: 13px; color: #666; padding: 3px 0; }
+    .payroll-total { font-weight: 700; color: #f06292; font-size: 15px; padding-top: 6px; border-top: 1px solid #f0f0f0; margin-top: 4px; }
+
+    .payroll-summary { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .payroll-summary-row { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; border-bottom: 1px solid #f8f8f8; }
+    .payroll-summary-row:last-of-type { border-bottom: none; }
+    .payroll-status-row { display: flex; gap: 16px; justify-content: center; margin-top: 12px; font-size: 13px; }
   `;
   document.head.appendChild(style);
 }

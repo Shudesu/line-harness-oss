@@ -180,8 +180,9 @@ function setupCheckoutButton(token: string, friendId: string, nurseryName: strin
       };
 
       if (data.success) {
+        const d = data.data as { checkInAt: string; checkOutAt: string; actualHours: number; payroll?: { grossAmount: number; withholdingTax: number; netAmount: number; paymentMethod: string } };
         const container = document.getElementById('app')!;
-        container.innerHTML = renderCheckoutSuccess(nurseryName, data.data!.checkInAt, data.data!.checkOutAt, data.data!.actualHours);
+        container.innerHTML = renderCheckoutSuccess(nurseryName, d.checkInAt, d.checkOutAt, d.actualHours, d.payroll);
       } else {
         btn.textContent = data.error || 'エラーが発生しました';
         setTimeout(() => {
@@ -323,7 +324,33 @@ function renderCheckoutReady(nursery: string, date: string, start: string, end: 
   </div></div>`;
 }
 
-function renderCheckoutSuccess(nursery: string, checkInAt: string, checkOutAt: string, actualHours: number): string {
+function renderCheckoutSuccess(
+  nursery: string,
+  checkInAt: string,
+  checkOutAt: string,
+  actualHours: number,
+  payroll?: { grossAmount: number; withholdingTax: number; netAmount: number; paymentMethod: string } | null,
+): string {
+  const payrollSection = payroll ? `
+    <div class="info" style="margin-top:16px;">
+      <div class="info-row"><span class="info-label">💰</span>報酬: ¥${payroll.grossAmount.toLocaleString()}</div>
+      ${payroll.withholdingTax > 0 ? `<div class="info-row"><span class="info-label">📄</span>源泉徴収: -¥${payroll.withholdingTax.toLocaleString()}</div>` : ''}
+      <div class="info-row" style="font-weight:700;color:#f06292"><span class="info-label">💵</span>手取り: ¥${payroll.netAmount.toLocaleString()}</div>
+    </div>
+    <div style="margin-top:16px;">
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">振込方法</p>
+      <div style="display:flex;gap:8px;">
+        <button class="payment-btn ${payroll.paymentMethod === 'spot' ? 'selected' : ''}" data-method="spot" style="flex:1;padding:12px;border:2px solid ${payroll.paymentMethod === 'spot' ? '#f06292' : '#ddd'};border-radius:10px;background:${payroll.paymentMethod === 'spot' ? '#fce4ec' : '#fff'};font-size:14px;font-weight:600;cursor:pointer;">
+          ⚡ スポット振込
+        </button>
+        <button class="payment-btn ${payroll.paymentMethod === 'monthly' ? 'selected' : ''}" data-method="monthly" style="flex:1;padding:12px;border:2px solid ${payroll.paymentMethod === 'monthly' ? '#f06292' : '#ddd'};border-radius:10px;background:${payroll.paymentMethod === 'monthly' ? '#fce4ec' : '#fff'};font-size:14px;font-weight:600;cursor:pointer;">
+          📅 月末振込
+        </button>
+      </div>
+      <p style="font-size:11px;color:#999;margin-top:8px;">※スポット振込は振込手数料がかかる場合があります</p>
+    </div>
+  ` : '';
+
   return `${baseStyle()}<div class="container"><div class="card">
     <div class="success-icon">🎉</div>
     <p class="title">退勤しました！</p>
@@ -333,7 +360,8 @@ function renderCheckoutSuccess(nursery: string, checkInAt: string, checkOutAt: s
       <div class="info-row"><span class="info-label">🕐</span>退勤: ${formatTime(checkOutAt)}</div>
     </div>
     <div class="hours-display">${actualHours.toFixed(1)} 時間</div>
-    <p class="subtitle">本日もおつかれさまでした！</p>
+    ${payrollSection}
+    <p class="subtitle" style="margin-top:16px;">本日もおつかれさまでした！</p>
     <p class="close-note">この画面は閉じて大丈夫です</p>
   </div></div>`;
 }

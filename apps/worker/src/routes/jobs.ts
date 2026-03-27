@@ -12,11 +12,174 @@ import {
   denyBooking,
   getPendingBookings,
   getFriendById,
+  getNurseries,
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 import type { Env } from '../index.js';
 
 const jobs = new Hono<Env>();
+
+// ========== メール文面から求人を一括解析（管理: API_KEY認証） ==========
+
+jobs.post('/api/jobs/parse-email', async (c) => {
+  try {
+    const { text } = await c.req.json<{ text: string }>();
+    if (!text || text.trim().length === 0) {
+      return c.json({ success: false, error: 'text is required' }, 400);
+    }
+
+    const apiKey = c.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return c.json({ success: false, error: 'ANTHROPIC_API_KEY not configured' }, 500);
+    }
+
+    // 登録済み園リストを取得してマッチング精度を上げる
+    const nurseries = await getNurseries(c.env.DB);
+    const nurseryList = nurseries.map((n) => ({
+      id: n.id,
+      name: n.name,
+      address: n.address,
+      station: n.station,
+    }));
+
+    const today = new Date().toISOString().split('T')[0];
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 4096,
+        messages: [
+          {
+            role: 'user',
+            content: `以下のメール文面から求人情報を抽出してJSON配列で返してください。
+
+## 登録済み園リスト
+${JSON.stringify(nurseryList, null, 2)}
+
+## ルール
+- 園名が登録済みリストに一致する場合は nurseryId にそのIDを設定
+- 一致しない場合は nurseryId を null にして nurseryName に記載の園名を設定
+- 日付は YYYY-MM-DD 形式（今日: ${today}）。「来週月曜」等の相対表現も絶対日付に変換
+- 時間は HH:MM 形式
+- 時給の記載がなければ hourlyRate は null
+- 定員の記載がなければ capacity は 1
+- 業務内容があれば description に設定
+- 資格要件があれば requirements に設定
+- 1つのメールに複数日程がある場合は複数レコードに展開
+
+## 出力形式（JSON配列のみ、説明不要）
+[{
+  "nurseryId": "string|null",
+  "nurseryName": "string",
+  "workDate": "YYYY-MM-DD",
+  "startTime": "HH:MM",
+  "endTime": "HH:MM",
+  "hourlyRate": number|null,
+  "capacity": number,
+  "description": "string|null",
+  "requirements": "string|null"
+}]
+
+## メール文面
+${text}`,
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error('Anthropic API error:', res.status, errBody);
+      return c.json({ success: false, error: 'AI parsing failed' }, 502);
+    }
+
+    const aiResult = await res.json<{
+      content: Array<{ type: string; text: string }>;
+    }>();
+
+    const aiText = aiResult.content?.[0]?.text || '';
+
+    // JSON配列を抽出（コードブロック内でも対応）
+    const jsonMatch = aiText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      return c.json({ success: false, error: 'Failed to parse AI response', raw: aiText }, 422);
+    }
+
+    let parsed: unknown[];
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch {
+      return c.json({ success: false, error: 'AI returned invalid JSON', raw: aiText }, 422);
+    }
+
+    if (!Array.isArray(parsed)) {
+      return c.json({ success: false, error: 'AI response is not an array', raw: aiText }, 422);
+    }
+
+    // バリデーション: 必須フィールドと形式チェック
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const timeRegex = /^\d{2}:\d{2}$/;
+    const validated = parsed
+      .filter((job: unknown): job is Record<string, unknown> => {
+        if (!job || typeof job !== 'object') return false;
+        const j = job as Record<string, unknown>;
+        // 必須: nurseryName, workDate, startTime, endTime
+        if (!j.nurseryName || typeof j.nurseryName !== 'string') return false;
+        if (!j.workDate || typeof j.workDate !== 'string' || !dateRegex.test(j.workDate)) return false;
+        if (!j.startTime || typeof j.startTime !== 'string' || !timeRegex.test(j.startTime)) return false;
+        if (!j.endTime || typeof j.endTime !== 'string' || !timeRegex.test(j.endTime)) return false;
+        return true;
+      })
+      .map((job) => ({
+        nurseryId: (typeof job.nurseryId === 'string' ? job.nurseryId : null) as string | null,
+        nurseryName: job.nurseryName as string,
+        workDate: job.workDate as string,
+        startTime: job.startTime as string,
+        endTime: job.endTime as string,
+        hourlyRate: typeof job.hourlyRate === 'number' ? job.hourlyRate : null,
+        capacity: typeof job.capacity === 'number' && job.capacity > 0 ? job.capacity : 1,
+        description: typeof job.description === 'string' ? job.description : null,
+        requirements: typeof job.requirements === 'string' ? job.requirements : null,
+        address: typeof job.address === 'string' ? job.address : null,
+        station: typeof job.station === 'string' ? job.station : null,
+      }));
+
+    // 園名を補完（nurseryIdがある場合はリストから正式名称を取得）
+    const enriched = validated.map((job) => {
+      if (job.nurseryId) {
+        const nursery = nurseries.find((n) => n.id === job.nurseryId);
+        if (nursery) {
+          return {
+            ...job,
+            nurseryName: nursery.name,
+            address: nursery.address || job.address,
+            station: nursery.station || job.station,
+          };
+        }
+      }
+      return job;
+    });
+
+    return c.json({
+      success: true,
+      data: enriched,
+      meta: {
+        parsedCount: parsed.length,
+        validCount: enriched.length,
+        skippedCount: parsed.length - enriched.length,
+      },
+    });
+  } catch (err) {
+    console.error('POST /api/jobs/parse-email error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
 
 // ========== 求人一覧（公開: LIFF用） ==========
 
@@ -48,8 +211,47 @@ jobs.get('/api/jobs', async (c) => {
       }
     }
 
+    // nursery_id がある求人はnurseryデータをJOIN
+    const nurseryIds = [...new Set(items.map(j => (j as Record<string, unknown>).nursery_id as string).filter(Boolean))];
+    const nurseryMap = new Map<string, Record<string, unknown>>();
+    const workerUrl = c.env.WORKER_URL || '';
+
+    if (nurseryIds.length > 0) {
+      const nPlaceholders = nurseryIds.map(() => '?').join(',');
+      const nResult = await c.env.DB
+        .prepare(`SELECT * FROM nurseries WHERE id IN (${nPlaceholders})`)
+        .bind(...nurseryIds)
+        .all<Record<string, unknown>>();
+      for (const n of nResult.results) {
+        const photoKeys: string[] = JSON.parse((n.photo_r2_keys as string) || '[]');
+        nurseryMap.set(n.id as string, {
+          nurseryId: n.id,
+          nurseryName: n.name,
+          prefecture: n.prefecture,
+          area: n.area,
+          nurseryType: n.nursery_type,
+          qualificationReq: n.qualification_req,
+          address: n.address,
+          station: n.station,
+          accessInfo: n.access_info,
+          hpUrl: n.hp_url,
+          description: n.description,
+          requirements: n.requirements,
+          notes: n.notes,
+          transportFee: n.transport_fee,
+          breakMinutes: n.break_minutes,
+          photoUrls: photoKeys.map((key: string) =>
+            `${workerUrl}/api/nurseries/${n.id}/photo/${encodeURIComponent(key.split('/').pop() || key)}`
+          ),
+        });
+      }
+    }
+
     const data = items.map((job) => {
       const booked = bookingCountMap.get(job.id) ?? 0;
+      const nurseryId = (job as Record<string, unknown>).nursery_id as string | null;
+      const nurseryData = nurseryId ? nurseryMap.get(nurseryId) : null;
+
       return {
         id: job.id,
         nurseryName: job.nursery_name,
@@ -66,6 +268,8 @@ jobs.get('/api/jobs', async (c) => {
         status: job.status,
         metadata: job.metadata ? JSON.parse(job.metadata) : null,
         createdAt: job.created_at,
+        // nursery enrichment (nulls fall back to job-level fields)
+        ...(nurseryData || {}),
       };
     });
 
@@ -430,17 +634,26 @@ jobs.get('/api/bookings/pending', async (c) => {
           profile = await getProfileByFriendId(c.env.DB, b.friend_id);
         }
 
+        // フロントのBooking型に合わせたフィールド名で返す
+        const friendPictureUrl = b.friend_id
+          ? (await getFriendById(c.env.DB, b.friend_id))?.picture_url || null
+          : null;
+
         return {
           id: b.id,
           friendId: b.friend_id,
-          displayName,
+          friendDisplayName: displayName,
+          friendPictureUrl,
           nurseryName,
           workDate,
           startTime,
           endTime,
           hourlyRate,
           approvalStatus: b.approval_status,
+          title: b.title,
+          startAt: b.start_at,
           createdAt: b.created_at,
+          qualificationType: profile?.qualification_type || null,
           profile: profile ? {
             realName: profile.real_name,
             realNameKana: profile.real_name_kana,

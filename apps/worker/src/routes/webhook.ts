@@ -92,19 +92,26 @@ async function handleEvent(
     if (!userId) return;
 
     // プロフィール取得 & 友だち登録/更新
-    let profile;
+    let profile: { displayName?: string; pictureUrl?: string; statusMessage?: string } | undefined;
     try {
       profile = await lineClient.getProfile(userId);
     } catch (err) {
       console.error('Failed to get profile for', userId, err);
+      // プロフィール取得失敗時はデフォルト値で友だち登録を続行
     }
 
-    const friend = await upsertFriend(db, {
-      lineUserId: userId,
-      displayName: profile?.displayName ?? null,
-      pictureUrl: profile?.pictureUrl ?? null,
-      statusMessage: profile?.statusMessage ?? null,
-    });
+    let friend;
+    try {
+      friend = await upsertFriend(db, {
+        lineUserId: userId,
+        displayName: profile?.displayName ?? null,
+        pictureUrl: profile?.pictureUrl ?? null,
+        statusMessage: profile?.statusMessage ?? null,
+      });
+    } catch (err) {
+      console.error('Failed to upsert friend for', userId, err);
+      return; // 友だち登録に失敗した場合はこれ以上進めない
+    }
 
     // Set line_account_id for multi-account tracking
     if (lineAccountId) {

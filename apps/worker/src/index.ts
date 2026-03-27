@@ -35,9 +35,11 @@ import { richMenus } from './routes/rich-menus.js';
 import { trackedLinks } from './routes/tracked-links.js';
 import { forms } from './routes/forms.js';
 import { jobs } from './routes/jobs.js';
+import { nurseries } from './routes/nurseries.js';
 import { profiles } from './routes/profiles.js';
 import { attendance } from './routes/attendance.js';
 import { reviews } from './routes/reviews.js';
+import { payroll } from './routes/payroll.js';
 
 export type Env = {
   Bindings: {
@@ -51,6 +53,7 @@ export type Env = {
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
     ADMIN_LINE_USER_ID?: string;
+    ANTHROPIC_API_KEY?: string;
     DOCUMENTS: R2Bucket;
   };
   Variables: {
@@ -71,6 +74,10 @@ app.use('*', cors({
       workerUrl,
       // LINE LIFF SDK loads from these origins
       'https://liff.line.me',
+      // spot-admin (Cloudflare Pages)
+      'https://spothoiku-admin.pages.dev',
+      // Local dev
+      'http://localhost:3002',
     ].filter(Boolean);
     // Allow if origin matches any allowed origin (strip trailing slash)
     if (origin && allowed.some((a) => origin.replace(/\/$/, '') === a.replace(/\/$/, ''))) {
@@ -97,6 +104,8 @@ app.use('/api/attendance/checkout', liffAuthMiddleware);
 app.use('/api/attendance/status', liffAuthMiddleware);
 app.use('/api/reviews', liffAuthMiddleware);
 app.use('/api/credit-score/*', liffAuthMiddleware);
+app.use('/api/payroll/*', liffAuthMiddleware);
+app.use('/api/payment-settings/*', liffAuthMiddleware);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
@@ -126,9 +135,11 @@ app.route('/', richMenus);
 app.route('/', trackedLinks);
 app.route('/', forms);
 app.route('/', jobs);
+app.route('/', nurseries);
 app.route('/', profiles);
 app.route('/', attendance);
 app.route('/', reviews);
+app.route('/', payroll);
 
 // Short link: /r/:ref → landing page with LINE open button
 app.get('/r/:ref', (c) => {
@@ -240,7 +251,7 @@ async function runD1Backup(db: D1Database, r2: R2Bucket): Promise<void> {
     const tables = [
       'friends', 'tags', 'friend_tags', 'auto_replies', 'scenarios', 'scenario_steps',
       'friend_scenarios', 'broadcasts', 'messages_log', 'line_accounts', 'user_profiles',
-      'user_documents', 'favorite_nurseries', 'jobs', 'calendar_bookings', 'reviews',
+      'user_documents', 'favorite_nurseries', 'nurseries', 'jobs', 'calendar_bookings', 'reviews',
       'cancellation_log',
     ];
     const backup: Record<string, unknown[]> = {};
