@@ -619,18 +619,24 @@
       color: #555;
       margin-bottom: 6px;
     }
+    .slot-work-duration {
+      font-size: 12px;
+      color: #888;
+      margin-left: 4px;
+    }
     .slot-pay {
       display: flex;
       align-items: baseline;
       gap: 12px;
     }
     .slot-pay-total {
-      font-size: 13px;
-      color: #333;
-    }
-    .slot-pay-total strong {
-      font-size: 16px;
+      font-size: 18px;
+      font-weight: 700;
       color: #f06292;
+    }
+    .slot-pay-detail {
+      font-size: 12px;
+      color: #888;
     }
     .slot-pay-hourly {
       font-size: 12px;
@@ -930,6 +936,529 @@
       font-size: 12px;
       color: #999;
       text-align: right;
+    }
+
+    /* ========== Nursery Photo ========== */
+    .nursery-photo {
+      width: 100%;
+      height: 180px;
+      border-radius: 12px 12px 0 0;
+      overflow: hidden;
+      margin: -16px -16px 12px -16px;
+      width: calc(100% + 32px);
+    }
+    .nursery-photo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .nursery-photos {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scroll-snap-type: x mandatory;
+      margin-bottom: 16px;
+      border-radius: 8px;
+    }
+    .nursery-photos img {
+      width: 280px;
+      height: 200px;
+      object-fit: cover;
+      border-radius: 8px;
+      scroll-snap-align: start;
+      flex-shrink: 0;
+    }
+
+    /* ========== Badges ========== */
+    .nursery-station-badge {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 8px;
+    }
+    .station-label {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      background: #f06292;
+      padding: 2px 10px;
+      border-radius: 4px;
+      margin-right: 8px;
+    }
+    .nursery-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .badge {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      background: #757575;
+      padding: 4px 12px;
+      border-radius: 4px;
+    }
+
+    /* ========== Slot enhancements ========== */
+    .slot-pay-note {
+      font-size: 11px;
+      color: #999;
+      margin-top: 4px;
+    }
+    .slot-deadline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #888;
+      margin-top: 6px;
+      padding: 3px 8px;
+      border: 1px solid #e0e0e0;
+      border-radius: 12px;
+    }
+
+    /* ========== Section sub text ========== */
+    .section-sub {
+      font-size: 13px;
+      color: #666;
+      text-align: center;
+      line-height: 1.7;
+      margin-bottom: 16px;
+    }
+    .apply-note {
+      font-size: 11px;
+      color: #999;
+      line-height: 1.6;
+      margin-top: 12px;
+      margin-bottom: 20px;
+    }
+
+    /* ========== Info Table (募集要項) ========== */
+    .nursery-info-table {
+      margin-bottom: 20px;
+    }
+    .info-row {
+      display: flex;
+      border-bottom: 1px solid #f0f0f0;
+      padding: 14px 0;
+    }
+    .info-row:last-child {
+      border-bottom: none;
+    }
+    .info-row-label {
+      width: 90px;
+      flex-shrink: 0;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      background: #999;
+      padding: 6px 10px;
+      border-radius: 4px;
+      text-align: center;
+      align-self: flex-start;
+      margin-right: 12px;
+    }
+    .info-row-value {
+      flex: 1;
+      font-size: 14px;
+      color: #555;
+      line-height: 1.7;
+      padding-top: 4px;
+    }
+    .hp-link {
+      display: inline-block;
+      padding: 4px 12px;
+      border: 1px solid #ccc;
+      border-radius: 20px;
+      font-size: 12px;
+      color: #555;
+      text-decoration: none;
+      margin-left: 8px;
+    }
+    .hp-link:active {
+      background: #f5f5f5;
+    }
+
+    /* ========== Google Maps ========== */
+    .nursery-map {
+      margin: 16px 0;
+    }
+
+    /* ========== Bottom Navigation ========== */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      background: #fff;
+      border-top: 1px solid #e0e0e0;
+      z-index: 100;
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    .bottom-nav-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 8px 0;
+      text-decoration: none;
+      color: #999;
+      font-size: 11px;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+    .bottom-nav-item.active {
+      color: #f06292;
+    }
+    .bottom-nav-item svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    /* ========== Week Calendar (Filter) ========== */
+    .week-calendar {
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .week-cal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .week-cal-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #333;
+    }
+    .week-cal-nav {
+      display: flex;
+      gap: 4px;
+    }
+    .week-cal-nav button {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: #f5f5f5;
+      border-radius: 50%;
+      font-size: 14px;
+      color: #333;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .week-cal-nav button:active { background: #e0e0e0; }
+    .week-cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      text-align: center;
+    }
+    .week-cal-dow {
+      font-size: 10px;
+      font-weight: 600;
+      color: #999;
+      padding: 2px 0;
+    }
+    .week-cal-dow.sun { color: #e53e3e; }
+    .week-cal-dow.sat { color: #3b82f6; }
+    .week-cal-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px 0 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .week-cal-cell.past { opacity: 0.35; pointer-events: none; }
+    .week-cal-cell.today .week-cal-day { font-weight: 800; }
+    .week-cal-cell.selected { background: #f06292; }
+    .week-cal-cell.selected .week-cal-day { color: #fff; }
+    .week-cal-cell.selected .week-cal-dow-sub { color: rgba(255,255,255,0.8); }
+    .week-cal-cell:active:not(.past):not(.selected) { background: #fce4ec; }
+    .week-cal-day {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      line-height: 1.2;
+    }
+    .week-cal-cell.sun .week-cal-day { color: #e53e3e; }
+    .week-cal-cell.sat .week-cal-day { color: #3b82f6; }
+    .week-cal-cell.selected .week-cal-day { color: #fff !important; }
+    .week-cal-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #f06292;
+      margin-top: 2px;
+    }
+    .week-cal-cell.selected .week-cal-dot { background: #fff; }
+    .week-cal-cell.no-jobs .week-cal-dot { visibility: hidden; }
+    .week-cal-count {
+      font-size: 9px;
+      color: #f06292;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+    .week-cal-cell.selected .week-cal-count { color: #fff; }
+    /* ========== Month Calendar (Filter) ========== */
+    .month-calendar {
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .month-cal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .month-cal-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #333;
+    }
+    .month-cal-nav button {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: #f5f5f5;
+      border-radius: 50%;
+      font-size: 14px;
+      color: #333;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .month-cal-nav button:active { background: #e0e0e0; }
+    .month-cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 2px;
+      text-align: center;
+    }
+    .month-cal-dow {
+      font-size: 10px;
+      font-weight: 600;
+      color: #999;
+      padding: 4px 0;
+    }
+    .month-cal-dow.sun { color: #e53e3e; }
+    .month-cal-dow.sat { color: #3b82f6; }
+    .month-cal-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px 0 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+      min-height: 36px;
+    }
+    .month-cal-cell.empty { pointer-events: none; }
+    .month-cal-cell.past { opacity: 0.3; pointer-events: none; }
+    .month-cal-cell.today .month-cal-day { font-weight: 800; }
+    .month-cal-cell.selected { background: #f06292; }
+    .month-cal-cell.selected .month-cal-day { color: #fff !important; }
+    .month-cal-cell.selected .month-cal-dot { background: #fff; }
+    .month-cal-cell:active:not(.past):not(.selected):not(.empty) { background: #fce4ec; }
+    .month-cal-day {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      line-height: 1.2;
+    }
+    .month-cal-cell.sun .month-cal-day { color: #e53e3e; }
+    .month-cal-cell.sat .month-cal-day { color: #3b82f6; }
+    .month-cal-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #f06292;
+      margin-top: 2px;
+    }
+
+    .area-filter-section {
+      margin-top: 8px;
+    }
+    .area-filter-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .area-filter-chips {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      flex: 1;
+      min-width: 0;
+    }
+    .area-filter-chips::-webkit-scrollbar { display: none; }
+    .area-chip {
+      padding: 6px 14px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 16px;
+      background: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .area-chip.active {
+      border-color: #f06292;
+      color: #f06292;
+      background: #fce4ec;
+    }
+    .area-chip:active { border-color: #f06292; color: #f06292; }
+    .area-filter-chips.sub {
+      margin-top: 6px;
+    }
+    .area-chip.sub {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-color: #ccc;
+    }
+    .area-chip.sub.active {
+      border-color: #f06292;
+      color: #f06292;
+      background: #fce4ec;
+    }
+
+    /* ========== Mini Calendar (Nursery Detail) ========== */
+    .mini-cal {
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+    .mini-cal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .mini-cal-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #333;
+    }
+    .mini-cal-nav button {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: #f5f5f5;
+      border-radius: 50%;
+      font-size: 12px;
+      color: #333;
+      cursor: pointer;
+    }
+    .mini-cal-nav button:active { background: #e0e0e0; }
+    .mini-cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 2px;
+      text-align: center;
+    }
+    .mini-cal-dow {
+      font-size: 10px;
+      font-weight: 600;
+      color: #999;
+      padding: 4px 0;
+    }
+    .mini-cal-dow.sun { color: #e53e3e; }
+    .mini-cal-dow.sat { color: #3b82f6; }
+    .mini-cal-cell {
+      aspect-ratio: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-size: 13px;
+      color: #ccc;
+      cursor: default;
+      position: relative;
+      transition: all 0.15s;
+    }
+    .mini-cal-cell.empty { visibility: hidden; }
+    .mini-cal-cell.has-job {
+      color: #333;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .mini-cal-cell.has-job::after {
+      content: '';
+      position: absolute;
+      bottom: 3px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: #f06292;
+    }
+    .mini-cal-cell.selected {
+      background: #f06292;
+      color: #fff !important;
+    }
+    .mini-cal-cell.selected::after { background: #fff; }
+    .mini-cal-cell.has-job:active:not(.selected) { background: #fce4ec; }
+    .mini-cal-cell.today { font-weight: 800; }
+    .mini-cal-cell.sun { color: #e53e3e; }
+    .mini-cal-cell.sat { color: #3b82f6; }
+    .mini-cal-cell.has-job.sun { color: #e53e3e; }
+    .mini-cal-cell.has-job.sat { color: #3b82f6; }
+    .mini-cal-cell.selected.sun,
+    .mini-cal-cell.selected.sat { color: #fff !important; }
+    .mini-cal-day-slots {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #f0f0f0;
+    }
+    .mini-cal-day-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #333;
+      margin-bottom: 8px;
+    }
+
+    /* ========== Footer ========== */
+    .liff-footer {
+      background: #f06292;
+      color: #fff;
+      text-align: center;
+      padding: 24px 16px;
+      margin: 24px -16px -16px -16px;
+      font-size: 13px;
+    }
+    .liff-footer a {
+      color: #fff;
+      text-decoration: none;
+      margin: 0 12px;
+    }
+    .liff-footer a:active {
+      opacity: 0.8;
+    }
+    .footer-license {
+      font-size: 11px;
+      color: rgba(255,255,255,0.7);
+      margin-top: 8px;
     }
   </style>
 </head>

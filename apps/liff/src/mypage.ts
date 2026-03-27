@@ -17,6 +17,23 @@ declare const liff: {
 const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:8787';
 const LIFF_ID = import.meta.env?.VITE_LIFF_ID || '';
 
+function renderBottomNav(active: 'jobs' | 'mypage'): string {
+  const jobsUrl = `https://liff.line.me/${LIFF_ID}?page=jobs`;
+  const mypageUrl = `https://liff.line.me/${LIFF_ID}?page=mypage`;
+  return `
+    <nav class="bottom-nav">
+      <a href="${jobsUrl}" class="bottom-nav-item ${active === 'jobs' ? 'active' : ''}">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <span>お仕事を探す</span>
+      </a>
+      <a href="${mypageUrl}" class="bottom-nav-item ${active === 'mypage' ? 'active' : ''}">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span>マイページ</span>
+      </a>
+    </nav>
+  `;
+}
+
 interface BookingRecord {
   id: string;
   status: string;
@@ -159,16 +176,16 @@ function render(): void {
       <div class="profile-row"><span class="label">電話番号</span><span>${escapeHtml(state.profile.phone || '未登録')}</span></div>
       <div class="profile-row"><span class="label">資格</span><span>${qualLabel[state.profile.qualification_type || ''] || state.profile.qualification_type || '未登録'}</span></div>
     </div>
-    <a href="https://liff.line.me/${LIFF_ID}?page=jobs" class="btn-edit-profile">プロフィールを編集</a>
+    <a href="https://liff.line.me/${LIFF_ID}?page=jobs&view=profile" class="btn-edit-profile">プロフィールを編集</a>
   ` : `
     <div class="profile-info">
       <p>プロフィールが未登録です。お仕事に応募する際に登録できます。</p>
     </div>
-    <a href="https://liff.line.me/${LIFF_ID}?page=jobs" class="btn-edit-profile">お仕事を探す</a>
+    <a href="https://liff.line.me/${LIFF_ID}?page=jobs&view=profile" class="btn-edit-profile">プロフィールを登録する</a>
   `;
 
   app.innerHTML = `
-    <div class="mypage-container">
+    <div class="mypage-container" style="padding-bottom:70px;">
       <div class="mypage-header">
         <div class="mypage-avatar">
           ${state.pictureUrl ? `<img src="${state.pictureUrl}" alt="" />` : '<div class="avatar-placeholder">👤</div>'}
@@ -211,6 +228,7 @@ function render(): void {
         ${state.activeTab === 'profile' ? profileSection : ''}
       </div>
     </div>
+    ${renderBottomNav('mypage')}
   `;
 
   // タブ切替イベント

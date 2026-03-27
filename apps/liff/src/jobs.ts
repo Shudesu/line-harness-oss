@@ -18,6 +18,7 @@ declare const liff: {
 };
 
 const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:8787';
+const LIFF_ID = import.meta.env?.VITE_LIFF_ID || '';
 
 interface Job {
   id: string;
@@ -35,6 +36,18 @@ interface Job {
   status: string;
   metadata: Record<string, unknown> | null;
   createdAt: string;
+  // nursery enrichment fields
+  nurseryId?: string;
+  prefecture?: string | null;
+  area?: string | null;
+  nurseryType?: string | null;
+  qualificationReq?: string | null;
+  accessInfo?: string | null;
+  hpUrl?: string | null;
+  notes?: string | null;
+  transportFee?: number;
+  breakMinutes?: number;
+  photoUrls?: string[];
 }
 
 /** 園単位にグルーピングしたデータ */
@@ -46,6 +59,18 @@ interface NurseryGroup {
   description: string | null;
   requirements: string | null;
   jobs: Job[]; // その園の全求人（日付順）
+  // nursery enrichment
+  nurseryId?: string;
+  prefecture?: string | null;
+  area?: string | null;
+  nurseryType?: string | null;
+  qualificationReq?: string | null;
+  accessInfo?: string | null;
+  hpUrl?: string | null;
+  notes?: string | null;
+  transportFee?: number;
+  breakMinutes?: number;
+  photoUrls?: string[];
 }
 
 interface UserProfile {
@@ -74,10 +99,13 @@ interface UserDocument {
 }
 
 interface FilterState {
+  prefecture: string; // '' = 全都道府県, or '東京都' etc
   area: string;       // '' = 全エリア, or specific area keyword
   dateFrom: string;   // '' = today, or YYYY-MM-DD
   dateTo: string;     // '' = no limit, or YYYY-MM-DD
+  selectedDate: string; // '' = all, or YYYY-MM-DD (single date pick)
   sort: 'date' | 'rate-high' | 'rate-low'; // default: date
+  weekOffset: number; // 0 = current 2 weeks, 1 = next 2 weeks, etc.
 }
 
 interface JobsState {
@@ -96,7 +124,15 @@ interface JobsState {
   errorMessage: string;
   filter: FilterState;
   availableAreas: string[];
+  availablePrefectures: string[];
+  areasByPrefecture: Map<string, string[]>;
   showFilter: boolean;
+  // マイページからの遷移フラグ
+  fromMypage: boolean;
+  // ミニカレンダー（園詳細）
+  miniCalMonth: number; // 0-based month
+  miniCalYear: number;
+  miniCalSelectedDate: string; // YYYY-MM-DD
   // プロフィール入力中の一時データ
   profileForm: {
     realName: string;
@@ -111,7 +147,9 @@ interface JobsState {
     healthNotes: string;
     termsAgreed: boolean;
     idCardFile: File | null;
+    idCardBackFile: File | null;
     qualificationCertFile: File | null;
+    bacterialTestCertFile: File | null;
   };
 }
 
@@ -129,9 +167,15 @@ const state: JobsState = {
   loading: true,
   submitting: false,
   errorMessage: '',
-  filter: { area: '', dateFrom: '', dateTo: '', sort: 'date' },
+  filter: { prefecture: '', area: '', dateFrom: '', dateTo: '', selectedDate: '', sort: 'date', weekOffset: 0 },
   availableAreas: [],
+  availablePrefectures: [],
+  areasByPrefecture: new Map(),
   showFilter: false,
+  fromMypage: false,
+  miniCalMonth: new Date().getMonth(),
+  miniCalYear: new Date().getFullYear(),
+  miniCalSelectedDate: '',
   profileForm: {
     realName: '',
     realNameKana: '',
@@ -145,7 +189,9 @@ const state: JobsState = {
     healthNotes: '',
     termsAgreed: false,
     idCardFile: null,
+    idCardBackFile: null,
     qualificationCertFile: null,
+    bacterialTestCertFile: null,
   },
 };
 
@@ -191,13 +237,21 @@ function formatHourlyRate(rate: number | null): string {
   return `${rate.toLocaleString()}円`;
 }
 
-function calcTotalPay(hourlyRate: number, startTime: string, endTime: string, breakMinutes: number = 60): string {
+function calcTotalPay(hourlyRate: number, startTime: string, endTime: string, breakMinutes: number = 60, transportFee: number = 0): string {
   const [sh, sm] = startTime.split(':').map(Number);
   const [eh, em] = endTime.split(':').map(Number);
   const totalMinutes = (eh * 60 + em) - (sh * 60 + sm);
   const workMinutes = totalMinutes > 360 ? totalMinutes - breakMinutes : totalMinutes;
-  const total = Math.round(hourlyRate * workMinutes / 60);
+  const total = Math.round(hourlyRate * workMinutes / 60) + transportFee;
   return `${total.toLocaleString()}円`;
+}
+
+function calcWorkPay(hourlyRate: number, startTime: string, endTime: string, breakMinutes: number = 60): number {
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  const totalMinutes = (eh * 60 + em) - (sh * 60 + sm);
+  const workMinutes = totalMinutes > 360 ? totalMinutes - breakMinutes : totalMinutes;
+  return Math.round(hourlyRate * workMinutes / 60);
 }
 
 function daysFromNow(dateStr: string): number {
@@ -222,12 +276,38 @@ function groupByNursery(jobs: Job[]): NurseryGroup[] {
         description: job.description,
         requirements: job.requirements,
         jobs: [],
+        // nursery enrichment (from first job that has it)
+        nurseryId: job.nurseryId,
+        prefecture: job.prefecture,
+        area: job.area,
+        nurseryType: job.nurseryType,
+        qualificationReq: job.qualificationReq,
+        accessInfo: job.accessInfo,
+        hpUrl: job.hpUrl,
+        notes: job.notes,
+        transportFee: job.transportFee,
+        breakMinutes: job.breakMinutes,
+        photoUrls: job.photoUrls,
       });
     }
     const group = map.get(key)!;
     group.jobs.push(job);
     if (job.hourlyRate && (!group.hourlyRate || job.hourlyRate > group.hourlyRate)) {
       group.hourlyRate = job.hourlyRate;
+    }
+    // fill enrichment from any job that has it
+    if (job.nurseryId && !group.nurseryId) {
+      group.nurseryId = job.nurseryId;
+      group.prefecture = job.prefecture;
+      group.area = job.area;
+      group.nurseryType = job.nurseryType;
+      group.qualificationReq = job.qualificationReq;
+      group.accessInfo = job.accessInfo;
+      group.hpUrl = job.hpUrl;
+      group.notes = job.notes;
+      group.transportFee = job.transportFee;
+      group.breakMinutes = job.breakMinutes;
+      group.photoUrls = job.photoUrls;
     }
   }
   return Array.from(map.values()).sort((a, b) => (b.hourlyRate ?? 0) - (a.hourlyRate ?? 0));
@@ -243,6 +323,13 @@ function extractArea(address: string | null): string {
   return match ? match[1] : '';
 }
 
+/** 住所から都道府県を抽出 */
+function extractPrefecture(address: string | null): string {
+  if (!address) return '';
+  const match = address.match(/^(東京都|北海道|(?:京都|大阪)府|.{2,3}県)/);
+  return match ? match[1] : '';
+}
+
 /** 全求人からユニークなエリア一覧を生成 */
 function buildAvailableAreas(jobs: Job[]): string[] {
   const areas = new Set<string>();
@@ -253,22 +340,56 @@ function buildAvailableAreas(jobs: Job[]): string[] {
   return Array.from(areas).sort();
 }
 
+/** 都道府県一覧と、都道府県ごとのエリア（区・市）マップを構築 */
+function buildPrefectureAreaMap(jobs: Job[]): { prefectures: string[]; areasByPref: Map<string, string[]> } {
+  const prefSet = new Set<string>();
+  const areaMap = new Map<string, Set<string>>();
+  for (const job of jobs) {
+    const pref = job.prefecture || extractPrefecture(job.address);
+    const area = extractArea(job.address);
+    if (pref) {
+      prefSet.add(pref);
+      if (!areaMap.has(pref)) areaMap.set(pref, new Set());
+      if (area) areaMap.get(pref)!.add(area);
+    }
+  }
+  const prefectures = Array.from(prefSet).sort();
+  const areasByPref = new Map<string, string[]>();
+  for (const [pref, areas] of areaMap) {
+    areasByPref.set(pref, Array.from(areas).sort());
+  }
+  return { prefectures, areasByPref };
+}
+
 /** フィルタ・ソートを適用 */
 function applyFilterSort(nurseries: NurseryGroup[], filter: FilterState): NurseryGroup[] {
   let result = nurseries.map(n => {
     // 日付フィルタ: 園内の求人を絞る
     let jobs = n.jobs;
-    if (filter.dateFrom) {
-      jobs = jobs.filter(j => j.workDate >= filter.dateFrom);
-    }
-    if (filter.dateTo) {
-      jobs = jobs.filter(j => j.workDate <= filter.dateTo);
+    if (filter.selectedDate) {
+      // 単日選択モード
+      jobs = jobs.filter(j => j.workDate === filter.selectedDate);
+    } else {
+      if (filter.dateFrom) {
+        jobs = jobs.filter(j => j.workDate >= filter.dateFrom);
+      }
+      if (filter.dateTo) {
+        jobs = jobs.filter(j => j.workDate <= filter.dateTo);
+      }
     }
     return { ...n, jobs };
   });
 
   // 求人が0になった園は除外
   result = result.filter(n => n.jobs.length > 0);
+
+  // 都道府県フィルタ
+  if (filter.prefecture) {
+    result = result.filter(n => {
+      const pref = n.prefecture || extractPrefecture(n.address);
+      return pref === filter.prefecture;
+    });
+  }
 
   // エリアフィルタ
   if (filter.area) {
@@ -299,45 +420,115 @@ function applyFilterSort(nurseries: NurseryGroup[], filter: FilterState): Nurser
   return result;
 }
 
+// ========== Bottom Navigation ==========
+
+function renderBottomNav(active: 'jobs' | 'mypage'): string {
+  const jobsUrl = `https://liff.line.me/${LIFF_ID}?page=jobs`;
+  const mypageUrl = `https://liff.line.me/${LIFF_ID}?page=mypage`;
+  return `
+    <nav class="bottom-nav">
+      <a href="${jobsUrl}" class="bottom-nav-item ${active === 'jobs' ? 'active' : ''}">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <span>お仕事を探す</span>
+      </a>
+      <a href="${mypageUrl}" class="bottom-nav-item ${active === 'mypage' ? 'active' : ''}">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span>マイページ</span>
+      </a>
+    </nav>
+  `;
+}
+
 // ========== List View (園一覧) ==========
 
+/** 月カレンダー用: FilterStateのweekOffset を月オフセットとして再利用 */
+
+/** 各日付の求人数を集計 */
+function countJobsByDate(jobs: Job[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const job of jobs) {
+    if (job.remainingSlots > 0) {
+      map.set(job.workDate, (map.get(job.workDate) || 0) + 1);
+    }
+  }
+  return map;
+}
+
 function renderFilterBar(): string {
-  const { filter, availableAreas, showFilter, filteredNurseries } = state;
-  const activeCount = (filter.area ? 1 : 0) + (filter.dateFrom || filter.dateTo ? 1 : 0);
+  const { filter, filteredNurseries, allJobs } = state;
   const sortLabels: Record<string, string> = { 'date': '日付順', 'rate-high': '時給高い順', 'rate-low': '時給低い順' };
+  const jobCounts = countJobsByDate(allJobs);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  // 月カレンダー: weekOffset を月オフセットとして利用
+  const calYear = new Date(today.getFullYear(), today.getMonth() + filter.weekOffset, 1).getFullYear();
+  const calMonth = new Date(today.getFullYear(), today.getMonth() + filter.weekOffset, 1).getMonth();
+  const monthLabel = `${calYear}年${calMonth + 1}月`;
+  const weekdaysJa = ['日', '月', '火', '水', '木', '金', '土'];
+  const firstDayOfMonth = new Date(calYear, calMonth, 1);
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const startDow = firstDayOfMonth.getDay(); // 0=Sun
+
+  const dowHeaders = weekdaysJa.map((d, i) => {
+    const cls = i === 0 ? 'sun' : i === 6 ? 'sat' : '';
+    return `<div class="month-cal-dow ${cls}">${d}</div>`;
+  }).join('');
+
+  let calCells = '';
+  for (let i = 0; i < startDow; i++) calCells += '<div class="month-cal-cell empty"></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dateObj = new Date(calYear, calMonth, d);
+    const dow = dateObj.getDay();
+    const isPast = dateObj < today;
+    const isToday = dateStr === todayStr;
+    const isSelected = filter.selectedDate === dateStr;
+    const count = jobCounts.get(dateStr) || 0;
+    const dowCls = dow === 0 ? 'sun' : dow === 6 ? 'sat' : '';
+    const classes = [
+      'month-cal-cell',
+      isPast ? 'past' : '',
+      isToday ? 'today' : '',
+      isSelected ? 'selected' : '',
+      count > 0 ? 'has-job' : '',
+      dowCls,
+    ].filter(Boolean).join(' ');
+    calCells += `<div class="${classes}" data-date="${dateStr}">
+      <div class="month-cal-day">${d}</div>
+      ${count > 0 ? `<div class="month-cal-dot"></div>` : ''}
+    </div>`;
+  }
 
   return `
-    <div class="filter-bar">
-      <div class="filter-chips">
-        <button class="filter-chip ${showFilter ? 'active' : ''}" data-action="toggle-filter">
-          絞り込み${activeCount > 0 ? ` (${activeCount})` : ''}
-        </button>
+    <div class="month-calendar">
+      <div class="month-cal-header">
+        <div class="month-cal-nav"><button data-action="month-prev">&lt;</button></div>
+        <div class="month-cal-title">${monthLabel}</div>
+        <div class="month-cal-nav"><button data-action="month-next">&gt;</button></div>
+      </div>
+      <div class="month-cal-grid">
+        ${dowHeaders}
+        ${calCells}
+      </div>
+    </div>
+    <div class="area-filter-section">
+      <div class="area-filter-row">
+        <div class="area-filter-chips">
+          <button class="area-chip ${!filter.prefecture ? 'active' : ''}" data-action="filter-pref-all">すべて</button>
+          ${state.availablePrefectures.map(p => `<button class="area-chip ${filter.prefecture === p ? 'active' : ''}" data-action="filter-pref" data-pref="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join('')}
+        </div>
         <button class="sort-chip" data-action="cycle-sort">${sortLabels[filter.sort]}</button>
       </div>
-      ${showFilter ? `
-      <div class="filter-panel">
-        <div class="filter-row">
-          <label class="filter-label">エリア</label>
-          <select class="filter-select" id="filterArea">
-            <option value="">すべて</option>
-            ${availableAreas.map(a => `<option value="${escapeHtml(a)}" ${filter.area === a ? 'selected' : ''}>${escapeHtml(a)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="filter-row">
-          <label class="filter-label">期間</label>
-          <div class="filter-date-range">
-            <input type="date" class="filter-date" id="filterDateFrom" value="${filter.dateFrom}">
-            <span class="filter-date-sep">〜</span>
-            <input type="date" class="filter-date" id="filterDateTo" value="${filter.dateTo}">
-          </div>
-        </div>
-        <div class="filter-actions">
-          <button class="filter-reset-btn" data-action="reset-filter">リセット</button>
-          <button class="filter-apply-btn" data-action="apply-filter">適用</button>
-        </div>
-      </div>` : ''}
-      <p class="filter-result-count">${filteredNurseries.length}園が該当</p>
+      ${filter.prefecture && (state.areasByPrefecture.get(filter.prefecture)?.length ?? 0) > 1 ? `
+      <div class="area-filter-chips sub">
+        <button class="area-chip sub ${!filter.area ? 'active' : ''}" data-action="filter-area-all">全域</button>
+        ${(state.areasByPrefecture.get(filter.prefecture) || []).map(a => `<button class="area-chip sub ${filter.area === a ? 'active' : ''}" data-action="filter-area" data-area="${escapeHtml(a)}">${escapeHtml(a)}</button>`).join('')}
+      </div>
+      ` : ''}
     </div>
+    <p class="filter-result-count">${filteredNurseries.length}園が該当${filter.selectedDate ? ` (${formatDate(filter.selectedDate)})` : ''}</p>
   `;
 }
 
@@ -375,16 +566,26 @@ function renderList(): string {
   const cards = filteredNurseries.map((nursery) => {
     const openSlots = nursery.jobs.filter(j => j.remainingSlots > 0).length;
     const nextDate = nursery.jobs.find(j => j.remainingSlots > 0);
+    const photoUrl = nursery.photoUrls?.[0];
+
+    // バッジ: 県・園タイプ・資格
+    const badges: string[] = [];
+    if (nursery.prefecture) badges.push(escapeHtml(nursery.prefecture));
+    if (nursery.area) badges.push(escapeHtml(nursery.area));
+    if (nursery.nurseryType) badges.push(escapeHtml(nursery.nurseryType));
+    if (nursery.qualificationReq) badges.push(escapeHtml(nursery.qualificationReq));
 
     return `
       <div class="nursery-card" data-nursery="${escapeHtml(nursery.nurseryName)}">
+        ${photoUrl ? `<div class="nursery-photo"><img src="${escapeHtml(photoUrl)}" alt="${escapeHtml(nursery.nurseryName)}" loading="lazy"></div>` : ''}
+        ${nursery.station ? `<div class="nursery-station-badge"><span class="station-label">最寄駅</span> ${escapeHtml(nursery.station)}</div>` : ''}
         <h3 class="nursery-name">${escapeHtml(nursery.nurseryName)}</h3>
+        ${badges.length > 0 ? `<div class="nursery-badges">${badges.map(b => `<span class="badge">${b}</span>`).join('')}</div>` : ''}
         ${nursery.hourlyRate ? `
         <div class="nursery-rate">
           <span class="rate-label">時給</span>
           <span class="rate-value">${formatHourlyRate(nursery.hourlyRate)}</span>
         </div>` : ''}
-        ${nursery.station ? `<p class="nursery-station">${escapeHtml(nursery.station)}</p>` : ''}
         <div class="nursery-bottom">
           <span class="nursery-slots">${openSlots}日程で募集中</span>
           ${nextDate ? `<span class="nursery-next">直近 ${formatDate(nextDate.workDate)}</span>` : ''}
@@ -401,7 +602,7 @@ function renderList(): string {
   ` : '';
 
   return `
-    <div class="jobs-page">
+    <div class="jobs-page" style="padding-bottom:70px;">
       <div class="jobs-header">
         <h1>お仕事を探す</h1>
         <p>${state.nurseries.length}園で募集中</p>
@@ -409,6 +610,7 @@ function renderList(): string {
       ${renderFilterBar()}
       ${noResults || `<div class="nursery-list">${cards}</div>`}
     </div>
+    ${renderBottomNav('jobs')}
   `;
 }
 
@@ -419,8 +621,77 @@ function renderNurseryDetail(): string {
   if (!nursery) return '';
 
   const { selectedJob } = state;
+  const transportFee = nursery.transportFee ?? 0;
+  const breakMins = nursery.breakMinutes ?? 60;
 
-  const slotCards = nursery.jobs.map((job) => {
+  // 写真カルーセル
+  const photos = nursery.photoUrls ?? [];
+  const photoHtml = photos.length > 0
+    ? `<div class="nursery-photos">${photos.map(url => `<img src="${escapeHtml(url)}" alt="${escapeHtml(nursery.nurseryName)}" loading="lazy">`).join('')}</div>`
+    : '';
+
+  // バッジ
+  const badges: string[] = [];
+  if (nursery.prefecture) badges.push(escapeHtml(nursery.prefecture));
+  if (nursery.area) badges.push(escapeHtml(nursery.area));
+  if (nursery.nurseryType) badges.push(escapeHtml(nursery.nurseryType));
+  if (nursery.qualificationReq) badges.push(escapeHtml(nursery.qualificationReq));
+
+  // ========== ミニカレンダー ==========
+  const { miniCalMonth, miniCalYear, miniCalSelectedDate } = state;
+  const weekdaysJa = ['日', '月', '火', '水', '木', '金', '土'];
+  const calMonthLabel = `${miniCalYear}年${miniCalMonth + 1}月`;
+
+  // その月のカレンダー用日付
+  const firstDayOfMonth = new Date(miniCalYear, miniCalMonth, 1);
+  const daysInMonth = new Date(miniCalYear, miniCalMonth + 1, 0).getDate();
+  const startDow = firstDayOfMonth.getDay(); // 0=Sun
+
+  // 求人がある日のSet
+  const jobDateSet = new Set<string>();
+  for (const job of nursery.jobs) {
+    if (job.remainingSlots > 0) jobDateSet.add(job.workDate);
+  }
+
+  const todayNow = new Date();
+  todayNow.setHours(0, 0, 0, 0);
+  const todayStrCal = `${todayNow.getFullYear()}-${String(todayNow.getMonth() + 1).padStart(2, '0')}-${String(todayNow.getDate()).padStart(2, '0')}`;
+
+  // DOWヘッダー
+  const miniCalDowHtml = weekdaysJa.map((d, i) => {
+    const cls = i === 0 ? 'sun' : i === 6 ? 'sat' : '';
+    return `<div class="mini-cal-dow ${cls}">${d}</div>`;
+  }).join('');
+
+  // 日付セル
+  let miniCalCells = '';
+  for (let i = 0; i < startDow; i++) miniCalCells += '<div class="mini-cal-cell empty"></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${miniCalYear}-${String(miniCalMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dateObj = new Date(miniCalYear, miniCalMonth, d);
+    const dow = dateObj.getDay();
+    const isPast = dateObj < todayNow;
+    const hasJob = jobDateSet.has(dateStr);
+    const isSelected = miniCalSelectedDate === dateStr;
+    const isToday = dateStr === todayStrCal;
+    const dowCls = dow === 0 ? 'sun' : dow === 6 ? 'sat' : '';
+    const classes = [
+      'mini-cal-cell',
+      hasJob ? 'has-job' : '',
+      isPast ? '' : '',
+      isSelected ? 'selected' : '',
+      isToday ? 'today' : '',
+      dowCls,
+    ].filter(Boolean).join(' ');
+    miniCalCells += `<div class="${classes}" ${hasJob ? `data-cal-date="${dateStr}"` : ''}>${d}</div>`;
+  }
+
+  // 選択日のスロットカード
+  const selectedDateJobs = miniCalSelectedDate
+    ? nursery.jobs.filter(j => j.workDate === miniCalSelectedDate)
+    : nursery.jobs;
+
+  const slotCards = selectedDateJobs.map((job) => {
     const days = daysFromNow(job.workDate);
     const isSelected = selectedJob?.id === job.id;
     const isFull = job.remainingSlots <= 0;
@@ -429,6 +700,11 @@ function renderNurseryDetail(): string {
     const [eh, em] = job.endTime.split(':').map(Number);
     const totalMinutes = (eh * 60 + em) - (sh * 60 + sm);
     const hasBreak = totalMinutes > 360;
+    const breakText = hasBreak ? `（休憩${breakMins}分）` : '（休憩なし）';
+    const workMinutes = hasBreak ? totalMinutes - breakMins : totalMinutes;
+    const workH = Math.floor(workMinutes / 60);
+    const workM = workMinutes % 60;
+    const workDuration = workM > 0 ? `${workH}時間${workM}分` : `${workH}時間`;
 
     return `
       <div class="slot-card ${isSelected ? 'selected' : ''} ${isFull ? 'full' : ''}" ${!isFull ? `data-job-id="${job.id}"` : ''}>
@@ -438,55 +714,130 @@ function renderNurseryDetail(): string {
           ${isFull ? '<span class="slot-full-badge">締切</span>' : ''}
           ${!isFull && job.remainingSlots <= 1 ? '<span class="slot-last">残1枠</span>' : ''}
         </div>
-        <div class="slot-time">${job.startTime}〜${job.endTime}${hasBreak ? '（休憩60分）' : ''}</div>
+        <div class="slot-time">${job.startTime.slice(0, 5)}〜${job.endTime.slice(0, 5)} ${breakText} <span class="slot-work-duration">実働${workDuration}</span></div>
         ${job.hourlyRate ? `
         <div class="slot-pay">
-          <span class="slot-pay-total">報酬総額 <strong>${calcTotalPay(job.hourlyRate, job.startTime, job.endTime)}</strong></span>
-          <span class="slot-pay-hourly">時給 ${formatHourlyRate(job.hourlyRate)}</span>
-        </div>` : ''}
+          <span class="slot-pay-total">${calcTotalPay(job.hourlyRate, job.startTime, job.endTime, breakMins, transportFee)}</span>
+          <span class="slot-pay-detail">時給${formatHourlyRate(job.hourlyRate)}${transportFee > 0 ? ` + 交通費${transportFee.toLocaleString()}円` : ''}</span>
+        </div>
+        ` : ''}
       </div>
     `;
   }).join('');
+
+  // 報酬内訳
+  const payBreakdownHtml = nursery.hourlyRate
+    ? `<div class="info-row">
+        <div class="info-row-label">報酬内訳</div>
+        <div class="info-row-value">時給¥${nursery.hourlyRate.toLocaleString()}×勤務時間数${transportFee > 0 ? `＋交通費${transportFee.toLocaleString()}円` : ''}</div>
+      </div>`
+    : '';
+
+  // Google Maps iframe
+  const mapsHtml = nursery.address
+    ? `<div class="nursery-map">
+        <iframe src="https://maps.google.com/maps?q=${encodeURIComponent(nursery.address)}&output=embed&z=15" width="100%" height="200" style="border:0;border-radius:8px;" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+      </div>`
+    : '';
 
   return `
     <div class="jobs-page">
       <button class="back-btn" data-action="back-to-list">&lt; 一覧に戻る</button>
 
       <div class="nursery-detail">
+        ${photoHtml}
+
         <div class="nursery-detail-header">
+          ${nursery.station ? `<div class="nursery-station-badge"><span class="station-label">最寄駅</span> ${escapeHtml(nursery.station)}</div>` : ''}
           <h2>${escapeHtml(nursery.nurseryName)}</h2>
-          ${nursery.station ? `<p class="nursery-detail-station">${escapeHtml(nursery.station)}</p>` : ''}
+          ${badges.length > 0 ? `<div class="nursery-badges">${badges.map(b => `<span class="badge">${b}</span>`).join('')}</div>` : ''}
         </div>
 
-        <div class="section-title">募集中の日程</div>
+        <div class="section-title">＜ 現在募集している日時 ＞</div>
+        <p class="section-sub">日付をタップして募集中の日程を確認！<br>※ 複数応募も可能です</p>
+
+        <div class="mini-cal">
+          <div class="mini-cal-header">
+            <div class="mini-cal-nav"><button data-action="mini-cal-prev">&lt;</button></div>
+            <div class="mini-cal-title">${calMonthLabel}</div>
+            <div class="mini-cal-nav"><button data-action="mini-cal-next">&gt;</button></div>
+          </div>
+          <div class="mini-cal-grid">
+            ${miniCalDowHtml}
+            ${miniCalCells}
+          </div>
+          ${miniCalSelectedDate ? `
+            <div class="mini-cal-day-slots">
+              <div class="mini-cal-day-title">${formatDate(miniCalSelectedDate)} の募集</div>
+            </div>
+          ` : ''}
+        </div>
+
         <div class="slot-list">${slotCards}</div>
+        ${!miniCalSelectedDate && nursery.jobs.length > 10 ? '<p class="section-sub" style="font-size:11px;margin-top:8px;">カレンダーで日付を選ぶと絞り込めます</p>' : ''}
 
         ${selectedJob ? `
-        <button class="apply-btn" data-action="apply">この日程に応募する</button>
+        <button class="apply-btn" data-action="apply">この園に応募する ▶</button>
         ` : `
         <p class="select-hint">応募する日程をタップしてください</p>
         `}
 
-        <div class="nursery-info">
+        <p class="apply-note">※応募後いただきましたら、採用可否についてスポットほいく担当者から公式LINEを通じてご連絡いたします。なお、ご応募いただいても必ずしも勤務が確定するわけではないことを、予めご了承ください。</p>
+
+        <div class="section-title">＜ 募集要項 ＞</div>
+
+        <div class="nursery-info-table">
           ${nursery.description ? `
-          <div class="info-section">
-            <div class="info-section-title">業務内容</div>
-            <p class="info-section-body">${escapeHtml(nursery.description)}</p>
+          <div class="info-row">
+            <div class="info-row-label">業務内容</div>
+            <div class="info-row-value">${escapeHtml(nursery.description).replace(/\n/g, '<br>')}</div>
           </div>` : ''}
 
           ${nursery.requirements ? `
-          <div class="info-section">
-            <div class="info-section-title">応募資格</div>
-            <p class="info-section-body">${escapeHtml(nursery.requirements)}</p>
+          <div class="info-row">
+            <div class="info-row-label">応募資格</div>
+            <div class="info-row-value">${escapeHtml(nursery.requirements).replace(/\n/g, '<br>')}</div>
+          </div>` : ''}
+
+          ${payBreakdownHtml}
+
+          ${nursery.notes ? `
+          <div class="info-row">
+            <div class="info-row-label">注意事項</div>
+            <div class="info-row-value">${escapeHtml(nursery.notes).replace(/\n/g, '<br>')}</div>
+          </div>` : ''}
+
+          ${nursery.hpUrl ? `
+          <div class="info-row">
+            <div class="info-row-label">園のHP</div>
+            <div class="info-row-value">${escapeHtml(nursery.nurseryName)} <a href="${escapeHtml(nursery.hpUrl)}" target="_blank" rel="noopener" class="hp-link">園のHP</a></div>
           </div>` : ''}
 
           ${nursery.address ? `
-          <div class="info-section">
-            <div class="info-section-title">勤務地</div>
-            <p class="info-section-body">${escapeHtml(nursery.address)}</p>
+          <div class="info-row">
+            <div class="info-row-label">勤務地</div>
+            <div class="info-row-value">${escapeHtml(nursery.address)}</div>
+          </div>` : ''}
+
+          ${nursery.accessInfo ? `
+          <div class="info-row">
+            <div class="info-row-label">アクセス</div>
+            <div class="info-row-value">${escapeHtml(nursery.accessInfo).replace(/\n/g, '<br>')}</div>
           </div>` : ''}
         </div>
+
+        ${mapsHtml}
+
+        ${selectedJob ? `
+        <button class="apply-btn" data-action="apply" style="margin-top:24px;">この園に応募する ▶</button>
+        ` : ''}
       </div>
+
+      <footer class="liff-footer">
+        <a href="https://spothoiku.com/terms" target="_blank" rel="noopener">利用規約</a>
+        <span>運営会社 <a href="https://kit-inc.jp" target="_blank" rel="noopener">KIT株式会社</a></span>
+        <p class="footer-license">有料職業紹介事業(厚生労働大臣許可・許可番号13-ユ-318729)</p>
+      </footer>
     </div>
   `;
 }
@@ -496,11 +847,16 @@ function renderNurseryDetail(): string {
 function renderProfileForm(): string {
   const { profileForm, userProfile } = state;
   const hasIdCard = state.userDocuments.some(d => d.doc_type === 'id_card');
+  const hasIdCardBack = state.userDocuments.some(d => d.doc_type === 'id_card_back');
   const hasQualCert = state.userDocuments.some(d => d.doc_type === 'qualification_cert');
+  const hasBacterialTestCert = state.userDocuments.some(d => d.doc_type === 'bacterial_test_cert');
+
+  const fromMypage = state.fromMypage;
+  const backAction = fromMypage ? 'back-to-mypage' : (state.selectedNursery ? 'back-to-nursery' : 'back-to-list');
 
   return `
     <div class="jobs-page">
-      <button class="back-btn" data-action="back-to-nursery">&lt; 戻る</button>
+      <button class="back-btn" data-action="${backAction}">&lt; 戻る</button>
 
       <div class="profile-form-card">
         <h3>応募者情報の登録</h3>
@@ -573,43 +929,54 @@ function renderProfileForm(): string {
         </div>
 
         <div class="form-group">
-          <label class="form-label">細菌検査結果</label>
-          <p class="form-hint">応募ページにも記載しておりますが、勤務日から1ヶ月以内の細菌検査結果コピーがあると望ましいです。お持ちでしょうか。</p>
-          <select class="form-select" id="bacterialTestStatus">
+          <label class="form-label">検便検査について</label>
+          <p class="form-hint">勤務日から1ヶ月以内の検便検査結果が必要です。お持ちでしょうか。</p>
+          <select class="form-select" id="bacterialTestStatus" data-toggle-upload="bacterialTestUpload">
             <option value="">選択してください</option>
-            <option value="持っている" ${(profileForm.bacterialTestStatus || userProfile?.bacterial_test_status) === '持っている' ? 'selected' : ''}>持っている（1ヶ月以内）</option>
-            <option value="期限切れ" ${(profileForm.bacterialTestStatus || userProfile?.bacterial_test_status) === '期限切れ' ? 'selected' : ''}>持っているが期限切れ</option>
+            <option value="持っている" ${(profileForm.bacterialTestStatus || userProfile?.bacterial_test_status) === '持っている' ? 'selected' : ''}>持っている（一ヶ月以内）</option>
             <option value="持っていない" ${(profileForm.bacterialTestStatus || userProfile?.bacterial_test_status) === '持っていない' ? 'selected' : ''}>持っていない</option>
           </select>
         </div>
 
+        <div class="form-group" id="bacterialTestUpload" style="display:${(profileForm.bacterialTestStatus || userProfile?.bacterial_test_status) === '持っている' ? 'block' : 'none'}">
+          <label class="form-label">検便検査結果のアップロード ${hasBacterialTestCert ? '<span class="uploaded-badge">登録済み</span>' : '<span class="required">必須</span>'}</label>
+          <p class="form-hint">検査結果のコピーを撮影またはファイルで提出してください</p>
+          <label class="file-upload-btn" id="bacterialTestCertLabel">
+            <input type="file" accept="image/*" id="bacterialTestCertFile" style="display:none">
+            <span id="bacterialTestCertFileName">${hasBacterialTestCert ? '登録済み（変更する場合はタップ）' : '写真を選択'}</span>
+          </label>
+        </div>
+
         <div class="form-group">
-          <label class="form-label">本人確認書類 ${hasIdCard ? '<span class="uploaded-badge">登録済み</span>' : '<span class="required">必須</span>'}</label>
-          <p class="form-hint">運転免許証・マイナンバーカードなど</p>
+          <label class="form-label">本人確認書類（表面） ${hasIdCard ? '<span class="uploaded-badge">登録済み</span>' : '<span class="required">必須</span>'}</label>
+          <p class="form-hint">運転免許証・マイナンバーカードなどの表面</p>
           <label class="file-upload-btn" id="idCardLabel">
             <input type="file" accept="image/*" id="idCardFile" style="display:none">
-            <span id="idCardFileName">${hasIdCard ? '登録済み（変更する場合はタップ）' : '写真を選択'}</span>
+            <span id="idCardFileName">${hasIdCard ? '登録済み（変更する場合はタップ）' : '表面の写真を選択'}</span>
           </label>
         </div>
 
         <div class="form-group">
-          <label class="form-label">資格証 ${hasQualCert ? '<span class="uploaded-badge">登録済み</span>' : ''}</label>
-          <p class="form-hint">保育士証・看護師免許証など（お持ちの場合）</p>
-          <label class="file-upload-btn" id="qualCertLabel">
-            <input type="file" accept="image/*" id="qualCertFile" style="display:none">
-            <span id="qualCertFileName">${hasQualCert ? '登録済み（変更する場合はタップ）' : '写真を選択'}</span>
+          <label class="form-label">本人確認書類（裏面） ${hasIdCardBack ? '<span class="uploaded-badge">登録済み</span>' : '<span class="required">必須</span>'}</label>
+          <p class="form-hint">裏面も必ずご提出ください</p>
+          <label class="file-upload-btn" id="idCardBackLabel">
+            <input type="file" accept="image/*" id="idCardBackFile" style="display:none">
+            <span id="idCardBackFileName">${hasIdCardBack ? '登録済み（変更する場合はタップ）' : '裏面の写真を選択'}</span>
           </label>
         </div>
 
-        <div class="form-group terms-group">
-          <label class="terms-label">
-            <input type="checkbox" id="termsAgreed" ${(profileForm.termsAgreed || userProfile?.terms_agreed_at) ? 'checked' : ''}>
-            <span><a href="https://spothoiku.com/terms" target="_blank" rel="noopener" style="color:#f06292;">利用規約</a>に同意する</span>
+        <div class="form-group">
+          <label class="form-label">資格証（表面） ${hasQualCert ? '<span class="uploaded-badge">登録済み</span>' : '<span class="required">必須</span>'}</label>
+          <p class="form-hint">保育士証・看護師免許証などの表面を撮影してください</p>
+          <p class="form-hint" style="color:#e57373;">※ 必ず現在の姓でのものをご提出ください。旧姓のものは使用できません。</p>
+          <label class="file-upload-btn" id="qualCertLabel">
+            <input type="file" accept="image/*" id="qualCertFile" style="display:none">
+            <span id="qualCertFileName">${hasQualCert ? '登録済み（変更する場合はタップ）' : '表面の写真を選択'}</span>
           </label>
         </div>
 
         <button class="apply-btn" data-action="save-profile" id="saveProfileBtn">
-          ${userProfile ? '更新して応募に進む' : '登録して応募に進む'}
+          ${fromMypage ? (userProfile ? 'プロフィールを更新' : 'プロフィールを登録') : (userProfile ? '更新して応募に進む' : '登録して応募に進む')}
         </button>
       </div>
     </div>
@@ -644,7 +1011,7 @@ function renderConfirm(): string {
           ${selectedJob.hourlyRate ? `
           <div class="confirm-row">
             <span class="confirm-label">報酬総額</span>
-            <span class="confirm-value">${calcTotalPay(selectedJob.hourlyRate, selectedJob.startTime, selectedJob.endTime)}</span>
+            <span class="confirm-value">${calcTotalPay(selectedJob.hourlyRate, selectedJob.startTime, selectedJob.endTime, state.selectedNursery?.breakMinutes ?? 60, state.selectedNursery?.transportFee ?? 0)}</span>
           </div>` : ''}
           <div class="confirm-row">
             <span class="confirm-label">お名前</span>
@@ -662,6 +1029,15 @@ function renderConfirm(): string {
           </div>` : ''}
         </div>
         <p class="confirm-note">※応募後、採用可否についてスポットほいく担当者から公式LINEを通じてご連絡いたします。ご応募いただいても必ずしも勤務が確定するわけではないことを、予めご了承ください。</p>
+
+        ${!userProfile?.terms_agreed_at ? `
+        <div class="form-group terms-group" style="margin: 16px 0;">
+          <label class="terms-label">
+            <input type="checkbox" id="termsAgreedConfirm">
+            <span><a href="https://spothoiku.com/terms" target="_blank" rel="noopener" style="color:#f06292;">利用規約</a>に同意する</span>
+          </label>
+        </div>
+        ` : ''}
         <button class="apply-btn" data-action="confirm-apply">応募を確定する</button>
         <button class="cancel-link" data-action="back-to-nursery">戻る</button>
       </div>
@@ -736,10 +1112,63 @@ function render(): void {
 function attachEvents(): void {
   const app = getApp();
 
-  // Filter: toggle panel
-  app.querySelector('[data-action="toggle-filter"]')?.addEventListener('click', () => {
-    state.showFilter = !state.showFilter;
+  // Month Calendar: date cell click
+  app.querySelectorAll('.month-cal-cell:not(.past):not(.empty)').forEach((cell) => {
+    cell.addEventListener('click', () => {
+      const dateStr = (cell as HTMLElement).dataset.date || '';
+      state.filter.selectedDate = state.filter.selectedDate === dateStr ? '' : dateStr;
+      state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
+      render();
+    });
+  });
+
+  // Month Calendar: prev/next
+  app.querySelector('[data-action="month-prev"]')?.addEventListener('click', () => {
+    state.filter.weekOffset = Math.max(0, state.filter.weekOffset - 1);
+    state.filter.selectedDate = '';
     render();
+  });
+  app.querySelector('[data-action="month-next"]')?.addEventListener('click', () => {
+    state.filter.weekOffset += 1;
+    state.filter.selectedDate = '';
+    render();
+  });
+
+  // Prefecture filter: all
+  app.querySelector('[data-action="filter-pref-all"]')?.addEventListener('click', () => {
+    state.filter.prefecture = '';
+    state.filter.area = '';
+    state.filter.selectedDate = '';
+    state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
+    render();
+  });
+
+  // Prefecture filter: specific
+  app.querySelectorAll('[data-action="filter-pref"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const pref = (btn as HTMLElement).dataset.pref || '';
+      state.filter.prefecture = state.filter.prefecture === pref ? '' : pref;
+      state.filter.area = ''; // 都道府県変更時はエリアリセット
+      state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
+      render();
+    });
+  });
+
+  // Area filter: all (within prefecture)
+  app.querySelector('[data-action="filter-area-all"]')?.addEventListener('click', () => {
+    state.filter.area = '';
+    state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
+    render();
+  });
+
+  // Area filter: specific
+  app.querySelectorAll('[data-action="filter-area"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const area = (btn as HTMLElement).dataset.area || '';
+      state.filter.area = state.filter.area === area ? '' : area;
+      state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
+      render();
+    });
   });
 
   // Filter: cycle sort
@@ -751,24 +1180,35 @@ function attachEvents(): void {
     render();
   });
 
-  // Filter: apply
-  app.querySelector('[data-action="apply-filter"]')?.addEventListener('click', () => {
-    const area = (document.getElementById('filterArea') as HTMLSelectElement)?.value ?? '';
-    const dateFrom = (document.getElementById('filterDateFrom') as HTMLInputElement)?.value ?? '';
-    const dateTo = (document.getElementById('filterDateTo') as HTMLInputElement)?.value ?? '';
-    state.filter.area = area;
-    state.filter.dateFrom = dateFrom;
-    state.filter.dateTo = dateTo;
-    state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
-    state.showFilter = false;
-    render();
+  // Mini calendar: date cell click
+  app.querySelectorAll('.mini-cal-cell.has-job').forEach((cell) => {
+    cell.addEventListener('click', () => {
+      const dateStr = (cell as HTMLElement).dataset.calDate || '';
+      state.miniCalSelectedDate = state.miniCalSelectedDate === dateStr ? '' : dateStr;
+      state.selectedJob = null; // reset selection when switching dates
+      render();
+    });
   });
 
-  // Filter: reset
-  app.querySelector('[data-action="reset-filter"]')?.addEventListener('click', () => {
-    state.filter = { area: '', dateFrom: '', dateTo: '', sort: 'date' };
-    state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
-    state.showFilter = false;
+  // Mini calendar: prev/next month
+  app.querySelector('[data-action="mini-cal-prev"]')?.addEventListener('click', () => {
+    if (state.miniCalMonth === 0) {
+      state.miniCalMonth = 11;
+      state.miniCalYear -= 1;
+    } else {
+      state.miniCalMonth -= 1;
+    }
+    state.miniCalSelectedDate = '';
+    render();
+  });
+  app.querySelector('[data-action="mini-cal-next"]')?.addEventListener('click', () => {
+    if (state.miniCalMonth === 11) {
+      state.miniCalMonth = 0;
+      state.miniCalYear += 1;
+    } else {
+      state.miniCalMonth += 1;
+    }
+    state.miniCalSelectedDate = '';
     render();
   });
 
@@ -780,6 +1220,17 @@ function attachEvents(): void {
       if (nursery) {
         state.selectedNursery = nursery;
         state.selectedJob = null;
+        // ミニカレンダーを最初の求人の月に合わせる
+        const firstJob = nursery.jobs[0];
+        if (firstJob) {
+          const d = new Date(firstJob.workDate + 'T00:00:00');
+          state.miniCalYear = d.getFullYear();
+          state.miniCalMonth = d.getMonth();
+        } else {
+          state.miniCalYear = new Date().getFullYear();
+          state.miniCalMonth = new Date().getMonth();
+        }
+        state.miniCalSelectedDate = '';
         state.view = 'nursery';
         render();
         window.scrollTo(0, 0);
@@ -819,6 +1270,11 @@ function attachEvents(): void {
     render();
   });
 
+  // Back to mypage
+  app.querySelector('[data-action="back-to-mypage"]')?.addEventListener('click', () => {
+    window.location.href = `https://liff.line.me/${LIFF_ID}?page=mypage`;
+  });
+
   // Apply → check profile → profile form or confirm
   app.querySelector('[data-action="apply"]')?.addEventListener('click', () => {
     if (state.userProfile) {
@@ -845,6 +1301,18 @@ function attachEvents(): void {
     });
   }
 
+  const idCardBackInput = app.querySelector('#idCardBackFile') as HTMLInputElement | null;
+  if (idCardBackInput) {
+    idCardBackInput.addEventListener('change', () => {
+      const file = idCardBackInput.files?.[0];
+      if (file) {
+        state.profileForm.idCardBackFile = file;
+        const label = app.querySelector('#idCardBackFileName');
+        if (label) label.textContent = file.name;
+      }
+    });
+  }
+
   const qualCertInput = app.querySelector('#qualCertFile') as HTMLInputElement | null;
   if (qualCertInput) {
     qualCertInput.addEventListener('change', () => {
@@ -853,6 +1321,29 @@ function attachEvents(): void {
         state.profileForm.qualificationCertFile = file;
         const label = app.querySelector('#qualCertFileName');
         if (label) label.textContent = file.name;
+      }
+    });
+  }
+
+  const bacterialTestCertInput = app.querySelector('#bacterialTestCertFile') as HTMLInputElement | null;
+  if (bacterialTestCertInput) {
+    bacterialTestCertInput.addEventListener('change', () => {
+      const file = bacterialTestCertInput.files?.[0];
+      if (file) {
+        state.profileForm.bacterialTestCertFile = file;
+        const label = app.querySelector('#bacterialTestCertFileName');
+        if (label) label.textContent = file.name;
+      }
+    });
+  }
+
+  // 検便検査: 「持っている」選択時にアップロード欄を表示
+  const bacterialTestSelect = app.querySelector('#bacterialTestStatus') as HTMLSelectElement | null;
+  if (bacterialTestSelect) {
+    bacterialTestSelect.addEventListener('change', () => {
+      const uploadDiv = app.querySelector('#bacterialTestUpload') as HTMLElement | null;
+      if (uploadDiv) {
+        uploadDiv.style.display = bacterialTestSelect.value === '持っている' ? 'block' : 'none';
       }
     });
   }
@@ -884,9 +1375,25 @@ async function fetchJobs(): Promise<void> {
     if (!res.ok) throw new Error('求人情報の取得に失敗しました');
     const json = await res.json() as { success: boolean; data: Job[] };
     if (!json.success) throw new Error('求人情報の取得に失敗しました');
-    state.allJobs = json.data;
-    state.nurseries = groupByNursery(json.data);
-    state.availableAreas = buildAvailableAreas(json.data);
+    // 締切を過ぎた枠を除外（当日の勤務開始時刻を過ぎた枠は非表示）
+    const now = new Date();
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    const filteredJobs = json.data.filter((job: Job) => {
+      const jobDate = new Date(job.workDate + 'T00:00:00');
+      if (jobDate.getTime() === todayMidnight.getTime()) {
+        const [h, m] = job.startTime.split(':').map(Number);
+        const startDateTime = new Date(job.workDate + `T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`);
+        if (now >= startDateTime) return false;
+      }
+      return true;
+    });
+    state.allJobs = filteredJobs;
+    state.nurseries = groupByNursery(filteredJobs);
+    state.availableAreas = buildAvailableAreas(filteredJobs);
+    const prefAreaMap = buildPrefectureAreaMap(filteredJobs);
+    state.availablePrefectures = prefAreaMap.prefectures;
+    state.areasByPrefecture = prefAreaMap.areasByPref;
     state.filteredNurseries = applyFilterSort(state.nurseries, state.filter);
   } catch (err) {
     state.allJobs = [];
@@ -929,8 +1436,6 @@ async function saveProfile(): Promise<void> {
   const allergiesMedical = (document.getElementById('allergiesMedical') as HTMLInputElement)?.value?.trim();
   const healthNotes = (document.getElementById('healthNotes') as HTMLTextAreaElement)?.value?.trim();
   const bacterialTestStatus = (document.getElementById('bacterialTestStatus') as HTMLSelectElement)?.value;
-  const termsAgreed = (document.getElementById('termsAgreed') as HTMLInputElement)?.checked;
-
   if (!realName) {
     alert('お名前（本名）は必須です');
     return;
@@ -951,21 +1456,34 @@ async function saveProfile(): Promise<void> {
     alert('現場経験歴を選択してください');
     return;
   }
-  if (!termsAgreed && !state.userProfile?.terms_agreed_at) {
-    alert('利用規約への同意が必要です');
-    return;
-  }
-
   if (!state.friendId) {
     alert('ユーザー情報が取得できませんでした。LINEアプリからもう一度お試しください。');
     return;
   }
 
-  // 初回で書類未登録の場合のチェック
+  // 書類チェック
   const hasIdCard = state.userDocuments.some(d => d.doc_type === 'id_card') || state.profileForm.idCardFile;
   if (!hasIdCard) {
-    alert('本人確認書類は必須です');
+    alert('本人確認書類（表面）は必須です');
     return;
+  }
+  const hasIdCardBack = state.userDocuments.some(d => d.doc_type === 'id_card_back') || state.profileForm.idCardBackFile;
+  if (!hasIdCardBack) {
+    alert('本人確認書類（裏面）は必須です');
+    return;
+  }
+  const hasQualCert = state.userDocuments.some(d => d.doc_type === 'qualification_cert') || state.profileForm.qualificationCertFile;
+  if (!hasQualCert) {
+    alert('資格証は必須です');
+    return;
+  }
+  // 検便検査「持っている」選択時はアップロード必須
+  if (bacterialTestStatus === '持っている') {
+    const hasBacterialCert = state.userDocuments.some(d => d.doc_type === 'bacterial_test_cert') || state.profileForm.bacterialTestCertFile;
+    if (!hasBacterialCert) {
+      alert('検便検査結果のアップロードは必須です');
+      return;
+    }
   }
 
   state.submitting = true;
@@ -991,7 +1509,7 @@ async function saveProfile(): Promise<void> {
         experienceYears: experienceYears || undefined,
         bacterialTestStatus: bacterialTestStatus || undefined,
         healthNotes: healthNotes || undefined,
-        termsAgreedAt: termsAgreed ? new Date().toISOString() : undefined,
+        termsAgreedAt: undefined, // 利用規約同意は応募確定画面で取得
       }),
     });
 
@@ -1005,8 +1523,14 @@ async function saveProfile(): Promise<void> {
     if (state.profileForm.idCardFile) {
       uploads.push(uploadDocument(state.profileForm.idCardFile, 'id_card'));
     }
+    if (state.profileForm.idCardBackFile) {
+      uploads.push(uploadDocument(state.profileForm.idCardBackFile, 'id_card_back'));
+    }
     if (state.profileForm.qualificationCertFile) {
       uploads.push(uploadDocument(state.profileForm.qualificationCertFile, 'qualification_cert'));
+    }
+    if (state.profileForm.bacterialTestCertFile) {
+      uploads.push(uploadDocument(state.profileForm.bacterialTestCertFile, 'bacterial_test_cert'));
     }
 
     if (uploads.length > 0) {
@@ -1014,6 +1538,14 @@ async function saveProfile(): Promise<void> {
     }
 
     state.submitting = false;
+
+    // マイページから来た場合は保存後マイページに戻る
+    if (state.fromMypage) {
+      alert('プロフィールを更新しました');
+      window.location.href = `https://liff.line.me/${LIFF_ID}?page=mypage`;
+      return;
+    }
+
     state.view = 'confirm';
     render();
     window.scrollTo(0, 0);
@@ -1052,6 +1584,16 @@ async function uploadDocument(file: File, docType: string): Promise<void> {
 async function submitApplication(): Promise<void> {
   const { selectedJob, profile, friendId, userProfile } = state;
   if (!selectedJob || !profile || state.submitting) return;
+
+  // 利用規約同意チェック（未同意ユーザーのみ）
+  if (!userProfile?.terms_agreed_at) {
+    const termsCheckbox = document.getElementById('termsAgreedConfirm') as HTMLInputElement | null;
+    if (!termsCheckbox?.checked) {
+      alert('利用規約への同意が必要です');
+      return;
+    }
+  }
+
   state.submitting = true;
 
   const btn = getApp().querySelector('[data-action="confirm-apply"]') as HTMLButtonElement | null;
@@ -1064,6 +1606,14 @@ async function submitApplication(): Promise<void> {
     const displayName = userProfile?.real_name || profile.displayName;
     const body: Record<string, unknown> = { displayName };
     if (friendId) body.friendId = friendId;
+
+    // 利用規約同意を保存（初回のみ）
+    if (!userProfile?.terms_agreed_at && friendId) {
+      await apiCall('/api/profiles', {
+        method: 'POST',
+        body: JSON.stringify({ friendId, termsAgreedAt: new Date().toISOString() }),
+      }).catch(() => null);
+    }
 
     const res = await apiCall(`/api/jobs/${selectedJob.id}/book`, {
       method: 'POST',
@@ -1136,6 +1686,14 @@ export async function initJobs(): Promise<void> {
   // プロフィール取得（既存ユーザーなら自動引き継ぎ）
   await fetchProfile();
 
+  // URLパラメータで初期ビューを指定（マイページからの遷移対応）
+  const urlParams = new URLSearchParams(window.location.search);
+  const viewParam = urlParams.get('view');
+  if (viewParam === 'profile') {
+    state.view = 'profile';
+    state.fromMypage = true;
+  }
+
   render();
-  fetchJobs();
+  if (state.view === 'list') fetchJobs();
 }
