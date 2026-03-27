@@ -233,6 +233,11 @@ export default function Sidebar() {
       {/* フッター */}
       <div className="px-6 py-4 border-t border-gray-200 space-y-3">
         <p className="text-xs text-gray-400">みやびライン v0.1</p>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          <Link href="/privacy" className="text-xs text-gray-400 hover:text-gray-600 transition-colors">プライバシーポリシー</Link>
+          <Link href="/terms" className="text-xs text-gray-400 hover:text-gray-600 transition-colors">利用規約</Link>
+          <Link href="/tokutei" className="text-xs text-gray-400 hover:text-gray-600 transition-colors">特定商取引法</Link>
+        </div>
         <button
           onClick={() => {
             localStorage.removeItem('lh_api_key')
