@@ -91,6 +91,9 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
               タグ / 流入
             </th>
+            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">
+              スコア
+            </th>
             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
               登録日
             </th>
@@ -127,7 +130,20 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                         </div>
                       )}
                       <div>
-                        <p className="text-sm font-medium text-gray-900">{friend.displayName}</p>
+                        <p className="text-sm font-medium text-gray-900">
+                          {friend.displayName}
+                          {(() => {
+                            const tags = (friend as Record<string, unknown>).tags
+                            const meta = (friend as Record<string, unknown>).metadata
+                            const hasPpal =
+                              (Array.isArray(tags) && tags.some((t: unknown) => typeof t === 'string' && /ppal/i.test(t))) ||
+                              (typeof meta === 'string' && /ppal/i.test(meta)) ||
+                              (meta != null && typeof meta === 'object' && JSON.stringify(meta).toLowerCase().includes('ppal'))
+                            return hasPpal ? (
+                              <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">PPAL</span>
+                            ) : null
+                          })()}
+                        </p>
                         {friend.statusMessage && (
                           <p className="text-xs text-gray-400 truncate max-w-[160px]">{friend.statusMessage}</p>
                         )}
@@ -164,6 +180,18 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                     </div>
                   </td>
 
+                  {/* Score */}
+                  <td className="px-4 py-3 hidden sm:table-cell">
+                    {(() => {
+                      const score = (friend as Record<string, unknown>).score ?? (friend as Record<string, unknown>).totalScore
+                      if (score == null) return <span className="text-gray-400">-</span>
+                      const numScore = Number(score)
+                      if (numScore >= 80) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">HIGH</span>
+                      if (numScore >= 40) return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">MID</span>
+                      return <span className="text-gray-400">-</span>
+                    })()}
+                  </td>
+
                   {/* Registered date */}
                   <td className="px-4 py-3 text-sm text-gray-500">
                     {formatDate(friend.createdAt)}
@@ -183,7 +211,7 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                 {/* Expanded detail row */}
                 {isExpanded && (
                   <tr key={`${friend.id}-detail`} className="bg-gray-50">
-                    <td colSpan={5} className="px-6 py-4">
+                    <td colSpan={6} className="px-6 py-4">
                       <div className="space-y-3">
                         <div>
                           <p className="text-xs font-semibold text-gray-500 mb-1">LINE ユーザーID</p>

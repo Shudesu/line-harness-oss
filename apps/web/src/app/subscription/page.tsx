@@ -17,15 +17,16 @@ const PLANS = [
       'タグ 10個まで',
       'API アクセス',
       'コミュニティサポート',
+      '友だち追加で自動ステップ配信体験',
     ],
     stripePriceId: null,
   },
   {
     id: 'pro',
-    name: 'Pro',
+    name: 'Proプラン',
     price: '2,980',
     unit: '円/月',
-    description: '本格的なLINE運用に',
+    description: 'みやびラインを本格活用したい方に',
     features: [
       'フレンド数 10,000人まで',
       'ブロードキャスト 無制限',
@@ -35,15 +36,17 @@ const PLANS = [
       'Webhook 連携',
       'Claude AI 操作対応',
       'メールサポート',
+      'Teachable 連携',
+      'PPAL 連携（ベータ）',
     ],
     stripePriceId: process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID,
   },
   {
     id: 'business',
-    name: 'Business',
+    name: 'Businessプラン',
     price: '9,800',
     unit: '円/月',
-    description: '大規模・法人向け',
+    description: '本格的なBtoBコミュニティ・法人向け',
     features: [
       'フレンド数 無制限',
       'ブロードキャスト 無制限',
@@ -53,6 +56,7 @@ const PLANS = [
       'SLA 99.9%',
       'Claude AI 操作対応',
       '専任サポート',
+      'カスタム連携相談',
     ],
     stripePriceId: process.env.NEXT_PUBLIC_STRIPE_BUSINESS_PRICE_ID,
   },
@@ -107,7 +111,7 @@ export default function SubscriptionPage() {
           <Link href="/" className="text-sm text-gray-500 hover:text-green-600">
             ← ダッシュボードに戻る
           </Link>
-          <h1 className="text-3xl font-bold mt-4 mb-2">プラン管理</h1>
+          <h1 className="text-3xl font-bold mt-4 mb-2">みやびライン プラン管理</h1>
           <p className="text-gray-500">現在のプランと利用状況を確認できます</p>
         </div>
 
@@ -140,6 +144,16 @@ export default function SubscriptionPage() {
                 </span>
               )}
             </div>
+          </div>
+          {/* Stripe portal link */}
+          <div className="mt-4">
+            <a
+              href="/api/stripe/portal"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
+            >
+              プランを変更・解約
+            </a>
+            <p className="text-xs text-gray-400 mt-1">Stripe カスタマーポータルで管理・解約できます。ご不明な点は support@ambitiousai.co.jp までお問い合わせください。</p>
           </div>
         </div>
 
