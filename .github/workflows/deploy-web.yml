@@ -33,7 +33,7 @@ jobs:
         run: pnpm --filter @line-crm/shared build
 
       - name: Build web app
-        run: pnpm --filter @line-crm/web build
+        run: pnpm --filter web build
         env:
           NEXT_PUBLIC_API_BASE: ${{ secrets.NEXT_PUBLIC_API_BASE }}
           NEXT_PUBLIC_STRIPE_PRO_PRICE_ID: ${{ secrets.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID }}
