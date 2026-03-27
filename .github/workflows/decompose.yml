@@ -137,7 +137,9 @@ jobs:
             ANALYSIS='{"atomic":true,"reason":"Claude unavailable","subtasks":[]}'
           fi
 
-          echo "analysis=$ANALYSIS" >> $GITHUB_OUTPUT
+          # Strip markdown code fences and compact to single-line JSON (avoids GITHUB_OUTPUT multiline issues)
+          ANALYSIS_CLEAN=$(echo "$ANALYSIS" | python3 -c "import sys,json,re; t=sys.stdin.read().strip(); t=re.sub(r'^\x60{3}json\n?','',t); t=re.sub(r'\n?\x60{3}$','',t.strip()); obj=json.loads(t); print(json.dumps(obj))" 2>/dev/null || echo '{"atomic":true,"reason":"parse error","subtasks":[]}')
+          echo "analysis=$ANALYSIS_CLEAN" >> $GITHUB_OUTPUT
         env:
           CLAUDE_CODE_OAUTH_TOKEN_1: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_1 }}
           CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
