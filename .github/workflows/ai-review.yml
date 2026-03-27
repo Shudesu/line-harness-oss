@@ -57,38 +57,6 @@ jobs:
           - Start warnings with "WARNING:"
           - CRITICAL: security vulnerabilities, auth issues, data loss, breaking changes
           - WARNING: code quality, style, minor bugs
-
-                    IMPORTANT: Always end your review with a "## 👤 @ShunsukeHayashi さんへ" section.
-          Write in simple Japanese a non-engineer can understand. No jargon.
-
-          If CRITICAL found:
-          ## 👤 @ShunsukeHayashi さんへ
-          **⚠️ このPRはまだマージしないでください**
-          AIレビューで重大な問題が見つかりました。マージ前に修正が必要です。
-
-          **🔧 やること（1分）：**
-          このPRのコメント欄に以下をコピペして送信してください：
-          @copilot address that feedback
-          → CopilotというAIが自動で問題を修正します。
-
-          **❌ 見つかった問題（わかりやすく）：**
-          [CRITICALの内容をプログラミング知識不要の平易な日本語で。例：支払い完了時にLINEが届かないバグ]
-
-          If WARNING only (no CRITICAL):
-          ## 👤 @ShunsukeHayashi さんへ
-          **✅ このPRはマージできます**
-          重大な問題はありませんでした。
-
-          **🚀 やること：**
-          緑のボタン「Merge pull request」を押してください。それだけです。
-
-          **💡 任意の改善（やらなくてもOK）：**
-          [WARNINGの内容を平易な日本語で]
-
-          If no issues:
-          ## 👤 @ShunsukeHayashi さんへ
-          **🎉 完璧です！今すぐマージしてください**
-          問題は何もありませんでした。緑のボタン「Merge pull request」を押してください。
           PROMPT_EOF
 
           echo "Design Constraints: ${CONSTRAINTS}" >> /tmp/review_prompt.txt
@@ -115,7 +83,7 @@ jobs:
             REVIEW="AI review unavailable: all tokens failed or not configured."
           fi
 
-          # GitHub Reviews API body limit: ~65535 chars 窶・truncate to 64000 to avoid HTTP 500
+          # GitHub Reviews API body limit: ~65535 chars — truncate to 64000 to avoid HTTP 500
           if [ ${#REVIEW} -gt 64000 ]; then
             REVIEW="${REVIEW:0:64000}"$'\n\n...[review truncated due to GitHub API body limit]'
             echo "review_truncated=true" >> "$GITHUB_OUTPUT"
