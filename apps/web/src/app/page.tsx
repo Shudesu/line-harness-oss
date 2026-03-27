@@ -32,6 +32,8 @@ interface DashboardStats {
   templateCount: number | null
   automationCount: number | null
   scoringRuleCount: number | null
+  proSubscriberCount: number | null
+  businessSubscriberCount: number | null
 }
 
 interface StatCardProps {
@@ -80,6 +82,8 @@ export default function DashboardPage() {
     templateCount: null,
     automationCount: null,
     scoringRuleCount: null,
+    proSubscriberCount: null,
+    businessSubscriberCount: null,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -89,13 +93,22 @@ export default function DashboardPage() {
       setLoading(true)
       setError('')
       try {
-        const [friendCountRes, scenariosRes, broadcastsRes, templatesRes, automationsRes, scoringRes] = await Promise.allSettled([
+        const apiKey = typeof window !== 'undefined' ? localStorage.getItem('lh_api_key') ?? '' : ''
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? ''
+
+        const [friendCountRes, scenariosRes, broadcastsRes, templatesRes, automationsRes, scoringRes, proSubRes, bizSubRes] = await Promise.allSettled([
           api.friends.count({ accountId: selectedAccountId ?? undefined }),
           api.scenarios.list(),
           api.broadcasts.list(),
           api.templates.list(),
           api.automations.list(),
           api.scoring.rules(),
+          fetch(`${apiBase}/api/subscriptions/count`, {
+            headers: { 'x-api-key': apiKey },
+          }).then((r) => r.json()).catch(() => ({ success: false })),
+          fetch(`${apiBase}/api/subscriptions/count?plan=business`, {
+            headers: { 'x-api-key': apiKey },
+          }).then((r) => r.json()).catch(() => ({ success: false })),
         ])
 
         setStats({
@@ -122,6 +135,14 @@ export default function DashboardPage() {
           scoringRuleCount:
             scoringRes.status === 'fulfilled' && scoringRes.value.success
               ? scoringRes.value.data.length
+              : null,
+          proSubscriberCount:
+            proSubRes.status === 'fulfilled' && proSubRes.value.success
+              ? (proSubRes.value.count ?? null)
+              : null,
+          businessSubscriberCount:
+            bizSubRes.status === 'fulfilled' && bizSubRes.value.success
+              ? (bizSubRes.value.count ?? null)
               : null,
         })
       } catch {
@@ -254,6 +275,37 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* Service stats */}
+      <h2 className="text-sm font-semibold text-gray-700 mb-3 mt-2">サービス状況</h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
+        <StatCard
+          title="Proプラン加入者"
+          value={stats.proSubscriberCount}
+          loading={loading}
+          href="/subscription"
+          accentColor="#F59E0B"
+          icon={
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="Businessプラン加入者"
+          value={stats.businessSubscriberCount}
+          loading={loading}
+          href="/subscription"
+          accentColor="#8B5CF6"
+          icon={
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          }
+        />
+      </div>
+
       {/* Quick links */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 className="text-sm font-semibold text-gray-800 mb-4">クイックアクション</h2>
@@ -335,6 +387,22 @@ export default function DashboardPage() {
             <div>
               <p className="text-sm font-medium text-gray-900 group-hover:text-red-700 transition-colors">BAN検知</p>
               <p className="text-xs text-gray-400">アカウント健康度ダッシュボード</p>
+            </div>
+          </Link>
+
+          <Link
+            href="/subscription"
+            className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-amber-300 hover:bg-amber-50 transition-colors group"
+          >
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0" style={{ backgroundColor: '#F59E0B' }}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-900 group-hover:text-amber-700 transition-colors">プラン管理</p>
+              <p className="text-xs text-gray-400">Stripe サブスクリプション管理</p>
             </div>
           </Link>
         </div>
