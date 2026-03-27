@@ -141,7 +141,7 @@ export default function DashboardPage() {
         <p className="text-sm text-gray-500 mt-1">
           {selectedAccount
             ? `${selectedAccount.displayName || selectedAccount.name} の管理画面`
-            : 'LINE公式アカウント CRM 管理画面'}
+            : 'みやびライン 管理画面'}
         </p>
       </div>
 
@@ -160,8 +160,8 @@ export default function DashboardPage() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-bold text-gray-900">LINE で体験する</p>
-            <p className="text-xs text-gray-500 mt-0.5">友だち追加でステップ配信・フォーム・自動返信を体験</p>
+            <p className="text-sm font-bold text-gray-900">みやびライン で体験する</p>
+            <p className="text-xs text-gray-500 mt-0.5">みやびラインの友だち追加でステップ配信・フォーム・自動返信を体験</p>
           </div>
           <span className="text-xs px-3 py-1.5 rounded-full text-white font-medium" style={{ backgroundColor: '#06C755' }}>
             友だち追加

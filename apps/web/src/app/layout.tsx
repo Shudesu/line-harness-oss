@@ -3,8 +3,8 @@ import './globals.css'
 import AppShell from '@/components/app-shell'
 
 export const metadata: Metadata = {
-  title: 'LINE CRM 管理画面',
-  description: 'LINE公式アカウント CRM 管理画面',
+  title: 'みやびライン 管理画面',
+  description: 'みやびライン — LINE公式アカウント CRM',
 }
 
 export default function RootLayout({

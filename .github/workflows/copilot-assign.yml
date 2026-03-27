@@ -122,11 +122,13 @@ jobs:
 
           CUSTOM_INSTRUCTIONS=$(cat /tmp/instructions.txt)
 
+          # Copilot bot node_id: BOT_kgDOC9w8XQ (login: "Copilot", app: copilot-swe-agent)
+          # actorIds must include the bot's node_id — actorLogins:[] does NOT trigger Copilot
           gh api graphql -f query='
-            mutation($issueId: ID!, $repositoryId: ID!, $baseRef: String!, $customInstructions: String!) {
+            mutation($issueId: ID!, $repositoryId: ID!, $baseRef: String!, $customInstructions: String!, $botId: ID!) {
               replaceActorsForAssignable(input: {
                 assignableId: $issueId
-                actorLogins: []
+                actorIds: [$botId]
                 agentAssignment: {
                   targetRepositoryId: $repositoryId
                   baseRef: $baseRef
@@ -134,14 +136,15 @@ jobs:
                 }
               }) {
                 assignable {
-                  ... on Issue { number title }
+                  ... on Issue { number title assignees(first:5){ nodes{ login } } }
                 }
               }
             }' \
             -f issueId="$ISSUE_NODE_ID" \
             -f repositoryId="${{ steps.repo_id.outputs.id }}" \
             -f baseRef="${{ steps.default_branch.outputs.branch }}" \
-            -f customInstructions="$CUSTOM_INSTRUCTIONS"
+            -f customInstructions="$CUSTOM_INSTRUCTIONS" \
+            -f botId="BOT_kgDOC9w8XQ"
 
           echo "GitHub Copilot assigned to issue #${{ github.event.issue.number }}"
         env:
