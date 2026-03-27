@@ -1,0 +1,47 @@
+name: Deploy Web (CF Pages)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/shared/**'
+      - '.github/workflows/deploy-web.yml'
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build shared packages
+        run: pnpm --filter @line-crm/shared build
+
+      - name: Build web app
+        run: pnpm --filter @line-crm/web build
+        env:
+          NEXT_PUBLIC_API_BASE: ${{ secrets.NEXT_PUBLIC_API_BASE }}
+          NEXT_PUBLIC_STRIPE_PRO_PRICE_ID: ${{ secrets.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID }}
+          NEXT_PUBLIC_STRIPE_BUSINESS_PRICE_ID: ${{ secrets.NEXT_PUBLIC_STRIPE_BUSINESS_PRICE_ID }}
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/web/out --project-name=miyabi-line-admin --commit-dirty=true
