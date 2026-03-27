@@ -66,7 +66,7 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.ANTHROPIC_API_KEY, c.env.AI_SYSTEM_PROMPT);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -85,6 +85,8 @@ async function handleEvent(
   lineAccessToken: string,
   lineAccountId: string | null = null,
   workerUrl?: string,
+  anthropicApiKey?: string,
+  aiSystemPrompt?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -351,6 +353,52 @@ async function handleEvent(
       }
     }
 
+    // AI自動応答ミドルウェア（Issue #33）
+    // ANTHROPIC_API_KEY が設定されていてキーワードにマッチしなかった場合のみ実行
+    if (!matched && anthropicApiKey) {
+      try {
+        const aiEnabledRow = await db
+          .prepare(`SELECT value FROM ai_settings WHERE key = 'enabled' LIMIT 1`)
+          .first<{ value: string }>();
+        const aiEnabled = aiEnabledRow?.value === 'true';
+
+        if (aiEnabled) {
+          const systemPrompt =
+            aiSystemPrompt ??
+            'あなたはLINE公式アカウントのサポートAIです。丁寧かつ簡潔に日本語で回答してください。';
+
+          const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': anthropicApiKey,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 512,
+              system: systemPrompt,
+              messages: [{ role: 'user', content: incomingText }],
+            }),
+          });
+
+          if (aiRes.ok) {
+            const aiData = await aiRes.json<{ content: Array<{ type: string; text: string }> }>();
+            const replyText = aiData.content.find((b) => b.type === 'text')?.text ?? '';
+            if (replyText) {
+              await lineClient.replyMessage(event.replyToken, [
+                buildMessage('text', replyText),
+              ]);
+            }
+          } else {
+            console.error('AI auto-reply API error:', aiRes.status, await aiRes.text());
+          }
+        }
+      } catch (err) {
+        console.error('AI auto-reply error:', err);
+      }
+    }
+
     // イベントバス発火: message_received
     await fireEvent(db, 'message_received', {
       friendId: friend.id,
@@ -466,9 +514,54 @@ webhook.post('/api/webhooks/teachable', async (c) => {
   //    On failure, rollback line_message_sent_at so Teachable can retry.
   try {
     const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
-    await lineClient.pushMessage(lineUserId, [
-      buildMessage('text', 'ご購入ありがとうございます！\nコースへのアクセス権が付与されました。引き続きよろしくお願いします。'),
-    ]);
+    const liffUrl = c.env.LIFF_LINK_URL ?? 'https://liff.line.me/2008491323-apEVKQYv';
+    const messages = [
+      {
+        type: 'flex' as const,
+        altText: 'ご購入ありがとうございます！アカウント連携のご案内',
+        contents: {
+          type: 'bubble',
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'text',
+                text: '🎉 ご購入ありがとうございます！',
+                weight: 'bold',
+                size: 'md',
+                wrap: true,
+              },
+              {
+                type: 'text',
+                text: 'アカウント連携で受講・Discordコミュニティへのアクセスが開始されます。\n下のボタンから30秒で完了できます。',
+                size: 'sm',
+                color: '#666666',
+                wrap: true,
+                margin: 'md',
+              },
+            ],
+          },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'button',
+                style: 'primary',
+                color: '#06C755',
+                action: {
+                  type: 'uri',
+                  label: '今すぐ連携する',
+                  uri: liffUrl,
+                },
+              },
+            ],
+          },
+        },
+      },
+    ];
+    await lineClient.pushMessage(lineUserId, messages as Parameters<typeof lineClient.pushMessage>[1]);
   } catch (err) {
     console.error('Teachable webhook: pushMessage failed for', lineUserId, err);
     // Rollback the idempotency flag so Teachable retries can succeed.

@@ -1010,6 +1010,46 @@ liffRoutes.get('/api/liff/discord/callback', async (c) => {
   }
 });
 
+// ─── POST /api/liff/link-teachable — Teachable メール連携 ────────
+//
+// リクエストボディ: { lineUserId: string, teachableEmail: string }
+// LINE ID Token で lineUserId を検証し、unified_profiles に upsert する。
+// Issue #48 の要件 3 に対応。
+liffRoutes.post('/api/liff/link-teachable', async (c) => {
+  try {
+    const body = await c.req.json<{ lineUserId?: string; teachableEmail?: string }>();
+    if (!body.lineUserId || !body.teachableEmail) {
+      return c.json({ success: false, error: 'lineUserId and teachableEmail are required' }, 400);
+    }
+
+    const { lineUserId, teachableEmail } = body;
+
+    // Email format validation
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(teachableEmail)) {
+      return c.json({ success: false, error: 'Invalid email format' }, 400);
+    }
+
+    const db = c.env.DB;
+    const now = new Date().toISOString();
+
+    await db
+      .prepare(
+        `INSERT INTO unified_profiles (line_uid, teachable_email, updated_at, created_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(line_uid) DO UPDATE SET
+             teachable_email = excluded.teachable_email,
+             updated_at      = excluded.updated_at`,
+      )
+      .bind(lineUserId, teachableEmail, now, now)
+      .run();
+
+    return c.json({ success: true, data: { linked: true } });
+  } catch (err) {
+    console.error('POST /api/liff/link-teachable error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // ─── HTML Templates ─────────────────────────────────────────────
 
 function authLandingPage(liffUrl: string, oauthUrl: string): string {

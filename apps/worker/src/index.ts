@@ -58,6 +58,8 @@ export type Env = {
     DISCORD_CLIENT_SECRET?: string;   // secret — use `wrangler secret put`
     LIFF_LINK_URL?: string;
     TEACHABLE_WEBHOOK_SECRET?: string; // secret — use `wrangler secret put`
+    ANTHROPIC_API_KEY?: string;        // secret — use `wrangler secret put`
+    AI_SYSTEM_PROMPT?: string;         // オプション: AIシステムプロンプト
   };
 };
 
