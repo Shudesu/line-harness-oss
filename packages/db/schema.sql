@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS auto_replies (
   response_type    TEXT NOT NULL DEFAULT 'text',
   response_content TEXT NOT NULL,
   is_active        INTEGER NOT NULL DEFAULT 1,
+  line_account_id  TEXT,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 

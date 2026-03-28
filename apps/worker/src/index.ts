@@ -35,6 +35,7 @@ import { trackedLinks } from './routes/tracked-links.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
 import { staff } from './routes/staff.js';
+import { autoReplies } from './routes/auto-replies.js';
 
 export type Env = {
   Bindings: {
@@ -92,6 +93,7 @@ app.route('/', trackedLinks);
 app.route('/', forms);
 app.route('/', adPlatforms);
 app.route('/', staff);
+app.route('/', autoReplies);
 
 // Short link: /r/:ref → landing page with LINE open button
 app.get('/r/:ref', (c) => {
