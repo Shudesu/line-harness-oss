@@ -128,8 +128,17 @@ h1{font-size:28px;font-weight:800;margin-bottom:8px}
 </html>`);
 });
 
-// 404 fallback
-app.notFound((c) => c.json({ success: false, error: 'Not found' }, 404));
+// Convenience redirect for /book path
+app.get('/book', (c) => c.redirect('/?page=book'));
+
+// 404 fallback — JSON for API paths, plain for others (Workers Assets SPA fallback handles it)
+app.notFound((c) => {
+  const path = new URL(c.req.url).pathname;
+  if (path.startsWith('/api/') || path === '/webhook' || path === '/docs' || path === '/openapi.json') {
+    return c.json({ success: false, error: 'Not found' }, 404);
+  }
+  return c.notFound();
+});
 
 // Scheduled handler for cron triggers — runs for all active LINE accounts
 async function scheduled(

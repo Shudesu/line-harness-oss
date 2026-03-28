@@ -8,7 +8,6 @@ import { promptLineCredentials } from "../steps/prompt.js";
 import { createDatabase } from "../steps/database.js";
 import { deployWorker } from "../steps/deploy-worker.js";
 import { deployAdmin } from "../steps/deploy-admin.js";
-import { deployLiff } from "../steps/deploy-liff.js";
 import { setSecrets } from "../steps/secrets.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
 import { generateApiKey } from "../lib/crypto.js";
@@ -28,7 +27,6 @@ interface SetupState {
   botBasicId?: string;
   workerUrl?: string;
   adminUrl?: string;
-  liffUrl?: string;
   completedSteps: string[];
 }
 
@@ -158,7 +156,26 @@ export async function runSetup(repoDir: string): Promise<void> {
     p.log.success(`D1 データベース: 作成済み（${state.d1DatabaseId}）`);
   }
 
-  // Step 7: Deploy Worker
+  // Step 7: Fetch bot basic ID (before worker deploy — LINE API doesn't need worker)
+  if (!state.botBasicId) {
+    try {
+      const botRes = await fetch("https://api.line.me/v2/bot/info", {
+        headers: { Authorization: `Bearer ${state.lineChannelAccessToken}` },
+      });
+      if (botRes.ok) {
+        const bot = (await botRes.json()) as { basicId?: string };
+        if (bot.basicId) {
+          state.botBasicId = bot.basicId;
+          saveState(repoDir, state);
+          p.log.success(`Bot Basic ID: ${state.botBasicId}`);
+        }
+      }
+    } catch {
+      // Non-critical — LIFF friend-add button won't show
+    }
+  }
+
+  // Step 8: Deploy Worker (includes LIFF build via @cloudflare/vite-plugin)
   const workerName = "line-harness";
   state.workerName = workerName;
   if (!isDone(state, "worker")) {
@@ -168,6 +185,8 @@ export async function runSetup(repoDir: string): Promise<void> {
       d1DatabaseName: state.d1DatabaseName!,
       workerName,
       accountId: state.accountId!,
+      liffId: state.liffId!,
+      botBasicId: state.botBasicId || "",
     });
     state.workerUrl = workerUrl;
     markDone(state, "worker");
@@ -176,7 +195,7 @@ export async function runSetup(repoDir: string): Promise<void> {
     p.log.success(`Worker: デプロイ済み（${state.workerUrl}）`);
   }
 
-  // Step 8: Set secrets
+  // Step 9: Set secrets
   if (!isDone(state, "secrets")) {
     await setSecrets({
       workerName,
@@ -192,7 +211,7 @@ export async function runSetup(repoDir: string): Promise<void> {
     p.log.success("シークレット: 設定済み");
   }
 
-  // Step 8.5: Register LINE account in DB
+  // Step 10: Register LINE account in DB
   if (!isDone(state, "lineAccount")) {
     const s = p.spinner();
     s.start("LINE アカウント登録中...");
@@ -224,21 +243,6 @@ export async function runSetup(repoDir: string): Promise<void> {
         } catch {
           // Non-critical
         }
-        // Fetch bot basic ID for LIFF friend-add button
-        try {
-          const botRes = await fetch("https://api.line.me/v2/bot/info", {
-            headers: { Authorization: `Bearer ${state.lineChannelAccessToken}` },
-          });
-          if (botRes.ok) {
-            const bot = (await botRes.json()) as { basicId?: string };
-            if (bot.basicId) {
-              state.botBasicId = bot.basicId;
-              saveState(repoDir, state);
-            }
-          }
-        } catch {
-          // Non-critical
-        }
         s.stop("LINE アカウント登録完了");
       } else {
         const data = (await res.json()) as Record<string, unknown>;
@@ -253,7 +257,7 @@ export async function runSetup(repoDir: string): Promise<void> {
     p.log.success("LINE アカウント: 登録済み");
   }
 
-  // Step 9: Deploy Admin UI
+  // Step 11: Deploy Admin UI
   // Use unique project names to avoid subdomain collision
   const suffix = state.apiKey!.slice(0, 8);
   const adminProjectName = `lh-admin-${suffix}`;
@@ -271,24 +275,7 @@ export async function runSetup(repoDir: string): Promise<void> {
     p.log.success(`Admin UI: デプロイ済み（${state.adminUrl}）`);
   }
 
-  // Step 10: Deploy LIFF
-  const liffProjectName = `lh-liff-${suffix}`;
-  if (!isDone(state, "liff")) {
-    const { liffUrl } = await deployLiff({
-      repoDir,
-      workerUrl: state.workerUrl!,
-      liffId: state.liffId!,
-      botBasicId: state.botBasicId || "",
-      projectName: liffProjectName,
-    });
-    state.liffUrl = liffUrl;
-    markDone(state, "liff");
-    saveState(repoDir, state);
-  } else {
-    p.log.success(`LIFF: デプロイ済み（${state.liffUrl}）`);
-  }
-
-  // Step 11: Generate MCP config
+  // Step 12: Generate MCP config
   const addMcp = await p.confirm({
     message: "MCP 設定を .mcp.json に追加しますか？（Claude Code / Cursor 用）",
   });
@@ -296,7 +283,7 @@ export async function runSetup(repoDir: string): Promise<void> {
     generateMcpConfig({ workerUrl: state.workerUrl!, apiKey: state.apiKey! });
   }
 
-  // Step 12: Show completion screen
+  // Step 13: Show completion screen
   p.note(
     [
       `${pc.bold("① Webhook URL を設定してください:")}`,
@@ -305,7 +292,7 @@ export async function runSetup(repoDir: string): Promise<void> {
       `   → Webhook URL に貼り付け → 「Webhookの利用」を ${pc.bold("ON")} にする`,
       "",
       `${pc.bold("② LIFF エンドポイント URL を更新してください:")}`,
-      `   ${pc.cyan(state.liffUrl!)}`,
+      `   ${pc.cyan(state.workerUrl!)}`,
       `   → LINE Developers Console → LINE Login チャネル → LIFF`,
       `   → エンドポイント URL をこの URL に変更`,
       "",

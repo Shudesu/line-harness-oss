@@ -19,7 +19,6 @@ declare const liff: {
   closeWindow(): void;
 };
 
-const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:8787';
 const CONNECTION_ID = import.meta.env?.VITE_CALENDAR_CONNECTION_ID || '';
 
 interface Slot {
@@ -59,7 +58,7 @@ function escapeHtml(str: string): string {
 }
 
 function apiCall(path: string, options?: RequestInit): Promise<Response> {
-  return fetch(`${API_URL}${path}`, {
+  return fetch(path, {
     ...options,
     headers: {
       'Content-Type': 'application/json',

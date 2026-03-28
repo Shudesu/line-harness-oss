@@ -39,15 +39,5 @@ export async function runUpdate(repoDir: string): Promise<void> {
   );
   s.stop("Admin UI 再デプロイ完了");
 
-  // Rebuild and redeploy LIFF
-  s.start("LIFF 再デプロイ中...");
-  const liffDir = join(repoDir, "apps/liff");
-  await execa("pnpm", ["run", "build"], { cwd: liffDir });
-  await wrangler(
-    ["pages", "deploy", "dist", "--project-name", "line-harness-liff"],
-    { cwd: liffDir },
-  );
-  s.stop("LIFF 再デプロイ完了");
-
   p.outro(pc.green("アップデート完了！"));
 }

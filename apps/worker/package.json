@@ -2,9 +2,12 @@
   "name": "worker",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -14,8 +17,10 @@
     "@line-crm/shared": "workspace:*"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.0.0",
     "@cloudflare/workers-types": "^4.20241205.0",
     "typescript": "^5.7.0",
-    "wrangler": "^3.99.0"
+    "vite": "^6.0.0",
+    "wrangler": "^4.0.0"
   }
 }

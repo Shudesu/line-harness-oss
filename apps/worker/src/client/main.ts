@@ -37,13 +37,12 @@ function detectLiffId(): string {
   return import.meta.env?.VITE_LIFF_ID || '';
 }
 const LIFF_ID = detectLiffId();
-const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:8787';
 const UUID_STORAGE_KEY = 'lh_uuid';
 // LINE公式アカウントの友だち追加URL（LINE Developers Console → Messaging API → Bot basic ID）
 const BOT_BASIC_ID = import.meta.env?.VITE_BOT_BASIC_ID || '';
 
 function apiCall(path: string, options?: RequestInit): Promise<Response> {
-  return fetch(`${API_URL}${path}`, {
+  return fetch(path, {
     ...options,
     headers: {
       'Content-Type': 'application/json',

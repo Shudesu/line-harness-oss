@@ -40,7 +40,7 @@ LINE Login チャネルを作り、`/auth/line?ref=xxx` 経由で友だち追加
 
 1. LINE Developers Console → 同一プロバイダー内で「LINE Login」チャネルを作成
 2. 「LIFF」タブで LIFF アプリを追加
-3. エンドポイント URL: デプロイ後の LIFF アプリ URL を設定
+3. エンドポイント URL: デプロイ後の Worker URL を設定（LIFF は Worker に統合されています）
 4. Scope: `profile`, `openid` を有効化
 5. 控える値:
 
@@ -67,8 +67,7 @@ pnpm install
 line-harness/
 ├── apps/
 │   ├── web/              # Next.js 管理画面
-│   ├── worker/           # Cloudflare Workers API + Webhook
-│   └── liff/             # LIFF Vite アプリ
+│   └── worker/           # Cloudflare Workers API + Webhook + LIFF フロントエンド
 ├── packages/
 │   ├── db/               # D1 スキーマ & クエリ関数
 │   ├── line-sdk/         # LINE Messaging API ラッパー
@@ -77,6 +76,8 @@ line-harness/
 ├── package.json          # pnpm workspace root
 └── pnpm-workspace.yaml
 ```
+
+> **Note**: LIFF フロントエンドは Worker に統合されています。`@cloudflare/vite-plugin` により Worker デプロイ時に自動ビルドされ、Workers Static Assets として配信されます。LIFF エンドポイント URL は Worker URL と同じです。
 
 ## 3. Cloudflare D1 データベース作成
 

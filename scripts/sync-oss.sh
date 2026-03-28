@@ -17,7 +17,7 @@ rsync -av --delete \
   --exclude='.env' \
   --exclude='.claude' \
   --exclude='apps/web/out' \
-  --exclude='apps/liff/dist' \
+  --exclude='apps/worker/dist' \
   --exclude='docs/superpowers' \
   --exclude='README.md' \
   --exclude='.github/workflows' \
