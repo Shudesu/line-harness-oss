@@ -1,3 +1,5 @@
+import { extractFlexAltText } from '../utils/flex-alt-text.js';
+
 /**
  * イベントバス — システム内イベントの発火と処理
  *
@@ -21,10 +23,13 @@ import {
   jstNow,
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
+import { sendAdConversions } from './ad-conversion.js';
 
-interface EventPayload {
+export interface EventPayload {
   friendId?: string;
   eventData?: Record<string, unknown>;
+  conversionEventName?: string;
+  conversionValue?: number;
 }
 
 /**
@@ -37,12 +42,21 @@ export async function fireEvent(
   lineAccessToken?: string,
   lineAccountId?: string | null,
 ): Promise<void> {
-  await Promise.allSettled([
+  const jobs: Promise<unknown>[] = [
     fireOutgoingWebhooks(db, eventType, payload),
     processScoring(db, eventType, payload),
     processAutomations(db, eventType, payload, lineAccessToken, lineAccountId),
     processNotifications(db, eventType, payload, lineAccountId),
-  ]);
+  ];
+
+  // Ad conversion postback
+  if (payload.friendId && payload.conversionEventName) {
+    jobs.push(
+      sendAdConversions(db, payload.friendId, payload.conversionEventName, payload.conversionValue),
+    );
+  }
+
+  await Promise.allSettled(jobs);
 }
 
 /** 送信Webhookへの通知 */
@@ -221,7 +235,7 @@ async function executeAction(
       if (msgType === 'flex') {
         const contents = JSON.parse(action.params.content);
         await lineClient.pushMessage(friend.line_user_id, [
-          { type: 'flex', altText: action.params.altText || 'Message', contents },
+          { type: 'flex', altText: action.params.altText || extractFlexAltText(contents), contents },
         ]);
       } else {
         // Default: text message

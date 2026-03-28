@@ -38,10 +38,11 @@ export class FriendsResource {
     await this.http.delete(`/api/friends/${friendId}/tags/${tagId}`)
   }
 
-  async sendMessage(friendId: string, content: string, messageType: MessageType = 'text'): Promise<{ messageId: string }> {
+  async sendMessage(friendId: string, content: string, messageType: MessageType = 'text', altText?: string): Promise<{ messageId: string }> {
     const res = await this.http.post<ApiResponse<{ messageId: string }>>(`/api/friends/${friendId}/messages`, {
       messageType,
       content,
+      ...(altText ? { altText } : {}),
     })
     return res.data
   }

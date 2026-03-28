@@ -1,3 +1,4 @@
+import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getFriendScenariosDueForDelivery,
   getScenarioSteps,
@@ -163,7 +164,16 @@ async function processSingleDelivery(
 
   // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, etc.)
   const expandedContent = expandVariables(currentStep.message_content, friend, workerUrl);
-  const message = buildMessage(currentStep.message_type, expandedContent);
+  // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+  let trackedType: string = currentStep.message_type;
+  let trackedContent = expandedContent;
+  if (workerUrl) {
+    const { autoTrackContent } = await import('./auto-track.js');
+    const tracked = await autoTrackContent(db, currentStep.message_type, expandedContent, workerUrl);
+    trackedType = tracked.messageType;
+    trackedContent = tracked.content;
+  }
+  const message = buildMessage(trackedType, trackedContent);
   await lineClient.pushMessage(friend.line_user_id, [message]);
 
   // Log outgoing message
@@ -238,27 +248,6 @@ async function evaluateCondition(
   }
 }
 
-/** Recursively find the first text element in a Flex Message for altText */
-function extractFlexAltText(obj: unknown, depth = 0): string | null {
-  if (depth > 10 || !obj || typeof obj !== 'object') return null;
-  const node = obj as Record<string, unknown>;
-  if (node.type === 'text' && typeof node.text === 'string') {
-    return node.text.slice(0, 100);
-  }
-  if (Array.isArray(node.contents)) {
-    for (const child of node.contents) {
-      const found = extractFlexAltText(child, depth + 1);
-      if (found) return found;
-    }
-  }
-  for (const key of ['header', 'body', 'footer']) {
-    if (node[key]) {
-      const found = extractFlexAltText(node[key], depth + 1);
-      if (found) return found;
-    }
-  }
-  return null;
-}
 
 /** Remove empty text nodes from Flex JSON (caused by conditional blocks) */
 function cleanEmptyNodes(obj: unknown): void {
@@ -279,7 +268,7 @@ function cleanEmptyNodes(obj: unknown): void {
   }
 }
 
-export function buildMessage(messageType: string, messageContent: string): Message {
+export function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
   if (messageType === 'text') {
     return { type: 'text', text: messageContent };
   }
@@ -308,8 +297,7 @@ export function buildMessage(messageType: string, messageContent: string): Messa
       // Remove empty text nodes (from {{#if_ref}} conditional blocks)
       cleanEmptyNodes(contents);
       // Extract first text element for altText (shown in notifications)
-      const altText = extractFlexAltText(contents) || 'お知らせ';
-      return { type: 'flex', altText, contents };
+      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
     } catch {
       return { type: 'text', text: messageContent };
     }

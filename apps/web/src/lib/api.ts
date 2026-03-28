@@ -22,6 +22,7 @@ import type {
   Notification,
   AccountHealthLog,
   AccountMigration,
+  StaffMember,
 } from '@line-crm/shared'
 
 import type { Broadcast } from '@line-crm/shared'
@@ -32,15 +33,14 @@ export type ApiBroadcast = Broadcast
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'
 
 /**
- * Read the API key from localStorage first (set during login), falling back to
- * the build-time env var for local development without the login page.
+ * Read the API key from localStorage (set during login).
+ * Never embed secrets in the client bundle via NEXT_PUBLIC_* env vars.
  */
 function getApiKey(): string {
   if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('lh_api_key')
-    if (stored) return stored
+    return localStorage.getItem('lh_api_key') || ''
   }
-  return process.env.NEXT_PUBLIC_API_KEY || ''
+  return ''
 }
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
@@ -479,5 +479,27 @@ export const api = {
       }),
     getMigration: (migrationId: string) =>
       fetchApi<ApiResponse<AccountMigration>>(`/api/accounts/migrations/${migrationId}`),
+  },
+  staff: {
+    list: () =>
+      fetchApi<ApiResponse<StaffMember[]>>('/api/staff'),
+    get: (id: string) =>
+      fetchApi<ApiResponse<StaffMember>>(`/api/staff/${id}`),
+    me: () =>
+      fetchApi<ApiResponse<{ id: string; name: string; role: string; email: string | null }>>('/api/staff/me'),
+    create: (data: { name: string; email?: string; role: 'admin' | 'staff' }) =>
+      fetchApi<ApiResponse<StaffMember>>('/api/staff', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: { name?: string; email?: string | null; role?: string; isActive?: boolean }) =>
+      fetchApi<ApiResponse<StaffMember>>(`/api/staff/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/staff/${id}`, { method: 'DELETE' }),
+    regenerateKey: (id: string) =>
+      fetchApi<ApiResponse<{ apiKey: string }>>(`/api/staff/${id}/regenerate-key`, { method: 'POST' }),
   },
 }

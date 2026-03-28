@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getOperators,
   getOperatorById,
@@ -237,7 +238,7 @@ chats.post('/api/chats/:id/send', async (c) => {
       await lineClient.pushTextMessage(friend.line_user_id, body.content);
     } else if (messageType === 'flex') {
       const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, 'Message', contents);
+      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
     }
 
     // メッセージログに記録

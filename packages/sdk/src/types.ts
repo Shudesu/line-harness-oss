@@ -333,6 +333,44 @@ export interface CalendarBooking {
   createdAt: string
 }
 
+// ─── Staff ──────────────────────────────────────────────
+export type StaffRole = 'owner' | 'admin' | 'staff'
+
+export interface StaffMember {
+  id: string
+  name: string
+  email: string | null
+  role: StaffRole
+  /**
+   * Masked API key (e.g. `lh_****1234`).
+   * The full key is only returned once — on create or regenerate-key responses.
+   */
+  apiKey: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface StaffProfile {
+  id: string
+  name: string
+  role: StaffRole
+  email: string | null
+}
+
+export interface CreateStaffInput {
+  name: string
+  email?: string
+  role: 'admin' | 'staff'
+}
+
+export interface UpdateStaffInput {
+  name?: string
+  email?: string | null
+  role?: StaffRole
+  isActive?: boolean
+}
+
 // ─── High-Level ─────────────────────────────────────────
 export interface StepDefinition {
   delay: string

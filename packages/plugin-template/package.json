@@ -1,0 +1,25 @@
+{
+  "name": "@line-harness/plugin-myservice",
+  "version": "0.1.0",
+  "description": "LINE Harness plugin for MyService integration",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "build:mcp": "tsup mcp-server/index.ts --format esm --out-dir dist-mcp",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@line-harness/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240620.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.60.0",
+    "zod": "^3.24.4"
+  }
+}

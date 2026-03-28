@@ -33,6 +33,8 @@ import { automations } from './routes/automations.js';
 import { richMenus } from './routes/rich-menus.js';
 import { trackedLinks } from './routes/tracked-links.js';
 import { forms } from './routes/forms.js';
+import { adPlatforms } from './routes/ad-platforms.js';
+import { staff } from './routes/staff.js';
 
 export type Env = {
   Bindings: {
@@ -45,6 +47,10 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
+    X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
+  };
+  Variables: {
+    staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
   };
 };
 
@@ -84,11 +90,16 @@ app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
 app.route('/', forms);
+app.route('/', adPlatforms);
+app.route('/', staff);
 
 // Short link: /r/:ref → landing page with LINE open button
 app.get('/r/:ref', (c) => {
   const ref = c.req.param('ref');
-  const liffUrl = c.env.LIFF_URL || 'https://liff.line.me/2009554425-4IMBmLQ9';
+  const liffUrl = c.env.LIFF_URL;
+  if (!liffUrl) {
+    return c.json({ error: 'LIFF_URL is not configured. Set it via wrangler secret put LIFF_URL.' }, 500);
+  }
   const target = `${liffUrl}?ref=${encodeURIComponent(ref)}`;
 
   return c.html(`<!DOCTYPE html>
@@ -148,7 +159,7 @@ async function scheduled(
     const lineClient = new LineClient(token);
     jobs.push(
       processStepDeliveries(env.DB, lineClient, env.WORKER_URL),
-      processScheduledBroadcasts(env.DB, lineClient),
+      processScheduledBroadcasts(env.DB, lineClient, env.WORKER_URL),
       processReminderDeliveries(env.DB, lineClient),
     );
   }

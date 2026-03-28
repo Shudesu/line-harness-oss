@@ -30,18 +30,20 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 | Google Calendar | GCal接続、予約管理 |
 | Stripe連携 | 決済イベント連携（テーブル準備済み） |
 | BANモニタリング | アカウントヘルスチェック |
+| スタッフ管理 | owner/admin/staffの3ロール権限制御、APIキー個別発行 |
 
 ## 技術スタック
 
 | レイヤー | 技術 |
 |---------|------|
 | API/Webhook | Cloudflare Workers + Hono |
-| データベース | Cloudflare D1 (SQLite) — 42テーブル |
+| データベース | Cloudflare D1 (SQLite) — 45テーブル |
 | 定期実行 | Workers Cron Triggers (5分毎) |
 | 管理画面 | Next.js 15 (App Router) + Tailwind CSS on CF Pages |
 | LIFF | Vite + vanilla TypeScript |
 | LINE連携 | 自作型付きSDK (@line-crm/line-sdk) |
 | SDK | @line-harness/sdk (npm publish対応) |
+| MCP Server | @line-harness/mcp-server (Claude Code / AI エージェント連携) |
 
 ## デプロイ先
 
@@ -62,7 +64,7 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 | アフィリエイト計測 | なし | なし | あり |
 | UUID連携（BAN対策） | なし | なし | あり |
 | ステルス配信 | なし | なし | あり |
-| AI/API操作 | 非対応 | 非対応 | 全機能API公開 |
+| AI/API操作 | 非対応 | 非対応 | 全機能API公開 + MCP Server |
 | セルフホスト | 不可 | 不可 | 可 |
 | ソースコード | 非公開 | 非公開 | MIT |
 
@@ -101,6 +103,7 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 20. **[Deployment](21-Deployment.md)** — 本番デプロイ、スケーリング
 21. **[Operations](22-Operations.md)** — 運用、監視、トラブルシューティング
 22. **[Claude Code Integration](23-Claude-Code-Integration.md)** — AI連携、プロンプト例
+23. **[MCP Server](24-MCP-Server.md)** — MCP Server セットアップ、ツール一覧、URL自動追跡
 
 ## D1テーブル一覧（42テーブル）
 

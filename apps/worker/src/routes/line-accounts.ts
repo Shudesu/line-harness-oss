@@ -7,6 +7,7 @@ import {
   deleteLineAccount,
 } from '@line-crm/db';
 import type { LineAccount as DbLineAccount } from '@line-crm/db';
+import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
 const lineAccounts = new Hono<Env>();
@@ -89,14 +90,18 @@ lineAccounts.get('/api/line-accounts', async (c) => {
   }
 });
 
-// GET /api/line-accounts/:id - get single (includes secrets)
+// GET /api/line-accounts/:id - get single (secrets only for owner/admin)
 lineAccounts.get('/api/line-accounts/:id', async (c) => {
   try {
     const account = await getLineAccountById(c.env.DB, c.req.param('id'));
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
-    return c.json({ success: true, data: serializeLineAccountFull(account) });
+    const staff = c.get('staff');
+    const data = staff?.role === 'staff'
+      ? serializeLineAccount(account)
+      : serializeLineAccountFull(account);
+    return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/line-accounts/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -104,7 +109,7 @@ lineAccounts.get('/api/line-accounts/:id', async (c) => {
 });
 
 // POST /api/line-accounts - create
-lineAccounts.post('/api/line-accounts', async (c) => {
+lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
   try {
     const body = await c.req.json<{
       channelId: string;
@@ -129,9 +134,9 @@ lineAccounts.post('/api/line-accounts', async (c) => {
 });
 
 // PUT /api/line-accounts/:id - update
-lineAccounts.put('/api/line-accounts/:id', async (c) => {
+lineAccounts.put('/api/line-accounts/:id', requireRole('owner'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const body = await c.req.json<{
       name?: string;
       channelAccessToken?: string;
@@ -157,9 +162,9 @@ lineAccounts.put('/api/line-accounts/:id', async (c) => {
 });
 
 // DELETE /api/line-accounts/:id - delete
-lineAccounts.delete('/api/line-accounts/:id', async (c) => {
+lineAccounts.delete('/api/line-accounts/:id', requireRole('owner'), async (c) => {
   try {
-    await deleteLineAccount(c.env.DB, c.req.param('id'));
+    await deleteLineAccount(c.env.DB, c.req.param('id')!);
     return c.json({ success: true, data: null });
   } catch (err) {
     console.error('DELETE /api/line-accounts/:id error:', err);

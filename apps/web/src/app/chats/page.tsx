@@ -5,6 +5,7 @@ import { api, fetchApi } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import FlexPreviewComponent from '@/components/flex-preview'
 
 interface Chat {
   id: string
@@ -521,17 +522,9 @@ export default function ChatsPage() {
                     // メッセージ表示の分岐
                     let bubbleContent: React.ReactNode
                     if (msg.messageType === 'flex') {
-                      // Flexメッセージ — JSONをフォーマットして表示
-                      let formatted = msg.content
-                      try {
-                        formatted = JSON.stringify(JSON.parse(msg.content), null, 2)
-                      } catch { /* use raw */ }
                       bubbleContent = (
                         <div className="max-w-[300px]">
-                          <div className="text-xs font-medium mb-1 opacity-70">📋 Flex Message</div>
-                          <pre className="text-xs overflow-x-auto whitespace-pre-wrap bg-black/10 rounded p-2 max-h-[200px] overflow-y-auto" style={{ fontSize: '10px' }}>
-                            {formatted}
-                          </pre>
+                          <FlexPreviewComponent content={msg.content} maxWidth={280} />
                         </div>
                       )
                     } else if (msg.messageType === 'image') {

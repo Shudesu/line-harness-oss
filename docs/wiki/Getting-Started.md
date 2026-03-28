@@ -151,7 +151,8 @@ npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
 | 変数名 | 説明 |
 |--------|------|
 | `NEXT_PUBLIC_API_URL` | Workers API の URL（例: `https://line-crm-worker.line-crm-api.workers.dev`） |
-| `NEXT_PUBLIC_API_KEY` | 上で設定した API_KEY と同じ値 |
+
+> **セキュリティ注意**: `NEXT_PUBLIC_*` にAPIキーを設定しないでください。管理画面のログインページでAPIキーを入力する方式に変更されました（v0.5.1+）。
 
 ## 5. Workers デプロイ
 

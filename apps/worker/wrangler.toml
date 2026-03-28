@@ -1,13 +1,8 @@
-name = "line-crm-worker"
+name = "line-harness"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 workers_dev = true
-
-# API_KEY is set via `wrangler secret put API_KEY`
-# Do NOT hardcode secrets here
-
-[vars]
-WORKER_URL = "https://line-crm-worker.line-crm-api.workers.dev"
+account_id = "c40947ff58a767be74a53be79a89d68a"
 
 [[d1_databases]]
 binding = "DB"

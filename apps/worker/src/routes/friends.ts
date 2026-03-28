@@ -292,6 +292,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
     const body = await c.req.json<{
       messageType?: string;
       content: string;
+      altText?: string;
     }>();
 
     if (!body.content) {
@@ -315,7 +316,14 @@ friends.post('/api/friends/:id/messages', async (c) => {
     const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';
 
-    const message = buildMessage(messageType, body.content);
+    // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+    const { autoTrackContent } = await import('../services/auto-track.js');
+    const tracked = await autoTrackContent(
+      db, messageType, body.content,
+      c.env.WORKER_URL || new URL(c.req.url).origin,
+    );
+
+    const message = buildMessage(tracked.messageType, tracked.content, body.altText);
     await lineClient.pushMessage(friend.line_user_id, [message]);
 
     // Log outgoing message

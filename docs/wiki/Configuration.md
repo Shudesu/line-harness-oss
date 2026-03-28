@@ -90,7 +90,8 @@ Next.js 管理画面で必要な環境変数。Vercel / CF Pages のダッシュ
 | 変数名 | 説明 | 例 |
 |--------|------|-----|
 | `NEXT_PUBLIC_API_URL` | Workers API URL | `https://line-crm-worker.line-crm-api.workers.dev` |
-| `NEXT_PUBLIC_API_KEY` | API 認証キー（API_KEY と同値） | `sk-my-secret-key` |
+
+> **セキュリティ注意**: APIキーはログイン画面で入力する方式です。`NEXT_PUBLIC_*` にAPIキーを絶対に設定しないでください。クライアントバンドルに埋め込まれ、第三者から抽出可能になります。
 
 ## D1 データベースセットアップ
 

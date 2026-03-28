@@ -18,7 +18,7 @@ npm install github:your-org/line-harness#main --workspace=packages/sdk
 ```
 
 パッケージ名: `@line-harness/sdk`
-バージョン: 0.1.0
+バージョン: 0.2.0
 ライセンス: MIT
 エクスポート形式: ESM (`.mjs`) + CJS (`.cjs`) + TypeScript 型定義 (`.d.ts`)
 

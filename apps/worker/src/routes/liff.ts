@@ -34,6 +34,8 @@ liffRoutes.get('/auth/line', async (c) => {
   const redirect = c.req.query('redirect') || '';
   const gclid = c.req.query('gclid') || '';
   const fbclid = c.req.query('fbclid') || '';
+  const twclid = c.req.query('twclid') || '';
+  const ttclid = c.req.query('ttclid') || '';
   const utmSource = c.req.query('utm_source') || '';
   const utmMedium = c.req.query('utm_medium') || '';
   const utmCampaign = c.req.query('utm_campaign') || '';
@@ -55,23 +57,32 @@ liffRoutes.get('/auth/line', async (c) => {
   }
   const callbackUrl = `${baseUrl}/auth/callback`;
 
+  // xh: refs are X Harness one-time tokens — never forward to third-party URLs (liff.line.me / QR)
+  // The token must reach /auth/callback, so it IS included in the OAuth state (handled by this worker).
+  // It must NOT appear in LIFF URLs or QR codes that escape to external domains.
+  const externalRef = ref.startsWith('xh:') ? '' : ref;
+
   // Build LIFF URL with ref + ad params (for mobile → LINE app)
   // Extract LIFF ID from URL and pass as query param so the app can init correctly
   const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
   const liffParams = new URLSearchParams();
   if (liffIdMatch) liffParams.set('liffId', liffIdMatch[1]);
-  if (ref) liffParams.set('ref', ref);
+  if (externalRef) liffParams.set('ref', externalRef);
   if (redirect) liffParams.set('redirect', redirect);
   if (gclid) liffParams.set('gclid', gclid);
   if (fbclid) liffParams.set('fbclid', fbclid);
+  if (twclid) liffParams.set('twclid', twclid);
+  if (ttclid) liffParams.set('ttclid', ttclid);
   if (utmSource) liffParams.set('utm_source', utmSource);
   const liffTarget = liffParams.toString()
     ? `${liffUrl}?${liffParams.toString()}`
     : liffUrl;
 
   // Build OAuth URL (for desktop fallback)
-  // Pack all tracking params into state so they survive the OAuth redirect
-  const state = JSON.stringify({ ref, redirect, gclid, fbclid, utmSource, utmMedium, utmCampaign, account: accountParam, uid: uidParam });
+  // Pack all tracking params into state so they survive the OAuth redirect.
+  // The full ref (including xh: tokens) is stored in state — it is opaque to access.line.me
+  // and only decoded by this worker's /auth/callback handler.
+  const state = JSON.stringify({ ref, redirect, gclid, fbclid, twclid, ttclid, utmSource, utmMedium, utmCampaign, account: accountParam, uid: uidParam });
   const encodedState = btoa(state);
   const loginUrl = new URL('https://access.line.me/oauth2/v2.1/authorize');
   loginUrl.searchParams.set('response_type', 'code');
@@ -82,8 +93,9 @@ liffRoutes.get('/auth/line', async (c) => {
   loginUrl.searchParams.set('state', encodedState);
 
   // Build LIFF URL with params (opens LINE app directly on mobile + QR on PC)
+  // externalRef used — xh: tokens must not appear in QR codes or LIFF URLs
   const qrParams = new URLSearchParams();
-  if (ref) qrParams.set('ref', ref);
+  if (externalRef) qrParams.set('ref', externalRef);
   if (uidParam) qrParams.set('uid', uidParam);
   if (accountParam) qrParams.set('account', accountParam);
   const qrUrl = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
@@ -122,7 +134,7 @@ liffRoutes.get('/auth/line', async (c) => {
 </head>
 <body>
   <div class="card">
-    <h1>LINE Harness を体験</h1>
+    <h1>全機能を使う（0円）</h1>
     <p class="sub">スマートフォンで QR コードを読み取ってください</p>
     <div class="qr">
       <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(qrUrl)}" alt="QR Code">
@@ -149,6 +161,8 @@ liffRoutes.get('/auth/callback', async (c) => {
   let redirect = '';
   let gclid = '';
   let fbclid = '';
+  let twclid = '';
+  let ttclid = '';
   let utmSource = '';
   let utmMedium = '';
   let utmCampaign = '';
@@ -160,6 +174,8 @@ liffRoutes.get('/auth/callback', async (c) => {
     redirect = parsed.redirect || '';
     gclid = parsed.gclid || '';
     fbclid = parsed.fbclid || '';
+    twclid = parsed.twclid || '';
+    ttclid = parsed.ttclid || '';
     utmSource = parsed.utmSource || '';
     utmMedium = parsed.utmMedium || '';
     utmCampaign = parsed.utmCampaign || '';
@@ -295,7 +311,8 @@ liffRoutes.get('/auth/callback', async (c) => {
     }
 
     // Attribution tracking
-    if (ref) {
+    // xh: refs are X Harness one-time tokens (the token IS the secret) — never persist as ref_code
+    if (ref && !ref.startsWith('xh:')) {
       // Save ref_code on the friend record (first touch wins — only set if not already set)
       await db
         .prepare(`UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL`)
@@ -305,12 +322,21 @@ liffRoutes.get('/auth/callback', async (c) => {
       // Look up entry route config
       const route = await getEntryRouteByRefCode(db, ref);
 
-      // Persist tracking event
+      // Persist tracking event with ad click IDs
       await recordRefTracking(db, {
         refCode: ref,
         friendId: friend.id,
         entryRouteId: route?.id ?? null,
         sourceUrl: null,
+        fbclid: fbclid || null,
+        gclid: gclid || null,
+        twclid: twclid || null,
+        ttclid: ttclid || null,
+        utmSource: utmSource || null,
+        utmMedium: utmMedium || null,
+        utmCampaign: utmCampaign || null,
+        userAgent: c.req.header('User-Agent') || null,
+        ipAddress: c.req.header('CF-Connecting-IP') || null,
       });
 
       if (route) {
@@ -327,6 +353,8 @@ liffRoutes.get('/auth/callback', async (c) => {
     const adMeta: Record<string, string> = {};
     if (gclid) adMeta.gclid = gclid;
     if (fbclid) adMeta.fbclid = fbclid;
+    if (twclid) adMeta.twclid = twclid;
+    if (ttclid) adMeta.ttclid = ttclid;
     if (utmSource) adMeta.utm_source = utmSource;
     if (utmMedium) adMeta.utm_medium = utmMedium;
     if (utmCampaign) adMeta.utm_campaign = utmCampaign;
@@ -341,6 +369,33 @@ liffRoutes.get('/auth/callback', async (c) => {
         .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
         .bind(JSON.stringify(merged), jstNow(), friend.id)
         .run();
+    }
+
+    // X Harness token resolution: ref starting with "xh:" links X account to LINE friend
+    if (ref && ref.startsWith('xh:')) {
+      try {
+        const xhToken = ref.slice(3);
+        const xhResult = await resolveXHarnessToken(xhToken, c.env);
+        if (xhResult?.xUsername) {
+          const existingMeta = await db
+            .prepare('SELECT metadata FROM friends WHERE id = ?')
+            .bind(friend.id)
+            .first<{ metadata: string }>();
+          const meta = JSON.parse(existingMeta?.metadata || '{}');
+          meta.x_username = xhResult.xUsername;
+          await db
+            .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
+            .bind(JSON.stringify(meta), jstNow(), friend.id)
+            .run();
+          console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
+        }
+        // Apply gate actions (tag + scenario) from X Harness
+        if (xhResult) {
+          await applyXHarnessActions(db, friend.id, xhResult);
+        }
+      } catch (err) {
+        console.error('X Harness token resolution error (non-blocking):', err);
+      }
     }
 
     // Auto-enroll in friend_add scenarios + immediate delivery (skip delivery window)
@@ -396,24 +451,38 @@ liffRoutes.get('/auth/callback', async (c) => {
       return c.redirect(redirect);
     }
 
-    // If friend is not yet following this bot, redirect to friend-add page
+    // Redirect to the correct bot's chat after auth
+    // Find the LINE account by: account param, friend's account, or login channel ID
+    let redirectAccount: Record<string, string> | null = null;
     if (accountParam) {
-      const account = await getLineAccountByChannelId(db, accountParam);
-      if (account) {
-        // Fetch bot basic ID for friend-add URL
-        try {
-          const botInfo = await fetch('https://api.line.me/v2/bot/info', {
-            headers: { Authorization: `Bearer ${account.channel_access_token}` },
-          });
-          if (botInfo.ok) {
-            const bot = await botInfo.json() as { basicId?: string };
-            if (bot.basicId) {
-              return c.redirect(`https://line.me/R/ti/p/${bot.basicId}`);
-            }
+      redirectAccount = await getLineAccountByChannelId(db, accountParam) as Record<string, string> | null;
+    }
+    if (!redirectAccount) {
+      // Find account by login_channel_id used in this OAuth flow
+      redirectAccount = await db
+        .prepare('SELECT * FROM line_accounts WHERE login_channel_id = ?')
+        .bind(loginChannelId)
+        .first<Record<string, string>>();
+    }
+    if (!redirectAccount) {
+      // Fallback: first active account
+      redirectAccount = await db
+        .prepare('SELECT * FROM line_accounts WHERE is_active = 1 LIMIT 1')
+        .first<Record<string, string>>();
+    }
+    if (redirectAccount?.channel_access_token) {
+      try {
+        const botInfo = await fetch('https://api.line.me/v2/bot/info', {
+          headers: { Authorization: `Bearer ${redirectAccount.channel_access_token}` },
+        });
+        if (botInfo.ok) {
+          const bot = await botInfo.json() as { basicId?: string };
+          if (bot.basicId) {
+            return c.redirect(`https://line.me/R/ti/p/${bot.basicId}`);
           }
-        } catch {
-          // Fall through to completion page
         }
+      } catch {
+        // Fall through to completion page
       }
     }
 
@@ -503,10 +572,35 @@ liffRoutes.post('/api/liff/link', async (c) => {
     }
 
     if ((friend as unknown as Record<string, unknown>).user_id) {
-      // Still save ref even if already linked
-      if (body.ref) {
+      // Still save ref even if already linked (but never persist xh: tokens as ref_code)
+      if (body.ref && !body.ref.startsWith('xh:')) {
         await db.prepare('UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL')
           .bind(body.ref, friend.id).run();
+      }
+      // X Harness token resolution for already-linked friends
+      if (body.ref && body.ref.startsWith('xh:')) {
+        try {
+          const xhToken = body.ref.slice(3);
+          const xhResult = await resolveXHarnessToken(xhToken, c.env);
+          if (xhResult?.xUsername) {
+            const existingMeta = await db
+              .prepare('SELECT metadata FROM friends WHERE id = ?')
+              .bind(friend.id)
+              .first<{ metadata: string }>();
+            const meta = JSON.parse(existingMeta?.metadata || '{}');
+            meta.x_username = xhResult.xUsername;
+            await db
+              .prepare('UPDATE friends SET metadata = ? WHERE id = ?')
+              .bind(JSON.stringify(meta), friend.id)
+              .run();
+            console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
+          }
+          if (xhResult) {
+            await applyXHarnessActions(db, friend.id, xhResult);
+          }
+        } catch (err) {
+          console.error('X Harness token resolution error (non-blocking):', err);
+        }
       }
       return c.json({
         success: true,
@@ -531,7 +625,8 @@ liffRoutes.post('/api/liff/link', async (c) => {
     await linkFriendToUser(db, friend.id, userId);
 
     // Save ref_code from LIFF (first touch wins)
-    if (body.ref) {
+    // xh: refs are X Harness one-time tokens — never persist as ref_code
+    if (body.ref && !body.ref.startsWith('xh:')) {
       await db.prepare('UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL')
         .bind(body.ref, friend.id).run();
 
@@ -545,6 +640,32 @@ liffRoutes.post('/api/liff/link', async (c) => {
           sourceUrl: null,
         });
       } catch { /* silent */ }
+    }
+
+    // X Harness token resolution: ref starting with "xh:" links X account to LINE friend
+    if (body.ref && body.ref.startsWith('xh:')) {
+      try {
+        const xhToken = body.ref.slice(3);
+        const xhResult = await resolveXHarnessToken(xhToken, c.env);
+        if (xhResult?.xUsername) {
+          const existingMeta = await db
+            .prepare('SELECT metadata FROM friends WHERE id = ?')
+            .bind(friend.id)
+            .first<{ metadata: string }>();
+          const meta = JSON.parse(existingMeta?.metadata || '{}');
+          meta.x_username = xhResult.xUsername;
+          await db
+            .prepare('UPDATE friends SET metadata = ? WHERE id = ?')
+            .bind(JSON.stringify(meta), friend.id)
+            .run();
+          console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
+        }
+        if (xhResult) {
+          await applyXHarnessActions(db, friend.id, xhResult);
+        }
+      } catch (err) {
+        console.error('X Harness token resolution error (non-blocking):', err);
+      }
     }
 
     return c.json({
@@ -849,6 +970,90 @@ function errorPage(message: string): string {
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ─── X Harness Token Resolution ─────────────────────────────────
+
+/**
+ * Apply X Harness gate actions (tag + scenario) to a LINE friend.
+ * Non-blocking — failures are logged but don't interrupt the flow.
+ */
+async function applyXHarnessActions(
+  db: D1Database,
+  friendId: string,
+  result: XHarnessTokenResult,
+): Promise<void> {
+  // Add tag if specified
+  if (result.tag) {
+    try {
+      // Find or create the tag by name
+      let tagRow = await db
+        .prepare('SELECT id FROM tags WHERE name = ?')
+        .bind(result.tag)
+        .first<{ id: string }>();
+      if (!tagRow) {
+        const tagId = crypto.randomUUID();
+        const { jstNow } = await import('@line-crm/db');
+        tagRow = await db
+          .prepare('INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?) RETURNING id')
+          .bind(tagId, result.tag, jstNow())
+          .first<{ id: string }>();
+      }
+      if (tagRow) {
+        const { addTagToFriend } = await import('@line-crm/db');
+        await addTagToFriend(db, friendId, tagRow.id);
+        console.log(`X Harness: added tag "${result.tag}" to friend ${friendId}`);
+      }
+    } catch (err) {
+      console.error(`X Harness: failed to add tag "${result.tag}":`, err);
+    }
+  }
+
+  // Start scenario if specified
+  if (result.scenarioId) {
+    try {
+      const { enrollFriendInScenario } = await import('@line-crm/db');
+      await enrollFriendInScenario(db, friendId, result.scenarioId);
+      console.log(`X Harness: enrolled friend ${friendId} in scenario ${result.scenarioId}`);
+    } catch (err) {
+      console.error(`X Harness: failed to enroll in scenario:`, err);
+    }
+  }
+}
+
+interface XHarnessTokenResult {
+  xUsername: string | null;
+  tag: string | null;
+  scenarioId: string | null;
+}
+
+/**
+ * Resolve an X Harness token to get the linked X username + gate config (tag, scenario).
+ * The token IS the secret — no Bearer auth needed on the resolve endpoint.
+ */
+async function resolveXHarnessToken(
+  token: string,
+  env: { X_HARNESS_URL?: string },
+): Promise<XHarnessTokenResult | null> {
+  if (!env.X_HARNESS_URL) return null;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout — must not block login flow
+    try {
+      const res = await fetch(`${env.X_HARNESS_URL}/api/tokens/${token}/resolve`, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      const body = await res.json() as { success: boolean; data?: XHarnessTokenResult };
+      if (!body.success || !body.data) return null;
+      return { xUsername: body.data.xUsername, tag: body.data.tag ?? null, scenarioId: body.data.scenarioId ?? null };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch {
+    return null;
+  }
 }
 
 export { liffRoutes };

@@ -1,3 +1,4 @@
+import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getBroadcastById,
   getBroadcasts,
@@ -16,6 +17,7 @@ export async function processBroadcastSend(
   db: D1Database,
   lineClient: LineClient,
   broadcastId: string,
+  workerUrl?: string,
 ): Promise<Broadcast> {
   // Mark as sending
   await updateBroadcastStatus(db, broadcastId, 'sending');
@@ -25,7 +27,17 @@ export async function processBroadcastSend(
     throw new Error(`Broadcast ${broadcastId} not found`);
   }
 
-  const message = buildMessage(broadcast.message_type, broadcast.message_content);
+  // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+  let finalType: string = broadcast.message_type;
+  let finalContent = broadcast.message_content;
+  if (workerUrl) {
+    const { autoTrackContent } = await import('./auto-track.js');
+    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl);
+    finalType = tracked.messageType;
+    finalContent = tracked.content;
+  }
+  const altText = (broadcast as unknown as Record<string, unknown>).alt_text as string | undefined;
+  const message = buildMessage(finalType, finalContent, altText || undefined);
   let totalCount = 0;
   let successCount = 0;
 
@@ -100,6 +112,7 @@ export async function processBroadcastSend(
 export async function processScheduledBroadcasts(
   db: D1Database,
   lineClient: LineClient,
+  workerUrl?: string,
 ): Promise<void> {
   const now = jstNow();
   const allBroadcasts = await getBroadcasts(db);
@@ -114,7 +127,7 @@ export async function processScheduledBroadcasts(
 
   for (const broadcast of scheduled) {
     try {
-      await processBroadcastSend(db, lineClient, broadcast.id);
+      await processBroadcastSend(db, lineClient, broadcast.id, workerUrl);
     } catch (err) {
       console.error(`Failed to send scheduled broadcast ${broadcast.id}:`, err);
       // Continue with next broadcast
@@ -122,7 +135,7 @@ export async function processScheduledBroadcasts(
   }
 }
 
-function buildMessage(messageType: string, messageContent: string): Message {
+function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
   if (messageType === 'text') {
     return { type: 'text', text: messageContent };
   }
@@ -146,7 +159,7 @@ function buildMessage(messageType: string, messageContent: string): Message {
   if (messageType === 'flex') {
     try {
       const contents = JSON.parse(messageContent);
-      return { type: 'flex', altText: 'Message', contents };
+      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
     } catch {
       return { type: 'text', text: messageContent };
     }
