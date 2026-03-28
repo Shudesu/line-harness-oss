@@ -2,7 +2,7 @@ name = "line-harness"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 workers_dev = true
-account_id = "c40947ff58a767be74a53be79a89d68a"
+account_id = "b5d2ea575b38ec2342d19f91e98c9347"
 
 [[d1_databases]]
 binding = "DB"
