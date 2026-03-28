@@ -20,10 +20,13 @@ import {
   addTagToFriend,
   removeTagFromFriend,
   enrollFriendInScenario,
+  createBroadcast,
   jstNow,
 } from '@line-crm/db';
+import type { BroadcastMessageType, BroadcastTargetType } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
+import { processBroadcastSend } from './broadcast.js';
 
 export interface EventPayload {
   friendId?: string;
@@ -206,7 +209,7 @@ async function executeAction(
   lineAccessToken?: string,
 ): Promise<void> {
   const friendId = payload.friendId;
-  if (!friendId && action.type !== 'send_webhook') {
+  if (!friendId && action.type !== 'send_webhook' && action.type !== 'create_broadcast') {
     throw new Error('friendId is required for this action');
   }
 
@@ -295,6 +298,36 @@ async function executeAction(
         .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
         .bind(JSON.stringify(merged), jstNow(), friendId)
         .run();
+      break;
+    }
+
+    case 'create_broadcast': {
+      if (!lineAccessToken) {
+        throw new Error('lineAccessToken is required for create_broadcast');
+      }
+      const msgType = (action.params.messageType || 'text') as BroadcastMessageType;
+      const msgContent = action.params.messageContent || action.params.content || '';
+      const targetType = (action.params.targetType || 'all') as BroadcastTargetType;
+      const targetTagId = action.params.targetTagId || null;
+      const title = action.params.title || `Auto-broadcast ${jstNow()}`;
+
+      if (!msgContent) {
+        throw new Error('messageContent is required for create_broadcast');
+      }
+      if (targetType === 'tag' && !targetTagId) {
+        throw new Error('targetTagId is required when targetType is "tag"');
+      }
+
+      const broadcast = await createBroadcast(db, {
+        title,
+        messageType: msgType,
+        messageContent: msgContent,
+        targetType: targetType,
+        targetTagId: targetTagId,
+      });
+
+      const lineClient = new LineClient(lineAccessToken);
+      await processBroadcastSend(db, lineClient, broadcast.id);
       break;
     }
 
