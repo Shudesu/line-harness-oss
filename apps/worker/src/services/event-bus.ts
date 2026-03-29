@@ -217,6 +217,14 @@ function matchConditions(
     if (!text || !text.includes(conditions.keyword as string)) return false;
   }
 
+  // keyword_exact（完全一致）
+  if (conditions.keyword_exact) {
+    const text = (payload.eventData?.text || '').trim();
+    if (text !== conditions.keyword_exact) {
+      return false;
+    }
+  }
+
   return true;
 }
 
