@@ -10,10 +10,16 @@ export interface ReminderRow {
   updated_at: string;
 }
 
+export type StepTimingType = 'relative' | 'day_time';
+
 export interface ReminderStepRow {
   id: string;
   reminder_id: string;
   offset_minutes: number;
+  timing_type: StepTimingType;
+  days_offset: number | null;
+  send_hour: number | null;
+  send_minute: number | null;
   message_type: string;
   message_content: string;
   created_at: string;
@@ -27,6 +33,12 @@ export interface FriendReminderRow {
   status: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ReminderEnrollmentRow extends FriendReminderRow {
+  display_name: string;
+  picture_url: string | null;
+  is_following: number;
 }
 
 // --- リマインダCRUD ---
@@ -80,14 +92,39 @@ export async function getReminderSteps(db: D1Database, reminderId: string): Prom
   return result.results;
 }
 
+export interface CreateReminderStepInput {
+  reminderId: string;
+  offsetMinutes: number;
+  messageType: string;
+  messageContent: string;
+  timingType?: StepTimingType;
+  daysOffset?: number | null;
+  sendHour?: number | null;
+  sendMinute?: number | null;
+}
+
 export async function createReminderStep(
   db: D1Database,
-  input: { reminderId: string; offsetMinutes: number; messageType: string; messageContent: string },
+  input: CreateReminderStepInput,
 ): Promise<ReminderStepRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO reminder_steps (id, reminder_id, offset_minutes, message_type, message_content, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.reminderId, input.offsetMinutes, input.messageType, input.messageContent, now).run();
+  const timingType = input.timingType ?? 'relative';
+  await db.prepare(
+    `INSERT INTO reminder_steps (id, reminder_id, offset_minutes, timing_type, days_offset, send_hour, send_minute, message_type, message_content, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    id,
+    input.reminderId,
+    input.offsetMinutes,
+    timingType,
+    input.daysOffset ?? null,
+    input.sendHour ?? null,
+    input.sendMinute ?? null,
+    input.messageType,
+    input.messageContent,
+    now,
+  ).run();
   return (await db.prepare(`SELECT * FROM reminder_steps WHERE id = ?`).bind(id).first<ReminderStepRow>())!;
 }
 
@@ -114,9 +151,46 @@ export async function getFriendReminders(db: D1Database, friendId: string): Prom
   return result.results;
 }
 
+export async function getReminderEnrollments(db: D1Database, reminderId: string): Promise<ReminderEnrollmentRow[]> {
+  const result = await db.prepare(
+    `SELECT fr.*, f.display_name, f.picture_url, f.is_following
+     FROM friend_reminders fr
+     INNER JOIN friends f ON f.id = fr.friend_id
+     WHERE fr.reminder_id = ?
+     ORDER BY fr.target_date ASC`,
+  ).bind(reminderId).all<ReminderEnrollmentRow>();
+  return result.results;
+}
+
 export async function cancelFriendReminder(db: D1Database, id: string): Promise<void> {
   await db.prepare(`UPDATE friend_reminders SET status = 'cancelled', updated_at = ? WHERE id = ?`)
     .bind(jstNow(), id).run();
+}
+
+// --- 配信時刻計算 ---
+
+const JST_OFFSET_MS = 9 * 3600_000;
+
+/**
+ * ステップの配信時刻を計算する
+ * - relative: target_date + offset_minutes
+ * - day_time: target_dateのJST日付基準で days_offset日 の send_hour:send_minute (JST)
+ */
+export function computeStepSendTime(step: ReminderStepRow, targetDate: string): number {
+  if (step.timing_type === 'day_time' && step.days_offset !== null && step.send_hour !== null) {
+    const target = new Date(targetDate);
+    // target_date をJST日付に変換
+    const targetJSTMs = target.getTime() + JST_OFFSET_MS;
+    const targetJST = new Date(targetJSTMs);
+    const year = targetJST.getUTCFullYear();
+    const month = targetJST.getUTCMonth();
+    const day = targetJST.getUTCDate();
+    // days_offset日ずらした日のsend_hour:send_minute (JST)
+    const sendJST = new Date(Date.UTC(year, month, day + step.days_offset, step.send_hour, step.send_minute ?? 0, 0, 0));
+    return sendJST.getTime() - JST_OFFSET_MS;
+  }
+  // relative type: target_date + offset_minutes
+  return new Date(targetDate).getTime() + step.offset_minutes * 60_000;
 }
 
 /** リマインダ配信処理用: 配信が必要な友だちリマインダを取得 */
@@ -128,6 +202,7 @@ export async function getDueReminderDeliveries(db: D1Database, now: string): Pro
               WHERE fr.status = 'active' AND r.is_active = 1`)
     .all<FriendReminderRow>();
 
+  const nowMs = new Date(now).getTime();
   const results: Array<FriendReminderRow & { steps: ReminderStepRow[] }> = [];
   for (const fr of activeReminders.results) {
     const steps = await getReminderSteps(db, fr.reminder_id);
@@ -141,8 +216,8 @@ export async function getDueReminderDeliveries(db: D1Database, now: string): Pro
     // 未配信で配信時刻が到来しているステップをフィルタ
     const dueSteps = steps.filter((step) => {
       if (deliveredIds.has(step.id)) return false;
-      const targetTime = new Date(fr.target_date).getTime() + step.offset_minutes * 60_000;
-      return targetTime <= new Date(now).getTime();
+      const sendTime = computeStepSendTime(step, fr.target_date);
+      return sendTime <= nowMs;
     });
 
     if (dueSteps.length > 0) {

@@ -409,7 +409,10 @@ export const api = {
       }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/reminders/${id}`, { method: 'DELETE' }),
-    addStep: (id: string, data: { offsetMinutes: number; messageType: string; messageContent: string }) =>
+    addStep: (id: string, data: {
+      offsetMinutes: number; messageType: string; messageContent: string;
+      timingType?: string; daysOffset?: number | null; sendHour?: number | null; sendMinute?: number | null;
+    }) =>
       fetchApi<ApiResponse<ReminderStep>>(`/api/reminders/${id}/steps`, {
         method: 'POST',
         body: JSON.stringify(data),
@@ -418,6 +421,18 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/reminders/${reminderId}/steps/${stepId}`, {
         method: 'DELETE',
       }),
+    enrollments: (id: string) =>
+      fetchApi<ApiResponse<Array<{
+        id: string; friendId: string; reminderId: string; targetDate: string;
+        status: string; displayName: string; pictureUrl: string | null; isFollowing: boolean; createdAt: string;
+      }>>>(`/api/reminders/${id}/enrollments`),
+    enroll: (id: string, friendId: string, targetDate: string) =>
+      fetchApi<ApiResponse<{ id: string }>>(`/api/reminders/${id}/enroll/${friendId}`, {
+        method: 'POST',
+        body: JSON.stringify({ targetDate }),
+      }),
+    cancelEnrollment: (enrollmentId: string) =>
+      fetchApi<ApiResponse<null>>(`/api/friend-reminders/${enrollmentId}`, { method: 'DELETE' }),
   },
   scoring: {
     rules: () =>

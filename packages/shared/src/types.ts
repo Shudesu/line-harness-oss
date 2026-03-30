@@ -460,10 +460,16 @@ export interface Reminder {
   updatedAt: string;
 }
 
+export type StepTimingType = 'relative' | 'day_time';
+
 export interface ReminderStep {
   id: string;
   reminderId: string;
   offsetMinutes: number;
+  timingType: StepTimingType;
+  daysOffset: number | null;
+  sendHour: number | null;
+  sendMinute: number | null;
   messageType: MessageType;
   messageContent: string;
   createdAt: string;
