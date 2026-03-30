@@ -170,6 +170,7 @@ export default function RemindersPage() {
       const res = await api.reminders.create({
         name: form.name,
         description: form.description || undefined,
+        lineAccountId: selectedAccountId || undefined,
       })
       if (res.success) {
         setShowCreate(false)

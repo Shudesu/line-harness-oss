@@ -354,8 +354,10 @@ export default function ChatsPage() {
     }
   }, [showLoadingIndicator, loadingSeconds])
 
+  const sendLockRef = useRef(false)
   const handleSendMessage = async () => {
-    if (!selectedChatId || !messageContent.trim()) return
+    if (!selectedChatId || !messageContent.trim() || sendLockRef.current) return
+    sendLockRef.current = true
     setSending(true)
     try {
       await api.chats.send(selectedChatId, {
@@ -367,6 +369,7 @@ export default function ChatsPage() {
     } catch {
       setError('メッセージの送信に失敗しました。')
     } finally {
+      sendLockRef.current = false
       setSending(false)
     }
   }
