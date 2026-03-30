@@ -456,6 +456,8 @@ export interface Reminder {
   name: string;
   description: string | null;
   isActive: boolean;
+  eventDate: string | null;
+  eventLabel: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -6,6 +6,8 @@ export interface ReminderRow {
   name: string;
   description: string | null;
   is_active: number;
+  event_date: string | null;
+  event_label: string;
   created_at: string;
   updated_at: string;
 }
@@ -54,25 +56,28 @@ export async function getReminderById(db: D1Database, id: string): Promise<Remin
 
 export async function createReminder(
   db: D1Database,
-  input: { name: string; description?: string },
+  input: { name: string; description?: string; eventDate?: string; eventLabel?: string },
 ): Promise<ReminderRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO reminders (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
-    .bind(id, input.name, input.description ?? null, now, now).run();
+  await db.prepare(
+    `INSERT INTO reminders (id, name, description, event_date, event_label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(id, input.name, input.description ?? null, input.eventDate ?? null, input.eventLabel ?? 'イベント日時', now, now).run();
   return (await getReminderById(db, id))!;
 }
 
 export async function updateReminder(
   db: D1Database,
   id: string,
-  updates: Partial<{ name: string; description: string; isActive: boolean }>,
+  updates: Partial<{ name: string; description: string; isActive: boolean; eventDate: string | null; eventLabel: string }>,
 ): Promise<void> {
   const sets: string[] = [];
   const values: unknown[] = [];
   if (updates.name !== undefined) { sets.push('name = ?'); values.push(updates.name); }
   if (updates.description !== undefined) { sets.push('description = ?'); values.push(updates.description); }
   if (updates.isActive !== undefined) { sets.push('is_active = ?'); values.push(updates.isActive ? 1 : 0); }
+  if (updates.eventDate !== undefined) { sets.push('event_date = ?'); values.push(updates.eventDate); }
+  if (updates.eventLabel !== undefined) { sets.push('event_label = ?'); values.push(updates.eventLabel); }
   if (sets.length === 0) return;
   sets.push('updated_at = ?');
   values.push(jstNow());
@@ -130,6 +135,26 @@ export async function createReminderStep(
 
 export async function deleteReminderStep(db: D1Database, id: string): Promise<void> {
   await db.prepare(`DELETE FROM reminder_steps WHERE id = ?`).bind(id).run();
+}
+
+export async function updateReminderStep(
+  db: D1Database,
+  id: string,
+  input: Partial<CreateReminderStepInput>,
+): Promise<ReminderStepRow | null> {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (input.offsetMinutes !== undefined) { sets.push('offset_minutes = ?'); values.push(input.offsetMinutes); }
+  if (input.timingType !== undefined) { sets.push('timing_type = ?'); values.push(input.timingType); }
+  if (input.daysOffset !== undefined) { sets.push('days_offset = ?'); values.push(input.daysOffset); }
+  if (input.sendHour !== undefined) { sets.push('send_hour = ?'); values.push(input.sendHour); }
+  if (input.sendMinute !== undefined) { sets.push('send_minute = ?'); values.push(input.sendMinute); }
+  if (input.messageType !== undefined) { sets.push('message_type = ?'); values.push(input.messageType); }
+  if (input.messageContent !== undefined) { sets.push('message_content = ?'); values.push(input.messageContent); }
+  if (sets.length === 0) return null;
+  values.push(id);
+  await db.prepare(`UPDATE reminder_steps SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
+  return db.prepare(`SELECT * FROM reminder_steps WHERE id = ?`).bind(id).first<ReminderStepRow>();
 }
 
 // --- 友だちリマインダ ---

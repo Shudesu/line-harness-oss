@@ -397,12 +397,12 @@ export const api = {
     },
     get: (id: string) =>
       fetchApi<ApiResponse<Reminder & { steps: ReminderStep[] }>>(`/api/reminders/${id}`),
-    create: (data: { name: string; description?: string | null; lineAccountId?: string }) =>
+    create: (data: { name: string; description?: string | null; lineAccountId?: string; eventDate?: string | null; eventLabel?: string }) =>
       fetchApi<ApiResponse<Reminder>>('/api/reminders', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    update: (id: string, data: Partial<Pick<Reminder, 'name' | 'description' | 'isActive'>>) =>
+    update: (id: string, data: Partial<Pick<Reminder, 'name' | 'description' | 'isActive'> & { eventDate: string | null; eventLabel: string }>) =>
       fetchApi<ApiResponse<Reminder>>(`/api/reminders/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
@@ -415,6 +415,14 @@ export const api = {
     }) =>
       fetchApi<ApiResponse<ReminderStep>>(`/api/reminders/${id}/steps`, {
         method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateStep: (reminderId: string, stepId: string, data: {
+      offsetMinutes?: number; messageType?: string; messageContent?: string;
+      timingType?: string; daysOffset?: number | null; sendHour?: number | null; sendMinute?: number | null;
+    }) =>
+      fetchApi<ApiResponse<ReminderStep>>(`/api/reminders/${reminderId}/steps/${stepId}`, {
+        method: 'PUT',
         body: JSON.stringify(data),
       }),
     deleteStep: (reminderId: string, stepId: string) =>
