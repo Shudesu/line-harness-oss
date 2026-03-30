@@ -26,6 +26,7 @@ const messageTypeLabels: Record<string, string> = {
   image: '画像',
   image_link: '画像+リンク',
   flex: 'Flex',
+  carousel: 'カルーセル',
   multi: '複数吹き出し',
 }
 

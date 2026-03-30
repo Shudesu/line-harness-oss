@@ -176,4 +176,25 @@ export class LineClient {
       throw new Error(`LINE API error: ${res.status} ${res.statusText} — ${text}`);
     }
   }
+
+  // ─── Rich Menu Alias (for tab switching) ───────────────────────────────
+
+  async createRichMenuAlias(richMenuId: string, aliasId: string): Promise<void> {
+    await this.request('/richmenu/alias', {
+      method: 'POST',
+      body: JSON.stringify({ richMenuAliasId: aliasId, richMenuId }),
+    });
+  }
+
+  async deleteRichMenuAlias(aliasId: string): Promise<void> {
+    await this.request(`/richmenu/alias/${encodeURIComponent(aliasId)}`, {}, 'DELETE');
+  }
+
+  async getRichMenuAliasList(): Promise<{ aliases: { richMenuAliasId: string; richMenuId: string }[] }> {
+    return this.request('/richmenu/alias/list', {}, 'GET');
+  }
+
+  async updateRichMenuAlias(aliasId: string, richMenuId: string): Promise<void> {
+    await this.request(`/richmenu/alias/${encodeURIComponent(aliasId)}`, { richMenuId });
+  }
 }

@@ -23,6 +23,8 @@ export * from './forms';
 export * from './ad-platforms';
 export * from './staff';
 export * from './ai-reply';
+export * from './segments';
+export * from './rich-menus';
 
 /**
  * Thin wrapper around D1Database.

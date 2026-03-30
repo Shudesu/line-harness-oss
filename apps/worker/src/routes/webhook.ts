@@ -189,6 +189,22 @@ async function handleEvent(
     return;
   }
 
+  if (event.type === 'postback') {
+    const userId = event.source.type === 'user' ? event.source.userId : undefined;
+    if (!userId) return;
+
+    const friend = await getFriendByLineUserId(db, userId);
+    if (!friend) return;
+
+    const postbackData = (event as { postback?: { data?: string } }).postback?.data || '';
+    await fireEvent(db, 'postback_received', {
+      friendId: friend.id,
+      eventData: { postbackData },
+      replyToken: event.replyToken,
+    }, lineAccessToken, lineAccountId);
+    return;
+  }
+
   if (event.type === 'message' && event.message.type === 'text') {
     const textMessage = event.message as TextEventMessage;
     const userId =

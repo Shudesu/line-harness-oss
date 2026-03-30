@@ -1,11 +1,12 @@
 'use client'
 
 import FlexPreviewComponent from './flex-preview'
+import CarouselBuilder from './carousel/carousel-builder'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface MessageItem {
-  type: 'text' | 'image' | 'image_link' | 'flex'
+  type: 'text' | 'image' | 'image_link' | 'flex' | 'carousel'
   content: string
 }
 
@@ -16,6 +17,7 @@ const messageTypeOptions: { value: MessageType; label: string }[] = [
   { value: 'image', label: '画像' },
   { value: 'image_link', label: '画像+リンク' },
   { value: 'flex', label: 'Flex' },
+  { value: 'carousel', label: 'カルーセル' },
 ]
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -73,6 +75,9 @@ function defaultContent(type: MessageType): string {
       null,
       2,
     )
+  }
+  if (type === 'carousel') {
+    return JSON.stringify([{ imageUrl: '', title: '', description: '', buttons: [] }])
   }
   return ''
 }
@@ -280,6 +285,13 @@ function MessageItemEditor({
             }
           })()}
         </div>
+      )}
+
+      {item.type === 'carousel' && (
+        <CarouselBuilder
+          content={item.content}
+          onChange={(c) => onChange({ ...item, content: c })}
+        />
       )}
     </div>
   )

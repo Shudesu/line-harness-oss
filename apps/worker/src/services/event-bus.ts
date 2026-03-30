@@ -22,6 +22,8 @@ import {
   enrollFriendInScenario,
   jstNow,
   getFriendScore,
+  evaluateRichMenuForFriend,
+  getFriendById,
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
@@ -73,11 +75,16 @@ export async function fireEvent(
       }
     : payload;
 
-  // Phase 2: evaluate automations and create notifications concurrently.
-  await Promise.allSettled([
+  // Phase 2: evaluate automations, create notifications, and handle rich menu rules concurrently.
+  const phase2: Promise<unknown>[] = [
     processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId),
     processNotifications(db, eventType, enrichedPayload, lineAccountId),
-  ]);
+  ];
+  // On tag changes, evaluate rich menu rules for the friend
+  if ((eventType === 'tag_added' || eventType === 'tag_removed') && payload.friendId && lineAccessToken) {
+    phase2.push(evaluateAndApplyRichMenu(db, payload.friendId, lineAccessToken, lineAccountId));
+  }
+  await Promise.allSettled(phase2);
 }
 
 /** 送信Webhookへの通知 */
@@ -329,6 +336,27 @@ async function executeAction(
 
     default:
       console.warn(`未知のアクションタイプ: ${action.type}`);
+  }
+}
+
+/** タグ変更時のリッチメニュー自動割当 */
+async function evaluateAndApplyRichMenu(
+  db: D1Database,
+  friendId: string,
+  lineAccessToken: string,
+  lineAccountId?: string | null,
+): Promise<void> {
+  try {
+    const lineRichMenuId = await evaluateRichMenuForFriend(db, friendId, lineAccountId || undefined);
+    if (!lineRichMenuId) return;
+
+    const friend = await getFriendById(db, friendId);
+    if (!friend) return;
+
+    const lineClient = new LineClient(lineAccessToken);
+    await lineClient.linkRichMenuToUser(friend.line_user_id, lineRichMenuId);
+  } catch (err) {
+    console.error('evaluateAndApplyRichMenu error:', err);
   }
 }
 

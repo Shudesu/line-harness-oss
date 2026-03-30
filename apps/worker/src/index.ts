@@ -39,6 +39,7 @@ import { staff } from './routes/staff.js';
 import { images } from './routes/images.js';
 import { autoReplies } from './routes/auto-replies.js';
 import { aiReply } from './routes/ai-reply.js';
+import { segments } from './routes/segments.js';
 import { processAiReplyQueue } from './services/ai-reply.js';
 
 export type Env = {
@@ -104,6 +105,7 @@ app.route('/', staff);
 app.route('/', images);
 app.route('/', autoReplies);
 app.route('/', aiReply);
+app.route('/', segments);
 
 // Short link: /r/:ref → landing page with LINE open button
 app.get('/r/:ref', (c) => {

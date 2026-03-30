@@ -79,6 +79,70 @@ export function buildSingleMessage(
     }
   }
 
+  // carousel → Flex carousel message with multiple bubbles
+  if (type === 'carousel') {
+    try {
+      const cards = JSON.parse(content) as {
+        imageUrl: string;
+        title: string;
+        description: string;
+        buttons: { label: string; type: string; value: string }[];
+      }[];
+      const bubbles = cards.slice(0, 10).map((card) => {
+        const bubble: Record<string, unknown> = {
+          type: 'bubble',
+          size: 'micro',
+        };
+        if (card.imageUrl) {
+          bubble.hero = {
+            type: 'image',
+            url: card.imageUrl,
+            size: 'full',
+            aspectRatio: '20:13',
+            aspectMode: 'cover',
+          };
+        }
+        const bodyContents: unknown[] = [];
+        if (card.title) {
+          bodyContents.push({ type: 'text', text: card.title, weight: 'bold', size: 'md', wrap: true });
+        }
+        if (card.description) {
+          bodyContents.push({ type: 'text', text: card.description, size: 'xs', color: '#999999', wrap: true, margin: 'md' });
+        }
+        if (bodyContents.length > 0) {
+          bubble.body = { type: 'box', layout: 'vertical', contents: bodyContents };
+        }
+        if (card.buttons && card.buttons.length > 0) {
+          bubble.footer = {
+            type: 'box',
+            layout: 'vertical',
+            spacing: 'sm',
+            contents: card.buttons.slice(0, 3).map((btn) => ({
+              type: 'button',
+              action:
+                btn.type === 'uri'
+                  ? { type: 'uri', label: btn.label, uri: btn.value }
+                  : btn.type === 'postback'
+                    ? { type: 'postback', label: btn.label, data: btn.value, displayText: btn.label }
+                    : { type: 'message', label: btn.label, text: btn.value },
+              style: 'primary',
+              color: '#06C755',
+              height: 'sm',
+            })),
+          };
+        }
+        return bubble;
+      });
+      return {
+        type: 'flex',
+        altText: altText || cards[0]?.title || 'カルーセルメッセージ',
+        contents: { type: 'carousel', contents: bubbles },
+      };
+    } catch {
+      return { type: 'text', text: content };
+    }
+  }
+
   if (type === 'video') {
     try {
       const parsed = JSON.parse(content) as {
