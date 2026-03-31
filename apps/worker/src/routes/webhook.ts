@@ -15,7 +15,9 @@ import {
   jstNow,
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
-import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { buildSingleMessage, buildMessages } from '../utils/build-messages.js';
+import { expandVariables } from '../services/step-delivery.js';
+import { generateAndQueueAiReply } from '../services/ai-reply.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -66,7 +68,7 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.ANTHROPIC_API_KEY);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -85,6 +87,7 @@ async function handleEvent(
   lineAccessToken: string,
   lineAccountId: string | null = null,
   workerUrl?: string,
+  anthropicApiKey?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -132,8 +135,8 @@ async function handleEvent(
             if (firstStep && firstStep.delay_minutes === 0 && friendScenario.status === 'active') {
               try {
                 const expandedContent = expandVariables(firstStep.message_content, friend as { id: string; display_name: string | null; user_id: string | null });
-                const message = buildMessage(firstStep.message_type, expandedContent);
-                await lineClient.replyMessage(event.replyToken, [message]);
+                const msgs = buildMessages(firstStep.message_type, expandedContent);
+                await lineClient.replyMessage(event.replyToken, msgs);
                 console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
 
                 // Log outgoing message (replyMessage = 無料)
@@ -186,6 +189,22 @@ async function handleEvent(
     return;
   }
 
+  if (event.type === 'postback') {
+    const userId = event.source.type === 'user' ? event.source.userId : undefined;
+    if (!userId) return;
+
+    const friend = await getFriendByLineUserId(db, userId);
+    if (!friend) return;
+
+    const postbackData = (event as { postback?: { data?: string } }).postback?.data || '';
+    await fireEvent(db, 'postback_received', {
+      friendId: friend.id,
+      eventData: { postbackData },
+      replyToken: event.replyToken,
+    }, lineAccessToken, lineAccountId);
+    return;
+  }
+
   if (event.type === 'message' && event.message.type === 'text') {
     const textMessage = event.message as TextEventMessage;
     const userId =
@@ -234,7 +253,7 @@ async function handleEvent(
           const period = hour < 12 ? '午前' : '午後';
           const displayHour = hour <= 12 ? hour : hour - 12;
           await lineClient.replyMessage(event.replyToken, [
-            buildMessage('flex', JSON.stringify({
+            buildSingleMessage('flex', JSON.stringify({
               type: 'bubble',
               body: { type: 'box', layout: 'vertical', contents: [
                 { type: 'text', text: '配信時間を設定しました', size: 'lg', weight: 'bold', color: '#1e293b' },
@@ -265,8 +284,7 @@ async function handleEvent(
 
           for (const other of otherFriends.results) {
             const otherClient = new LineClient(other.channel_access_token);
-            const { buildMessage: bm } = await import('../services/step-delivery.js');
-            await otherClient.pushMessage(other.line_user_id, [bm('flex', JSON.stringify({
+            await otherClient.pushMessage(other.line_user_id, [buildSingleMessage('flex', JSON.stringify({
               type: 'bubble', size: 'giga',
               header: { type: 'box', layout: 'vertical', paddingAll: '20px', backgroundColor: '#fffbeb',
                 contents: [{ type: 'text', text: `${friend.display_name || ''}さんへ`, size: 'lg', weight: 'bold', color: '#1e293b' }],
@@ -282,14 +300,13 @@ async function handleEvent(
               footer: { type: 'box', layout: 'vertical', paddingAll: '16px',
                 contents: [
                   { type: 'button', action: { type: 'message', label: '導入について相談する', text: '導入支援を希望します' }, style: 'primary', color: '#06C755' },
-                  ...(c.env.LIFF_URL ? [{ type: 'button', action: { type: 'uri', label: 'フィードバックを送る', uri: `${c.env.LIFF_URL}?page=form` }, style: 'secondary', margin: 'sm' }] : []),
                 ],
               },
             }))]);
           }
 
           // Reply on Account ② confirming
-          await lineClient.replyMessage(event.replyToken, [buildMessage('flex', JSON.stringify({
+          await lineClient.replyMessage(event.replyToken, [buildSingleMessage('flex', JSON.stringify({
             type: 'bubble',
             body: { type: 'box', layout: 'vertical', paddingAll: '20px',
               contents: [
@@ -335,8 +352,8 @@ async function handleEvent(
         try {
           // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}})
           const expandedContent = expandVariables(rule.response_content, friend as { id: string; display_name: string | null; user_id: string | null }, workerUrl);
-          const replyMsg = buildMessage(rule.response_type, expandedContent);
-          await lineClient.replyMessage(event.replyToken, [replyMsg]);
+          const replyMsgs = buildMessages(rule.response_type, expandedContent);
+          await lineClient.replyMessage(event.replyToken, replyMsgs);
           replyTokenConsumed = true;
 
           // 送信ログ（replyMessage = 無料）
@@ -365,6 +382,15 @@ async function handleEvent(
       eventData: { text: incomingText, matched },
       replyToken: replyTokenConsumed ? undefined : event.replyToken,
     }, lineAccessToken, lineAccountId);
+
+    // AI自動返信: キーワード自動応答にマッチしなかった場合のみ
+    if (!matched && !isAutoKeyword && !isTimeCommand && anthropicApiKey) {
+      try {
+        await generateAndQueueAiReply(db, friend.id, incomingText, lineAccountId, anthropicApiKey);
+      } catch (err) {
+        console.error('AI reply queue error:', err);
+      }
+    }
 
     return;
   }

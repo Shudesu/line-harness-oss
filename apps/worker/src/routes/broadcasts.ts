@@ -5,6 +5,7 @@ import {
   createBroadcast,
   updateBroadcast,
   deleteBroadcast,
+  getLineAccountById,
 } from '@line-crm/db';
 import type { Broadcast as DbBroadcast, BroadcastMessageType, BroadcastTargetType } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
@@ -12,6 +13,17 @@ import { processBroadcastSend } from '../services/broadcast.js';
 import { processSegmentSend } from '../services/segment-send.js';
 import type { SegmentCondition } from '../services/segment-query.js';
 import type { Env } from '../index.js';
+
+async function getLineClientForBroadcast(db: D1Database, broadcast: DbBroadcast, fallbackToken: string): Promise<LineClient> {
+  const lineAccountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
+  if (lineAccountId) {
+    const account = await getLineAccountById(db, lineAccountId);
+    if (account) {
+      return new LineClient(account.channel_access_token);
+    }
+  }
+  return new LineClient(fallbackToken);
+}
 
 const broadcasts = new Hono<Env>();
 
@@ -23,6 +35,7 @@ function serializeBroadcast(row: DbBroadcast) {
     messageContent: row.message_content,
     targetType: row.target_type,
     targetTagId: row.target_tag_id,
+    targetSegmentId: row.target_segment_id,
     status: row.status,
     scheduledAt: row.scheduled_at,
     sentAt: row.sent_at,
@@ -79,6 +92,7 @@ broadcasts.post('/api/broadcasts', async (c) => {
       messageContent: string;
       targetType: BroadcastTargetType;
       targetTagId?: string | null;
+      targetSegmentId?: string | null;
       scheduledAt?: string | null;
       lineAccountId?: string | null;
       altText?: string | null;
@@ -104,6 +118,7 @@ broadcasts.post('/api/broadcasts', async (c) => {
       messageContent: body.messageContent,
       targetType: body.targetType,
       targetTagId: body.targetTagId ?? null,
+      targetSegmentId: body.targetSegmentId ?? null,
       scheduledAt: body.scheduledAt ?? null,
     });
 
@@ -197,7 +212,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 400);
     }
 
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const lineClient = await getLineClientForBroadcast(c.env.DB, existing, c.env.LINE_CHANNEL_ACCESS_TOKEN);
     await processBroadcastSend(c.env.DB, lineClient, id, c.env.WORKER_URL);
 
     const result = await getBroadcastById(c.env.DB, id);
@@ -231,7 +246,7 @@ broadcasts.post('/api/broadcasts/:id/send-segment', async (c) => {
       );
     }
 
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const lineClient = await getLineClientForBroadcast(c.env.DB, existing, c.env.LINE_CHANNEL_ACCESS_TOKEN);
     await processSegmentSend(c.env.DB, lineClient, id, body.conditions);
 
     const result = await getBroadcastById(c.env.DB, id);

@@ -1,5 +1,3 @@
-import { extractFlexAltText } from '../utils/flex-alt-text.js';
-
 /**
  * リマインダ配信処理 — cronトリガーで定期実行
  *
@@ -14,7 +12,8 @@ import {
   getFriendById,
   jstNow,
 } from '@line-crm/db';
-import type { LineClient, Message } from '@line-crm/line-sdk';
+import type { LineClient } from '@line-crm/line-sdk';
+import { buildMessages } from '../utils/build-messages.js';
 import { addJitter, sleep } from './stealth.js';
 
 export async function processReminderDeliveries(
@@ -39,8 +38,8 @@ export async function processReminderDeliveries(
       }
 
       for (const step of fr.steps) {
-        const message = buildMessage(step.message_type, step.message_content);
-        await lineClient.pushMessage(friend.line_user_id, [message]);
+        const messages = buildMessages(step.message_type, step.message_content);
+        await lineClient.pushMessage(friend.line_user_id, messages);
 
         // メッセージログに記録
         const logId = crypto.randomUUID();
@@ -64,25 +63,3 @@ export async function processReminderDeliveries(
   }
 }
 
-function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
-  if (messageType === 'text') {
-    return { type: 'text', text: messageContent };
-  }
-  if (messageType === 'image') {
-    try {
-      const parsed = JSON.parse(messageContent) as { originalContentUrl: string; previewImageUrl: string };
-      return { type: 'image', originalContentUrl: parsed.originalContentUrl, previewImageUrl: parsed.previewImageUrl };
-    } catch {
-      return { type: 'text', text: messageContent };
-    }
-  }
-  if (messageType === 'flex') {
-    try {
-      const contents = JSON.parse(messageContent);
-      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
-    } catch {
-      return { type: 'text', text: messageContent };
-    }
-  }
-  return { type: 'text', text: messageContent };
-}

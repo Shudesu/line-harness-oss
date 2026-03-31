@@ -108,6 +108,46 @@ lineAccounts.get('/api/line-accounts/:id', async (c) => {
   }
 });
 
+// POST /api/line-accounts/bootstrap - register default env account
+lineAccounts.post('/api/line-accounts/bootstrap', requireRole('owner'), async (c) => {
+  try {
+    const db = c.env.DB;
+    const channelId = c.env.LINE_CHANNEL_ID;
+    const token = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    const secret = c.env.LINE_CHANNEL_SECRET;
+
+    if (!channelId || !token || !secret) {
+      return c.json({ success: false, error: 'LINE env vars not configured' }, 400);
+    }
+
+    // Check if already registered
+    const existing = await getLineAccounts(db);
+    const found = existing.find((a) => a.channel_id === channelId);
+    if (found) {
+      return c.json({ success: true, data: serializeLineAccount(found), message: 'Already registered' });
+    }
+
+    // Fetch bot profile for display name
+    const profile = await fetchBotProfile(token);
+    const name = profile.displayName || 'LINE公式アカウント';
+
+    const account = await createLineAccount(db, {
+      channelId,
+      name,
+      channelAccessToken: token,
+      channelSecret: secret,
+    });
+
+    // Link existing friends that have no line_account_id
+    await db.prepare(`UPDATE friends SET line_account_id = ? WHERE line_account_id IS NULL`).bind(account.id).run();
+
+    return c.json({ success: true, data: serializeLineAccount(account) }, 201);
+  } catch (err) {
+    console.error('POST /api/line-accounts/bootstrap error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // POST /api/line-accounts - create
 lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
   try {

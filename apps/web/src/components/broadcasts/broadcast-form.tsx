@@ -1,20 +1,30 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Tag } from '@line-crm/shared'
-import { api, type ApiBroadcast } from '@/lib/api'
+import { api, fetchApi, type ApiBroadcast } from '@/lib/api'
 import FlexPreviewComponent from '@/components/flex-preview'
+
+interface Segment {
+  id: string
+  name: string
+  description: string | null
+}
 
 interface BroadcastFormProps {
   tags: Tag[]
   onSuccess: () => void
   onCancel: () => void
+  lineAccountId?: string | null
 }
 
 const messageTypeLabels: Record<ApiBroadcast['messageType'], string> = {
   text: 'テキスト',
   image: '画像',
+  image_link: '画像+リンク',
   flex: 'Flexメッセージ',
+  carousel: 'カルーセル',
+  multi: '複数吹き出し',
 }
 
 interface FormState {
@@ -23,22 +33,32 @@ interface FormState {
   messageContent: string
   targetType: ApiBroadcast['targetType']
   targetTagId: string
+  targetSegmentId: string
   scheduledAt: string
   sendNow: boolean
 }
 
-export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFormProps) {
+export default function BroadcastForm({ tags, onSuccess, onCancel, lineAccountId }: BroadcastFormProps) {
   const [form, setForm] = useState<FormState>({
     title: '',
     messageType: 'text',
     messageContent: '',
     targetType: 'all',
     targetTagId: '',
+    targetSegmentId: '',
     scheduledAt: '',
     sendNow: true,
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [segments, setSegments] = useState<Segment[]>([])
+
+  useEffect(() => {
+    const params = lineAccountId ? `?lineAccountId=${lineAccountId}` : ''
+    fetchApi<{ success: boolean; data: Segment[] }>(`/api/segments${params}`)
+      .then((res) => setSegments(res.data || []))
+      .catch(() => {})
+  }, [lineAccountId])
 
   const handleSave = async () => {
     if (!form.title.trim()) { setError('配信タイトルを入力してください'); return }
@@ -60,7 +80,9 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
         messageContent: form.messageContent,
         targetType: form.targetType,
         targetTagId: form.targetType === 'tag' ? form.targetTagId || null : null,
+        targetSegmentId: form.targetType === 'segment' ? form.targetSegmentId || null : null,
         status: 'draft',
+        lineAccountId: lineAccountId || null,
         // datetime-local returns YYYY-MM-DDTHH:mm in JST wall-clock time
         // Append +09:00 so new Date() parses correctly for epoch comparisons
         scheduledAt: form.sendNow || !form.scheduledAt
@@ -218,6 +240,17 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
             >
               タグで絞り込み
             </button>
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, targetType: 'segment', targetTagId: '' })}
+              className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
+                form.targetType === 'segment'
+                  ? 'border-green-500 text-green-700 bg-green-50'
+                  : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
+              }`}
+            >
+              セグメント
+            </button>
           </div>
           {form.targetType === 'tag' && (
             <select
@@ -228,6 +261,18 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
               <option value="">タグを選択...</option>
               {tags.map((tag) => (
                 <option key={tag.id} value={tag.id}>{tag.name}</option>
+              ))}
+            </select>
+          )}
+          {form.targetType === 'segment' && (
+            <select
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+              value={form.targetSegmentId}
+              onChange={(e) => setForm({ ...form, targetSegmentId: e.target.value })}
+            >
+              <option value="">セグメントを選択...</option>
+              {segments.map((seg) => (
+                <option key={seg.id} value={seg.id}>{seg.name}{seg.description ? ` — ${seg.description}` : ''}</option>
               ))}
             </select>
           )}

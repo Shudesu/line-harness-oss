@@ -95,6 +95,7 @@ export default function ScenariosPage() {
         triggerType: form.triggerType,
         triggerTagId: form.triggerTagId || null,
         isActive: form.isActive,
+        lineAccountId: selectedAccountId || undefined,
       })
       if (res.success) {
         setShowCreate(false)

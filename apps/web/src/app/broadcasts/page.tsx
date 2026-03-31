@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { Tag } from '@line-crm/shared'
-import { api, type ApiBroadcast } from '@/lib/api'
+import { api, fetchApi, type ApiBroadcast } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import BroadcastForm from '@/components/broadcasts/broadcast-form'
@@ -81,7 +81,20 @@ export default function BroadcastsPage() {
     if (!confirm('この配信を今すぐ送信してもよいですか？')) return
     setSendingId(id)
     try {
-      await api.broadcasts.send(id)
+      const broadcast = broadcasts.find((b) => b.id === id)
+      if (broadcast?.targetType === 'segment' && broadcast.targetSegmentId) {
+        // Load segment conditions and call send-segment
+        const segRes = await fetchApi<{ success: boolean; data: { conditions_json: string } }>(`/api/segments/${broadcast.targetSegmentId}`)
+        if (segRes.data?.conditions_json) {
+          const conditions = JSON.parse(segRes.data.conditions_json)
+          await fetchApi(`/api/broadcasts/${id}/send-segment`, {
+            method: 'POST',
+            body: JSON.stringify({ conditions }),
+          })
+        }
+      } else {
+        await api.broadcasts.send(id)
+      }
       load()
     } catch {
       setError('送信に失敗しました')
@@ -133,6 +146,7 @@ export default function BroadcastsPage() {
           tags={tags}
           onSuccess={() => { setShowCreate(false); load() }}
           onCancel={() => setShowCreate(false)}
+          lineAccountId={selectedAccountId}
         />
       )}
 

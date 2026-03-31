@@ -30,6 +30,33 @@ import type { Broadcast } from '@line-crm/shared'
 /** Broadcast type from API (now camelCase after worker serialization) */
 export type ApiBroadcast = Broadcast
 
+export type AiReplyConfig = {
+  id: string
+  lineAccountId: string | null
+  isEnabled: boolean
+  aiModel: string
+  systemPrompt: string
+  delayMinMinutes: number
+  delayMaxMinutes: number
+  maxContextMessages: number
+  maxTokens: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type AiReplyQueueEntry = {
+  id: string
+  friendId: string
+  lineAccountId: string | null
+  incomingMessage: string
+  aiResponse: string
+  status: string
+  scheduledSendAt: string
+  sentAt: string | null
+  errorMessage: string | null
+  createdAt: string
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL
 if (!API_URL) {
   throw new Error(
@@ -161,8 +188,10 @@ export const api = {
       messageContent: string
       targetType: ApiBroadcast['targetType']
       targetTagId?: string | null
+      targetSegmentId?: string | null
       scheduledAt?: string | null
       status?: ApiBroadcast['status']
+      lineAccountId?: string | null
     }) =>
       fetchApi<ApiResponse<ApiBroadcast>>('/api/broadcasts', {
         method: 'POST',
@@ -313,6 +342,7 @@ export const api = {
       description?: string | null
       conditions?: Record<string, unknown>
       priority?: number
+      lineAccountId?: string
     }) =>
       fetchApi<ApiResponse<Automation>>('/api/automations', {
         method: 'POST',
@@ -367,27 +397,50 @@ export const api = {
     },
     get: (id: string) =>
       fetchApi<ApiResponse<Reminder & { steps: ReminderStep[] }>>(`/api/reminders/${id}`),
-    create: (data: { name: string; description?: string | null }) =>
+    create: (data: { name: string; description?: string | null; lineAccountId?: string; eventDate?: string | null; eventLabel?: string }) =>
       fetchApi<ApiResponse<Reminder>>('/api/reminders', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    update: (id: string, data: Partial<Pick<Reminder, 'name' | 'description' | 'isActive'>>) =>
+    update: (id: string, data: Partial<Pick<Reminder, 'name' | 'description' | 'isActive'> & { eventDate: string | null; eventLabel: string }>) =>
       fetchApi<ApiResponse<Reminder>>(`/api/reminders/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/reminders/${id}`, { method: 'DELETE' }),
-    addStep: (id: string, data: { offsetMinutes: number; messageType: string; messageContent: string }) =>
+    addStep: (id: string, data: {
+      offsetMinutes: number; messageType: string; messageContent: string;
+      timingType?: string; daysOffset?: number | null; sendHour?: number | null; sendMinute?: number | null;
+    }) =>
       fetchApi<ApiResponse<ReminderStep>>(`/api/reminders/${id}/steps`, {
         method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateStep: (reminderId: string, stepId: string, data: {
+      offsetMinutes?: number; messageType?: string; messageContent?: string;
+      timingType?: string; daysOffset?: number | null; sendHour?: number | null; sendMinute?: number | null;
+    }) =>
+      fetchApi<ApiResponse<ReminderStep>>(`/api/reminders/${reminderId}/steps/${stepId}`, {
+        method: 'PUT',
         body: JSON.stringify(data),
       }),
     deleteStep: (reminderId: string, stepId: string) =>
       fetchApi<ApiResponse<null>>(`/api/reminders/${reminderId}/steps/${stepId}`, {
         method: 'DELETE',
       }),
+    enrollments: (id: string) =>
+      fetchApi<ApiResponse<Array<{
+        id: string; friendId: string; reminderId: string; targetDate: string;
+        status: string; displayName: string; pictureUrl: string | null; isFollowing: boolean; createdAt: string;
+      }>>>(`/api/reminders/${id}/enrollments`),
+    enroll: (id: string, friendId: string, targetDate: string) =>
+      fetchApi<ApiResponse<{ id: string }>>(`/api/reminders/${id}/enroll/${friendId}`, {
+        method: 'POST',
+        body: JSON.stringify({ targetDate }),
+      }),
+    cancelEnrollment: (enrollmentId: string) =>
+      fetchApi<ApiResponse<null>>(`/api/friend-reminders/${enrollmentId}`, { method: 'DELETE' }),
   },
   scoring: {
     rules: () =>
@@ -507,5 +560,39 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/staff/${id}`, { method: 'DELETE' }),
     regenerateKey: (id: string) =>
       fetchApi<ApiResponse<{ apiKey: string }>>(`/api/staff/${id}/regenerate-key`, { method: 'POST' }),
+  },
+  aiReply: {
+    getConfig: (lineAccountId?: string) => {
+      const query = lineAccountId ? '?lineAccountId=' + lineAccountId : ''
+      return fetchApi<ApiResponse<AiReplyConfig | null>>('/api/ai-reply/config' + query)
+    },
+    updateConfig: (data: {
+      lineAccountId?: string | null
+      isEnabled?: boolean
+      aiModel?: string
+      systemPrompt?: string
+      delayMinMinutes?: number
+      delayMaxMinutes?: number
+      maxContextMessages?: number
+      maxTokens?: number
+    }) =>
+      fetchApi<ApiResponse<AiReplyConfig>>('/api/ai-reply/config', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    getQueue: (params?: { lineAccountId?: string; status?: string; limit?: number }) => {
+      const query = new URLSearchParams()
+      if (params?.lineAccountId) query.set('lineAccountId', params.lineAccountId)
+      if (params?.status) query.set('status', params.status)
+      if (params?.limit) query.set('limit', String(params.limit))
+      return fetchApi<ApiResponse<AiReplyQueueEntry[]>>('/api/ai-reply/queue?' + query)
+    },
+    cancelQueue: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/ai-reply/queue/${id}`, { method: 'DELETE' }),
+    test: (data: { message: string; friendId?: string; lineAccountId?: string | null }) =>
+      fetchApi<ApiResponse<{ response: string; model: string; contextMessages: number }>>('/api/ai-reply/test', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 }

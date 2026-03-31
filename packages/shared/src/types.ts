@@ -89,7 +89,7 @@ export interface Scenario {
 // -----------------------------------------------------------------------------
 
 /** メッセージ種別 */
-export type MessageType = "text" | "image" | "flex";
+export type MessageType = "text" | "image" | "image_link" | "flex" | "carousel" | "multi";
 
 export interface ScenarioStep {
   /** 主キー (UUIDv4) */
@@ -139,7 +139,7 @@ export interface FriendScenario {
 // -----------------------------------------------------------------------------
 
 /** 配信対象種別 */
-export type BroadcastTargetType = "all" | "tag";
+export type BroadcastTargetType = "all" | "tag" | "segment";
 
 /** 配信ステータス */
 export type BroadcastStatus = "draft" | "scheduled" | "sending" | "sent";
@@ -157,6 +157,8 @@ export interface Broadcast {
   targetType: BroadcastTargetType;
   /** 対象タグID (targetType が 'tag' の場合のみ使用) */
   targetTagId: string | null;
+  /** 対象セグメントID (targetType が 'segment' の場合のみ使用) */
+  targetSegmentId?: string | null;
   /** 配信ステータス */
   status: BroadcastStatus;
   /** 予約配信日時 (ISO 8601、即時配信の場合は null) */
@@ -454,14 +456,22 @@ export interface Reminder {
   name: string;
   description: string | null;
   isActive: boolean;
+  eventDate: string | null;
+  eventLabel: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type StepTimingType = 'relative' | 'day_time';
 
 export interface ReminderStep {
   id: string;
   reminderId: string;
   offsetMinutes: number;
+  timingType: StepTimingType;
+  daysOffset: number | null;
+  sendHour: number | null;
+  sendMinute: number | null;
   messageType: MessageType;
   messageContent: string;
   createdAt: string;

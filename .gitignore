@@ -13,3 +13,4 @@ dist/
 .env.staging
 apps/web/out/
 apps/worker/dist/
+.vercel

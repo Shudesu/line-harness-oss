@@ -1,4 +1,3 @@
-import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getFriendScenariosDueForDelivery,
   getScenarioSteps,
@@ -8,7 +7,7 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
-import type { Message } from '@line-crm/line-sdk';
+import { buildMessages, buildSingleMessage } from '../utils/build-messages.js';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 
 /**
@@ -173,8 +172,8 @@ async function processSingleDelivery(
     trackedType = tracked.messageType;
     trackedContent = tracked.content;
   }
-  const message = buildMessage(trackedType, trackedContent);
-  await lineClient.pushMessage(friend.line_user_id, [message]);
+  const messages = buildMessages(trackedType, trackedContent);
+  await lineClient.pushMessage(friend.line_user_id, messages);
 
   // Log outgoing message
   const logId = crypto.randomUUID();
@@ -249,60 +248,5 @@ async function evaluateCondition(
 }
 
 
-/** Remove empty text nodes from Flex JSON (caused by conditional blocks) */
-function cleanEmptyNodes(obj: unknown): void {
-  if (!obj || typeof obj !== 'object') return;
-  const node = obj as Record<string, unknown>;
-  for (const key of ['header', 'body', 'footer']) {
-    if (node[key]) cleanEmptyNodes(node[key]);
-  }
-  if (Array.isArray(node.contents)) {
-    node.contents = (node.contents as unknown[]).filter((c) => {
-      if (c && typeof c === 'object' && (c as Record<string, unknown>).type === 'text') {
-        const text = (c as Record<string, unknown>).text;
-        return typeof text === 'string' && text.trim().length > 0;
-      }
-      return true;
-    });
-    for (const c of node.contents as unknown[]) cleanEmptyNodes(c);
-  }
-}
-
-export function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
-  if (messageType === 'text') {
-    return { type: 'text', text: messageContent };
-  }
-
-  if (messageType === 'image') {
-    // messageContent is expected to be JSON: { originalContentUrl, previewImageUrl }
-    try {
-      const parsed = JSON.parse(messageContent) as {
-        originalContentUrl: string;
-        previewImageUrl: string;
-      };
-      return {
-        type: 'image',
-        originalContentUrl: parsed.originalContentUrl,
-        previewImageUrl: parsed.previewImageUrl,
-      };
-    } catch {
-      // Fallback: treat as text if parsing fails
-      return { type: 'text', text: messageContent };
-    }
-  }
-
-  if (messageType === 'flex') {
-    try {
-      const contents = JSON.parse(messageContent);
-      // Remove empty text nodes (from {{#if_ref}} conditional blocks)
-      cleanEmptyNodes(contents);
-      // Extract first text element for altText (shown in notifications)
-      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
-    } catch {
-      return { type: 'text', text: messageContent };
-    }
-  }
-
-  // Fallback
-  return { type: 'text', text: messageContent };
-}
+// Re-export for backward compatibility (used by webhook.ts)
+export { buildSingleMessage as buildMessage, buildMessages };

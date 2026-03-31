@@ -4,6 +4,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import MultiMessageEditor, {
+  type MessageItem,
+  parseMessages,
+  serializeMessages,
+} from '@/components/multi-message-editor'
 
 interface Template {
   id: string
@@ -18,14 +23,16 @@ interface Template {
 const messageTypeLabels: Record<string, string> = {
   text: 'テキスト',
   image: '画像',
+  image_link: '画像+リンク',
   flex: 'Flex',
+  carousel: 'カルーセル',
+  multi: '複数吹き出し',
 }
 
 interface CreateFormState {
   name: string
   category: string
-  messageType: string
-  messageContent: string
+  messages: MessageItem[]
 }
 
 function formatDate(iso: string): string {
@@ -66,11 +73,20 @@ export default function TemplatesPage() {
   const [form, setForm] = useState<CreateFormState>({
     name: '',
     category: '',
-    messageType: 'text',
-    messageContent: '',
+    messages: [{ type: 'text', content: '' }],
   })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<CreateFormState>({
+    name: '',
+    category: '',
+    messages: [{ type: 'text', content: '' }],
+  })
+  const [editSaving, setEditSaving] = useState(false)
+  const [editFormError, setEditFormError] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -108,22 +124,24 @@ export default function TemplatesPage() {
       setFormError('カテゴリを入力してください')
       return
     }
-    if (!form.messageContent.trim()) {
+    const hasContent = form.messages.some((m) => m.content.trim())
+    if (!hasContent) {
       setFormError('メッセージ内容を入力してください')
       return
     }
     setSaving(true)
     setFormError('')
     try {
+      const { messageType, messageContent } = serializeMessages(form.messages)
       const res = await api.templates.create({
         name: form.name,
         category: form.category,
-        messageType: form.messageType,
-        messageContent: form.messageContent,
+        messageType,
+        messageContent,
       })
       if (res.success) {
         setShowCreate(false)
-        setForm({ name: '', category: '', messageType: 'text', messageContent: '' })
+        setForm({ name: '', category: '', messages: [{ type: 'text', content: '' }] })
         load()
       } else {
         setFormError(res.error)
@@ -132,6 +150,54 @@ export default function TemplatesPage() {
       setFormError('作成に失敗しました')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const startEdit = (template: Template) => {
+    setEditingId(template.id)
+    setEditForm({
+      name: template.name,
+      category: template.category,
+      messages: parseMessages(template.messageType, template.messageContent),
+    })
+    setEditFormError('')
+  }
+
+  const handleEdit = async () => {
+    if (!editingId) return
+    if (!editForm.name.trim()) {
+      setEditFormError('テンプレート名を入力してください')
+      return
+    }
+    if (!editForm.category.trim()) {
+      setEditFormError('カテゴリを入力してください')
+      return
+    }
+    const hasContent = editForm.messages.some((m) => m.content.trim())
+    if (!hasContent) {
+      setEditFormError('メッセージ内容を入力してください')
+      return
+    }
+    setEditSaving(true)
+    setEditFormError('')
+    try {
+      const { messageType, messageContent } = serializeMessages(editForm.messages)
+      const res = await api.templates.update(editingId, {
+        name: editForm.name,
+        category: editForm.category,
+        messageType,
+        messageContent,
+      })
+      if (res.success) {
+        setEditingId(null)
+        load()
+      } else {
+        setEditFormError(res.error)
+      }
+    } catch {
+      setEditFormError('更新に失敗しました')
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -224,25 +290,10 @@ export default function TemplatesPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">メッセージタイプ</label>
-              <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-                value={form.messageType}
-                onChange={(e) => setForm({ ...form, messageType: e.target.value })}
-              >
-                <option value="text">テキスト</option>
-                <option value="image">画像</option>
-                <option value="flex">Flex</option>
-              </select>
-            </div>
-            <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容 <span className="text-red-500">*</span></label>
-              <textarea
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                rows={4}
-                placeholder="メッセージ内容を入力してください"
-                value={form.messageContent}
-                onChange={(e) => setForm({ ...form, messageContent: e.target.value })}
+              <MultiMessageEditor
+                messages={form.messages}
+                onChange={(messages) => setForm({ ...form, messages })}
               />
             </div>
 
@@ -310,43 +361,102 @@ export default function TemplatesPage() {
             <tbody className="divide-y divide-gray-100">
               {templates.map((template) => (
                 <tr key={template.id} className="hover:bg-gray-50 transition-colors">
-                  {/* Name */}
-                  <td className="px-4 py-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{template.name}</p>
-                      <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">
-                        {template.messageContent.slice(0, 50)}
-                        {template.messageContent.length > 50 ? '...' : ''}
-                      </p>
-                    </div>
-                  </td>
+                  {editingId === template.id ? (
+                    <td colSpan={5} className="px-4 py-4">
+                      <div className="space-y-3 max-w-lg">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">テンプレート名</label>
+                          <input
+                            type="text"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                            value={editForm.name}
+                            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">カテゴリ</label>
+                          <input
+                            type="text"
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                            value={editForm.category}
+                            onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容</label>
+                          <MultiMessageEditor
+                            messages={editForm.messages}
+                            onChange={(messages) => setEditForm({ ...editForm, messages })}
+                          />
+                        </div>
+                        {editFormError && <p className="text-xs text-red-600">{editFormError}</p>}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleEdit}
+                            disabled={editSaving}
+                            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
+                            style={{ backgroundColor: '#06C755' }}
+                          >
+                            {editSaving ? '保存中...' : '保存'}
+                          </button>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                          >
+                            キャンセル
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  ) : (
+                    <>
+                      {/* Name */}
+                      <td className="px-4 py-3">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{template.name}</p>
+                          <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">
+                            {template.messageContent.slice(0, 50)}
+                            {template.messageContent.length > 50 ? '...' : ''}
+                          </p>
+                        </div>
+                      </td>
 
-                  {/* Category */}
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                      {template.category}
-                    </span>
-                  </td>
+                      {/* Category */}
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                          {template.category}
+                        </span>
+                      </td>
 
-                  {/* Message Type */}
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {messageTypeLabels[template.messageType] || template.messageType}
-                  </td>
+                      {/* Message Type */}
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {messageTypeLabels[template.messageType] || template.messageType}
+                      </td>
 
-                  {/* Created At */}
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {formatDate(template.createdAt)}
-                  </td>
+                      {/* Created At */}
+                      <td className="px-4 py-3 text-sm text-gray-500">
+                        {formatDate(template.createdAt)}
+                      </td>
 
-                  {/* Actions */}
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => handleDelete(template.id)}
-                      className="px-3 py-1 text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
-                    >
-                      削除
-                    </button>
-                  </td>
+                      {/* Actions */}
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => startEdit(template)}
+                            className="px-3 py-1 min-h-[44px] text-xs font-medium text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                          >
+                            編集
+                          </button>
+                          <button
+                            onClick={() => handleDelete(template.id)}
+                            className="px-3 py-1 min-h-[44px] text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                          >
+                            削除
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>

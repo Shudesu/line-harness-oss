@@ -3,27 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
-import CcPromptButton from '@/components/cc-prompt-button'
 import { useAccount } from '@/contexts/account-context'
-
-const ccPrompts = [
-  {
-    title: 'ダッシュボードのKPI分析',
-    prompt: `LINE CRM ダッシュボードのデータを分析してください。
-1. 友だち数の推移を確認
-2. アクティブシナリオの効果を評価
-3. 配信の開封率・クリック率を分析
-改善提案を含めてレポートしてください。`,
-  },
-  {
-    title: '新しいシナリオを提案',
-    prompt: `現在の友だちデータとタグ情報を元に、効果的なシナリオ配信を提案してください。
-1. ターゲットセグメントの特定
-2. メッセージ内容の提案
-3. 配信タイミングの最適化
-具体的なステップ配信の構成を含めてください。`,
-  },
-]
 
 interface DashboardStats {
   friendCount: number | null
@@ -72,7 +52,7 @@ function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }
 }
 
 export default function DashboardPage() {
-  const { selectedAccountId, selectedAccount } = useAccount()
+  const { accounts, selectedAccountId, selectedAccount, setSelectedAccountId, loading: accountsLoading } = useAccount()
   const [stats, setStats] = useState<DashboardStats>({
     friendCount: null,
     activeScenarioCount: null,
@@ -85,16 +65,21 @@ export default function DashboardPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (!selectedAccountId) {
+      setLoading(false)
+      return
+    }
     const load = async () => {
       setLoading(true)
       setError('')
       try {
+        const accountFilter = { accountId: selectedAccountId }
         const [friendCountRes, scenariosRes, broadcastsRes, templatesRes, automationsRes, scoringRes] = await Promise.allSettled([
-          api.friends.count({ accountId: selectedAccountId ?? undefined }),
-          api.scenarios.list(),
-          api.broadcasts.list(),
+          api.friends.count(accountFilter),
+          api.scenarios.list(accountFilter),
+          api.broadcasts.list(accountFilter),
           api.templates.list(),
-          api.automations.list(),
+          api.automations.list(accountFilter),
           api.scoring.rules(),
         ])
 
@@ -134,15 +119,97 @@ export default function DashboardPage() {
     load()
   }, [selectedAccountId])
 
+  // アカウント読み込み中
+  if (accountsLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="text-sm text-gray-400">読み込み中...</div>
+      </div>
+    )
+  }
+
+  // アカウント未登録
+  if (accounts.length === 0) {
+    return (
+      <div>
+        <div className="mb-6">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">ダッシュボード</h1>
+        </div>
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-10 text-center">
+          <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+          </div>
+          <h2 className="text-lg font-bold text-gray-900 mb-2">LINE公式アカウントを追加してください</h2>
+          <p className="text-sm text-gray-500 mb-6">
+            LINE Developers Consoleでチャネルを作成し、アクセストークンとシークレットを登録することで利用を開始できます。
+          </p>
+          <Link
+            href="/accounts"
+            className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+            style={{ backgroundColor: '#06C755' }}
+          >
+            アカウントを追加する
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900">ダッシュボード</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {selectedAccount
-            ? `${selectedAccount.displayName || selectedAccount.name} の管理画面`
-            : 'LINE公式アカウント CRM 管理画面'}
-        </p>
+      </div>
+
+      {/* アカウント切り替え */}
+      <div className="flex gap-3 mb-6 overflow-x-auto pb-1">
+        {accounts.map((account) => (
+          <button
+            key={account.id}
+            onClick={() => setSelectedAccountId(account.id)}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-left transition-all shrink-0 ${
+              selectedAccountId === account.id
+                ? 'border-green-400 bg-green-50 shadow-sm'
+                : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            {account.pictureUrl ? (
+              <img
+                src={account.pictureUrl}
+                alt=""
+                className="w-9 h-9 rounded-full shrink-0"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
+                <span className="text-sm font-bold text-gray-500">
+                  {(account.displayName || account.name || '?').charAt(0)}
+                </span>
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className={`text-sm font-semibold truncate ${
+                selectedAccountId === account.id ? 'text-green-800' : 'text-gray-900'
+              }`}>
+                {account.displayName || account.name}
+              </p>
+              {account.basicId && (
+                <p className="text-xs text-gray-400 truncate">@{account.basicId}</p>
+              )}
+            </div>
+          </button>
+        ))}
+        <Link
+          href="/accounts"
+          className="flex items-center gap-2 px-4 py-3 rounded-lg border border-dashed border-gray-300 text-gray-400 hover:border-green-400 hover:text-green-600 hover:bg-green-50 transition-all shrink-0"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          <span className="text-sm font-medium">追加</span>
+        </Link>
       </div>
 
       {error && (
@@ -150,24 +217,6 @@ export default function DashboardPage() {
           {error}
         </div>
       )}
-
-      {/* Demo banner */}
-      <a
-        href="https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=dashboard"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-bold text-gray-900">LINE で体験する</p>
-            <p className="text-xs text-gray-500 mt-0.5">友だち追加でステップ配信・フォーム・自動返信を体験</p>
-          </div>
-          <span className="text-xs px-3 py-1.5 rounded-full text-white font-medium" style={{ backgroundColor: '#06C755' }}>
-            友だち追加
-          </span>
-        </div>
-      </a>
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
@@ -197,7 +246,7 @@ export default function DashboardPage() {
           }
         />
         <StatCard
-          title="配信数 (合計)"
+          title="配信数"
           value={stats.broadcastCount}
           loading={loading}
           href="/broadcasts"
@@ -211,7 +260,6 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Round 3 summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
         <StatCard
           title="テンプレート数"
@@ -321,26 +369,8 @@ export default function DashboardPage() {
               <p className="text-xs text-gray-400">オペレーターチャット管理</p>
             </div>
           </Link>
-
-          <Link
-            href="/health"
-            className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors group"
-          >
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 bg-red-500">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-900 group-hover:text-red-700 transition-colors">BAN検知</p>
-              <p className="text-xs text-gray-400">アカウント健康度ダッシュボード</p>
-            </div>
-          </Link>
         </div>
       </div>
-
-      <CcPromptButton prompts={ccPrompts} />
     </div>
   )
 }

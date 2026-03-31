@@ -8,10 +8,13 @@ import {
   getReminderSteps,
   createReminderStep,
   deleteReminderStep,
+  updateReminderStep,
   enrollFriendInReminder,
   getFriendReminders,
   cancelFriendReminder,
+  getReminderEnrollments,
 } from '@line-crm/db';
+import type { StepTimingType } from '@line-crm/db';
 import type { Env } from '../index.js';
 
 const reminders = new Hono<Env>();
@@ -38,6 +41,8 @@ reminders.get('/api/reminders', async (c) => {
         name: r.name,
         description: r.description,
         isActive: Boolean(r.is_active),
+        eventDate: r.event_date ?? null,
+        eventLabel: r.event_label ?? 'イベント日時',
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       })),
@@ -63,12 +68,18 @@ reminders.get('/api/reminders/:id', async (c) => {
         name: reminder.name,
         description: reminder.description,
         isActive: Boolean(reminder.is_active),
+        eventDate: reminder.event_date ?? null,
+        eventLabel: reminder.event_label ?? 'イベント日時',
         createdAt: reminder.created_at,
         updatedAt: reminder.updated_at,
         steps: steps.map((s) => ({
           id: s.id,
           reminderId: s.reminder_id,
           offsetMinutes: s.offset_minutes,
+          timingType: s.timing_type ?? 'relative',
+          daysOffset: s.days_offset,
+          sendHour: s.send_hour,
+          sendMinute: s.send_minute,
           messageType: s.message_type,
           messageContent: s.message_content,
           createdAt: s.created_at,
@@ -83,15 +94,23 @@ reminders.get('/api/reminders/:id', async (c) => {
 
 reminders.post('/api/reminders', async (c) => {
   try {
-    const body = await c.req.json<{ name: string; description?: string; lineAccountId?: string | null }>();
+    const body = await c.req.json<{
+      name: string; description?: string; lineAccountId?: string | null;
+      eventDate?: string | null; eventLabel?: string;
+    }>();
     if (!body.name) return c.json({ success: false, error: 'name is required' }, 400);
-    const item = await createReminder(c.env.DB, body);
+    const item = await createReminder(c.env.DB, {
+      name: body.name,
+      description: body.description,
+      eventDate: body.eventDate ?? undefined,
+      eventLabel: body.eventLabel,
+    });
     // Save line_account_id if provided
     if (body.lineAccountId) {
       await c.env.DB.prepare(`UPDATE reminders SET line_account_id = ? WHERE id = ?`)
         .bind(body.lineAccountId, item.id).run();
     }
-    return c.json({ success: true, data: { id: item.id, name: item.name, createdAt: item.created_at } }, 201);
+    return c.json({ success: true, data: { id: item.id, name: item.name, eventDate: item.event_date, createdAt: item.created_at } }, 201);
   } catch (err) {
     console.error('POST /api/reminders error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -127,17 +146,79 @@ reminders.delete('/api/reminders/:id', async (c) => {
 reminders.post('/api/reminders/:id/steps', async (c) => {
   try {
     const reminderId = c.req.param('id');
-    const body = await c.req.json<{ offsetMinutes: number; messageType: string; messageContent: string }>();
+    const body = await c.req.json<{
+      offsetMinutes: number;
+      messageType: string;
+      messageContent: string;
+      timingType?: StepTimingType;
+      daysOffset?: number | null;
+      sendHour?: number | null;
+      sendMinute?: number | null;
+    }>();
     if (body.offsetMinutes === undefined || !body.messageType || !body.messageContent) {
       return c.json({ success: false, error: 'offsetMinutes, messageType, messageContent are required' }, 400);
     }
-    const step = await createReminderStep(c.env.DB, { reminderId, ...body });
+    const step = await createReminderStep(c.env.DB, {
+      reminderId,
+      offsetMinutes: body.offsetMinutes,
+      messageType: body.messageType,
+      messageContent: body.messageContent,
+      timingType: body.timingType,
+      daysOffset: body.daysOffset,
+      sendHour: body.sendHour,
+      sendMinute: body.sendMinute,
+    });
     return c.json({
       success: true,
-      data: { id: step.id, reminderId: step.reminder_id, offsetMinutes: step.offset_minutes, messageType: step.message_type, createdAt: step.created_at },
+      data: {
+        id: step.id,
+        reminderId: step.reminder_id,
+        offsetMinutes: step.offset_minutes,
+        timingType: step.timing_type,
+        daysOffset: step.days_offset,
+        sendHour: step.send_hour,
+        sendMinute: step.send_minute,
+        messageType: step.message_type,
+        createdAt: step.created_at,
+      },
     }, 201);
   } catch (err) {
     console.error('POST /api/reminders/:id/steps error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+reminders.put('/api/reminders/:reminderId/steps/:stepId', async (c) => {
+  try {
+    const stepId = c.req.param('stepId');
+    const body = await c.req.json<{
+      offsetMinutes?: number;
+      messageType?: string;
+      messageContent?: string;
+      timingType?: StepTimingType;
+      daysOffset?: number | null;
+      sendHour?: number | null;
+      sendMinute?: number | null;
+    }>();
+    const step = await updateReminderStep(c.env.DB, stepId, body);
+    if (!step) return c.json({ success: false, error: 'Not found' }, 404);
+    return c.json({
+      success: true,
+      data: {
+        id: step.id,
+        reminderId: step.reminder_id,
+        offsetMinutes: step.offset_minutes,
+        timingType: step.timing_type,
+        daysOffset: step.days_offset,
+        sendHour: step.send_hour,
+        sendMinute: step.send_minute,
+        messageType: step.message_type,
+        messageContent: step.message_content,
+        createdAt: step.created_at,
+      },
+    });
+  } catch (err) {
+    console.error('PUT /api/reminders/:reminderId/steps/:stepId error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -167,6 +248,31 @@ reminders.post('/api/reminders/:id/enroll/:friendId', async (c) => {
     }, 201);
   } catch (err) {
     console.error('POST /api/reminders/:id/enroll/:friendId error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/reminders/:id/enrollments — リマインダの登録者一覧
+reminders.get('/api/reminders/:id/enrollments', async (c) => {
+  try {
+    const reminderId = c.req.param('id');
+    const items = await getReminderEnrollments(c.env.DB, reminderId);
+    return c.json({
+      success: true,
+      data: items.map((e) => ({
+        id: e.id,
+        friendId: e.friend_id,
+        reminderId: e.reminder_id,
+        targetDate: e.target_date,
+        status: e.status,
+        displayName: e.display_name,
+        pictureUrl: e.picture_url,
+        isFollowing: Boolean(e.is_following),
+        createdAt: e.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('GET /api/reminders/:id/enrollments error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

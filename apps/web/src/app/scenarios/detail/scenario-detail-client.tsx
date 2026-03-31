@@ -7,6 +7,11 @@ import type { Scenario, ScenarioStep, ScenarioTriggerType, MessageType } from '@
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FlexPreviewComponent from '@/components/flex-preview'
+import MultiMessageEditor, {
+  type MessageItem,
+  parseMessages,
+  serializeMessages,
+} from '@/components/multi-message-editor'
 
 type ScenarioWithSteps = Scenario & { steps: ScenarioStep[] }
 
@@ -16,11 +21,14 @@ const triggerOptions: { value: ScenarioTriggerType; label: string }[] = [
   { value: 'manual', label: '手動' },
 ]
 
-const messageTypeOptions: { value: MessageType; label: string }[] = [
-  { value: 'text', label: 'テキスト' },
-  { value: 'image', label: '画像' },
-  { value: 'flex', label: 'Flex' },
-]
+const messageTypeLabels: Record<string, string> = {
+  text: 'テキスト',
+  image: '画像',
+  image_link: '画像+リンク',
+  flex: 'Flex',
+  carousel: 'カルーセル',
+  multi: '複数吹き出し',
+}
 
 function formatDelay(minutes: number): string {
   if (minutes === 0) return '即時'
@@ -40,15 +48,13 @@ function formatDelay(minutes: number): string {
 interface StepFormState {
   stepOrder: number
   delayMinutes: number
-  messageType: MessageType
-  messageContent: string
+  messages: MessageItem[]
 }
 
 const emptyStepForm: StepFormState = {
   stepOrder: 1,
   delayMinutes: 0,
-  messageType: 'text',
-  messageContent: '',
+  messages: [{ type: 'text', content: '' }],
 }
 
 function FlexPreview({ content }: { content: string }) {
@@ -153,8 +159,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
     setStepForm({
       stepOrder: step.stepOrder,
       delayMinutes: step.delayMinutes,
-      messageType: step.messageType,
-      messageContent: step.messageContent,
+      messages: parseMessages(step.messageType, step.messageContent),
     })
     setEditingStepId(step.id)
     setShowStepForm(true)
@@ -162,19 +167,21 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
   }
 
   const handleSaveStep = async () => {
-    if (!stepForm.messageContent.trim()) {
+    const hasContent = stepForm.messages.some((m) => m.content.trim())
+    if (!hasContent) {
       setStepError('メッセージ内容を入力してください')
       return
     }
     setStepSaving(true)
     setStepError('')
     try {
+      const { messageType, messageContent } = serializeMessages(stepForm.messages)
       if (editingStepId) {
         const res = await api.scenarios.updateStep(id, editingStepId, {
           stepOrder: stepForm.stepOrder,
           delayMinutes: stepForm.delayMinutes,
-          messageType: stepForm.messageType,
-          messageContent: stepForm.messageContent,
+          messageType: messageType as MessageType,
+          messageContent,
         })
         if (!res.success) {
           setStepError(res.error)
@@ -184,8 +191,8 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
         const res = await api.scenarios.addStep(id, {
           stepOrder: stepForm.stepOrder,
           delayMinutes: stepForm.delayMinutes,
-          messageType: stepForm.messageType,
-          messageContent: stepForm.messageContent,
+          messageType: messageType as MessageType,
+          messageContent,
         })
         if (!res.success) {
           setStepError(res.error)
@@ -404,25 +411,10 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">メッセージタイプ</label>
-                <select
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-                  value={stepForm.messageType}
-                  onChange={(e) => setStepForm({ ...stepForm, messageType: e.target.value as MessageType })}
-                >
-                  {messageTypeOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容 <span className="text-red-500">*</span></label>
-                <textarea
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                  rows={4}
-                  placeholder="メッセージ内容を入力..."
-                  value={stepForm.messageContent}
-                  onChange={(e) => setStepForm({ ...stepForm, messageContent: e.target.value })}
+                <MultiMessageEditor
+                  messages={stepForm.messages}
+                  onChange={(messages) => setStepForm({ ...stepForm, messages })}
                 />
               </div>
 
@@ -474,18 +466,36 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                         <span className="text-xs text-gray-500">{formatDelay(step.delayMinutes)}</span>
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                           step.messageType === 'text' ? 'bg-blue-50 text-blue-600' :
-                          step.messageType === 'image' ? 'bg-purple-50 text-purple-600' :
+                          step.messageType === 'image' || step.messageType === 'image_link' ? 'bg-purple-50 text-purple-600' :
+                          step.messageType === 'multi' ? 'bg-green-50 text-green-600' :
                           'bg-orange-50 text-orange-600'
                         }`}>
-                          {messageTypeOptions.find(o => o.value === step.messageType)?.label ?? step.messageType}
+                          {messageTypeLabels[step.messageType] ?? step.messageType}
                         </span>
                       </div>
                       <div className="text-sm text-gray-700 bg-gray-50 rounded-md px-3 py-2">
-                        {step.messageType === 'text' ? (
+                        {step.messageType === 'multi' ? (
+                          <div className="space-y-2">
+                            {parseMessages(step.messageType, step.messageContent).map((m, mi) => (
+                              <div key={mi} className="border-l-2 border-green-300 pl-2">
+                                <span className="text-xs text-gray-400">{messageTypeLabels[m.type] ?? m.type}</span>
+                                {m.type === 'text' ? (
+                                  <p className="whitespace-pre-wrap break-words text-xs">{m.content}</p>
+                                ) : m.type === 'flex' ? (
+                                  <FlexPreview content={m.content} />
+                                ) : m.type === 'image' || m.type === 'image_link' ? (
+                                  <ImagePreview content={m.content} />
+                                ) : (
+                                  <p className="whitespace-pre-wrap break-words text-xs">{m.content}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : step.messageType === 'text' ? (
                           <p className="whitespace-pre-wrap break-words">{step.messageContent}</p>
                         ) : step.messageType === 'flex' ? (
                           <FlexPreview content={step.messageContent} />
-                        ) : step.messageType === 'image' ? (
+                        ) : step.messageType === 'image' || step.messageType === 'image_link' ? (
                           <ImagePreview content={step.messageContent} />
                         ) : (
                           <p className="whitespace-pre-wrap break-words">{step.messageContent}</p>

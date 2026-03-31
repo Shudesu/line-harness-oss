@@ -8,7 +8,18 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [checked, setChecked] = useState(false)
 
   useEffect(() => {
+    // Auto-auth: if env key is set and localStorage is empty, auto-login
+    const autoKey = process.env.NEXT_PUBLIC_AUTO_AUTH_KEY
+    if (autoKey && !localStorage.getItem('lh_api_key')) {
+      localStorage.setItem('lh_api_key', autoKey)
+    }
+
     if (pathname === '/login') {
+      // If auto-auth is configured, skip login page
+      if (autoKey && localStorage.getItem('lh_api_key')) {
+        router.replace('/')
+        return
+      }
       setChecked(true)
       return
     }
