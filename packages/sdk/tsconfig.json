@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
+    "lib": ["ES2022", "DOM"],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true

@@ -7,6 +7,44 @@ import type { StaffMember } from '@line-crm/shared'
 
 type NewApiKey = { apiKey: string; staffId: string }
 
+// Fixx Scheduler integration
+const SCHEDULER_SUPABASE_URL = 'https://uilthhwvatyrbwbhxbbu.supabase.co'
+const SCHEDULER_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVpbHRoaHd2YXR5cmJ3Ymh4YmJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2MDkzODcsImV4cCI6MjA4NzE4NTM4N30.IOHvxn7VA3fUiEn6mPyYh_yUaNcpkQyirA9S6khMMNA'
+
+interface SchedulerStaff {
+  id: string
+  name: string
+  calendar_id: string
+  is_active: boolean
+  is_fallback: boolean
+}
+
+async function fetchSchedulerStaff(): Promise<SchedulerStaff[]> {
+  const res = await fetch(
+    `${SCHEDULER_SUPABASE_URL}/rest/v1/staff_members?select=id,name,calendar_id,is_active,is_fallback`,
+    { headers: { apikey: SCHEDULER_SUPABASE_KEY, Authorization: `Bearer ${SCHEDULER_SUPABASE_KEY}` } }
+  )
+  if (!res.ok) return []
+  return res.json()
+}
+
+async function toggleSchedulerStaff(id: string, isActive: boolean): Promise<boolean> {
+  const res = await fetch(
+    `${SCHEDULER_SUPABASE_URL}/rest/v1/staff_members?id=eq.${id}`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: SCHEDULER_SUPABASE_KEY,
+        Authorization: `Bearer ${SCHEDULER_SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ is_active: isActive }),
+    }
+  )
+  return res.ok
+}
+
 function RoleBadge({ role }: { role: string }) {
   const styles =
     role === 'owner'
@@ -36,6 +74,31 @@ export default function StaffPage() {
   // New API key banner
   const [newKey, setNewKey] = useState<NewApiKey | null>(null)
   const [copied, setCopied] = useState(false)
+
+  // Scheduler staff
+  const [schedulerStaff, setSchedulerStaff] = useState<SchedulerStaff[]>([])
+  const [schedulerLoading, setSchedulerLoading] = useState<string | null>(null)
+
+  const loadSchedulerStaff = async () => {
+    const data = await fetchSchedulerStaff()
+    setSchedulerStaff(data)
+  }
+
+  useEffect(() => {
+    loadSchedulerStaff()
+  }, [])
+
+  const getSchedulerMatch = (memberEmail: string | null): SchedulerStaff | undefined => {
+    if (!memberEmail) return undefined
+    return schedulerStaff.find(s => s.calendar_id === memberEmail)
+  }
+
+  const handleToggleScheduler = async (schedulerId: string, currentActive: boolean) => {
+    setSchedulerLoading(schedulerId)
+    const ok = await toggleSchedulerStaff(schedulerId, !currentActive)
+    if (ok) await loadSchedulerStaff()
+    setSchedulerLoading(null)
+  }
 
   // Create form
   const [showForm, setShowForm] = useState(false)
@@ -283,9 +346,8 @@ export default function StaffPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">名前</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">メール</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ロール</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">APIキー</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状態</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">面談対応</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -296,40 +358,27 @@ export default function StaffPage() {
                   <td className="px-4 py-3">
                     <RoleBadge role={member.role} />
                   </td>
-                  <td className="px-4 py-3 text-gray-400 font-mono text-xs hidden md:table-cell">
-                    {maskKey(member.apiKey ?? '')}
-                  </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center gap-1.5 text-xs ${member.isActive ? 'text-green-700' : 'text-gray-400'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${member.isActive ? 'bg-green-500' : 'bg-gray-300'}`} />
                       {member.isActive ? '有効' : '無効'}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      {member.role !== 'owner' && (
-                        <>
-                          <button
-                            onClick={() => handleToggleActive(member)}
-                            className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
-                          >
-                            {member.isActive ? '無効化' : '有効化'}
-                          </button>
-                          <button
-                            onClick={() => handleRegenerateKey(member)}
-                            className="px-2.5 py-1 text-xs font-medium text-blue-600 bg-white border border-blue-200 rounded hover:bg-blue-50 transition-colors"
-                          >
-                            キー再生成
-                          </button>
-                          <button
-                            onClick={() => handleDelete(member)}
-                            className="px-2.5 py-1 text-xs font-medium text-red-600 bg-white border border-red-200 rounded hover:bg-red-50 transition-colors"
-                          >
-                            削除
-                          </button>
-                        </>
-                      )}
-                    </div>
+                  <td className="px-4 py-3 text-center">
+                    {(() => {
+                      const match = getSchedulerMatch(member.email ?? null)
+                      if (!match) return <span className="text-xs text-gray-300">—</span>
+                      const isLoading = schedulerLoading === match.id
+                      return (
+                        <button
+                          onClick={() => handleToggleScheduler(match.id, match.is_active)}
+                          disabled={isLoading}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${match.is_active ? 'bg-green-500' : 'bg-gray-300'} ${isLoading ? 'opacity-50' : ''}`}
+                        >
+                          <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${match.is_active ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </button>
+                      )
+                    })()}
                   </td>
                 </tr>
               ))}

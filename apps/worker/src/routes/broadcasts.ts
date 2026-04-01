@@ -87,9 +87,9 @@ broadcasts.post('/api/broadcasts', async (c) => {
       );
     }
 
-    if (body.targetType === 'tag' && !body.targetTagId) {
+    if ((body.targetType === 'tag' || body.targetType === 'tag_exclude') && !body.targetTagId) {
       return c.json(
-        { success: false, error: 'targetTagId is required when targetType is "tag"' },
+        { success: false, error: 'targetTagId is required when targetType is "tag" or "tag_exclude"' },
         400,
       );
     }

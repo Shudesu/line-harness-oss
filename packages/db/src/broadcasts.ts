@@ -1,5 +1,5 @@
 import { jstNow } from './utils.js';
-export type BroadcastTargetType = 'all' | 'tag';
+export type BroadcastTargetType = 'all' | 'tag' | 'tag_exclude';
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent';
 export type BroadcastMessageType = 'text' | 'image' | 'flex';
 

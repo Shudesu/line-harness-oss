@@ -6,6 +6,7 @@ import {
   updateBroadcastStatus,
   updateBroadcastBatchProgress,
   getFriendsByTag,
+  getFriendsExcludingTag,
   jstNow,
   updateBroadcastLineRequestId,
   createBroadcastInsight,
@@ -53,12 +54,14 @@ export async function processBroadcastSend(
       // We don't have exact count for broadcast API, set as 0 (unknown)
       totalCount = 0;
       successCount = 0;
-    } else if (broadcast.target_type === 'tag') {
+    } else if (broadcast.target_type === 'tag' || broadcast.target_type === 'tag_exclude') {
       if (!broadcast.target_tag_id) {
         throw new Error('target_tag_id is required for tag-targeted broadcasts');
       }
 
-      const friends = await getFriendsByTag(db, broadcast.target_tag_id);
+      const friends = broadcast.target_type === 'tag_exclude'
+        ? await getFriendsExcludingTag(db, broadcast.target_tag_id)
+        : await getFriendsByTag(db, broadcast.target_tag_id);
       const followingFriends = friends.filter((f) => f.is_following);
       totalCount = followingFriends.length;
 

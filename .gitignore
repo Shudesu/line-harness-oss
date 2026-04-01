@@ -14,3 +14,4 @@ dist/
 apps/web/out/
 apps/worker/dist/
 .worktrees/
+.vercel

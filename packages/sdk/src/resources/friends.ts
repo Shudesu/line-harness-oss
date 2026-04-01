@@ -65,4 +65,29 @@ export class FriendsResource {
   async removeRichMenu(friendId: string): Promise<void> {
     await this.http.delete(`/api/friends/${friendId}/rich-menu`)
   }
+
+  async sync(options?: {
+    lineAccountId?: string;
+    tagNames?: string[];
+    dryRun?: boolean;
+  }): Promise<{
+    totalFollowers: number;
+    imported: number;
+    updated: number;
+    failed: number;
+    tagsApplied: string[];
+    dryRun?: boolean;
+    errors?: Array<{ userId: string; error: string }>;
+  }> {
+    const res = await this.http.post<ApiResponse<{
+      totalFollowers: number;
+      imported: number;
+      updated: number;
+      failed: number;
+      tagsApplied: string[];
+      dryRun?: boolean;
+      errors?: Array<{ userId: string; error: string }>;
+    }>>('/api/friends/sync', options ?? {})
+    return res.data
+  }
 }

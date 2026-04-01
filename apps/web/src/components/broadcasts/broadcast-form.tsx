@@ -18,12 +18,15 @@ const messageTypeLabels: Record<ApiBroadcast['messageType'], string> = {
   flex: 'Flexメッセージ',
 }
 
+type TagMode = 'include' | 'exclude'
+
 interface FormState {
   title: string
   messageType: ApiBroadcast['messageType']
   messageContent: string
   targetType: ApiBroadcast['targetType']
   targetTagId: string
+  tagMode: TagMode
   scheduledAt: string
   sendNow: boolean
 }
@@ -36,6 +39,7 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
     messageContent: '',
     targetType: 'all',
     targetTagId: '',
+    tagMode: 'include' as TagMode,
     scheduledAt: '',
     sendNow: true,
   })
@@ -60,7 +64,7 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
         title: form.title,
         messageType: form.messageType,
         messageContent: form.messageContent,
-        targetType: form.targetType,
+        targetType: form.targetType === 'tag' && form.tagMode === 'exclude' ? 'tag_exclude' : form.targetType,
         targetTagId: form.targetType === 'tag' ? form.targetTagId || null : null,
         status: 'draft',
         lineAccountId: selectedAccountId || null,
@@ -223,16 +227,47 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
             </button>
           </div>
           {form.targetType === 'tag' && (
-            <select
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-              value={form.targetTagId}
-              onChange={(e) => setForm({ ...form, targetTagId: e.target.value })}
-            >
-              <option value="">タグを選択...</option>
-              {tags.map((tag) => (
-                <option key={tag.id} value={tag.id}>{tag.name}</option>
-              ))}
-            </select>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, tagMode: 'include' })}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                    form.tagMode === 'include'
+                      ? 'border-blue-500 text-blue-700 bg-blue-50'
+                      : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
+                  }`}
+                >
+                  タグを含む
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, tagMode: 'exclude' })}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                    form.tagMode === 'exclude'
+                      ? 'border-red-500 text-red-700 bg-red-50'
+                      : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
+                  }`}
+                >
+                  タグを除く
+                </button>
+              </div>
+              <select
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                value={form.targetTagId}
+                onChange={(e) => setForm({ ...form, targetTagId: e.target.value })}
+              >
+                <option value="">タグを選択...</option>
+                {tags.map((tag) => (
+                  <option key={tag.id} value={tag.id}>{tag.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400">
+                {form.tagMode === 'include'
+                  ? '選択したタグが付いている友だちに配信'
+                  : '選択したタグが付いている友だちを除外して配信'}
+              </p>
+            </div>
           )}
         </div>
 

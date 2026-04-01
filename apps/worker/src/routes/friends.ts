@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
   getFriends,
   getFriendById,
+  getFriendByLineUserId,
   getFriendCount,
   addTagToFriend,
   removeTagFromFriend,
@@ -323,9 +324,10 @@ friends.get('/api/friends/:id/messages', async (c) => {
 });
 
 // POST /api/friends/:id/messages - send message to friend
+// :id can be a Harness internal ID (UUID) or LINE user ID (starts with U)
 friends.post('/api/friends/:id/messages', async (c) => {
   try {
-    const friendId = c.req.param('id');
+    const idParam = c.req.param('id');
     const body = await c.req.json<{
       messageType?: string;
       content: string;
@@ -337,7 +339,11 @@ friends.post('/api/friends/:id/messages', async (c) => {
     }
 
     const db = c.env.DB;
-    const friend = await getFriendById(db, friendId);
+    // Support both Harness UUID and LINE user ID (starts with U + 32 hex chars)
+    let friend = await getFriendById(db, idParam);
+    if (!friend && idParam.startsWith('U') && idParam.length === 33) {
+      friend = await getFriendByLineUserId(db, idParam);
+    }
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }

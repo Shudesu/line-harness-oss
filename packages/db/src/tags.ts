@@ -113,3 +113,21 @@ export async function getFriendsByTag(
     .all<Friend>();
   return result.results;
 }
+
+export async function getFriendsExcludingTag(
+  db: D1Database,
+  tagId: string,
+): Promise<Friend[]> {
+  const result = await db
+    .prepare(
+      `SELECT f.*
+       FROM friends f
+       WHERE f.id NOT IN (
+         SELECT ft.friend_id FROM friend_tags ft WHERE ft.tag_id = ?
+       )
+       ORDER BY f.created_at DESC`,
+    )
+    .bind(tagId)
+    .all<Friend>();
+  return result.results;
+}

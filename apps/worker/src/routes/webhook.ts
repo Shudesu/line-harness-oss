@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { verifySignature, LineClient } from '@line-crm/line-sdk';
-import type { WebhookRequestBody, WebhookEvent, TextEventMessage } from '@line-crm/line-sdk';
+import type { WebhookRequestBody, WebhookEvent, TextEventMessage, PostbackEvent } from '@line-crm/line-sdk';
 import {
   upsertFriend,
   updateFriendFollowStatus,
@@ -497,6 +497,130 @@ async function handleEvent(
       replyToken: replyTokenConsumed ? undefined : event.replyToken,
     }, lineAccessToken, lineAccountId);
 
+    return;
+  }
+
+  if (event.type === 'postback') {
+    const postbackEvent = event as PostbackEvent;
+    const userId = event.source.type === 'user' ? event.source.userId : undefined;
+    if (!userId) return;
+
+    const friend = await getFriendByLineUserId(db, userId);
+    if (!friend) return;
+
+    await handleHearingPostback(db, lineClient, postbackEvent, friend);
+    return;
+  }
+}
+
+const REGION_PREFECTURES: Record<string, string[]> = {
+  '北海道・東北': ['北海道', '青森', '岩手', '宮城', '秋田', '山形', '福島'],
+  '関東': ['東京', '神奈川', '埼玉', '千葉', '茨城', '栃木', '群馬'],
+  '北陸・甲信越': ['新潟', '富山', '石川', '福井', '山梨', '長野'],
+  '東海': ['愛知', '岐阜', '静岡', '三重'],
+  '関西': ['大阪', '京都', '兵庫', '奈良', '滋賀', '和歌山'],
+  '中国・四国': ['鳥取', '島根', '岡山', '広島', '山口', '徳島', '香川', '愛媛', '高知'],
+  '九州・沖縄': ['福岡', '佐賀', '長崎', '熊本', '大分', '宮崎', '鹿児島', '沖縄'],
+};
+
+async function handleHearingPostback(
+  db: D1Database,
+  lineClient: LineClient,
+  event: PostbackEvent,
+  friend: { id: string; metadata: string },
+): Promise<void> {
+  const data = event.postback.data;
+
+  if (data.startsWith('region=')) {
+    const region = data.slice('region='.length);
+    const prefectures = REGION_PREFECTURES[region];
+    if (!prefectures) return;
+
+    // Build prefecture buttons in rows of 3
+    const rows = [];
+    for (let i = 0; i < prefectures.length; i += 3) {
+      const chunk = prefectures.slice(i, i + 3);
+      rows.push({
+        type: 'box', layout: 'horizontal', margin: 'sm', spacing: 'sm',
+        contents: chunk.map(pref => ({
+          type: 'button',
+          action: { type: 'postback', label: pref, data: `area=${pref}`, displayText: pref },
+          style: 'secondary' as const,
+          height: 'sm',
+          flex: 1,
+        })),
+      });
+    }
+
+    const flex = {
+      type: 'bubble',
+      body: {
+        type: 'box', layout: 'vertical', paddingAll: '20px',
+        contents: [
+          { type: 'text', text: `${region}の都道府県を選択`, weight: 'bold', size: 'sm', color: '#1E293B' },
+          ...rows,
+        ],
+      },
+    };
+
+    await lineClient.replyMessage(event.replyToken, [
+      buildMessage('flex', JSON.stringify(flex)),
+    ]);
+    return;
+  }
+
+  if (data.startsWith('area=')) {
+    const area = data.slice('area='.length);
+    const meta = JSON.parse(friend.metadata || '{}');
+    const updatedMeta = { ...meta, area };
+    await db.prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(updatedMeta), jstNow(), friend.id).run();
+
+    // Send qualification question as next step
+    const qualFlex = {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'vertical',
+        contents: [
+          { type: 'text', text: `活動エリア：${area} ✓`, size: 'sm', color: '#22C55E', weight: 'bold' },
+        ],
+        paddingAll: '16px', backgroundColor: '#F0FDF4',
+      },
+      body: {
+        type: 'box', layout: 'vertical', paddingAll: '20px',
+        contents: [
+          { type: 'text', text: '整備士資格を教えてください', weight: 'bold', size: 'sm', color: '#1E293B' },
+          {
+            type: 'box', layout: 'horizontal', margin: 'md', spacing: 'sm',
+            contents: ['1級', '2級', '3級', 'なし'].map(q => ({
+              type: 'button',
+              action: { type: 'postback', label: q, data: `qual=${q}`, displayText: q },
+              style: 'secondary' as const,
+              height: 'sm',
+              flex: 1,
+            })),
+          },
+        ],
+      },
+    };
+
+    await lineClient.replyMessage(event.replyToken, [
+      buildMessage('flex', JSON.stringify(qualFlex)),
+    ]);
+    return;
+  }
+
+  if (data.startsWith('qual=')) {
+    const qual = data.slice('qual='.length);
+    const meta = JSON.parse(friend.metadata || '{}');
+    const updatedMeta = { ...meta, qual };
+    await db.prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(updatedMeta), jstNow(), friend.id).run();
+
+    // Qualification is always the last step (after area), so send thank you
+    await lineClient.replyMessage(event.replyToken, [
+      buildMessage('text', `整備士資格：${qual} で承りました✓\n\nご回答ありがとうございました！面談でお会いできるのを楽しみにしています 🙌`),
+    ]);
     return;
   }
 }
