@@ -7,7 +7,8 @@ import {
   getFriendById,
   jstNow,
 } from '@line-crm/db';
-import type { LineClient } from '@line-crm/line-sdk';
+import type { FriendScenarioDue } from '@line-crm/db';
+import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 
@@ -71,6 +72,7 @@ export async function processStepDeliveries(
   db: D1Database,
   lineClient: LineClient,
   workerUrl?: string,
+  accountTokenMap?: Map<string | null, string>,
 ): Promise<void> {
   // Skip delivery outside 9:00-23:00 JST window
   const jstHour = new Date(Date.now() + 9 * 60 * 60_000).getUTCHours();
@@ -86,7 +88,7 @@ export async function processStepDeliveries(
       if (i > 0) {
         await sleep(addJitter(50, 200));
       }
-      await processSingleDelivery(db, lineClient, fs, workerUrl);
+      await processSingleDelivery(db, lineClient, fs, workerUrl, accountTokenMap);
     } catch (err) {
       console.error(`Error processing friend_scenario ${fs.id}:`, err);
       // Continue with next one
@@ -97,16 +99,26 @@ export async function processStepDeliveries(
 async function processSingleDelivery(
   db: D1Database,
   lineClient: LineClient,
-  fs: {
-    id: string;
-    friend_id: string;
-    scenario_id: string;
-    current_step_order: number;
-    status: string;
-    next_delivery_at: string | null;
-  },
+  fs: FriendScenarioDue,
   workerUrl?: string,
+  accountTokenMap?: Map<string | null, string>,
 ): Promise<void> {
+  const claimed = await db
+    .prepare(
+      `UPDATE friend_scenarios
+       SET next_delivery_at = NULL
+       WHERE id = ?
+         AND next_delivery_at IS NOT NULL`,
+    )
+    .bind(fs.id)
+    .run();
+  if (claimed.meta.changes === 0) {
+    return;
+  }
+
+  const effectiveToken = accountTokenMap?.get(fs.line_account_id) ?? accountTokenMap?.get(null);
+  const effectiveClient = effectiveToken ? new LineClient(effectiveToken) : lineClient;
+
   // Get friend first to read preferred delivery hour from metadata
   const friend = await getFriendById(db, fs.friend_id);
   if (!friend || !friend.is_following) {
@@ -174,7 +186,7 @@ async function processSingleDelivery(
     trackedContent = tracked.content;
   }
   const message = buildMessage(trackedType, trackedContent);
-  await lineClient.pushMessage(friend.line_user_id, [message]);
+  await effectiveClient.pushMessage(friend.line_user_id, [message]);
 
   // Log outgoing message
   const logId = crypto.randomUUID();

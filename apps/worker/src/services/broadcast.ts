@@ -19,8 +19,22 @@ export async function processBroadcastSend(
   broadcastId: string,
   workerUrl?: string,
 ): Promise<Broadcast> {
-  // Mark as sending
-  await updateBroadcastStatus(db, broadcastId, 'sending');
+  const claimed = await db
+    .prepare(
+      `UPDATE broadcasts
+       SET status = 'sending'
+       WHERE id = ?
+         AND status IN ('draft', 'scheduled')`,
+    )
+    .bind(broadcastId)
+    .run();
+  if (claimed.meta.changes === 0) {
+    const existingBroadcast = await getBroadcastById(db, broadcastId);
+    if (!existingBroadcast) {
+      throw new Error(`Broadcast ${broadcastId} not found`);
+    }
+    return existingBroadcast;
+  }
 
   const broadcast = await getBroadcastById(db, broadcastId);
   if (!broadcast) {

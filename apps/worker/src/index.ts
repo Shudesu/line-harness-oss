@@ -143,28 +143,21 @@ async function scheduled(
 ): Promise<void> {
   // Get all active accounts from DB, plus the default env account
   const dbAccounts = await getLineAccounts(env.DB);
-  const activeTokens = new Set<string>();
-
-  // Default account from env
-  activeTokens.add(env.LINE_CHANNEL_ACCESS_TOKEN);
-
-  // DB accounts
+  const accountTokenMap = new Map<string | null, string>();
+  accountTokenMap.set(null, env.LINE_CHANNEL_ACCESS_TOKEN);
   for (const account of dbAccounts) {
     if (account.is_active) {
-      activeTokens.add(account.channel_access_token);
+      accountTokenMap.set(account.id, account.channel_access_token);
     }
   }
 
-  // Run delivery for each account
+  const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
   const jobs = [];
-  for (const token of activeTokens) {
-    const lineClient = new LineClient(token);
-    jobs.push(
-      processStepDeliveries(env.DB, lineClient, env.WORKER_URL),
-      processScheduledBroadcasts(env.DB, lineClient, env.WORKER_URL),
-      processReminderDeliveries(env.DB, lineClient),
-    );
-  }
+  jobs.push(
+    processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL, accountTokenMap),
+    processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
+    processReminderDeliveries(env.DB, defaultLineClient),
+  );
   jobs.push(checkAccountHealth(env.DB));
 
   await Promise.allSettled(jobs);

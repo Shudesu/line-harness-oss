@@ -43,6 +43,8 @@ export interface FriendScenario {
   updated_at: string;
 }
 
+export type FriendScenarioDue = FriendScenario & { line_account_id: string | null };
+
 // ============================================================
 // Scenario CRUD
 // ============================================================
@@ -360,16 +362,18 @@ export async function enrollFriendInScenario(
 export async function getFriendScenariosDueForDelivery(
   db: D1Database,
   now: string,
-): Promise<FriendScenario[]> {
+): Promise<FriendScenarioDue[]> {
   // Fetch all active scenarios with a delivery time, then filter by epoch comparison
   // to handle mixed timestamp formats (Z and +09:00) during migration
   const result = await db
     .prepare(
-      `SELECT * FROM friend_scenarios
-       WHERE status = 'active'
+      `SELECT fs.*, s.line_account_id
+       FROM friend_scenarios fs
+       JOIN scenarios s ON s.id = fs.scenario_id
+       WHERE fs.status = 'active'
          AND next_delivery_at IS NOT NULL`,
     )
-    .all<FriendScenario>();
+    .all<FriendScenarioDue>();
   const nowMs = new Date(now).getTime();
   return result.results
     .filter((fs) => new Date(fs.next_delivery_at!).getTime() <= nowMs)
