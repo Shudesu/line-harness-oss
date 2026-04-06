@@ -160,4 +160,9 @@ async function scheduled(
 export default {
   fetch: app.fetch,
   scheduled,
+  // Queue consumer — no-op (legacy binding, queue no longer used)
+  async queue(_batch: MessageBatch, _env: Env["Bindings"]): Promise<void> {
+    // Previously used for mizukagami session processing.
+    // Now handled synchronously in the fetch handler.
+  },
 };
