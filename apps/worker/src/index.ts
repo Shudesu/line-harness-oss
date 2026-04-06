@@ -32,6 +32,7 @@ import { automations } from "./routes/automations.js";
 import { richMenus } from "./routes/rich-menus.js";
 import { trackedLinks } from "./routes/tracked-links.js";
 import { forms } from "./routes/forms.js";
+import { handleMizukagamiQueue } from "./queue-consumer.js";
 
 export type Env = {
   Bindings: {
@@ -46,6 +47,8 @@ export type Env = {
     WORKER_URL: string;
     SAP_API_URL: string;
     SAP_API_KEY: string;
+    VERCEL_PROTECTION_BYPASS: string;
+    MIZUKAGAMI_QUEUE: Queue;
   };
 };
 
@@ -160,9 +163,5 @@ async function scheduled(
 export default {
   fetch: app.fetch,
   scheduled,
-  // Queue consumer — no-op (legacy binding, queue no longer used)
-  async queue(_batch: MessageBatch, _env: Env["Bindings"]): Promise<void> {
-    // Previously used for mizukagami session processing.
-    // Now handled synchronously in the fetch handler.
-  },
+  queue: handleMizukagamiQueue,
 };

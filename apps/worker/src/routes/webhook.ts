@@ -87,6 +87,8 @@ webhook.post("/webhook", async (c) => {
           c.env.WORKER_URL || new URL(c.req.url).origin,
           c.env.SAP_API_URL,
           c.env.SAP_API_KEY,
+          c.env.VERCEL_PROTECTION_BYPASS,
+          c.env.MIZUKAGAMI_QUEUE,
         );
       } catch (err) {
         console.error("Error handling webhook event:", err);
@@ -108,6 +110,8 @@ async function handleEvent(
   workerUrl?: string,
   sapApiUrl?: string,
   sapApiKey?: string,
+  vercelBypass?: string,
+  mizukagamiQueue?: Queue,
 ): Promise<void> {
   if (event.type === "follow") {
     const userId =
@@ -300,12 +304,15 @@ async function handleEvent(
     // MIZUKAGAMI Mirror Session — 水鏡v2対話フロー（最優先で処理）
     if (sapApiUrl && sapApiKey) {
       const mizuResult = await handleMizukagami(
+        db,
         lineClient,
         userId,
         incomingText,
         event.replyToken,
         sapApiUrl,
         sapApiKey,
+        vercelBypass,
+        mizukagamiQueue,
       );
       if (mizuResult.handled) {
         // 水鏡セッションで処理済み — 他のハンドラーをスキップ
