@@ -82,6 +82,15 @@ interface DiagnosisApiResponse {
     string,
     { tradition: string; weight: number; data: Record<string, unknown> }
   >;
+  soulMatch: {
+    soulNo: number;
+    soulName: string;
+    primarySpiral: string;
+    secondarySystem: string;
+    manifestation: string;
+    confidence: number;
+    matchType: string;
+  } | null;
 }
 
 interface MirrorSessionStatusResponse {
@@ -850,6 +859,18 @@ export async function handleMizukagami(
           description: "",
         },
         calculatorDetails: diagResult.calculatorDetails,
+        ...(diagResult.soulMatch
+          ? {
+              soulMatch: {
+                soulNo: diagResult.soulMatch.soulNo,
+                soulName: diagResult.soulMatch.soulName,
+                soulNameReading: "",
+                innateSpiral: diagResult.soulMatch.primarySpiral,
+                acquiredSystem: diagResult.soulMatch.secondarySystem,
+                manifestedWisdom: diagResult.soulMatch.manifestation,
+              },
+            }
+          : {}),
       };
       const calcSummary = buildCalculatorSummary(diagResult.calculatorDetails);
 
