@@ -14,5 +14,15 @@ binding = "DB"
 database_name = "line-crm"
 database_id = "f6958f40-8b53-4ec3-ba1b-08fc00fcb669"
 
+[[queues.producers]]
+queue = "mizukagami-processing"
+binding = "MIZUKAGAMI_QUEUE"
+
+[[queues.consumers]]
+queue = "mizukagami-processing"
+max_batch_size = 1
+max_retries = 2
+max_batch_timeout = 5
+
 [triggers]
 crons = ["*/5 * * * *"]
