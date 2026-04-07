@@ -609,12 +609,12 @@ export function buildBridgeMessages(
   if (soulName) {
     messages.push({
       type: "text",
-      text: `216のアーキタイプから、あなたの魂を照合しています...\n「${soulName}」の共鳴を感じます。`,
+      text: `216のアーキタイプから、あなたの魂を照合しています...\n「${soulName}」の共鳴を感じます。\n\nカード生成に約1分ほどお待ちください。`,
     });
   } else {
     messages.push({
       type: "text",
-      text: "あなたの水面に映る叡智を、一枚のカードに紡いでいます...",
+      text: "あなたの水面に映る叡智を、一枚のカードに紡いでいます...\n\nカード生成に約1分ほどお待ちください。",
     });
   }
 
@@ -910,6 +910,9 @@ export async function handleMizukagami(
           description: "",
         },
         calculatorDetails: diagResult.calculatorDetails,
+        ...(diagResult.diagnosis.innate.nasaPrecision
+          ? { nasaPrecision: diagResult.diagnosis.innate.nasaPrecision }
+          : {}),
         ...(diagResult.soulMatch
           ? {
               soulMatch: {
