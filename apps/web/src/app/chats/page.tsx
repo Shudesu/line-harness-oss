@@ -108,6 +108,8 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   const [sending, setSending] = useState(false)
   const [messages, setMessages] = useState<MessageLog[]>([])
   const [loadingMessages, setLoadingMessages] = useState(true)
+  const isComposingRef = useRef(false)
+  const sendLockRef = useRef(false)
 
   useEffect(() => {
     const loadMessages = async () => {
@@ -124,7 +126,8 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   }, [friendId])
 
   const handleSend = async () => {
-    if (!message.trim() || sending) return
+    if (!message.trim() || sending || sendLockRef.current) return
+    sendLockRef.current = true
     setSending(true)
     try {
       await fetchApi(`/api/friends/${friendId}/messages`, {
@@ -141,6 +144,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
       setMessage('')
     } catch { /* silent */ }
     setSending(false)
+    sendLockRef.current = false
   }
 
   function renderContent(msg: MessageLog) {
@@ -218,7 +222,16 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+            onCompositionStart={() => { isComposingRef.current = true }}
+            onCompositionEnd={() => { isComposingRef.current = false }}
+            onKeyDown={(e) => {
+              // IME変換確定のEnterでは送信しない
+              if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) return
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
             placeholder="メッセージを入力..."
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
           />
@@ -249,12 +262,14 @@ export default function ChatsPage() {
   const [error, setError] = useState('')
   const [messageContent, setMessageContent] = useState('')
   const [sending, setSending] = useState(false)
+  const sendLockRef = useRef(false)
   const [notes, setNotes] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false)
   const [loadingSeconds, setLoadingSeconds] = useState(5)
   const lastLoadingTriggerAtRef = useRef<Record<string, number>>({})
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false)
+  const isComposingRef = useRef(false)
 
   useEffect(() => {
     try {
@@ -355,7 +370,8 @@ export default function ChatsPage() {
   }, [showLoadingIndicator, loadingSeconds])
 
   const handleSendMessage = async () => {
-    if (!selectedChatId || !messageContent.trim()) return
+    if (!selectedChatId || !messageContent.trim() || sending || sendLockRef.current) return
+    sendLockRef.current = true
     setSending(true)
     try {
       await api.chats.send(selectedChatId, {
@@ -368,6 +384,7 @@ export default function ChatsPage() {
       setError('メッセージの送信に失敗しました。')
     } finally {
       setSending(false)
+      sendLockRef.current = false
     }
   }
 
@@ -396,6 +413,8 @@ export default function ChatsPage() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // IME変換確定のEnterでは送信しない
+    if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
@@ -683,6 +702,8 @@ export default function ChatsPage() {
                         void triggerLoadingAnimation(selectedChatId)
                       }
                     }}
+                    onCompositionStart={() => { isComposingRef.current = true }}
+                    onCompositionEnd={() => { isComposingRef.current = false }}
                     onFocus={() => {
                       setIsMessageInputFocused(true)
                       if (selectedChatId) {
