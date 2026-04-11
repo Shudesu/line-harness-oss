@@ -7,7 +7,7 @@ workers_dev = true
 # デフォルト = テスト環境 (noda@)
 # 使い方: npx wrangler deploy
 # ═══════════════════════════════════════════════════════════════
-account_id = "YOUR_DEV_ACCOUNT_ID"
+account_id = "c4d92c479a309c53bf05082a7e938bd1"
 
 [assets]
 directory = "dist/client"
@@ -31,7 +31,7 @@ crons = ["*/5 * * * *"]
 # D1:     npx wrangler d1 execute line-crm --env production --remote --file ...
 # ═══════════════════════════════════════════════════════════════
 [env.production]
-account_id = "YOUR_ACCOUNT_ID"
+account_id = "c4d92c479a309c53bf05082a7e938bd1"
 
 [env.production.assets]
 directory = "dist/client"
@@ -41,6 +41,7 @@ binding = "ASSETS"
 binding = "DB"
 database_name = "line-crm"
 database_id = "f6958f40-8b53-4ec3-ba1b-08fc00fcb669"
+migrations_dir = "../../packages/db/migrations"
 
 
 [[env.production.r2_buckets]]
