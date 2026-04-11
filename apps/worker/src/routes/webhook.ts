@@ -20,10 +20,6 @@ import {
 } from "@line-crm/db";
 import { fireEvent } from "../services/event-bus.js";
 import { buildMessage, expandVariables } from "../services/step-delivery.js";
-import {
-  handleMizukagami,
-  isMizukagamiTrigger,
-} from "../services/mizukagami.js";
 import type { Env } from "../index.js";
 
 const webhook = new Hono<Env>();
@@ -88,7 +84,8 @@ webhook.post("/webhook", async (c) => {
           c.env.SAP_API_URL,
           c.env.SAP_API_KEY,
           c.env.VERCEL_PROTECTION_BYPASS,
-          c.env.MIZUKAGAMI_QUEUE,
+          c.env.MIZUKAGAMI_WORKER_URL,
+          c.env.MIZUKAGAMI_API_KEY,
         );
       } catch (err) {
         console.error("Error handling webhook event:", err);
@@ -111,7 +108,8 @@ async function handleEvent(
   sapApiUrl?: string,
   sapApiKey?: string,
   vercelBypass?: string,
-  mizukagamiQueue?: Queue,
+  mizukagamiWorkerUrl?: string,
+  mizukagamiApiKey?: string,
 ): Promise<void> {
   if (event.type === "follow") {
     const userId =
@@ -301,36 +299,44 @@ async function handleEvent(
       .bind(logId, friend.id, incomingText, now)
       .run();
 
-    // MIZUKAGAMI Mirror Session — 水鏡v2対話フロー（最優先で処理）
-    if (sapApiUrl && sapApiKey) {
-      const mizuResult = await handleMizukagami(
-        db,
-        lineClient,
-        userId,
-        incomingText,
-        event.replyToken,
-        sapApiUrl,
-        sapApiKey,
-        vercelBypass,
-        mizukagamiQueue,
-      );
-      if (mizuResult.handled) {
-        // 水鏡セッションで処理済み — 他のハンドラーをスキップ
-        await fireEvent(
-          db,
-          "message_received",
-          {
-            friendId: friend.id,
-            eventData: {
-              text: incomingText,
-              matched: true,
-              handler: "mizukagami",
-            },
+    // MIZUKAGAMI Mirror Session — 水鏡 Worker に転送（最優先で処理）
+    if (mizukagamiWorkerUrl && mizukagamiApiKey) {
+      try {
+        const mizuRes = await fetch(`${mizukagamiWorkerUrl}/handle`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${mizukagamiApiKey}`,
           },
-          lineAccessToken,
-          lineAccountId,
-        );
-        return;
+          body: JSON.stringify({
+            userId,
+            text: incomingText,
+            lineAccessToken,
+          }),
+        });
+        if (mizuRes.ok) {
+          const mizuResult = await mizuRes.json<{ handled: boolean }>();
+          if (mizuResult.handled) {
+            await fireEvent(
+              db,
+              "message_received",
+              {
+                friendId: friend.id,
+                eventData: {
+                  text: incomingText,
+                  matched: true,
+                  handler: "mizukagami",
+                },
+              },
+              lineAccessToken,
+              lineAccountId,
+            );
+            return;
+          }
+        }
+      } catch (err) {
+        console.error("[webhook] Mizukagami Worker 呼び出し失敗:", err);
+        // 失敗時は通常フローにフォールスルー
       }
     }
 
