@@ -57,6 +57,25 @@ export type Env = {
 
 const app = new Hono<Env>();
 
+type DeliveryProcessResult = { processed: number; failed: number; errors: string[] };
+
+function formatScheduledError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function deliveryResultFromSettled(
+  label: string,
+  settled: PromiseSettledResult<DeliveryProcessResult>,
+): DeliveryProcessResult {
+  if (settled.status === 'fulfilled') return settled.value;
+  return {
+    processed: 0,
+    failed: 1,
+    errors: [`${label}: ${formatScheduledError(settled.reason)}`],
+  };
+}
+
 // CORS — allow all origins for MVP
 app.use('*', cors({ origin: '*' }));
 
@@ -152,15 +171,30 @@ async function scheduled(
   }
 
   const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN, env.DB, { autoLog: false });
-  const jobs = [];
-  jobs.push(
+  const jobs = [
     processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL, accountTokenMap),
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
     processReminderDeliveries(env.DB, defaultLineClient),
-  );
-  jobs.push(checkAccountHealth(env.DB));
+    checkAccountHealth(env.DB),
+  ] as const;
 
-  await Promise.allSettled(jobs);
+  const [stepJob, broadcastJob, reminderJob, healthJob] = await Promise.allSettled(jobs);
+  const stepResult = deliveryResultFromSettled('steps', stepJob);
+  const broadcastResult = deliveryResultFromSettled('broadcasts', broadcastJob);
+  const reminderResult = deliveryResultFromSettled('reminders', reminderJob);
+
+  console.log(
+    `[scheduled] summary: steps=${stepResult.processed}/${stepResult.failed}, reminders=${reminderResult.processed}/${reminderResult.failed}, broadcasts=${broadcastResult.processed}/${broadcastResult.failed}, health=ok`,
+  );
+
+  const errors = [...stepResult.errors, ...reminderResult.errors, ...broadcastResult.errors];
+  if (stepResult.failed > 0 || reminderResult.failed > 0 || broadcastResult.failed > 0) {
+    console.error('[scheduled] errors:', errors);
+  }
+
+  if (healthJob.status === 'rejected') {
+    console.error('[scheduled] health errors:', [`health: ${formatScheduledError(healthJob.reason)}`]);
+  }
 }
 
 export default {

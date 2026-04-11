@@ -18,10 +18,18 @@ import { computeMessageContentHash } from '@line-crm/line-sdk';
 import type { LineClient, Message } from '@line-crm/line-sdk';
 import { addJitter, sleep } from './stealth.js';
 
+type DeliveryProcessResult = { processed: number; failed: number; errors: string[] };
+
+function formatDeliveryError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 export async function processReminderDeliveries(
   db: D1Database,
   lineClient: LineClient,
-): Promise<void> {
+): Promise<DeliveryProcessResult> {
+  const result: DeliveryProcessResult = { processed: 0, failed: 0, errors: [] };
   const now = jstNow();
   const dueReminders = await getDueReminderDeliveries(db, now);
 
@@ -36,6 +44,7 @@ export async function processReminderDeliveries(
       const friend = await getFriendById(db, fr.friend_id);
       if (!friend || !friend.is_following) {
         // フォロー解除済み — スキップ
+        result.processed += 1;
         continue;
       }
 
@@ -62,10 +71,15 @@ export async function processReminderDeliveries(
 
       // 全ステップ配信済みかチェック
       await completeReminderIfDone(db, fr.id, fr.reminder_id);
+      result.processed += 1;
     } catch (err) {
       console.error(`リマインダ配信エラー (friend_reminder ${fr.id}):`, err);
+      result.failed += 1;
+      result.errors.push(`リマインダ配信エラー (friend_reminder ${fr.id}): ${formatDeliveryError(err)}`);
     }
   }
+
+  return result;
 }
 
 function buildMessage(messageType: string, messageContent: string, altText?: string): Message {

@@ -12,6 +12,13 @@ import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 
+type DeliveryProcessResult = { processed: number; failed: number; errors: string[] };
+
+function formatDeliveryError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 /**
  * Replace template variables in message content.
  *
@@ -73,10 +80,12 @@ export async function processStepDeliveries(
   lineClient: LineClient,
   workerUrl?: string,
   accountTokenMap?: Map<string | null, string>,
-): Promise<void> {
+): Promise<DeliveryProcessResult> {
+  const result: DeliveryProcessResult = { processed: 0, failed: 0, errors: [] };
+
   // Skip delivery outside 9:00-23:00 JST window
   const jstHour = new Date(Date.now() + 9 * 60 * 60_000).getUTCHours();
-  if (jstHour < DEFAULT_START_HOUR || jstHour >= DEFAULT_END_HOUR) return;
+  if (jstHour < DEFAULT_START_HOUR || jstHour >= DEFAULT_END_HOUR) return result;
 
   const now = jstNow();
   const dueFriendScenarios = await getFriendScenariosDueForDelivery(db, now);
@@ -89,11 +98,16 @@ export async function processStepDeliveries(
         await sleep(addJitter(50, 200));
       }
       await processSingleDelivery(db, lineClient, fs, workerUrl, accountTokenMap);
+      result.processed += 1;
     } catch (err) {
       console.error(`Error processing friend_scenario ${fs.id}:`, err);
+      result.failed += 1;
+      result.errors.push(`Error processing friend_scenario ${fs.id}: ${formatDeliveryError(err)}`);
       // Continue with next one
     }
   }
+
+  return result;
 }
 
 async function processSingleDelivery(

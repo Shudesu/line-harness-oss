@@ -14,11 +14,19 @@ import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js'
 
 const MULTICAST_BATCH_SIZE = 500;
 
+type DeliveryProcessResult = { processed: number; failed: number; errors: string[] };
+
+function formatDeliveryError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 export async function processBroadcastSend(
   db: D1Database,
   lineClient: LineClient,
   broadcastId: string,
   workerUrl?: string,
+  errors?: string[],
 ): Promise<Broadcast> {
   const claimed = await db
     .prepare(
@@ -110,6 +118,7 @@ export async function processBroadcastSend(
           }
         } catch (err) {
           console.error(`Multicast batch ${i / MULTICAST_BATCH_SIZE} failed:`, err);
+          errors?.push(`Multicast batch ${i / MULTICAST_BATCH_SIZE} failed for broadcast ${broadcastId}: ${formatDeliveryError(err)}`);
           // Continue with next batch; failed batch is not logged
         }
       }
@@ -129,7 +138,8 @@ export async function processScheduledBroadcasts(
   db: D1Database,
   lineClient: LineClient,
   workerUrl?: string,
-): Promise<void> {
+): Promise<DeliveryProcessResult> {
+  const result: DeliveryProcessResult = { processed: 0, failed: 0, errors: [] };
   const now = jstNow();
   const allBroadcasts = await getBroadcasts(db);
 
@@ -143,12 +153,19 @@ export async function processScheduledBroadcasts(
 
   for (const broadcast of scheduled) {
     try {
-      await processBroadcastSend(db, lineClient, broadcast.id, workerUrl);
+      const errorCountBefore = result.errors.length;
+      await processBroadcastSend(db, lineClient, broadcast.id, workerUrl, result.errors);
+      result.processed += 1;
+      result.failed += result.errors.length - errorCountBefore;
     } catch (err) {
       console.error(`Failed to send scheduled broadcast ${broadcast.id}:`, err);
+      result.failed += 1;
+      result.errors.push(`Failed to send scheduled broadcast ${broadcast.id}: ${formatDeliveryError(err)}`);
       // Continue with next broadcast
     }
   }
+
+  return result;
 }
 
 function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
