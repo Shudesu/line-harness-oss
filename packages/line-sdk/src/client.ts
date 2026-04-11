@@ -9,18 +9,18 @@ import type {
   UserProfile,
 } from './types.js';
 
-const LINE_API_BASE = 'https://api.line.me/v2/bot';
+const LINE_API_BASE = 'https://api.line.me';
 
 export class LineClient {
   constructor(private readonly channelAccessToken: string) {}
 
   // ─── Core request helper ──────────────────────────────────────────────────
 
-  private async request<T = unknown>(
+  async request(
+    method: string,
     path: string,
-    body: object,
-    method: 'GET' | 'POST' | 'DELETE' = 'POST',
-  ): Promise<T> {
+    body?: unknown,
+  ): Promise<{ data: unknown; headers: Headers }> {
     const url = `${LINE_API_BASE}${path}`;
 
     const options: RequestInit = {
@@ -31,7 +31,7 @@ export class LineClient {
       },
     };
 
-    if (method !== 'GET' && method !== 'DELETE') {
+    if (method !== 'GET' && method !== 'DELETE' && body !== undefined) {
       options.body = JSON.stringify(body);
     }
 
@@ -46,112 +46,139 @@ export class LineClient {
 
     // Some endpoints (e.g. push, reply) return an empty body with 200.
     const contentType = res.headers.get('content-type') ?? '';
+    let data: unknown;
     if (contentType.includes('application/json')) {
-      return res.json() as Promise<T>;
+      data = await res.json();
+    } else {
+      data = undefined;
     }
 
-    return undefined as unknown as T;
+    return { data, headers: res.headers };
   }
 
   // ─── Profile ──────────────────────────────────────────────────────────────
 
   async getProfile(userId: string): Promise<UserProfile> {
-    return this.request<UserProfile>(
-      `/profile/${encodeURIComponent(userId)}`,
-      {},
+    const { data } = await this.request(
       'GET',
+      `/v2/bot/profile/${encodeURIComponent(userId)}`,
     );
+    return data as UserProfile;
   }
 
   // ─── Messaging ───────────────────────────────────────────────────────────
 
-  async pushMessage(to: string, messages: Message[]): Promise<void> {
+  async pushMessage(to: string, messages: Message[]): Promise<unknown> {
     const body: PushMessageRequest = { to, messages };
-    await this.request('/message/push', body);
+    const { data } = await this.request('POST', '/v2/bot/message/push', body);
+    return data;
   }
 
-  async multicast(to: string[], messages: Message[]): Promise<void> {
-    const body: MulticastRequest = { to, messages };
-    await this.request('/message/multicast', body);
+  async multicast(
+    to: string[],
+    messages: Message[],
+    customAggregationUnits?: string[],
+  ): Promise<{ data: unknown; requestId: string | null }> {
+    const body: Record<string, unknown> = { to, messages };
+    if (customAggregationUnits) {
+      body.customAggregationUnits = customAggregationUnits;
+    }
+    const { data, headers } = await this.request(
+      'POST',
+      '/v2/bot/message/multicast',
+      body,
+    );
+    return { data, requestId: headers.get('x-line-request-id') };
   }
 
-  async broadcast(messages: Message[]): Promise<void> {
+  async broadcast(
+    messages: Message[],
+  ): Promise<{ data: unknown; requestId: string | null }> {
     const body: BroadcastRequest = { messages };
-    await this.request('/message/broadcast', body);
+    const { data, headers } = await this.request(
+      'POST',
+      '/v2/bot/message/broadcast',
+      body,
+    );
+    return { data, requestId: headers.get('x-line-request-id') };
   }
 
   async replyMessage(
     replyToken: string,
     messages: Message[],
-  ): Promise<void> {
+  ): Promise<unknown> {
     const body: ReplyMessageRequest = { replyToken, messages };
-    await this.request('/message/reply', body);
+    const { data } = await this.request('POST', '/v2/bot/message/reply', body);
+    return data;
   }
 
   // ─── Rich Menu ────────────────────────────────────────────────────────────
 
   async getRichMenuList(): Promise<{ richmenus: RichMenuObject[] }> {
-    return this.request<{ richmenus: RichMenuObject[] }>(
-      '/richmenu/list',
-      {},
-      'GET',
-    );
+    const { data } = await this.request('GET', '/v2/bot/richmenu/list');
+    return data as { richmenus: RichMenuObject[] };
   }
 
   async createRichMenu(menu: RichMenuObject): Promise<{ richMenuId: string }> {
-    return this.request<{ richMenuId: string }>('/richmenu', menu);
+    const { data } = await this.request('POST', '/v2/bot/richmenu', menu);
+    return data as { richMenuId: string };
   }
 
-  async deleteRichMenu(richMenuId: string): Promise<void> {
-    await this.request(
-      `/richmenu/${encodeURIComponent(richMenuId)}`,
-      {},
+  async deleteRichMenu(richMenuId: string): Promise<unknown> {
+    const { data } = await this.request(
       'DELETE',
+      `/v2/bot/richmenu/${encodeURIComponent(richMenuId)}`,
     );
+    return data;
   }
 
-  async setDefaultRichMenu(richMenuId: string): Promise<void> {
-    await this.request(
-      `/user/all/richmenu/${encodeURIComponent(richMenuId)}`,
-      {},
+  async setDefaultRichMenu(richMenuId: string): Promise<unknown> {
+    const { data } = await this.request(
+      'POST',
+      `/v2/bot/user/all/richmenu/${encodeURIComponent(richMenuId)}`,
     );
+    return data;
   }
 
-  async linkRichMenuToUser(userId: string, richMenuId: string): Promise<void> {
-    await this.request(
-      `/user/${encodeURIComponent(userId)}/richmenu/${encodeURIComponent(richMenuId)}`,
-      {},
+  async linkRichMenuToUser(
+    userId: string,
+    richMenuId: string,
+  ): Promise<unknown> {
+    const { data } = await this.request(
+      'POST',
+      `/v2/bot/user/${encodeURIComponent(userId)}/richmenu/${encodeURIComponent(richMenuId)}`,
     );
+    return data;
   }
 
-  async unlinkRichMenuFromUser(userId: string): Promise<void> {
-    await this.request(
-      `/user/${encodeURIComponent(userId)}/richmenu`,
-      {},
+  async unlinkRichMenuFromUser(userId: string): Promise<unknown> {
+    const { data } = await this.request(
       'DELETE',
+      `/v2/bot/user/${encodeURIComponent(userId)}/richmenu`,
     );
+    return data;
   }
 
   async getRichMenuIdOfUser(userId: string): Promise<{ richMenuId: string }> {
-    return this.request<{ richMenuId: string }>(
-      `/user/${encodeURIComponent(userId)}/richmenu`,
-      {},
+    const { data } = await this.request(
       'GET',
+      `/v2/bot/user/${encodeURIComponent(userId)}/richmenu`,
     );
+    return data as { richMenuId: string };
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  async pushTextMessage(to: string, text: string): Promise<void> {
-    await this.pushMessage(to, [{ type: 'text', text }]);
+  async pushTextMessage(to: string, text: string): Promise<unknown> {
+    return this.pushMessage(to, [{ type: 'text', text }]);
   }
 
   async pushFlexMessage(
     to: string,
     altText: string,
     contents: FlexContainer,
-  ): Promise<void> {
-    await this.pushMessage(to, [{ type: 'flex', altText, contents }]);
+  ): Promise<unknown> {
+    return this.pushMessage(to, [{ type: 'flex', altText, contents }]);
   }
 
   // ─── Rich Menu Image Upload ─────────────────────────────────────────────
@@ -173,7 +200,41 @@ export class LineClient {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`LINE API error: ${res.status} ${res.statusText} — ${text}`);
+      throw new Error(
+        `LINE API error: ${res.status} ${res.statusText} — ${text}`,
+      );
     }
+  }
+
+  // ─── Insight API ─────────────────────────────────────────────────────────
+
+  /**
+   * Get user interaction statistics for a broadcast message.
+   * Data becomes available ~3 days after sending.
+   * GET only — no messages are sent.
+   */
+  async getMessageEventInsight(requestId: string): Promise<unknown> {
+    const { data } = await this.request(
+      'GET',
+      `/v2/bot/insight/message/event?requestId=${encodeURIComponent(requestId)}`,
+    );
+    return data;
+  }
+
+  /**
+   * Get statistics per unit for multicast messages.
+   * GET only — no messages are sent.
+   */
+  async getUnitInsight(
+    customAggregationUnit: string,
+    from: string,
+    to: string,
+  ): Promise<unknown> {
+    const params = new URLSearchParams({ customAggregationUnit, from, to });
+    const { data } = await this.request(
+      'GET',
+      `/v2/bot/insight/message/event/aggregation?${params.toString()}`,
+    );
+    return data;
   }
 }

@@ -7,14 +7,26 @@ export function registerListCrmObjects(server: McpServer): void {
     "list_crm_objects",
     "List all CRM objects of a specific type: scenarios, forms, tags, rich menus, tracked links, or broadcasts.",
     {
-      objectType: z.enum(["scenarios", "forms", "tags", "rich_menus", "tracked_links", "broadcasts"]).describe("Type of CRM object to list"),
-      accountId: z.string().optional().describe("LINE account ID (uses default if omitted)"),
+      objectType: z
+        .enum([
+          "scenarios",
+          "forms",
+          "tags",
+          "rich_menus",
+          "tracked_links",
+          "broadcasts",
+        ])
+        .describe("Type of CRM object to list"),
+      accountId: z
+        .string()
+        .optional()
+        .describe("LINE account ID (uses default if omitted)"),
     },
     async ({ objectType, accountId }) => {
       try {
         const client = getClient();
+        let items: unknown;
 
-        let items;
         switch (objectType) {
           case "scenarios":
             items = await client.scenarios.list({ accountId });
@@ -37,11 +49,32 @@ export function registerListCrmObjects(server: McpServer): void {
         }
 
         return {
-          content: [{ type: "text", text: JSON.stringify({ success: true, objectType, items }, null, 2) }],
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                { success: true, objectType, items },
+                null,
+                2,
+              ),
+            },
+          ],
         };
       } catch (error) {
-        return { content: [{ type: "text", text: JSON.stringify({ success: false, error: String(error) }, null, 2) }], isError: true };
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                { success: false, error: String(error) },
+                null,
+                2,
+              ),
+            },
+          ],
+          isError: true,
+        };
       }
-    }
+    },
   );
 }

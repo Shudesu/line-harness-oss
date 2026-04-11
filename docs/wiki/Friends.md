@@ -67,15 +67,15 @@ LINE Harness の友だち管理は、LINE公式アカウントのフォロワー
 
 ```bash
 # 基本取得（デフォルト: limit=50, offset=0）
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/friends" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 
 # ページネーション
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends?limit=20&offset=40" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/friends?limit=20&offset=40" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 
 # タグで絞り込み
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends?tagId=TAG_UUID" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/friends?tagId=TAG_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -118,7 +118,7 @@ curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends?tagId=TAG_
 ### GET /api/friends/count — 友だち数
 
 ```bash
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends/count" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/friends/count" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -134,7 +134,7 @@ curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends/count" \
 ### GET /api/friends/:id — 友だち詳細
 
 ```bash
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -145,7 +145,7 @@ curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUI
 友だちにタグを追加します。`tag_added` トリガーのシナリオへの自動登録も行います。
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/tags" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/tags" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"tagId": "TAG_UUID"}'
@@ -166,7 +166,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEN
 ### DELETE /api/friends/:id/tags/:tagId — タグ削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/tags/TAG_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/tags/TAG_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -179,7 +179,7 @@ curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRI
 既存のメタデータにマージ（shallow merge）します。
 
 ```bash
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/metadata" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/metadata" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -200,13 +200,13 @@ curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND
 
 ```bash
 # テキストメッセージ
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/messages" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/messages" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"content": "こんにちは！"}'
 
 # Flex メッセージ
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/messages" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/messages" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -215,7 +215,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEN
   }'
 
 # 画像メッセージ
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/messages" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/messages" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -263,9 +263,9 @@ LP、SNS、広告、全ての導線で `/auth/line` を使えば:
 
 ```
 # 友だち追加URL の例
-https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=instagram
-https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=youtube&utm_source=youtube&utm_medium=description
-https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=facebook-ad&gclid=xxx
+https://your-worker.your-subdomain.workers.dev/auth/line?ref=instagram
+https://your-worker.your-subdomain.workers.dev/auth/line?ref=youtube&utm_source=youtube&utm_medium=description
+https://your-worker.your-subdomain.workers.dev/auth/line?ref=facebook-ad&gclid=xxx
 ```
 
 ### 紐づけ方法（`/auth/line` 以外の場合）
@@ -288,7 +288,7 @@ https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=facebook-ad&gclid
 import { LineHarness } from '@line-harness/sdk'
 
 const client = new LineHarness({
-  apiUrl: 'https://line-crm-worker.line-crm-api.workers.dev',
+  apiUrl: 'https://your-worker.your-subdomain.workers.dev',
   apiKey: 'YOUR_API_KEY',
 })
 

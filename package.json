@@ -1,6 +1,6 @@
 {
   "name": "line-oss-crm",
-  "version": "0.3.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Open-source LINE Official Account CRM/marketing automation",
   "scripts": {
@@ -10,13 +10,16 @@
     "deploy:worker": "pnpm --filter worker deploy",
     "deploy:web": "pnpm --filter web build",
     "db:migrate": "wrangler d1 execute line-crm --file=packages/db/schema.sql",
-    "db:migrate:local": "wrangler d1 execute line-crm --file=packages/db/schema.sql --local"
+    "db:migrate:local": "wrangler d1 execute line-crm --file=packages/db/schema.sql --local",
+    "deploy:setup": "node packages/create-line-harness/dist/index.js",
+    "deploy:update": "node packages/create-line-harness/dist/index.js update"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "4"
   }
 }

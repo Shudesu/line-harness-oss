@@ -11,8 +11,8 @@ L社/U社代替。AI（CC）ネイティブ設計。
 - 1プロジェクト = 1デプロイ（ステルス性最強）
 
 ## デプロイ先
-- **API**: https://line-crm-worker.line-crm-api.workers.dev
-- **管理画面**: https://line-crm-admin.pages.dev
+- **API**: https://your-worker.your-subdomain.workers.dev
+- **管理画面**: https://your-admin.pages.dev
 - **D1**: line-crm (YOUR_D1_DATABASE_ID) APAC/KIX
 - **Cron**: 5分毎ステップ配信チェック + リマインダー配信
 

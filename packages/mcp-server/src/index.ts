@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerAllTools } from "./tools/index.js";
@@ -7,7 +5,7 @@ import { registerAllResources } from "./resources/index.js";
 
 const server = new McpServer({
   name: "line-harness",
-  version: "0.1.0",
+  version: "0.3.0",
 });
 
 registerAllTools(server);

@@ -10,6 +10,11 @@ export interface Form {
   fields: string; // JSON string of FormField[]
   on_submit_tag_id: string | null;
   on_submit_scenario_id: string | null;
+  on_submit_message_type: 'text' | 'flex' | null;
+  on_submit_message_content: string | null; // supports template variables: {{name}}, {{auth_url:CHANNEL_ID}}, etc.
+  on_submit_webhook_url: string | null;
+  on_submit_webhook_headers: string | null;
+  on_submit_webhook_fail_message: string | null;
   save_to_metadata: number;
   is_active: number;
   submit_count: number;
@@ -47,6 +52,11 @@ export interface CreateFormInput {
   fields: string; // JSON string
   onSubmitTagId?: string | null;
   onSubmitScenarioId?: string | null;
+  onSubmitMessageType?: 'text' | 'flex' | null;
+  onSubmitMessageContent?: string | null;
+  onSubmitWebhookUrl?: string | null;
+  onSubmitWebhookHeaders?: string | null;
+  onSubmitWebhookFailMessage?: string | null;
   saveToMetadata?: boolean;
 }
 
@@ -58,8 +68,10 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
     .prepare(
       `INSERT INTO forms
          (id, name, description, fields, on_submit_tag_id, on_submit_scenario_id,
+          on_submit_message_type, on_submit_message_content,
+          on_submit_webhook_url, on_submit_webhook_headers, on_submit_webhook_fail_message,
           save_to_metadata, is_active, submit_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     )
     .bind(
       id,
@@ -68,6 +80,11 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
       input.fields,
       input.onSubmitTagId ?? null,
       input.onSubmitScenarioId ?? null,
+      input.onSubmitMessageType ?? null,
+      input.onSubmitMessageContent ?? null,
+      input.onSubmitWebhookUrl ?? null,
+      input.onSubmitWebhookHeaders ?? null,
+      input.onSubmitWebhookFailMessage ?? null,
       input.saveToMetadata !== false ? 1 : 0,
       now,
       now,
@@ -83,6 +100,11 @@ export interface UpdateFormInput {
   fields?: string;
   onSubmitTagId?: string | null;
   onSubmitScenarioId?: string | null;
+  onSubmitMessageType?: 'text' | 'flex' | null;
+  onSubmitMessageContent?: string | null;
+  onSubmitWebhookUrl?: string | null;
+  onSubmitWebhookHeaders?: string | null;
+  onSubmitWebhookFailMessage?: string | null;
   saveToMetadata?: boolean;
   isActive?: boolean;
 }
@@ -105,6 +127,11 @@ export async function updateForm(
            fields = ?,
            on_submit_tag_id = ?,
            on_submit_scenario_id = ?,
+           on_submit_message_type = ?,
+           on_submit_message_content = ?,
+           on_submit_webhook_url = ?,
+           on_submit_webhook_headers = ?,
+           on_submit_webhook_fail_message = ?,
            save_to_metadata = ?,
            is_active = ?,
            updated_at = ?
@@ -118,6 +145,21 @@ export async function updateForm(
       'onSubmitScenarioId' in input
         ? (input.onSubmitScenarioId ?? null)
         : existing.on_submit_scenario_id,
+      'onSubmitMessageType' in input
+        ? (input.onSubmitMessageType ?? null)
+        : existing.on_submit_message_type,
+      'onSubmitMessageContent' in input
+        ? (input.onSubmitMessageContent ?? null)
+        : existing.on_submit_message_content,
+      'onSubmitWebhookUrl' in input
+        ? (input.onSubmitWebhookUrl ?? null)
+        : existing.on_submit_webhook_url,
+      'onSubmitWebhookHeaders' in input
+        ? (input.onSubmitWebhookHeaders ?? null)
+        : existing.on_submit_webhook_headers,
+      'onSubmitWebhookFailMessage' in input
+        ? (input.onSubmitWebhookFailMessage ?? null)
+        : existing.on_submit_webhook_fail_message,
       'saveToMetadata' in input
         ? (input.saveToMetadata !== false ? 1 : 0)
         : existing.save_to_metadata,

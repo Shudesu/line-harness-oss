@@ -1,5 +1,11 @@
 import type { HttpClient } from '../http.js'
-import type { ApiResponse, TrackedLink, TrackedLinkWithClicks, CreateTrackedLinkInput } from '../types.js'
+import type {
+  ApiResponse,
+  TrackedLink,
+  TrackedLinkWithClicks,
+  CreateTrackedLinkInput,
+  UpdateTrackedLinkInput,
+} from '../types.js'
 
 export class TrackedLinksResource {
   constructor(private readonly http: HttpClient) {}
@@ -11,6 +17,14 @@ export class TrackedLinksResource {
 
   async create(input: CreateTrackedLinkInput): Promise<TrackedLink> {
     const res = await this.http.post<ApiResponse<TrackedLink>>('/api/tracked-links', input)
+    return res.data
+  }
+
+  async update(id: string, input: UpdateTrackedLinkInput): Promise<TrackedLink> {
+    const res = await this.http.patch<ApiResponse<TrackedLink>>(
+      `/api/tracked-links/${id}`,
+      input,
+    )
     return res.data
   }
 

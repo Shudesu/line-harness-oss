@@ -17,6 +17,15 @@ export interface RefTracking {
   friend_id: string | null;
   entry_route_id: string | null;
   source_url: string | null;
+  fbclid: string | null;
+  gclid: string | null;
+  twclid: string | null;
+  ttclid: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  user_agent: string | null;
+  ip_address: string | null;
   created_at: string;
 }
 
@@ -119,6 +128,15 @@ export async function recordRefTracking(
     friendId?: string | null;
     entryRouteId?: string | null;
     sourceUrl?: string | null;
+    fbclid?: string | null;
+    gclid?: string | null;
+    twclid?: string | null;
+    ttclid?: string | null;
+    utmSource?: string | null;
+    utmMedium?: string | null;
+    utmCampaign?: string | null;
+    userAgent?: string | null;
+    ipAddress?: string | null;
   },
 ): Promise<RefTracking> {
   const id = crypto.randomUUID();
@@ -126,8 +144,11 @@ export async function recordRefTracking(
 
   await db
     .prepare(
-      `INSERT INTO ref_tracking (id, ref_code, friend_id, entry_route_id, source_url, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ref_tracking
+       (id, ref_code, friend_id, entry_route_id, source_url,
+        fbclid, gclid, twclid, ttclid, utm_source, utm_medium, utm_campaign,
+        user_agent, ip_address, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -135,6 +156,15 @@ export async function recordRefTracking(
       opts.friendId ?? null,
       opts.entryRouteId ?? null,
       opts.sourceUrl ?? null,
+      opts.fbclid ?? null,
+      opts.gclid ?? null,
+      opts.twclid ?? null,
+      opts.ttclid ?? null,
+      opts.utmSource ?? null,
+      opts.utmMedium ?? null,
+      opts.utmCampaign ?? null,
+      opts.userAgent ?? null,
+      opts.ipAddress ?? null,
       now,
     )
     .run();
@@ -143,6 +173,22 @@ export async function recordRefTracking(
     .prepare(`SELECT * FROM ref_tracking WHERE id = ?`)
     .bind(id)
     .first<RefTracking>())!;
+}
+
+export async function getRefTrackingWithClickIds(
+  db: D1Database,
+  friendId: string,
+): Promise<RefTracking | null> {
+  return db
+    .prepare(
+      `SELECT * FROM ref_tracking
+       WHERE friend_id = ?
+       AND (fbclid IS NOT NULL OR gclid IS NOT NULL OR twclid IS NOT NULL OR ttclid IS NOT NULL)
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .bind(friendId)
+    .first<RefTracking>();
 }
 
 export async function getRefTrackingByFriend(

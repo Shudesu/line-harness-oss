@@ -145,7 +145,7 @@ Workers Cron Trigger（5分毎）が `processReminderDeliveries` を実行する
 ### リマインダー一覧取得
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/reminders" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/reminders" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -170,7 +170,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/reminders" \
 ### リマインダー詳細取得（ステップ付き）
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMINDER_UUID" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/reminders/REMINDER_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -211,7 +211,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMI
 ### リマインダー作成
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/reminders" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/reminders" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "name": "4月勉強会リマインド", "description": "月次勉強会用" }'
@@ -229,7 +229,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/reminders" \
 ### リマインダー更新
 
 ```bash
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMINDER_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/reminders/REMINDER_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "name": "4月勉強会リマインド（更新）", "isActive": false }'
@@ -238,14 +238,14 @@ curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMI
 ### リマインダー削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMINDER_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/reminders/REMINDER_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ### ステップ追加
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMINDER_UUID/steps" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/reminders/REMINDER_UUID/steps" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -273,14 +273,14 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REM
 ### ステップ削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMINDER_UUID/steps/STEP_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/reminders/REMINDER_UUID/steps/STEP_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ### 友だちをリマインダーに登録
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REMINDER_UUID/enroll/FRIEND_UUID" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/reminders/REMINDER_UUID/enroll/FRIEND_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "targetDate": "2026-04-10T19:00:00+09:00" }'
@@ -304,7 +304,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/reminders/REM
 ### 友だちのリマインダー一覧取得
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/reminders" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/reminders" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -329,7 +329,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND
 ### 友だちリマインダーのキャンセル
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/friend-reminders/FRIEND_REMINDER_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/friend-reminders/FRIEND_REMINDER_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 

@@ -40,31 +40,38 @@ export function addMessageVariation(text: string, index: number): string {
 }
 
 /**
- * Calculate staggered delay for bulk sending.
- * Spreads messages over time to mimic human-operated account.
+ * バッチ送信用のステアリング遅延を計算する。
+ * LINEのレート制限回避と自然な送信パターンを維持しつつ、
+ * Cloudflare Workerの実行時間制限（30秒）内に全バッチが完了するように調整。
  *
- * @param totalMessages Total number of messages to send
- * @param batchIndex Current batch index (0-based)
- * @returns Delay in milliseconds before sending this batch
+ * 合計遅延の上限: 20秒（30秒制限に対してAPI呼び出し分の余裕を確保）
+ *
+ * @param totalMessages 送信対象の総メッセージ数
+ * @param batchIndex 現在のバッチインデックス（0始まり）
+ * @returns このバッチ送信前の遅延（ミリ秒）
  */
 export function calculateStaggerDelay(
   totalMessages: number,
   batchIndex: number,
 ): number {
+  // Cloudflare Worker実行時間制限内に収めるための上限（20秒）
+  const MAX_TOTAL_DELAY_MS = 20_000;
+  const totalBatches = Math.ceil(totalMessages / 500);
+
   if (totalMessages <= 100) {
-    // Small sends: minimal delay with jitter
-    return addJitter(100, 500);
+    // 少量送信: 最小限の遅延 + ジッター
+    return addJitter(100, 400);
   }
 
-  if (totalMessages <= 1000) {
-    // Medium sends: spread over ~2 minutes
-    const baseDelay = (120_000 / Math.ceil(totalMessages / 500)) * batchIndex;
-    return addJitter(baseDelay, 2000);
-  }
+  // バッチ間遅延を均等に分配（合計が上限を超えないように）
+  // batchIndex=0 は遅延なしで呼ばれるため、実際の遅延回数は totalBatches - 1
+  const delaySlots = Math.max(totalBatches - 1, 1);
+  const baseDelay = Math.min(
+    Math.floor(MAX_TOTAL_DELAY_MS / delaySlots),
+    5000, // バッチ間の最大遅延を5秒に制限
+  );
 
-  // Large sends: spread over ~5 minutes with more jitter
-  const baseDelay = (300_000 / Math.ceil(totalMessages / 500)) * batchIndex;
-  return addJitter(baseDelay, 5000);
+  return addJitter(baseDelay, Math.min(baseDelay * 0.2, 500));
 }
 
 /**

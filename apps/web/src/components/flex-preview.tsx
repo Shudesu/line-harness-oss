@@ -72,25 +72,6 @@ function FlexText({ node }: { node: FlexNode }) {
     ...(node.align === 'center' ? { textAlign: 'center' } : node.align === 'end' ? { textAlign: 'right' } : {}),
     ...(node.flex !== undefined ? { flex: node.flex } : {}),
   }
-  // Span-based text: contents holds span children instead of a top-level text field
-  if (!node.text && node.contents?.length) {
-    return (
-      <p style={style}>
-        {node.contents.map((span, i) => (
-          <span
-            key={i}
-            style={{
-              fontWeight: span.weight === 'bold' ? 700 : undefined,
-              color: span.color || undefined,
-              fontSize: getSize(span.size) || undefined,
-            }}
-          >
-            {span.text || ''}
-          </span>
-        ))}
-      </p>
-    )
-  }
   return <p style={style}>{node.text || ''}</p>
 }
 

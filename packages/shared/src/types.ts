@@ -650,6 +650,27 @@ export interface AutomationLog {
   createdAt: string;
 }
 
+// -----------------------------------------------------------------------------
+// スタッフ (StaffMember)
+// -----------------------------------------------------------------------------
+export interface StaffMember {
+  id: string;
+  name: string;
+  email: string | null;
+  role: 'owner' | 'admin' | 'staff';
+  apiKey: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StaffProfile {
+  id: string;
+  name: string;
+  role: 'owner' | 'admin' | 'staff';
+  email: string | null;
+}
+
 // =============================================================================
 // API レスポンスラッパー型
 // =============================================================================

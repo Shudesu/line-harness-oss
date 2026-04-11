@@ -22,6 +22,21 @@ export default function LoginPage() {
 
       if (res.ok) {
         localStorage.setItem('lh_api_key', apiKey)
+        // Fetch staff profile for name/role display
+        try {
+          const profileRes = await fetch(`${apiUrl}/api/staff/me`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          })
+          if (profileRes.ok) {
+            const profileData = await profileRes.json()
+            if (profileData.success && profileData.data) {
+              localStorage.setItem('lh_staff_name', profileData.data.name)
+              localStorage.setItem('lh_staff_role', profileData.data.role)
+            }
+          }
+        } catch {
+          // Profile fetch is best-effort
+        }
         router.push('/')
       } else {
         setError('APIキーが正しくありません')

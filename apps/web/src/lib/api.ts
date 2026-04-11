@@ -22,6 +22,7 @@ import type {
   Notification,
   AccountHealthLog,
   AccountMigration,
+  StaffMember,
 } from '@line-crm/shared'
 
 import type { Broadcast } from '@line-crm/shared'
@@ -29,18 +30,35 @@ import type { Broadcast } from '@line-crm/shared'
 /** Broadcast type from API (now camelCase after worker serialization) */
 export type ApiBroadcast = Broadcast
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'
+export type BroadcastInsight = {
+  broadcastId?: string
+  delivered: number | null
+  uniqueImpression: number | null
+  uniqueClick: number | null
+  uniqueMediaPlayed: number | null
+  openRate: number | null
+  clickRate: number | null
+  status?: string
+  fetchedAt?: string | null
+}
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+if (!API_URL) {
+  throw new Error(
+    'NEXT_PUBLIC_API_URL is not set. Build cannot proceed without a valid API URL. ' +
+    'Set it in .env.production (local) or GitHub Secrets (CI).'
+  )
+}
 
 /**
- * Read the API key from localStorage first (set during login), falling back to
- * the build-time env var for local development without the login page.
+ * Read the API key from localStorage (set during login).
+ * Never embed secrets in the client bundle via NEXT_PUBLIC_* env vars.
  */
 function getApiKey(): string {
   if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('lh_api_key')
-    if (stored) return stored
+    return localStorage.getItem('lh_api_key') || ''
   }
-  return process.env.NEXT_PUBLIC_API_KEY || ''
+  return ''
 }
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
@@ -181,6 +199,10 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/broadcasts/${id}`, { method: 'DELETE' }),
     send: (id: string) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}/send`, { method: 'POST' }),
+    getInsight: (id: string) =>
+      fetchApi<ApiResponse<BroadcastInsight | null>>(`/api/broadcasts/${id}/insight`),
+    fetchInsight: (id: string) =>
+      fetchApi<ApiResponse<BroadcastInsight>>(`/api/broadcasts/${id}/fetch-insight`, { method: 'POST' }),
   },
 
   // ── Round 2 APIs ─────────────────────────────────────────────────────────
@@ -479,5 +501,27 @@ export const api = {
       }),
     getMigration: (migrationId: string) =>
       fetchApi<ApiResponse<AccountMigration>>(`/api/accounts/migrations/${migrationId}`),
+  },
+  staff: {
+    list: () =>
+      fetchApi<ApiResponse<StaffMember[]>>('/api/staff'),
+    get: (id: string) =>
+      fetchApi<ApiResponse<StaffMember>>(`/api/staff/${id}`),
+    me: () =>
+      fetchApi<ApiResponse<{ id: string; name: string; role: string; email: string | null }>>('/api/staff/me'),
+    create: (data: { name: string; email?: string; role: 'admin' | 'staff' }) =>
+      fetchApi<ApiResponse<StaffMember>>('/api/staff', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: { name?: string; email?: string | null; role?: string; isActive?: boolean }) =>
+      fetchApi<ApiResponse<StaffMember>>(`/api/staff/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/staff/${id}`, { method: 'DELETE' }),
+    regenerateKey: (id: string) =>
+      fetchApi<ApiResponse<{ apiKey: string }>>(`/api/staff/${id}/regenerate-key`, { method: 'POST' }),
   },
 }

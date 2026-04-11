@@ -1,0 +1,16 @@
+name = "line-harness-plugin-myservice"
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+# Cron trigger: runs every hour (adjust as needed)
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+# LINE Harness API connection
+LINE_HARNESS_API_URL = "https://your-line-harness.example.com"
+# Set secrets via: wrangler secret put LINE_HARNESS_API_KEY
+# Set secrets via: wrangler secret put EXTERNAL_API_KEY
+
+# Optional: LINE account ID for multi-account setups
+# LINE_ACCOUNT_ID = ""

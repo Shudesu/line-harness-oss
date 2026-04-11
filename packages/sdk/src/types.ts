@@ -45,6 +45,8 @@ export interface FriendListParams {
   limit?: number
   offset?: number
   tagId?: string
+  search?: string
+  metadata?: Record<string, string>
   accountId?: string
 }
 
@@ -154,7 +156,28 @@ export interface Broadcast {
   sentAt: string | null
   totalCount: number
   successCount: number
+  lineRequestId?: string | null
+  aggregationUnit?: string | null
   createdAt: string
+}
+
+export interface BroadcastInsight {
+  id: string
+  broadcastId: string
+  delivered: number | null
+  uniqueImpression: number | null
+  uniqueClick: number | null
+  uniqueMediaPlayed: number | null
+  openRate: number | null
+  clickRate: number | null
+  status: 'pending' | 'ready' | 'failed'
+  retryCount: number
+  fetchedAt: string | null
+  createdAt: string
+}
+
+export interface BroadcastWithInsight extends Broadcast {
+  insight?: BroadcastInsight | null
 }
 
 export interface CreateBroadcastInput {
@@ -164,6 +187,7 @@ export interface CreateBroadcastInput {
   targetType: 'all' | 'tag'
   targetTagId?: string
   scheduledAt?: string
+  altText?: string
 }
 
 export interface UpdateBroadcastInput {
@@ -231,6 +255,8 @@ export interface TrackedLink {
   trackingUrl: string
   tagId: string | null
   scenarioId: string | null
+  introTemplateId: string | null
+  rewardTemplateId: string | null
   isActive: boolean
   clickCount: number
   createdAt: string
@@ -253,6 +279,17 @@ export interface CreateTrackedLinkInput {
   originalUrl: string
   tagId?: string | null
   scenarioId?: string | null
+  introTemplateId?: string | null
+  rewardTemplateId?: string | null
+}
+
+export interface UpdateTrackedLinkInput {
+  name?: string
+  tagId?: string | null
+  scenarioId?: string | null
+  introTemplateId?: string | null
+  rewardTemplateId?: string | null
+  isActive?: boolean
 }
 
 // ─── Forms ──────────────────────────────────────────────
@@ -272,6 +309,8 @@ export interface Form {
   fields: FormField[]
   onSubmitTagId: string | null
   onSubmitScenarioId: string | null
+  onSubmitMessageType: 'text' | 'flex' | null
+  onSubmitMessageContent: string | null
   saveToMetadata: boolean
   isActive: boolean
   submitCount: number
@@ -285,6 +324,8 @@ export interface CreateFormInput {
   fields: FormField[]
   onSubmitTagId?: string | null
   onSubmitScenarioId?: string | null
+  onSubmitMessageType?: 'text' | 'flex' | null
+  onSubmitMessageContent?: string | null
   saveToMetadata?: boolean
 }
 
@@ -294,6 +335,8 @@ export interface UpdateFormInput {
   fields?: FormField[]
   onSubmitTagId?: string | null
   onSubmitScenarioId?: string | null
+  onSubmitMessageType?: 'text' | 'flex' | null
+  onSubmitMessageContent?: string | null
   saveToMetadata?: boolean
   isActive?: boolean
 }
@@ -304,6 +347,35 @@ export interface FormSubmission {
   friendId: string | null
   data: Record<string, unknown>
   createdAt: string
+}
+
+// ─── Auto-Replies ──────────────────────────────────────
+export interface AutoReply {
+  id: string
+  keyword: string
+  matchType: 'exact' | 'contains'
+  responseType: string
+  responseContent: string
+  lineAccountId: string | null
+  isActive: boolean
+  createdAt: string
+}
+
+export interface CreateAutoReplyInput {
+  keyword: string
+  matchType?: 'exact' | 'contains'
+  responseType?: string
+  responseContent: string
+  lineAccountId?: string | null
+}
+
+export interface UpdateAutoReplyInput {
+  keyword?: string
+  matchType?: 'exact' | 'contains'
+  responseType?: string
+  responseContent?: string
+  lineAccountId?: string | null
+  isActive?: boolean
 }
 
 // ─── Calendar ───────────────────────────────────────────
@@ -333,9 +405,65 @@ export interface CalendarBooking {
   createdAt: string
 }
 
+// ─── Staff ──────────────────────────────────────────────
+export type StaffRole = 'owner' | 'admin' | 'staff'
+
+export interface StaffMember {
+  id: string
+  name: string
+  email: string | null
+  role: StaffRole
+  /**
+   * Masked API key (e.g. `lh_****1234`).
+   * The full key is only returned once — on create or regenerate-key responses.
+   */
+  apiKey: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface StaffProfile {
+  id: string
+  name: string
+  role: StaffRole
+  email: string | null
+}
+
+export interface CreateStaffInput {
+  name: string
+  email?: string
+  role: 'admin' | 'staff'
+}
+
+export interface UpdateStaffInput {
+  name?: string
+  email?: string | null
+  role?: StaffRole
+  isActive?: boolean
+}
+
 // ─── High-Level ─────────────────────────────────────────
 export interface StepDefinition {
   delay: string
   type: MessageType
   content: string
+}
+
+// ─── Images ─────────────────────────────────────────────
+export interface UploadedImage {
+  id: string
+  key: string
+  url: string
+  mimeType: string
+  size: number
+}
+
+export interface UploadImageInput {
+  /** Base64-encoded image data (with or without data URI prefix) */
+  data: string
+  /** MIME type, e.g. "image/png". Defaults to "image/png" */
+  mimeType?: string
+  /** Optional original filename */
+  filename?: string
 }

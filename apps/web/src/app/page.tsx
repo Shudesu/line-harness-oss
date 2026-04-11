@@ -153,7 +153,7 @@ export default function DashboardPage() {
 
       {/* Demo banner */}
       <a
-        href="https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=dashboard"
+        href="https://your-worker.your-subdomain.workers.dev/auth/line?ref=dashboard"
         target="_blank"
         rel="noopener noreferrer"
         className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"

@@ -21,4 +21,11 @@ export class RichMenusResource {
   async setDefault(richMenuId: string): Promise<void> {
     await this.http.post(`/api/rich-menus/${encodeURIComponent(richMenuId)}/default`)
   }
+
+  async uploadImage(richMenuId: string, imageData: string, contentType: string = 'image/png'): Promise<void> {
+    await this.http.post(`/api/rich-menus/${encodeURIComponent(richMenuId)}/image`, {
+      imageData,
+      contentType,
+    })
+  }
 }

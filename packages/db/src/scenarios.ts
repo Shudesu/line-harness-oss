@@ -365,9 +365,11 @@ export async function getFriendScenariosDueForDelivery(
   // to handle mixed timestamp formats (Z and +09:00) during migration
   const result = await db
     .prepare(
-      `SELECT * FROM friend_scenarios
-       WHERE status = 'active'
-         AND next_delivery_at IS NOT NULL`,
+      `SELECT fs.* FROM friend_scenarios fs
+       INNER JOIN scenarios s ON fs.scenario_id = s.id
+       WHERE fs.status = 'active'
+         AND s.is_active = 1
+         AND fs.next_delivery_at IS NOT NULL`,
     )
     .all<FriendScenario>();
   const nowMs = new Date(now).getTime();

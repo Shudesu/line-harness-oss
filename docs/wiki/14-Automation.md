@@ -164,7 +164,7 @@ priority: 0    → 最後に実行（デフォルト）
 ### オートメーション一覧取得
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/automations" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/automations" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -196,7 +196,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/automations" \
 ### オートメーション詳細取得（ログ付き）
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/automations/AUTO_UUID" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/automations/AUTO_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -237,7 +237,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/automations/AU
 ### オートメーション作成
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/automations" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/automations" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -278,7 +278,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/automations" 
 ### オートメーション更新
 
 ```bash
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/automations/AUTO_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/automations/AUTO_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -291,7 +291,7 @@ curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/automations/AU
 ### オートメーション削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/automations/AUTO_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/automations/AUTO_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -299,7 +299,7 @@ curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/automations
 
 ```bash
 # 特定オートメーションのログ
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/automations/AUTO_UUID/logs?limit=50" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/automations/AUTO_UUID/logs?limit=50" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 

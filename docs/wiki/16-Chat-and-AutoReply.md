@@ -176,7 +176,7 @@ CREATE INDEX idx_messages_log_created_at ON messages_log (created_at);
 #### オペレーター一覧取得
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/operators" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/operators" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -211,7 +211,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/operators" \
 #### オペレーター作成
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/operators" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/operators" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "name": "鈴木一郎", "email": "suzuki@example.com", "role": "operator" }'
@@ -229,7 +229,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/operators" \
 #### オペレーター更新
 
 ```bash
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/operators/OP_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/operators/OP_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "role": "admin", "isActive": true }'
@@ -238,7 +238,7 @@ curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/operators/OP_U
 #### オペレーター削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/operators/OP_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/operators/OP_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -248,19 +248,19 @@ curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/operators/O
 
 ```bash
 # 全チャット
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/chats" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/chats" \
   -H "Authorization: Bearer YOUR_API_KEY"
 
 # 未読のみ
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/chats?status=unread" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/chats?status=unread" \
   -H "Authorization: Bearer YOUR_API_KEY"
 
 # 特定オペレーター担当
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/chats?operatorId=OP_UUID" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/chats?operatorId=OP_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 
 # 組み合わせ
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/chats?status=in_progress&operatorId=OP_UUID" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/chats?status=in_progress&operatorId=OP_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -289,7 +289,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/chats?status=i
 #### チャット詳細取得（メッセージ履歴付き）
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUID" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/chats/CHAT_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -340,7 +340,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUI
 #### チャット作成
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/chats" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/chats" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "friendId": "friend-uuid-1", "operatorId": "op-uuid-1" }'
@@ -359,19 +359,19 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/chats" \
 
 ```bash
 # オペレーターアサイン + 対応中に変更
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/chats/CHAT_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "operatorId": "op-uuid-1", "status": "in_progress" }'
 
 # 対応完了
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/chats/CHAT_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "status": "resolved", "notes": "料金プラン説明完了。来週フォローアップ予定。" }'
 
 # アサイン解除
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/chats/CHAT_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "operatorId": null }'
@@ -381,13 +381,13 @@ curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUI
 
 ```bash
 # テキストメッセージ送信
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUID/send" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/chats/CHAT_UUID/send" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "content": "お問い合わせありがとうございます！料金プランの詳細をお送りします。" }'
 
 # Flexメッセージ送信
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/chats/CHAT_UUID/send" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/chats/CHAT_UUID/send" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{

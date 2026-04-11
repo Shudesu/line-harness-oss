@@ -1,7 +1,10 @@
+import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getBroadcastById,
   updateBroadcastStatus,
   jstNow,
+  updateBroadcastLineRequestId,
+  createBroadcastInsight,
 } from '@line-crm/db';
 import type { Broadcast } from '@line-crm/db';
 import type { LineClient, Message } from '@line-crm/line-sdk';
@@ -48,6 +51,7 @@ export async function processSegmentSend(
 
     const now = jstNow();
     const totalBatches = Math.ceil(friends.length / MULTICAST_BATCH_SIZE);
+    const unit = `bcast_${broadcast.id.slice(0, 8)}`;
 
     for (let i = 0; i < friends.length; i += MULTICAST_BATCH_SIZE) {
       const batchIndex = Math.floor(i / MULTICAST_BATCH_SIZE);
@@ -67,7 +71,7 @@ export async function processSegmentSend(
       }
 
       try {
-        await lineClient.multicast(lineUserIds, [batchMessage]);
+        await lineClient.multicast(lineUserIds, [batchMessage], [unit]);
         successCount += batch.length;
 
         // Log successfully sent messages
@@ -87,6 +91,8 @@ export async function processSegmentSend(
       }
     }
 
+    await updateBroadcastLineRequestId(db, broadcast.id, null, unit);
+    await createBroadcastInsight(db, broadcast.id);
     await updateBroadcastStatus(db, broadcastId, 'sent', { totalCount, successCount });
   } catch (err) {
     // On failure, reset to draft so it can be retried
@@ -97,7 +103,7 @@ export async function processSegmentSend(
   return (await getBroadcastById(db, broadcastId))!;
 }
 
-function buildMessage(messageType: string, messageContent: string): Message {
+function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
   if (messageType === 'text') {
     return { type: 'text', text: messageContent };
   }
@@ -121,7 +127,7 @@ function buildMessage(messageType: string, messageContent: string): Message {
   if (messageType === 'flex') {
     try {
       const contents = JSON.parse(messageContent);
-      return { type: 'flex', altText: 'Message', contents };
+      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
     } catch {
       return { type: 'text', text: messageContent };
     }

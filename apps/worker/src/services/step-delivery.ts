@@ -1,3 +1,4 @@
+import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getFriendScenariosDueForDelivery,
   getScenarioSteps,
@@ -18,10 +19,11 @@ import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
  * - {{uid}}                 → friend's user UUID
  * - {{friend_id}}           → friend's internal ID
  * - {{auth_url:CHANNEL_ID}} → full /auth/line URL with uid for cross-account linking
+ * - {{metadata.KEY}}       → friend's metadata value (from form responses etc.)
  */
 export function expandVariables(
   content: string,
-  friend: { id: string; display_name: string | null; user_id: string | null; ref_code?: string | null },
+  friend: { id: string; display_name: string | null; user_id: string | null; ref_code?: string | null; metadata?: Record<string, unknown> | string | null },
   apiOrigin?: string,
 ): string {
   let result = content;
@@ -35,6 +37,26 @@ export function expandVariables(
   } else {
     result = result.replace(/\{\{#if_ref\}\}[\s\S]*?\{\{\/if_ref\}\}/g, '');
   }
+  // Metadata variables: {{metadata.KEY}} → value from friend's metadata
+  const meta = friend.metadata
+    ? (typeof friend.metadata === 'string' ? JSON.parse(friend.metadata) as Record<string, unknown> : friend.metadata)
+    : {};
+  // Conditional block: {{#if_metadata.KEY}}...{{/if_metadata.KEY}} — only shown if metadata key has a value
+  // When inside JSON arrays, removes the element and fixes trailing/leading commas
+  result = result.replace(/\{\{#if_metadata\.([^}]+)\}\}([\s\S]*?)\{\{\/if_metadata\.\1\}\}/g, (_match, key, inner) => {
+    const val = meta[key];
+    if (val == null || val === '') return '';
+    return inner;
+  });
+  // Clean up broken JSON commas from removed conditional blocks (e.g. ",," or "[," or ",]")
+  result = result.replace(/,\s*,/g, ',');
+  result = result.replace(/\[\s*,/g, '[');
+  result = result.replace(/,\s*\]/g, ']');
+  result = result.replace(/\{\{metadata\.([^}]+)\}\}/g, (_match, key) => {
+    const val = meta[key];
+    if (val == null) return '';
+    return Array.isArray(val) ? val.join(', ') : String(val);
+  });
   if (apiOrigin) {
     result = result.replace(/\{\{auth_url:([^}]+)\}\}/g, (_match, channelId) => {
       const params = new URLSearchParams({ account: channelId, ref: 'cross-link' });
@@ -43,6 +65,26 @@ export function expandVariables(
     });
   }
   return result;
+}
+
+/**
+ * Resolve metadata for a friend, merging across all UUID-linked records.
+ * Falls back to the friend's own metadata if no user_id.
+ */
+export async function resolveMetadata(
+  db: D1Database,
+  friend: { user_id?: string | null; metadata?: string | null },
+): Promise<Record<string, unknown>> {
+  // If friend has a UUID, merge metadata from all linked records
+  if (friend.user_id) {
+    const { getMergedMetadataByUserId } = await import('@line-crm/db');
+    return getMergedMetadataByUserId(db, friend.user_id);
+  }
+  // Fallback: parse own metadata
+  if (friend.metadata) {
+    try { return JSON.parse(friend.metadata); } catch { return {}; }
+  }
+  return {};
 }
 
 /** Default delivery window: 9:00-23:00 JST. If outside, push to next 9:00 AM. */
@@ -161,10 +203,32 @@ async function processSingleDelivery(
     }
   }
 
-  // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, etc.)
-  const expandedContent = expandVariables(currentStep.message_content, friend, workerUrl);
-  const message = buildMessage(currentStep.message_type, expandedContent);
-  await lineClient.pushMessage(friend.line_user_id, [message]);
+  // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, {{metadata.KEY}}, etc.)
+  const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
+  const friendWithMeta = { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1];
+  const expandedContent = expandVariables(currentStep.message_content, friendWithMeta, workerUrl);
+  // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+  let trackedType: string = currentStep.message_type;
+  let trackedContent = expandedContent;
+  if (workerUrl) {
+    const { autoTrackContent } = await import('./auto-track.js');
+    const tracked = await autoTrackContent(db, currentStep.message_type, expandedContent, workerUrl);
+    trackedType = tracked.messageType;
+    trackedContent = tracked.content;
+  }
+  const message = buildMessage(trackedType, trackedContent);
+  // Resolve the correct LINE client for this friend's account
+  let deliveryClient = lineClient;
+  const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
+  if (friendAccountId) {
+    const { getLineAccountById } = await import('@line-crm/db');
+    const account = await getLineAccountById(db, friendAccountId);
+    if (account) {
+      const { LineClient: LC } = await import('@line-crm/line-sdk');
+      deliveryClient = new LC(account.channel_access_token);
+    }
+  }
+  await deliveryClient.pushMessage(friend.line_user_id, [message]);
 
   // Log outgoing message
   const logId = crypto.randomUUID();
@@ -238,29 +302,8 @@ async function evaluateCondition(
   }
 }
 
-/** Recursively find the first text element in a Flex Message for altText */
-function extractFlexAltText(obj: unknown, depth = 0): string | null {
-  if (depth > 10 || !obj || typeof obj !== 'object') return null;
-  const node = obj as Record<string, unknown>;
-  if (node.type === 'text' && typeof node.text === 'string') {
-    return node.text.slice(0, 100);
-  }
-  if (Array.isArray(node.contents)) {
-    for (const child of node.contents) {
-      const found = extractFlexAltText(child, depth + 1);
-      if (found) return found;
-    }
-  }
-  for (const key of ['header', 'body', 'footer']) {
-    if (node[key]) {
-      const found = extractFlexAltText(node[key], depth + 1);
-      if (found) return found;
-    }
-  }
-  return null;
-}
 
-/** Remove empty text nodes from Flex JSON (caused by conditional blocks) */
+/** Remove empty text nodes and boxes with empty text from Flex JSON */
 function cleanEmptyNodes(obj: unknown): void {
   if (!obj || typeof obj !== 'object') return;
   const node = obj as Record<string, unknown>;
@@ -268,18 +311,32 @@ function cleanEmptyNodes(obj: unknown): void {
     if (node[key]) cleanEmptyNodes(node[key]);
   }
   if (Array.isArray(node.contents)) {
+    // First clean children recursively
+    for (const c of node.contents as unknown[]) cleanEmptyNodes(c);
+    // Then filter out empty nodes
     node.contents = (node.contents as unknown[]).filter((c) => {
-      if (c && typeof c === 'object' && (c as Record<string, unknown>).type === 'text') {
-        const text = (c as Record<string, unknown>).text;
+      if (!c || typeof c !== 'object') return true;
+      const child = c as Record<string, unknown>;
+      // Remove empty text nodes
+      if (child.type === 'text') {
+        const text = child.text;
         return typeof text === 'string' && text.trim().length > 0;
+      }
+      // Remove box nodes where any text child is empty (metadata rows with no value)
+      if (child.type === 'box' && Array.isArray(child.contents)) {
+        const texts = (child.contents as Array<Record<string, unknown>>).filter(t => t.type === 'text');
+        if (texts.length >= 2) {
+          // horizontal box with label + value — remove if value is empty
+          const hasEmptyText = texts.some(t => typeof t.text === 'string' && t.text.trim() === '');
+          if (hasEmptyText) return false;
+        }
       }
       return true;
     });
-    for (const c of node.contents as unknown[]) cleanEmptyNodes(c);
   }
 }
 
-export function buildMessage(messageType: string, messageContent: string): Message {
+export function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
   if (messageType === 'text') {
     return { type: 'text', text: messageContent };
   }
@@ -308,8 +365,7 @@ export function buildMessage(messageType: string, messageContent: string): Messa
       // Remove empty text nodes (from {{#if_ref}} conditional blocks)
       cleanEmptyNodes(contents);
       // Extract first text element for altText (shown in notifications)
-      const altText = extractFlexAltText(contents) || 'お知らせ';
-      return { type: 'flex', altText, contents };
+      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
     } catch {
       return { type: 'text', text: messageContent };
     }

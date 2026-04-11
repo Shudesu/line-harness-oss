@@ -46,6 +46,7 @@ const menuSections = [
   {
     label: '設定',
     items: [
+      { href: '/staff', label: 'スタッフ管理', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
       { href: '/accounts', label: 'LINEアカウント', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
       { href: '/users', label: 'UUID管理', icon: 'M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2' },
       { href: '/health', label: 'BAN検知', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
@@ -163,6 +164,13 @@ function NavIcon({ d }: { d: string }) {
 export default function Sidebar() {
   const pathname = usePathname()
   const [isOpen, setIsOpen] = useState(false)
+  const [staffName, setStaffName] = useState<string | null>(null)
+  const [staffRole, setStaffRole] = useState<string | null>(null)
+
+  useEffect(() => {
+    setStaffName(localStorage.getItem('lh_staff_name'))
+    setStaffRole(localStorage.getItem('lh_staff_role'))
+  }, [])
 
   useEffect(() => { setIsOpen(false) }, [pathname])
   useEffect(() => {
@@ -199,7 +207,11 @@ export default function Sidebar() {
                 <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{section.label}</p>
               </div>
             )}
-            {section.items.map((item) => {
+            {section.items.filter((item) => {
+              if (item.href === '/staff' && staffRole !== 'owner') return false
+              if (item.href === '/accounts' && staffRole === 'staff') return false
+              return true
+            }).map((item) => {
               const active = isActive(item.href)
               const isDanger = 'danger' in item && item.danger
               return (
@@ -225,11 +237,26 @@ export default function Sidebar() {
       </nav>
 
       {/* フッター */}
-      <div className="px-6 py-4 border-t border-gray-200 space-y-3">
+      <div className="border-t border-gray-200">
+        {staffName && (
+          <div className="px-3 py-2 text-xs text-gray-500 border-t border-gray-100">
+            <div className="font-medium text-gray-700">{staffName}</div>
+            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5 ${
+              staffRole === 'owner' ? 'bg-yellow-100 text-yellow-800' :
+              staffRole === 'admin' ? 'bg-blue-100 text-blue-800' :
+              'bg-gray-100 text-gray-600'
+            }`}>
+              {staffRole === 'owner' ? 'オーナー' : staffRole === 'admin' ? '管理者' : 'スタッフ'}
+            </span>
+          </div>
+        )}
+        <div className="px-6 py-4 space-y-3">
         <p className="text-xs text-gray-400">LINE Harness v{process.env.APP_VERSION || '0.0.0'}</p>
         <button
           onClick={() => {
             localStorage.removeItem('lh_api_key')
+            localStorage.removeItem('lh_staff_name')
+            localStorage.removeItem('lh_staff_role')
             window.location.href = '/login'
           }}
           className="flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 transition-colors"
@@ -239,6 +266,7 @@ export default function Sidebar() {
           </svg>
           ログアウト
         </button>
+        </div>
       </div>
     </>
   )

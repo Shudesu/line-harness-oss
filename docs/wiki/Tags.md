@@ -136,7 +136,7 @@ curl -s ".../api/friends?tagId=VIP_TAG_UUID" \
 全タグを名前順で取得:
 
 ```bash
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/tags" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/tags" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -157,13 +157,13 @@ curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/tags" \
 
 ```bash
 # 色指定あり
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/tags" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/tags" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "VIP", "color": "#EF4444"}'
 
 # 色指定なし（デフォルト: #3B82F6）
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/tags" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/tags" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "新規"}'
@@ -193,7 +193,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/tags" \
 ### DELETE /api/tags/:id — タグ削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/tags/TAG_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/tags/TAG_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -208,7 +208,7 @@ curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/tags/TAG_UU
 ### POST /api/friends/:id/tags — 友だちにタグ付与
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/tags" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/tags" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"tagId": "TAG_UUID"}'
@@ -228,7 +228,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEN
 ### DELETE /api/friends/:id/tags/:tagId — 友だちからタグ削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/tags/TAG_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/tags/TAG_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -242,7 +242,7 @@ curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRI
 import { LineHarness } from '@line-harness/sdk'
 
 const client = new LineHarness({
-  apiUrl: 'https://line-crm-worker.line-crm-api.workers.dev',
+  apiUrl: 'https://your-worker.your-subdomain.workers.dev',
   apiKey: 'YOUR_API_KEY',
 })
 

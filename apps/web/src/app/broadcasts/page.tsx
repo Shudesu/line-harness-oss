@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { Tag } from '@line-crm/shared'
-import { api, type ApiBroadcast } from '@/lib/api'
+import { api, type ApiBroadcast, type BroadcastInsight } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import BroadcastForm from '@/components/broadcasts/broadcast-form'
@@ -56,6 +56,31 @@ export default function BroadcastsPage() {
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [sendingId, setSendingId] = useState<string | null>(null)
+  const [insights, setInsights] = useState<Record<string, BroadcastInsight>>({})
+  const [fetchingInsight, setFetchingInsight] = useState<string | null>(null)
+
+  const loadInsight = async (id: string) => {
+    try {
+      const res = await api.broadcasts.getInsight(id)
+      if (res.success && res.data) {
+        setInsights(prev => ({ ...prev, [id]: res.data! }))
+      }
+    } catch { /* ignore */ }
+  }
+
+  const handleFetchInsight = async (id: string) => {
+    setFetchingInsight(id)
+    try {
+      const res = await api.broadcasts.fetchInsight(id)
+      if (res.success && res.data) {
+        setInsights(prev => ({ ...prev, [id]: res.data }))
+      }
+    } catch {
+      setError('インサイトの取得に失敗しました')
+    } finally {
+      setFetchingInsight(null)
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -76,6 +101,11 @@ export default function BroadcastsPage() {
   }, [selectedAccountId])
 
   useEffect(() => { load() }, [load])
+
+  // 送信済みbroadcastのinsightを読み込み
+  useEffect(() => {
+    broadcasts.filter(b => b.status === 'sent').forEach(b => loadInsight(b.id))
+  }, [broadcasts])
 
   const handleSend = async (id: string) => {
     if (!confirm('この配信を今すぐ送信してもよいですか？')) return
@@ -227,12 +257,43 @@ export default function BroadcastsPage() {
                       {formatDatetime(broadcast.sentAt)}
                     </td>
 
-                    {/* Stats */}
+                    {/* Stats & Insight */}
                     <td className="px-4 py-3 text-sm text-gray-500">
                       {broadcast.status === 'sent' ? (
-                        <span>
-                          {broadcast.successCount.toLocaleString('ja-JP')} / {broadcast.totalCount.toLocaleString('ja-JP')} 件
-                        </span>
+                        <div>
+                          {broadcast.totalCount > 0 && (
+                            <p>{broadcast.successCount.toLocaleString('ja-JP')} / {broadcast.totalCount.toLocaleString('ja-JP')} 件</p>
+                          )}
+                          {insights[broadcast.id] ? (
+                            <div className="mt-1 space-y-0.5">
+                              {insights[broadcast.id].delivered != null && (
+                                <p className="text-xs">配信: <span className="font-medium text-gray-700">{insights[broadcast.id].delivered!.toLocaleString('ja-JP')}</span></p>
+                              )}
+                              {insights[broadcast.id].uniqueImpression != null && (
+                                <p className="text-xs">開封: <span className="font-medium text-blue-600">{insights[broadcast.id].uniqueImpression!.toLocaleString('ja-JP')}</span>
+                                  {insights[broadcast.id].openRate != null && (
+                                    <span className="text-gray-400"> ({(insights[broadcast.id].openRate! * 100).toFixed(1)}%)</span>
+                                  )}
+                                </p>
+                              )}
+                              {insights[broadcast.id].uniqueClick != null && (
+                                <p className="text-xs">クリック: <span className="font-medium text-green-600">{insights[broadcast.id].uniqueClick!.toLocaleString('ja-JP')}</span>
+                                  {insights[broadcast.id].clickRate != null && (
+                                    <span className="text-gray-400"> ({(insights[broadcast.id].clickRate! * 100).toFixed(1)}%)</span>
+                                  )}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleFetchInsight(broadcast.id)}
+                              disabled={fetchingInsight === broadcast.id}
+                              className="mt-1 text-xs text-blue-500 hover:text-blue-700 disabled:opacity-50"
+                            >
+                              {fetchingInsight === broadcast.id ? '取得中...' : 'インサイトを取得'}
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         '-'
                       )}

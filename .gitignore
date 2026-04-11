@@ -7,6 +7,9 @@ dist/
 .env.local
 *.log
 .DS_Store
+.mcp.json
+*.toml.bak
 .env.production
 .env.staging
 apps/web/out/
+apps/worker/dist/

@@ -1,19 +1,51 @@
-name = "line-crm-worker"
+name = "line-harness"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 workers_dev = true
 
-# API_KEY is set via `wrangler secret put API_KEY`
-# Do NOT hardcode secrets here
+# ═══════════════════════════════════════════════════════════════
+# デフォルト = テスト環境 (noda@)
+# 使い方: npx wrangler deploy
+# ═══════════════════════════════════════════════════════════════
+account_id = "YOUR_DEV_ACCOUNT_ID"
 
-[vars]
-WORKER_URL = "https://line-crm-worker.line-crm-api.workers.dev"
+[assets]
+directory = "dist/client"
+binding = "ASSETS"
 
 [[d1_databases]]
+binding = "DB"
+database_name = "line-harness"
+database_id = "YOUR_DEV_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "line-harness-images"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+# ═══════════════════════════════════════════════════════════════
+# 本番環境 (aiagent.mini@)
+# 使い方: npx wrangler deploy --env production --name your-worker-name
+# D1:     npx wrangler d1 execute line-crm --env production --remote --file ...
+# ═══════════════════════════════════════════════════════════════
+[env.production]
+account_id = "YOUR_ACCOUNT_ID"
+
+[env.production.assets]
+directory = "dist/client"
+binding = "ASSETS"
+
+[[env.production.d1_databases]]
 binding = "DB"
 database_name = "line-crm"
 database_id = "f6958f40-8b53-4ec3-ba1b-08fc00fcb669"
 
 
-[triggers]
+[[env.production.r2_buckets]]
+binding = "IMAGES"
+bucket_name = "line-harness-images"
+
+[env.production.triggers]
 crons = ["*/5 * * * *"]

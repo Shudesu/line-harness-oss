@@ -1,31 +1,14 @@
 {
   "name": "worker",
-  "version": "0.1.0",
+  "version": "0.8.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler d1 migrations apply DB --migrations-dir ../../packages/db/migrations && wrangler deploy",
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler deploy",
     "typecheck": "tsc --noEmit"
-  },
-  "cloudflare": {
-    "bindings": {
-      "LINE_CHANNEL_ACCESS_TOKEN": {
-        "type": "secret",
-        "description": "LINE Messaging API channel access token (from LINE Developers Console → Messaging API → Issue)"
-      },
-      "LINE_CHANNEL_SECRET": {
-        "type": "secret",
-        "description": "LINE Messaging API channel secret (from LINE Developers Console → Basic Settings)"
-      },
-      "LINE_LOGIN_CHANNEL_ID": {
-        "type": "secret",
-        "description": "LINE Login channel ID for friend-add OAuth flow (from LINE Developers Console → LINE Login channel)"
-      },
-      "API_KEY": {
-        "type": "secret",
-        "description": "Random string used to authenticate MCP Server and Admin UI requests — generate with: openssl rand -hex 32"
-      }
-    }
   },
   "dependencies": {
     "hono": "^4.6.0",
@@ -34,8 +17,10 @@
     "@line-crm/shared": "workspace:*"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.0.0",
     "@cloudflare/workers-types": "^4.20241205.0",
     "typescript": "^5.7.0",
-    "wrangler": "^3.99.0"
+    "vite": "^6.0.0",
+    "wrangler": "^4.0.0"
   }
 }

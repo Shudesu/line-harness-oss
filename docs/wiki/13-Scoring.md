@@ -144,7 +144,7 @@ async function addScore(db, input) {
 ### スコアリングルール一覧取得
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/scoring-rules" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -188,7 +188,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules"
 ### スコアリングルール詳細取得
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules/RULE_UUID" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/scoring-rules/RULE_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -211,7 +211,7 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules/
 ### スコアリングルール作成
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/scoring-rules" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -238,7 +238,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules
 ### スコアリングルール更新
 
 ```bash
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules/RULE_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/scoring-rules/RULE_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "scoreValue": 15, "isActive": true }'
@@ -262,14 +262,14 @@ curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules/
 ### スコアリングルール削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/scoring-rules/RULE_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/scoring-rules/RULE_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ### 友だちのスコア取得（現在値+履歴）
 
 ```bash
-curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/score" \
+curl -X GET "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/score" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -319,13 +319,13 @@ curl -X GET "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND
 
 ```bash
 # 加算
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/score" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/score" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "scoreChange": 50, "reason": "セミナー参加ボーナス" }'
 
 # 減算
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEND_UUID/score" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_UUID/score" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "scoreChange": -10, "reason": "30日間未活動" }'
@@ -351,7 +351,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/friends/FRIEN
 
 ```bash
 KEY="YOUR_API_KEY"
-BASE="https://line-crm-worker.line-crm-api.workers.dev"
+BASE="https://your-worker.your-subdomain.workers.dev"
 
 # 友だち追加: +5
 curl -X POST "$BASE/api/scoring-rules" -H "Authorization: Bearer $KEY" \

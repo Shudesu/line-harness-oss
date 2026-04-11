@@ -9,6 +9,8 @@ export interface TrackedLink {
   original_url: string;
   tag_id: string | null;
   scenario_id: string | null;
+  intro_template_id: string | null;
+  reward_template_id: string | null;
   is_active: number;
   click_count: number;
   created_at: string;
@@ -46,6 +48,8 @@ export interface CreateTrackedLinkInput {
   originalUrl: string;
   tagId?: string | null;
   scenarioId?: string | null;
+  introTemplateId?: string | null;
+  rewardTemplateId?: string | null;
 }
 
 export async function createTrackedLink(
@@ -57,13 +61,62 @@ export async function createTrackedLink(
 
   await db
     .prepare(
-      `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, is_active, click_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+      `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, is_active, click_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     )
-    .bind(id, input.name, input.originalUrl, input.tagId ?? null, input.scenarioId ?? null, now, now)
+    .bind(
+      id,
+      input.name,
+      input.originalUrl,
+      input.tagId ?? null,
+      input.scenarioId ?? null,
+      input.introTemplateId ?? null,
+      input.rewardTemplateId ?? null,
+      now,
+      now,
+    )
     .run();
 
   return (await getTrackedLinkById(db, id))!;
+}
+
+export interface UpdateTrackedLinkInput {
+  name?: string;
+  tagId?: string | null;
+  scenarioId?: string | null;
+  introTemplateId?: string | null;
+  rewardTemplateId?: string | null;
+  isActive?: boolean;
+}
+
+export async function updateTrackedLink(
+  db: D1Database,
+  id: string,
+  input: UpdateTrackedLinkInput,
+): Promise<TrackedLink | null> {
+  const existing = await getTrackedLinkById(db, id);
+  if (!existing) return null;
+
+  const now = jstNow();
+  const name = input.name ?? existing.name;
+  const tagId = input.tagId === undefined ? existing.tag_id : input.tagId;
+  const scenarioId = input.scenarioId === undefined ? existing.scenario_id : input.scenarioId;
+  const introTemplateId =
+    input.introTemplateId === undefined ? existing.intro_template_id : input.introTemplateId;
+  const rewardTemplateId =
+    input.rewardTemplateId === undefined ? existing.reward_template_id : input.rewardTemplateId;
+  const isActive = input.isActive === undefined ? existing.is_active : (input.isActive ? 1 : 0);
+
+  await db
+    .prepare(
+      `UPDATE tracked_links
+         SET name = ?, tag_id = ?, scenario_id = ?, intro_template_id = ?, reward_template_id = ?, is_active = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+    .bind(name, tagId, scenarioId, introTemplateId, rewardTemplateId, isActive, now, id)
+    .run();
+
+  return getTrackedLinkById(db, id);
 }
 
 export async function deleteTrackedLink(db: D1Database, id: string): Promise<void> {
@@ -121,3 +174,4 @@ export async function getLinkClicks(
     .all<LinkClickWithFriend>();
   return result.results;
 }
+

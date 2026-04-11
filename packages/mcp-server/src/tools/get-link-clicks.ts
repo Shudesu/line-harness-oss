@@ -14,11 +14,28 @@ export function registerGetLinkClicks(server: McpServer): void {
         const client = getClient();
         const link = await client.trackedLinks.get(linkId);
         return {
-          content: [{ type: "text", text: JSON.stringify({ success: true, link }, null, 2) }],
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ success: true, link }, null, 2),
+            },
+          ],
         };
       } catch (error) {
-        return { content: [{ type: "text", text: JSON.stringify({ success: false, error: String(error) }, null, 2) }], isError: true };
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                { success: false, error: String(error) },
+                null,
+                2,
+              ),
+            },
+          ],
+          isError: true,
+        };
       }
-    }
+    },
   );
 }

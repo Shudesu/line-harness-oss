@@ -182,7 +182,7 @@ WHERE EXISTS (SELECT 1 FROM friend_tags ft WHERE ft.friend_id = f.id AND ft.tag_
 ### GET /api/broadcasts — 配信一覧
 
 ```bash
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/broadcasts" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -227,7 +227,7 @@ curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
 ### GET /api/broadcasts/:id — 配信詳細
 
 ```bash
-curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BROADCAST_UUID" \
+curl -s "https://your-worker.your-subdomain.workers.dev/api/broadcasts/BROADCAST_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" | jq
 ```
 
@@ -235,7 +235,7 @@ curl -s "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BROADCA
 
 ```bash
 # テキスト配信（下書き — 全員向け）
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -246,7 +246,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
   }'
 
 # タグ指定 + 予約配信
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -259,7 +259,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
   }'
 
 # Flex メッセージ配信
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -308,7 +308,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts" \
 draft または scheduled の配信のみ更新可能:
 
 ```bash
-curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BROADCAST_UUID" \
+curl -X PUT "https://your-worker.your-subdomain.workers.dev/api/broadcasts/BROADCAST_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -325,7 +325,7 @@ curl -X PUT "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BRO
 ### DELETE /api/broadcasts/:id — 配信削除
 
 ```bash
-curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BROADCAST_UUID" \
+curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/broadcasts/BROADCAST_UUID" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -334,7 +334,7 @@ curl -X DELETE "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/
 下書きまたは予約中の配信を即座に実行:
 
 ```bash
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BROADCAST_UUID/send" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts/BROADCAST_UUID/send" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -347,7 +347,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BR
 
 ```bash
 # VIPタグを持ち、かつ metadata.plan が "premium" の友だちに配信
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BROADCAST_UUID/send-segment" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts/BROADCAST_UUID/send-segment" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -362,7 +362,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BR
   }'
 
 # タグAまたはタグBを持つ友だちに配信
-curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BROADCAST_UUID/send-segment" \
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts/BROADCAST_UUID/send-segment" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -391,7 +391,7 @@ curl -X POST "https://line-crm-worker.line-crm-api.workers.dev/api/broadcasts/BR
 import { LineHarness } from '@line-harness/sdk'
 
 const client = new LineHarness({
-  apiUrl: 'https://line-crm-worker.line-crm-api.workers.dev',
+  apiUrl: 'https://your-worker.your-subdomain.workers.dev',
   apiKey: 'YOUR_API_KEY',
 })
 

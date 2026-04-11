@@ -1,6 +1,6 @@
 {
   "name": "@line-harness/sdk",
-  "version": "0.1.0",
+  "version": "0.10.0",
   "description": "AI-native SDK for LINE Harness — programmatic LINE official account automation",
   "type": "module",
   "exports": {
@@ -13,7 +13,9 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -23,7 +25,13 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": ["line", "crm", "marketing-automation", "sdk", "ai"],
+  "keywords": [
+    "line",
+    "crm",
+    "marketing-automation",
+    "sdk",
+    "ai"
+  ],
   "license": "MIT",
   "devDependencies": {
     "tsup": "^8.0.0",

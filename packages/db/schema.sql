@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS friends (
   status_message   TEXT,
   is_following     INTEGER NOT NULL DEFAULT 1,
   user_id          TEXT,
+  ig_igsid         TEXT,
   score            INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS friends (
 
 CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
+CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
 
 -- ============================================================
 -- Tags
@@ -105,10 +107,34 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   sent_at         TEXT,
   total_count     INTEGER NOT NULL DEFAULT 0,
   success_count   INTEGER NOT NULL DEFAULT 0,
+  line_request_id   TEXT,
+  aggregation_unit  TEXT,
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts (status);
+
+-- ============================================================
+-- Broadcast Insights
+-- ============================================================
+CREATE TABLE IF NOT EXISTS broadcast_insights (
+  id                  TEXT PRIMARY KEY,
+  broadcast_id        TEXT NOT NULL REFERENCES broadcasts(id) ON DELETE CASCADE,
+  delivered           INTEGER,
+  unique_impression   INTEGER,
+  unique_click        INTEGER,
+  unique_media_played INTEGER,
+  open_rate           REAL,
+  click_rate          REAL,
+  raw_response        TEXT,
+  status              TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
+  retry_count         INTEGER NOT NULL DEFAULT 0,
+  fetched_at          TEXT,
+  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_broadcast_insights_broadcast_id ON broadcast_insights(broadcast_id);
+CREATE INDEX IF NOT EXISTS idx_broadcast_insights_status ON broadcast_insights(status);
 
 -- ============================================================
 -- Messages Log
@@ -137,6 +163,7 @@ CREATE TABLE IF NOT EXISTS auto_replies (
   match_type       TEXT NOT NULL CHECK (match_type IN ('exact', 'contains')) DEFAULT 'exact',
   response_type    TEXT NOT NULL DEFAULT 'text',
   response_content TEXT NOT NULL,
+  line_account_id  TEXT DEFAULT NULL,
   is_active        INTEGER NOT NULL DEFAULT 1,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
@@ -505,3 +532,73 @@ CREATE TABLE IF NOT EXISTS automation_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_automation_logs_automation ON automation_logs (automation_id);
+
+-- ============================================================
+-- Ad Platform Configuration
+-- ============================================================
+CREATE TABLE IF NOT EXISTS ad_platforms (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  display_name TEXT,
+  config       TEXT NOT NULL DEFAULT '{}',
+  is_active    INTEGER DEFAULT 1,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+-- ============================================================
+-- Ad Conversion Logs
+-- ============================================================
+CREATE TABLE IF NOT EXISTS ad_conversion_logs (
+  id                  TEXT PRIMARY KEY,
+  ad_platform_id      TEXT NOT NULL,
+  friend_id           TEXT NOT NULL,
+  conversion_point_id TEXT,
+  event_name          TEXT NOT NULL,
+  click_id            TEXT,
+  click_id_type       TEXT,
+  status              TEXT DEFAULT 'pending',
+  request_body        TEXT,
+  response_body       TEXT,
+  error_message       TEXT,
+  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_platform ON ad_conversion_logs (ad_platform_id);
+CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_friend ON ad_conversion_logs (friend_id);
+CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_status ON ad_conversion_logs (status);
+
+-- Staff member accounts with role-based access control
+CREATE TABLE IF NOT EXISTS staff_members (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  email      TEXT,
+  role       TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff')),
+  api_key    TEXT UNIQUE NOT NULL,
+  is_active  INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
+CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
+
+-- Reusable message templates (text or Flex) for reward messages in campaigns
+CREATE TABLE IF NOT EXISTS message_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  message_type TEXT NOT NULL CHECK (message_type IN ('text', 'flex')),
+  message_content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Pool accounts — multiple LINE accounts per traffic pool for distribution
+CREATE TABLE IF NOT EXISTS pool_accounts (
+  id TEXT PRIMARY KEY,
+  pool_id TEXT NOT NULL REFERENCES traffic_pools(id) ON DELETE CASCADE,
+  line_account_id TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(pool_id, line_account_id)
+);

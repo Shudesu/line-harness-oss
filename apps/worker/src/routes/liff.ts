@@ -9,9 +9,15 @@ import {
   recordRefTracking,
   addTagToFriend,
   getLineAccountByChannelId,
+  getLineAccountById,
   getLineAccounts,
+  getTrafficPoolBySlug,
+  getRandomPoolAccount,
+  getTrackedLinkById,
+  getMessageTemplateById,
   jstNow,
 } from '@line-crm/db';
+import { buildIntroMessage } from '../services/intro-message.js';
 import type { Env } from '../index.js';
 
 const liffRoutes = new Hono<Env>();
@@ -32,16 +38,39 @@ const liffRoutes = new Hono<Env>();
 liffRoutes.get('/auth/line', async (c) => {
   const ref = c.req.query('ref') || '';
   const redirect = c.req.query('redirect') || '';
+  const formId = c.req.query('form') || '';
   const gclid = c.req.query('gclid') || '';
   const fbclid = c.req.query('fbclid') || '';
+  const twclid = c.req.query('twclid') || '';
+  const ttclid = c.req.query('ttclid') || '';
   const utmSource = c.req.query('utm_source') || '';
   const utmMedium = c.req.query('utm_medium') || '';
   const utmCampaign = c.req.query('utm_campaign') || '';
-  const accountParam = c.req.query('account') || '';
+  let accountParam = c.req.query('account') || '';
   const uidParam = c.req.query('uid') || ''; // existing user UUID for cross-account linking
+  const igParam = c.req.query('ig') || ''; // IG Harness IGSID for cross-platform linking
+  let poolAccount = ''; // pool's channel_id — passed via state only, not accountParam
   const baseUrl = new URL(c.req.url).origin;
 
-  // Multi-account: resolve LINE Login channel + LIFF from DB if account param provided
+  // X (Twitter) iOS in-app browser since v11.42 uses custom WKWebView that
+  // blocks ALL Universal Links / deep links. Same for Instagram, Facebook,
+  // LINE in-app, WeChat. Redirect to /r/ which renders an explicit
+  // "Safariで開く" guidance UI. This is one-way — /r/'s OAuth fallback
+  // button targets /auth/oauth (not /auth/line), so no loop is possible.
+  const ua = c.req.header('user-agent') || '';
+  const isInAppBrowser = /twitter|twitterandroid|\b(fbav|fban|instagram|line\/|micromessenger)\b/i.test(ua);
+  if (isInAppBrowser && ref) {
+    const url = new URL(c.req.url);
+    const passthrough = new URLSearchParams();
+    for (const [key, value] of url.searchParams) {
+      if (key !== 'ref') passthrough.set(key, value);
+    }
+    const qs = passthrough.toString();
+    return c.redirect(`/r/${encodeURIComponent(ref)}${qs ? '?' + qs : ''}`);
+  }
+
+  // Multi-account: resolve LINE Login channel + LIFF
+  // Priority: ?account= param > traffic pool "main" > env default
   let channelId = c.env.LINE_LOGIN_CHANNEL_ID;
   let liffUrl = c.env.LIFF_URL;
   if (accountParam) {
@@ -52,26 +81,73 @@ liffRoutes.get('/auth/line', async (c) => {
     if (account?.liff_id) {
       liffUrl = `https://liff.line.me/${account.liff_id}`;
     }
+  } else {
+    // Traffic pool: pick random account from pool for distribution
+    // NOTE: accountParam is NOT set here — setting it triggers the cross-account
+    // OAuth guard (L123) which skips LIFF on mobile. Pool is not cross-account.
+    // Instead, pool's channel_id goes into state only for callback to resolve.
+    const poolSlug = c.req.query('pool') || 'main';
+    const pool = await getTrafficPoolBySlug(c.env.DB, poolSlug);
+    if (pool) {
+      const account = await getRandomPoolAccount(c.env.DB, pool.id);
+      if (account) {
+        if (account.login_channel_id) channelId = account.login_channel_id;
+        if (account.liff_id) liffUrl = `https://liff.line.me/${account.liff_id}`;
+        if (account.channel_id) poolAccount = account.channel_id;
+      } else {
+        // Check if pool_accounts exist at all (vs all disabled)
+        const { getPoolAccounts } = await import('@line-crm/db');
+        const allAccounts = await getPoolAccounts(c.env.DB, pool.id);
+        if (allAccounts.length === 0) {
+          // No pool_accounts yet — fallback to active_account_id (migration period)
+          if (pool.login_channel_id) channelId = pool.login_channel_id;
+          if (pool.liff_id) liffUrl = `https://liff.line.me/${pool.liff_id}`;
+          if (pool.channel_id) poolAccount = pool.channel_id;
+        } else {
+          // All pool_accounts disabled — fail closed, don't leak to default account
+          return c.text('このリンクは現在利用できません。しばらくしてからお試しください。', 503);
+        }
+      }
+    }
   }
   const callbackUrl = `${baseUrl}/auth/callback`;
+
+  // xh: refs are X Harness one-time tokens — never forward to third-party URLs (liff.line.me / QR)
+  // The token must reach /auth/callback, so it IS included in the OAuth state (handled by this worker).
+  // It must NOT appear in LIFF URLs or QR codes that escape to external domains.
+  const externalRef = ref.startsWith('xh:') ? '' : ref;
 
   // Build LIFF URL with ref + ad params (for mobile → LINE app)
   // Extract LIFF ID from URL and pass as query param so the app can init correctly
   const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
   const liffParams = new URLSearchParams();
   if (liffIdMatch) liffParams.set('liffId', liffIdMatch[1]);
-  if (ref) liffParams.set('ref', ref);
+  if (externalRef) liffParams.set('ref', externalRef);
+  if (formId) liffParams.set('form', formId);
+  const gateParam = c.req.query('gate') || '';
+  if (gateParam) liffParams.set('gate', gateParam);
+  const xhParam2 = c.req.query('xh') || '';
+  if (xhParam2) liffParams.set('xh', xhParam2);
+  if (igParam) liffParams.set('ig', igParam);
   if (redirect) liffParams.set('redirect', redirect);
   if (gclid) liffParams.set('gclid', gclid);
   if (fbclid) liffParams.set('fbclid', fbclid);
+  if (twclid) liffParams.set('twclid', twclid);
+  if (ttclid) liffParams.set('ttclid', ttclid);
   if (utmSource) liffParams.set('utm_source', utmSource);
   const liffTarget = liffParams.toString()
     ? `${liffUrl}?${liffParams.toString()}`
     : liffUrl;
 
   // Build OAuth URL (for desktop fallback)
-  // Pack all tracking params into state so they survive the OAuth redirect
-  const state = JSON.stringify({ ref, redirect, gclid, fbclid, utmSource, utmMedium, utmCampaign, account: accountParam, uid: uidParam });
+  // Pack all tracking params into state so they survive the OAuth redirect.
+  // The full ref (including xh: tokens) is stored in state — it is opaque to access.line.me
+  // and only decoded by this worker's /auth/callback handler.
+  // gate / xh: campaign metadata that must reach the form push so the form
+  // can verify against the correct gate via the correct X Harness instance.
+  // Without these, the form falls back to the gateId baked into the form's
+  // onSubmitWebhookUrl (which is stale when a form is reused across campaigns).
+  const state = JSON.stringify({ ref, redirect, form: formId, gate: gateParam, xh: xhParam2, gclid, fbclid, twclid, ttclid, utmSource, utmMedium, utmCampaign, account: accountParam || poolAccount, uid: uidParam, ig: igParam });
   const encodedState = btoa(state);
   const loginUrl = new URL('https://access.line.me/oauth2/v2.1/authorize');
   loginUrl.searchParams.set('response_type', 'code');
@@ -82,20 +158,28 @@ liffRoutes.get('/auth/line', async (c) => {
   loginUrl.searchParams.set('state', encodedState);
 
   // Build LIFF URL with params (opens LINE app directly on mobile + QR on PC)
+  // externalRef used — xh: tokens must not appear in QR codes or LIFF URLs
+  // gate/xh: campaign metadata that the LIFF page must see so it can verify
+  // against the correct gate (otherwise the form falls back to the stale gate
+  // baked into the form's webhook URL when forms are reused across campaigns).
   const qrParams = new URLSearchParams();
-  if (ref) qrParams.set('ref', ref);
+  if (liffIdMatch) qrParams.set('liffId', liffIdMatch[1]);
+  if (externalRef) qrParams.set('ref', externalRef);
+  if (formId) qrParams.set('form', formId);
+  if (gateParam) qrParams.set('gate', gateParam);
+  if (xhParam2) qrParams.set('xh', xhParam2);
   if (uidParam) qrParams.set('uid', uidParam);
   if (accountParam) qrParams.set('account', accountParam);
+  if (igParam) qrParams.set('ig', igParam);
   const qrUrl = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
 
   // Mobile: redirect to LIFF URL (opens LINE app directly)
   // Exception: cross-account links (account param) use OAuth directly
   // because Account A's LIFF can't open from Account B's LINE chat
-  const ua = (c.req.header('user-agent') || '').toLowerCase();
-  const isMobile = /iphone|ipad|android|mobile/.test(ua);
+  const isMobile = /iphone|ipad|android|mobile/.test(ua.toLowerCase());
   if (isMobile) {
     if (accountParam) {
-      // Cross-account: use OAuth (LIFF won't work across accounts)
+      // Cross-account link: use OAuth so callback handles push
       return c.redirect(loginUrl.toString());
     }
     return c.redirect(qrUrl);
@@ -107,31 +191,109 @@ liffRoutes.get('/auth/line', async (c) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LINE で友だち追加</title>
+  <title>LINE で開く</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Hiragino Sans', system-ui, sans-serif; background: #0d1117; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-    .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 48px; text-align: center; max-width: 480px; width: 90%; }
-    h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; }
-    .sub { font-size: 14px; color: rgba(255,255,255,0.5); margin-bottom: 32px; }
-    .qr { background: #fff; border-radius: 16px; padding: 24px; display: inline-block; margin-bottom: 24px; }
-    .qr img { display: block; width: 240px; height: 240px; }
-    .hint { font-size: 13px; color: rgba(255,255,255,0.4); line-height: 1.6; }
-    .badge { display: inline-block; margin-top: 24px; padding: 8px 20px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #06C755; background: rgba(6,199,85,0.1); border: 1px solid rgba(6,199,85,0.2); }
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;background:#f5f7f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
+    .card{background:#fff;border-radius:20px;box-shadow:0 2px 20px rgba(0,0,0,0.06);text-align:center;max-width:480px;width:90%;padding:48px;border:1px solid rgba(0,0,0,0.04)}
+    .line-icon{width:48px;height:48px;margin:0 auto 20px}
+    .line-icon svg{width:48px;height:48px}
+    .msg{font-size:15px;color:#444;font-weight:500;margin-bottom:32px;line-height:1.6}
+    .qr{background:#f9f9f9;border-radius:16px;padding:24px;display:inline-block;margin-bottom:24px;border:1px solid rgba(0,0,0,0.04)}
+    .qr img{display:block;width:240px;height:240px}
+    .hint{font-size:13px;color:#999;line-height:1.6}
+    .footer{font-size:11px;color:#bbb;margin-top:24px;line-height:1.5}
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>LINE Harness を体験</h1>
-    <p class="sub">スマートフォンで QR コードを読み取ってください</p>
+    <div class="line-icon">
+      <svg viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#06C755"/><path d="M24 12C17.37 12 12 16.58 12 22.2c0 3.54 2.35 6.65 5.86 8.47-.2.74-.76 2.75-.87 3.17-.14.55.2.54.42.39.18-.12 2.84-1.88 4-2.65.84.13 1.7.22 2.59.22 6.63 0 12-4.58 12-10.2S30.63 12 24 12z" fill="#fff"/></svg>
+    </div>
+    <p class="msg">スマートフォンで QR コードを読み取ってください</p>
     <div class="qr">
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(qrUrl)}" alt="QR Code">
+      <img src="/api/qr?size=240x240&data=${encodeURIComponent(qrUrl)}" alt="QR Code">
     </div>
     <p class="hint">LINE アプリのカメラまたは<br>スマートフォンのカメラで読み取れます</p>
-    <div class="badge">LINE Harness OSS</div>
+    <p class="footer">友だち追加で全機能を無料体験できます</p>
   </div>
 </body>
 </html>`);
+});
+
+/**
+ * GET /auth/oauth — force OAuth flow (skips LIFF, skips X detection)
+ *
+ * This endpoint always 302's to access.line.me OAuth, regardless of UA.
+ * Used by /r/'s X-warning-page "このまま LINE を開く" button so the user
+ * can complete friend-add in-place when LINE Universal Link is broken
+ * (e.g. inside X's custom WKWebView since v11.42).
+ *
+ * Same query params as /auth/line. No HTML rendering, no smart logic.
+ */
+liffRoutes.get('/auth/oauth', async (c) => {
+  const ref = c.req.query('ref') || '';
+  const redirect = c.req.query('redirect') || '';
+  const formId = c.req.query('form') || '';
+  const gateParam = c.req.query('gate') || '';
+  const xhParam = c.req.query('xh') || '';
+  const gclid = c.req.query('gclid') || '';
+  const fbclid = c.req.query('fbclid') || '';
+  const twclid = c.req.query('twclid') || '';
+  const ttclid = c.req.query('ttclid') || '';
+  const utmSource = c.req.query('utm_source') || '';
+  const utmMedium = c.req.query('utm_medium') || '';
+  const utmCampaign = c.req.query('utm_campaign') || '';
+  const accountParam = c.req.query('account') || '';
+  const uidParam = c.req.query('uid') || '';
+  const igParam = c.req.query('ig') || '';
+  let poolAccount = '';
+  const baseUrl = new URL(c.req.url).origin;
+
+  // Pool / account resolution — same logic as /auth/line
+  let channelId = c.env.LINE_LOGIN_CHANNEL_ID;
+  if (accountParam) {
+    const account = await getLineAccountByChannelId(c.env.DB, accountParam);
+    if (account?.login_channel_id) channelId = account.login_channel_id;
+  } else {
+    const poolSlug = c.req.query('pool') || 'main';
+    const pool = await getTrafficPoolBySlug(c.env.DB, poolSlug);
+    if (pool) {
+      const account = await getRandomPoolAccount(c.env.DB, pool.id);
+      if (account) {
+        if (account.login_channel_id) channelId = account.login_channel_id;
+        if (account.channel_id) poolAccount = account.channel_id;
+      } else {
+        const { getPoolAccounts } = await import('@line-crm/db');
+        const allAccounts = await getPoolAccounts(c.env.DB, pool.id);
+        if (allAccounts.length === 0) {
+          if (pool.login_channel_id) channelId = pool.login_channel_id;
+          if (pool.channel_id) poolAccount = pool.channel_id;
+        } else {
+          return c.text('このリンクは現在利用できません。しばらくしてからお試しください。', 503);
+        }
+      }
+    }
+  }
+
+  // Build OAuth URL with full state
+  const callbackUrl = `${baseUrl}/auth/callback`;
+  const state = JSON.stringify({
+    ref, redirect, form: formId, gate: gateParam, xh: xhParam,
+    gclid, fbclid, twclid, ttclid,
+    utmSource, utmMedium, utmCampaign,
+    account: accountParam || poolAccount, uid: uidParam, ig: igParam,
+  });
+  const encodedState = btoa(state);
+  const loginUrl = new URL('https://access.line.me/oauth2/v2.1/authorize');
+  loginUrl.searchParams.set('response_type', 'code');
+  loginUrl.searchParams.set('client_id', channelId);
+  loginUrl.searchParams.set('redirect_uri', callbackUrl);
+  loginUrl.searchParams.set('scope', 'profile openid email');
+  loginUrl.searchParams.set('bot_prompt', 'aggressive');
+  loginUrl.searchParams.set('state', encodedState);
+
+  return c.redirect(loginUrl.toString());
 });
 
 /**
@@ -147,24 +309,36 @@ liffRoutes.get('/auth/callback', async (c) => {
   // Parse state (contains ref, redirect, and ad click IDs)
   let ref = '';
   let redirect = '';
+  let formId = '';
+  let gateParam = '';
+  let xhParam = '';
   let gclid = '';
   let fbclid = '';
+  let twclid = '';
+  let ttclid = '';
   let utmSource = '';
   let utmMedium = '';
   let utmCampaign = '';
   let accountParam = '';
   let uidParam = '';
+  let igParam = '';
   try {
     const parsed = JSON.parse(atob(stateParam));
     ref = parsed.ref || '';
     redirect = parsed.redirect || '';
+    formId = parsed.form || '';
+    gateParam = parsed.gate || '';
+    xhParam = parsed.xh || '';
     gclid = parsed.gclid || '';
     fbclid = parsed.fbclid || '';
+    twclid = parsed.twclid || '';
+    ttclid = parsed.ttclid || '';
     utmSource = parsed.utmSource || '';
     utmMedium = parsed.utmMedium || '';
     utmCampaign = parsed.utmCampaign || '';
     accountParam = parsed.account || '';
     uidParam = parsed.uid || '';
+    igParam = parsed.ig || '';
   } catch {
     // ignore
   }
@@ -262,6 +436,37 @@ liffRoutes.get('/auth/callback', async (c) => {
       statusMessage: null,
     });
 
+    // IG cross-platform UUID linkage
+    // If the tracked link carried ?ig=<IGSID>, persist it on our side and
+    // notify IG Harness so both DBs hold a bidirectional reference.
+    if (igParam) {
+      try {
+        await db
+          .prepare('UPDATE friends SET ig_igsid = ? WHERE id = ? AND (ig_igsid IS NULL OR ig_igsid = ?)')
+          .bind(igParam, friend.id, igParam)
+          .run();
+      } catch (err) {
+        console.error('Failed to write friends.ig_igsid:', err);
+      }
+      // Best-effort notify IG Harness (don't block the user)
+      if (c.env.IG_HARNESS_URL && c.env.IG_HARNESS_LINK_SECRET) {
+        c.executionCtx.waitUntil(
+          fetch(`${c.env.IG_HARNESS_URL}/api/followers/link-line`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-LINE-HARNESS-LINK-SECRET': c.env.IG_HARNESS_LINK_SECRET,
+            },
+            body: JSON.stringify({ igsid: igParam, line_friend_uuid: friend.id }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              console.error('IG Harness link-line failed:', res.status, await res.text().catch(() => ''));
+            }
+          }).catch((err) => console.error('IG Harness link-line error:', err))
+        );
+      }
+    }
+
     // Create or find user → link
     let userId: string | null = null;
 
@@ -295,7 +500,8 @@ liffRoutes.get('/auth/callback', async (c) => {
     }
 
     // Attribution tracking
-    if (ref) {
+    // xh: refs are X Harness one-time tokens (the token IS the secret) — never persist as ref_code
+    if (ref && !ref.startsWith('xh:')) {
       // Save ref_code on the friend record (first touch wins — only set if not already set)
       await db
         .prepare(`UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL`)
@@ -305,12 +511,21 @@ liffRoutes.get('/auth/callback', async (c) => {
       // Look up entry route config
       const route = await getEntryRouteByRefCode(db, ref);
 
-      // Persist tracking event
+      // Persist tracking event with ad click IDs
       await recordRefTracking(db, {
         refCode: ref,
         friendId: friend.id,
         entryRouteId: route?.id ?? null,
         sourceUrl: null,
+        fbclid: fbclid || null,
+        gclid: gclid || null,
+        twclid: twclid || null,
+        ttclid: ttclid || null,
+        utmSource: utmSource || null,
+        utmMedium: utmMedium || null,
+        utmCampaign: utmCampaign || null,
+        userAgent: c.req.header('User-Agent') || null,
+        ipAddress: c.req.header('CF-Connecting-IP') || null,
       });
 
       if (route) {
@@ -327,6 +542,8 @@ liffRoutes.get('/auth/callback', async (c) => {
     const adMeta: Record<string, string> = {};
     if (gclid) adMeta.gclid = gclid;
     if (fbclid) adMeta.fbclid = fbclid;
+    if (twclid) adMeta.twclid = twclid;
+    if (ttclid) adMeta.ttclid = ttclid;
     if (utmSource) adMeta.utm_source = utmSource;
     if (utmMedium) adMeta.utm_medium = utmMedium;
     if (utmCampaign) adMeta.utm_campaign = utmCampaign;
@@ -341,6 +558,33 @@ liffRoutes.get('/auth/callback', async (c) => {
         .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
         .bind(JSON.stringify(merged), jstNow(), friend.id)
         .run();
+    }
+
+    // X Harness token resolution: ref starting with "xh:" links X account to LINE friend
+    if (ref && ref.startsWith('xh:')) {
+      try {
+        const xhToken = ref.slice(3);
+        const xhResult = await resolveXHarnessToken(xhToken, c.env);
+        if (xhResult?.xUsername) {
+          const existingMeta = await db
+            .prepare('SELECT metadata FROM friends WHERE id = ?')
+            .bind(friend.id)
+            .first<{ metadata: string }>();
+          const meta = JSON.parse(existingMeta?.metadata || '{}');
+          meta.x_username = xhResult.xUsername;
+          await db
+            .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
+            .bind(JSON.stringify(meta), jstNow(), friend.id)
+            .run();
+          console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
+        }
+        // Apply gate actions (tag + scenario) from X Harness
+        if (xhResult) {
+          await applyXHarnessActions(db, friend.id, xhResult);
+        }
+      } catch (err) {
+        console.error('X Harness token resolution error (non-blocking):', err);
+      }
     }
 
     // Auto-enroll in friend_add scenarios + immediate delivery (skip delivery window)
@@ -377,9 +621,11 @@ liffRoutes.get('/auth/callback', async (c) => {
             const steps = await getScenarioSteps(db, scenario.id);
             const firstStep = steps[0];
             if (firstStep && firstStep.delay_minutes === 0) {
+              const { resolveMetadata: resolveMetaLiff } = await import('../services/step-delivery.js');
+              const resolvedMetaLiff = await resolveMetaLiff(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
               const expandedContent = expandVariables(
                 firstStep.message_content,
-                friend as { id: string; display_name: string | null; user_id: string | null },
+                { ...friend, metadata: resolvedMetaLiff } as Parameters<typeof expandVariables>[1],
                 c.env.WORKER_URL,
               );
               await lineClient.pushMessage(lineUserId, [buildMessage(firstStep.message_type, expandedContent)]);
@@ -396,24 +642,103 @@ liffRoutes.get('/auth/callback', async (c) => {
       return c.redirect(redirect);
     }
 
-    // If friend is not yet following this bot, redirect to friend-add page
-    if (accountParam) {
-      const account = await getLineAccountByChannelId(db, accountParam);
-      if (account) {
-        // Fetch bot basic ID for friend-add URL
-        try {
-          const botInfo = await fetch('https://api.line.me/v2/bot/info', {
-            headers: { Authorization: `Bearer ${account.channel_access_token}` },
-          });
-          if (botInfo.ok) {
-            const bot = await botInfo.json() as { basicId?: string };
-            if (bot.basicId) {
-              return c.redirect(`https://line.me/R/ti/p/${bot.basicId}`);
+    // Send form link as LINE message if form param was passed
+    if (formId && friend?.line_user_id) {
+      try {
+        // Build form LIFF URL using the friend's account liff_id (multi-account aware)
+        // Append gate/xh so the form can verify against the correct campaign gate
+        // (form definitions can be reused across campaigns, so the form's webhook
+        // URL is unreliable as a source of gate id).
+        // xh: refs are X Harness one-time secret tokens — never put them on
+        // liff.line.me URLs (third-party host). The same filter is applied
+        // elsewhere in this file for QR codes / external LIFF URLs.
+        const externalRefForForm = ref && !ref.startsWith('xh:') ? ref : '';
+        const formQuery = new URLSearchParams();
+        formQuery.set('page', 'form');
+        formQuery.set('id', formId);
+        if (externalRefForForm) formQuery.set('ref', externalRefForForm);
+        if (gateParam) formQuery.set('gate', gateParam);
+        if (xhParam) formQuery.set('xh', xhParam);
+        let formLiffUrl = `${new URL(c.req.url).origin}?${formQuery.toString()}`;
+        const { LineClient } = await import('@line-crm/line-sdk');
+        const { getLineAccountById: getAcctById } = await import('@line-crm/db');
+        let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+        if (friend.line_account_id) {
+          const account = await getAcctById(db, friend.line_account_id);
+          if (account?.channel_access_token) accessToken = account.channel_access_token;
+          if (account?.liff_id) {
+            formLiffUrl = `https://liff.line.me/${account.liff_id}?${formQuery.toString()}`;
+          }
+        }
+        if (formLiffUrl.startsWith(`${new URL(c.req.url).origin}`)) {
+          const envLiffUrl = c.env.LIFF_URL || '';
+          const envLiffIdMatch = envLiffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
+          if (envLiffIdMatch) {
+            formLiffUrl = `https://liff.line.me/${envLiffIdMatch[1]}?${formQuery.toString()}`;
+          }
+        }
+        // Resolve intro template via tracked link (if ref points to one).
+        // Also pin the friend to this tracked_link via setFriendFirstTrackedLinkIfNull,
+        // so the form-submit handler can authoritatively look up the reward
+        // template without trusting client-provided ref. The "if null" guard
+        // means existing friends cannot tamper with their attribution by
+        // re-running this flow with a different ref.
+        let introTemplate = null;
+        if (ref) {
+          const trackedLink = await getTrackedLinkById(db, ref);
+          if (trackedLink) {
+            try {
+              const { setFriendFirstTrackedLinkIfNull } = await import('@line-crm/db');
+              await setFriendFirstTrackedLinkIfNull(db, friend.id, trackedLink.id);
+            } catch (e) {
+              console.error('setFriendFirstTrackedLinkIfNull failed (non-blocking):', e);
+            }
+            if (trackedLink.intro_template_id) {
+              introTemplate = await getMessageTemplateById(db, trackedLink.intro_template_id);
             }
           }
-        } catch {
-          // Fall through to completion page
         }
+        const introMessage = buildIntroMessage(introTemplate, formLiffUrl);
+
+        const lineClient = new LineClient(accessToken);
+        await lineClient.pushMessage(friend.line_user_id, [introMessage as any]);
+      } catch (err) {
+        console.error('Form link push error (non-blocking):', err);
+      }
+    }
+
+    // Redirect to the correct bot's chat after auth
+    // Find the LINE account by: account param, friend's account, or login channel ID
+    let redirectAccount: Record<string, string> | null = null;
+    if (accountParam) {
+      redirectAccount = await getLineAccountByChannelId(db, accountParam) as Record<string, string> | null;
+    }
+    if (!redirectAccount) {
+      // Find account by login_channel_id used in this OAuth flow
+      redirectAccount = await db
+        .prepare('SELECT * FROM line_accounts WHERE login_channel_id = ?')
+        .bind(loginChannelId)
+        .first<Record<string, string>>();
+    }
+    if (!redirectAccount) {
+      // Fallback: first active account
+      redirectAccount = await db
+        .prepare('SELECT * FROM line_accounts WHERE is_active = 1 LIMIT 1')
+        .first<Record<string, string>>();
+    }
+    if (redirectAccount?.channel_access_token) {
+      try {
+        const botInfo = await fetch('https://api.line.me/v2/bot/info', {
+          headers: { Authorization: `Bearer ${redirectAccount.channel_access_token}` },
+        });
+        if (botInfo.ok) {
+          const bot = await botInfo.json() as { basicId?: string };
+          if (bot.basicId) {
+            return c.redirect(`https://line.me/R/ti/p/${bot.basicId}`);
+          }
+        }
+      } catch {
+        // Fall through to completion page
       }
     }
 
@@ -422,6 +747,50 @@ liffRoutes.get('/auth/callback', async (c) => {
   } catch (err) {
     console.error('Auth callback error:', err);
     return c.html(errorPage('Internal error'));
+  }
+});
+
+// ─── LIFF config endpoint ──────────────────────────────────────
+
+// GET /api/liff/config - resolve account info from LIFF ID (public, no auth)
+liffRoutes.get('/api/liff/config', async (c) => {
+  try {
+    const liffId = c.req.query('liffId');
+    if (!liffId) {
+      return c.json({ success: false, error: 'liffId is required' }, 400);
+    }
+
+    const account = await c.env.DB
+      .prepare('SELECT id, name, channel_access_token FROM line_accounts WHERE liff_id = ? AND is_active = 1')
+      .bind(liffId)
+      .first<{ id: string; name: string; channel_access_token: string }>();
+
+    // Fallback to default env account if liff_id not found in DB
+    const accessToken = account?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    const accountName = account?.name || 'Default';
+    const accountId = account?.id || 'default';
+
+    // Fetch bot basic ID from LINE API
+    let botBasicId = '';
+    try {
+      const botRes = await fetch('https://api.line.me/v2/bot/info', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (botRes.ok) {
+        const bot = await botRes.json() as { basicId?: string };
+        botBasicId = bot.basicId || '';
+      }
+    } catch {
+      // non-blocking
+    }
+
+    return c.json({
+      success: true,
+      data: { botBasicId, accountName, accountId },
+    });
+  } catch (err) {
+    console.error('GET /api/liff/config error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
 
@@ -503,10 +872,35 @@ liffRoutes.post('/api/liff/link', async (c) => {
     }
 
     if ((friend as unknown as Record<string, unknown>).user_id) {
-      // Still save ref even if already linked
-      if (body.ref) {
+      // Still save ref even if already linked (but never persist xh: tokens as ref_code)
+      if (body.ref && !body.ref.startsWith('xh:')) {
         await db.prepare('UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL')
           .bind(body.ref, friend.id).run();
+      }
+      // X Harness token resolution for already-linked friends
+      if (body.ref && body.ref.startsWith('xh:')) {
+        try {
+          const xhToken = body.ref.slice(3);
+          const xhResult = await resolveXHarnessToken(xhToken, c.env);
+          if (xhResult?.xUsername) {
+            const existingMeta = await db
+              .prepare('SELECT metadata FROM friends WHERE id = ?')
+              .bind(friend.id)
+              .first<{ metadata: string }>();
+            const meta = JSON.parse(existingMeta?.metadata || '{}');
+            meta.x_username = xhResult.xUsername;
+            await db
+              .prepare('UPDATE friends SET metadata = ? WHERE id = ?')
+              .bind(JSON.stringify(meta), friend.id)
+              .run();
+            console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
+          }
+          if (xhResult) {
+            await applyXHarnessActions(db, friend.id, xhResult);
+          }
+        } catch (err) {
+          console.error('X Harness token resolution error (non-blocking):', err);
+        }
       }
       return c.json({
         success: true,
@@ -531,7 +925,8 @@ liffRoutes.post('/api/liff/link', async (c) => {
     await linkFriendToUser(db, friend.id, userId);
 
     // Save ref_code from LIFF (first touch wins)
-    if (body.ref) {
+    // xh: refs are X Harness one-time tokens — never persist as ref_code
+    if (body.ref && !body.ref.startsWith('xh:')) {
       await db.prepare('UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL')
         .bind(body.ref, friend.id).run();
 
@@ -545,6 +940,32 @@ liffRoutes.post('/api/liff/link', async (c) => {
           sourceUrl: null,
         });
       } catch { /* silent */ }
+    }
+
+    // X Harness token resolution: ref starting with "xh:" links X account to LINE friend
+    if (body.ref && body.ref.startsWith('xh:')) {
+      try {
+        const xhToken = body.ref.slice(3);
+        const xhResult = await resolveXHarnessToken(xhToken, c.env);
+        if (xhResult?.xUsername) {
+          const existingMeta = await db
+            .prepare('SELECT metadata FROM friends WHERE id = ?')
+            .bind(friend.id)
+            .first<{ metadata: string }>();
+          const meta = JSON.parse(existingMeta?.metadata || '{}');
+          meta.x_username = xhResult.xUsername;
+          await db
+            .prepare('UPDATE friends SET metadata = ? WHERE id = ?')
+            .bind(JSON.stringify(meta), friend.id)
+            .run();
+          console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
+        }
+        if (xhResult) {
+          await applyXHarnessActions(db, friend.id, xhResult);
+        }
+      } catch (err) {
+        console.error('X Harness token resolution error (non-blocking):', err);
+      }
     }
 
     return c.json({
@@ -850,5 +1271,207 @@ function errorPage(message: string): string {
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+// ─── X Harness Token Resolution ─────────────────────────────────
+
+/**
+ * Apply X Harness gate actions (tag + scenario) to a LINE friend.
+ * Non-blocking — failures are logged but don't interrupt the flow.
+ */
+async function applyXHarnessActions(
+  db: D1Database,
+  friendId: string,
+  result: XHarnessTokenResult,
+): Promise<void> {
+  // Add tag if specified
+  if (result.tag) {
+    try {
+      // Find or create the tag by name
+      let tagRow = await db
+        .prepare('SELECT id FROM tags WHERE name = ?')
+        .bind(result.tag)
+        .first<{ id: string }>();
+      if (!tagRow) {
+        const tagId = crypto.randomUUID();
+        const { jstNow } = await import('@line-crm/db');
+        tagRow = await db
+          .prepare('INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?) RETURNING id')
+          .bind(tagId, result.tag, jstNow())
+          .first<{ id: string }>();
+      }
+      if (tagRow) {
+        const { addTagToFriend } = await import('@line-crm/db');
+        await addTagToFriend(db, friendId, tagRow.id);
+        console.log(`X Harness: added tag "${result.tag}" to friend ${friendId}`);
+      }
+    } catch (err) {
+      console.error(`X Harness: failed to add tag "${result.tag}":`, err);
+    }
+  }
+
+  // Start scenario if specified
+  if (result.scenarioId) {
+    try {
+      const { enrollFriendInScenario } = await import('@line-crm/db');
+      await enrollFriendInScenario(db, friendId, result.scenarioId);
+      console.log(`X Harness: enrolled friend ${friendId} in scenario ${result.scenarioId}`);
+    } catch (err) {
+      console.error(`X Harness: failed to enroll in scenario:`, err);
+    }
+  }
+}
+
+interface XHarnessTokenResult {
+  xUsername: string | null;
+  tag: string | null;
+  scenarioId: string | null;
+}
+
+/**
+ * Resolve an X Harness token to get the linked X username + gate config (tag, scenario).
+ * The token IS the secret — no Bearer auth needed on the resolve endpoint.
+ */
+async function resolveXHarnessToken(
+  token: string,
+  env: { X_HARNESS_URL?: string },
+): Promise<XHarnessTokenResult | null> {
+  if (!env.X_HARNESS_URL) return null;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout — must not block login flow
+    try {
+      const res = await fetch(`${env.X_HARNESS_URL}/api/tokens/${token}/resolve`, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      const body = await res.json() as { success: boolean; data?: XHarnessTokenResult };
+      if (!body.success || !body.data) return null;
+      return { xUsername: body.data.xUsername, tag: body.data.tag ?? null, scenarioId: body.data.scenarioId ?? null };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch {
+    return null;
+  }
+}
+
+// POST /api/liff/send-form-link — send form URL as push message (public, used by LIFF)
+// Security: requires idToken to verify the caller is the actual LINE user
+liffRoutes.post('/api/liff/send-form-link', async (c) => {
+  try {
+    const { lineUserId, formId, idToken, ref, gate, xh } = await c.req.json<{
+      lineUserId: string;
+      formId: string;
+      idToken?: string;
+      ref?: string;
+      gate?: string;
+      xh?: string;
+    }>();
+    if (!lineUserId || !formId) {
+      return c.json({ success: false, error: 'lineUserId and formId required' }, 400);
+    }
+    // idToken is required: this endpoint pins friend.first_tracked_link_id and
+    // pushes a campaign-specific message, so we must verify the caller IS the
+    // claimed LINE user before trusting lineUserId. Without this, an attacker
+    // who knows another user's lineUserId could lock that user into an
+    // attacker-chosen tracked_link_id (and thus an attacker-chosen reward).
+    if (!idToken) {
+      return c.json({ success: false, error: 'idToken required' }, 401);
+    }
+
+    // Verify idToken — ensures caller is the actual user
+    {
+      const loginChannelIds = [c.env.LINE_LOGIN_CHANNEL_ID];
+      const dbAccounts = await getLineAccounts(c.env.DB);
+      for (const acct of dbAccounts) {
+        if (acct.login_channel_id) loginChannelIds.push(acct.login_channel_id);
+      }
+      let verified = false;
+      for (const channelId of loginChannelIds) {
+        const verifyRes = await fetch('https://api.line.me/oauth2/v2.1/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ id_token: idToken, client_id: channelId }),
+        });
+        if (verifyRes.ok) {
+          const data = await verifyRes.json() as { sub: string };
+          if (data.sub !== lineUserId) {
+            return c.json({ success: false, error: 'Token mismatch' }, 403);
+          }
+          verified = true;
+          break;
+        }
+      }
+      if (!verified) {
+        return c.json({ success: false, error: 'Invalid idToken' }, 401);
+      }
+    }
+
+    const db = c.env.DB;
+    const friend = await getFriendByLineUserId(db, lineUserId);
+    if (!friend) {
+      return c.json({ success: false, error: 'Friend not found' }, 404);
+    }
+
+    // Build form LIFF URL using the friend's account liff_id (multi-account aware)
+    // Append gate/xh so the form can verify against the correct campaign gate
+    // (form definitions can be reused across campaigns, so the form's webhook
+    // URL is unreliable as a source of gate id).
+    // xh: refs are X Harness one-time secret tokens — never put them on
+    // liff.line.me URLs (third-party host).
+    const externalRefForForm = ref && !ref.startsWith('xh:') ? ref : '';
+    const formQuery = new URLSearchParams();
+    formQuery.set('page', 'form');
+    formQuery.set('id', formId);
+    if (externalRefForForm) formQuery.set('ref', externalRefForForm);
+    if (gate) formQuery.set('gate', gate);
+    if (xh) formQuery.set('xh', xh);
+    let formLiffUrl = `${new URL(c.req.url).origin}?${formQuery.toString()}`;
+    const { LineClient } = await import('@line-crm/line-sdk');
+    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    if ((friend as any).line_account_id) {
+      const account = await getLineAccountById(db, (friend as any).line_account_id);
+      if (account?.channel_access_token) accessToken = account.channel_access_token;
+      if (account?.liff_id) {
+        formLiffUrl = `https://liff.line.me/${account.liff_id}?${formQuery.toString()}`;
+      }
+    }
+    if (formLiffUrl.startsWith(`${new URL(c.req.url).origin}`)) {
+      // Fallback: use env LIFF_URL if no account-specific liff_id
+      const liffUrl = c.env.LIFF_URL || '';
+      const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
+      if (liffIdMatch) {
+        formLiffUrl = `https://liff.line.me/${liffIdMatch[1]}?${formQuery.toString()}`;
+      }
+    }
+    // Resolve intro template via tracked link (if ref provided).
+    // Also pin the friend's first_tracked_link_id (idempotent — never overwrites).
+    let introTemplate = null;
+    if (ref) {
+      const trackedLink = await getTrackedLinkById(c.env.DB, ref);
+      if (trackedLink) {
+        try {
+          const { setFriendFirstTrackedLinkIfNull } = await import('@line-crm/db');
+          await setFriendFirstTrackedLinkIfNull(c.env.DB, friend.id, trackedLink.id);
+        } catch (e) {
+          console.error('setFriendFirstTrackedLinkIfNull failed (non-blocking):', e);
+        }
+      }
+      if (trackedLink?.intro_template_id) {
+        introTemplate = await getMessageTemplateById(c.env.DB, trackedLink.intro_template_id);
+      }
+    }
+    const introMessage = buildIntroMessage(introTemplate, formLiffUrl);
+
+    const lineClient = new LineClient(accessToken);
+    await lineClient.pushMessage(lineUserId, [introMessage as any]);
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('POST /api/liff/send-form-link error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
 
 export { liffRoutes };
