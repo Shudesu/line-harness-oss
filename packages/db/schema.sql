@@ -122,11 +122,17 @@ CREATE TABLE IF NOT EXISTS messages_log (
   broadcast_id     TEXT REFERENCES broadcasts (id) ON DELETE SET NULL,
   scenario_step_id TEXT REFERENCES scenario_steps (id) ON DELETE SET NULL,
   delivery_type    TEXT CHECK (delivery_type IN ('push', 'reply')),
+  content_hash     TEXT,
+  idempotency_key  TEXT,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_log_friend_id ON messages_log (friend_id);
 CREATE INDEX IF NOT EXISTS idx_messages_log_created_at ON messages_log (created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_log_dedup ON messages_log (friend_id, content_hash, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_log_idempotency_key
+  ON messages_log (idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
 
 -- ============================================================
 -- Auto Replies

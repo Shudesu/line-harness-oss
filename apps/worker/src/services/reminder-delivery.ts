@@ -14,6 +14,7 @@ import {
   getFriendById,
   jstNow,
 } from '@line-crm/db';
+import { computeMessageContentHash } from '@line-crm/line-sdk';
 import type { LineClient, Message } from '@line-crm/line-sdk';
 import { addJitter, sleep } from './stealth.js';
 
@@ -40,20 +41,23 @@ export async function processReminderDeliveries(
 
       for (const step of fr.steps) {
         const message = buildMessage(step.message_type, step.message_content);
+        const claimed = await markReminderStepDelivered(db, fr.id, step.id);
+        if (!claimed) {
+          continue;
+        }
+
         await lineClient.pushMessage(friend.line_user_id, [message]);
 
         // メッセージログに記録
         const logId = crypto.randomUUID();
+        const contentHash = await computeMessageContentHash(friend.id, [message]);
         await db
           .prepare(
-            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, created_at)
-             VALUES (?, ?, 'outgoing', ?, ?, ?)`,
+            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, content_hash, created_at)
+             VALUES (?, ?, 'outgoing', ?, ?, ?, ?)`,
           )
-          .bind(logId, friend.id, step.message_type, step.message_content, jstNow())
+          .bind(logId, friend.id, step.message_type, step.message_content, contentHash, jstNow())
           .run();
-
-        // 配信済みを記録
-        await markReminderStepDelivered(db, fr.id, step.id);
       }
 
       // 全ステップ配信済みかチェック

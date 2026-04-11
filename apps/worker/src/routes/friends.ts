@@ -16,6 +16,7 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
+import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
@@ -310,7 +311,6 @@ friends.post('/api/friends/:id/messages', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
 
-    const { LineClient } = await import('@line-crm/line-sdk');
     // Resolve access token from friend's account (multi-account support)
     let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
     if ((friend as unknown as Record<string, unknown>).line_account_id) {
@@ -318,7 +318,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
       const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
       if (account) accessToken = account.channel_access_token;
     }
-    const lineClient = new LineClient(accessToken);
+    const lineClient = new LineClient(accessToken, db, { autoLog: false });
     const messageType = body.messageType ?? 'text';
 
     // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
@@ -333,12 +333,13 @@ friends.post('/api/friends/:id/messages', async (c) => {
 
     // Log outgoing message
     const logId = crypto.randomUUID();
+    const contentHash = await computeMessageContentHash(friend.id, [message]);
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-         VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, ?)`,
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, content_hash, created_at)
+         VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, ?, ?)`,
       )
-      .bind(logId, friend.id, messageType, body.content, jstNow())
+      .bind(logId, friend.id, messageType, body.content, contentHash, jstNow())
       .run();
 
     return c.json({ success: true, data: { messageId: logId } });
@@ -425,19 +426,19 @@ friends.post('/api/friends/sync', async (c) => {
           if (firstStep && firstStep.delay_minutes === 0 && friendScenario.status === 'active') {
             try {
               const expandedContent = expandVariables(firstStep.message_content, friend as { id: string; display_name: string | null; user_id: string | null });
-              const { LineClient } = await import('@line-crm/line-sdk');
-              const pushClient = new LineClient(accessToken);
+              const pushClient = new LineClient(accessToken, db, { autoLog: false });
               const message = buildMessage(firstStep.message_type, expandedContent);
               await pushClient.pushMessage(friend.line_user_id, [message]);
 
               // Log outgoing message
               const logId = crypto.randomUUID();
+              const contentHash = await computeMessageContentHash(friend.id, [message]);
               await db
                 .prepare(
-                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, scenario_step_id, delivery_type, created_at)
-                   VALUES (?, ?, 'outgoing', ?, ?, ?, 'push', ?)`,
+                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, scenario_step_id, delivery_type, content_hash, created_at)
+                   VALUES (?, ?, 'outgoing', ?, ?, ?, 'push', ?, ?)`,
                 )
-                .bind(logId, friend.id, firstStep.message_type, firstStep.message_content, firstStep.id, jstNow())
+                .bind(logId, friend.id, firstStep.message_type, firstStep.message_content, firstStep.id, contentHash, jstNow())
                 .run();
 
               // Advance to step 2 or complete

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { verifySignature, LineClient } from '@line-crm/line-sdk';
+import { verifySignature, LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
 import type { WebhookRequestBody, WebhookEvent, TextEventMessage } from '@line-crm/line-sdk';
 import {
   upsertFriend,
@@ -60,7 +60,7 @@ webhook.post('/webhook', async (c) => {
     return c.json({ status: 'ok' }, 200);
   }
 
-  const lineClient = new LineClient(channelAccessToken);
+  const lineClient = new LineClient(channelAccessToken, db, { autoLog: false });
 
   // 非同期処理 — LINE は ~1s 以内のレスポンスを要求
   const processingPromise = (async () => {
@@ -261,13 +261,13 @@ async function handleEvent(
         if (friendRecord?.user_id) {
           // Find the same user on other accounts
           const otherFriends = await db.prepare(
-            'SELECT f.line_user_id, la.channel_access_token FROM friends f INNER JOIN line_accounts la ON la.id = f.line_account_id WHERE f.user_id = ? AND f.line_account_id != ? AND f.is_following = 1'
-          ).bind(friendRecord.user_id, lineAccountId).all<{ line_user_id: string; channel_access_token: string }>();
+            'SELECT f.id, f.line_user_id, la.channel_access_token FROM friends f INNER JOIN line_accounts la ON la.id = f.line_account_id WHERE f.user_id = ? AND f.line_account_id != ? AND f.is_following = 1'
+          ).bind(friendRecord.user_id, lineAccountId).all<{ id: string; line_user_id: string; channel_access_token: string }>();
 
           for (const other of otherFriends.results) {
-            const otherClient = new LineClient(other.channel_access_token);
+            const otherClient = new LineClient(other.channel_access_token, db, { autoLog: false });
             const { buildMessage: bm } = await import('../services/step-delivery.js');
-            await otherClient.pushMessage(other.line_user_id, [bm('flex', JSON.stringify({
+            const content = JSON.stringify({
               type: 'bubble', size: 'giga',
               header: { type: 'box', layout: 'vertical', paddingAll: '20px', backgroundColor: '#fffbeb',
                 contents: [{ type: 'text', text: `${friend.display_name || ''}さんへ`, size: 'lg', weight: 'bold', color: '#1e293b' }],
@@ -286,7 +286,19 @@ async function handleEvent(
                   ...(liffUrl ? [{ type: 'button', action: { type: 'uri', label: 'フィードバックを送る', uri: `${liffUrl}?page=form` }, style: 'secondary', margin: 'sm' }] : []),
                 ],
               },
-            }))]);
+            });
+            const message = bm('flex', content);
+            await otherClient.pushMessage(other.line_user_id, [message]);
+
+            const logId = crypto.randomUUID();
+            const contentHash = await computeMessageContentHash(other.id, [message]);
+            await db
+              .prepare(
+                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, content_hash, created_at)
+                 VALUES (?, ?, 'outgoing', 'flex', ?, ?, ?)`,
+              )
+              .bind(logId, other.id, content, contentHash, jstNow())
+              .run();
           }
 
           // Reply on Account ② confirming

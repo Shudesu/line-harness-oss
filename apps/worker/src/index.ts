@@ -151,7 +151,7 @@ async function scheduled(
     }
   }
 
-  const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
+  const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN, env.DB, { autoLog: false });
   const jobs = [];
   jobs.push(
     processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL, accountTokenMap),

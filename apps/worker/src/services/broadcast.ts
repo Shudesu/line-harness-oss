@@ -7,6 +7,7 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { Broadcast } from '@line-crm/db';
+import { computeMessageContentHash } from '@line-crm/line-sdk';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
@@ -58,7 +59,7 @@ export async function processBroadcastSend(
   try {
     if (broadcast.target_type === 'all') {
       // Use LINE broadcast API (sends to all followers)
-      await lineClient.broadcast([message]);
+      await lineClient.broadcast([message], broadcastId);
       // We don't have exact count for broadcast API, set as 0 (unknown)
       totalCount = 0;
       successCount = 0;
@@ -98,12 +99,13 @@ export async function processBroadcastSend(
           // Log only successfully sent messages
           for (const friend of batch) {
             const logId = crypto.randomUUID();
+            const contentHash = await computeMessageContentHash(friend.id, [batchMessage]);
             await db
               .prepare(
-                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-                 VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, ?)`,
+                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, content_hash, created_at)
+                 VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, ?, ?)`,
               )
-              .bind(logId, friend.id, broadcast.message_type, broadcast.message_content, broadcastId, now)
+              .bind(logId, friend.id, broadcast.message_type, broadcast.message_content, broadcastId, contentHash, now)
               .run();
           }
         } catch (err) {

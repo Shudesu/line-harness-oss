@@ -8,7 +8,7 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { FriendScenarioDue } from '@line-crm/db';
-import { LineClient } from '@line-crm/line-sdk';
+import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 
@@ -117,7 +117,7 @@ async function processSingleDelivery(
   }
 
   const effectiveToken = accountTokenMap?.get(fs.line_account_id) ?? accountTokenMap?.get(null);
-  const effectiveClient = effectiveToken ? new LineClient(effectiveToken) : lineClient;
+  const effectiveClient = effectiveToken ? new LineClient(effectiveToken, db, { autoLog: false }) : lineClient;
 
   // Get friend first to read preferred delivery hour from metadata
   const friend = await getFriendById(db, fs.friend_id);
@@ -190,12 +190,13 @@ async function processSingleDelivery(
 
   // Log outgoing message
   const logId = crypto.randomUUID();
+  const contentHash = await computeMessageContentHash(friend.id, [message]);
   await db
     .prepare(
-      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, ?)`,
+      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, content_hash, created_at)
+       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, ?, ?)`,
     )
-    .bind(logId, friend.id, currentStep.message_type, currentStep.message_content, currentStep.id, jstNow())
+    .bind(logId, friend.id, currentStep.message_type, currentStep.message_content, currentStep.id, contentHash, jstNow())
     .run();
 
   // Determine next step (find the step after currentStep in the sorted list)

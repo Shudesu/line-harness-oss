@@ -12,6 +12,7 @@ import {
   updateChat,
   jstNow,
 } from '@line-crm/db';
+import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
 import type { Env } from '../index.js';
 
 const chats = new Hono<Env>();
@@ -230,22 +231,26 @@ chats.post('/api/chats/:id/send', async (c) => {
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 
     // LINE APIでメッセージ送信
-    const { LineClient } = await import('@line-crm/line-sdk');
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN, c.env.DB, { autoLog: false });
     const messageType = body.messageType ?? 'text';
+    let contentHash: string | null = null;
 
     if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
+      const message = { type: 'text' as const, text: body.content };
+      await lineClient.pushMessage(friend.line_user_id, [message]);
+      contentHash = await computeMessageContentHash(friend.id, [message]);
     } else if (messageType === 'flex') {
       const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
+      const message = { type: 'flex' as const, altText: extractFlexAltText(contents), contents };
+      await lineClient.pushMessage(friend.line_user_id, [message]);
+      contentHash = await computeMessageContentHash(friend.id, [message]);
     }
 
     // メッセージログに記録
     const logId = crypto.randomUUID();
     await c.env.DB
-      .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, created_at) VALUES (?, ?, 'outgoing', ?, ?, ?)`)
-      .bind(logId, friend.id, messageType, body.content, jstNow())
+      .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, content_hash, created_at) VALUES (?, ?, 'outgoing', ?, ?, ?, ?)`)
+      .bind(logId, friend.id, messageType, body.content, contentHash, jstNow())
       .run();
 
     // チャットの最終メッセージ日時を更新

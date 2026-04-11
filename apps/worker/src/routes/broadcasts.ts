@@ -197,7 +197,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 400);
     }
 
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN, c.env.DB, { autoLog: false });
     await processBroadcastSend(c.env.DB, lineClient, id, c.env.WORKER_URL);
 
     const result = await getBroadcastById(c.env.DB, id);
@@ -231,7 +231,7 @@ broadcasts.post('/api/broadcasts/:id/send-segment', async (c) => {
       );
     }
 
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN, c.env.DB, { autoLog: false });
     await processSegmentSend(c.env.DB, lineClient, id, body.conditions);
 
     const result = await getBroadcastById(c.env.DB, id);

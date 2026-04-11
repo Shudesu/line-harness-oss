@@ -12,6 +12,7 @@ import {
   getLineAccounts,
   jstNow,
 } from '@line-crm/db';
+import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
 import type { Env } from '../index.js';
 
 const liffRoutes = new Hono<Env>();
@@ -401,7 +402,6 @@ liffRoutes.get('/auth/callback', async (c) => {
     // Auto-enroll in friend_add scenarios + immediate delivery (skip delivery window)
     try {
       const { getScenarios, enrollFriendInScenario: enroll, getScenarioSteps } = await import('@line-crm/db');
-      const { LineClient } = await import('@line-crm/line-sdk');
       const { buildMessage, expandVariables } = await import('../services/step-delivery.js');
 
       // Resolve which account this friend belongs to
@@ -415,7 +415,7 @@ liffRoutes.get('/auth/callback', async (c) => {
         const acct = await getLineAccountByChannelId(db, accountParam);
         if (acct) accessToken = acct.channel_access_token;
       }
-      const lineClient = new LineClient(accessToken);
+      const lineClient = new LineClient(accessToken, db, { autoLog: false });
 
       const scenarios = await getScenarios(db);
       for (const scenario of scenarios) {
@@ -437,7 +437,18 @@ liffRoutes.get('/auth/callback', async (c) => {
                 friend as { id: string; display_name: string | null; user_id: string | null },
                 c.env.WORKER_URL,
               );
-              await lineClient.pushMessage(lineUserId, [buildMessage(firstStep.message_type, expandedContent)]);
+              const message = buildMessage(firstStep.message_type, expandedContent);
+              await lineClient.pushMessage(lineUserId, [message]);
+
+              const logId = crypto.randomUUID();
+              const contentHash = await computeMessageContentHash(friend.id, [message]);
+              await db
+                .prepare(
+                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, scenario_step_id, delivery_type, content_hash, created_at)
+                   VALUES (?, ?, 'outgoing', ?, ?, ?, 'push', ?, ?)`,
+                )
+                .bind(logId, friend.id, firstStep.message_type, firstStep.message_content, firstStep.id, contentHash, jstNow())
+                .run();
             }
           }
         }

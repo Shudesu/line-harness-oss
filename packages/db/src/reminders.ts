@@ -153,10 +153,11 @@ export async function getDueReminderDeliveries(db: D1Database, now: string): Pro
 }
 
 /** 配信済みを記録 */
-export async function markReminderStepDelivered(db: D1Database, friendReminderId: string, reminderStepId: string): Promise<void> {
+export async function markReminderStepDelivered(db: D1Database, friendReminderId: string, reminderStepId: string): Promise<boolean> {
   const id = crypto.randomUUID();
-  await db.prepare(`INSERT OR IGNORE INTO friend_reminder_deliveries (id, friend_reminder_id, reminder_step_id) VALUES (?, ?, ?)`)
+  const result = await db.prepare(`INSERT OR IGNORE INTO friend_reminder_deliveries (id, friend_reminder_id, reminder_step_id) VALUES (?, ?, ?)`)
     .bind(id, friendReminderId, reminderStepId).run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 /** 全ステップ配信済みならcompletedにする */

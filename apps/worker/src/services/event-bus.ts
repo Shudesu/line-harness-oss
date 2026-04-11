@@ -24,7 +24,8 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { BroadcastMessageType, BroadcastTargetType } from '@line-crm/db';
-import { LineClient } from '@line-crm/line-sdk';
+import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
+import type { Message } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
 import { processBroadcastSend } from './broadcast.js';
 
@@ -233,19 +234,27 @@ async function executeAction(
         .bind(friendId)
         .first<{ line_user_id: string }>();
       if (!friend) break;
-      const lineClient = new LineClient(lineAccessToken);
-      const msgType = action.params.messageType || 'text';
+      const lineClient = new LineClient(lineAccessToken, db, { autoLog: false });
+      const msgType = action.params.messageType === 'flex' ? 'flex' : 'text';
+      let message: Message;
       if (msgType === 'flex') {
         const contents = JSON.parse(action.params.content);
-        await lineClient.pushMessage(friend.line_user_id, [
-          { type: 'flex', altText: action.params.altText || extractFlexAltText(contents), contents },
-        ]);
+        message = { type: 'flex' as const, altText: action.params.altText || extractFlexAltText(contents), contents };
       } else {
         // Default: text message
-        await lineClient.pushMessage(friend.line_user_id, [
-          { type: 'text', text: action.params.content },
-        ]);
+        message = { type: 'text' as const, text: action.params.content };
       }
+      await lineClient.pushMessage(friend.line_user_id, [message]);
+
+      const logId = crypto.randomUUID();
+      const contentHash = await computeMessageContentHash(friendId, [message]);
+      await db
+        .prepare(
+          `INSERT INTO messages_log (id, friend_id, direction, message_type, content, content_hash, created_at)
+           VALUES (?, ?, 'outgoing', ?, ?, ?, ?)`,
+        )
+        .bind(logId, friendId, msgType, action.params.content, contentHash, jstNow())
+        .run();
       break;
     }
 
@@ -326,7 +335,7 @@ async function executeAction(
         targetTagId: targetTagId,
       });
 
-      const lineClient = new LineClient(lineAccessToken);
+      const lineClient = new LineClient(lineAccessToken, db, { autoLog: false });
       await processBroadcastSend(db, lineClient, broadcast.id);
       break;
     }

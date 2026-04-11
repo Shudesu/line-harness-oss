@@ -12,6 +12,7 @@ import {
 import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { Form as DbForm, FormSubmission as DbFormSubmission } from '@line-crm/db';
+import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
 import type { Env } from '../index.js';
 
 const forms = new Hono<Env>();
@@ -264,7 +265,6 @@ forms.post('/api/forms/:id/submit', async (c) => {
           const friend = await getFriendById(db, friendId!);
           if (!friend?.line_user_id) { console.log('Form reply: no line_user_id'); return; }
           console.log('Form reply: sending to', friend.line_user_id);
-          const { LineClient } = await import('@line-crm/line-sdk');
           // Resolve access token from friend's account (multi-account support)
           let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
           if ((friend as unknown as Record<string, unknown>).line_account_id) {
@@ -272,7 +272,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
             const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
             if (account) accessToken = account.channel_access_token;
           }
-          const lineClient = new LineClient(accessToken);
+          const lineClient = new LineClient(accessToken, db, { autoLog: false });
 
           // Build Flex card showing their answers
           const entries = Object.entries(submissionData as Record<string, unknown>);
@@ -321,7 +321,19 @@ forms.post('/api/forms/:id/submit', async (c) => {
           };
 
           const { buildMessage } = await import('../services/step-delivery.js');
-          await lineClient.pushMessage(friend.line_user_id, [buildMessage('flex', JSON.stringify(flex))]);
+          const message = buildMessage('flex', JSON.stringify(flex));
+          await lineClient.pushMessage(friend.line_user_id, [message]);
+
+          const logId = crypto.randomUUID();
+          const content = JSON.stringify(flex);
+          const contentHash = await computeMessageContentHash(friend.id, [message]);
+          await db
+            .prepare(
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, content_hash, created_at)
+               VALUES (?, ?, 'outgoing', 'flex', ?, ?, ?)`,
+            )
+            .bind(logId, friend.id, content, contentHash, jstNow())
+            .run();
         })(),
       );
 

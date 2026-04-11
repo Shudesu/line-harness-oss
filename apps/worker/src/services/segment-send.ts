@@ -5,6 +5,7 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { Broadcast } from '@line-crm/db';
+import { computeMessageContentHash } from '@line-crm/line-sdk';
 import type { LineClient, Message } from '@line-crm/line-sdk';
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
 import { buildSegmentQuery } from './segment-query.js';
@@ -23,8 +24,16 @@ export async function processSegmentSend(
   broadcastId: string,
   condition: SegmentCondition,
 ): Promise<Broadcast> {
-  // Mark as sending
-  await updateBroadcastStatus(db, broadcastId, 'sending');
+  const claimed = await db.prepare(
+    "UPDATE broadcasts SET status = 'sending' WHERE id = ? AND status IN ('draft', 'scheduled')",
+  ).bind(broadcastId).run();
+  if (claimed.meta.changes === 0) {
+    const existingBroadcast = await getBroadcastById(db, broadcastId);
+    if (!existingBroadcast) {
+      throw new Error(`Broadcast ${broadcastId} not found`);
+    }
+    return existingBroadcast;
+  }
 
   const broadcast = await getBroadcastById(db, broadcastId);
   if (!broadcast) {
@@ -74,12 +83,13 @@ export async function processSegmentSend(
         // Log successfully sent messages
         for (const friend of batch) {
           const logId = crypto.randomUUID();
+          const contentHash = await computeMessageContentHash(friend.id, [batchMessage]);
           await db
             .prepare(
-              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-               VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, ?)`,
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, content_hash, created_at)
+               VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, ?, ?)`,
             )
-            .bind(logId, friend.id, broadcast.message_type, broadcast.message_content, broadcastId, now)
+            .bind(logId, friend.id, broadcast.message_type, broadcast.message_content, broadcastId, contentHash, now)
             .run();
         }
       } catch (err) {
