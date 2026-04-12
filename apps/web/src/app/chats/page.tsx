@@ -39,6 +39,16 @@ interface ChatDetail extends Chat {
   messages?: ChatMessage[]
 }
 
+interface StaffInfo {
+  id: string
+  name: string
+  role: string
+  iconUrl: string | null
+  isActive?: boolean
+}
+
+type SenderMode = 'official' | 'self' | string // string = staff id for owner selecting others
+
 type StatusFilter = 'all' | 'unread' | 'in_progress' | 'resolved'
 
 const statusConfig: Record<Chat['status'], { label: string; className: string }> = {
@@ -150,9 +160,11 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
     sendLockRef.current = true
     setSending(true)
     try {
+      const meRes = await api.staff.me().catch(() => null)
+      const sender = meRes?.success && meRes.data.name ? { name: meRes.data.name } : undefined
       await fetchApi(`/api/friends/${friendId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content: message, messageType: 'text' }),
+        body: JSON.stringify({ content: message, messageType: 'text', ...(sender ? { sender } : {}) }),
       })
       setMessages((prev) => [...prev, {
         id: crypto.randomUUID(),
@@ -312,6 +324,9 @@ export default function ChatsPage() {
   const isComposingRef = useRef(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [currentStaff, setCurrentStaff] = useState<StaffInfo | null>(null)
+  const [staffList, setStaffList] = useState<StaffInfo[]>([])
+  const [senderMode, setSenderMode] = useState<SenderMode>('self')
 
   useEffect(() => {
     try {
@@ -335,6 +350,24 @@ export default function ChatsPage() {
       // localStorage unavailable
     }
   }, [showLoadingIndicator, loadingSeconds])
+
+  useEffect(() => {
+    const loadStaffInfo = async () => {
+      try {
+        const meRes = await api.staff.me()
+        if (meRes.success) {
+          setCurrentStaff(meRes.data as StaffInfo)
+          if (meRes.data.role === 'owner') {
+            try {
+              const listRes = await api.staff.list()
+              if (listRes.success) setStaffList(listRes.data as unknown as StaffInfo[])
+            } catch { /* staff list is optional */ }
+          }
+        }
+      } catch { /* not logged in as staff */ }
+    }
+    loadStaffInfo()
+  }, [])
 
   const loadChats = useCallback(async () => {
     setLoading(true)
@@ -524,6 +557,19 @@ export default function ChatsPage() {
     }
   }, [showLoadingIndicator, loadingSeconds])
 
+  const buildSender = useCallback((): { name: string; iconUrl?: string } | undefined => {
+    if (senderMode === 'official') return undefined
+    if (senderMode === 'self' && currentStaff) {
+      return { name: currentStaff.name, ...(currentStaff.iconUrl ? { iconUrl: currentStaff.iconUrl } : {}) }
+    }
+    // owner selecting a specific staff member
+    const selected = staffList.find((s) => s.id === senderMode)
+    if (selected) {
+      return { name: selected.name, ...(selected.iconUrl ? { iconUrl: selected.iconUrl } : {}) }
+    }
+    return undefined
+  }, [senderMode, currentStaff, staffList])
+
   const handleSendMessage = async () => {
     if (!selectedChatId || sending || sendLockRef.current) return
     if (!messageContent.trim() && !pendingImage) return
@@ -532,13 +578,14 @@ export default function ChatsPage() {
     setSending(true)
     try {
       const now = new Date().toISOString()
+      const sender = buildSender()
       // --- Image send path (runs first when image is present) ---
       if (pendingImage && pendingImage.mode === 'line-image') {
         const imgPayload = JSON.stringify({
           originalContentUrl: pendingImage.originalContentUrl,
           previewImageUrl: pendingImage.previewImageUrl,
         })
-        await api.chats.send(sendingChatId, { messageType: 'image', content: imgPayload })
+        await api.chats.send(sendingChatId, { messageType: 'image', content: imgPayload, ...(sender ? { sender } : {}) })
         setPendingImage(null)
         // Optimistic update for image
         setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
@@ -584,7 +631,7 @@ export default function ChatsPage() {
       // --- Text send path (runs independently — both paths execute when both image and text are present) ---
       if (messageContent.trim()) {
         const content = messageContent.trim()
-        await api.chats.send(sendingChatId, { content })
+        await api.chats.send(sendingChatId, { content, ...(sender ? { sender } : {}) })
         setMessageContent('')
         // Optimistic update: append message locally instead of refetching (prevents scroll jump / full reload feel)
         // Only mutate chatDetail if it still corresponds to the chat we just sent to
@@ -1000,6 +1047,33 @@ export default function ChatsPage() {
               {/* Send Message Form */}
               <div className="px-4 py-3 border-t border-gray-200">
                 <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-600">
+                  {currentStaff && (
+                    <div className="inline-flex items-center gap-1.5">
+                      <span className="text-gray-500">送信者:</span>
+                      {currentStaff.role === 'owner' && staffList.length > 0 ? (
+                        <select
+                          value={senderMode}
+                          onChange={(e) => setSenderMode(e.target.value)}
+                          className="border border-gray-300 rounded-md px-2 py-1 bg-white text-xs"
+                        >
+                          <option value="official">公式アカウント</option>
+                          <option value="self">{currentStaff.name}（自分）</option>
+                          {staffList.filter((s) => s.id !== currentStaff.id && s.isActive !== false).map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          value={senderMode}
+                          onChange={(e) => setSenderMode(e.target.value)}
+                          className="border border-gray-300 rounded-md px-2 py-1 bg-white text-xs"
+                        >
+                          <option value="official">公式アカウント</option>
+                          <option value="self">{currentStaff.name}（自分）</option>
+                        </select>
+                      )}
+                    </div>
+                  )}
                   <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"

@@ -25,6 +25,11 @@ export interface PaginatedData<T> {
 // ─── Common ─────────────────────────────────────────────
 export type ScenarioTriggerType = 'friend_add' | 'tag_added' | 'manual'
 export type MessageType = 'text' | 'image' | 'flex'
+
+export interface MessageSender {
+  name: string
+  iconUrl?: string
+}
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent'
 
 // ─── Friend ─────────────────────────────────────────────
@@ -486,6 +491,7 @@ export interface StaffMember {
    * The full key is only returned once — on create or regenerate-key responses.
    */
   apiKey: string
+  iconUrl: string | null
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -496,12 +502,14 @@ export interface StaffProfile {
   name: string
   role: StaffRole
   email: string | null
+  iconUrl: string | null
 }
 
 export interface CreateStaffInput {
   name: string
-  email?: string
+  email?: string | null
   role: 'admin' | 'staff'
+  iconUrl?: string | null
 }
 
 export interface UpdateStaffInput {
@@ -509,6 +517,7 @@ export interface UpdateStaffInput {
   email?: string | null
   role?: StaffRole
   isActive?: boolean
+  iconUrl?: string | null
 }
 
 // ─── High-Level ─────────────────────────────────────────

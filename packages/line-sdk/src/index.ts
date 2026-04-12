@@ -35,6 +35,7 @@ export type {
   LocationEventMessage,
   Message,
   MessageEvent,
+  MessageSender,
   MulticastRequest,
   PostbackEvent,
   PushMessageRequest,

@@ -190,13 +190,15 @@ export interface ImageMapMessageType {
   actions: Record<string, unknown>[];
 }
 
-export type Message =
+export type BaseMessage =
   | TextMessage
   | ImageMessage
   | FlexMessage
   | VideoMessage
   | TemplateMessage
   | ImageMapMessageType;
+
+export type Message = BaseMessage & { sender?: MessageSender };
 
 // ─── Rich Menu types ──────────────────────────────────────────────────────────
 
@@ -264,6 +266,13 @@ export interface RichMenuObject {
   name: string;
   chatBarText: string;
   areas: RichMenuArea[];
+}
+
+// ─── Sender ──────────────────────────────────────────────────────────────────
+
+export interface MessageSender {
+  name: string;
+  iconUrl?: string;
 }
 
 // ─── Request types ────────────────────────────────────────────────────────────

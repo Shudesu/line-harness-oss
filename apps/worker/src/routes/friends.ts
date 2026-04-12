@@ -542,6 +542,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
       messageType?: string;
       content: string;
       altText?: string;
+      sender?: { name: string; iconUrl?: string };
     }>();
 
     if (!body.content) {
@@ -573,7 +574,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
     );
 
     const message = buildMessage(tracked.messageType, tracked.content, body.altText);
-    await lineClient.pushMessage(friend.line_user_id, [message]);
+    await lineClient.pushMessage(friend.line_user_id, [message], body.sender);
 
     // Log outgoing message
     const logId = crypto.randomUUID();

@@ -25,6 +25,7 @@ function serializeStaff(row: StaffMember, masked = true) {
     email: row.email,
     role: row.role,
     apiKey: masked ? maskApiKey(row.api_key) : row.api_key,
+    iconUrl: row.icon_url ?? null,
     isActive: Boolean(row.is_active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -45,6 +46,7 @@ staff.get('/api/staff/me', async (c) => {
           name: 'Owner',
           role: 'owner',
           email: null,
+          iconUrl: null,
         },
       });
     }
@@ -61,6 +63,7 @@ staff.get('/api/staff/me', async (c) => {
         name: member.name,
         role: member.role,
         email: member.email,
+        iconUrl: member.icon_url ?? null,
       },
     });
   } catch (err) {
@@ -98,7 +101,7 @@ staff.get('/api/staff/:id', requireRole('owner'), async (c) => {
 // POST /api/staff — owner only. Create staff. Returns full API key (one-time visible).
 staff.post('/api/staff', requireRole('owner'), async (c) => {
   try {
-    const body = await c.req.json<{ name: string; email?: string; role: string }>();
+    const body = await c.req.json<{ name: string; email?: string; role: string; iconUrl?: string }>();
 
     if (!body.name) {
       return c.json({ success: false, error: 'name is required' }, 400);
@@ -113,6 +116,7 @@ staff.post('/api/staff', requireRole('owner'), async (c) => {
       name: body.name,
       email: body.email ?? null,
       role: body.role as 'owner' | 'admin' | 'staff',
+      icon_url: body.iconUrl ?? null,
     });
 
     // Return full (unmasked) API key one-time
@@ -132,6 +136,7 @@ staff.patch('/api/staff/:id', requireRole('owner'), async (c) => {
       email?: string | null;
       role?: string;
       isActive?: boolean;
+      iconUrl?: string | null;
     }>();
 
     const validRoles = ['owner', 'admin', 'staff'] as const;
@@ -161,6 +166,7 @@ staff.patch('/api/staff/:id', requireRole('owner'), async (c) => {
       email: body.email,
       role: body.role as 'owner' | 'admin' | 'staff' | undefined,
       is_active: body.isActive !== undefined ? (body.isActive ? 1 : 0) : undefined,
+      icon_url: body.iconUrl !== undefined ? body.iconUrl : undefined,
     });
 
     if (!updated) {

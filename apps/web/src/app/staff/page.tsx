@@ -41,9 +41,14 @@ export default function StaffPage() {
   const [showForm, setShowForm] = useState(false)
   const [formName, setFormName] = useState('')
   const [formEmail, setFormEmail] = useState('')
+  const [formIconUrl, setFormIconUrl] = useState('')
   const [formRole, setFormRole] = useState<'admin' | 'staff'>('staff')
   const [formLoading, setFormLoading] = useState(false)
   const [formError, setFormError] = useState('')
+
+  // Inline icon edit
+  const [editingIconId, setEditingIconId] = useState<string | null>(null)
+  const [editIconUrl, setEditIconUrl] = useState('')
 
   const loadMembers = async () => {
     setLoading(true)
@@ -71,11 +76,12 @@ export default function StaffPage() {
     setFormLoading(true)
     setFormError('')
     try {
-      const body: { name: string; role: 'admin' | 'staff'; email?: string } = {
+      const body: { name: string; role: 'admin' | 'staff'; email?: string; iconUrl?: string } = {
         name: formName,
         role: formRole,
       }
       if (formEmail) body.email = formEmail
+      if (formIconUrl) body.iconUrl = formIconUrl
 
       const res = await fetchApi<ApiResponse<StaffMember & { apiKey?: string }>>('/api/staff', {
         method: 'POST',
@@ -87,6 +93,7 @@ export default function StaffPage() {
         }
         setFormName('')
         setFormEmail('')
+        setFormIconUrl('')
         setFormRole('staff')
         setShowForm(false)
         await loadMembers()
@@ -191,7 +198,7 @@ export default function StaffPage() {
         <div className="mb-6 p-5 bg-white border border-gray-200 rounded-lg shadow-sm">
           <h2 className="text-sm font-semibold text-gray-900 mb-4">新しいスタッフを追加</h2>
           <form onSubmit={handleCreate} className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">名前 *</label>
                 <input
@@ -210,6 +217,16 @@ export default function StaffPage() {
                   value={formEmail}
                   onChange={(e) => setFormEmail(e.target.value)}
                   placeholder="taro@example.com"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">アイコン画像URL</label>
+                <input
+                  type="url"
+                  value={formIconUrl}
+                  onChange={(e) => setFormIconUrl(e.target.value)}
+                  placeholder="https://example.com/icon.png"
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
                 />
               </div>
@@ -291,7 +308,54 @@ export default function StaffPage() {
             <tbody className="divide-y divide-gray-100">
               {members.map((member) => (
                 <tr key={member.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 font-medium text-gray-900">{member.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      {member.iconUrl ? (
+                        <img src={member.iconUrl} alt="" className="w-7 h-7 rounded-full flex-shrink-0" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                          <span className="text-gray-500 text-xs">{member.name.charAt(0)}</span>
+                        </div>
+                      )}
+                      <div>
+                        <span className="font-medium text-gray-900">{member.name}</span>
+                        {editingIconId === member.id ? (
+                          <div className="flex items-center gap-1 mt-1">
+                            <input
+                              type="url"
+                              value={editIconUrl}
+                              onChange={(e) => setEditIconUrl(e.target.value)}
+                              placeholder="https://..."
+                              className="w-48 px-2 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
+                            />
+                            <button
+                              onClick={async () => {
+                                await fetchApi(`/api/staff/${member.id}`, {
+                                  method: 'PATCH',
+                                  body: JSON.stringify({ iconUrl: editIconUrl || null }),
+                                })
+                                setEditingIconId(null)
+                                await loadMembers()
+                              }}
+                              className="px-1.5 py-0.5 text-xs text-green-700 bg-green-50 rounded hover:bg-green-100"
+                            >
+                              保存
+                            </button>
+                            <button onClick={() => setEditingIconId(null)} className="px-1.5 py-0.5 text-xs text-gray-500 rounded hover:bg-gray-100">
+                              取消
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => { setEditingIconId(member.id); setEditIconUrl(member.iconUrl || '') }}
+                            className="block text-xs text-gray-400 hover:text-green-600"
+                          >
+                            {member.iconUrl ? 'アイコン変更' : 'アイコン設定'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-gray-500 hidden sm:table-cell">{member.email ?? '—'}</td>
                   <td className="px-4 py-3">
                     <RoleBadge role={member.role} />

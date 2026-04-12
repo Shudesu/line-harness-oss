@@ -13,7 +13,8 @@ workers_dev = true
 # デフォルト = テスト環境 (noda@)
 # 使い方: npx wrangler deploy
 # ═══════════════════════════════════════════════════════════════
-account_id = "YOUR_DEV_ACCOUNT_ID"
+# account_id は環境変数 CLOUDFLARE_ACCOUNT_ID で設定
+# database_id は環境変数では上書きできないため wrangler.toml に記載が必要
 
 [assets]
 directory = "dist/client"

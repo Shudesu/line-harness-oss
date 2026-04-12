@@ -842,6 +842,7 @@ export interface StaffMember {
   email: string | null;
   role: 'owner' | 'admin' | 'staff';
   apiKey: string;
+  iconUrl: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -852,6 +853,7 @@ export interface StaffProfile {
   name: string;
   role: 'owner' | 'admin' | 'staff';
   email: string | null;
+  iconUrl: string | null;
 }
 
 // =============================================================================

@@ -32,8 +32,22 @@ export function registerSendMessage(server: McpServer): void {
         .describe(
           "Mark as test send. Prepends 【テスト配信】 to text messages, adds test banner to flex messages.",
         ),
+      senderName: z
+        .string()
+        .max(20)
+        .optional()
+        .describe(
+          "Display name shown as the message sender (max 20 chars). Use for staff-specific messages, e.g. 'スタッフ田中'.",
+        ),
+      senderIconUrl: z
+        .string()
+        .url()
+        .optional()
+        .describe(
+          "HTTPS URL of the sender's icon image (PNG recommended, max 1MB).",
+        ),
     },
-    async ({ friendId, content, messageType, altText, isTest }) => {
+    async ({ friendId, content, messageType, altText, isTest, senderName, senderIconUrl }) => {
       try {
         const client = getClient();
 
@@ -71,11 +85,13 @@ export function registerSendMessage(server: McpServer): void {
           `DM to ${friendId.slice(0, 8)}`,
         );
 
+        const sender = senderName ? { name: senderName, ...(senderIconUrl ? { iconUrl: senderIconUrl } : {}) } : undefined;
         const result = await client.friends.sendMessage(
           friendId,
           trackedContent,
           messageType,
           altText,
+          sender,
         );
         return {
           content: [

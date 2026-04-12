@@ -2,6 +2,7 @@ import type {
   BroadcastRequest,
   FlexContainer,
   Message,
+  MessageSender,
   MulticastRequest,
   PushMessageRequest,
   ReplyMessageRequest,
@@ -68,8 +69,13 @@ export class LineClient {
 
   // ─── Messaging ───────────────────────────────────────────────────────────
 
-  async pushMessage(to: string, messages: Message[]): Promise<unknown> {
-    const body: PushMessageRequest = { to, messages };
+  private applyS(messages: Message[], sender?: MessageSender): Message[] {
+    if (!sender) return messages;
+    return messages.map((m) => ({ ...m, sender }));
+  }
+
+  async pushMessage(to: string, messages: Message[], sender?: MessageSender): Promise<unknown> {
+    const body: PushMessageRequest = { to, messages: this.applyS(messages, sender) };
     const { data } = await this.request('POST', '/v2/bot/message/push', body);
     return data;
   }
@@ -78,8 +84,9 @@ export class LineClient {
     to: string[],
     messages: Message[],
     customAggregationUnits?: string[],
+    sender?: MessageSender,
   ): Promise<{ data: unknown; requestId: string | null }> {
-    const body: Record<string, unknown> = { to, messages };
+    const body: Record<string, unknown> = { to, messages: this.applyS(messages, sender) };
     if (customAggregationUnits) {
       body.customAggregationUnits = customAggregationUnits;
     }
@@ -93,8 +100,9 @@ export class LineClient {
 
   async broadcast(
     messages: Message[],
+    sender?: MessageSender,
   ): Promise<{ data: unknown; requestId: string | null }> {
-    const body: BroadcastRequest = { messages };
+    const body: BroadcastRequest = { messages: this.applyS(messages, sender) };
     const { data, headers } = await this.request(
       'POST',
       '/v2/bot/message/broadcast',
@@ -106,8 +114,9 @@ export class LineClient {
   async replyMessage(
     replyToken: string,
     messages: Message[],
+    sender?: MessageSender,
   ): Promise<unknown> {
-    const body: ReplyMessageRequest = { replyToken, messages };
+    const body: ReplyMessageRequest = { replyToken, messages: this.applyS(messages, sender) };
     const { data } = await this.request('POST', '/v2/bot/message/reply', body);
     return data;
   }
@@ -187,24 +196,26 @@ export class LineClient {
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  async pushTextMessage(to: string, text: string): Promise<unknown> {
-    return this.pushMessage(to, [{ type: 'text', text }]);
+  async pushTextMessage(to: string, text: string, sender?: MessageSender): Promise<unknown> {
+    return this.pushMessage(to, [{ type: 'text', text }], sender);
   }
 
   async pushFlexMessage(
     to: string,
     altText: string,
     contents: FlexContainer,
+    sender?: MessageSender,
   ): Promise<unknown> {
-    return this.pushMessage(to, [{ type: 'flex', altText, contents }]);
+    return this.pushMessage(to, [{ type: 'flex', altText, contents }], sender);
   }
 
   async pushImageMessage(
     to: string,
     originalContentUrl: string,
     previewImageUrl: string,
+    sender?: MessageSender,
   ): Promise<unknown> {
-    return this.pushMessage(to, [{ type: 'image', originalContentUrl, previewImageUrl }]);
+    return this.pushMessage(to, [{ type: 'image', originalContentUrl, previewImageUrl }], sender);
   }
 
   // ─── Rich Menu Image Upload ─────────────────────────────────────────────

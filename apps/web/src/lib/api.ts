@@ -25,6 +25,7 @@ import type {
   AccountHealthLog,
   AccountMigration,
   StaffMember,
+  StaffProfile,
   Broadcast,
   BroadcastTargetType,
   EntryRoute,
@@ -667,7 +668,7 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    send: (id: string, data: { content: string; messageType?: string }) =>
+    send: (id: string, data: { content: string; messageType?: string; sender?: { name: string; iconUrl?: string } }) =>
       fetchApi<ApiResponse<unknown>>(`/api/chats/${id}/send`, {
         method: 'POST',
         body: JSON.stringify(data),
@@ -805,13 +806,13 @@ export const api = {
     get: (id: string) =>
       fetchApi<ApiResponse<StaffMember>>(`/api/staff/${id}`),
     me: () =>
-      fetchApi<ApiResponse<{ id: string; name: string; role: string; email: string | null }>>('/api/staff/me'),
-    create: (data: { name: string; email?: string; role: 'admin' | 'staff' }) =>
+      fetchApi<ApiResponse<StaffProfile>>('/api/staff/me'),
+    create: (data: { name: string; email?: string; role: 'admin' | 'staff'; iconUrl?: string | null }) =>
       fetchApi<ApiResponse<StaffMember>>('/api/staff', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    update: (id: string, data: { name?: string; email?: string | null; role?: string; isActive?: boolean }) =>
+    update: (id: string, data: { name?: string; email?: string | null; role?: string; isActive?: boolean; iconUrl?: string | null }) =>
       fetchApi<ApiResponse<StaffMember>>(`/api/staff/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),

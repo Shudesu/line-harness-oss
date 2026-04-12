@@ -520,7 +520,7 @@ chats.post('/api/chats/:id/send', async (c) => {
     const chat = await resolveOrCreateChat(c.env.DB, chatId);
     if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
 
-    const body = await c.req.json<{ messageType?: string; content: string }>();
+    const body = await c.req.json<{ messageType?: string; content: string; sender?: { name: string; iconUrl?: string } }>();
     if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
 
     const { friend, accessToken } = await resolveFriendAndAccessToken(
@@ -536,10 +536,10 @@ chats.post('/api/chats/:id/send', async (c) => {
     const messageType = body.messageType ?? 'text';
 
     if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
+      await lineClient.pushTextMessage(friend.line_user_id, body.content, body.sender);
     } else if (messageType === 'flex') {
       const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
+      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents, body.sender);
     } else if (messageType === 'image') {
       const parsed = JSON.parse(body.content) as {
         originalContentUrl: string;
@@ -549,6 +549,7 @@ chats.post('/api/chats/:id/send', async (c) => {
         friend.line_user_id,
         parsed.originalContentUrl,
         parsed.previewImageUrl,
+        body.sender,
       );
     }
 

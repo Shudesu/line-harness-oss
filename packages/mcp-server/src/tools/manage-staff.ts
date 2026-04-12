@@ -12,11 +12,12 @@ export function registerManageStaff(server: McpServer): void {
         .describe("Action to perform"),
       name: z.string().optional().describe("Staff name (for 'create' action)"),
       email: z.string().nullable().optional().describe("Staff email (optional, null to clear)"),
+      iconUrl: z.string().url().nullable().optional().describe("Staff sender icon URL (optional, null to clear)"),
       role: z.enum(["admin", "staff"]).optional().describe("Staff role (for 'create'/'update')"),
       staffId: z.string().optional().describe("Staff ID (for 'get','update','delete','regenerate_key')"),
       isActive: z.boolean().optional().describe("Activate/deactivate (for 'update')"),
     },
-    async ({ action, name, email, role, staffId, isActive }) => {
+    async ({ action, name, email, iconUrl, role, staffId, isActive }) => {
       try {
         const client = getClient();
 
@@ -37,7 +38,7 @@ export function registerManageStaff(server: McpServer): void {
         if (action === "create") {
           if (!name) throw new Error("name is required for create action");
           if (!role) throw new Error("role is required for create action");
-          const member = await client.staff.create({ name, email, role });
+          const member = await client.staff.create({ name, email, role, iconUrl });
           return {
             content: [{
               type: "text" as const,
@@ -62,6 +63,7 @@ export function registerManageStaff(server: McpServer): void {
           const updates: Record<string, unknown> = {};
           if (name !== undefined) updates.name = name;
           if (email !== undefined) updates.email = email;
+          if (iconUrl !== undefined) updates.iconUrl = iconUrl;
           if (role !== undefined) updates.role = role;
           if (isActive !== undefined) updates.isActive = isActive;
           const member = await client.staff.update(staffId, updates);
