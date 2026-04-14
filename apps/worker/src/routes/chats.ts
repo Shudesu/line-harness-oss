@@ -9,6 +9,8 @@ import {
   getChats,
   getChatById,
   createChat,
+  getFriendById,
+  getLineAccountById,
   updateChat,
   jstNow,
 } from '@line-crm/db';
@@ -43,6 +45,28 @@ async function startLoadingAnimation(
         : `LINE API error: ${response.status}`,
     );
   }
+}
+
+async function resolveFriendAndAccessToken(
+  db: D1Database,
+  friendId: string,
+  defaultAccessToken: string,
+) {
+  const friend = await getFriendById(db, friendId);
+  if (!friend) {
+    return { friend: null, accessToken: defaultAccessToken };
+  }
+
+  if (!friend.line_account_id) {
+    return { friend, accessToken: defaultAccessToken };
+  }
+
+  const account = await getLineAccountById(db, friend.line_account_id);
+  if (!account) {
+    return { friend, accessToken: defaultAccessToken };
+  }
+
+  return { friend, accessToken: account.channel_access_token };
 }
 
 // ========== オペレーターCRUD ==========
@@ -258,14 +282,15 @@ chats.post('/api/chats/:id/loading', async (c) => {
     }
     const loadingSeconds = clampLoadingSeconds(loadingSecondsInput);
 
-    const friend = await c.env.DB
-      .prepare(`SELECT * FROM friends WHERE id = ?`)
-      .bind(chat.friend_id)
-      .first<{ id: string; line_user_id: string }>();
+    const { friend, accessToken } = await resolveFriendAndAccessToken(
+      c.env.DB,
+      chat.friend_id,
+      c.env.LINE_CHANNEL_ACCESS_TOKEN,
+    );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 
     await startLoadingAnimation(
-      c.env.LINE_CHANNEL_ACCESS_TOKEN,
+      accessToken,
       friend.line_user_id,
       loadingSeconds,
     );
@@ -288,15 +313,16 @@ chats.post('/api/chats/:id/send', async (c) => {
     const body = await c.req.json<{ messageType?: string; content: string }>();
     if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
 
-    const friend = await c.env.DB
-      .prepare(`SELECT * FROM friends WHERE id = ?`)
-      .bind(chat.friend_id)
-      .first<{ id: string; line_user_id: string }>();
+    const { friend, accessToken } = await resolveFriendAndAccessToken(
+      c.env.DB,
+      chat.friend_id,
+      c.env.LINE_CHANNEL_ACCESS_TOKEN,
+    );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 
     // LINE APIでメッセージ送信
     const { LineClient } = await import('@line-crm/line-sdk');
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';
 
     if (messageType === 'text') {
