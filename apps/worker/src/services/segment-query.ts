@@ -1,6 +1,6 @@
 export interface SegmentRule {
-  type: 'tag_exists' | 'tag_not_exists' | 'metadata_equals' | 'metadata_not_equals' | 'ref_code' | 'is_following'
-  value: string | boolean | { key: string; value: string }
+  type: 'tag_exists' | 'tag_not_exists' | 'metadata_equals' | 'metadata_not_equals' | 'ref_code' | 'is_following' | 'friend_ids'
+  value: string | boolean | string[] | { key: string; value: string }
 }
 
 export interface SegmentCondition {
@@ -81,6 +81,17 @@ export function buildSegmentQuery(condition: SegmentCondition): { sql: string; b
         }
         clauses.push(`f.is_following = ?`)
         bindings.push(rule.value ? 1 : 0)
+        break
+      }
+
+      case 'friend_ids': {
+        if (!Array.isArray(rule.value) || rule.value.length === 0) {
+          throw new Error('friend_ids rule requires a non-empty array of friend IDs')
+        }
+        const ids = rule.value as string[]
+        const placeholders = ids.map(() => '?').join(', ')
+        clauses.push(`f.id IN (${placeholders})`)
+        bindings.push(...ids)
         break
       }
 

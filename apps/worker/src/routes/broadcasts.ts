@@ -265,6 +265,71 @@ broadcasts.post('/api/broadcasts/:id/send-segment', async (c) => {
   }
 });
 
+// POST /api/broadcasts/multicast-queue — 選択した友だちへのキュー配信
+broadcasts.post('/api/broadcasts/multicast-queue', async (c) => {
+  try {
+    const body = await c.req.json<{
+      friendIds: string[];
+      messageType: string;
+      messageContent: string;
+      altText?: string | null;
+      lineAccountId?: string | null;
+    }>();
+
+    if (!Array.isArray(body.friendIds) || body.friendIds.length === 0) {
+      return c.json({ success: false, error: 'friendIds (non-empty array) is required' }, 400);
+    }
+    if (!body.messageType || !body.messageContent) {
+      return c.json({ success: false, error: 'messageType and messageContent are required' }, 400);
+    }
+
+    // Create a broadcast record
+    const broadcast = await createBroadcast(c.env.DB, {
+      title: `友だち選択配信 (${body.friendIds.length}人)`,
+      messageType: body.messageType as BroadcastMessageType,
+      messageContent: body.messageContent,
+      targetType: 'tag', // Reuse 'tag' target_type; actual targeting is via segment_conditions
+      targetTagId: null,
+    });
+
+    // Set alt_text, line_account_id if provided
+    const updates: string[] = [];
+    const binds: unknown[] = [];
+    if (body.altText) { updates.push('alt_text = ?'); binds.push(body.altText); }
+    if (body.lineAccountId) { updates.push('line_account_id = ?'); binds.push(body.lineAccountId); }
+    if (updates.length > 0) {
+      binds.push(broadcast.id);
+      await c.env.DB.prepare(`UPDATE broadcasts SET ${updates.join(', ')} WHERE id = ?`)
+        .bind(...binds).run();
+    }
+
+    // Build segment_conditions with friend_ids + is_following filter
+    const segmentConditions: SegmentCondition = {
+      operator: 'AND',
+      rules: [
+        { type: 'friend_ids', value: body.friendIds },
+        { type: 'is_following', value: true },
+      ],
+    };
+
+    // Queue for batch processing: set status='sending', batch_offset=0, segment_conditions
+    await c.env.DB.prepare(
+      `UPDATE broadcasts SET status = 'sending', batch_offset = 0, segment_conditions = ? WHERE id = ?`
+    ).bind(JSON.stringify(segmentConditions), broadcast.id).run();
+
+    const result = await getBroadcastById(c.env.DB, broadcast.id);
+    return c.json({
+      success: true,
+      data: result ? serializeBroadcast(result) : null,
+      queued: true,
+      message: 'Multicast queued for batch processing by Cron',
+    }, 202);
+  } catch (err) {
+    console.error('POST /api/broadcasts/multicast-queue error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/broadcasts/:id/insight — インサイト（開封率・クリック率）取得
 broadcasts.get('/api/broadcasts/:id/insight', async (c) => {
   try {
