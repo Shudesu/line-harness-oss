@@ -91,7 +91,7 @@ const ccPrompts = [
 ]
 
 export default function AutomationsPage() {
-  const { selectedAccountId } = useAccount()
+  const { selectedAccountId, loading: accountLoading } = useAccount()
   const [automations, setAutomations] = useState<Automation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -118,8 +118,37 @@ export default function AutomationsPage() {
   }, [selectedAccountId])
 
   useEffect(() => {
-    loadAutomations()
-  }, [loadAutomations])
+    if (accountLoading) return
+    
+    let cancelled = false
+    
+    const fetchData = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const res = await api.automations.list({ accountId: selectedAccountId || undefined })
+        if (cancelled) return
+        if (res.success) {
+          setAutomations(res.data)
+        } else {
+          setError(res.error)
+        }
+      } catch {
+        if (cancelled) return
+        setError('オートメーションの読み込みに失敗しました。もう一度お試しください。')
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+    
+    fetchData()
+    
+    return () => {
+      cancelled = true
+    }
+  }, [selectedAccountId, accountLoading])
 
   const handleCreate = async () => {
     if (!form.name.trim()) {
