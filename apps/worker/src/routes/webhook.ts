@@ -191,50 +191,47 @@ async function handleEvent(
       }
     };
 
-    // friend_add シナリオに登録（このアカウントのシナリオのみ）
+    // Welcome scenario dispatch rule:
+    // - ref_code経由で対応する tag_added シナリオがあれば、そちらを優先
+    //   (流入経路ごとに1つのウェルカムという運用ルール)
+    // - tag_added シナリオが1件も該当しない時だけ、friend_add (一般ウェルカム) を発火
+    // これにより「ref_codeあり → 経路別ウェルカム」「ref_codeなし → 一般ウェルカム」の
+    // 二者択一になり、二重配信を根本防止する。
     let replyTokenUsed = false;
+    let tagAddedMatched = false;
     const scenarios = await getScenarios(db);
-    for (const scenario of scenarios) {
-      // Account-match rule:
-      // - scenario.line_account_id NULL  → global scenario, always runs
-      // - scenario.line_account_id SET   → must match the webhook's resolved account
-      // NOTE: the previous rule `!scenario.line_account_id || !lineAccountId || ...`
-      // was incorrect: when the webhook matched the env-fallback account (lineAccountId=null),
-      // the `!lineAccountId` branch made EVERY scenario match regardless of its account,
-      // which fired other accounts' scenarios for the wrong friend.
-      const scenarioAccountMatch = !scenario.line_account_id || scenario.line_account_id === lineAccountId;
-      if (scenario.trigger_type === 'friend_add' && scenario.is_active && scenarioAccountMatch) {
-        try {
-          const used = await enrollAndDeliver(scenario.id, !replyTokenUsed);
-          if (used) replyTokenUsed = true;
-        } catch (err) {
-          console.error('Failed to enroll friend in scenario', scenario.id, err);
-        }
-      }
-    }
+    const accountMatches = (s: { line_account_id: string | null }) =>
+      !s.line_account_id || s.line_account_id === lineAccountId;
 
-    // tag_added シナリオ: ref_code 経由で付与されたタグに紐づくシナリオを起動
+    // Pass 1: tag_added シナリオ (ref_code 経由)
     if (refRoute?.tag_id) {
       for (const scenario of scenarios) {
-        // Account-match rule:
-      // - scenario.line_account_id NULL  → global scenario, always runs
-      // - scenario.line_account_id SET   → must match the webhook's resolved account
-      // NOTE: the previous rule `!scenario.line_account_id || !lineAccountId || ...`
-      // was incorrect: when the webhook matched the env-fallback account (lineAccountId=null),
-      // the `!lineAccountId` branch made EVERY scenario match regardless of its account,
-      // which fired other accounts' scenarios for the wrong friend.
-      const scenarioAccountMatch = !scenario.line_account_id || scenario.line_account_id === lineAccountId;
         if (
           scenario.trigger_type === 'tag_added' &&
           scenario.is_active &&
-          scenarioAccountMatch &&
+          accountMatches(scenario) &&
           scenario.trigger_tag_id === refRoute.tag_id
         ) {
+          tagAddedMatched = true;
           try {
             const used = await enrollAndDeliver(scenario.id, !replyTokenUsed);
             if (used) replyTokenUsed = true;
           } catch (err) {
             console.error('Failed to enroll friend in tag_added scenario', scenario.id, err);
+          }
+        }
+      }
+    }
+
+    // Pass 2: friend_add シナリオ (tag_added が1件も該当しなかった場合のフォールバック)
+    if (!tagAddedMatched) {
+      for (const scenario of scenarios) {
+        if (scenario.trigger_type === 'friend_add' && scenario.is_active && accountMatches(scenario)) {
+          try {
+            const used = await enrollAndDeliver(scenario.id, !replyTokenUsed);
+            if (used) replyTokenUsed = true;
+          } catch (err) {
+            console.error('Failed to enroll friend in friend_add scenario', scenario.id, err);
           }
         }
       }
