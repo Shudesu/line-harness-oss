@@ -15,6 +15,38 @@ async function resolveLineClient(c: { env: Env['Bindings']; req: { query(key: st
   return new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
 }
 
+// GET /api/rich-menus/:id/image — proxy the rich menu image (binary)
+richMenus.get('/api/rich-menus/:id/image', async (c) => {
+  try {
+    const richMenuId = c.req.param('id');
+    const lineClient = await resolveLineClient(c);
+    const { data, contentType } = await lineClient.getRichMenuImage(richMenuId);
+    return new Response(data, {
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=60',
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('GET /api/rich-menus/:id/image error:', message);
+    return c.json({ success: false, error: `Failed to fetch image: ${message}` }, 500);
+  }
+});
+
+// GET /api/rich-menus/default — get current default rich menu id (empty if none)
+richMenus.get('/api/rich-menus/default', async (c) => {
+  try {
+    const lineClient = await resolveLineClient(c);
+    const id = await lineClient.getDefaultRichMenuId();
+    return c.json({ success: true, data: { richMenuId: id } });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('GET /api/rich-menus/default error:', message);
+    return c.json({ success: false, error: `Failed to fetch default: ${message}` }, 500);
+  }
+});
+
 // GET /api/rich-menus — list all rich menus from LINE API
 richMenus.get('/api/rich-menus', async (c) => {
   try {

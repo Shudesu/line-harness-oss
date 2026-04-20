@@ -167,6 +167,16 @@ export class LineClient {
     return data as { richMenuId: string };
   }
 
+  /** Returns the current default rich menu id, or null if none is set. */
+  async getDefaultRichMenuId(): Promise<string | null> {
+    try {
+      const { data } = await this.request('GET', '/v2/bot/user/all/richmenu');
+      return (data as { richMenuId?: string } | null)?.richMenuId ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   async pushTextMessage(to: string, text: string): Promise<unknown> {
@@ -204,6 +214,26 @@ export class LineClient {
         `LINE API error: ${res.status} ${res.statusText} — ${text}`,
       );
     }
+  }
+
+  /** Download rich menu image as ArrayBuffer. */
+  async getRichMenuImage(
+    richMenuId: string,
+  ): Promise<{ data: ArrayBuffer; contentType: string }> {
+    const url = `https://api-data.line.me/v2/bot/richmenu/${encodeURIComponent(richMenuId)}/content`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.channelAccessToken}` },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(
+        `LINE API error: ${res.status} ${res.statusText} — ${text}`,
+      );
+    }
+    return {
+      data: await res.arrayBuffer(),
+      contentType: res.headers.get('content-type') || 'image/png',
+    };
   }
 
   // ─── Insight API ─────────────────────────────────────────────────────────

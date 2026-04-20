@@ -30,6 +30,32 @@ import type { Broadcast } from '@line-crm/shared'
 /** Broadcast type from API (now camelCase after worker serialization) */
 export type ApiBroadcast = Broadcast
 
+export type RichMenuBounds = { x: number; y: number; width: number; height: number }
+
+export type RichMenuAction =
+  | { type: 'message'; label?: string; text: string }
+  | { type: 'uri'; label?: string; uri: string }
+  | { type: 'postback'; label?: string; data: string; displayText?: string }
+
+export type RichMenuArea = { bounds: RichMenuBounds; action: RichMenuAction }
+
+export type RichMenu = {
+  richMenuId: string
+  name: string
+  chatBarText: string
+  size: { width: number; height: number }
+  selected: boolean
+  areas: RichMenuArea[]
+}
+
+export type RichMenuCreateInput = {
+  size: { width: number; height: number }
+  name: string
+  chatBarText: string
+  selected?: boolean
+  areas: RichMenuArea[]
+}
+
 export type BroadcastInsight = {
   broadcastId?: string
   delivered: number | null
@@ -531,6 +557,34 @@ export const api = {
       }),
     getMigration: (migrationId: string) =>
       fetchApi<ApiResponse<AccountMigration>>(`/api/accounts/migrations/${migrationId}`),
+  },
+  richMenus: {
+    list: () =>
+      fetchApi<ApiResponse<RichMenu[]>>('/api/rich-menus'),
+    getDefault: () =>
+      fetchApi<ApiResponse<{ richMenuId: string | null }>>('/api/rich-menus/default'),
+    create: (data: RichMenuCreateInput) =>
+      fetchApi<ApiResponse<{ richMenuId: string }>>('/api/rich-menus', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/rich-menus/${id}`, { method: 'DELETE' }),
+    setDefault: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/rich-menus/${id}/default`, { method: 'POST' }),
+    uploadImage: (id: string, imageBase64: string, contentType: 'image/png' | 'image/jpeg') =>
+      fetchApi<ApiResponse<null>>(`/api/rich-menus/${id}/image`, {
+        method: 'POST',
+        body: JSON.stringify({ image: imageBase64, contentType }),
+      }),
+    imageUrl: (id: string) => `${API_URL}/api/rich-menus/${id}/image`,
+    fetchImageBlob: async (id: string): Promise<Blob> => {
+      const res = await fetch(`${API_URL}/api/rich-menus/${id}/image`, {
+        headers: { Authorization: `Bearer ${getApiKey()}` },
+      })
+      if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`)
+      return res.blob()
+    },
   },
   staff: {
     list: () =>
