@@ -269,6 +269,25 @@ async function scheduled(
   } catch (e) {
     console.error("Insight fetch error:", e);
   }
+
+  // webhook_dedupe の旧 entry を掃除 (5幕イニシエーション Bug 1 対策、migration 024)
+  // 30 分以上前の entry は LINE の再送ウィンドウを超えているので安全に削除可能
+  try {
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const res = await env.DB.prepare(
+      `DELETE FROM webhook_dedupe WHERE received_at < ?`,
+    )
+      .bind(cutoff)
+      .run();
+    const deleted = res.meta?.changes ?? 0;
+    if (deleted > 0) {
+      console.log(
+        `[webhook_dedupe cleanup] pruned ${deleted} entries older than ${cutoff}`,
+      );
+    }
+  } catch (e) {
+    console.error("webhook_dedupe cleanup error (migration 024 未適用?):", e);
+  }
 }
 
 export default {

@@ -73,6 +73,45 @@ webhook.post("/webhook", async (c) => {
   // 非同期処理 — LINE は ~1s 以内のレスポンスを要求
   const processingPromise = (async () => {
     for (const event of body.events) {
+      // ─────────────────────────────────────────────────────────
+      // Webhook 二重処理防止 (ED-NEW, 5幕イニシエーション Bug 1 対策)
+      //
+      // LINE Webhook は以下のケースで同一 event が複数回配信される:
+      //   - Messaging API サーバー側のタイムアウト再送
+      //   - transient network error 後のリトライ
+      //   - まれに LINE 内部で重複 enqueue
+      //
+      // webhookEventId は event 単位で一意 (LINE 仕様)。
+      // webhook_dedupe テーブルに INSERT OR IGNORE し、既処理なら skip。
+      // 旧 entry の掃除は cron (*/5 * * * *) に委任。
+      // ─────────────────────────────────────────────────────────
+      const eventId =
+        (event as { webhookEventId?: string }).webhookEventId ||
+        // webhookEventId が無い古い webhook 版向けフォールバック
+        `${event.type}:${event.timestamp}:${
+          (event.source as { userId?: string }).userId ?? "unknown"
+        }`;
+      try {
+        const dedupeResult = await db
+          .prepare(
+            `INSERT OR IGNORE INTO webhook_dedupe (event_id, received_at) VALUES (?, ?)`,
+          )
+          .bind(eventId, new Date().toISOString())
+          .run();
+        if ((dedupeResult.meta?.changes ?? 0) === 0) {
+          console.log(
+            `[webhook dedupe] skip duplicate event_id=${eventId} type=${event.type}`,
+          );
+          continue;
+        }
+      } catch (dedupeErr) {
+        // テーブルが未作成の環境でも処理は継続 (migration 未適用時の safety net)
+        console.error(
+          `[webhook dedupe] table access failed (migration 024 未適用?):`,
+          dedupeErr,
+        );
+      }
+
       try {
         await handleEvent(
           db,
