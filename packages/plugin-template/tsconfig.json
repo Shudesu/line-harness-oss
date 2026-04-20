@@ -5,5 +5,5 @@
     "rootDir": ".",
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["src/**/*.ts", "mcp-server/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

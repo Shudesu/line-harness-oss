@@ -64,6 +64,7 @@ export type Env = {
     WORKER_URL: string;
     MIZUKAGAMI_WORKER_URL: string;
     MIZUKAGAMI_API_KEY: string;
+    MIZUKAGAMI: Fetcher;
     X_HARNESS_URL?: string;
     IG_HARNESS_URL?: string;
     IG_HARNESS_LINK_SECRET?: string;

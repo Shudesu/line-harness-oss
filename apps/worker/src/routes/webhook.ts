@@ -83,6 +83,8 @@ webhook.post("/webhook", async (c) => {
           c.env.WORKER_URL || new URL(c.req.url).origin,
           c.env.MIZUKAGAMI_WORKER_URL,
           c.env.MIZUKAGAMI_API_KEY,
+          c.env.MIZUKAGAMI,
+          c.env.LIFF_URL,
         );
       } catch (err) {
         console.error("Error handling webhook event:", err);
@@ -104,6 +106,8 @@ async function handleEvent(
   workerUrl?: string,
   mizukagamiWorkerUrl?: string,
   mizukagamiApiKey?: string,
+  mizukagamiService?: Fetcher,
+  liffUrl?: string,
 ): Promise<void> {
   if (event.type === "follow") {
     const userId =
@@ -143,6 +147,20 @@ async function handleEvent(
         .run();
       console.log(
         `[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`,
+      );
+    }
+
+    // ref_code: LINE chatReferral（Voom/広告経由）または follow_params から取得
+    const chatReferral = (event as unknown as Record<string, unknown>)
+      .chatReferral as { ref?: string } | undefined;
+    const refCode = chatReferral?.ref ?? null;
+    if (refCode) {
+      await db
+        .prepare("UPDATE friends SET ref_code = ?, updated_at = ? WHERE id = ?")
+        .bind(refCode, jstNow(), friend.id)
+        .run();
+      console.log(
+        `[follow] ref_code set to ${refCode} for friend ${friend.id}`,
       );
     }
 
@@ -373,25 +391,51 @@ async function handleEvent(
       .run();
 
     // MIZUKAGAMI Mirror Session — 水鏡 Worker に転送（最優先で処理）
-    if (mizukagamiWorkerUrl && mizukagamiApiKey) {
+    if (mizukagamiApiKey && (mizukagamiService || mizukagamiWorkerUrl)) {
       try {
-        const mizuRes = await fetch(`${mizukagamiWorkerUrl}/handle`, {
-          method: 'POST',
+        const mizuUrl = mizukagamiService
+          ? "https://mizukagami/handle"
+          : `${mizukagamiWorkerUrl}/handle`;
+        const replyToken = (event as unknown as { replyToken?: string })
+          .replyToken;
+        const req = new Request(mizuUrl, {
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
             Authorization: `Bearer ${mizukagamiApiKey}`,
           },
-          body: JSON.stringify({ userId, text: incomingText, lineAccessToken }),
+          body: JSON.stringify({
+            userId,
+            text: incomingText,
+            lineAccessToken,
+            replyToken,
+          }),
         });
+        const mizuRes = mizukagamiService
+          ? await mizukagamiService.fetch(req)
+          : await fetch(req);
         if (mizuRes.ok) {
           const mizuResult = await mizuRes.json<{ handled: boolean }>();
           if (mizuResult.handled) {
-            await fireEvent(db, 'message_received', { friendId: friend.id, eventData: { text: incomingText, matched: true, handler: 'mizukagami' } }, lineAccessToken, lineAccountId);
+            await fireEvent(
+              db,
+              "message_received",
+              {
+                friendId: friend.id,
+                eventData: {
+                  text: incomingText,
+                  matched: true,
+                  handler: "mizukagami",
+                },
+              },
+              lineAccessToken,
+              lineAccountId,
+            );
             return;
           }
         }
       } catch (err) {
-        console.error('[webhook] Mizukagami Worker 呼び出し失敗:', err);
+        console.error("[webhook] Mizukagami Worker 呼び出し失敗:", err);
       }
     }
 
@@ -596,14 +640,14 @@ async function handleEvent(
                         style: "primary",
                         color: "#06C755",
                       },
-                      ...(c.env.LIFF_URL
+                      ...(liffUrl
                         ? [
                             {
                               type: "button",
                               action: {
                                 type: "uri",
                                 label: "フィードバックを送る",
-                                uri: `${c.env.LIFF_URL}?page=form`,
+                                uri: `${liffUrl}?page=form`,
                               },
                               style: "secondary",
                               margin: "sm",

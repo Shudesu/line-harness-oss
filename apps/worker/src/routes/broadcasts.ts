@@ -202,7 +202,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     }
 
     let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
-    const broadcastAccountId = (existing as Record<string, unknown>).line_account_id;
+    const broadcastAccountId = (existing as unknown as Record<string, unknown>).line_account_id;
     if (broadcastAccountId) {
       const { getLineAccountById } = await import('@line-crm/db');
       const account = await getLineAccountById(c.env.DB, broadcastAccountId as string);
@@ -243,7 +243,7 @@ broadcasts.post('/api/broadcasts/:id/send-segment', async (c) => {
     }
 
     let segAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
-    const segAccountId = (existing as Record<string, unknown>).line_account_id;
+    const segAccountId = (existing as unknown as Record<string, unknown>).line_account_id;
     if (segAccountId) {
       const { getLineAccountById } = await import('@line-crm/db');
       const account = await getLineAccountById(c.env.DB, segAccountId as string);
