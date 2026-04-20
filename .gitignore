@@ -14,3 +14,7 @@ dist/
 apps/web/out/
 apps/worker/dist/
 .worktrees/
+
+# Session handover notes (may contain sensitive info; keep local only)
+HANDOVER.md
+**/HANDOVER.md
