@@ -104,6 +104,12 @@ export interface ScenarioStep {
   messageType: MessageType;
   /** メッセージ内容 (テキスト or JSONシリアライズ済みFlexメッセージ等) */
   messageContent: string;
+  /** 条件タイプ (tag_exists / tag_not_exists / metadata_equals / metadata_not_equals) */
+  conditionType?: string | null;
+  /** 条件値 (タグID、または {"key":"","value":""} の JSON) */
+  conditionValue?: string | null;
+  /** 条件がfalseの時に飛ぶ step_order */
+  nextStepOnFalse?: number | null;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
 }

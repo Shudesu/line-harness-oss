@@ -22,6 +22,16 @@ const messageTypeOptions: { value: MessageType; label: string }[] = [
   { value: 'flex', label: 'Flex' },
 ]
 
+function formatCondition(type?: string | null): string {
+  switch (type) {
+    case 'tag_exists': return 'タグあり'
+    case 'tag_not_exists': return 'タグなし'
+    case 'metadata_equals': return 'メタ一致'
+    case 'metadata_not_equals': return 'メタ不一致'
+    default: return type || ''
+  }
+}
+
 function formatDelay(minutes: number): string {
   if (minutes === 0) return '即時'
   if (minutes < 60) return `${minutes}分後`
@@ -464,7 +474,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-2">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span
                           className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-white shrink-0"
                           style={{ backgroundColor: '#06C755' }}
@@ -479,6 +489,17 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                         }`}>
                           {messageTypeOptions.find(o => o.value === step.messageType)?.label ?? step.messageType}
                         </span>
+                        {step.conditionType && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                            条件: {formatCondition(step.conditionType)}
+                            {step.conditionValue ? ` (${step.conditionValue.slice(0, 8)}…)` : ''}
+                          </span>
+                        )}
+                        {step.nextStepOnFalse != null && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+                            false → Step {step.nextStepOnFalse}
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-gray-700 bg-gray-50 rounded-md px-3 py-2">
                         {step.messageType === 'text' ? (

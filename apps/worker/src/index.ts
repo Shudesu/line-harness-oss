@@ -48,7 +48,7 @@ import { messageTemplates } from './routes/message-templates.js';
 export type Env = {
   Bindings: {
     DB: D1Database;
-    IMAGES: R2Bucket;
+    IMAGES?: R2Bucket;
     ASSETS: Fetcher;
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;

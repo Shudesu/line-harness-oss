@@ -494,6 +494,18 @@ forms.post('/api/forms/:id/submit', async (c) => {
             metadata: resolvedMeta,
           };
 
+          // 無料相談フォーム: 専用サンクスメッセージ（3吹き出し）
+          if (form.id === '032491b8-563f-4736-bf0d-e91b911c87ac') {
+            const name = friend.display_name || '';
+            const messages = [
+              buildMessage('text', `${name}さん\n\n無料相談へのお申し込みありがとうございます！\nご相談内容、受け取りました。`),
+              buildMessage('text', '日程を確認して\nこのLINEで改めてご連絡します。'),
+              buildMessage('text', 'それまでに\n「これも伝えておきたい」があれば\nこのままメッセージしてください。'),
+            ];
+            await lineClient.pushMessage(friend.line_user_id, messages);
+            return;
+          }
+
           // Build diagnostic result Flex card showing their answers
           const entries = Object.entries(submissionData as Record<string, unknown>);
           const answerRows = entries.map(([key, value]) => {

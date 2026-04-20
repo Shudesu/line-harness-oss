@@ -12,6 +12,8 @@ import {
   completeFriendScenario,
   upsertChatOnMessage,
   getLineAccounts,
+  addTagToFriend,
+  removeTagFromFriend,
   jstNow,
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
@@ -66,7 +68,7 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -85,6 +87,7 @@ async function handleEvent(
   lineAccessToken: string,
   lineAccountId: string | null = null,
   workerUrl?: string,
+  liffUrl?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -119,6 +122,9 @@ async function handleEvent(
       console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
     }
 
+    // 友だち追加時に【状態】未診断タグを付与
+    await addTagToFriend(db, friend.id, '87acf0ef-c218-4de3-bffe-66e53177d911').catch(() => {});
+
     // friend_add シナリオに登録（このアカウントのシナリオのみ）
     const scenarios = await getScenarios(db);
     for (const scenario of scenarios) {
@@ -130,40 +136,51 @@ async function handleEvent(
           const friendScenario = await enrollFriendInScenario(db, friend.id, scenario.id);
           if (!friendScenario) continue; // already enrolled
 
-            // Immediate delivery: if the first step has delay=0, send it now via replyMessage (free)
+            // Immediate delivery: bundle consecutive leading steps with delay=0 and no condition
+            // into a single replyMessage (LINE allows up to 5 messages per reply)
             const steps = await getScenarioSteps(db, scenario.id);
-            const firstStep = steps[0];
-            if (firstStep && firstStep.delay_minutes === 0 && friendScenario.status === 'active') {
-              try {
-                const { resolveMetadata } = await import('../services/step-delivery.js');
-                const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-                const expandedContent = expandVariables(firstStep.message_content, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1]);
-                const message = buildMessage(firstStep.message_type, expandedContent);
-                await lineClient.replyMessage(event.replyToken, [message]);
-                console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
+            const leading = [];
+            for (const s of steps) {
+              if (leading.length >= 5) break;
+              if (s.delay_minutes !== 0) break;
+              if (s.condition_type) break;
+              leading.push(s);
+            }
 
-                // Log outgoing message (replyMessage = 無料)
-                const logId = crypto.randomUUID();
-                await db
-                  .prepare(
-                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, created_at)
-                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', ?)`,
-                  )
-                  .bind(logId, friend.id, firstStep.message_type, firstStep.message_content, firstStep.id, jstNow())
-                  .run();
+            if (leading.length > 0 && friendScenario.status === 'active') {
+              try {
+                const messages = leading.map((step) => {
+                  const expanded = expandVariables(step.message_content, friend as { id: string; display_name: string | null; user_id: string | null });
+                  return buildMessage(step.message_type, expanded);
+                });
+                await lineClient.replyMessage(event.replyToken, messages);
+                console.log(`Immediate delivery: sent ${leading.length} step(s) to ${userId}`);
+
+                // Log outgoing messages (replyMessage = 無料)
+                for (const step of leading) {
+                  const logId = crypto.randomUUID();
+                  await db
+                    .prepare(
+                      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, created_at)
+                       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', ?)`,
+                    )
+                    .bind(logId, friend.id, step.message_type, step.message_content, step.id, jstNow())
+                    .run();
+                }
 
                 // Advance or complete the friend_scenario
-                const secondStep = steps[1] ?? null;
-                if (secondStep) {
+                const lastSent = leading[leading.length - 1];
+                const nextStep = steps[leading.length] ?? null;
+                if (nextStep) {
                   const nextDeliveryDate = new Date(Date.now() + 9 * 60 * 60_000);
-                  nextDeliveryDate.setMinutes(nextDeliveryDate.getMinutes() + secondStep.delay_minutes);
+                  nextDeliveryDate.setMinutes(nextDeliveryDate.getMinutes() + nextStep.delay_minutes);
                   // Enforce 9:00-21:00 JST delivery window
                   const h = nextDeliveryDate.getUTCHours();
                   if (h < 9 || h >= 21) {
                     if (h >= 21) nextDeliveryDate.setUTCDate(nextDeliveryDate.getUTCDate() + 1);
                     nextDeliveryDate.setUTCHours(9, 0, 0, 0);
                   }
-                  await advanceFriendScenario(db, friendScenario.id, firstStep.step_order, nextDeliveryDate.toISOString().slice(0, -1) + '+09:00');
+                  await advanceFriendScenario(db, friendScenario.id, lastSent.step_order, nextDeliveryDate.toISOString().slice(0, -1) + '+09:00');
                 } else {
                   await completeFriendScenario(db, friendScenario.id);
                 }
@@ -188,6 +205,15 @@ async function handleEvent(
     if (!userId) return;
 
     await updateFriendFollowStatus(db, userId, false);
+
+    // ブロック/解除時にアクティブなシナリオを打ち切る（再追加で作り直される）
+    const friend = await getFriendByLineUserId(db, userId);
+    if (friend) {
+      await db
+        .prepare(`UPDATE friend_scenarios SET status = 'cancelled', next_delivery_at = NULL, updated_at = ? WHERE friend_id = ? AND status = 'active'`)
+        .bind(jstNow(), friend.id)
+        .run();
+    }
     return;
   }
 
@@ -353,6 +379,115 @@ async function handleEvent(
         }
       } catch (err) {
         console.error('Cross-account trigger error:', err);
+      }
+    }
+
+    // 診断フロー: DIAG_N* / DIAG_N*_L* / DIAG_FIN_N*_L*_G* を受けたら
+    // 該当タグを付与して次のカードを auto_reply で返す。
+    // DIAG_FIN_* のみ結果カードを直接送ってリターンする。
+    const DIAG_TAGS = {
+      N: {
+        '1': 'a33f7bf2-817d-4b5d-8634-5d93d4b12396', // 悩み:リピート強化
+        '2': '4c5534dd-52ba-4341-9106-526e89cbb4a4', // 悩み:客単価向上
+        '3': '4d19320b-9f8a-4163-9ac5-84b199a255f5', // 悩み:業務効率化
+        '4': '46c1bfc4-7b42-40cc-afef-139ce276503e', // 悩み:休眠掘り起こし
+      },
+      L: {
+        '1': 'b45233b3-5fc3-4391-bf80-b64b963b6efc', // LINE:未運用
+        '2': '10e45f4e-acb9-405a-a19e-fae31d6597a1', // LINE:公式のみ未活用
+        '3': 'e4bd1028-5e35-4564-becb-01097f3ab3f7', // LINE:手動配信中
+        '4': 'e8997d6c-0ace-4580-92ad-476e064da721', // LINE:拡張ツール運用中
+      },
+      G: {
+        '1': 'c6ab487b-f7a5-4640-9457-e2420658b3f1', // 業種:美容サロン
+        '2': '1762a8d1-ba85-4941-b03e-178b15f09c47', // 業種:フィットネス
+        '3': 'c7344832-126a-4f0d-8a39-1fc457b12b9a', // 業種:教育
+        '4': '84b8f921-b78f-4fd5-a404-5510ced49115', // 業種:飲食
+      },
+    } as const;
+    const TAG_UNDIAGNOSED = '87acf0ef-c218-4de3-bffe-66e53177d911';
+    const TAG_DIAGNOSED = '247db502-3e68-4951-8d3a-a68a6e0a7180';
+
+    // 相談フォームに進む / ちょっと相談する: LIFF フォームへのURIボタン付きFlexを返す（2択挟まず直行）
+    if (incomingText === '相談フォームに進む' || incomingText === 'ちょっと相談する') {
+      const FORM_ID = '032491b8-563f-4736-bf0d-e91b911c87ac';
+      if (liffUrl) {
+        const separator = liffUrl.includes('?') ? '&' : '?';
+        const formUrl = `${liffUrl}${separator}page=form&id=${FORM_ID}`;
+        const flexContent = {
+          type: 'bubble',
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              { type: 'text', text: 'ありがとうございます！', wrap: true, size: 'md', weight: 'bold' },
+              { type: 'text', text: '下のボタンから相談フォームを開いてください。\n\n30秒で終わります。\n送信後、折り返しご連絡します。', wrap: true, size: 'sm', color: '#555555', margin: 'md' },
+            ],
+          },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: 'sm',
+            contents: [
+              { type: 'button', style: 'primary', color: '#06C755', action: { type: 'uri', label: '相談フォームを開く', uri: formUrl } },
+            ],
+          },
+        };
+        try {
+          await lineClient.replyMessage(event.replyToken, [buildMessage('flex', JSON.stringify(flexContent))]);
+        } catch (err) {
+          console.error('Failed to send form link:', err);
+        }
+      } else {
+        console.error('LIFF_URL not configured; cannot send form link');
+      }
+      return;
+    }
+
+    const finMatch = incomingText.match(/^DIAG_FIN_N([1-4])_L([1-4])_G([1-4])$/);
+    if (finMatch) {
+      const [, n, l, g] = finMatch;
+      try {
+        await addTagToFriend(db, friend.id, DIAG_TAGS.N[n as '1']);
+        await addTagToFriend(db, friend.id, DIAG_TAGS.L[l as '1']);
+        await addTagToFriend(db, friend.id, DIAG_TAGS.G[g as '1']);
+        await removeTagFromFriend(db, friend.id, TAG_UNDIAGNOSED);
+        await addTagToFriend(db, friend.id, TAG_DIAGNOSED);
+
+        const resultKeyword = `DIAG_RESULT_N${n}_L${l}`;
+        const resultRow = await db
+          .prepare(`SELECT response_type, response_content FROM auto_replies WHERE keyword = ? AND response_type = 'flex' AND is_active = 1 LIMIT 1`)
+          .bind(resultKeyword)
+          .first<{ response_type: string; response_content: string }>();
+        if (resultRow) {
+          const expanded = expandVariables(resultRow.response_content, friend as { id: string; display_name: string | null; user_id: string | null }, workerUrl, liffUrl);
+          await lineClient.replyMessage(event.replyToken, [buildMessage(resultRow.response_type, expanded)]);
+        }
+      } catch (err) {
+        console.error('Diagnostic FIN handler error:', err);
+      }
+      return;
+    }
+
+    const q2Match = incomingText.match(/^DIAG_N([1-4])_L([1-4])$/);
+    if (q2Match) {
+      const [, , l] = q2Match;
+      try {
+        await addTagToFriend(db, friend.id, DIAG_TAGS.L[l as '1']);
+      } catch (err) {
+        console.error('Diagnostic Q2 tag error:', err);
+      }
+      // fall through → auto_reply returns Q3 card
+    } else {
+      const q1Match = incomingText.match(/^DIAG_N([1-4])$/);
+      if (q1Match) {
+        const [, n] = q1Match;
+        try {
+          await addTagToFriend(db, friend.id, DIAG_TAGS.N[n as '1']);
+        } catch (err) {
+          console.error('Diagnostic Q1 tag error:', err);
+        }
+        // fall through → auto_reply returns Q2 card
       }
     }
 

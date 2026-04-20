@@ -7,7 +7,7 @@ workers_dev = true
 # デフォルト = テスト環境 (noda@)
 # 使い方: npx wrangler deploy
 # ═══════════════════════════════════════════════════════════════
-account_id = "YOUR_DEV_ACCOUNT_ID"
+account_id = "b9f2208028d2e63f1b374e50361cc418"
 
 [assets]
 directory = "dist/client"
@@ -15,12 +15,8 @@ binding = "ASSETS"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "line-harness"
-database_id = "YOUR_DEV_D1_DATABASE_ID"
-
-[[r2_buckets]]
-binding = "IMAGES"
-bucket_name = "line-harness-images"
+database_name = "line-crm"
+database_id = "263ee34d-83d1-4b8b-bd4b-3eac7fab70aa"
 
 [triggers]
 crons = ["*/5 * * * *"]

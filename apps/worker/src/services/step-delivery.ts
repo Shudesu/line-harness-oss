@@ -26,12 +26,16 @@ export function expandVariables(
   content: string,
   friend: { id: string; display_name: string | null; user_id: string | null; ref_code?: string | null; metadata?: Record<string, unknown> | string | null },
   apiOrigin?: string,
+  liffUrl?: string,
 ): string {
   let result = content;
   result = result.replace(/\{\{name\}\}/g, friend.display_name || '');
   result = result.replace(/\{\{uid\}\}/g, friend.user_id || '');
   result = result.replace(/\{\{friend_id\}\}/g, friend.id);
   result = result.replace(/\{\{ref\}\}/g, friend.ref_code || '');
+  if (liffUrl) {
+    result = result.replace(/\{\{liff_url\}\}/g, liffUrl);
+  }
   // Conditional block: {{#if_ref}}...{{/if_ref}} — only shown if ref_code exists
   if (friend.ref_code) {
     result = result.replace(/\{\{#if_ref\}\}([\s\S]*?)\{\{\/if_ref\}\}/g, '$1');
