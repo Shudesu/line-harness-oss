@@ -1,0 +1,9 @@
+{
+  "name": "soulflow-proxy-vnew",
+  "version": "1.1.0",
+  "private": true,
+  "license": "ISC",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  }
+}

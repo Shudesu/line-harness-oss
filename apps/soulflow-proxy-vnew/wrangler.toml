@@ -1,0 +1,15 @@
+name = "soulflow-proxy-vnew"
+main = "worker.js"
+compatibility_date = "2023-08-23"
+workers_dev = true
+account_id = "c4d92c479a309c53bf05082a7e938bd1"
+
+[unsafe.metadata.observability]
+enabled = true
+
+# Secrets (wrangler secret put で設定):
+#   SUPABASE_URL                   # 例: https://eizsilomeafyhftuvqst.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY      # phoenix-memory-os の service_role key
+#
+# 未設定時は Supabase UPSERT がスキップされ (worker.js:upsertIqbEntry)、
+# 既存の GAS 転送動作のみが実行される (後方互換)。
