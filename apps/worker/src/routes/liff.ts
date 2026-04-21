@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import {
   getFriendByLineUserId,
   createUser,
@@ -21,6 +21,72 @@ import { buildIntroMessage } from '../services/intro-message.js';
 import type { Env } from '../index.js';
 
 const liffRoutes = new Hono<Env>();
+
+// Persist ig_igsid on the LINE friend and notify IG Harness.
+// Used anywhere a LIFF/OAuth flow resolves with a known IGSID so existing
+// friends (who bypass /auth/callback) also get the cross-link written.
+async function linkIgIgsid(
+  c: Context<Env>,
+  friendId: string,
+  igParam: string,
+): Promise<void> {
+  if (!igParam) return;
+
+  // Only notify IG Harness if this friend is actually linked to this IGSID
+  // locally. Writing LINE→IG first then gating the IG→LINE notify prevents
+  // the two DBs from diverging when the same LINE friend is hit with a
+  // different ?ig= on a later visit (the UPDATE is a no-op, and blindly
+  // notifying would then point IG Harness at the wrong LINE UUID).
+  let linked = false;
+  try {
+    const result = await c.env.DB
+      .prepare('UPDATE friends SET ig_igsid = ? WHERE id = ? AND (ig_igsid IS NULL OR ig_igsid = ?)')
+      .bind(igParam, friendId, igParam)
+      .run();
+    if (result.meta?.changes && result.meta.changes > 0) {
+      linked = true;
+    } else {
+      const row = await c.env.DB
+        .prepare('SELECT ig_igsid FROM friends WHERE id = ?')
+        .bind(friendId)
+        .first<{ ig_igsid: string | null }>();
+      linked = row?.ig_igsid === igParam;
+    }
+  } catch (err) {
+    console.error('Failed to write friends.ig_igsid:', err);
+    return;
+  }
+
+  if (!linked) {
+    console.warn(
+      `Skipping IG Harness notify: friend ${friendId} is already linked to a different IGSID`,
+    );
+    return;
+  }
+
+  if (c.env.IG_HARNESS_URL && c.env.IG_HARNESS_LINK_SECRET) {
+    c.executionCtx.waitUntil(
+      fetch(`${c.env.IG_HARNESS_URL}/api/followers/link-line`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-LINE-HARNESS-LINK-SECRET': c.env.IG_HARNESS_LINK_SECRET,
+        },
+        body: JSON.stringify({ igsid: igParam, line_friend_uuid: friendId }),
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            console.error(
+              'IG Harness link-line failed:',
+              res.status,
+              await res.text().catch(() => ''),
+            );
+          }
+        })
+        .catch((err) => console.error('IG Harness link-line error:', err)),
+    );
+  }
+}
 
 // ─── LINE Login OAuth (bot_prompt=aggressive) ───────────────────
 
@@ -436,36 +502,10 @@ liffRoutes.get('/auth/callback', async (c) => {
       statusMessage: null,
     });
 
-    // IG cross-platform UUID linkage
-    // If the tracked link carried ?ig=<IGSID>, persist it on our side and
-    // notify IG Harness so both DBs hold a bidirectional reference.
-    if (igParam) {
-      try {
-        await db
-          .prepare('UPDATE friends SET ig_igsid = ? WHERE id = ? AND (ig_igsid IS NULL OR ig_igsid = ?)')
-          .bind(igParam, friend.id, igParam)
-          .run();
-      } catch (err) {
-        console.error('Failed to write friends.ig_igsid:', err);
-      }
-      // Best-effort notify IG Harness (don't block the user)
-      if (c.env.IG_HARNESS_URL && c.env.IG_HARNESS_LINK_SECRET) {
-        c.executionCtx.waitUntil(
-          fetch(`${c.env.IG_HARNESS_URL}/api/followers/link-line`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-LINE-HARNESS-LINK-SECRET': c.env.IG_HARNESS_LINK_SECRET,
-            },
-            body: JSON.stringify({ igsid: igParam, line_friend_uuid: friend.id }),
-          }).then(async (res) => {
-            if (!res.ok) {
-              console.error('IG Harness link-line failed:', res.status, await res.text().catch(() => ''));
-            }
-          }).catch((err) => console.error('IG Harness link-line error:', err))
-        );
-      }
-    }
+    // IG cross-platform UUID linkage (OAuth path — new friends & returning users
+    // going through /auth/callback). Existing friends who bypass OAuth hit the
+    // same helper from /api/liff/link and /api/liff/send-form-link.
+    await linkIgIgsid(c, friend.id, igParam);
 
     // Create or find user → link
     let userId: string | null = null;
@@ -827,6 +867,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
       displayName?: string | null;
       ref?: string;
       existingUuid?: string;
+      ig?: string;
     }>();
 
     if (!body.idToken) {
@@ -865,6 +906,11 @@ liffRoutes.post('/api/liff/link', async (c) => {
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
+
+    // IG cross-link: runs regardless of already-linked vs new-link branch so
+    // existing friends still get ig_igsid wired when they hit this endpoint
+    // from a reward DM.
+    await linkIgIgsid(c, friend.id, body.ig || '');
 
     if ((friend as unknown as Record<string, unknown>).user_id) {
       // Still save ref even if already linked (but never persist xh: tokens as ref_code)
@@ -1355,13 +1401,14 @@ async function resolveXHarnessToken(
 // Security: requires idToken to verify the caller is the actual LINE user
 liffRoutes.post('/api/liff/send-form-link', async (c) => {
   try {
-    const { lineUserId, formId, idToken, ref, gate, xh } = await c.req.json<{
+    const { lineUserId, formId, idToken, ref, gate, xh, ig } = await c.req.json<{
       lineUserId: string;
       formId: string;
       idToken?: string;
       ref?: string;
       gate?: string;
       xh?: string;
+      ig?: string;
     }>();
     if (!lineUserId || !formId) {
       return c.json({ success: false, error: 'lineUserId and formId required' }, 400);
@@ -1408,6 +1455,10 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
+
+    // IG cross-link for LIFF flows that hit this endpoint (existing friends
+    // tapping a reward DM URL).
+    await linkIgIgsid(c, friend.id, ig || '');
 
     // Build form LIFF URL using the friend's account liff_id (multi-account aware)
     // Append gate/xh so the form can verify against the correct campaign gate

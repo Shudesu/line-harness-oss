@@ -84,8 +84,8 @@ export async function processSegmentSend(
         // Log successfully sent messages (batch insert for performance)
         const logStmts = batch.map(friend =>
           db.prepare(
-            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-             VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, ?)`,
+            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+             VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, 'broadcast', ?)`,
           ).bind(crypto.randomUUID(), friend.id, broadcast.message_type, broadcast.message_content, broadcastId, now),
         );
         await db.batch(logStmts);

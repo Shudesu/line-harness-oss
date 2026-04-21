@@ -65,8 +65,8 @@ export async function processReminderDeliveries(
         const logId = crypto.randomUUID();
         await db
           .prepare(
-            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, created_at)
-             VALUES (?, ?, 'outgoing', ?, ?, ?)`,
+            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, created_at)
+             VALUES (?, ?, 'outgoing', ?, ?, 'reminder', ?)`,
           )
           .bind(logId, friend.id, step.message_type, step.message_content, jstNow())
           .run();

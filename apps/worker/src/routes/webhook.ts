@@ -146,8 +146,8 @@ async function handleEvent(
                 const logId = crypto.randomUUID();
                 await db
                   .prepare(
-                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, created_at)
-                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', ?)`,
+                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', 'scenario', ?)`,
                   )
                   .bind(logId, friend.id, firstStep.message_type, firstStep.message_content, firstStep.id, jstNow())
                   .run();
@@ -237,6 +237,36 @@ async function handleEvent(
     return;
   }
 
+  // 非テキストの受信メッセージ（スタンプ/画像/音声/動画/ファイル/位置情報等）もログに残す。
+  // ここで早期 return することで、テキスト用の auto_reply / scenario 判定には進まない
+  // （スタンプ単体に対するキーワードマッチは意味を持たないため）。inbox 抜けだけ防ぐ。
+  if (event.type === 'message' && event.message.type !== 'text') {
+    const userId = event.source.type === 'user' ? event.source.userId : undefined;
+    if (!userId) return;
+    const friend = await getFriendByLineUserId(db, userId);
+    if (!friend) return;
+
+    const msg = event.message as { type: string; fileName?: string; title?: string };
+    const labels: Record<string, string> = {
+      sticker: '[スタンプ]',
+      image: '[画像]',
+      audio: '[音声]',
+      video: '[動画]',
+      file: msg.fileName ? `[ファイル: ${msg.fileName}]` : '[ファイル]',
+      location: msg.title ? `[位置情報: ${msg.title}]` : '[位置情報]',
+    };
+    const content = labels[msg.type] ?? `[${msg.type}]`;
+
+    await db
+      .prepare(
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+         VALUES (?, ?, 'incoming', ?, ?, NULL, NULL, 'user', ?)`,
+      )
+      .bind(crypto.randomUUID(), friend.id, msg.type, content, jstNow())
+      .run();
+    return;
+  }
+
   if (event.type === 'message' && event.message.type === 'text') {
     const textMessage = event.message as TextEventMessage;
     const userId =
@@ -253,20 +283,15 @@ async function handleEvent(
     // 受信メッセージをログに記録
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, ?)`,
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?)`,
       )
       .bind(logId, friend.id, incomingText, now)
       .run();
 
-    // チャットを作成/更新（ユーザーの自発的メッセージのみ unread にする）
-    // ボタンタップ等の自動応答キーワードは除外
-    const autoKeywords = ['料金', '機能', 'API', 'フォーム', 'ヘルプ', 'UUID', 'UUID連携について教えて', 'UUID連携を確認', '配信時間', '導入支援を希望します', 'アカウント連携を見る', '体験を完了する', 'BAN対策を見る', '連携確認'];
-    const isAutoKeyword = autoKeywords.some(k => incomingText === k);
+    // チャット unread 判定は auto_replies マッチ結果 (matched) を使う。
+    // ハードコードキーワードリストは廃止 — auto_replies テーブルが single source of truth。
     const isTimeCommand = /(?:配信時間|配信|届けて|通知)[はを]?\s*\d{1,2}\s*時/.test(incomingText);
-    if (!isAutoKeyword && !isTimeCommand) {
-      await upsertChatOnMessage(db, friend.id);
-    }
 
     // 配信時間設定: 「配信時間は○時」「○時に届けて」等のパターンを検出
     const timeMatch = incomingText.match(/(?:配信時間|配信|届けて|通知)[はを]?\s*(\d{1,2})\s*時/);
@@ -383,8 +408,13 @@ async function handleEvent(
           : incomingText.includes(rule.keyword);
 
       if (isMatch) {
+        // silent タイプ: 返信しないが matched=true にして unread / push を抑止する
+        if (rule.response_type === 'silent') {
+          matched = true;
+          break;
+        }
+
         try {
-          // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}})
           const { resolveMetadata: resolveMeta2 } = await import('../services/step-delivery.js');
           const resolvedMeta2 = await resolveMeta2(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
           const expandedContent = expandVariables(rule.response_content, { ...friend, metadata: resolvedMeta2 } as Parameters<typeof expandVariables>[1], workerUrl);
@@ -396,19 +426,23 @@ async function handleEvent(
           const outLogId = crypto.randomUUID();
           await db
             .prepare(
-              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, created_at)
-               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', ?)`,
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'auto_reply', ?)`,
             )
             .bind(outLogId, friend.id, rule.response_type, rule.response_content, jstNow())
             .run();
         } catch (err) {
           console.error('Failed to send auto-reply', err);
-          // replyToken may still be unused if replyMessage threw before LINE accepted it
         }
 
         matched = true;
         break;
       }
+    }
+
+    // auto_replies にマッチしなかった & 配信時間コマンドでもない = 自発メッセージ → unread にする
+    if (!matched && !isTimeCommand) {
+      await upsertChatOnMessage(db, friend.id);
     }
 
     // イベントバス発火: message_received

@@ -108,6 +108,8 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   const [sending, setSending] = useState(false)
   const [messages, setMessages] = useState<MessageLog[]>([])
   const [loadingMessages, setLoadingMessages] = useState(true)
+  const isComposingRef = useRef(false)
+  const sendLockRef = useRef(false)
 
   useEffect(() => {
     const loadMessages = async () => {
@@ -124,7 +126,8 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   }, [friendId])
 
   const handleSend = async () => {
-    if (!message.trim() || sending) return
+    if (!message.trim() || sending || sendLockRef.current) return
+    sendLockRef.current = true
     setSending(true)
     try {
       await fetchApi(`/api/friends/${friendId}/messages`, {
@@ -141,6 +144,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
       setMessage('')
     } catch { /* silent */ }
     setSending(false)
+    sendLockRef.current = false
   }
 
   function renderContent(msg: MessageLog) {
@@ -218,7 +222,16 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+            onCompositionStart={() => { isComposingRef.current = true }}
+            onCompositionEnd={() => { isComposingRef.current = false }}
+            onKeyDown={(e) => {
+              // IME変換確定のEnterでは送信しない
+              if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) return
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
             placeholder="メッセージを入力..."
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
           />
@@ -244,17 +257,23 @@ export default function ChatsPage() {
   const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null)
   const [chatDetail, setChatDetail] = useState<ChatDetail | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const statusFilterRef = useRef<StatusFilter>('all')
+  // Send mode: 'enter' = Enter sends, Shift+Enter = newline; 'shift-enter' = reverse
+  const [sendMode, setSendMode] = useState<'enter' | 'shift-enter'>('enter')
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState('')
   const [messageContent, setMessageContent] = useState('')
   const [sending, setSending] = useState(false)
+  const sendLockRef = useRef(false)
   const [notes, setNotes] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false)
   const [loadingSeconds, setLoadingSeconds] = useState(5)
   const lastLoadingTriggerAtRef = useRef<Record<string, number>>({})
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false)
+  const isComposingRef = useRef(false)
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     try {
@@ -286,15 +305,9 @@ export default function ChatsPage() {
       const params: { status?: string; accountId?: string } = {}
       if (statusFilter !== 'all') params.status = statusFilter
       if (selectedAccountId) params.accountId = selectedAccountId
-      const [chatRes, friendRes] = await Promise.allSettled([
-        api.chats.list(params),
-        api.friends.list({ accountId: selectedAccountId || undefined, limit: '800' }),
-      ])
-      if (chatRes.status === 'fulfilled' && chatRes.value.success) {
-        setChats(chatRes.value.data as unknown as Chat[])
-      }
-      if (friendRes.status === 'fulfilled' && friendRes.value.success) {
-        setAllFriends((friendRes.value.data as unknown as { items: FriendItem[] }).items)
+      const chatRes = await api.chats.list(params)
+      if (chatRes.success) {
+        setChats(chatRes.data as unknown as Chat[])
       }
     } catch {
       setError('チャットの読み込みに失敗しました。もう一度お試しください。')
@@ -302,6 +315,33 @@ export default function ChatsPage() {
       setLoading(false)
     }
   }, [statusFilter, selectedAccountId])
+
+  // Friends list (for the "new direct message" modal) — loaded lazily in the background
+  // Previously fetched 800 friends in parallel with chats, which blocked the initial render.
+  const loadAllFriends = useCallback(async () => {
+    try {
+      const friendRes = await api.friends.list({ accountId: selectedAccountId || undefined, limit: '800' })
+      if (friendRes.success) {
+        setAllFriends((friendRes.data as unknown as { items: FriendItem[] }).items)
+      }
+    } catch { /* silent */ }
+  }, [selectedAccountId])
+
+  useEffect(() => { void loadAllFriends() }, [loadAllFriends])
+
+  // Keep ref in sync so setChats updater can read the latest filter without stale closure
+  useEffect(() => { statusFilterRef.current = statusFilter }, [statusFilter])
+
+  // Load/save sendMode preference (guarded — privacy-restricted browsers throw)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('chat.sendMode')
+      if (saved === 'enter' || saved === 'shift-enter') setSendMode(saved)
+    } catch { /* localStorage unavailable */ }
+  }, [])
+  useEffect(() => {
+    try { localStorage.setItem('chat.sendMode', sendMode) } catch { /* ignore */ }
+  }, [sendMode])
 
   const loadChatDetail = useCallback(async (chatId: string) => {
     setDetailLoading(true)
@@ -330,6 +370,35 @@ export default function ChatsPage() {
     }
   }, [selectedChatId, loadChatDetail])
 
+  // 詳細が新しくロードされたら最下部（＝最新メッセージ）までスクロールする。
+  // そこから上にスクロールすれば過去のメッセージを辿れる（LINE受信画面と同じUX）。
+  // ユーザーが手動でスクロールしたら delayed auto-scroll は発動させない。
+  useEffect(() => {
+    if (!chatDetail?.messages || chatDetail.messages.length === 0) return
+    const el = messagesScrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    let userScrolled = false
+    const onScroll = () => {
+      if (!messagesScrollRef.current) return
+      const current = messagesScrollRef.current
+      // 下端から一定以上離れたらユーザー操作とみなす
+      if (current.scrollHeight - current.scrollTop - current.clientHeight > 20) {
+        userScrolled = true
+      }
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    // 画像/Flex の表示後に高さが増える場合に追従するフォロワー（ユーザーがスクロール済みなら発動させない）
+    const id = window.setTimeout(() => {
+      if (userScrolled || !messagesScrollRef.current) return
+      messagesScrollRef.current.scrollTop = messagesScrollRef.current.scrollHeight
+    }, 150)
+    return () => {
+      window.clearTimeout(id)
+      el.removeEventListener('scroll', onScroll)
+    }
+  }, [chatDetail?.id, chatDetail?.messages?.length])
+
   const handleSelectChat = (chatId: string) => {
     setSelectedChatId(chatId)
     setMessageContent('')
@@ -355,19 +424,55 @@ export default function ChatsPage() {
   }, [showLoadingIndicator, loadingSeconds])
 
   const handleSendMessage = async () => {
-    if (!selectedChatId || !messageContent.trim()) return
+    if (!selectedChatId || !messageContent.trim() || sending || sendLockRef.current) return
+    const content = messageContent.trim()
+    const sendingChatId = selectedChatId  // capture the chat id for this send
+    sendLockRef.current = true
     setSending(true)
     try {
-      await api.chats.send(selectedChatId, {
-        content: messageContent.trim(),
-      })
+      await api.chats.send(sendingChatId, { content })
       setMessageContent('')
-      loadChatDetail(selectedChatId)
-      loadChats()
+      // Optimistic update: append message locally instead of refetching (prevents scroll jump / full reload feel)
+      const now = new Date().toISOString()
+      // Only mutate chatDetail if it still corresponds to the chat we just sent to
+      setChatDetail((prev) => (prev && prev.id === sendingChatId) ? {
+        ...prev,
+        lastMessageAt: now,
+        status: 'in_progress',
+        messages: [
+          ...(prev.messages ?? []),
+          {
+            id: crypto.randomUUID(),
+            direction: 'outgoing',
+            messageType: 'text',
+            content,
+            createdAt: now,
+          },
+        ],
+      } : prev)
+      setChats((prev) => {
+        // Skip reconciliation if the list no longer contains this chat (e.g. tab changed mid-send)
+        const exists = prev.some((c) => c.id === sendingChatId)
+        if (!exists) return prev
+        const currentFilter = statusFilterRef.current
+        const updated = prev.map((c) => c.id === sendingChatId ? {
+          ...c,
+          lastMessageAt: now,
+          status: 'in_progress' as const,
+        } : c)
+        // Drop rows that no longer match the current tab (e.g. replying from 未読 moves chat to in_progress)
+        const filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
+        return [...filtered].sort((a, b) => {
+          const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
+          const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
+          return bt - at
+        })
+      })
     } catch {
       setError('メッセージの送信に失敗しました。')
     } finally {
       setSending(false)
+      sendLockRef.current = false
     }
   }
 
@@ -395,8 +500,14 @@ export default function ChatsPage() {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    // IME変換確定のEnterでは送信しない
+    if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) return
+    if (e.key !== 'Enter') return
+    // sendMode 'enter': Enter単体で送信、Shift+Enterは改行
+    // sendMode 'shift-enter': Shift+Enterで送信、Enter単体は改行
+    const shouldSend = sendMode === 'enter' ? !e.shiftKey : e.shiftKey
+    if (shouldSend) {
       e.preventDefault()
       handleSendMessage()
     }
@@ -562,7 +673,7 @@ export default function ChatsPage() {
               </div>
 
               {/* Messages — LINE-style chat bubbles */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
+              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
                 {(!chatDetail.messages || chatDetail.messages.length === 0) ? (
                   <div className="text-center py-8">
                     <p className="text-white/60 text-sm">メッセージはまだありません。</p>
@@ -651,7 +762,7 @@ export default function ChatsPage() {
 
               {/* Send Message Form */}
               <div className="px-4 py-3 border-t border-gray-200">
-                <div className="mb-2 flex items-center gap-3 text-xs text-gray-600">
+                <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-600">
                   <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -671,10 +782,29 @@ export default function ChatsPage() {
                       <option key={sec} value={sec}>{sec}秒</option>
                     ))}
                   </select>
+                  <span className="text-gray-500">送信キー:</span>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={sendMode === 'enter'}
+                      onChange={() => setSendMode('enter')}
+                      className="accent-green-600"
+                    />
+                    <span>Enter</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={sendMode === 'shift-enter'}
+                      onChange={() => setSendMode('shift-enter')}
+                      className="accent-green-600"
+                    />
+                    <span>Shift+Enter</span>
+                  </label>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
+                <div className="flex items-end gap-2">
+                  <textarea
+                    rows={2}
                     value={messageContent}
                     onChange={(e) => {
                       const value = e.target.value
@@ -683,6 +813,8 @@ export default function ChatsPage() {
                         void triggerLoadingAnimation(selectedChatId)
                       }
                     }}
+                    onCompositionStart={() => { isComposingRef.current = true }}
+                    onCompositionEnd={() => { isComposingRef.current = false }}
                     onFocus={() => {
                       setIsMessageInputFocused(true)
                       if (selectedChatId) {
@@ -692,7 +824,7 @@ export default function ChatsPage() {
                     onBlur={() => setIsMessageInputFocused(false)}
                     onKeyDown={handleKeyDown}
                     placeholder="メッセージを入力..."
-                    className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                    className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
                   />
                   <button
                     onClick={handleSendMessage}

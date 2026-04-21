@@ -440,8 +440,8 @@ broadcasts.post('/api/broadcasts/:id/test-send', async (c) => {
         await lineClient.pushMessage(friend.line_user_id, [message]);
         sent++;
         await c.env.DB.prepare(
-          `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, delivery_type, created_at)
-           VALUES (?, ?, 'outgoing', ?, ?, NULL, 'test', ?)`
+          `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, delivery_type, source, created_at)
+           VALUES (?, ?, 'outgoing', ?, ?, NULL, 'test', 'broadcast', ?)`
         ).bind(crypto.randomUUID(), friend.id, broadcast.message_type, messageContent, now).run();
       } catch (err) {
         console.error(`Test send to ${friend.id} failed:`, err);

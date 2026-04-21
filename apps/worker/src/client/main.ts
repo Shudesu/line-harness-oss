@@ -141,6 +141,7 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
               ref: params.get('ref') || '',
               gate: params.get('gate') || '',
               xh: params.get('xh') || '',
+              ig: params.get('ig') || '',
             }),
           });
         } catch { /* best-effort */ }
@@ -211,6 +212,7 @@ async function linkAndAddFlow() {
     ]);
 
     // 1. UUID linking (always, regardless of friendship)
+    const linkParams = new URLSearchParams(window.location.search);
     const linkPromise = apiCall('/api/liff/link', {
       method: 'POST',
       body: JSON.stringify({
@@ -218,6 +220,7 @@ async function linkAndAddFlow() {
         displayName: profile.displayName,
         existingUuid: existingUuid,
         ref: ref,
+        ig: linkParams.get('ig') || '',
       }),
     }).then(async (res) => {
       if (res.ok) {
@@ -279,6 +282,7 @@ async function linkAndAddFlow() {
               ref: ref || '',
               gate: params.get('gate') || '',
               xh: params.get('xh') || '',
+              ig: params.get('ig') || '',
             }),
           });
         } catch { /* best-effort */ }

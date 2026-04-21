@@ -18,9 +18,9 @@ WHERE status != 'completed' AND id NOT IN (
   ) WHERE rn = 1
 );
 
--- Step 2: Add UNIQUE index to prevent future duplicates
+-- Step 2: Add partial UNIQUE index to prevent future duplicates (allows re-enrollment after completion)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_friend_scenarios_unique
-ON friend_scenarios (friend_id, scenario_id);
+ON friend_scenarios (friend_id, scenario_id) WHERE status != 'completed';
 
 -- Step 3: Allow 'delivering' status (D1/SQLite does not support ALTER CHECK,
 -- but the CHECK constraint is only enforced on INSERT/UPDATE, and we handle

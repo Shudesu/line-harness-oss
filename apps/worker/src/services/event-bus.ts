@@ -217,6 +217,14 @@ function matchConditions(
     if (!text || !text.includes(conditions.keyword as string)) return false;
   }
 
+  // keyword_exact（完全一致）
+  if (conditions.keyword_exact) {
+    const text = (payload.eventData?.text || '').trim();
+    if (text !== conditions.keyword_exact) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -327,7 +335,19 @@ async function executeAction(
         .bind(friendId)
         .first<{ metadata: string }>();
       const current = JSON.parse(existing?.metadata || '{}') as Record<string, unknown>;
-      const patch = JSON.parse(action.params.data || '{}') as Record<string, unknown>;
+      // {{message}} を受信メッセージ内容に置換してからパース
+      // JSON文字列内に埋め込むため、JSON仕様に準拠して全制御文字をエスケープ
+      const escapeForJsonString = (s: string): string =>
+        s
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/\n/g, '\\n')
+          .replace(/\r/g, '\\r')
+          .replace(/\t/g, '\\t')
+          .replace(/[\u0000-\u001f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+      const raw = (action.params.data || '{}')
+        .replace(/\{\{message\}\}/g, escapeForJsonString(payload.eventData?.text || ''));
+      const patch = JSON.parse(raw) as Record<string, unknown>;
       const merged = { ...current, ...patch };
       await db
         .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')

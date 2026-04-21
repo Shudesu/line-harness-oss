@@ -244,8 +244,8 @@ async function processSingleDelivery(
   const logId = crypto.randomUUID();
   await db
     .prepare(
-      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, created_at)
-       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, ?)`,
+      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?)`,
     )
     .bind(logId, friend.id, currentStep.message_type, currentStep.message_content, currentStep.id, jstNow())
     .run();
