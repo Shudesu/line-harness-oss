@@ -215,6 +215,16 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ conditions }),
       }),
+    multicastQueue: (data: {
+      friendIds: string[]
+      messageType: string
+      messageContent: string
+      altText?: string | null
+    }) =>
+      fetchApi<ApiResponse<ApiBroadcast> & { queued?: boolean }>('/api/broadcasts/multicast-queue', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   segments: {
