@@ -386,6 +386,12 @@ async function submitBooking(): Promise<void> {
   if (!selectedSlot || !selectedDate || !profile || state.submitting) return;
   state.submitting = true;
 
+  let bookerEmail: string | null = null;
+  const decoded = liff.getDecodedIDToken?.();
+  if (decoded?.email) {
+    bookerEmail = decoded.email;
+  }
+
   const confirmBtn = getApp().querySelector('[data-action="confirm-booking"]') as HTMLButtonElement | null;
   if (confirmBtn) {
     confirmBtn.disabled = true;
@@ -400,6 +406,7 @@ async function submitBooking(): Promise<void> {
     };
     if (CONNECTION_ID) body.connectionId = CONNECTION_ID;
     if (friendId) body.friendId = friendId;
+    if (bookerEmail) body.email = bookerEmail;
 
     const res = await apiCall('/api/integrations/google-calendar/book', {
       method: 'POST',
