@@ -10,9 +10,12 @@ import {
   updateCalendarBookingStatus,
   updateCalendarBookingEventId,
   getBookingsInRange,
+  getFriendById,
   toJstString,
 } from '@line-crm/db';
+import { LineClient } from '@line-crm/line-sdk';
 import { GoogleCalendarClient } from '../services/google-calendar.js';
+import { sendBookingConfirmation } from '../services/booking-notify.js';
 import type { Env } from '../index.js';
 
 const calendar = new Hono<Env>();
@@ -220,6 +223,20 @@ calendar.post('/api/integrations/google-calendar/book', async (c) => {
         // Google API 失敗はベストエフォート — D1 予約は維持する
         console.warn('Google Calendar createEvent error (booking still created in D1):', err);
       }
+    }
+
+    // ベストエフォートで確定通知を送る — 失敗しても予約作成は成功として返す
+    try {
+      const friend = booking.friend_id ? await getFriendById(c.env.DB, booking.friend_id) : null;
+      const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+      await sendBookingConfirmation(
+        { RESEND_API_KEY: c.env.RESEND_API_KEY, NOTIFY_FROM_EMAIL: c.env.NOTIFY_FROM_EMAIL },
+        booking,
+        lineClient,
+        friend,
+      );
+    } catch (err) {
+      console.warn('booking confirmation notify failed (booking still created):', err);
     }
 
     return c.json({
