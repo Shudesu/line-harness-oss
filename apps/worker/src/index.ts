@@ -62,6 +62,8 @@ export type Env = {
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
+    RESEND_API_KEY?: string;              // Resend — booking confirmation/reminder email
+    NOTIFY_FROM_EMAIL?: string;           // e.g. noreply@fixbox.jp
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };

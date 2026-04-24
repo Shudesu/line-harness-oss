@@ -174,15 +174,29 @@ calendar.get('/api/integrations/google-calendar/bookings', async (c) => {
 
 calendar.post('/api/integrations/google-calendar/book', async (c) => {
   try {
-    const body = await c.req.json<{ connectionId: string; friendId?: string; title: string; startAt: string; endAt: string; description?: string; metadata?: Record<string, unknown> }>();
+    const body = await c.req.json<{
+      connectionId: string;
+      friendId?: string;
+      title: string;
+      startAt: string;
+      endAt: string;
+      description?: string;
+      email?: string;
+      metadata?: Record<string, unknown>;
+    }>();
     if (!body.connectionId || !body.title || !body.startAt || !body.endAt) {
       return c.json({ success: false, error: 'connectionId, title, startAt, endAt are required' }, 400);
     }
 
+    const mergedMeta = {
+      ...(body.metadata ?? {}),
+      ...(body.email ? { email: body.email } : {}),
+    };
+
     // D1 に予約レコードを作成
     const booking = await createCalendarBooking(c.env.DB, {
       ...body,
-      metadata: body.metadata ? JSON.stringify(body.metadata) : undefined,
+      metadata: Object.keys(mergedMeta).length > 0 ? JSON.stringify(mergedMeta) : undefined,
     });
 
     // Google Calendar にイベントを作成（access_token がある場合のみ、ベストエフォート）
