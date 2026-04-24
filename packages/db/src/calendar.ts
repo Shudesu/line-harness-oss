@@ -139,6 +139,6 @@ export async function updateBookingMetadata(
 ): Promise<void> {
   await db
     .prepare(`UPDATE calendar_bookings SET metadata = ?, updated_at = ? WHERE id = ?`)
-    .bind(JSON.stringify(metadata), new Date().toISOString(), id)
+    .bind(JSON.stringify(metadata), jstNow(), id)
     .run();
 }
