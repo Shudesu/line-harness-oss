@@ -46,9 +46,13 @@ export async function sendBookingConfirmation(
   });
 
   if (channel === 'line' && friend) {
-    const flex = buildConfirmationFlex(booking);
+    const flex = buildConfirmationFlex(booking, meta.meet_url ?? null);
     await lineClient.pushMessage(friend.line_user_id, [
-      { type: 'flex', altText: `【予約確定】${formatRange(booking)}`, contents: flex },
+      {
+        type: 'flex',
+        altText: `【面談確定】${formatJstDateJa(booking.start_at)} ${formatJstTime(booking.start_at)}〜`,
+        contents: flex,
+      },
     ]);
     return { channel, delivered: true };
   }
@@ -59,8 +63,8 @@ export async function sendBookingConfirmation(
       secret: env.GAS_MAIL_SECRET,
       to: meta.email,
       cc: env.NOTIFY_CC_EMAIL ? [env.NOTIFY_CC_EMAIL] : undefined,
-      subject: `【予約確定】${formatRange(booking)}`,
-      html: buildConfirmationHtml(booking),
+      subject: `Fixx｜整備士面談 ${subjectStamp(booking.start_at)}〜`,
+      html: buildConfirmationHtml(booking, meta.meet_url ?? null),
     });
     return { channel, delivered: true };
   }
@@ -68,7 +72,12 @@ export async function sendBookingConfirmation(
   return { channel, delivered: false };
 }
 
-interface ParsedMeta { email?: string | null; reminder_24h_sent?: boolean; reminder_1h_sent?: boolean }
+interface ParsedMeta {
+  email?: string | null;
+  reminder_24h_sent?: boolean;
+  reminder_1h_sent?: boolean;
+  meet_url?: string | null;
+}
 
 export function safeParseMetadata(raw: string | null): ParsedMeta {
   if (!raw) return {};
@@ -83,31 +92,97 @@ export function formatJstRange(startIso: string, endIso: string): string {
   return `${d} ${hm(s)}〜${hm(e)}`;
 }
 
-function formatRange(b: BookingRow): string {
-  return formatJstRange(b.start_at, b.end_at);
+const JST_WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'] as const;
+
+/** Returns "M/D (曜)" in JST regardless of host TZ */
+export function formatJstDateJa(iso: string): string {
+  const jst = new Date(new Date(iso).getTime() + 9 * 60 * 60_000);
+  const dow = JST_WEEKDAYS[jst.getUTCDay()];
+  return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()} (${dow})`;
 }
 
-function buildConfirmationFlex(b: BookingRow): object {
-  return {
+/** Returns "HH:MM" in JST regardless of host TZ */
+export function formatJstTime(iso: string): string {
+  const jst = new Date(new Date(iso).getTime() + 9 * 60 * 60_000);
+  return `${String(jst.getUTCHours()).padStart(2, '0')}:${String(jst.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/** Subject-line date: "M/D HH:MM" in JST */
+function subjectStamp(startIso: string): string {
+  const jst = new Date(new Date(startIso).getTime() + 9 * 60 * 60_000);
+  const d = `${jst.getUTCMonth() + 1}/${jst.getUTCDate()}`;
+  const hm = `${String(jst.getUTCHours()).padStart(2, '0')}:${String(jst.getUTCMinutes()).padStart(2, '0')}`;
+  return `${d} ${hm}`;
+}
+
+function buildConfirmationFlex(b: BookingRow, meetUrl: string | null): object {
+  const dateTimeText = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜${formatJstTime(b.end_at)}`;
+  const meetBlock = meetUrl
+    ? { type: 'text', text: meetUrl, size: 'sm', color: '#304070', wrap: true, action: { type: 'uri', label: 'open', uri: meetUrl } }
+    : { type: 'text', text: '面談前日までに別途ご案内いたします。', size: 'sm', color: '#888888', wrap: true };
+
+  const bubble: Record<string, unknown> = {
     type: 'bubble',
     body: {
       type: 'box',
       layout: 'vertical',
+      spacing: 'md',
       contents: [
-        { type: 'text', text: '予約が確定しました', weight: 'bold', size: 'lg' },
-        { type: 'separator', margin: 'md' },
-        { type: 'text', text: b.title, margin: 'md' },
-        { type: 'text', text: formatRange(b), size: 'md', color: '#304070', weight: 'bold' },
-        { type: 'text', text: '当日は担当者からご連絡します。', size: 'xs', color: '#888888', wrap: true, margin: 'md' },
+        { type: 'text', text: '整備士面談 予約確定', weight: 'bold', size: 'lg', color: '#304070' },
+        { type: 'separator' },
+        {
+          type: 'box',
+          layout: 'vertical',
+          spacing: 'xs',
+          contents: [
+            { type: 'text', text: '日時', size: 'xs', color: '#888888' },
+            { type: 'text', text: dateTimeText, weight: 'bold', size: 'md', wrap: true },
+          ],
+        },
+        {
+          type: 'box',
+          layout: 'vertical',
+          spacing: 'xs',
+          contents: [
+            { type: 'text', text: 'Google Meet', size: 'xs', color: '#888888' },
+            meetBlock,
+          ],
+        },
+        { type: 'text', text: 'ご質問・変更はこのトークからご連絡ください。', size: 'xs', color: '#888888', wrap: true, margin: 'md' },
       ],
     },
   };
+
+  if (meetUrl) {
+    bubble.footer = {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        { type: 'button', style: 'primary', color: '#304070', action: { type: 'uri', label: 'Google Meetを開く', uri: meetUrl } },
+      ],
+    };
+  }
+
+  return bubble;
 }
 
-function buildConfirmationHtml(b: BookingRow): string {
-  return `<p>ご予約ありがとうございます。以下の内容で確定しました。</p>
-<p><strong>${escapeHtml(b.title)}</strong><br>${escapeHtml(formatRange(b))}</p>
-<p>当日は担当者からご連絡いたします。</p>`;
+function buildConfirmationHtml(b: BookingRow, meetUrl: string | null): string {
+  const dateLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜${formatJstTime(b.end_at)}`;
+  const meetLine = meetUrl
+    ? `<a href="${escapeHtml(meetUrl)}">${escapeHtml(meetUrl)}</a>`
+    : '面談前日までに別途ご案内いたします。';
+
+  return `<p>この度は整備士面談のご予約をいただき、ありがとうございます。<br>以下の内容で日程を確定いたしましたのでご案内いたします。</p>
+<p><strong>【日時】</strong><br>${escapeHtml(dateLine)}</p>
+<p><strong>【Google Meet】</strong><br>${meetLine}</p>
+<p><strong>【当日のご案内】</strong><br>
+  ・開始時刻になりましたら上記Google MeetのURLからご入室ください<br>
+  ・面談はおよそ30分程度を予定しております<br>
+  ・服装はカジュアルで問題ございません<br>
+  ・キャンセル・日時変更はこのメールへのご返信、またはLINEよりご連絡ください
+</p>
+<p>当日お会いできるのを楽しみにしております。<br>どうぞよろしくお願いいたします。</p>
+<p style="color:#888;font-size:12px">── 株式会社Fixx 整備士面談事務局</p>`;
 }
 
 function escapeHtml(s: string): string {
@@ -172,16 +247,17 @@ export async function processBookingReminders(
 
         if (channel === 'line' && friend) {
           await deps.lineClient.pushMessage(friend.line_user_id, [
-            { type: 'text', text: buildReminderText(b, w.label) },
+            { type: 'text', text: buildReminderText(b, meta.meet_url ?? null, w.label) },
           ]);
         } else if (channel === 'email' && env.GAS_MAIL_URL && env.GAS_MAIL_SECRET && meta.email) {
+          const subjectLabel = w.label === '24h' ? '【リマインダー】' : '【まもなく】';
           await sendEmail({
             webhookUrl: env.GAS_MAIL_URL,
             secret: env.GAS_MAIL_SECRET,
             to: meta.email,
             cc: env.NOTIFY_CC_EMAIL ? [env.NOTIFY_CC_EMAIL] : undefined,
-            subject: `【リマインダー】${formatRange(b)} の予約`,
-            html: `<p>${escapeHtml(buildReminderText(b, w.label)).replace(/\n/g, '<br>')}</p>`,
+            subject: `Fixx｜${subjectLabel}整備士面談 ${subjectStamp(b.start_at)}〜`,
+            html: `<p>${escapeHtml(buildReminderText(b, meta.meet_url ?? null, w.label)).replace(/\n/g, '<br>')}</p>`,
           });
         } else {
           skipped++;
@@ -200,7 +276,9 @@ export async function processBookingReminders(
   return { delivered, skipped, failed };
 }
 
-function buildReminderText(b: BookingRow, label: '24h' | '1h'): string {
+function buildReminderText(b: BookingRow, meetUrl: string | null, label: '24h' | '1h'): string {
   const lead = label === '24h' ? '明日' : 'まもなく（1時間後）';
-  return `${lead}のご予約リマインダーです。\n${b.title}\n${formatRange(b)}\n\nご都合が変わった場合はこのトークからご連絡ください。`;
+  const dateTimeLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜${formatJstTime(b.end_at)}`;
+  const meetLine = meetUrl ?? '別途ご案内のURLよりご参加ください。';
+  return `${lead}、整備士面談のお時間です。\n\n【日時】\n${dateTimeLine}\n\n【Google Meet】\n${meetLine}\n\n開始時刻になりましたら上記URLよりご入室ください。\nご都合が変わった場合はこのトークからご連絡ください。`;
 }

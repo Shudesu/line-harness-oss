@@ -9,6 +9,7 @@ import {
   createCalendarBooking,
   updateCalendarBookingStatus,
   updateCalendarBookingEventId,
+  updateBookingMetadata,
   getBookingsInRange,
   getFriendById,
   toJstString,
@@ -210,7 +211,7 @@ calendar.post('/api/integrations/google-calendar/book', async (c) => {
           calendarId: conn.calendar_id,
           accessToken: conn.access_token,
         });
-        const { eventId } = await gcal.createEvent({
+        const { eventId, meetUrl } = await gcal.createEvent({
           summary: body.title,
           start: body.startAt,
           end: body.endAt,
@@ -219,6 +220,12 @@ calendar.post('/api/integrations/google-calendar/book', async (c) => {
         // event_id を D1 予約レコードに保存
         await updateCalendarBookingEventId(c.env.DB, booking.id, eventId);
         booking.event_id = eventId;
+        // Meet URL を metadata に永続化（確定通知で参照するため、通知送信より前にやる必要がある）
+        if (meetUrl) {
+          const mergedBookingMeta = { ...mergedMeta, meet_url: meetUrl };
+          await updateBookingMetadata(c.env.DB, booking.id, mergedBookingMeta);
+          booking.metadata = JSON.stringify(mergedBookingMeta);
+        }
       } catch (err) {
         // Google API 失敗はベストエフォート — D1 予約は維持する
         console.warn('Google Calendar createEvent error (booking still created in D1):', err);

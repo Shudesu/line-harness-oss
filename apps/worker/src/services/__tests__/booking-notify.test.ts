@@ -44,10 +44,52 @@ describe('sendBookingConfirmation (LINE path)', () => {
     const [to, messages] = pushMessage.mock.calls[0];
     expect(to).toBe('U1');
     expect(messages[0].type).toBe('flex');
-    expect(messages[0].altText).toContain('予約確定');
+    expect(messages[0].altText).toContain('【面談確定】');
     // Regression guard: time must render in JST, not host TZ
     expect(messages[0].altText).toContain('10:00');
-    expect(JSON.stringify(messages[0].contents)).toContain('10:00');
+    const contentsJson = JSON.stringify(messages[0].contents);
+    expect(contentsJson).toContain('10:00');
+    expect(contentsJson).toContain('整備士面談');
+  });
+
+  it('includes Google Meet URL + footer button when metadata.meet_url is set', async () => {
+    const pushMessage = vi.fn().mockResolvedValue({});
+    const lineClient = { pushMessage } as unknown as Parameters<typeof sendBookingConfirmation>[2];
+    const friend = { id: 'f1', line_user_id: 'U1', is_following: 1 };
+    const bookingWithMeet: Booking = {
+      ...fakeBooking,
+      metadata: JSON.stringify({ meet_url: 'https://meet.google.com/abc-defg-hij' }),
+    } as Booking;
+
+    await sendBookingConfirmation(
+      { GAS_MAIL_URL: undefined, GAS_MAIL_SECRET: undefined },
+      bookingWithMeet,
+      lineClient,
+      friend as any,
+    );
+
+    const [, messages] = pushMessage.mock.calls[0];
+    const contents = messages[0].contents;
+    const contentsJson = JSON.stringify(contents);
+    expect(contentsJson).toContain('https://meet.google.com/abc-defg-hij');
+    expect(contents.footer).toBeDefined();
+    expect(JSON.stringify(contents.footer)).toContain('Google Meetを開く');
+  });
+
+  it('omits footer when meet_url is absent', async () => {
+    const pushMessage = vi.fn().mockResolvedValue({});
+    const lineClient = { pushMessage } as unknown as Parameters<typeof sendBookingConfirmation>[2];
+    const friend = { id: 'f1', line_user_id: 'U1', is_following: 1 };
+
+    await sendBookingConfirmation(
+      { GAS_MAIL_URL: undefined, GAS_MAIL_SECRET: undefined },
+      fakeBooking,
+      lineClient,
+      friend as any,
+    );
+
+    const [, messages] = pushMessage.mock.calls[0];
+    expect(messages[0].contents.footer).toBeUndefined();
   });
 });
 
@@ -109,6 +151,33 @@ describe('sendBookingConfirmation (email path)', () => {
     expect(body.secret).toBe('test-secret');
     expect(body.to).toEqual(['user@example.com']);
     expect(body.cc).toBeUndefined();
+    expect(body.subject).toContain('Fixx｜整備士面談');
+    expect(body.subject).toContain('10:00');
+    expect(body.html).toContain('整備士面談のご予約をいただき');
+  });
+
+  it('sends confirmation with meet_url when metadata.meet_url is set', async () => {
+    const pushMessage = vi.fn();
+    const lineClient = { pushMessage } as any;
+    const bookingWithMeet: Booking = {
+      ...fakeBooking,
+      friend_id: null,
+      metadata: JSON.stringify({
+        email: 'user@example.com',
+        meet_url: 'https://meet.google.com/abc-defg-hij',
+      }),
+    } as Booking;
+
+    await sendBookingConfirmation(
+      { GAS_MAIL_URL: 'https://script.google.com/macros/s/TEST/exec', GAS_MAIL_SECRET: 'test-secret' },
+      bookingWithMeet,
+      lineClient,
+      null,
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.html).toContain('https://meet.google.com/abc-defg-hij');
+    expect(body.html).toContain('<a href="https://meet.google.com/abc-defg-hij">');
   });
 
   it('sends email with cc when NOTIFY_CC_EMAIL is set', async () => {
@@ -191,6 +260,10 @@ describe('processBookingReminders', () => {
     const opts = getBookingsForReminder.mock.calls[0][1];
     expect(opts.startFrom).toMatch(/\+09:00$/);
     expect(opts.startTo).toMatch(/\+09:00$/);
+    // Body regression: LINE reminder text should render new mechanic-interview format
+    const [, messages] = pushMessage.mock.calls[0];
+    expect(messages[0].text).toContain('明日、整備士面談');
+    expect(messages[0].text).toContain('10:00');
   });
 
   it('skips booking where reminder_24h_sent is already true', async () => {
@@ -265,6 +338,8 @@ describe('processBookingReminders', () => {
       expect(body.to).toEqual(['customer@example.com']);
       expect(body.cc).toEqual(['biz@fixbox.jp']);
       expect(body.html).toContain('<br>'); // newline conversion regression guard
+      // 1h bucket uses 【まもなく】; 24h bucket uses 【リマインダー】 — this test is 1h
+      expect(body.subject).toMatch(/^Fixx｜【まもなく】整備士面談/);
       expect(updateBookingMetadata).toHaveBeenCalledWith(
         expect.anything(),
         'b1h',

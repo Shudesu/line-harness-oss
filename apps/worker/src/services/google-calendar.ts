@@ -58,17 +58,25 @@ export class GoogleCalendarClient {
   }
 
   /**
-   * Create an event on Google Calendar.
-   * Returns the created event's ID.
+   * Create an event on Google Calendar with an auto-allocated Google Meet link.
+   * Returns the created event's ID and hangoutLink (null if GCal declined to allocate one).
    */
-  async createEvent(event: CreateEventInput): Promise<{ eventId: string }> {
-    const url = `${GCAL_BASE}/calendars/${encodeURIComponent(this.config.calendarId)}/events`;
+  async createEvent(event: CreateEventInput): Promise<{ eventId: string; meetUrl: string | null }> {
+    // conferenceDataVersion=1 is required for GCal to honor the createRequest
+    // and allocate a hangoutsMeet conference. Without it the field is silently dropped.
+    const url = `${GCAL_BASE}/calendars/${encodeURIComponent(this.config.calendarId)}/events?conferenceDataVersion=1`;
 
     const body = {
       summary: event.summary,
       description: event.description,
       start: { dateTime: event.start, timeZone: TIMEZONE },
       end: { dateTime: event.end, timeZone: TIMEZONE },
+      conferenceData: {
+        createRequest: {
+          requestId: crypto.randomUUID(),
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      },
     };
 
     const res = await fetch(url, {
@@ -85,12 +93,12 @@ export class GoogleCalendarClient {
       throw new Error(`Google Calendar createEvent error ${res.status}: ${text}`);
     }
 
-    const data = (await res.json()) as { id?: string };
+    const data = (await res.json()) as { id?: string; hangoutLink?: string };
     if (!data.id) {
       throw new Error('Google Calendar createEvent: response missing event id');
     }
 
-    return { eventId: data.id };
+    return { eventId: data.id, meetUrl: data.hangoutLink ?? null };
   }
 
   /**
