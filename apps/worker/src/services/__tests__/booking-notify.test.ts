@@ -186,4 +186,85 @@ describe('processBookingReminders', () => {
     expect(summary.skipped).toBe(1);
     expect(pushMessage).not.toHaveBeenCalled();
   });
+
+  it('sends 1h email reminder with CC when booking has no friendId but has email', async () => {
+    const now = new Date('2026-05-01T09:00:00+09:00');
+    const booking = {
+      id: 'b1h',
+      connection_id: 'c1',
+      friend_id: null,
+      title: '予約',
+      start_at: '2026-05-01T10:00:00+09:00',
+      end_at: '2026-05-01T11:00:00+09:00',
+      metadata: JSON.stringify({ email: 'customer@example.com' }),
+    };
+
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'email_r1' }), { status: 200 }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const pushMessage = vi.fn();
+      const updateBookingMetadata = vi.fn().mockResolvedValue(undefined);
+      const summary = await processBookingReminders(
+        { RESEND_API_KEY: 'rk', NOTIFY_FROM_EMAIL: 'noreply@fixbox.jp' },
+        {
+          now,
+          db: {} as any,
+          lineClient: { pushMessage } as any,
+          getBookingsForReminder: vi.fn().mockResolvedValue([booking]),
+          updateBookingMetadata,
+          getFriendById: vi.fn().mockResolvedValue(null),
+        } as any,
+      );
+
+      expect(summary.delivered).toBe(1);
+      expect(pushMessage).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.to).toEqual(['customer@example.com']);
+      expect(body.cc).toEqual(['fixbox-biz@fixbox.jp']);
+      expect(body.html).toContain('<br>'); // newline conversion regression guard
+      expect(updateBookingMetadata).toHaveBeenCalledWith(
+        expect.anything(),
+        'b1h',
+        expect.objectContaining({ reminder_1h_sent: true, email: 'customer@example.com' }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('counts send failure as failed and does not mark metadata sent', async () => {
+    const now = new Date('2026-04-30T10:00:00+09:00');
+    const booking = {
+      id: 'bfail',
+      connection_id: 'c1',
+      friend_id: 'f1',
+      title: '予約',
+      start_at: '2026-05-01T10:00:00+09:00',
+      end_at: '2026-05-01T11:00:00+09:00',
+      metadata: null as string | null,
+    };
+    const pushMessage = vi.fn().mockRejectedValue(new Error('LINE push 500'));
+    const updateBookingMetadata = vi.fn();
+    const summary = await processBookingReminders(
+      { RESEND_API_KEY: undefined, NOTIFY_FROM_EMAIL: undefined },
+      {
+        now,
+        db: {} as any,
+        lineClient: { pushMessage } as any,
+        getBookingsForReminder: vi.fn().mockResolvedValue([booking]),
+        updateBookingMetadata,
+        getFriendById: vi.fn().mockResolvedValue({
+          id: 'f1', line_user_id: 'U1', is_following: 1,
+        }),
+      } as any,
+    );
+    expect(summary.failed).toBe(1);
+    expect(summary.delivered).toBe(0);
+    expect(updateBookingMetadata).not.toHaveBeenCalled();
+  });
 });

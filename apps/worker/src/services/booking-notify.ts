@@ -152,6 +152,10 @@ export async function processBookingReminders(
       const meta = safeParseMetadata(b.metadata);
       if (meta[w.flag]) { skipped++; continue; }
 
+      // Delivery semantics: send first, flag second.
+      // If the UPDATE fails after a successful send, next tick re-delivers within
+      // the 10-min window. For reminders we prefer "duplicate > missed" — a user
+      // getting two "明日予約です" messages is annoying, a missed appointment is worse.
       try {
         const friend = b.friend_id ? await deps.getFriendById(deps.db, b.friend_id) : null;
         const channel = pickChannel({
@@ -170,7 +174,7 @@ export async function processBookingReminders(
             from: env.NOTIFY_FROM_EMAIL,
             to: meta.email,
             subject: `【リマインダー】${formatRange(b)} の予約`,
-            html: `<p>${escapeHtml(buildReminderText(b, w.label))}</p>`,
+            html: `<p>${escapeHtml(buildReminderText(b, w.label)).replace(/\n/g, '<br>')}</p>`,
           });
         } else {
           skipped++;
