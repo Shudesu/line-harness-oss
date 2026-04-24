@@ -85,7 +85,7 @@ describe('sendBookingConfirmation (email path)', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('sends email with CC fixbox-biz@fixbox.jp when friendId missing but email present', async () => {
+  it('sends email without cc when NOTIFY_CC_EMAIL is unset', async () => {
     const pushMessage = vi.fn();
     const lineClient = { pushMessage } as any;
     const bookingWithEmail: Booking = {
@@ -108,7 +108,34 @@ describe('sendBookingConfirmation (email path)', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.secret).toBe('test-secret');
     expect(body.to).toEqual(['user@example.com']);
-    expect(body.cc).toEqual(['fixbox-biz@fixbox.jp']);
+    expect(body.cc).toBeUndefined();
+  });
+
+  it('sends email with cc when NOTIFY_CC_EMAIL is set', async () => {
+    const pushMessage = vi.fn();
+    const lineClient = { pushMessage } as any;
+    const bookingWithEmail: Booking = {
+      ...fakeBooking,
+      friend_id: null,
+      metadata: JSON.stringify({ email: 'user@example.com' }),
+    } as Booking;
+
+    const result = await sendBookingConfirmation(
+      {
+        GAS_MAIL_URL: 'https://script.google.com/macros/s/TEST/exec',
+        GAS_MAIL_SECRET: 'test-secret',
+        NOTIFY_CC_EMAIL: 'biz@fixbox.jp',
+      },
+      bookingWithEmail,
+      lineClient,
+      null,
+    );
+
+    expect(result.channel).toBe('email');
+    expect(result.delivered).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.cc).toEqual(['biz@fixbox.jp']);
   });
 
   it('returns delivered=false when neither channel available', async () => {
@@ -215,7 +242,11 @@ describe('processBookingReminders', () => {
       const pushMessage = vi.fn();
       const updateBookingMetadata = vi.fn().mockResolvedValue(undefined);
       const summary = await processBookingReminders(
-        { GAS_MAIL_URL: 'https://script.google.com/macros/s/TEST/exec', GAS_MAIL_SECRET: 'test-secret' },
+        {
+          GAS_MAIL_URL: 'https://script.google.com/macros/s/TEST/exec',
+          GAS_MAIL_SECRET: 'test-secret',
+          NOTIFY_CC_EMAIL: 'biz@fixbox.jp',
+        },
         {
           now,
           db: {} as any,
@@ -232,7 +263,7 @@ describe('processBookingReminders', () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
       expect(body.secret).toBe('test-secret');
       expect(body.to).toEqual(['customer@example.com']);
-      expect(body.cc).toEqual(['fixbox-biz@fixbox.jp']);
+      expect(body.cc).toEqual(['biz@fixbox.jp']);
       expect(body.html).toContain('<br>'); // newline conversion regression guard
       expect(updateBookingMetadata).toHaveBeenCalledWith(
         expect.anything(),

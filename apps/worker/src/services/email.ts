@@ -10,13 +10,15 @@ export interface SendEmailInput {
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<{ ok: true }> {
-  const body = {
+  const body: Record<string, unknown> = {
     secret: input.secret,
     to: Array.isArray(input.to) ? input.to : [input.to],
-    cc: input.cc ?? [DEFAULT_CC],
     subject: input.subject,
     html: input.html,
   };
+  if (input.cc && input.cc.length > 0) {
+    body.cc = input.cc;
+  }
 
   const res = await fetch(input.webhookUrl, {
     method: 'POST',

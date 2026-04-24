@@ -18,7 +18,7 @@ describe('sendEmail (GAS webhook)', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('POSTs to webhookUrl with CC fixbox-biz@fixbox.jp by default', async () => {
+  it('POSTs to webhookUrl without cc when cc not provided', async () => {
     await sendEmail({
       webhookUrl: TEST_URL,
       secret: 'shh',
@@ -34,8 +34,21 @@ describe('sendEmail (GAS webhook)', () => {
     const body = JSON.parse(init.body as string);
     expect(body.secret).toBe('shh');
     expect(body.to).toEqual(['mechanic@example.com']);
-    expect(body.cc).toEqual([DEFAULT_CC]);
+    expect(body.cc).toBeUndefined();
     expect(DEFAULT_CC).toBe('fixbox-biz@fixbox.jp');
+  });
+
+  it('omits cc field when empty array passed', async () => {
+    await sendEmail({
+      webhookUrl: TEST_URL,
+      secret: 's',
+      to: 'x@y.z',
+      cc: [],
+      subject: 's',
+      html: '<p>h</p>',
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.cc).toBeUndefined();
   });
 
   it('does not set Authorization header', async () => {

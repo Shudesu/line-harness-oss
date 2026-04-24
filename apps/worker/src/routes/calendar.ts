@@ -230,7 +230,7 @@ calendar.post('/api/integrations/google-calendar/book', async (c) => {
       const friend = booking.friend_id ? await getFriendById(c.env.DB, booking.friend_id) : null;
       const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
       await sendBookingConfirmation(
-        { GAS_MAIL_URL: c.env.GAS_MAIL_URL, GAS_MAIL_SECRET: c.env.GAS_MAIL_SECRET },
+        { GAS_MAIL_URL: c.env.GAS_MAIL_URL, GAS_MAIL_SECRET: c.env.GAS_MAIL_SECRET, NOTIFY_CC_EMAIL: c.env.NOTIFY_CC_EMAIL },
         booking,
         lineClient,
         friend,

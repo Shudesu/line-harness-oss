@@ -29,6 +29,7 @@ export interface BookingRow {
 export interface NotifyEnv {
   GAS_MAIL_URL?: string;
   GAS_MAIL_SECRET?: string;
+  NOTIFY_CC_EMAIL?: string;
 }
 
 export async function sendBookingConfirmation(
@@ -57,6 +58,7 @@ export async function sendBookingConfirmation(
       webhookUrl: env.GAS_MAIL_URL,
       secret: env.GAS_MAIL_SECRET,
       to: meta.email,
+      cc: env.NOTIFY_CC_EMAIL ? [env.NOTIFY_CC_EMAIL] : undefined,
       subject: `【予約確定】${formatRange(booking)}`,
       html: buildConfirmationHtml(booking),
     });
@@ -177,6 +179,7 @@ export async function processBookingReminders(
             webhookUrl: env.GAS_MAIL_URL,
             secret: env.GAS_MAIL_SECRET,
             to: meta.email,
+            cc: env.NOTIFY_CC_EMAIL ? [env.NOTIFY_CC_EMAIL] : undefined,
             subject: `【リマインダー】${formatRange(b)} の予約`,
             html: `<p>${escapeHtml(buildReminderText(b, w.label)).replace(/\n/g, '<br>')}</p>`,
           });

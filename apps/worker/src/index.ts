@@ -65,6 +65,7 @@ export type Env = {
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
     GAS_MAIL_URL?: string;                // GAS Web App URL for fixbox-biz@fixbox.jp sending
     GAS_MAIL_SECRET?: string;             // Shared secret matching GAS script
+    NOTIFY_CC_EMAIL?: string;             // Optional CC target for booking emails (e.g. fixbox-biz@fixbox.jp)
     MANAGED_AGENTS_URL?: string;          // Fixx通信生成 managed-agents 連携
     MANAGED_AGENTS_CRON_SECRET?: string;
     MANAGED_AGENTS_BYPASS_TOKEN?: string;
@@ -359,7 +360,7 @@ async function scheduled(
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
     processReminderDeliveries(env.DB, defaultLineClient),
     processBookingReminders(
-      { GAS_MAIL_URL: env.GAS_MAIL_URL, GAS_MAIL_SECRET: env.GAS_MAIL_SECRET },
+      { GAS_MAIL_URL: env.GAS_MAIL_URL, GAS_MAIL_SECRET: env.GAS_MAIL_SECRET, NOTIFY_CC_EMAIL: env.NOTIFY_CC_EMAIL },
       {
         now: new Date(),
         db: env.DB,
