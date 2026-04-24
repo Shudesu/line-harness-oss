@@ -211,16 +211,24 @@ calendar.post('/api/integrations/google-calendar/book', async (c) => {
           calendarId: conn.calendar_id,
           accessToken: conn.access_token,
         });
-        const { eventId, meetUrl } = await gcal.createEvent({
+        const created = await gcal.createEvent({
           summary: body.title,
           start: body.startAt,
           end: body.endAt,
           description: body.description,
         });
         // event_id を D1 予約レコードに保存
-        await updateCalendarBookingEventId(c.env.DB, booking.id, eventId);
-        booking.event_id = eventId;
+        await updateCalendarBookingEventId(c.env.DB, booking.id, created.eventId);
+        booking.event_id = created.eventId;
         // Meet URL を metadata に永続化（確定通知で参照するため、通知送信より前にやる必要がある）
+        // createEventレスポンスに Meet URL がまだ無い場合 (conference 割当が pending) は
+        // 短い sleep 後に getEvent で再取得して拾う。
+        let meetUrl = created.meetUrl;
+        if (!meetUrl) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const refetched = await gcal.getEvent(created.eventId).catch(() => ({ meetUrl: null }));
+          meetUrl = refetched.meetUrl;
+        }
         if (meetUrl) {
           const mergedBookingMeta = { ...mergedMeta, meet_url: meetUrl };
           await updateBookingMetadata(c.env.DB, booking.id, mergedBookingMeta);

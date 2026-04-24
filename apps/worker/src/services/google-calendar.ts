@@ -93,12 +93,48 @@ export class GoogleCalendarClient {
       throw new Error(`Google Calendar createEvent error ${res.status}: ${text}`);
     }
 
-    const data = (await res.json()) as { id?: string; hangoutLink?: string };
+    const data = (await res.json()) as {
+      id?: string;
+      hangoutLink?: string;
+      conferenceData?: {
+        entryPoints?: Array<{ entryPointType?: string; uri?: string }>;
+        createRequest?: { status?: { statusCode?: string } };
+      };
+    };
     if (!data.id) {
       throw new Error('Google Calendar createEvent: response missing event id');
     }
 
-    return { eventId: data.id, meetUrl: data.hangoutLink ?? null };
+    // Meet URL の取得優先度:
+    //   1. conferenceData.entryPoints[].uri (entryPointType='video') — モダンGoogle Meet
+    //   2. hangoutLink — 旧Hangouts/Meet互換の同期フィールド(fallback)
+    //
+    // conferenceData.createRequest.status.statusCode === 'pending' の場合は
+    // Meet URL がまだ割り当てられていないので、呼び出し側で event を再取得する必要がある。
+    const videoEntry = data.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video');
+    const meetUrl = videoEntry?.uri ?? data.hangoutLink ?? null;
+
+    return { eventId: data.id, meetUrl };
+  }
+
+  /**
+   * Fetch an event by id. Used to re-read Meet URL when conference allocation
+   * was still pending at createEvent time.
+   */
+  async getEvent(eventId: string): Promise<{ meetUrl: string | null }> {
+    const url = `${GCAL_BASE}/calendars/${encodeURIComponent(this.config.calendarId)}/events/${encodeURIComponent(eventId)}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.config.accessToken}` },
+    });
+    if (!res.ok) {
+      return { meetUrl: null };
+    }
+    const data = (await res.json()) as {
+      hangoutLink?: string;
+      conferenceData?: { entryPoints?: Array<{ entryPointType?: string; uri?: string }> };
+    };
+    const videoEntry = data.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video');
+    return { meetUrl: videoEntry?.uri ?? data.hangoutLink ?? null };
   }
 
   /**
