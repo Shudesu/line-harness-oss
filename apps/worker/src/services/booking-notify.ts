@@ -177,12 +177,12 @@ function buildConfirmationHtml(b: BookingRow, meetUrl: string | null): string {
 <p><strong>【Google Meet】</strong><br>${meetLine}</p>
 <p><strong>【当日のご案内】</strong><br>
   ・開始時刻になりましたら上記Google MeetのURLからご入室ください<br>
-  ・面談はおよそ30分程度を予定しております<br>
+  ・面談は15分から20分程度を予定しております<br>
   ・服装はカジュアルで問題ございません<br>
   ・キャンセル・日時変更はこのメールへのご返信、またはLINEよりご連絡ください
 </p>
 <p>当日お会いできるのを楽しみにしております。<br>どうぞよろしくお願いいたします。</p>
-<p style="color:#888;font-size:12px">── 株式会社Fixx 整備士面談事務局</p>`;
+<p style="color:#888;font-size:12px">── 株式会社Fixx</p>`;
 }
 
 function escapeHtml(s: string): string {
