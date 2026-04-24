@@ -1,5 +1,6 @@
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Friend } from '@line-crm/db';
+import { toJstString } from '@line-crm/db';
 import { sendEmail } from './email.js';
 
 export type Channel = 'line' | 'email' | 'none';
@@ -141,9 +142,12 @@ export async function processBookingReminders(
   for (const w of WINDOWS) {
     const windowStart = new Date(deps.now.getTime() + w.beforeStartMin * 60_000);
     const windowEnd = new Date(windowStart.getTime() + w.windowMin * 60_000);
+    // NOTE: booked start_at strings use `+09:00` (JST) format (see packages/db toJstString).
+    // Lexicographic compare against `Z` (UTC) bounds would silently filter everything out,
+    // so pass the window bounds in the same JST format the column uses.
     const rows = await deps.getBookingsForReminder(deps.db, {
-      startFrom: windowStart.toISOString(),
-      startTo: windowEnd.toISOString(),
+      startFrom: toJstString(windowStart),
+      startTo: toJstString(windowEnd),
     });
 
     for (const b of rows) {

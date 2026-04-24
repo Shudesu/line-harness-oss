@@ -159,6 +159,11 @@ describe('processBookingReminders', () => {
       'b24',
       expect.objectContaining({ reminder_24h_sent: true }),
     );
+    // Regression guard: window bounds must be JST (+09:00) to match stored column format.
+    // Passing Z-suffixed UTC strings would silently filter out all rows.
+    const opts = getBookingsForReminder.mock.calls[0][1];
+    expect(opts.startFrom).toMatch(/\+09:00$/);
+    expect(opts.startTo).toMatch(/\+09:00$/);
   });
 
   it('skips booking where reminder_24h_sent is already true', async () => {
