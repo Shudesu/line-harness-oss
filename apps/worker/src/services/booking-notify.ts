@@ -72,12 +72,16 @@ export function safeParseMetadata(raw: string | null): ParsedMeta {
   try { return JSON.parse(raw) as ParsedMeta; } catch { return {}; }
 }
 
+export function formatJstRange(startIso: string, endIso: string): string {
+  const s = new Date(new Date(startIso).getTime() + 9 * 60 * 60_000);
+  const e = new Date(new Date(endIso).getTime() + 9 * 60 * 60_000);
+  const d = `${s.getUTCMonth() + 1}/${s.getUTCDate()}`;
+  const hm = (x: Date) => `${String(x.getUTCHours()).padStart(2, '0')}:${String(x.getUTCMinutes()).padStart(2, '0')}`;
+  return `${d} ${hm(s)}〜${hm(e)}`;
+}
+
 function formatRange(b: BookingRow): string {
-  const start = new Date(b.start_at);
-  const end = new Date(b.end_at);
-  const d = `${start.getMonth() + 1}/${start.getDate()}`;
-  const hm = (x: Date) => `${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`;
-  return `${d} ${hm(start)}〜${hm(end)}`;
+  return formatJstRange(b.start_at, b.end_at);
 }
 
 function buildConfirmationFlex(b: BookingRow): object {
