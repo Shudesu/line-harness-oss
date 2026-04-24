@@ -116,7 +116,7 @@ function subjectStamp(startIso: string): string {
 }
 
 function buildConfirmationFlex(b: BookingRow, meetUrl: string | null): object {
-  const dateTimeText = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜${formatJstTime(b.end_at)}`;
+  const dateTimeText = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`;
   const meetBlock = meetUrl
     ? { type: 'text', text: meetUrl, size: 'sm', color: '#304070', wrap: true, action: { type: 'uri', label: 'open', uri: meetUrl } }
     : { type: 'text', text: '面談前日までに別途ご案内いたします。', size: 'sm', color: '#888888', wrap: true };
@@ -167,7 +167,7 @@ function buildConfirmationFlex(b: BookingRow, meetUrl: string | null): object {
 }
 
 function buildConfirmationHtml(b: BookingRow, meetUrl: string | null): string {
-  const dateLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜${formatJstTime(b.end_at)}`;
+  const dateLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`;
   const meetLine = meetUrl
     ? `<a href="${escapeHtml(meetUrl)}">${escapeHtml(meetUrl)}</a>`
     : '面談前日までに別途ご案内いたします。';
@@ -278,7 +278,7 @@ export async function processBookingReminders(
 
 function buildReminderText(b: BookingRow, meetUrl: string | null, label: '24h' | '1h'): string {
   const lead = label === '24h' ? '明日' : 'まもなく（1時間後）';
-  const dateTimeLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜${formatJstTime(b.end_at)}`;
+  const dateTimeLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`;
   const meetLine = meetUrl ?? '別途ご案内のURLよりご参加ください。';
   return `${lead}、整備士面談のお時間です。\n\n【日時】\n${dateTimeLine}\n\n【Google Meet】\n${meetLine}\n\n開始時刻になりましたら上記URLよりご入室ください。\nご都合が変わった場合はこのトークからご連絡ください。`;
 }
