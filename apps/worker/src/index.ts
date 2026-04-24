@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { LineClient } from '@line-crm/line-sdk';
-import { getLineAccounts, getTrafficPoolBySlug, getRandomPoolAccount, getPoolAccounts } from '@line-crm/db';
+import { getLineAccounts, getTrafficPoolBySlug, getRandomPoolAccount, getPoolAccounts, getBookingsForReminder, updateBookingMetadata, getFriendById } from '@line-crm/db';
 import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts, processQueuedBroadcasts } from './services/broadcast.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
+import { processBookingReminders } from './services/booking-notify.js';
 import { checkAccountHealth } from './services/ban-monitor.js';
 import { refreshLineAccessTokens } from './services/token-refresh.js';
 import { processInsightFetch } from './services/insight-fetcher.js';
@@ -354,6 +355,17 @@ async function scheduled(
     processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL),
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
     processReminderDeliveries(env.DB, defaultLineClient),
+    processBookingReminders(
+      { RESEND_API_KEY: env.RESEND_API_KEY, NOTIFY_FROM_EMAIL: env.NOTIFY_FROM_EMAIL },
+      {
+        now: new Date(),
+        db: env.DB,
+        lineClient: defaultLineClient,
+        getBookingsForReminder,
+        updateBookingMetadata,
+        getFriendById,
+      },
+    ),
   );
   // キュー処理は1回だけ実行（内部でアカウント別lineClientを解決する）
   // ロック解除: タイムアウトでstuckした配信を復旧

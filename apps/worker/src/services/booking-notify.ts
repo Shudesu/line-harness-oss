@@ -110,3 +110,86 @@ function buildConfirmationHtml(b: BookingRow): string {
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
+
+export interface ReminderDeps {
+  now: Date;
+  db: D1Database;
+  lineClient: LineClient;
+  getBookingsForReminder: (db: D1Database, opts: { startFrom: string; startTo: string }) => Promise<BookingRow[]>;
+  updateBookingMetadata: (db: D1Database, id: string, metadata: Record<string, unknown>) => Promise<void>;
+  getFriendById: (db: D1Database, id: string) => Promise<Friend | null>;
+}
+
+interface WindowSpec {
+  label: '24h' | '1h';
+  flag: 'reminder_24h_sent' | 'reminder_1h_sent';
+  beforeStartMin: number;
+  windowMin: number;
+}
+
+const WINDOWS: WindowSpec[] = [
+  { label: '24h', flag: 'reminder_24h_sent', beforeStartMin: 24 * 60, windowMin: 10 },
+  { label: '1h',  flag: 'reminder_1h_sent',  beforeStartMin: 60,      windowMin: 10 },
+];
+
+export async function processBookingReminders(
+  env: NotifyEnv,
+  deps: ReminderDeps,
+): Promise<{ delivered: number; skipped: number; failed: number }> {
+  let delivered = 0, skipped = 0, failed = 0;
+
+  for (const w of WINDOWS) {
+    const windowStart = new Date(deps.now.getTime() + w.beforeStartMin * 60_000);
+    const windowEnd = new Date(windowStart.getTime() + w.windowMin * 60_000);
+    const rows = await deps.getBookingsForReminder(deps.db, {
+      startFrom: windowStart.toISOString(),
+      startTo: windowEnd.toISOString(),
+    });
+
+    for (const b of rows) {
+      const startMs = new Date(b.start_at).getTime();
+      if (startMs < windowStart.getTime() || startMs >= windowEnd.getTime()) continue;
+      const meta = safeParseMetadata(b.metadata);
+      if (meta[w.flag]) { skipped++; continue; }
+
+      try {
+        const friend = b.friend_id ? await deps.getFriendById(deps.db, b.friend_id) : null;
+        const channel = pickChannel({
+          friendId: b.friend_id,
+          isFollowing: Boolean(friend?.is_following),
+          email: meta.email ?? null,
+        });
+
+        if (channel === 'line' && friend) {
+          await deps.lineClient.pushMessage(friend.line_user_id, [
+            { type: 'text', text: buildReminderText(b, w.label) },
+          ]);
+        } else if (channel === 'email' && env.RESEND_API_KEY && env.NOTIFY_FROM_EMAIL && meta.email) {
+          await sendEmail({
+            apiKey: env.RESEND_API_KEY,
+            from: env.NOTIFY_FROM_EMAIL,
+            to: meta.email,
+            subject: `【リマインダー】${formatRange(b)} の予約`,
+            html: `<p>${escapeHtml(buildReminderText(b, w.label))}</p>`,
+          });
+        } else {
+          skipped++;
+          continue;
+        }
+
+        await deps.updateBookingMetadata(deps.db, b.id, { ...meta, [w.flag]: true });
+        delivered++;
+      } catch (err) {
+        console.warn(`booking reminder failed for ${b.id}:`, err);
+        failed++;
+      }
+    }
+  }
+
+  return { delivered, skipped, failed };
+}
+
+function buildReminderText(b: BookingRow, label: '24h' | '1h'): string {
+  const lead = label === '24h' ? '明日' : 'まもなく（1時間後）';
+  return `${lead}のご予約リマインダーです。\n${b.title}\n${formatRange(b)}\n\nご都合が変わった場合はこのトークからご連絡ください。`;
+}

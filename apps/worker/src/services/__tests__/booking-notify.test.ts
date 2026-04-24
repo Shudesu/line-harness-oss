@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { sendBookingConfirmation, pickChannel, formatJstRange } from '../booking-notify.js';
+import { sendBookingConfirmation, pickChannel, formatJstRange, processBookingReminders } from '../booking-notify.js';
 
 type Booking = Parameters<typeof sendBookingConfirmation>[1];
 
@@ -116,5 +116,74 @@ describe('sendBookingConfirmation (email path)', () => {
     const orphan: Booking = { ...fakeBooking, friend_id: null, metadata: null } as Booking;
     const result = await sendBookingConfirmation({ RESEND_API_KEY: 'rk', NOTIFY_FROM_EMAIL: 'a@b.c' }, orphan, lineClient, null);
     expect(result).toEqual({ channel: 'none', delivered: false });
+  });
+});
+
+describe('processBookingReminders', () => {
+  it('sends 24h reminder and marks metadata.reminder_24h_sent', async () => {
+    const now = new Date('2026-04-30T10:00:00+09:00');
+    const booking = {
+      id: 'b24',
+      connection_id: 'c1',
+      friend_id: 'f1',
+      title: '予約',
+      start_at: '2026-05-01T10:00:00+09:00',
+      end_at: '2026-05-01T11:00:00+09:00',
+      metadata: null as string | null,
+    };
+    const getBookingsForReminder = vi.fn().mockResolvedValue([booking]);
+    const updateBookingMetadata = vi.fn().mockResolvedValue(undefined);
+    const getFriendById = vi.fn().mockResolvedValue({
+      id: 'f1', line_user_id: 'U1', is_following: 1,
+    });
+    const pushMessage = vi.fn().mockResolvedValue({});
+    const lineClient = { pushMessage } as any;
+
+    const summary = await processBookingReminders(
+      { RESEND_API_KEY: undefined, NOTIFY_FROM_EMAIL: undefined },
+      {
+        now,
+        db: {} as any,
+        lineClient,
+        getBookingsForReminder,
+        updateBookingMetadata,
+        getFriendById,
+      } as any,
+    );
+
+    expect(summary.delivered).toBe(1);
+    expect(pushMessage).toHaveBeenCalledOnce();
+    expect(updateBookingMetadata).toHaveBeenCalledWith(
+      expect.anything(),
+      'b24',
+      expect.objectContaining({ reminder_24h_sent: true }),
+    );
+  });
+
+  it('skips booking where reminder_24h_sent is already true', async () => {
+    const now = new Date('2026-04-30T10:00:00+09:00');
+    const booking = {
+      id: 'b24b',
+      connection_id: 'c1',
+      friend_id: 'f1',
+      title: '予約',
+      start_at: '2026-05-01T10:00:00+09:00',
+      end_at: '2026-05-01T11:00:00+09:00',
+      metadata: JSON.stringify({ reminder_24h_sent: true }),
+    };
+    const pushMessage = vi.fn();
+    const summary = await processBookingReminders(
+      { RESEND_API_KEY: undefined, NOTIFY_FROM_EMAIL: undefined },
+      {
+        now,
+        db: {} as any,
+        lineClient: { pushMessage } as any,
+        getBookingsForReminder: vi.fn().mockResolvedValue([booking]),
+        updateBookingMetadata: vi.fn(),
+        getFriendById: vi.fn(),
+      } as any,
+    );
+    expect(summary.skipped).toBe(1);
+    expect(pushMessage).not.toHaveBeenCalled();
   });
 });
