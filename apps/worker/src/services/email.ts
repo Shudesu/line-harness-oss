@@ -1,40 +1,39 @@
 export const DEFAULT_CC = 'fixbox-biz@fixbox.jp';
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 
 export interface SendEmailInput {
-  apiKey: string;
-  from: string;
+  webhookUrl: string;
+  secret: string;
   to: string | string[];
   cc?: string[];
   subject: string;
   html: string;
-  text?: string;
 }
 
-export async function sendEmail(input: SendEmailInput): Promise<{ id: string }> {
+export async function sendEmail(input: SendEmailInput): Promise<{ ok: true }> {
   const body = {
-    from: input.from,
+    secret: input.secret,
     to: Array.isArray(input.to) ? input.to : [input.to],
     cc: input.cc ?? [DEFAULT_CC],
     subject: input.subject,
     html: input.html,
-    ...(input.text ? { text: input.text } : {}),
   };
 
-  const res = await fetch(RESEND_ENDPOINT, {
+  const res = await fetch(input.webhookUrl, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
+    redirect: 'follow',
   });
 
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    throw new Error(`Resend error ${res.status}: ${detail}`);
+    throw new Error(`GAS mail error ${res.status}: ${detail}`);
   }
 
-  return (await res.json()) as { id: string };
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (json.error) {
+    throw new Error(`GAS mail rejected: ${json.error}`);
+  }
+  return { ok: true };
 }

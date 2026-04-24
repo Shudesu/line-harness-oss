@@ -26,8 +26,8 @@ export interface BookingRow {
 }
 
 export interface NotifyEnv {
-  RESEND_API_KEY?: string;
-  NOTIFY_FROM_EMAIL?: string;
+  GAS_MAIL_URL?: string;
+  GAS_MAIL_SECRET?: string;
 }
 
 export async function sendBookingConfirmation(
@@ -51,10 +51,10 @@ export async function sendBookingConfirmation(
     return { channel, delivered: true };
   }
 
-  if (channel === 'email' && env.RESEND_API_KEY && env.NOTIFY_FROM_EMAIL && meta.email) {
+  if (channel === 'email' && env.GAS_MAIL_URL && env.GAS_MAIL_SECRET && meta.email) {
     await sendEmail({
-      apiKey: env.RESEND_API_KEY,
-      from: env.NOTIFY_FROM_EMAIL,
+      webhookUrl: env.GAS_MAIL_URL,
+      secret: env.GAS_MAIL_SECRET,
       to: meta.email,
       subject: `【予約確定】${formatRange(booking)}`,
       html: buildConfirmationHtml(booking),
@@ -168,10 +168,10 @@ export async function processBookingReminders(
           await deps.lineClient.pushMessage(friend.line_user_id, [
             { type: 'text', text: buildReminderText(b, w.label) },
           ]);
-        } else if (channel === 'email' && env.RESEND_API_KEY && env.NOTIFY_FROM_EMAIL && meta.email) {
+        } else if (channel === 'email' && env.GAS_MAIL_URL && env.GAS_MAIL_SECRET && meta.email) {
           await sendEmail({
-            apiKey: env.RESEND_API_KEY,
-            from: env.NOTIFY_FROM_EMAIL,
+            webhookUrl: env.GAS_MAIL_URL,
+            secret: env.GAS_MAIL_SECRET,
             to: meta.email,
             subject: `【リマインダー】${formatRange(b)} の予約`,
             html: `<p>${escapeHtml(buildReminderText(b, w.label)).replace(/\n/g, '<br>')}</p>`,

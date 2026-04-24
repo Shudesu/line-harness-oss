@@ -34,7 +34,7 @@ describe('sendBookingConfirmation (LINE path)', () => {
     const friend = { id: 'f1', line_user_id: 'U1', is_following: 1 };
 
     await sendBookingConfirmation(
-      { RESEND_API_KEY: undefined, NOTIFY_FROM_EMAIL: undefined },
+      { GAS_MAIL_URL: undefined, GAS_MAIL_SECRET: undefined },
       fakeBooking,
       lineClient,
       friend as any,
@@ -95,7 +95,7 @@ describe('sendBookingConfirmation (email path)', () => {
     } as Booking;
 
     const result = await sendBookingConfirmation(
-      { RESEND_API_KEY: 'rk', NOTIFY_FROM_EMAIL: 'noreply@fixbox.jp' },
+      { GAS_MAIL_URL: 'https://script.google.com/macros/s/TEST/exec', GAS_MAIL_SECRET: 'test-secret' },
       bookingWithEmail,
       lineClient,
       null,
@@ -106,6 +106,7 @@ describe('sendBookingConfirmation (email path)', () => {
     expect(pushMessage).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledOnce();
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.secret).toBe('test-secret');
     expect(body.to).toEqual(['user@example.com']);
     expect(body.cc).toEqual(['fixbox-biz@fixbox.jp']);
   });
@@ -114,7 +115,7 @@ describe('sendBookingConfirmation (email path)', () => {
     const pushMessage = vi.fn();
     const lineClient = { pushMessage } as any;
     const orphan: Booking = { ...fakeBooking, friend_id: null, metadata: null } as Booking;
-    const result = await sendBookingConfirmation({ RESEND_API_KEY: 'rk', NOTIFY_FROM_EMAIL: 'a@b.c' }, orphan, lineClient, null);
+    const result = await sendBookingConfirmation({ GAS_MAIL_URL: 'https://script.google.com/macros/s/TEST/exec', GAS_MAIL_SECRET: 'test-secret' }, orphan, lineClient, null);
     expect(result).toEqual({ channel: 'none', delivered: false });
   });
 });
@@ -140,7 +141,7 @@ describe('processBookingReminders', () => {
     const lineClient = { pushMessage } as any;
 
     const summary = await processBookingReminders(
-      { RESEND_API_KEY: undefined, NOTIFY_FROM_EMAIL: undefined },
+      { GAS_MAIL_URL: undefined, GAS_MAIL_SECRET: undefined },
       {
         now,
         db: {} as any,
@@ -173,7 +174,7 @@ describe('processBookingReminders', () => {
     };
     const pushMessage = vi.fn();
     const summary = await processBookingReminders(
-      { RESEND_API_KEY: undefined, NOTIFY_FROM_EMAIL: undefined },
+      { GAS_MAIL_URL: undefined, GAS_MAIL_SECRET: undefined },
       {
         now,
         db: {} as any,
@@ -209,7 +210,7 @@ describe('processBookingReminders', () => {
       const pushMessage = vi.fn();
       const updateBookingMetadata = vi.fn().mockResolvedValue(undefined);
       const summary = await processBookingReminders(
-        { RESEND_API_KEY: 'rk', NOTIFY_FROM_EMAIL: 'noreply@fixbox.jp' },
+        { GAS_MAIL_URL: 'https://script.google.com/macros/s/TEST/exec', GAS_MAIL_SECRET: 'test-secret' },
         {
           now,
           db: {} as any,
@@ -224,6 +225,7 @@ describe('processBookingReminders', () => {
       expect(pushMessage).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledOnce();
       const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.secret).toBe('test-secret');
       expect(body.to).toEqual(['customer@example.com']);
       expect(body.cc).toEqual(['fixbox-biz@fixbox.jp']);
       expect(body.html).toContain('<br>'); // newline conversion regression guard
@@ -251,7 +253,7 @@ describe('processBookingReminders', () => {
     const pushMessage = vi.fn().mockRejectedValue(new Error('LINE push 500'));
     const updateBookingMetadata = vi.fn();
     const summary = await processBookingReminders(
-      { RESEND_API_KEY: undefined, NOTIFY_FROM_EMAIL: undefined },
+      { GAS_MAIL_URL: undefined, GAS_MAIL_SECRET: undefined },
       {
         now,
         db: {} as any,

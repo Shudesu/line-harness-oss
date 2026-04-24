@@ -63,8 +63,11 @@ export type Env = {
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
-    RESEND_API_KEY?: string;              // Resend — booking confirmation/reminder email
-    NOTIFY_FROM_EMAIL?: string;           // e.g. noreply@fixbox.jp
+    GAS_MAIL_URL?: string;                // GAS Web App URL for fixbox-biz@fixbox.jp sending
+    GAS_MAIL_SECRET?: string;             // Shared secret matching GAS script
+    MANAGED_AGENTS_URL?: string;          // Fixx通信生成 managed-agents 連携
+    MANAGED_AGENTS_CRON_SECRET?: string;
+    MANAGED_AGENTS_BYPASS_TOKEN?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -356,7 +359,7 @@ async function scheduled(
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
     processReminderDeliveries(env.DB, defaultLineClient),
     processBookingReminders(
-      { RESEND_API_KEY: env.RESEND_API_KEY, NOTIFY_FROM_EMAIL: env.NOTIFY_FROM_EMAIL },
+      { GAS_MAIL_URL: env.GAS_MAIL_URL, GAS_MAIL_SECRET: env.GAS_MAIL_SECRET },
       {
         now: new Date(),
         db: env.DB,

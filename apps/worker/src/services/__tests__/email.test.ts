@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { sendEmail, DEFAULT_CC } from '../email.js';
 
-describe('sendEmail', () => {
+const TEST_URL = 'https://script.google.com/macros/s/TEST/exec';
+
+describe('sendEmail (GAS webhook)', () => {
   const originalFetch = globalThis.fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'email_123' }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
     );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -16,10 +18,10 @@ describe('sendEmail', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('POSTs to Resend with CC fixbox-biz@fixbox.jp by default', async () => {
+  it('POSTs to webhookUrl with CC fixbox-biz@fixbox.jp by default', async () => {
     await sendEmail({
-      apiKey: 'test_key',
-      from: 'noreply@fixbox.jp',
+      webhookUrl: TEST_URL,
+      secret: 'shh',
       to: 'mechanic@example.com',
       subject: '予約確定',
       html: '<p>OK</p>',
@@ -27,20 +29,26 @@ describe('sendEmail', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://api.resend.com/emails');
+    expect(url).toBe(TEST_URL);
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string);
-    expect(body.from).toBe('noreply@fixbox.jp');
+    expect(body.secret).toBe('shh');
     expect(body.to).toEqual(['mechanic@example.com']);
     expect(body.cc).toEqual([DEFAULT_CC]);
     expect(DEFAULT_CC).toBe('fixbox-biz@fixbox.jp');
-    expect(init.headers.Authorization).toBe('Bearer test_key');
+  });
+
+  it('does not set Authorization header', async () => {
+    await sendEmail({ webhookUrl: TEST_URL, secret: 's', to: 'x@y.z', subject: 's', html: '<p>h</p>' });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.headers.Authorization).toBeUndefined();
+    expect(init.headers['Content-Type']).toBe('application/json');
   });
 
   it('allows overriding CC', async () => {
     await sendEmail({
-      apiKey: 'k',
-      from: 'a@b.c',
+      webhookUrl: TEST_URL,
+      secret: 's',
       to: 'x@y.z',
       cc: ['override@example.com'],
       subject: 's',
@@ -52,15 +60,24 @@ describe('sendEmail', () => {
 
   it('throws on non-2xx response', async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ message: 'rate_limited' }), { status: 429 }),
+      new Response('Server Error', { status: 500 }),
     );
     await expect(
-      sendEmail({ apiKey: 'k', from: 'a@b.c', to: 'x@y.z', subject: 's', html: '<p>h</p>' }),
-    ).rejects.toThrow(/rate_limited/);
+      sendEmail({ webhookUrl: TEST_URL, secret: 's', to: 'x@y.z', subject: 's', html: '<p>h</p>' }),
+    ).rejects.toThrow(/GAS mail error 500/);
   });
 
-  it('sets AbortSignal timeout of 30s', async () => {
-    await sendEmail({ apiKey: 'k', from: 'a@b.c', to: 'x@y.z', subject: 's', html: '<p>h</p>' });
+  it('throws when GAS returns 200 with error body (wrong secret)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'unauthorized' }), { status: 200 }),
+    );
+    await expect(
+      sendEmail({ webhookUrl: TEST_URL, secret: 'wrong', to: 'x@y.z', subject: 's', html: '<p>h</p>' }),
+    ).rejects.toThrow(/GAS mail rejected: unauthorized/);
+  });
+
+  it('sets AbortSignal timeout', async () => {
+    await sendEmail({ webhookUrl: TEST_URL, secret: 's', to: 'x@y.z', subject: 's', html: '<p>h</p>' });
     const init = fetchMock.mock.calls[0][1];
     expect(init.signal).toBeDefined();
   });
