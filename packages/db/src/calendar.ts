@@ -107,3 +107,38 @@ export async function getBookingsInRange(db: D1Database, connectionId: string, s
     .all<CalendarBookingRow>();
   return result.results;
 }
+
+export interface ReminderScanOptions {
+  /** ISO datetime — lower bound (inclusive) of start_at window */
+  startFrom: string;
+  /** ISO datetime — upper bound (exclusive) of start_at window */
+  startTo: string;
+}
+
+export async function getBookingsForReminder(
+  db: D1Database,
+  opts: ReminderScanOptions,
+): Promise<Array<{ id: string; connection_id: string; friend_id: string | null; title: string; start_at: string; end_at: string; metadata: string | null }>> {
+  const result = await db
+    .prepare(
+      `SELECT id, connection_id, friend_id, title, start_at, end_at, metadata
+       FROM calendar_bookings
+       WHERE status = 'confirmed'
+         AND start_at >= ?
+         AND start_at < ?`,
+    )
+    .bind(opts.startFrom, opts.startTo)
+    .all<{ id: string; connection_id: string; friend_id: string | null; title: string; start_at: string; end_at: string; metadata: string | null }>();
+  return result.results;
+}
+
+export async function updateBookingMetadata(
+  db: D1Database,
+  id: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE calendar_bookings SET metadata = ?, updated_at = ? WHERE id = ?`)
+    .bind(JSON.stringify(metadata), new Date().toISOString(), id)
+    .run();
+}
