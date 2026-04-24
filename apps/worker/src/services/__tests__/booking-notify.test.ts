@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { sendBookingConfirmation, pickChannel, formatJstRange } from '../booking-notify.js';
 
 type Booking = Parameters<typeof sendBookingConfirmation>[1];
@@ -67,5 +67,54 @@ describe('formatJstRange', () => {
     // 15:00 UTC = 00:00 JST next day
     const out = formatJstRange('2026-04-30T15:00:00Z', '2026-04-30T16:00:00Z');
     expect(out).toBe('5/1 00:00〜01:00');
+  });
+});
+
+describe('sendBookingConfirmation (email path)', () => {
+  const originalFetch = globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'email_1' }), { status: 200 }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('sends email with CC fixbox-biz@fixbox.jp when friendId missing but email present', async () => {
+    const pushMessage = vi.fn();
+    const lineClient = { pushMessage } as any;
+    const bookingWithEmail: Booking = {
+      ...fakeBooking,
+      friend_id: null,
+      metadata: JSON.stringify({ email: 'user@example.com' }),
+    } as Booking;
+
+    const result = await sendBookingConfirmation(
+      { RESEND_API_KEY: 'rk', NOTIFY_FROM_EMAIL: 'noreply@fixbox.jp' },
+      bookingWithEmail,
+      lineClient,
+      null,
+    );
+
+    expect(result.channel).toBe('email');
+    expect(result.delivered).toBe(true);
+    expect(pushMessage).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.to).toEqual(['user@example.com']);
+    expect(body.cc).toEqual(['fixbox-biz@fixbox.jp']);
+  });
+
+  it('returns delivered=false when neither channel available', async () => {
+    const pushMessage = vi.fn();
+    const lineClient = { pushMessage } as any;
+    const orphan: Booking = { ...fakeBooking, friend_id: null, metadata: null } as Booking;
+    const result = await sendBookingConfirmation({ RESEND_API_KEY: 'rk', NOTIFY_FROM_EMAIL: 'a@b.c' }, orphan, lineClient, null);
+    expect(result).toEqual({ channel: 'none', delivered: false });
   });
 });
