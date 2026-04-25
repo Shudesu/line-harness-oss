@@ -92,13 +92,36 @@ friends.get('/api/friends', async (c) => {
     const listResult = await listStmt.bind(...listBinds).all<DbFriend>();
     const items = listResult.results;
 
-    // Fetch tags for each friend in parallel so the list response includes tags
-    const itemsWithTags = await Promise.all(
-      items.map(async (friend) => {
-        const tags = await getFriendTags(db, friend.id);
-        return { ...serializeFriend(friend), tags: tags.map(serializeTag) };
-      }),
-    );
+    // Fetch tags for ALL listed friends in a single JOIN query.
+    // The previous Promise.all + per-friend query was an N+1 that exceeded the
+    // Cloudflare Workers CPU limit when /chats loaded limit=800 friends,
+    // causing 503 exceededCpu cascading into 500s on related endpoints.
+    const tagsByFriend = new Map<string, DbTag[]>();
+    if (items.length > 0) {
+      const friendIds = items.map((f) => f.id);
+      const placeholders = friendIds.map(() => '?').join(',');
+      const tagsResult = await db
+        .prepare(
+          `SELECT t.*, ft.friend_id AS ft_friend_id
+           FROM tags t
+           INNER JOIN friend_tags ft ON ft.tag_id = t.id
+           WHERE ft.friend_id IN (${placeholders})
+           ORDER BY t.name ASC`,
+        )
+        .bind(...friendIds)
+        .all<DbTag & { ft_friend_id: string }>();
+      for (const row of tagsResult.results) {
+        const { ft_friend_id, ...tag } = row;
+        const list = tagsByFriend.get(ft_friend_id) ?? [];
+        list.push(tag as DbTag);
+        tagsByFriend.set(ft_friend_id, list);
+      }
+    }
+
+    const itemsWithTags = items.map((friend) => ({
+      ...serializeFriend(friend),
+      tags: (tagsByFriend.get(friend.id) ?? []).map(serializeTag),
+    }));
 
     return c.json({
       success: true,
