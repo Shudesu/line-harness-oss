@@ -87,6 +87,16 @@ function getApiKey(): string {
   return ''
 }
 
+function handleUnauthorized(): void {
+  if (typeof window === 'undefined') return
+  localStorage.removeItem('lh_api_key')
+  localStorage.removeItem('lh_staff_name')
+  localStorage.removeItem('lh_staff_role')
+  if (window.location.pathname !== '/login') {
+    window.location.assign('/login?expired=1')
+  }
+}
+
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -96,6 +106,10 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
       ...options?.headers,
     },
   })
+  if (res.status === 401) {
+    handleUnauthorized()
+    throw new Error('Unauthorized')
+  }
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json() as Promise<T>
 }
