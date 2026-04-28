@@ -18,6 +18,7 @@ import {
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { DEMO_INDUSTRIES, DEMO_ACTIONS, DEMO_RICH_MENU_IDS, INDUSTRY_TAG_IDS, type DemoIndustryKey } from '../config/demo-config.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -227,6 +228,131 @@ async function handleEvent(
     if (!friend) return;
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
+
+    // ─── 業種別デモのショールーム導線 ─────────────────────────────
+    // postback data が "demo=<industry>" / "demo_action=<key>" の場合は
+    // demo-config テーブルを引いて RM切替＋タグ操作＋reply（fallbackでpush）を行う。
+    // 実装スコープ: 業種別デモ設計書.md
+    if (postbackData.startsWith('demo=')) {
+      const key = postbackData.slice('demo='.length) as DemoIndustryKey;
+      const def = DEMO_INDUSTRIES[key];
+      if (def) {
+        if (def.richMenuId) {
+          try {
+            await lineClient.linkRichMenuToUser(userId, def.richMenuId);
+          } catch (err) {
+            console.error('linkRichMenuToUser failed', err);
+          }
+        }
+        for (const tid of INDUSTRY_TAG_IDS) {
+          await removeTagFromFriend(db, friend.id, tid).catch(() => {});
+        }
+        if (def.industryTagId) {
+          await addTagToFriend(db, friend.id, def.industryTagId).catch(() => {});
+        }
+        await addTagToFriend(db, friend.id, def.actionTagId).catch(() => {});
+        const messages: ReturnType<typeof buildMessage>[] = [];
+        if (def.explain) messages.push(buildMessage('text', def.explain));
+        if (def.greeting) messages.push(buildMessage(def.greetingType === 'flex' ? 'flex' : 'text', def.greeting));
+        if (messages.length > 0) {
+          try {
+            await lineClient.replyMessage(event.replyToken, messages);
+          } catch (err) {
+            console.error('demo industry replyMessage failed, falling back to push', err);
+            try {
+              await lineClient.pushMessage(userId, messages);
+            } catch (e2) {
+              console.error('demo industry pushMessage fallback failed', e2);
+            }
+          }
+        }
+        return;
+      }
+    }
+
+    if (postbackData.startsWith('demo_action=')) {
+      const key = postbackData.slice('demo_action='.length);
+      const def = DEMO_ACTIONS[key];
+      if (def) {
+        // 登録ガチャ1回制限: タグが既に付いていたら案内して終了
+        if (key === '飲食_登録ガチャ表示') {
+          const alreadyGacha = await db.prepare(
+            'SELECT 1 FROM friend_tags WHERE friend_id = ? AND tag_id = ? LIMIT 1'
+          ).bind(friend.id, def.actionTagId).first();
+          if (alreadyGacha) {
+            const msg = buildMessage('text', '登録ガチャはすでにお済みです✨\n\n「本日のおすすめ」や「予約」もぜひご利用ください。');
+            await lineClient.replyMessage(event.replyToken, [msg]).catch(async () => {
+              await lineClient.pushMessage(userId, [msg]).catch(() => {});
+            });
+            return;
+          }
+        }
+
+        await addTagToFriend(db, friend.id, def.actionTagId).catch(() => {});
+        if (def.switchRmToMain) {
+          await lineClient.linkRichMenuToUser(userId, DEMO_RICH_MENU_IDS.main).catch((err) => {
+            console.error('switchRmToMain failed', err);
+          });
+        }
+        let message: ReturnType<typeof buildMessage> | null = null;
+        if ((def.kind === 'text' || def.kind === 'flex') && def.contentOptions && def.contentOptions.length > 0) {
+          const picked = def.contentOptions[Math.floor(Math.random() * def.contentOptions.length)];
+          message = buildMessage(def.kind, picked, def.altText);
+        } else if ((def.kind === 'text' || def.kind === 'flex') && def.content) {
+          message = buildMessage(def.kind, def.content, def.altText);
+        } else if (def.kind === 'lookup' && def.lookupKeyword) {
+          const row = await db
+            .prepare(`SELECT response_type, response_content FROM auto_replies WHERE keyword = ? AND is_active = 1 LIMIT 1`)
+            .bind(def.lookupKeyword)
+            .first<{ response_type: string; response_content: string }>();
+          if (row) {
+            const expanded = expandVariables(row.response_content, friend as { id: string; display_name: string | null; user_id: string | null }, workerUrl, liffUrl);
+            message = buildMessage(row.response_type, expanded);
+          }
+        } else if (def.kind === 'form' && def.formId && liffUrl) {
+          const separator = liffUrl.includes('?') ? '&' : '?';
+          const formUrl = `${liffUrl}${separator}page=form&id=${def.formId}`;
+          const flex = {
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                { type: 'text', text: def.altText ?? 'フォームを開く', wrap: true, size: 'md', weight: 'bold' },
+                { type: 'text', text: '下のボタンから開いてください。', wrap: true, size: 'sm', color: '#555555', margin: 'md' },
+              ],
+            },
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              spacing: 'sm',
+              contents: [
+                {
+                  type: 'button',
+                  style: 'primary',
+                  color: '#06C755',
+                  action: { type: 'uri', label: 'フォームを開く', uri: formUrl },
+                },
+              ],
+            },
+          };
+          message = buildMessage('flex', JSON.stringify(flex));
+        }
+        if (message) {
+          try {
+            await lineClient.replyMessage(event.replyToken, [message]);
+          } catch (err) {
+            console.error('demo action replyMessage failed, falling back to push', err);
+            try {
+              await lineClient.pushMessage(userId, [message]);
+            } catch (e2) {
+              console.error('demo action pushMessage fallback failed', e2);
+            }
+          }
+        }
+        return;
+      }
+    }
 
     // Match postback data against auto_replies (exact match on keyword)
     const autoReplyQuery = lineAccountId

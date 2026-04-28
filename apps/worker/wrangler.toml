@@ -19,6 +19,10 @@ database_name = "line-crm"
 database_id = "263ee34d-83d1-4b8b-bd4b-3eac7fab70aa"
 migrations_dir = "../../packages/db/migrations"
 
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "line-harness-images"
+
 [triggers]
 crons = ["*/5 * * * *"]
 
