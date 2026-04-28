@@ -54,6 +54,7 @@ export type Env = {
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;
     API_KEY: string;
+    LEGACY_API_KEY?: string;
     LIFF_URL: string;
     LINE_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_ID: string;

@@ -44,9 +44,18 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     return next();
   }
 
-  // Fallback: env API_KEY acts as owner
+  // Fallback: env API_KEY acts as owner (current rotation slot)
   if (token === c.env.API_KEY) {
     c.set('staff', { id: 'env-owner', name: 'Owner', role: 'owner' as const });
+    console.log('[auth] accept_via=API_KEY');
+    return next();
+  }
+
+  // Legacy fallback: LEGACY_API_KEY accepted during rotation grace period.
+  // Delete this secret after soak (accept_via=LEGACY_API_KEY count = 0) to revoke old key.
+  if (c.env.LEGACY_API_KEY && token === c.env.LEGACY_API_KEY) {
+    c.set('staff', { id: 'env-owner-legacy', name: 'Owner (legacy)', role: 'owner' as const });
+    console.log('[auth] accept_via=LEGACY_API_KEY');
     return next();
   }
 
