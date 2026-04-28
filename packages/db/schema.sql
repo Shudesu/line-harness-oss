@@ -25,12 +25,22 @@ CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
 -- ============================================================
 -- Tags
 -- ============================================================
+CREATE TABLE IF NOT EXISTS tag_groups (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
 CREATE TABLE IF NOT EXISTS tags (
   id         TEXT PRIMARY KEY,
   name       TEXT UNIQUE NOT NULL,
   color      TEXT NOT NULL DEFAULT '#3B82F6',
+  group_id   TEXT REFERENCES tag_groups (id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_tags_group_id ON tags (group_id);
 
 -- ============================================================
 -- Friend <-> Tag join

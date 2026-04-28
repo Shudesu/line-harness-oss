@@ -1,6 +1,7 @@
 import type {
   Friend,
   Tag,
+  TagGroup,
   Scenario,
   ScenarioStep,
   ApiResponse,
@@ -156,13 +157,34 @@ export const api = {
   tags: {
     list: () =>
       fetchApi<ApiResponse<Tag[]>>('/api/tags'),
-    create: (data: { name: string; color: string }) =>
+    create: (data: { name: string; color: string; groupId?: string | null }) =>
       fetchApi<ApiResponse<Tag>>('/api/tags', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    update: (id: string, data: { name?: string; color?: string; groupId?: string | null }) =>
+      fetchApi<ApiResponse<Tag>>(`/api/tags/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/tags/${id}`, { method: 'DELETE' }),
+  },
+  tagGroups: {
+    list: () =>
+      fetchApi<ApiResponse<TagGroup[]>>('/api/tag-groups'),
+    create: (data: { name: string; sortOrder?: number }) =>
+      fetchApi<ApiResponse<TagGroup>>('/api/tag-groups', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: { name?: string; sortOrder?: number }) =>
+      fetchApi<ApiResponse<TagGroup>>(`/api/tag-groups/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/tag-groups/${id}`, { method: 'DELETE' }),
   },
   scenarios: {
     list: (params?: { accountId?: string }) => {

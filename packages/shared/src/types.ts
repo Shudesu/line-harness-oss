@@ -42,7 +42,16 @@ export interface Tag {
   name: string;
   /** 表示色 (HEX: #RRGGBB) */
   color: string;
+  /** 所属グループID (未分類は null) */
+  groupId: string | null;
   /** 作成日時 (ISO 8601) */
+  createdAt: string;
+}
+
+export interface TagGroup {
+  id: string;
+  name: string;
+  sortOrder: number;
   createdAt: string;
 }
 
