@@ -370,34 +370,39 @@ export default function ChatsPage() {
     }
   }, [selectedChatId, loadChatDetail])
 
-  // 詳細が新しくロードされたら最下部（＝最新メッセージ）までスクロールする。
-  // そこから上にスクロールすれば過去のメッセージを辿れる（LINE受信画面と同じUX）。
-  // ユーザーが手動でスクロールしたら delayed auto-scroll は発動させない。
+  // チャット切替時のみ強制で最下部、それ以外(ポーリング更新で新着が来た等)は
+  // 「ユーザーが最下部付近にいた時だけ」追従。上にスクロール中なら現在位置を保持。
+  const wasNearBottomRef = useRef(true)
+  const prevChatIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (!chatDetail?.messages || chatDetail.messages.length === 0) return
     const el = messagesScrollRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-    let userScrolled = false
-    const onScroll = () => {
-      if (!messagesScrollRef.current) return
-      const current = messagesScrollRef.current
-      // 下端から一定以上離れたらユーザー操作とみなす
-      if (current.scrollHeight - current.scrollTop - current.clientHeight > 20) {
-        userScrolled = true
-      }
+
+    const chatChanged = prevChatIdRef.current !== chatDetail.id
+    if (chatChanged) {
+      prevChatIdRef.current = chatDetail.id ?? null
+      wasNearBottomRef.current = true
+      el.scrollTop = el.scrollHeight
+      // 画像/Flex の高さ確定後に再追従
+      const id = window.setTimeout(() => {
+        if (!messagesScrollRef.current) return
+        messagesScrollRef.current.scrollTop = messagesScrollRef.current.scrollHeight
+      }, 150)
+      return () => window.clearTimeout(id)
     }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    // 画像/Flex の表示後に高さが増える場合に追従するフォロワー（ユーザーがスクロール済みなら発動させない）
-    const id = window.setTimeout(() => {
-      if (userScrolled || !messagesScrollRef.current) return
-      messagesScrollRef.current.scrollTop = messagesScrollRef.current.scrollHeight
-    }, 150)
-    return () => {
-      window.clearTimeout(id)
-      el.removeEventListener('scroll', onScroll)
+
+    if (wasNearBottomRef.current) {
+      el.scrollTop = el.scrollHeight
     }
   }, [chatDetail?.id, chatDetail?.messages?.length])
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesScrollRef.current
+    if (!el) return
+    // 100px以内なら「最下部にいる」とみなす
+    wasNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+  }, [])
 
   const handleSelectChat = (chatId: string) => {
     setSelectedChatId(chatId)
@@ -673,7 +678,7 @@ export default function ChatsPage() {
               </div>
 
               {/* Messages — LINE-style chat bubbles */}
-              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
+              <div ref={messagesScrollRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
                 {(!chatDetail.messages || chatDetail.messages.length === 0) ? (
                   <div className="text-center py-8">
                     <p className="text-white/60 text-sm">メッセージはまだありません。</p>
