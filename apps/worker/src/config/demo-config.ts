@@ -8,10 +8,11 @@ export type DemoIndustryKey = 'restaurant' | 'salon' | 'school' | 'main';
 export type DemoActionKind = 'text' | 'flex' | 'form' | 'lookup';
 
 export interface ActionDef {
-  actionTagId: string;
+  actionTagId?: string;              // 省略時はタグ付与しない
   kind: DemoActionKind;
   content?: string;
-  contentOptions?: readonly string[];  // ランダム選択用（ガチャ等）
+  contentOptions?: readonly string[];   // ランダム選択用（ガチャ等）
+  contentMultiple?: readonly string[];  // 複数バルーン一括送信用
   formId?: string;
   altText?: string;
   switchRmToMain?: true;
@@ -24,7 +25,12 @@ export interface IndustryDef {
   actionTagId: string;
   explain: string | null;
   greeting: string | null;
-  greetingType?: 'flex';  // greeting が FlexJSON 文字列のとき指定
+}
+
+// 業種別デモ：店主向け説明書（メインRMボタン押下時に送る2バルーン+CTA）
+export interface IndustryIntroDef {
+  bubble1Text: string;     // 説明書 吹き出し①（テキスト）
+  bubble2Flex: string;     // 説明書 吹き出し②（Flex本文 + 「デモを開始する」ボタン）
 }
 
 // ─── タグID ──────────────────────────────────────────────
@@ -77,31 +83,26 @@ const F = {
 // 新RM作成後、ここを差し替える。差し替え前でも tagging / reply は動くが
 // linkRichMenuToUser は richMenuId が空文字なら呼び出しをスキップする実装。
 export const DEMO_RICH_MENU_IDS = {
-  main:       'richmenu-0bb6ec3b0574034ceaee93b0d5f08f43',
-  restaurant: 'richmenu-f8b9c605ddddec3883cdc0c4c4a3e3d0',
+  main:       'richmenu-c0116681cb64406d22fe343ad78bd4c1',
+  restaurant: 'richmenu-ff34fffe93e5ebe0ae38d10692d6ea72',
   salon:      'richmenu-b864e092171201115deb97905b83f592',
   school:     'richmenu-f8f94969ec3dc7accaaa28dd73896d08',
 } as const;
 
 // ─── 解説 / あいさつ本文 ────────────────────────────────
-const EXPLAIN_RESTAURANT = `飲食店デモへようこそ。
+// 文面正本: 配信文面.md §業種別デモ入口文面（実装前正本 / 2026-04-28 リライト）
+// 構造: メインRMの業種ボタン押下 → demo_intro= で「店主向け説明書 2バルーン + デモを開始するCTA」
+//       CTA押下 → demo= で「業種別RM切替 + 業種タグ + お客さん向けあいさつ 1バルーン」
 
-登録 → 特典配布 → 来店後フォロー
-の流れをこのLINEで体験できます。
-
-まずはガチャで特典を受け取ってください。`;
-
-// FlexJSON: 挨拶カード＋登録ガチャボタン
-const GREETING_RESTAURANT_FLEX = JSON.stringify({
+// 業種別デモ：説明書②（吹き出し②本文 + 「デモを開始する」ボタン）共通ビルダ
+const buildIntroBubble2Flex = (bodyText: string, demoKey: 'restaurant' | 'salon' | 'school'): string => JSON.stringify({
   type: 'bubble',
   body: {
     type: 'box',
     layout: 'vertical',
     paddingAll: '20px',
     contents: [
-      { type: 'text', text: 'ご登録ありがとうございます', weight: 'bold', size: 'xl', color: '#1e293b', wrap: true },
-      { type: 'text', text: 'LINE登録の方限定で、今すぐ使える特典をご用意しています。まずは登録ガチャを回して、あなたの特典を確認してください。', size: 'sm', color: '#64748b', wrap: true, margin: 'lg' },
-      { type: 'text', text: 'お席の予約や本日のおすすめも、このLINEから確認できます。', size: 'sm', color: '#64748b', wrap: true, margin: 'md' },
+      { type: 'text', text: bodyText, size: 'sm', color: '#1e293b', wrap: true },
     ],
   },
   footer: {
@@ -113,77 +114,154 @@ const GREETING_RESTAURANT_FLEX = JSON.stringify({
         type: 'button',
         style: 'primary',
         color: '#06C755',
-        action: { type: 'postback', label: '🎰 登録ガチャを回す', data: 'demo_action=飲食_登録ガチャ表示', displayText: '登録ガチャを回す' },
+        action: { type: 'postback', label: '▶ デモを開始する', data: `demo=${demoKey}`, displayText: 'デモを開始する' },
       },
     ],
   },
 });
 
-const EXPLAIN_SALON = `美容サロン・整体向けデモに切り替えました。
+// ── 飲食店 ─────────────────────────────────
+const INTRO_RESTAURANT_BUBBLE1 = `🍽 登録のあとで止まりがちなLINE
+━━━━━━━━━━━━
 
-事前カウンセリングをLINEで受け取り、
-2回目以降の予約をLINEへ寄せる想定です。
+飲食店のLINE、
+登録までは作るんですが
+そこから止まりがちです。
 
-予約前日はキャンセル防止、
-施術後はホームケアや追加メニュー案内までつなげます。`;
+会計時に「LINEどうぞ」と渡して
+クーポン1枚で終わり、
+リピートに効いたかも見えない。
+あるあるです。`;
 
-const GREETING_SALON = `ご登録ありがとうございます。
+const INTRO_RESTAURANT_BUBBLE2_BODY = `このデモで触れるのは3つ。
 
-施術前に、今のお悩みやご希望を
-LINEで簡単に伺っています。
+✅ 登録時に渡す特典ガチャ
+✅ LINE内で完結する席予約
+✅ 来店後1ヶ月以内の再来店メッセージ
 
-当日スムーズにご案内するために、
-まずはカウンセリングシートをご記入ください。
+下の「デモを開始する」を押すと
+お客さんとしてお店のLINEに登録した
+ところからスタートします。`;
 
-下のメニューから
-「カウンセリング」を押してみてください。`;
+const GREETING_RESTAURANT = `🍽 ご登録ありがとうございます
+━━━━━━━━━━━━
 
-const EXPLAIN_SCHOOL = `教室・スクール向けデモに切り替えました。
-
-レベル診断で目的や不安を聞き、
-その人に合う体験内容へ案内する想定です。
-
-診断だけで止まった人にも、
-3日後の不安解消メッセージで無理なく後追いします。`;
-
-const GREETING_SCHOOL = `ご登録ありがとうございます。
-
-このLINEでは、
-あなたに合う始め方を簡単に診断できます。
-
-経験や不安に合わせて、
-おすすめの体験内容をご案内します。
+このLINEでは
+次回使える特典、席予約、
+本日のおすすめが受け取れます。
 
 まずは下のメニューから
-「レベル診断」を押してみてください。`;
+「登録ガチャ」を回してみてください。
+次回1ヶ月以内に使える特典が出ます👇`;
 
+// ── サロン・整体 ──────────────────────────
+const INTRO_SALON_BUBBLE1 = `💆 サロンの「LINE登録してもらう理由」
+━━━━━━━━━━━━
+
+サロンや整体って
+「LINEに登録してください」
+だけだと弱いんですよね。
+
+クーポンを配って終わり、
+にもなりやすい。
+
+でも
+「施術前のカウンセリングを
+LINEで先にやっています」
+と言えると、
+登録してもらう理由が自然になります。`;
+
+const INTRO_SALON_BUBBLE2_BODY = `このデモで触れるのは
+カウンセリングを入口にした流れ。
+
+✅ 施術前カウンセリングシート
+✅ 悩み別のおすすめメニュー返答
+✅ 施術後ケア + 次回提案
+
+下の「デモを開始する」を押すと
+お客さんとしてサロンに登録した
+ところからスタートします。`;
+
+// 想定シーン: 店頭で「カウンセリングはLINEでやってます」と促されて施術直前に登録した直後
+const GREETING_SALON = `💆 ご登録ありがとうございます
+━━━━━━━━━━━━
+
+カウンセリングは
+このLINEで承っています。
+
+ご記入いただいた内容をもとに
+本日の施術をご提案します。
+
+下のメニューから
+「カウンセリング」を押してください👇`;
+
+// ── 教室・スクール ────────────────────────
+const INTRO_SCHOOL_BUBBLE1 = `🎓 問い合わせは来るのに、体験まで来ない
+━━━━━━━━━━━━
+
+教室・スクールあるあるです。
+
+問い合わせや資料請求は来るのに
+体験予約までは進まない。
+体験までは来てくれても、
+入会で止まる。
+
+止まってる理由はだいたい
+「自分のレベルでいいのか」
+「合わなかったらどうしよう」
+の不安です。`;
+
+const INTRO_SCHOOL_BUBBLE2_BODY = `このデモで触れるのは
+その不安をLINEで先に潰す流れ。
+
+✅ レベル診断 → コース提案
+✅ 体験予約フォーム
+✅ 申込まなかった人への3日後フォロー
+
+下の「デモを開始する」を押すと
+お客さんとして教室に登録した
+ところからスタートします。`;
+
+const GREETING_SCHOOL = `🎓 ご登録ありがとうございます
+━━━━━━━━━━━━
+
+このLINEでは
+あなたに合う始め方を
+30秒で診断できます。
+
+まずは下のメニューから
+「レベル診断」を押してください。
+体験コースの案内まで
+このLINEで完結します👇`;
+
+// ── メインに戻る ─────────────────────────
 const BACK_TO_MAIN_TEXT = `メインメニューに戻りました。
 
 別の業種デモを試したい場合は、
 上段の3つのデモボタンから選んでください。`;
 
 // ─── 業種定義 ──────────────────────────────────────────
+// demo= 押下時（=「デモを開始する」CTA）の挙動: RM切替 + 業種タグ + あいさつ1バルーン
 export const DEMO_INDUSTRIES: Record<DemoIndustryKey, IndustryDef> = {
   restaurant: {
     richMenuId:    DEMO_RICH_MENU_IDS.restaurant,
     industryTagId: T.industry_restaurant,
     actionTagId:   T.main_restaurant,
-    explain:       EXPLAIN_RESTAURANT,
-    greeting:      GREETING_RESTAURANT_FLEX,
-    greetingType:  'flex',
+    explain:       null,
+    greeting:      GREETING_RESTAURANT,
   },
   salon: {
     richMenuId:    DEMO_RICH_MENU_IDS.salon,
     industryTagId: T.industry_salon,
     actionTagId:   T.main_salon,
-    explain:       EXPLAIN_SALON,
+    explain:       null,
     greeting:      GREETING_SALON,
   },
   school: {
     richMenuId:    DEMO_RICH_MENU_IDS.school,
     industryTagId: T.industry_school,
     actionTagId:   T.main_school,
-    explain:       EXPLAIN_SCHOOL,
+    explain:       null,
     greeting:      GREETING_SCHOOL,
   },
   main: {
@@ -192,6 +270,23 @@ export const DEMO_INDUSTRIES: Record<DemoIndustryKey, IndustryDef> = {
     actionTagId:   T.back_to_main,
     explain:       BACK_TO_MAIN_TEXT,
     greeting:      null,
+  },
+};
+
+// demo_intro= 押下時（=メインRMの業種ボタン）の挙動: 説明書2バルーン+CTA Flex のみ。
+// RM切替・業種タグ付与はしない。CTA「デモを開始する」のpostback dataは `demo=<industry>`。
+export const DEMO_INDUSTRY_INTROS: Record<Exclude<DemoIndustryKey, 'main'>, IndustryIntroDef> = {
+  restaurant: {
+    bubble1Text: INTRO_RESTAURANT_BUBBLE1,
+    bubble2Flex: buildIntroBubble2Flex(INTRO_RESTAURANT_BUBBLE2_BODY, 'restaurant'),
+  },
+  salon: {
+    bubble1Text: INTRO_SALON_BUBBLE1,
+    bubble2Flex: buildIntroBubble2Flex(INTRO_SALON_BUBBLE2_BODY, 'salon'),
+  },
+  school: {
+    bubble1Text: INTRO_SCHOOL_BUBBLE1,
+    bubble2Flex: buildIntroBubble2Flex(INTRO_SCHOOL_BUBBLE2_BODY, 'school'),
   },
 };
 
@@ -210,7 +305,35 @@ const REST_IMAGE_URLS = {
   gachaDiscount: 'https://line-harness.line-harness-shota-test.workers.dev/images/restaurant-gacha-discount.png',
 } as const;
 
-const buildRestGachaFlex = (imageUrl: string, title: string, description: string): string => JSON.stringify({
+// FlexJSON: ガチャ演出カード（登録ガチャ1タップ目）
+const GACHA_PRODUCTION_FLEX = JSON.stringify({
+  type: 'bubble',
+  body: {
+    type: 'box',
+    layout: 'vertical',
+    paddingAll: '20px',
+    spacing: 'md',
+    contents: [
+      { type: 'text', text: '🎰 ガラガラ ガラガラ…', weight: 'bold', size: 'xl', color: '#1e293b', wrap: true },
+      { type: 'text', text: 'ただいま抽選中です。', size: 'sm', color: '#64748b', wrap: true },
+    ],
+  },
+  footer: {
+    type: 'box',
+    layout: 'vertical',
+    paddingAll: '16px',
+    contents: [
+      {
+        type: 'button',
+        style: 'primary',
+        color: '#06C755',
+        action: { type: 'postback', label: '結果を見る', data: 'demo_action=飲食_ガチャ結果表示', displayText: '結果を見る' },
+      },
+    ],
+  },
+});
+
+const buildRestGachaFlex = (imageUrl: string, title: string): string => JSON.stringify({
   type: 'bubble',
   hero: {
     type: 'image',
@@ -224,10 +347,10 @@ const buildRestGachaFlex = (imageUrl: string, title: string, description: string
     layout: 'vertical',
     spacing: 'sm',
     contents: [
-      { type: 'text', text: '🎰 おめでとうございます！', weight: 'bold', size: 'lg', color: '#1e293b', wrap: true },
+      { type: 'text', text: '🎉 当たり！', weight: 'bold', size: 'lg', color: '#1e293b', wrap: true },
       { type: 'text', text: title, weight: 'bold', size: 'xl', color: '#ff6b35', wrap: true },
-      { type: 'text', text: description, size: 'sm', color: '#64748b', wrap: true },
-      { type: 'text', text: 'スタッフにこの画面をご提示ください。', size: 'xs', color: '#94a3b8', wrap: true, margin: 'md' },
+      { type: 'text', text: '次回1ヶ月以内のご来店でご利用いただけます。', size: 'sm', color: '#64748b', wrap: true },
+      { type: 'text', text: 'お会計時にこの画面を店員にお見せください。', size: 'xs', color: '#94a3b8', wrap: true, margin: 'md' },
     ],
   },
   footer: {
@@ -244,23 +367,11 @@ const buildRestGachaFlex = (imageUrl: string, title: string, description: string
   },
 });
 
-// ガチャ結果 3パターン（ランダム選択）
+// ガチャ結果 3パターン（ランダム選択）— 文面正本: 配信文面.md §飲食店デモ：登録ガチャ結果
 export const REST_GACHA_RESULTS = [
-  buildRestGachaFlex(
-    REST_IMAGE_URLS.gachaDrink,
-    '【A特典】ドリンク1杯サービス',
-    '本日のご来店時にお使いいただけます。',
-  ),
-  buildRestGachaFlex(
-    REST_IMAGE_URLS.gachaDessert,
-    '【B特典】デザートサービス',
-    'お食事のご注文時にお申し付けください。',
-  ),
-  buildRestGachaFlex(
-    REST_IMAGE_URLS.gachaDiscount,
-    '【C特典】次回来店時10%OFF',
-    '有効期限: 本日から1ヶ月以内',
-  ),
+  buildRestGachaFlex(REST_IMAGE_URLS.gachaDrink,   'ドリンク1杯サービス'),
+  buildRestGachaFlex(REST_IMAGE_URLS.gachaDessert, 'お好きな一品サービス'),
+  buildRestGachaFlex(REST_IMAGE_URLS.gachaDiscount, 'お会計から10%OFF'),
 ] as const;
 
 // FlexJSON: メニュー表画像＋予約ボタンだけのおすすめカード
@@ -289,20 +400,51 @@ const REST_RECOMMEND_FLEX = JSON.stringify({
   },
 });
 
-// 来店後フォロー例（RMの「1ヶ月以内クーポン」ボタンから発火）
-const REST_COUPON_TEXT = `【来店後フォロー例】
+// 来店後フォロー例 3バルーン — 文面正本: 配信文面.md §飲食店：来店後フォロー例
+const REST_FOLLOW_MSG1 = `🍽 先日はありがとうございました
 
-本日はご来店ありがとうございました。
+先日はお越しいただき
+ありがとうございました！
 
-今日の感想があれば、
-ぜひこのLINEに送ってください。
+お料理、お楽しみいただけましたか？
 
-次回のご予約もここからできます。
-「また来たい」と思ったとき、
-そのまま予約窓口として使えます。
+次回のご予約は
+下のメニュー「席を予約する」から
+そのまま取れます。
 
-※ このメッセージは来店当日の夜に
-　 自動送信される想定です。`;
+またのお越しをお待ちしています。`;
+
+const REST_FOLLOW_MSG2 = `🍽 そろそろもう一度、いかがですか？
+
+前回のご来店から
+そろそろ1ヶ月になりますね。
+
+ご登録時の特典の期限も
+近づいてきました。
+
+「そういえばあそこ
+また行きたかった」という方、
+このタイミングでぜひ。
+
+▼ 席を予約する`;
+
+const REST_FOLLOW_MSG3 = `💡 来店後フォローはLINEが一番効く
+━━━━━━━━━━━━
+
+新規集客より
+一度来た人をもう一度呼ぶほうが
+ずっと少ない手間で済むんですよね。
+
+このデモみたいに
+✅ 来店後3日目にお礼
+✅ 1ヶ月後にリマインド
+を自動で届く流れにしておくと、
+「忘れてただけ」を防げます。
+
+文面・タイミング・特典の中身は
+お店に合わせて変えられます。
+
+この後、その2通の例をお送りします。`;
 
 const SALON_CARE_TEXT = `今日の状態だと、
 ご自宅でのケアを少し足すと
@@ -380,10 +522,11 @@ const AFTER_DEMO_CONSULT_TEXT = `30分Zoomで、
 
 export const DEMO_ACTIONS: Record<string, ActionDef> = {
   // 飲食
-  '飲食_登録ガチャ表示':   { actionTagId: T.rest_gacha,     kind: 'flex', contentOptions: REST_GACHA_RESULTS, altText: '登録ガチャ結果' },
-  '飲食_予約フォーム表示': { actionTagId: T.rest_form,      kind: 'form', formId: F.rest_form,       altText: '飲食店予約フォーム' },
-  '飲食_おすすめ表示':     { actionTagId: T.rest_recommend, kind: 'flex', content: REST_RECOMMEND_FLEX, altText: '本日のおすすめ' },
-  '飲食_再来店クーポン表示':{actionTagId: T.rest_coupon,    kind: 'text', content: REST_COUPON_TEXT },
+  '飲食_登録ガチャ表示':    { kind: 'flex', content: GACHA_PRODUCTION_FLEX, altText: '登録ガチャ' },
+  '飲食_ガチャ結果表示':    { actionTagId: T.rest_gacha,     kind: 'flex', contentOptions: REST_GACHA_RESULTS, altText: '登録ガチャ結果' },
+  '飲食_予約フォーム表示':  { actionTagId: T.rest_form,      kind: 'form', formId: F.rest_form,       altText: '飲食店予約フォーム' },
+  '飲食_おすすめ表示':      { actionTagId: T.rest_recommend, kind: 'flex', content: REST_RECOMMEND_FLEX, altText: '本日のおすすめ' },
+  '飲食_来店後フォロー表示':{ actionTagId: T.rest_coupon,    kind: 'text', contentMultiple: [REST_FOLLOW_MSG3, REST_FOLLOW_MSG1, REST_FOLLOW_MSG2] },
   // サロン
   '美容_カウンセリング表示':{actionTagId: T.salon_counsel,  kind: 'form', formId: F.salon_counsel,  altText: 'カウンセリングシート' },
   '美容_予約フォーム表示': { actionTagId: T.salon_form,     kind: 'form', formId: F.salon_form,     altText: '初回予約フォーム' },

@@ -18,7 +18,8 @@ import {
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
-import { DEMO_INDUSTRIES, DEMO_ACTIONS, DEMO_RICH_MENU_IDS, INDUSTRY_TAG_IDS, type DemoIndustryKey } from '../config/demo-config.js';
+import { buildMiniDiagnosisReportFlex } from '../services/diagnosis-report-flex.js';
+import { DEMO_INDUSTRIES, DEMO_INDUSTRY_INTROS, DEMO_ACTIONS, DEMO_RICH_MENU_IDS, INDUSTRY_TAG_IDS, type DemoIndustryKey } from '../config/demo-config.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -230,9 +231,34 @@ async function handleEvent(
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
 
     // ─── 業種別デモのショールーム導線 ─────────────────────────────
-    // postback data が "demo=<industry>" / "demo_action=<key>" の場合は
-    // demo-config テーブルを引いて RM切替＋タグ操作＋reply（fallbackでpush）を行う。
-    // 実装スコープ: 業種別デモ設計書.md
+    // 文面正本: 配信文面.md §業種別デモ入口文面
+    //   demo_intro=<industry>: メインRMの業種ボタン押下時。店主向け説明書2バルーン+「デモを開始する」CTAのみ送る。
+    //                          RM切替・業種タグ付与はしない。
+    //   demo=<industry>: 説明書内「デモを開始する」CTA押下時、または main 戻り。
+    //                    RM切替+業種タグ+お客さん向けあいさつ1バルーン。
+    //   demo_action=<key>: 業種別RM内の各機能ボタン。
+    if (postbackData.startsWith('demo_intro=')) {
+      const key = postbackData.slice('demo_intro='.length) as Exclude<DemoIndustryKey, 'main'>;
+      const intro = DEMO_INDUSTRY_INTROS[key];
+      if (intro) {
+        const messages = [
+          buildMessage('text', intro.bubble1Text),
+          buildMessage('flex', intro.bubble2Flex, 'デモの説明'),
+        ];
+        try {
+          await lineClient.replyMessage(event.replyToken, messages);
+        } catch (err) {
+          console.error('demo_intro replyMessage failed, falling back to push', err);
+          try {
+            await lineClient.pushMessage(userId, messages);
+          } catch (e2) {
+            console.error('demo_intro pushMessage fallback failed', e2);
+          }
+        }
+        return;
+      }
+    }
+
     if (postbackData.startsWith('demo=')) {
       const key = postbackData.slice('demo='.length) as DemoIndustryKey;
       const def = DEMO_INDUSTRIES[key];
@@ -253,7 +279,7 @@ async function handleEvent(
         await addTagToFriend(db, friend.id, def.actionTagId).catch(() => {});
         const messages: ReturnType<typeof buildMessage>[] = [];
         if (def.explain) messages.push(buildMessage('text', def.explain));
-        if (def.greeting) messages.push(buildMessage(def.greetingType === 'flex' ? 'flex' : 'text', def.greeting));
+        if (def.greeting) messages.push(buildMessage('text', def.greeting));
         if (messages.length > 0) {
           try {
             await lineClient.replyMessage(event.replyToken, messages);
@@ -274,26 +300,46 @@ async function handleEvent(
       const key = postbackData.slice('demo_action='.length);
       const def = DEMO_ACTIONS[key];
       if (def) {
-        // 登録ガチャ1回制限: タグが既に付いていたら案内して終了
+        // 登録ガチャ1回制限: 演出を見せる前にチェック（ワクワクさせてシャットアウトを防ぐ）
         if (key === '飲食_登録ガチャ表示') {
-          const alreadyGacha = await db.prepare(
-            'SELECT 1 FROM friend_tags WHERE friend_id = ? AND tag_id = ? LIMIT 1'
-          ).bind(friend.id, def.actionTagId).first();
-          if (alreadyGacha) {
-            const msg = buildMessage('text', '登録ガチャはすでにお済みです✨\n\n「本日のおすすめ」や「予約」もぜひご利用ください。');
-            await lineClient.replyMessage(event.replyToken, [msg]).catch(async () => {
-              await lineClient.pushMessage(userId, [msg]).catch(() => {});
-            });
-            return;
+          const gachaResultDef = DEMO_ACTIONS['飲食_ガチャ結果表示'];
+          const gachaTagId = gachaResultDef?.actionTagId;
+          if (gachaTagId) {
+            const alreadyGacha = await db.prepare(
+              'SELECT 1 FROM friend_tags WHERE friend_id = ? AND tag_id = ? LIMIT 1'
+            ).bind(friend.id, gachaTagId).first();
+            if (alreadyGacha) {
+              const msg = buildMessage('text', 'ガチャの特典はすでにお受け取り済みです✨\n\n「本日のおすすめ」や「席を予約する」もぜひ試してみてください。');
+              await lineClient.replyMessage(event.replyToken, [msg]).catch(async () => {
+                await lineClient.pushMessage(userId, [msg]).catch(() => {});
+              });
+              return;
+            }
           }
         }
 
-        await addTagToFriend(db, friend.id, def.actionTagId).catch(() => {});
+        if (def.actionTagId) await addTagToFriend(db, friend.id, def.actionTagId).catch(() => {});
         if (def.switchRmToMain) {
           await lineClient.linkRichMenuToUser(userId, DEMO_RICH_MENU_IDS.main).catch((err) => {
             console.error('switchRmToMain failed', err);
           });
         }
+        // 複数バルーン送信（3バルーン等）
+        if (def.contentMultiple && def.contentMultiple.length > 0) {
+          const messages = def.contentMultiple.map(c => buildMessage('text', c));
+          try {
+            await lineClient.replyMessage(event.replyToken, messages);
+          } catch (err) {
+            console.error('demo action (multiple) replyMessage failed, falling back to push', err);
+            try {
+              await lineClient.pushMessage(userId, messages);
+            } catch (e2) {
+              console.error('demo action (multiple) pushMessage fallback failed', e2);
+            }
+          }
+          return;
+        }
+
         let message: ReturnType<typeof buildMessage> | null = null;
         if ((def.kind === 'text' || def.kind === 'flex') && def.contentOptions && def.contentOptions.length > 0) {
           const picked = def.contentOptions[Math.floor(Math.random() * def.contentOptions.length)];
@@ -485,7 +531,7 @@ async function handleEvent(
               footer: { type: 'box', layout: 'vertical', paddingAll: '16px',
                 contents: [
                   { type: 'button', action: { type: 'message', label: '導入について相談する', text: '導入支援を希望します' }, style: 'primary', color: '#06C755' },
-                  ...(c.env.LIFF_URL ? [{ type: 'button', action: { type: 'uri', label: 'フィードバックを送る', uri: `${c.env.LIFF_URL}?page=form` }, style: 'secondary', margin: 'sm' }] : []),
+                  ...(liffUrl ? [{ type: 'button', action: { type: 'uri', label: 'フィードバックを送る', uri: `${liffUrl}?page=form` }, style: 'secondary', margin: 'sm' }] : []),
                 ],
               },
             }))]);
@@ -533,9 +579,17 @@ async function handleEvent(
     } as const;
     const TAG_UNDIAGNOSED = '87acf0ef-c218-4de3-bffe-66e53177d911';
     const TAG_DIAGNOSED = '247db502-3e68-4951-8d3a-a68a6e0a7180';
+    const TAG_TEMP_CONSULT = 'e8cb3455-5da0-4036-bd94-cb2468e13130';
+    const TAG_TEMP_CASE = 'c210d3a1-facc-4973-94b6-5ed4772a66bd';
+    const TAG_CASE_GUIDED = '0df633bb-7247-4cb1-9d17-309e48111c7a';
+    const TAG_CONSULT_GUIDED = '8ee745a8-a046-4e13-9ff2-1128311f014b';
 
-    // 相談フォームに進む / ちょっと相談する: LIFF フォームへのURIボタン付きFlexを返す（2択挟まず直行）
+    // 相談フォームに進む / ちょっと相談する: 温度感を保存してLIFFフォームへ直行。
     if (incomingText === '相談フォームに進む' || incomingText === 'ちょっと相談する') {
+      await removeTagFromFriend(db, friend.id, TAG_TEMP_CASE).catch(() => {});
+      await addTagToFriend(db, friend.id, TAG_TEMP_CONSULT).catch(() => {});
+      await addTagToFriend(db, friend.id, TAG_CONSULT_GUIDED).catch(() => {});
+
       const FORM_ID = '032491b8-563f-4736-bf0d-e91b911c87ac';
       if (liffUrl) {
         const separator = liffUrl.includes('?') ? '&' : '?';
@@ -570,6 +624,25 @@ async function handleEvent(
       return;
     }
 
+    if (incomingText === 'まず事例を見てみる') {
+      await removeTagFromFriend(db, friend.id, TAG_TEMP_CONSULT).catch(() => {});
+      await addTagToFriend(db, friend.id, TAG_TEMP_CASE).catch(() => {});
+      await addTagToFriend(db, friend.id, TAG_CASE_GUIDED).catch(() => {});
+
+      await lineClient.replyMessage(event.replyToken, [
+        buildMessage('text', [
+          'ありがとうございます！',
+          '',
+          '事例ページは現在リニューアル中です。',
+          '',
+          '準備ができたらお届けしますね。',
+          '',
+          'もし先に相談してみたくなったら、いつでも「ちょっと相談する」と送ってください。',
+        ].join('\n')),
+      ]);
+      return;
+    }
+
     const finMatch = incomingText.match(/^DIAG_FIN_N([1-4])_L([1-4])_G([1-4])$/);
     if (finMatch) {
       const [, n, l, g] = finMatch;
@@ -580,15 +653,15 @@ async function handleEvent(
         await removeTagFromFriend(db, friend.id, TAG_UNDIAGNOSED);
         await addTagToFriend(db, friend.id, TAG_DIAGNOSED);
 
-        const resultKeyword = `DIAG_RESULT_N${n}_L${l}`;
-        const resultRow = await db
-          .prepare(`SELECT response_type, response_content FROM auto_replies WHERE keyword = ? AND response_type = 'flex' AND is_active = 1 LIMIT 1`)
-          .bind(resultKeyword)
-          .first<{ response_type: string; response_content: string }>();
-        if (resultRow) {
-          const expanded = expandVariables(resultRow.response_content, friend as { id: string; display_name: string | null; user_id: string | null }, workerUrl, liffUrl);
-          await lineClient.replyMessage(event.replyToken, [buildMessage(resultRow.response_type, expanded)]);
-        }
+        const resultFlex = buildMiniDiagnosisReportFlex({
+          need: n as '1' | '2' | '3' | '4',
+          lineState: l as '1' | '2' | '3' | '4',
+          industry: g as '1' | '2' | '3' | '4',
+          displayName: friend.display_name,
+        });
+        await lineClient.replyMessage(event.replyToken, [
+          buildMessage('flex', JSON.stringify(resultFlex), 'ミニ診断レポート'),
+        ]);
       } catch (err) {
         console.error('Diagnostic FIN handler error:', err);
       }
