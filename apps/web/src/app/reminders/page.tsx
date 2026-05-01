@@ -5,6 +5,104 @@ import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import FlexPreviewComponent from '@/components/flex-preview'
+
+type TriggerType = 'manual' | 'booking'
+
+// ---------- Flex preview helpers ----------
+
+const SAMPLE_CTX = {
+  date_time: '5/3 (土) 10:00〜',
+  date: '5/3 (土)',
+  time: '10:00',
+  meet_url: 'https://meet.google.com/abc-defg-hij',
+  reschedule_url: 'https://liff.line.me/2008306929-fYBUXXBL',
+  display_name: '隆太郎',
+}
+
+function expandSamplePlaceholders(input: string): string {
+  return input
+    .replace(/\{\{\s*date_time\s*\}\}/g, SAMPLE_CTX.date_time)
+    .replace(/\{\{\s*date\s*\}\}/g, SAMPLE_CTX.date)
+    .replace(/\{\{\s*time\s*\}\}/g, SAMPLE_CTX.time)
+    .replace(/\{\{\s*meet_url\s*\}\}/g, SAMPLE_CTX.meet_url)
+    .replace(/\{\{\s*reschedule_url\s*\}\}/g, SAMPLE_CTX.reschedule_url)
+    .replace(/\{\{\s*display_name\s*\}\}/g, SAMPLE_CTX.display_name)
+}
+
+interface BookingFlexV1Spec {
+  kind: 'booking_flex_v1'
+  heading: string
+  noteText?: string | null
+  primaryButton?: { label: string; uri: string } | null
+  secondaryButton?: { label: string; uri: string } | null
+}
+
+/**
+ * Builds the same Flex bubble as worker's buildBookingFlexFromSpec().
+ * Kept in sync manually — see apps/worker/src/services/booking-notify.ts.
+ */
+function buildBookingFlexBubble(spec: BookingFlexV1Spec): unknown {
+  const heading = expandSamplePlaceholders(spec.heading)
+  const noteText = spec.noteText ? expandSamplePlaceholders(spec.noteText) : null
+  const meetUrl = SAMPLE_CTX.meet_url
+
+  const bodyContents: unknown[] = [
+    { type: 'text', text: heading, weight: 'bold', size: 'lg', color: '#304070', wrap: true },
+    { type: 'separator' },
+    {
+      type: 'box', layout: 'vertical', spacing: 'xs',
+      contents: [
+        { type: 'text', text: '日時', size: 'xs', color: '#888888' },
+        { type: 'text', text: SAMPLE_CTX.date_time, weight: 'bold', size: 'md', wrap: true },
+      ],
+    },
+    {
+      type: 'box', layout: 'vertical', spacing: 'xs',
+      contents: [
+        { type: 'text', text: 'Google Meet', size: 'xs', color: '#888888' },
+        { type: 'text', text: meetUrl, size: 'sm', color: '#304070', wrap: true, action: { type: 'uri', label: 'open', uri: meetUrl } },
+      ],
+    },
+  ]
+  if (noteText) {
+    bodyContents.push({ type: 'text', text: noteText, size: 'xs', color: '#888888', wrap: true, margin: 'md' })
+  }
+
+  const footerButtons: unknown[] = []
+  if (spec.primaryButton?.label) {
+    const uri = expandSamplePlaceholders(spec.primaryButton.uri)
+    if (uri) footerButtons.push({ type: 'button', style: 'primary', color: '#304070', action: { type: 'uri', label: spec.primaryButton.label, uri } })
+  }
+  if (spec.secondaryButton?.label) {
+    const uri = expandSamplePlaceholders(spec.secondaryButton.uri)
+    if (uri) footerButtons.push({ type: 'button', style: 'secondary', margin: 'md', action: { type: 'uri', label: spec.secondaryButton.label, uri } })
+  }
+
+  const bubble: Record<string, unknown> = {
+    type: 'bubble',
+    body: { type: 'box', layout: 'vertical', spacing: 'md', contents: bodyContents },
+  }
+  if (footerButtons.length > 0) {
+    bubble.footer = { type: 'box', layout: 'vertical', spacing: 'md', contents: footerButtons }
+  }
+  return bubble
+}
+
+/**
+ * Returns Flex JSON suitable for FlexPreviewComponent.
+ * - booking_flex_v1 spec → builds the same Flex bubble worker produces
+ * - raw Flex JSON → passed through
+ * - invalid JSON → null (caller should hide preview)
+ */
+function getRenderableFlex(messageContent: string): string | null {
+  let parsed: unknown
+  try { parsed = JSON.parse(messageContent) } catch { return null }
+  if (parsed && typeof parsed === 'object' && (parsed as { kind?: string }).kind === 'booking_flex_v1') {
+    return JSON.stringify(buildBookingFlexBubble(parsed as BookingFlexV1Spec))
+  }
+  return JSON.stringify(parsed)
+}
 
 type TriggerType = 'manual' | 'booking'
 
@@ -501,9 +599,21 @@ export default function RemindersPage() {
                                         {messageTypeLabels[step.messageType] ?? step.messageType}
                                       </span>
                                     </div>
-                                    <p className="text-xs text-gray-600 whitespace-pre-wrap break-words line-clamp-3">
-                                      {step.messageContent}
-                                    </p>
+                                    {step.messageType === 'flex' ? (() => {
+                                      const flex = getRenderableFlex(step.messageContent)
+                                      return flex ? (
+                                        <div className="mt-2 p-3 bg-white border border-gray-200 rounded-md max-w-[340px]">
+                                          <div className="text-xs text-gray-400 mb-2">プレビュー (サンプルデータ展開)</div>
+                                          <FlexPreviewComponent content={flex} maxWidth={300} />
+                                        </div>
+                                      ) : (
+                                        <p className="text-xs text-red-500 mt-1">⚠️ Flex JSON が壊れています</p>
+                                      )
+                                    })() : (
+                                      <p className="text-xs text-gray-600 whitespace-pre-wrap break-words line-clamp-3">
+                                        {step.messageContent}
+                                      </p>
+                                    )}
                                   </div>
                                   <button
                                     onClick={() => handleDeleteStep(step.id)}
