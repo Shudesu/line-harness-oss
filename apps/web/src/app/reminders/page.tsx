@@ -104,8 +104,6 @@ function getRenderableFlex(messageContent: string): string | null {
   return JSON.stringify(parsed)
 }
 
-type TriggerType = 'manual' | 'booking'
-
 interface Reminder {
   id: string
   name: string
