@@ -18,6 +18,50 @@ import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 
+/**
+ * メッセージ/ポストバック等のwebhookで友だち未登録だった場合に
+ * プロファイルを取得して即座に upsert するバックフィル。
+ *
+ * LINE Harness導入前に友だち追加した既存730名等は follow webhook を
+ * 取り損ねているため line_user_id が DB に無く、push もメール通知も
+ * できない。ユーザーが何かしらアクション（メッセージ/ボタンタップ）
+ * したタイミングで自動補填する。
+ */
+async function ensureFriend(
+  db: D1Database,
+  lineClient: LineClient,
+  userId: string,
+  lineAccountId: string | null,
+): Promise<Awaited<ReturnType<typeof getFriendByLineUserId>>> {
+  const existing = await getFriendByLineUserId(db, userId);
+  if (existing) return existing;
+
+  console.log(`[ensureFriend] backfill missing friend userId=${userId}`);
+  let profile;
+  try {
+    profile = await lineClient.getProfile(userId);
+  } catch (err) {
+    console.error(`[ensureFriend] getProfile failed for ${userId}:`, err);
+    return null;
+  }
+
+  const friend = await upsertFriend(db, {
+    lineUserId: userId,
+    displayName: profile?.displayName ?? null,
+    pictureUrl: profile?.pictureUrl ?? null,
+    statusMessage: profile?.statusMessage ?? null,
+  });
+
+  if (lineAccountId) {
+    await db
+      .prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
+      .bind(lineAccountId, jstNow(), friend.id)
+      .run();
+  }
+  console.log(`[ensureFriend] backfilled friend.id=${friend.id} displayName=${profile?.displayName ?? 'null'}`);
+  return friend;
+}
+
 const webhook = new Hono<Env>();
 
 webhook.post('/webhook', async (c) => {
@@ -197,7 +241,7 @@ async function handleEvent(
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await ensureFriend(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
@@ -243,7 +287,7 @@ async function handleEvent(
   if (event.type === 'message' && event.message.type !== 'text') {
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await ensureFriend(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const msg = event.message as { type: string; fileName?: string; title?: string };
@@ -273,7 +317,7 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await ensureFriend(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const incomingText = textMessage.text;

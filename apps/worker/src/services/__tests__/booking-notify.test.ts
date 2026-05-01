@@ -260,10 +260,11 @@ describe('processBookingReminders', () => {
     const opts = getBookingsForReminder.mock.calls[0][1];
     expect(opts.startFrom).toMatch(/\+09:00$/);
     expect(opts.startTo).toMatch(/\+09:00$/);
-    // Body regression: LINE reminder text should render new mechanic-interview format
+    // Body regression: LINE reminder is now Flex with Meet URL button
     const [, messages] = pushMessage.mock.calls[0];
-    expect(messages[0].text).toContain('明日、整備士面談');
-    expect(messages[0].text).toContain('10:00');
+    expect(messages[0].type).toBe('flex');
+    expect(messages[0].altText).toContain('【明日】');
+    expect(messages[0].altText).toContain('10:00');
   });
 
   it('skips booking where reminder_24h_sent is already true', async () => {
