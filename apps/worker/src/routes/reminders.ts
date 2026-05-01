@@ -38,6 +38,7 @@ reminders.get('/api/reminders', async (c) => {
         name: r.name,
         description: r.description,
         isActive: Boolean(r.is_active),
+        triggerType: r.trigger_type ?? 'manual',
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       })),
@@ -63,6 +64,7 @@ reminders.get('/api/reminders/:id', async (c) => {
         name: reminder.name,
         description: reminder.description,
         isActive: Boolean(reminder.is_active),
+        triggerType: reminder.trigger_type ?? 'manual',
         createdAt: reminder.created_at,
         updatedAt: reminder.updated_at,
         steps: steps.map((s) => ({

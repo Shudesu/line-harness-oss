@@ -6,6 +6,8 @@ export interface ReminderRow {
   name: string;
   description: string | null;
   is_active: number;
+  /** 'manual' = ユーザー定義カスタム / 'booking' = 予約紐付き自動 */
+  trigger_type: 'manual' | 'booking';
   created_at: string;
   updated_at: string;
 }

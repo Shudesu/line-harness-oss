@@ -454,6 +454,8 @@ export interface Reminder {
   name: string;
   description: string | null;
   isActive: boolean;
+  /** 'manual' = ユーザー定義カスタム / 'booking' = 予約紐付き自動 (booking-notify) */
+  triggerType: 'manual' | 'booking';
   createdAt: string;
   updatedAt: string;
 }

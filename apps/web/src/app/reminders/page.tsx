@@ -6,11 +6,14 @@ import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 
+type TriggerType = 'manual' | 'booking'
+
 interface Reminder {
   id: string
   name: string
   description: string | null
   isActive: boolean
+  triggerType: TriggerType
   createdAt: string
   updatedAt: string
 }
@@ -26,6 +29,7 @@ interface ReminderStep {
 
 interface ReminderWithSteps extends Reminder {
   steps: ReminderStep[]
+  triggerType: TriggerType
 }
 
 interface CreateFormState {
@@ -57,6 +61,32 @@ function formatOffset(minutes: number): string {
   const prefix = minutes < 0 ? '-' : '+'
   return `${prefix}${hours}時間${mins}分`
 }
+
+/**
+ * booking 種別: offset_minutes は予約開始の N 分前 (常に正の値) を意味する。
+ * manual 種別: offset_minutes は target_date 基準の +/- オフセット。
+ */
+function formatBookingOffset(minutes: number): string {
+  if (minutes === 0) return '開始時刻ちょうど'
+  if (minutes < 60) return `${minutes}分前`
+  if (minutes % 1440 === 0) return `${minutes / 1440}日前`
+  if (minutes % 60 === 0) return `${minutes / 60}時間前`
+  return `${Math.floor(minutes / 60)}時間${minutes % 60}分前`
+}
+
+const triggerTypeBadge: Record<TriggerType, { label: string; className: string }> = {
+  manual: { label: 'カスタム', className: 'bg-blue-100 text-blue-700' },
+  booking: { label: '予約自動', className: 'bg-purple-100 text-purple-700' },
+}
+
+const PLACEHOLDERS = [
+  { token: '{{date_time}}', desc: '5/1 (金) 10:00〜' },
+  { token: '{{date}}', desc: '5/1 (金)' },
+  { token: '{{time}}', desc: '10:00' },
+  { token: '{{meet_url}}', desc: 'Google Meet URL' },
+  { token: '{{reschedule_url}}', desc: '日程変更ページURL' },
+  { token: '{{display_name}}', desc: '友だち表示名' },
+]
 
 const messageTypeLabels: Record<string, string> = {
   text: 'テキスト',
@@ -355,7 +385,14 @@ export default function RemindersPage() {
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate">{reminder.name}</h3>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm font-semibold text-gray-900 truncate">{reminder.name}</h3>
+                        <span
+                          className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium shrink-0 ${triggerTypeBadge[reminder.triggerType ?? 'manual'].className}`}
+                        >
+                          {triggerTypeBadge[reminder.triggerType ?? 'manual'].label}
+                        </span>
+                      </div>
                       {reminder.description && (
                         <p className="text-xs text-gray-500 mt-1 line-clamp-2">{reminder.description}</p>
                       )}
@@ -381,6 +418,24 @@ export default function RemindersPage() {
                 {/* Expanded detail */}
                 {isExpanded && (
                   <div className="border-t border-gray-200 p-5">
+                    {/* Placeholder hint — booking-tied reminders can use these tokens in message_content */}
+                    {(expandedData?.triggerType ?? reminder.triggerType) === 'booking' && (
+                      <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs">
+                        <p className="font-semibold text-purple-700 mb-2">利用可能なプレースホルダ</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                          {PLACEHOLDERS.map((p) => (
+                            <div key={p.token} className="flex items-center gap-2 text-purple-700">
+                              <code className="px-1.5 py-0.5 bg-white rounded border border-purple-200 font-mono">{p.token}</code>
+                              <span className="text-purple-600/80">→ {p.desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-purple-600/80">
+                          オフセットは「予約開始の N 分前」として解釈されます (cron 5分間隔)。
+                        </p>
+                      </div>
+                    )}
+
                     {/* Actions */}
                     <div className="flex flex-wrap items-center gap-2 mb-4">
                       <button
@@ -438,7 +493,9 @@ export default function RemindersPage() {
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 mb-1">
                                       <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
-                                        {formatOffset(step.offsetMinutes)}
+                                        {(expandedData?.triggerType ?? 'manual') === 'booking'
+                                          ? formatBookingOffset(step.offsetMinutes)
+                                          : formatOffset(step.offsetMinutes)}
                                       </span>
                                       <span className="text-xs text-gray-400">
                                         {messageTypeLabels[step.messageType] ?? step.messageType}

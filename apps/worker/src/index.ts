@@ -66,6 +66,7 @@ export type Env = {
     GAS_MAIL_URL?: string;                // GAS Web App URL for fixbox-biz@fixbox.jp sending
     GAS_MAIL_SECRET?: string;             // Shared secret matching GAS script
     NOTIFY_CC_EMAIL?: string;             // Optional CC target for booking emails (e.g. fixbox-biz@fixbox.jp)
+    BOOKING_RESCHEDULE_URL?: string;      // 予約変更/キャンセル LIFF or Web URL — 設定があれば確認/リマインダに「日程を変更する」ボタン表示
     MANAGED_AGENTS_URL?: string;          // Fixx通信生成 managed-agents 連携
     MANAGED_AGENTS_CRON_SECRET?: string;
     MANAGED_AGENTS_BYPASS_TOKEN?: string;
@@ -360,7 +361,12 @@ async function scheduled(
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
     processReminderDeliveries(env.DB, defaultLineClient),
     processBookingReminders(
-      { GAS_MAIL_URL: env.GAS_MAIL_URL, GAS_MAIL_SECRET: env.GAS_MAIL_SECRET, NOTIFY_CC_EMAIL: env.NOTIFY_CC_EMAIL },
+      {
+        GAS_MAIL_URL: env.GAS_MAIL_URL,
+        GAS_MAIL_SECRET: env.GAS_MAIL_SECRET,
+        NOTIFY_CC_EMAIL: env.NOTIFY_CC_EMAIL,
+        BOOKING_RESCHEDULE_URL: env.BOOKING_RESCHEDULE_URL,
+      },
       {
         now: new Date(),
         db: env.DB,
@@ -368,6 +374,18 @@ async function scheduled(
         getBookingsForReminder,
         updateBookingMetadata,
         getFriendById,
+        getBookingReminderSteps: async (db) => {
+          const result = await db
+            .prepare(
+              `SELECT s.id, s.reminder_id, s.offset_minutes, s.message_type, s.message_content
+               FROM reminder_steps s
+               JOIN reminders r ON r.id = s.reminder_id
+               WHERE r.trigger_type = 'booking' AND r.is_active = 1
+               ORDER BY s.offset_minutes DESC`
+            )
+            .all<{ id: string; reminder_id: string; offset_minutes: number; message_type: string; message_content: string }>();
+          return result.results ?? [];
+        },
       },
     ),
   );

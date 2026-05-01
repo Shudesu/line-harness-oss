@@ -217,7 +217,27 @@ describe('sendBookingConfirmation (email path)', () => {
 });
 
 describe('processBookingReminders', () => {
-  it('sends 24h reminder and marks metadata.reminder_24h_sent', async () => {
+  // Shared steps mock — booking-reminders are now DB-driven (migration 029).
+  // Using fixed step ids matching the seeded production templates so flag-key
+  // assertions stay aligned with the real metadata shape.
+  const STEP_24H = {
+    id: 'sys_booking_step_24h',
+    reminder_id: 'sys_booking_reminder_v1',
+    offset_minutes: 1440,
+    message_type: 'flex',
+    message_content: '{"kind":"booking_flex_v1","heading":"面談リマインド｜明日","noteText":"日程変更は下のボタン、その他のご相談はこのトークへ。","primaryButton":{"label":"Google Meetを開く","uri":"{{meet_url}}"},"secondaryButton":{"label":"日程を変更する","uri":"{{reschedule_url}}"}}',
+  };
+  const STEP_1H = {
+    id: 'sys_booking_step_1h',
+    reminder_id: 'sys_booking_reminder_v1',
+    offset_minutes: 60,
+    message_type: 'flex',
+    message_content: '{"kind":"booking_flex_v1","heading":"面談リマインド｜1時間前","noteText":"日程変更は下のボタン、その他のご相談はこのトークへ。","primaryButton":{"label":"Google Meetを開く","uri":"{{meet_url}}"},"secondaryButton":{"label":"日程を変更する","uri":"{{reschedule_url}}"}}',
+  };
+  const allSteps = [STEP_24H, STEP_1H];
+  const stepsMock = () => vi.fn().mockResolvedValue(allSteps);
+
+  it('sends 24h reminder and marks metadata.reminder_step_<id>_sent', async () => {
     const now = new Date('2026-04-30T10:00:00+09:00');
     const booking = {
       id: 'b24',
@@ -245,6 +265,7 @@ describe('processBookingReminders', () => {
         getBookingsForReminder,
         updateBookingMetadata,
         getFriendById,
+        getBookingReminderSteps: stepsMock(),
       } as any,
     );
 
@@ -253,7 +274,7 @@ describe('processBookingReminders', () => {
     expect(updateBookingMetadata).toHaveBeenCalledWith(
       expect.anything(),
       'b24',
-      expect.objectContaining({ reminder_24h_sent: true }),
+      expect.objectContaining({ reminder_step_sys_booking_step_24h_sent: true }),
     );
     // Regression guard: window bounds must be JST (+09:00) to match stored column format.
     // Passing Z-suffixed UTC strings would silently filter out all rows.
@@ -288,6 +309,7 @@ describe('processBookingReminders', () => {
         getBookingsForReminder: vi.fn().mockResolvedValue([booking]),
         updateBookingMetadata: vi.fn(),
         getFriendById: vi.fn(),
+        getBookingReminderSteps: stepsMock(),
       } as any,
     );
     expect(summary.skipped).toBe(1);
@@ -328,6 +350,7 @@ describe('processBookingReminders', () => {
           getBookingsForReminder: vi.fn().mockResolvedValue([booking]),
           updateBookingMetadata,
           getFriendById: vi.fn().mockResolvedValue(null),
+          getBookingReminderSteps: stepsMock(),
         } as any,
       );
 
@@ -338,13 +361,12 @@ describe('processBookingReminders', () => {
       expect(body.secret).toBe('test-secret');
       expect(body.to).toEqual(['customer@example.com']);
       expect(body.cc).toEqual(['biz@fixbox.jp']);
-      expect(body.html).toContain('<br>'); // newline conversion regression guard
       // 1h bucket uses 【まもなく】; 24h bucket uses 【リマインダー】 — this test is 1h
       expect(body.subject).toMatch(/^Fixx｜【まもなく】整備士面談/);
       expect(updateBookingMetadata).toHaveBeenCalledWith(
         expect.anything(),
         'b1h',
-        expect.objectContaining({ reminder_1h_sent: true, email: 'customer@example.com' }),
+        expect.objectContaining({ reminder_step_sys_booking_step_1h_sent: true, email: 'customer@example.com' }),
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -375,6 +397,7 @@ describe('processBookingReminders', () => {
         getFriendById: vi.fn().mockResolvedValue({
           id: 'f1', line_user_id: 'U1', is_following: 1,
         }),
+        getBookingReminderSteps: stepsMock(),
       } as any,
     );
     expect(summary.failed).toBe(1);

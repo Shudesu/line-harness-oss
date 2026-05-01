@@ -76,15 +76,41 @@ export async function sendBookingConfirmation(
 
 interface ParsedMeta {
   email?: string | null;
+  meet_url?: string | null;
+  // Legacy hardcoded-window flags (preserved for in-flight bookings created before migration 029).
+  // New flags use `reminder_step_<step_id>_sent` keyed by reminder_steps.id.
   reminder_24h_sent?: boolean;
   reminder_1h_sent?: boolean;
   reminder_5min_sent?: boolean;
-  meet_url?: string | null;
+  // Flexible string-key flags so we can stamp `reminder_step_<id>_sent` per template step.
+  [key: string]: unknown;
 }
 
 export function safeParseMetadata(raw: string | null): ParsedMeta {
   if (!raw) return {};
   try { return JSON.parse(raw) as ParsedMeta; } catch { return {}; }
+}
+
+export function reminderStepFlagKey(stepId: string): string {
+  return `reminder_step_${stepId}_sent`;
+}
+
+/** Stored spec for a booking-reminder Flex step (reminder_steps.message_content JSON). */
+export interface BookingFlexSpec {
+  kind: 'booking_flex_v1';
+  heading: string;
+  noteText?: string | null;
+  primaryButton?: { label: string; uri: string } | null;
+  secondaryButton?: { label: string; uri: string } | null;
+}
+
+/** Loaded booking-reminder step row + parsed spec. */
+export interface BookingReminderStep {
+  id: string;
+  reminder_id: string;
+  offset_minutes: number;
+  message_type: string;
+  message_content: string;
 }
 
 export function formatJstRange(startIso: string, endIso: string): string {
@@ -207,23 +233,17 @@ export interface ReminderDeps {
   getBookingsForReminder: (db: D1Database, opts: { startFrom: string; startTo: string }) => Promise<BookingRow[]>;
   updateBookingMetadata: (db: D1Database, id: string, metadata: Record<string, unknown>) => Promise<void>;
   getFriendById: (db: D1Database, id: string) => Promise<Friend | null>;
+  /**
+   * Loads enabled booking-reminder steps from DB.
+   * (reminders.trigger_type='booking' AND reminders.is_active=1, joined to reminder_steps.)
+   * Replaces the previous hardcoded WINDOWS array — admins can now edit timings + content
+   * via /reminders without a deploy.
+   */
+  getBookingReminderSteps: (db: D1Database) => Promise<BookingReminderStep[]>;
 }
 
-interface WindowSpec {
-  label: '24h' | '1h' | '5min';
-  flag: 'reminder_24h_sent' | 'reminder_1h_sent' | 'reminder_5min_sent';
-  beforeStartMin: number;
-  windowMin: number;
-}
-
-const WINDOWS: WindowSpec[] = [
-  { label: '24h',  flag: 'reminder_24h_sent',  beforeStartMin: 24 * 60, windowMin: 10 },
-  { label: '1h',   flag: 'reminder_1h_sent',   beforeStartMin: 60,      windowMin: 10 },
-  // Cron fires every 5 minutes; with beforeStartMin=5 and windowMin=5 a booking at 10:00
-  // is caught by the 9:55 tick (window 9:55–10:00). windowMin=5 leaves no overlap with
-  // the 1h window since they're 55 minutes apart.
-  { label: '5min', flag: 'reminder_5min_sent', beforeStartMin: 5,       windowMin: 5  },
-];
+/** Per-tick window during which a step's offset is considered "due". Matches the 5-min cron tick. */
+const STEP_WINDOW_MIN = 5;
 
 export async function processBookingReminders(
   env: NotifyEnv,
@@ -231,9 +251,11 @@ export async function processBookingReminders(
 ): Promise<{ delivered: number; skipped: number; failed: number }> {
   let delivered = 0, skipped = 0, failed = 0;
 
-  for (const w of WINDOWS) {
-    const windowStart = new Date(deps.now.getTime() + w.beforeStartMin * 60_000);
-    const windowEnd = new Date(windowStart.getTime() + w.windowMin * 60_000);
+  const steps = await deps.getBookingReminderSteps(deps.db);
+
+  for (const step of steps) {
+    const windowStart = new Date(deps.now.getTime() + step.offset_minutes * 60_000);
+    const windowEnd = new Date(windowStart.getTime() + STEP_WINDOW_MIN * 60_000);
     // NOTE: booked start_at strings use `+09:00` (JST) format (see packages/db toJstString).
     // Lexicographic compare against `Z` (UTC) bounds would silently filter everything out,
     // so pass the window bounds in the same JST format the column uses.
@@ -242,15 +264,20 @@ export async function processBookingReminders(
       startTo: toJstString(windowEnd),
     });
 
+    const flagKey = reminderStepFlagKey(step.id);
+    const legacyFlag = legacyFlagForOffset(step.offset_minutes);
+
     for (const b of rows) {
       const startMs = new Date(b.start_at).getTime();
       if (startMs < windowStart.getTime() || startMs >= windowEnd.getTime()) continue;
       const meta = safeParseMetadata(b.metadata);
-      if (meta[w.flag]) { skipped++; continue; }
+      // Skip if either the per-step flag OR the legacy hardcoded-window flag has fired.
+      // Prevents double-send for bookings created during the WINDOWS-array era.
+      if (meta[flagKey] || (legacyFlag && meta[legacyFlag])) { skipped++; continue; }
 
       // Delivery semantics: send first, flag second.
       // If the UPDATE fails after a successful send, next tick re-delivers within
-      // the 10-min window. For reminders we prefer "duplicate > missed" — a user
+      // the same window. For reminders we prefer "duplicate > missed" — a user
       // getting two "明日予約です" messages is annoying, a missed appointment is worse.
       try {
         const friend = b.friend_id ? await deps.getFriendById(deps.db, b.friend_id) : null;
@@ -260,31 +287,39 @@ export async function processBookingReminders(
           email: meta.email ?? null,
         });
 
+        const ctx: PlaceholderCtx = {
+          dateTime: `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`,
+          date: formatJstDateJa(b.start_at),
+          time: formatJstTime(b.start_at),
+          meetUrl: meta.meet_url ?? null,
+          rescheduleUrl: env.BOOKING_RESCHEDULE_URL ?? null,
+          displayName: friend?.display_name ?? null,
+        };
+
         if (channel === 'line' && friend) {
-          const flex = buildReminderFlex(b, meta.meet_url ?? null, env.BOOKING_RESCHEDULE_URL ?? null, w.label);
+          const flex = renderStepAsFlex(step, ctx);
           await deps.lineClient.pushMessage(friend.line_user_id, [
             {
               type: 'flex',
-              altText: `${reminderAltLead(w.label)}整備士面談 ${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`,
+              altText: `${altLeadForOffset(step.offset_minutes)}整備士面談 ${ctx.dateTime}`,
               contents: flex,
             },
           ]);
         } else if (channel === 'email' && env.GAS_MAIL_URL && env.GAS_MAIL_SECRET && meta.email) {
-          const subjectLabel = reminderEmailSubjectLabel(w.label);
           await sendEmail({
             webhookUrl: env.GAS_MAIL_URL,
             secret: env.GAS_MAIL_SECRET,
             to: meta.email,
             cc: env.NOTIFY_CC_EMAIL ? [env.NOTIFY_CC_EMAIL] : undefined,
-            subject: `Fixx｜${subjectLabel}整備士面談 ${subjectStamp(b.start_at)}〜`,
-            html: buildReminderHtml(b, meta.meet_url ?? null, env.BOOKING_RESCHEDULE_URL ?? null, w.label),
+            subject: `Fixx｜${emailSubjectLabelForOffset(step.offset_minutes)}整備士面談 ${subjectStamp(b.start_at)}〜`,
+            html: renderStepAsHtml(step, ctx),
           });
         } else {
           skipped++;
           continue;
         }
 
-        await deps.updateBookingMetadata(deps.db, b.id, { ...meta, [w.flag]: true });
+        await deps.updateBookingMetadata(deps.db, b.id, { ...meta, [flagKey]: true });
         delivered++;
       } catch (err) {
         console.warn(`booking reminder failed for ${b.id}:`, err);
@@ -296,107 +331,157 @@ export async function processBookingReminders(
   return { delivered, skipped, failed };
 }
 
-type ReminderLabel = '24h' | '1h' | '5min';
-
-function reminderTextLead(label: ReminderLabel): string {
-  if (label === '24h') return '明日';
-  if (label === '1h') return 'まもなく（1時間後）';
-  return 'まもなく（5分後）';
+/** Maps a step's offset_minutes back onto the legacy hardcoded flag, if any. */
+function legacyFlagForOffset(offsetMin: number): string | null {
+  if (offsetMin === 24 * 60) return 'reminder_24h_sent';
+  if (offsetMin === 60) return 'reminder_1h_sent';
+  if (offsetMin === 5) return 'reminder_5min_sent';
+  return null;
 }
 
-function reminderHeading(label: ReminderLabel): string {
-  if (label === '24h') return '面談リマインド｜明日';
-  if (label === '1h') return '面談リマインド｜1時間前';
-  return '面談まもなく開始｜5分前';
+// ============================================================================
+// Template-driven rendering (DB-backed booking reminders)
+// ============================================================================
+
+/** Context passed to placeholder substitution. Keys map to {{snake_case}} placeholders. */
+export interface PlaceholderCtx {
+  dateTime: string;
+  date: string;
+  time: string;
+  meetUrl: string | null;
+  rescheduleUrl: string | null;
+  displayName: string | null;
 }
 
-function reminderAltLead(label: ReminderLabel): string {
-  if (label === '24h') return '【明日】';
-  if (label === '1h') return '【1時間前】';
-  return '【5分前】';
+/**
+ * Substitutes {{date_time}}, {{date}}, {{time}}, {{meet_url}}, {{reschedule_url}}, {{display_name}}.
+ * Empty values render as empty string (not "undefined") so admin-authored templates degrade gracefully.
+ */
+export function expandPlaceholders(input: string, ctx: PlaceholderCtx): string {
+  return input
+    .replace(/\{\{\s*date_time\s*\}\}/g, ctx.dateTime)
+    .replace(/\{\{\s*date\s*\}\}/g, ctx.date)
+    .replace(/\{\{\s*time\s*\}\}/g, ctx.time)
+    .replace(/\{\{\s*meet_url\s*\}\}/g, ctx.meetUrl ?? '')
+    .replace(/\{\{\s*reschedule_url\s*\}\}/g, ctx.rescheduleUrl ?? '')
+    .replace(/\{\{\s*display_name\s*\}\}/g, ctx.displayName ?? '');
 }
 
-function reminderEmailSubjectLabel(label: ReminderLabel): string {
-  if (label === '24h') return '【リマインダー】';
-  if (label === '1h') return '【まもなく】';
-  return '【5分前】';
+function parseBookingFlexSpec(raw: string): BookingFlexSpec | null {
+  try {
+    const obj = JSON.parse(raw) as BookingFlexSpec;
+    if (obj && obj.kind === 'booking_flex_v1' && typeof obj.heading === 'string') return obj;
+  } catch { /* fall through */ }
+  return null;
 }
 
-function buildReminderText(b: BookingRow, meetUrl: string | null, rescheduleUrl: string | null, label: ReminderLabel): string {
-  const lead = reminderTextLead(label);
-  const dateTimeLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`;
-  const meetLine = meetUrl ?? '別途ご案内のURLよりご参加ください。';
-  const rescheduleLine = rescheduleUrl ? `\n\n【日程変更・キャンセル】\n${rescheduleUrl}` : '';
-  return `${lead}、整備士面談のお時間です。\n\n【日時】\n${dateTimeLine}\n\n【Google Meet】\n${meetLine}${rescheduleLine}\n\n開始時刻になりましたら上記URLよりご入室ください。\nご都合が変わった場合は上記リンク、またはこのトークからご連絡ください。`;
-}
+/** Builds a Flex bubble from a stored booking_flex_v1 spec, expanding placeholders. */
+export function buildBookingFlexFromSpec(spec: BookingFlexSpec, ctx: PlaceholderCtx): object {
+  const heading = expandPlaceholders(spec.heading, ctx);
+  const noteText = spec.noteText ? expandPlaceholders(spec.noteText, ctx) : null;
 
-function buildReminderHtml(b: BookingRow, meetUrl: string | null, rescheduleUrl: string | null, label: ReminderLabel): string {
-  const lead = reminderTextLead(label);
-  const dateTimeLine = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`;
-  const meetLine = meetUrl
-    ? `<a href="${escapeHtml(meetUrl)}">${escapeHtml(meetUrl)}</a>`
-    : '別途ご案内のURLよりご参加ください。';
-  const rescheduleBlock = rescheduleUrl
-    ? `<p><strong>【日程変更・キャンセル】</strong><br><a href="${escapeHtml(rescheduleUrl)}">${escapeHtml(rescheduleUrl)}</a></p>`
-    : '';
-  return `<p>${escapeHtml(lead)}、整備士面談のお時間です。</p>
-<p><strong>【日時】</strong><br>${escapeHtml(dateTimeLine)}</p>
-<p><strong>【Google Meet】</strong><br>${meetLine}</p>
-${rescheduleBlock}<p>開始時刻になりましたら上記URLよりご入室ください。<br>ご都合が変わった場合は上記リンク、またはLINEよりご連絡ください。</p>`;
-}
-
-function buildReminderFlex(b: BookingRow, meetUrl: string | null, rescheduleUrl: string | null, label: ReminderLabel): object {
-  const dateTimeText = `${formatJstDateJa(b.start_at)} ${formatJstTime(b.start_at)}〜`;
-  const heading = reminderHeading(label);
-  const meetBlock = meetUrl
-    ? { type: 'text', text: meetUrl, size: 'sm', color: '#304070', wrap: true, action: { type: 'uri', label: 'open', uri: meetUrl } }
+  const meetBlock = ctx.meetUrl
+    ? { type: 'text', text: ctx.meetUrl, size: 'sm', color: '#304070', wrap: true, action: { type: 'uri', label: 'open', uri: ctx.meetUrl } }
     : { type: 'text', text: '別途ご案内のURLよりご参加ください。', size: 'sm', color: '#888888', wrap: true };
-  const noteText = rescheduleUrl
-    ? '日程変更は下のボタン、その他のご相談はこのトークへ。'
-    : 'ご都合が変わった場合はこのトークからご連絡ください。';
+
+  const bodyContents: object[] = [
+    { type: 'text', text: heading, weight: 'bold', size: 'lg', color: '#304070', wrap: true },
+    { type: 'separator' },
+    {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'xs',
+      contents: [
+        { type: 'text', text: '日時', size: 'xs', color: '#888888' },
+        { type: 'text', text: ctx.dateTime, weight: 'bold', size: 'md', wrap: true },
+      ],
+    },
+    {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'xs',
+      contents: [
+        { type: 'text', text: 'Google Meet', size: 'xs', color: '#888888' },
+        meetBlock,
+      ],
+    },
+  ];
+  if (noteText) {
+    bodyContents.push({ type: 'text', text: noteText, size: 'xs', color: '#888888', wrap: true, margin: 'md' });
+  }
 
   const bubble: Record<string, unknown> = {
     type: 'bubble',
-    body: {
-      type: 'box',
-      layout: 'vertical',
-      spacing: 'md',
-      contents: [
-        { type: 'text', text: heading, weight: 'bold', size: 'lg', color: '#304070', wrap: true },
-        { type: 'separator' },
-        {
-          type: 'box',
-          layout: 'vertical',
-          spacing: 'xs',
-          contents: [
-            { type: 'text', text: '日時', size: 'xs', color: '#888888' },
-            { type: 'text', text: dateTimeText, weight: 'bold', size: 'md', wrap: true },
-          ],
-        },
-        {
-          type: 'box',
-          layout: 'vertical',
-          spacing: 'xs',
-          contents: [
-            { type: 'text', text: 'Google Meet', size: 'xs', color: '#888888' },
-            meetBlock,
-          ],
-        },
-        { type: 'text', text: noteText, size: 'xs', color: '#888888', wrap: true, margin: 'md' },
-      ],
-    },
+    body: { type: 'box', layout: 'vertical', spacing: 'md', contents: bodyContents },
   };
 
+  // Buttons render only when both label is present AND the resolved URI is non-empty
+  // (so {{meet_url}} on a booking that never got a Meet URL gracefully omits the button).
   const footerButtons: object[] = [];
-  if (meetUrl) {
-    footerButtons.push({ type: 'button', style: 'primary', color: '#304070', action: { type: 'uri', label: 'Google Meetを開く', uri: meetUrl } });
+  if (spec.primaryButton?.label) {
+    const uri = expandPlaceholders(spec.primaryButton.uri, ctx);
+    if (uri) footerButtons.push({ type: 'button', style: 'primary', color: '#304070', action: { type: 'uri', label: spec.primaryButton.label, uri } });
   }
-  if (rescheduleUrl) {
-    footerButtons.push({ type: 'button', style: 'secondary', margin: 'md', action: { type: 'uri', label: '日程を変更する', uri: rescheduleUrl } });
+  if (spec.secondaryButton?.label) {
+    const uri = expandPlaceholders(spec.secondaryButton.uri, ctx);
+    if (uri) footerButtons.push({ type: 'button', style: 'secondary', margin: 'md', action: { type: 'uri', label: spec.secondaryButton.label, uri } });
   }
   if (footerButtons.length > 0) {
     bubble.footer = { type: 'box', layout: 'vertical', spacing: 'md', contents: footerButtons };
   }
 
   return bubble;
+}
+
+function renderStepAsFlex(step: BookingReminderStep, ctx: PlaceholderCtx): object {
+  if (step.message_type === 'flex') {
+    const spec = parseBookingFlexSpec(step.message_content);
+    if (spec) return buildBookingFlexFromSpec(spec, ctx);
+  }
+  // Plain-text step → wrap in a minimal Flex bubble so the channel stays consistent
+  const text = expandPlaceholders(step.message_content, ctx);
+  return {
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [{ type: 'text', text, wrap: true, size: 'sm' }],
+    },
+  };
+}
+
+function renderStepAsHtml(step: BookingReminderStep, ctx: PlaceholderCtx): string {
+  if (step.message_type === 'flex') {
+    const spec = parseBookingFlexSpec(step.message_content);
+    if (spec) {
+      const heading = expandPlaceholders(spec.heading, ctx);
+      const noteText = spec.noteText ? expandPlaceholders(spec.noteText, ctx) : null;
+      const meetLine = ctx.meetUrl
+        ? `<a href="${escapeHtml(ctx.meetUrl)}">${escapeHtml(ctx.meetUrl)}</a>`
+        : '別途ご案内のURLよりご参加ください。';
+      const rescheduleBlock = spec.secondaryButton && ctx.rescheduleUrl
+        ? `<p><strong>【${escapeHtml(spec.secondaryButton.label)}】</strong><br><a href="${escapeHtml(ctx.rescheduleUrl)}">${escapeHtml(ctx.rescheduleUrl)}</a></p>`
+        : '';
+      const note = noteText ? `<p>${escapeHtml(noteText)}</p>` : '';
+      return `<p><strong>${escapeHtml(heading)}</strong></p>
+<p><strong>【日時】</strong><br>${escapeHtml(ctx.dateTime)}</p>
+<p><strong>【Google Meet】</strong><br>${meetLine}</p>
+${rescheduleBlock}${note}`;
+    }
+  }
+  return `<p>${escapeHtml(expandPlaceholders(step.message_content, ctx)).replace(/\n/g, '<br>')}</p>`;
+}
+
+/** Email subject prefix derived from offset_minutes (matches old hardcoded labels). */
+function emailSubjectLabelForOffset(offsetMin: number): string {
+  if (offsetMin >= 60 * 12) return '【リマインダー】';
+  if (offsetMin >= 30) return '【まもなく】';
+  return '【5分前】';
+}
+
+/** LINE altText prefix derived from offset_minutes. */
+function altLeadForOffset(offsetMin: number): string {
+  if (offsetMin >= 60 * 12) return '【明日】';
+  if (offsetMin >= 30) return '【1時間前】';
+  return '【5分前】';
 }

@@ -341,12 +341,15 @@ CREATE INDEX IF NOT EXISTS idx_calendar_bookings_start ON calendar_bookings (sta
 -- Round 3: リマインダ配信
 -- ============================================================
 CREATE TABLE IF NOT EXISTS reminders (
-  id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL,
-  description TEXT,
-  is_active   INTEGER NOT NULL DEFAULT 1,
-  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  description   TEXT,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  -- 'manual'  : ユーザー定義カスタムリマインダ (reminder-delivery.ts cron)
+  -- 'booking' : 予約紐付き自動リマインダ (booking-notify.ts cron, offset_minutes は予約開始 N 分前)
+  trigger_type  TEXT NOT NULL DEFAULT 'manual' CHECK (trigger_type IN ('manual', 'booking')),
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS reminder_steps (
