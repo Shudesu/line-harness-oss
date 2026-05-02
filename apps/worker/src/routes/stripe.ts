@@ -6,6 +6,7 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { fireEvent, getTelegramConfig } from '../services/event-bus.js';
 
 const stripe = new Hono<Env>();
 
@@ -145,8 +146,7 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
       }
 
       // イベントバスに発火（自動化ルール用）
-      const { fireEvent } = await import('../services/event-bus.js');
-      await fireEvent(db, 'cv_fire', { friendId, eventData: { type: 'purchase', amount: obj.amount, stripeEventId: body.id } });
+      await fireEvent(db, 'cv_fire', { friendId, eventData: { type: 'purchase', amount: obj.amount, stripeEventId: body.id } }, undefined, undefined, getTelegramConfig(c.env));
     }
 
     // サブスクリプションイベント処理

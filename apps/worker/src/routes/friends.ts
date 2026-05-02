@@ -17,7 +17,7 @@ import {
 } from '@line-crm/db';
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { LineClient, computeMessageContentHash } from '@line-crm/line-sdk';
-import { fireEvent } from '../services/event-bus.js';
+import { fireEvent, getTelegramConfig } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 
@@ -209,7 +209,7 @@ friends.post('/api/friends/:id/tags', async (c) => {
     }
 
     // イベントバス発火: tag_change
-    await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
+    await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } }, undefined, undefined, getTelegramConfig(c.env));
 
     return c.json({ success: true, data: null }, 201);
   } catch (err) {
@@ -227,7 +227,7 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
     await removeTagFromFriend(c.env.DB, friendId, tagId);
 
     // イベントバス発火: tag_change
-    await fireEvent(c.env.DB, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
+    await fireEvent(c.env.DB, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } }, undefined, undefined, getTelegramConfig(c.env));
 
     return c.json({ success: true, data: null });
   } catch (err) {

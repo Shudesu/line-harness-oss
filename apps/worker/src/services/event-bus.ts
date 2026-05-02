@@ -36,6 +36,17 @@ export interface EventPayload {
   conversionValue?: number;
 }
 
+type TelegramConfig = { botToken: string; chatId: string };
+
+export function getTelegramConfig(env: {
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
+}): TelegramConfig | undefined {
+  return env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID
+    ? { botToken: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID }
+    : undefined;
+}
+
 /**
  * イベントを発火し、登録された全ハンドラーを実行
  */
@@ -45,12 +56,13 @@ export async function fireEvent(
   payload: EventPayload,
   lineAccessToken?: string,
   lineAccountId?: string | null,
+  telegramConfig?: TelegramConfig,
 ): Promise<void> {
   const jobs: Promise<unknown>[] = [
     fireOutgoingWebhooks(db, eventType, payload),
     processScoring(db, eventType, payload),
     processAutomations(db, eventType, payload, lineAccessToken, lineAccountId),
-    processNotifications(db, eventType, payload, lineAccountId),
+    processNotifications(db, eventType, payload, lineAccountId, telegramConfig),
   ];
 
   // Ad conversion postback
@@ -351,6 +363,7 @@ async function processNotifications(
   eventType: string,
   payload: EventPayload,
   lineAccountId?: string | null,
+  telegramConfig?: TelegramConfig,
 ): Promise<void> {
   try {
     const allRules = await getActiveNotificationRulesByEvent(db, eventType);
@@ -376,6 +389,33 @@ async function processNotifications(
         // Webhook通知チャネルの場合は即時配信
         if (channel === 'webhook') {
           // 送信Webhookと統合（既にfireOutgoingWebhooksで処理済み）
+        }
+        if (channel === 'telegram' && telegramConfig?.botToken && telegramConfig?.chatId) {
+          try {
+            let friendName = 'Unknown';
+            if (payload.friendId) {
+              const friend = await db
+                .prepare('SELECT display_name FROM friends WHERE id = ?')
+                .bind(payload.friendId)
+                .first<{ display_name: string | null }>();
+              if (friend?.display_name) friendName = friend.display_name;
+            }
+            const text = typeof payload.eventData?.text === 'string' ? payload.eventData.text : '';
+            const body = `📱 LINE返信\n\n${friendName}:\n${text}`;
+            await fetch(
+              `https://api.telegram.org/bot${telegramConfig.botToken}/sendMessage`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: telegramConfig.chatId,
+                  text: body,
+                }),
+              },
+            );
+          } catch (err) {
+            console.error('Telegram notification failed:', err);
+          }
         }
         // email チャネルの場合はSendGrid等で送信（将来実装）
         // dashboard チャネルの場合はDB記録のみ（上記createNotificationで完了）
