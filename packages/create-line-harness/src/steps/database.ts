@@ -14,7 +14,8 @@ export async function createDatabase(
 ): Promise<DatabaseResult> {
   const s = p.spinner();
 
-  // Create D1 database
+  // Create D1 database — keep this in pipe mode so we can parse the ID and
+  // detect the "already exists" case via captured stderr.
   s.start("D1 データベース作成中...");
   let databaseId: string;
   try {
@@ -47,6 +48,7 @@ export async function createDatabase(
       }
       databaseId = db.uuid;
     } else {
+      s.stop("D1 データベース作成失敗");
       throw error;
     }
   }

@@ -11,7 +11,13 @@ import { deployAdmin } from "../steps/deploy-admin.js";
 import { setSecrets } from "../steps/secrets.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
 import { generateApiKey } from "../lib/crypto.js";
-import { wrangler, setAccountId } from "../lib/wrangler.js";
+import {
+  getAccountIds,
+  setAccountId,
+  wrangler,
+  WranglerError,
+  type CloudflareAccount,
+} from "../lib/wrangler.js";
 
 interface SetupState {
   projectName?: string;
@@ -31,6 +37,17 @@ interface SetupState {
   adminUrl?: string;
   completedSteps: string[];
 }
+
+// Steps whose result lives in the previous CF account and must be redone if the user switches.
+const ACCOUNT_DEPENDENT_STEPS = [
+  "r2billing",
+  "database",
+  "r2",
+  "worker",
+  "secrets",
+  "lineAccount",
+  "admin",
+];
 
 function getStatePath(repoDir: string): string {
   return join(repoDir, ".line-harness-setup.json");
@@ -62,6 +79,137 @@ function markDone(state: SetupState, step: string): void {
   }
 }
 
+/**
+ * When the user switches CF accounts mid-setup, all account-bound state is stale
+ * (R2 billing was enabled on a different account, the D1 lives elsewhere, etc.).
+ * Strip those steps + their cached resource IDs so the resumed run rebuilds them.
+ */
+function resetAccountBoundState(state: SetupState): void {
+  state.completedSteps = state.completedSteps.filter(
+    (s) => !ACCOUNT_DEPENDENT_STEPS.includes(s),
+  );
+  state.d1DatabaseId = undefined;
+  state.d1DatabaseName = undefined;
+  state.r2BucketName = undefined;
+  state.workerUrl = undefined;
+  state.adminUrl = undefined;
+}
+
+function describeAccount(
+  id: string | undefined,
+  accounts: CloudflareAccount[],
+): string {
+  if (!id) return "(未設定)";
+  const match = accounts.find((a) => a.id === id);
+  return match ? `${match.name} (${id})` : id;
+}
+
+/**
+ * Verify that the previously-saved accountId still belongs to the currently
+ * authenticated wrangler session. If not, prompt the user to either switch
+ * back, pick a new account (and rebuild account-bound state), or abort.
+ */
+async function verifyAccount(
+  state: SetupState,
+  repoDir: string,
+): Promise<void> {
+  const accounts = await getAccountIds();
+  if (accounts.length === 0) {
+    // wrangler whoami unparsable — let downstream steps surface the error.
+    return;
+  }
+
+  const hasAccountBoundProgress = state.completedSteps.some((s) =>
+    ACCOUNT_DEPENDENT_STEPS.includes(s),
+  );
+
+  if (!state.accountId) {
+    if (!hasAccountBoundProgress) {
+      // Brand-new run (or only credentials/liffId completed) — normal flow picks the account next.
+      return;
+    }
+
+    // Legacy state file from < 0.1.14: account-bound steps are marked done but
+    // we don't know which CF account they were performed on. Cannot trust them.
+    p.log.warn(
+      [
+        "前回のセットアップで作成された Cloudflare リソース（D1/R2/Worker など）がありますが、",
+        "どのアカウントに作られたか記録されていません（v0.1.14 未満で生成された state です）。",
+        `現在ログイン中: ${accounts.map((a) => `${a.name} (${a.id})`).join(", ")}`,
+      ].join("\n"),
+    );
+
+    const choice = await p.select({
+      message: "どうしますか？",
+      options: [
+        {
+          value: "reset",
+          label: "アカウント依存ステップをリセットして、現在のアカウントで作り直す（推奨）",
+        },
+        {
+          value: "continue",
+          label: "リセットせず、現在のアカウントで続行する（前回のリソースが流用できれば再利用）",
+        },
+        {
+          value: "abort",
+          label: "中止する",
+        },
+      ],
+    });
+    if (p.isCancel(choice) || choice === "abort") {
+      p.cancel("セットアップを中止しました。");
+      process.exit(0);
+    }
+    if (choice === "reset") {
+      resetAccountBoundState(state);
+      saveState(repoDir, state);
+      p.log.success("アカウント依存ステップをリセットしました。");
+    }
+    return;
+  }
+
+  const stillAvailable = accounts.some((a) => a.id === state.accountId);
+  if (stillAvailable) {
+    p.log.info(
+      `前回のアカウント: ${pc.cyan(describeAccount(state.accountId, accounts))}`,
+    );
+    return;
+  }
+
+  p.log.warn(
+    [
+      "前回使用した Cloudflare アカウントが、現在ログイン中のアカウント一覧に見つかりません。",
+      `  前回:           ${describeAccount(state.accountId, accounts)}`,
+      `  現在ログイン中: ${accounts.map((a) => `${a.name} (${a.id})`).join(", ")}`,
+    ].join("\n"),
+  );
+
+  const choice = await p.select({
+    message: "どうしますか？",
+    options: [
+      {
+        value: "switch",
+        label: "現在ログイン中のアカウントで続行する（R2/D1/Worker などを作り直し）",
+      },
+      {
+        value: "abort",
+        label: "中止して `wrangler login` で前回のアカウントに戻る",
+      },
+    ],
+  });
+  if (p.isCancel(choice) || choice === "abort") {
+    p.cancel(
+      "セットアップを中止しました。`npx wrangler login` で前回のアカウントに戻ってから再実行してください。",
+    );
+    process.exit(0);
+  }
+
+  resetAccountBoundState(state);
+  state.accountId = undefined;
+  saveState(repoDir, state);
+  p.log.success("アカウント依存ステップをリセットしました。新しいアカウントで再構築します。");
+}
+
 export async function runSetup(repoDir: string): Promise<void> {
   p.intro(pc.bgCyan(pc.black(" LINE Harness セットアップ ")));
 
@@ -73,13 +221,39 @@ export async function runSetup(repoDir: string): Promise<void> {
     );
   }
 
+  try {
+    await runSetupInner(state, repoDir);
+  } catch (error) {
+    if (error instanceof WranglerError) {
+      const help = error.getHelp();
+      if (help) {
+        p.log.error(`${error.message}\n\n${pc.yellow("考えられる原因:")}\n${help}`);
+      } else {
+        p.log.error(error.message);
+      }
+      p.cancel(
+        "セットアップが失敗しました。修正後に同じコマンドを再実行すれば、続きから再開できます。",
+      );
+      process.exit(1);
+    }
+    throw error;
+  }
+}
+
+async function runSetupInner(
+  state: SetupState,
+  repoDir: string,
+): Promise<void> {
   // Step 1: Check dependencies
   await checkDeps();
 
   // Step 2: Authenticate with Cloudflare
   await ensureAuth();
 
-  // Step 2.5: Get account ID
+  // Step 2.4: If we have a saved accountId, make sure it still belongs to the current wrangler session
+  await verifyAccount(state, repoDir);
+
+  // Step 2.5: Get account ID (only if not set or just reset by verifyAccount)
   if (!state.accountId) {
     const accountId = await getAccountId();
     state.accountId = accountId;
@@ -410,6 +584,7 @@ export async function runSetup(repoDir: string): Promise<void> {
         d1DatabaseName: state.d1DatabaseName,
         d1DatabaseId: state.d1DatabaseId,
         r2BucketName: state.r2BucketName,
+        accountId: state.accountId,
       },
       null,
       2,

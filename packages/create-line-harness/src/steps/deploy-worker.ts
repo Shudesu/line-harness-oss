@@ -2,7 +2,10 @@ import * as p from "@clack/prompts";
 import { writeFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { execa } from "execa";
-import { wrangler } from "../lib/wrangler.js";
+import { wrangler, WranglerError } from "../lib/wrangler.js";
+
+const WORKERS_DEV_URL = /(https:\/\/[^\s]+\.workers\.dev)/;
+const TTY_REQUIRED = /non[- ]?interactive|cloudflare_api_token|consent denied|authentication error|expired/i;
 
 interface DeployWorkerOptions {
   repoDir: string;
@@ -22,7 +25,6 @@ interface DeployWorkerResult {
 export async function deployWorker(
   options: DeployWorkerOptions,
 ): Promise<DeployWorkerResult> {
-  const s = p.spinner();
   const workerDir = join(options.repoDir, "apps/worker");
   const tomlPath = join(workerDir, "wrangler.toml");
 
@@ -32,7 +34,6 @@ export async function deployWorker(
     : null;
 
   // Write deploy wrangler.toml
-  s.start("Worker デプロイ中...");
   const deployToml = `name = "${options.workerName}"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
@@ -63,21 +64,75 @@ crons = ["*/5 * * * *"]
   const envContent = `VITE_LIFF_ID=${options.liffId}\nVITE_BOT_BASIC_ID=${options.botBasicId}\n`;
   writeFileSync(envPath, envContent);
 
+  const buildSpinner = p.spinner();
+  buildSpinner.start("Worker ビルド中...");
   try {
     // Build workspace dependencies that the worker needs
     await execa("npx", ["pnpm", "-r", "--filter", "./packages/shared", "--filter", "./packages/line-sdk", "--filter", "./packages/db", "build"], { cwd: options.repoDir });
     await execa("npx", ["vite", "build"], { cwd: workerDir });
+    buildSpinner.stop("Worker ビルド完了");
 
-    const output = await wrangler(["deploy"], { cwd: workerDir });
+    // Pipe-first: capture deploy output so we can parse the real URL
+    // (Cloudflare serves Workers at https://<worker>.<account-subdomain>.workers.dev,
+    // so guessing the hostname is unsafe).
+    let workerUrl: string;
+    try {
+      const output = await wrangler(["deploy"], { cwd: workerDir });
+      const match = output.match(WORKERS_DEV_URL);
+      if (!match) {
+        throw new Error(`Worker URL を出力からパースできません:\n${output}`);
+      }
+      workerUrl = match[1];
+    } catch (firstError) {
+      // Pipe deploy may fail with "non-interactive / CLOUDFLARE_API_TOKEN required"
+      // when wrangler needs to refresh its OAuth token. Retry once with a real TTY.
+      const isAuthError =
+        firstError instanceof WranglerError &&
+        TTY_REQUIRED.test(firstError.stderr);
+      if (!isAuthError) throw firstError;
 
-    // Parse worker URL from output
-    const urlMatch = output.match(/(https:\/\/[^\s]+\.workers\.dev)/);
-    const workerUrl = urlMatch
-      ? urlMatch[1]
-      : `https://${options.workerName}.workers.dev`;
+      p.log.warn(
+        "wrangler の認証を更新するため、対話モードで再実行します（出力が表示されます）...",
+      );
+      await wrangler(["deploy"], { cwd: workerDir, tty: true });
 
-    s.stop("Worker デプロイ完了");
+      // Worker is now live. Try a second pipe call to recover the URL — token
+      // is fresh so this should succeed cheaply. If it doesn't, we deliberately
+      // keep state.workerUrl unset by throwing: the next setup run will retry
+      // the worker step (it isn't marked complete yet) and recover the URL.
+      try {
+        const output = await wrangler(["deploy"], { cwd: workerDir });
+        const match = output.match(WORKERS_DEV_URL);
+        if (!match) {
+          throw new Error("URL not found in second deploy output");
+        }
+        workerUrl = match[1];
+      } catch (urlError) {
+        const reason =
+          urlError instanceof Error ? urlError.message : String(urlError);
+        throw new Error(
+          [
+            "Worker のデプロイは完了しましたが URL を取得できませんでした。",
+            `理由: ${reason}`,
+            "",
+            "対処:",
+            `  1. もう一度同じコマンドを実行すると、worker ステップが再試行され URL を取得します。`,
+            `  2. または \`npx wrangler deployments list --name ${options.workerName}\` で URL を確認してください。`,
+          ].join("\n"),
+        );
+      }
+    }
+
+    p.log.success(`Worker デプロイ完了: ${workerUrl}`);
     return { workerUrl };
+  } catch (error) {
+    // Make sure the spinner is stopped before the error bubbles up
+    try {
+      buildSpinner.stop("Worker デプロイ失敗");
+    } catch {
+      // already stopped
+    }
+    throw error;
   } finally {
     // Restore original wrangler.toml
     if (originalToml) {
