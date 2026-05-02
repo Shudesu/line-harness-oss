@@ -31,6 +31,10 @@ function serializeScenario(row: DbScenario) {
     description: row.description,
     triggerType: row.trigger_type,
     triggerTagId: row.trigger_tag_id,
+    // null = global scenario (fires for every account); UUID = bound to that line_account_id.
+    // Surfacing this lets the dashboard distinguish "全アカ共通" from orphan scenarios whose
+    // owner account was deleted.
+    lineAccountId: (row as { line_account_id?: string | null }).line_account_id ?? null,
     isActive: Boolean(row.is_active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

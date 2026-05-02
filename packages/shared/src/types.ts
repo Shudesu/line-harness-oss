@@ -76,6 +76,8 @@ export interface Scenario {
   triggerType: ScenarioTriggerType;
   /** トリガーとなるタグID (triggerType が 'tag_added' の場合のみ使用) */
   triggerTagId: string | null;
+  /** 紐づく LINE アカウント ID。null = 全アカウント共通として発火 */
+  lineAccountId: string | null;
   /** 有効/無効フラグ */
   isActive: boolean;
   /** 作成日時 (ISO 8601) */

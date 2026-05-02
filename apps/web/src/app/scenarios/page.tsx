@@ -121,6 +121,7 @@ export default function ScenariosPage() {
         description: form.description || null,
         triggerType: form.triggerType,
         triggerTagId: form.triggerTagId || null,
+        lineAccountId: selectedAccountId,
         isActive: form.isActive,
       })
       if (res.success) {

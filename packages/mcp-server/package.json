@@ -1,6 +1,6 @@
 {
   "name": "@line-harness/mcp-server",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "type": "module",
   "bin": {
     "line-harness-mcp": "./dist/index.js"
