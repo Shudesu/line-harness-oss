@@ -10,9 +10,39 @@ interface FriendTableProps {
   friends: FriendWithTags[]
   allTags: Tag[]
   onRefresh: () => void
+  selectedIds?: Set<string>
+  onSelectionChange?: (ids: Set<string>) => void
 }
 
-export default function FriendTable({ friends, allTags, onRefresh }: FriendTableProps) {
+export default function FriendTable({ friends, allTags, onRefresh, selectedIds, onSelectionChange }: FriendTableProps) {
+  const selectable = !!onSelectionChange
+  const selected = selectedIds ?? new Set<string>()
+
+  const allChecked = friends.length > 0 && friends.every((f) => selected.has(f.id))
+  const someChecked = friends.some((f) => selected.has(f.id))
+
+  const handleToggleAll = () => {
+    if (!onSelectionChange) return
+    const next = new Set(selected)
+    if (allChecked) {
+      friends.forEach((f) => next.delete(f.id))
+    } else {
+      friends.forEach((f) => next.add(f.id))
+    }
+    onSelectionChange(next)
+  }
+
+  const handleToggle = (id: string) => {
+    if (!onSelectionChange) return
+    const next = new Set(selected)
+    if (next.has(id)) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
+    onSelectionChange(next)
+  }
+
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [addingTagForFriend, setAddingTagForFriend] = useState<string | null>(null)
   const [selectedTagId, setSelectedTagId] = useState('')
@@ -82,6 +112,17 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
       <table className="w-full min-w-[640px]">
         <thead>
           <tr className="bg-gray-50 border-b border-gray-200">
+            {selectable && (
+              <th className="px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                  checked={allChecked}
+                  ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked }}
+                  onChange={handleToggleAll}
+                />
+              </th>
+            )}
             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
               アイコン / 表示名
             </th>
@@ -109,9 +150,20 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
               <>
                 <tr
                   key={friend.id}
-                  className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  className={`hover:bg-gray-50 cursor-pointer transition-colors ${selected.has(friend.id) ? 'bg-green-50' : ''}`}
                   onClick={() => toggleExpand(friend.id)}
                 >
+                  {/* Checkbox */}
+                  {selectable && (
+                    <td className="px-4 py-3 w-10" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                        checked={selected.has(friend.id)}
+                        onChange={() => handleToggle(friend.id)}
+                      />
+                    </td>
+                  )}
                   {/* Avatar + Name */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
@@ -183,7 +235,7 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                 {/* Expanded detail row */}
                 {isExpanded && (
                   <tr key={`${friend.id}-detail`} className="bg-gray-50">
-                    <td colSpan={5} className="px-6 py-4">
+                    <td colSpan={selectable ? 6 : 5} className="px-6 py-4">
                       <div className="space-y-3">
                         <div>
                           <p className="text-xs font-semibold text-gray-500 mb-1">LINE ユーザーID</p>
