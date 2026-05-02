@@ -345,10 +345,17 @@ export async function enrollFriendInScenario(
   }
   const nextDeliveryAt = rawDate.toISOString().slice(0, -1) + '+09:00';
 
+  // current_step_order is initialized to -1 (NOT 0) so that the step-delivery
+  // service's `steps.find(s => s.step_order > fs.current_step_order)` lookup
+  // matches the very first step (step_order=0).
+  // If we initialize to 0, scenarios that only have a step_order=0 step are
+  // silently completed without delivering anything (because no step has
+  // step_order > 0). This was observed in production on 2026-04-27 where
+  // ~10 friend_scenarios silently completed for a 46-hour window.
   const result = await db
     .prepare(
       `INSERT OR IGNORE INTO friend_scenarios (id, friend_id, scenario_id, current_step_order, status, started_at, next_delivery_at, updated_at)
-       VALUES (?, ?, ?, 0, 'active', ?, ?, ?)`,
+       VALUES (?, ?, ?, -1, 'active', ?, ?, ?)`,
     )
     .bind(id, friendId, scenarioId, now, nextDeliveryAt, now)
     .run();

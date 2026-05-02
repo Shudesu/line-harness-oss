@@ -38,6 +38,7 @@ import { trackedLinks } from './routes/tracked-links.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
 import { staff } from './routes/staff.js';
+import { capabilities } from './routes/capabilities.js';
 import { images } from './routes/images.js';
 import { accountSettings } from './routes/account-settings.js';
 import { setup } from './routes/setup.js';
@@ -54,6 +55,7 @@ export type Env = {
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;
     API_KEY: string;
+    LEGACY_API_KEY?: string;
     LIFF_URL: string;
     LINE_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_ID: string;
@@ -109,6 +111,7 @@ app.route('/', trackedLinks);
 app.route('/', forms);
 app.route('/', adPlatforms);
 app.route('/', staff);
+app.route('/', capabilities);
 app.route('/', images);
 app.route('/', setup);
 app.route('/', autoReplies);
@@ -133,14 +136,14 @@ app.get('/api/qr', async (c) => {
   });
 });
 
-// Short link: /r/:ref → landing page with LINE open button
+// Short link: /r/:ref → universal landing page with LINE open button
 // Supports query params: ?form=FORM_ID (auto-push form after friend add)
-// Mobile: resolves pool → button links directly to LIFF URL (triggers Universal Link)
-// Desktop: QR code encodes LIFF URL
+// Mobile: single CTA → LIFF URL (Universal Link). No UA detection.
+// Desktop: QR code encodes LIFF URL.
+// Stuck users opt into /r/:ref/help for Safari escape instructions.
 app.get('/r/:ref', async (c) => {
   const ref = c.req.param('ref');
   const formId = c.req.query('form') || '';
-  const baseUrl = new URL(c.req.url).origin;
 
   // Resolve LIFF URL from pool (same logic as /auth/line)
   let liffUrl = c.env.LIFF_URL;
@@ -172,77 +175,44 @@ app.get('/r/:ref', async (c) => {
   if (ig) liffParams.set('ig', ig);
   const liffTarget = liffParams.toString() ? `${liffUrl}?${liffParams.toString()}` : liffUrl;
 
-  // Build /auth/oauth fallback URL — forces OAuth flow without X detection,
-  // so the X warning button doesn't loop back to this landing page
-  const authParams = new URLSearchParams();
-  authParams.set('ref', ref);
-  if (formId) authParams.set('form', formId);
-  const poolParam = c.req.query('pool');
-  if (poolParam) authParams.set('pool', poolParam);
-  if (gate) authParams.set('gate', gate);
-  if (xh) authParams.set('xh', xh);
-  if (ig) authParams.set('ig', ig);
-  const authFallback = `${baseUrl}/auth/oauth?${authParams.toString()}`;
+  // Help link carries the *resolved* liff target as `t=` so the help page
+  // displays the exact URL the user should paste into a real browser. Without
+  // this, pooled refs would re-roll the random pool account on each /r/:ref
+  // visit and the help-page paste URL could end up at a different LINE
+  // account than the one originally chosen for this user.
+  const helpUrl = `/r/${encodeURIComponent(ref)}/help?t=${encodeURIComponent(liffTarget)}`;
 
   const ua = (c.req.header('user-agent') || '').toLowerCase();
   const isMobile = /iphone|ipad|android|mobile/.test(ua);
-  // X (Twitter) iOS in-app browser since v11.42 uses custom WKWebView that
-  // blocks ALL Universal Links and deep links. Detect via UA and show
-  // explicit "open in Safari" instruction to recover lost users.
-  const isXInAppBrowser = /twitter|twitterandroid/i.test(c.req.header('user-agent') || '');
-  // Other in-app browsers (Instagram, FB, LINE itself, etc.) — same UL limitations
-  const isOtherInApp = /\b(fbav|fban|instagram|line\/|micromessenger)\b/i.test(c.req.header('user-agent') || '');
-
-  if (isMobile && (isXInAppBrowser || isOtherInApp)) {
-    // In-app browser path: explain the issue + offer two recovery paths
-    const inAppName = isXInAppBrowser ? 'X' : 'アプリ内';
-    return c.html(`<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LINE で開く</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;background:#f5f7f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}
-.card{background:#fff;border-radius:20px;box-shadow:0 2px 20px rgba(0,0,0,0.06);text-align:center;max-width:380px;width:100%;padding:36px 24px 32px;border:1px solid rgba(0,0,0,0.04)}
-.line-icon{width:44px;height:44px;margin:0 auto 16px}
-.line-icon svg{width:44px;height:44px}
-.title{font-size:17px;color:#222;font-weight:700;margin-bottom:10px;line-height:1.5}
-.msg{font-size:13px;color:#666;margin-bottom:24px;line-height:1.7}
-.steps{background:#f9f9f9;border-radius:12px;padding:18px 20px;margin-bottom:24px;text-align:left}
-.steps-title{font-size:13px;color:#06C755;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px}
-.steps ol{margin:0;padding-left:20px;font-size:13px;color:#555;line-height:1.8}
-.btn{display:block;width:100%;padding:16px;border:none;border-radius:12px;font-size:16px;font-weight:700;text-decoration:none;text-align:center;color:#fff;background:#06C755;box-shadow:0 2px 12px rgba(6,199,85,0.2);transition:all .15s;cursor:pointer}
-.btn:active{transform:scale(0.98);opacity:.9}
-.footer{font-size:11px;color:#bbb;margin-top:20px;line-height:1.5}
-</style>
-</head>
-<body>
-<div class="card">
-<div class="line-icon">
-<svg viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#06C755"/><path d="M24 12C17.37 12 12 16.58 12 22.2c0 3.54 2.35 6.65 5.86 8.47-.2.74-.76 2.75-.87 3.17-.14.55.2.54.42.39.18-.12 2.84-1.88 4-2.65.84.13 1.7.22 2.59.22 6.63 0 12-4.58 12-10.2S30.63 12 24 12z" fill="#fff"/></svg>
-</div>
-<p class="title">${inAppName}内ブラウザでは<br>LINE が開けません</p>
-<p class="msg">外部ブラウザ（Safari / Chrome）で開いてから「LINE で開く」をタップしてください</p>
-<div class="steps">
-<div class="steps-title">📱 ブラウザで開く手順</div>
-<ol>
-<li>画面下中央の URL「<strong>workers.dev ⋮</strong>」の<strong>「⋮」</strong>をタップ</li>
-<li>表示メニューから「<strong>ブラウザで開く</strong>」を選択</li>
-<li>移動先のページで「LINE で開く」をタップ</li>
-</ol>
-</div>
-<a href="${liffTarget}" class="btn">このまま LINE を開く</a>
-<p class="footer">友だち追加で全機能を無料体験できます</p>
-</div>
-</body>
-</html>`);
-  }
+  const isIOS = /iphone|ipad|ipod/.test(ua);
+  const isAndroid = /android/.test(ua);
 
   if (isMobile) {
-    // Regular mobile browser (Safari/Chrome): direct LIFF URL link
-    // User tap on liff.line.me triggers Universal Link → LINE app opens
+    // OS-aware mobile UI. Per-browser detection (X / IG / FB) intentionally avoided —
+    // we only branch on iOS vs Android because the recovery primitives differ:
+    //   iOS: long-press the link → iOS context menu shows "LINEで開く" even inside
+    //        WKWebView in-app browsers that block tap-driven Universal Links.
+    //   Android: intent:// URL launches LINE directly via Android's intent system,
+    //        which works even when in-app browsers swallow https links.
+    // The same liff.line.me URL still drives Universal Link on the iOS button —
+    // long-press is a recovery hint, not a replacement.
+
+    // Build Android intent URL — strips the https:// prefix and appends the intent
+    // metadata so Chrome / in-app browsers hand off to the LINE app package.
+    // L-Step uses the same shape: jp.naver.line.android with browsable category.
+    // S.browser_fallback_url makes Chrome fall back to plain HTTPS when LINE
+    // isn't installed or the WebView refuses the intent, so Android users
+    // never hit a dead end (they at least land on liff.line.me web).
+    const liffPath = liffTarget.replace(/^https:\/\//, '');
+    const intentFallback = encodeURIComponent(liffTarget);
+    const androidIntent = `intent://${liffPath}#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=jp.naver.line.android;S.browser_fallback_url=${intentFallback};end`;
+    const buttonHref = isAndroid ? androidIntent : liffTarget;
+    // iOS shows long-press hint; Android relies on intent URL alone (long-press
+    // on Android opens "Open with…" which is noisier than the intent route).
+    const longPressHint = isIOS
+      ? '<p class="hint">※開かない場合はボタンを<strong>長押し</strong>して「LINEで開く」を選択</p>'
+      : '';
+
     return c.html(`<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -252,15 +222,16 @@ body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;backgroun
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;background:#f5f7f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
-.card{background:#fff;border-radius:20px;box-shadow:0 2px 20px rgba(0,0,0,0.06);text-align:center;max-width:360px;width:90%;padding:40px 28px 36px;border:1px solid rgba(0,0,0,0.04)}
+.card{background:#fff;border-radius:20px;box-shadow:0 2px 20px rgba(0,0,0,0.06);text-align:center;max-width:360px;width:90%;padding:40px 28px 32px;border:1px solid rgba(0,0,0,0.04)}
 .line-icon{width:48px;height:48px;margin:0 auto 20px}
 .line-icon svg{width:48px;height:48px}
 .msg{font-size:15px;color:#444;font-weight:500;margin-bottom:28px;line-height:1.6}
 .btn{display:block;width:100%;padding:16px;border:none;border-radius:12px;font-size:16px;font-weight:700;text-decoration:none;text-align:center;color:#fff;background:#06C755;box-shadow:0 2px 12px rgba(6,199,85,0.2);transition:all .15s}
 .btn:active{transform:scale(0.98);opacity:.9}
-.fallback{font-size:12px;color:#999;margin-top:16px;line-height:1.5}
-.fallback a{color:#06C755}
-.footer{font-size:11px;color:#bbb;margin-top:16px;line-height:1.5}
+.hint{font-size:11px;color:#888;margin-top:10px;line-height:1.6}
+.hint strong{color:#06C755;font-weight:700}
+.help{font-size:12px;color:#999;margin-top:18px;line-height:1.5}
+.help a{color:#999;text-decoration:underline}
 </style>
 </head>
 <body>
@@ -268,10 +239,10 @@ body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;backgroun
 <div class="line-icon">
 <svg viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#06C755"/><path d="M24 12C17.37 12 12 16.58 12 22.2c0 3.54 2.35 6.65 5.86 8.47-.2.74-.76 2.75-.87 3.17-.14.55.2.54.42.39.18-.12 2.84-1.88 4-2.65.84.13 1.7.22 2.59.22 6.63 0 12-4.58 12-10.2S30.63 12 24 12z" fill="#fff"/></svg>
 </div>
-<p class="msg">LINE アプリで開きます</p>
-<a href="${liffTarget}" class="btn">LINE で開く</a>
-<p class="fallback">開かない場合は<a href="${authFallback}">こちら</a></p>
-<p class="footer">友だち追加で全機能を無料体験できます</p>
+<p class="msg">友達追加して始める</p>
+<a href="${buttonHref}" class="btn">LINEで開く</a>
+${longPressHint}
+<p class="help">うまく開けない方は <a href="${helpUrl}">こちら</a></p>
 </div>
 </body>
 </html>`);
@@ -309,6 +280,156 @@ body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;backgroun
 <p class="hint">LINE アプリのカメラまたは<br>スマートフォンのカメラで読み取れます</p>
 <p class="footer">友だち追加で全機能を無料体験できます</p>
 </div>
+</body>
+</html>`);
+});
+
+// /r/:ref/help — opt-in recovery page when "LINEで開く" didn't launch the app.
+// Method 1 (long-press) is iOS's escape hatch — works inside X / IG / FB
+// in-app browsers because iOS's context menu is system-level UI floating
+// above the WKWebView, so it surfaces "LINEで開く" even when tap-driven
+// Universal Links are blocked. This is the L-Step approach.
+// Method 2 (URL copy → external browser) is the universal fallback.
+// No LINE-Login-web fallback exposed — friction kills conversion.
+app.get('/r/:ref/help', (c) => {
+  const ref = c.req.param('ref');
+  const reqUrl = new URL(c.req.url);
+  // Prefer the resolved liff target passed by /r/:ref via ?t= so pooled refs
+  // do not re-roll on retry. Fall back to the short /r/:ref URL only when
+  // ?t= is missing (e.g. direct navigation to /help without coming from /r/).
+  // Reject anything that is not an https://liff.line.me/* URL — never trust
+  // user-supplied open redirects.
+  const tParam = c.req.query('t') || '';
+  let displayUrl: string;
+  if (tParam && /^https:\/\/liff\.line\.me\//.test(tParam)) {
+    displayUrl = tParam;
+  } else {
+    // Strip ?t= if it sneaks in unvalidated, but keep other query params
+    // (form, gate, xh, ig, pool) for the /r/:ref re-entry.
+    const safeParams = new URLSearchParams(reqUrl.search);
+    safeParams.delete('t');
+    const qs = safeParams.toString();
+    displayUrl = `${reqUrl.origin}/r/${encodeURIComponent(ref)}${qs ? '?' + qs : ''}`;
+  }
+  // Escape URL for safe embedding in HTML attributes and a visible <code>-style block.
+  const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const urlForHtml = escapeHtml(displayUrl);
+
+  const ua = (c.req.header('user-agent') || '').toLowerCase();
+  const isIOS = /iphone|ipad|ipod/.test(ua);
+  const isAndroid = /android/.test(ua);
+  const browserName = isIOS ? 'Safari' : isAndroid ? 'Chrome' : 'ブラウザ（iPhoneは Safari／Androidは Chrome）';
+
+  // Long-press recovery is iOS-only. On Android the intent:// URL on the
+  // main page already handles the equivalent recovery without help-page UI.
+  const longPressBlock = isIOS ? `<div class="method">
+<div class="method-num">1</div>
+<div class="method-body">
+<div class="method-title">長押しで開く（最も簡単）</div>
+<div class="method-desc">前のページに戻り、緑の「LINEで開く」ボタンを<strong>長押し</strong>。表示されたメニューから「<strong>LINEで開く</strong>」を選択してください。</div>
+</div>
+</div>` : '';
+  const copyMethodNum = isIOS ? '2' : '1';
+
+  return c.html(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LINEを開く方法</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;background:#f5f7f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}
+.card{background:#fff;border-radius:20px;box-shadow:0 2px 20px rgba(0,0,0,0.06);max-width:400px;width:100%;padding:28px 24px;border:1px solid rgba(0,0,0,0.04)}
+.title{font-size:17px;color:#333;font-weight:700;margin-bottom:20px;text-align:center;line-height:1.5}
+.method{display:flex;gap:12px;margin-bottom:20px;align-items:flex-start}
+.method-num{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#06C755;color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.method-body{flex:1}
+.method-title{font-size:14px;font-weight:700;color:#333;margin-bottom:6px}
+.method-desc{font-size:13px;color:#666;line-height:1.7}
+.method-desc strong{color:#06C755;font-weight:700}
+.copy-section{background:#f9f9f9;border-radius:12px;padding:16px;margin-top:8px}
+.url-box{background:#fff;border:1px solid #e5e7e5;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#333;word-break:break-all;line-height:1.5;user-select:all;-webkit-user-select:all}
+.copy-btn{display:block;width:100%;padding:12px;border:none;border-radius:10px;font-size:13px;font-weight:600;text-align:center;color:#fff;background:#06C755;cursor:pointer;margin-bottom:10px;transition:all .15s;font-family:inherit}
+.copy-btn:active{transform:scale(0.98);opacity:.9}
+.copy-btn.copied{background:#999}
+.copy-hint{font-size:11px;color:#aaa;text-align:center;margin-bottom:8px;line-height:1.5}
+.steps{font-size:12px;color:#666;line-height:1.8;padding-left:18px;margin-top:6px}
+.steps li::marker{color:#06C755;font-weight:700}
+</style>
+</head>
+<body>
+<div class="card">
+<p class="title">LINEを開く方法</p>
+${longPressBlock}
+<div class="method">
+<div class="method-num">${copyMethodNum}</div>
+<div class="method-body">
+<div class="method-title">${browserName}で開く</div>
+<div class="method-desc">URLをコピーして${browserName}のアドレスバーに貼り付け</div>
+<div class="copy-section">
+<div class="url-box" id="urlBox">${urlForHtml}</div>
+<button class="copy-btn" id="copyBtn" type="button" data-url="${urlForHtml}">URLをコピー</button>
+<p class="copy-hint">うまくコピーできない場合は上のURLを長押しで選択</p>
+<ol class="steps">
+<li>ホームに戻る</li>
+<li>${browserName}を開く</li>
+<li>アドレスバーに貼り付け</li>
+<li>「LINEで開く」をタップ</li>
+</ol>
+</div>
+</div>
+</div>
+</div>
+<script>
+(function(){
+  var btn = document.getElementById('copyBtn');
+  var url = btn.getAttribute('data-url');
+  function showCopied(){
+    btn.textContent = '✓ コピーしました';
+    btn.classList.add('copied');
+    setTimeout(function(){
+      btn.textContent = 'URLをコピー';
+      btn.classList.remove('copied');
+    }, 2000);
+  }
+  function showFailed(){
+    btn.textContent = '上のURLを長押しでコピー';
+    btn.classList.add('copied');
+    setTimeout(function(){
+      btn.textContent = 'URLをコピー';
+      btn.classList.remove('copied');
+    }, 3000);
+  }
+  function execFallback(text){
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+  btn.addEventListener('click', function(){
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(showCopied, function(){
+        if (execFallback(url)) { showCopied(); } else { showFailed(); }
+      });
+    } else if (execFallback(url)) {
+      showCopied();
+    } else {
+      showFailed();
+    }
+  });
+})();
+</script>
 </body>
 </html>`);
 });

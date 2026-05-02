@@ -88,6 +88,174 @@ async function linkIgIgsid(
   }
 }
 
+// Apply tag + scenario from a ref code. Looks up entry_routes (legacy) first,
+// then tracked_links (modern). Both expose (tag_id, scenario_id) so the call
+// sites are uniform.
+//
+// Click-campaign semantics: when scenario step 1 is delay-0, push it on
+// EVERY click — not just first enrollment. enrollFriendInScenario is
+// INSERT OR IGNORE so re-clicks return null, but the push fires anyway
+// so the same Flex / message is re-delivered each time the user re-enters
+// the funnel (matches user expectation of "tracked link push"). Only
+// advance the enrollment row when the enrollment row is freshly created;
+// otherwise the cron worker keeps managing the existing enrollment.
+//
+// Used from BOTH /auth/callback (new friends, OAuth path) and
+// /api/liff/link (existing friends, LIFF SDK path) so click-driven push
+// works for already-friend users too.
+//
+// `accountChannelId` lets callers (e.g. /auth/callback) supply the resolved
+// LINE account context when `friend.line_account_id` may not yet be wired
+// up by the follow webhook. Without it the helper would fall back to the
+// default env token and push to the wrong bot for non-default accounts.
+async function applyRefAttribution(
+  c: Context<Env>,
+  ref: string,
+  friend: { id: string; line_account_id?: string | null },
+  lineUserId: string,
+  options?: { accountChannelId?: string | null },
+): Promise<void> {
+  if (!ref || ref.startsWith('xh:')) return;
+  const db = c.env.DB;
+
+  const route = await getEntryRouteByRefCode(db, ref);
+  let trackedLink: Awaited<ReturnType<typeof getTrackedLinkById>> = null;
+  if (!route) {
+    const tl = await getTrackedLinkById(db, ref);
+    if (tl?.is_active) trackedLink = tl;
+  }
+  const effectiveTagId = route?.tag_id ?? trackedLink?.tag_id ?? null;
+  const effectiveScenarioId = route?.scenario_id ?? trackedLink?.scenario_id ?? null;
+
+  if (effectiveTagId) {
+    await addTagToFriend(db, friend.id, effectiveTagId);
+  }
+  if (effectiveScenarioId) {
+    try {
+      const {
+        enrollFriendInScenario,
+        getScenarioSteps,
+        advanceFriendScenario,
+        completeFriendScenario,
+        getFriendById,
+      } = await import('@line-crm/db');
+      const { LineClient } = await import('@line-crm/line-sdk');
+      const { buildMessage, expandVariables, resolveMetadata } = await import('../services/step-delivery.js');
+      const steps = await getScenarioSteps(db, effectiveScenarioId);
+      const firstStep = steps[0];
+      if (!firstStep || firstStep.delay_minutes !== 0) return;
+
+      // Cooldown FIRST, before enrolling. /api/liff/link is hit on every
+      // LIFF page load (refresh, back-nav), not only on a fresh
+      // tracked-link click. Doing cooldown after enrollment would leave
+      // a fresh active step-0 row behind for the cron worker to pick up
+      // (because the partial UNIQUE on friend_scenarios is keyed
+      // `WHERE status != 'completed'`, so completed runs don't block
+      // a new INSERT).
+      const cutoff = new Date(Date.now() - 60_000 + 9 * 60 * 60_000)
+        .toISOString()
+        .slice(0, -1) + '+09:00';
+      const recent = await db
+        .prepare(
+          `SELECT 1 FROM messages_log
+           WHERE friend_id = ? AND scenario_step_id = ?
+             AND direction = 'outgoing' AND created_at > ?
+           LIMIT 1`,
+        )
+        .bind(friend.id, firstStep.id, cutoff)
+        .first();
+      if (recent) return;
+
+      // INSERT OR IGNORE — null on re-clicks (already enrolled), still push.
+      const enrollment = await enrollFriendInScenario(db, friend.id, effectiveScenarioId);
+
+      // Resolve push token. Prefer caller-supplied account channel (OAuth
+      // context), then friend.line_account_id, then the env default.
+      let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+      if (options?.accountChannelId) {
+        const acct = await getLineAccountByChannelId(db, options.accountChannelId);
+        if (acct?.channel_access_token) accessToken = acct.channel_access_token;
+      } else if (friend.line_account_id) {
+        const acct = await getLineAccountById(db, friend.line_account_id);
+        if (acct?.channel_access_token) accessToken = acct.channel_access_token;
+      }
+      const lineClient = new LineClient(accessToken);
+
+      // Re-read the friend after caller writes (linkFriendToUser /
+      // ref_code UPDATE) so {{uid}}, {{ref}}, and merged metadata
+      // expand against the latest state.
+      const fresh = (await getFriendById(db, friend.id)) ?? friend;
+      const resolvedMeta = await resolveMetadata(db, {
+        user_id: (fresh as unknown as Record<string, string | null>).user_id,
+        metadata: (fresh as unknown as Record<string, string | null>).metadata,
+      });
+      const expanded = expandVariables(
+        firstStep.message_content,
+        { ...fresh, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1],
+        c.env.WORKER_URL,
+      );
+      await lineClient.pushMessage(lineUserId, [buildMessage(firstStep.message_type, expanded)]);
+
+      // Log the push so the cooldown above sees it on subsequent calls,
+      // and so /chats and analytics show the message.
+      const nowIso = new Date(Date.now() + 9 * 60 * 60_000)
+        .toISOString()
+        .slice(0, -1) + '+09:00';
+      await db
+        .prepare(
+          `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+           VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          friend.id,
+          firstStep.message_type,
+          firstStep.message_content,
+          firstStep.id,
+          nowIso,
+        )
+        .run();
+
+      // Advance the enrollment so the cron delivery worker does not re-send
+      // step 1. Look up the row for this (friend, scenario) — covers both
+      // the freshly-created enrollment AND a stale row whose previous
+      // attempt failed before reaching this advancement (P2 from review).
+      // Filter out completed rows — the partial UNIQUE allows multiple
+      // historical completed rows to coexist, and we only want to repair
+      // the active one. Pick the most recently updated as a tiebreaker.
+      const enrollmentRow = enrollment ?? await db
+        .prepare(
+          `SELECT id, current_step_order FROM friend_scenarios
+           WHERE friend_id = ? AND scenario_id = ? AND status != 'completed'
+           ORDER BY updated_at DESC LIMIT 1`,
+        )
+        .bind(friend.id, effectiveScenarioId)
+        .first<{ id: string; current_step_order: number }>();
+      if (enrollmentRow && enrollmentRow.current_step_order < firstStep.step_order) {
+        const nextStep = steps[1];
+        if (nextStep) {
+          const next = new Date(Date.now() + 9 * 60 * 60_000 + nextStep.delay_minutes * 60_000);
+          const hours = next.getUTCHours();
+          if (hours < 9 || hours >= 21) {
+            if (hours >= 21) next.setUTCDate(next.getUTCDate() + 1);
+            next.setUTCHours(9, 0, 0, 0);
+          }
+          await advanceFriendScenario(
+            db,
+            enrollmentRow.id,
+            firstStep.step_order,
+            next.toISOString().slice(0, -1) + '+09:00',
+          );
+        } else {
+          await completeFriendScenario(db, enrollmentRow.id);
+        }
+      }
+    } catch (err) {
+      console.error('Ref scenario enrollment error:', err);
+    }
+  }
+}
+
 // ─── LINE Login OAuth (bot_prompt=aggressive) ───────────────────
 
 /**
@@ -118,22 +286,7 @@ liffRoutes.get('/auth/line', async (c) => {
   let poolAccount = ''; // pool's channel_id — passed via state only, not accountParam
   const baseUrl = new URL(c.req.url).origin;
 
-  // X (Twitter) iOS in-app browser since v11.42 uses custom WKWebView that
-  // blocks ALL Universal Links / deep links. Same for Instagram, Facebook,
-  // LINE in-app, WeChat. Redirect to /r/ which renders an explicit
-  // "Safariで開く" guidance UI. This is one-way — /r/'s OAuth fallback
-  // button targets /auth/oauth (not /auth/line), so no loop is possible.
   const ua = c.req.header('user-agent') || '';
-  const isInAppBrowser = /twitter|twitterandroid|\b(fbav|fban|instagram|line\/|micromessenger)\b/i.test(ua);
-  if (isInAppBrowser && ref) {
-    const url = new URL(c.req.url);
-    const passthrough = new URLSearchParams();
-    for (const [key, value] of url.searchParams) {
-      if (key !== 'ref') passthrough.set(key, value);
-    }
-    const qs = passthrough.toString();
-    return c.redirect(`/r/${encodeURIComponent(ref)}${qs ? '?' + qs : ''}`);
-  }
 
   // Multi-account: resolve LINE Login channel + LIFF
   // Priority: ?account= param > traffic pool "main" > env default
@@ -239,14 +392,32 @@ liffRoutes.get('/auth/line', async (c) => {
   if (igParam) qrParams.set('ig', igParam);
   const qrUrl = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
 
-  // Mobile: redirect to LIFF URL (opens LINE app directly)
-  // Exception: cross-account links (account param) use OAuth directly
-  // because Account A's LIFF can't open from Account B's LINE chat
+  // Mobile: route through /r/:ref so users get the OS-aware landing page
+  // (long-press hint on iOS, intent:// URL on Android) instead of being
+  // dropped onto liff.line.me directly. Direct liff.line.me redirects
+  // surface LINE Login web for UL-未学習 devices, which kills conversion.
+  // Exceptions:
+  //   - cross-account links (accountParam) → OAuth directly so the callback
+  //     can push from the correct account
+  //   - xh: refs (X Harness one-time tokens) → liff.line.me direct, since
+  //     these tokens must NEVER appear in third-party URLs and the
+  //     externalRef has already been zeroed for that case
+  //   - empty ref → liff.line.me direct (no /r/:ref to route to)
   const isMobile = /iphone|ipad|android|mobile/.test(ua.toLowerCase());
   if (isMobile) {
     if (accountParam) {
-      // Cross-account link: use OAuth so callback handles push
       return c.redirect(loginUrl.toString());
+    }
+    if (externalRef) {
+      // Forward all relevant query params (form, gate, xh, ig, pool, redirect, ad ids).
+      // ref is already in the path; strip it from the query.
+      const reqUrl = new URL(c.req.url);
+      const passthrough = new URLSearchParams();
+      for (const [key, value] of reqUrl.searchParams) {
+        if (key !== 'ref') passthrough.set(key, value);
+      }
+      const qs = passthrough.toString();
+      return c.redirect(`/r/${encodeURIComponent(externalRef)}${qs ? '?' + qs : ''}`);
     }
     return c.redirect(qrUrl);
   }
@@ -568,14 +739,9 @@ liffRoutes.get('/auth/callback', async (c) => {
         ipAddress: c.req.header('CF-Connecting-IP') || null,
       });
 
-      if (route) {
-        // Auto-tag the friend
-        if (route.tag_id) {
-          await addTagToFriend(db, friend.id, route.tag_id);
-        }
-        // Auto-enroll in scenario (scenario_id stored; enrollment handled by scenario engine)
-        // Future: call enrollFriendInScenario(db, friend.id, route.scenario_id) here
-      }
+      await applyRefAttribution(c, ref, friend, lineUserId, {
+        accountChannelId: accountParam || null,
+      });
     }
 
     // Save ad click IDs + UTM to friend metadata (for future ad API postback)
@@ -918,6 +1084,25 @@ liffRoutes.post('/api/liff/link', async (c) => {
         await db.prepare('UPDATE friends SET ref_code = ? WHERE id = ? AND ref_code IS NULL')
           .bind(body.ref, friend.id).run();
       }
+      // Apply ref attribution (tag + scenario push) for already-linked friends.
+      // /auth/callback only fires for new OAuth flows, so existing friends
+      // would otherwise miss tracked-link campaigns triggered by /api/liff/link.
+      // Mirror the new-link branch's recordRefTracking call so analytics
+      // (/api/analytics/ref-summary) include LIFF hits from existing friends.
+      if (body.ref && !body.ref.startsWith('xh:')) {
+        try {
+          const route = await getEntryRouteByRefCode(db, body.ref);
+          await recordRefTracking(db, {
+            refCode: body.ref,
+            friendId: friend.id,
+            entryRouteId: route?.id ?? null,
+            sourceUrl: null,
+          });
+        } catch { /* silent */ }
+      }
+      if (body.ref) {
+        await applyRefAttribution(c, body.ref, friend, lineUserId);
+      }
       // X Harness token resolution for already-linked friends
       if (body.ref && body.ref.startsWith('xh:')) {
         try {
@@ -981,6 +1166,9 @@ liffRoutes.post('/api/liff/link', async (c) => {
           sourceUrl: null,
         });
       } catch { /* silent */ }
+
+      // Apply ref attribution (tag + scenario push) for newly-linked friends
+      await applyRefAttribution(c, body.ref, friend, lineUserId);
     }
 
     // X Harness token resolution: ref starting with "xh:" links X account to LINE friend

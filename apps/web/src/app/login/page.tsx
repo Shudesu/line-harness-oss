@@ -15,7 +15,12 @@ export default function LoginPage() {
 
     try {
       // Validate by calling a simple endpoint
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL
+      if (!apiUrl) {
+        setError('NEXT_PUBLIC_API_URL is not set in build env')
+        setLoading(false)
+        return
+      }
       const res = await fetch(`${apiUrl}/api/friends/count`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       })
