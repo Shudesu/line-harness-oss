@@ -174,36 +174,55 @@ main ブランチに直接 push 可（開発速度優先）。
 
 ### 7.1 バージョニング
 
-semver に従う。次回リリースから SDK・MCP・タグを統一バージョンに揃える。
+semver に従う。**root `package.json` を唯一の真実**とし、umbrella package (apps/web, apps/worker, packages/sdk, packages/mcp-server) は `scripts/sync-versions.sh` で同一バージョンに揃える。
 
 - **patch** (x.x.N): バグ修正
 - **minor** (x.N.0): 新機能追加
 - **major** (N.0.0): 破壊的変更
 
+`packages/db` / `packages/shared` / `packages/create-line-harness` / `packages/plugin-template` は umbrella 外 — それぞれ独立した version を持つ (内部依存 or CLI/template の独自リリース cadence のため)。
+
 ### 7.2 リリース手順
 
 ```bash
 # 1. CHANGELOG.md にエントリ追加
-# 2. package.json バージョン更新（SDK, MCP 両方）
-# 3. ビルド + テスト
+
+# 2. root package.json のバージョンを bump (例: 0.12.0 → 0.13.0)
+node -e "const fs=require('fs');const p=require('./package.json');p.version='0.13.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+
+# 3. umbrella packages を同期 (apps/web, apps/worker, packages/sdk, packages/mcp-server)
+bash scripts/sync-versions.sh
+
+# 4. ビルド + テスト
 pnpm --filter @line-harness/sdk build && pnpm --filter @line-harness/sdk test
 pnpm --filter @line-harness/mcp-server build
 
-# 4. npm publish（pnpm で）
+# 5. npm publish (pnpm で)
 cd packages/sdk && pnpm publish --access public --no-git-checks
 cd packages/mcp-server && pnpm publish --access public --no-git-checks
 
-# 5. commit + push（sync-oss.yml が OSS に反映）
-git commit -m "chore: release vX.Y.Z"
-git push
+# 6. commit + push (pre-push hook が版差を再検証 → 不一致なら拒否)
+git add -A
+git commit -m "chore: release v0.13.0"
+git push  # GitHub Actions が deploy を走らせる
 
-# 6. OSS リポに GitHub Release 作成
-gh release create vX.Y.Z --repo Shudesu/line-harness-oss --title "vX.Y.Z" --notes "..."
+# 7. OSS リポに GitHub Release 作成
+gh release create v0.13.0 --repo Shudesu/line-harness-oss --title "v0.13.0" --notes "..."
 ```
 
 ### 7.3 npm publish は pnpm で
 
 `npm publish` ではなく `pnpm publish` を使う。`workspace:*` が自動で実バージョンに変換される。
+
+### 7.4 ダッシュボード表示バージョン
+
+`apps/web/next.config.ts` がビルド時に root `package.json` を読み、`APP_VERSION` env として注入する。サイドバーの `LINE Harness v{APP_VERSION}` 表示はこの値を使う。手動の env 上書き不要。
+
+### 7.5 バージョン同期チェック
+
+- `bash scripts/sync-versions.sh` — root → umbrella packages へ伝播 (apply mode)
+- `bash scripts/sync-versions.sh --check` — 不一致を検出のみ (CI/hook 用)
+- `.githooks/pre-push` が push 前に `--check` を自動実行。不一致なら push 拒否
 
 ---
 
