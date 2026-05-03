@@ -2,10 +2,15 @@ import type { Context, Next } from 'hono';
 import { getStaffByApiKey } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-async function shortFingerprint(value: string | undefined): Promise<string | null> {
-  if (!value) return null;
+function normalizeBearerSecret(value: string | undefined): string {
+  return value?.trim() ?? '';
+}
 
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+async function shortFingerprint(value: string | undefined): Promise<string | null> {
+  const normalized = normalizeBearerSecret(value);
+  if (!normalized) return null;
+
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
   return Array.from(new Uint8Array(digest))
     .slice(0, 6)
     .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -55,16 +60,18 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   }
 
   const token = authHeader.slice('Bearer '.length);
+  const normalizedToken = normalizeBearerSecret(token);
+  const normalizedApiKey = normalizeBearerSecret(c.env.API_KEY);
 
   // Check staff_members table first
-  const staff = await getStaffByApiKey(c.env.DB, token);
+  const staff = await getStaffByApiKey(c.env.DB, normalizedToken);
   if (staff) {
     c.set('staff', { id: staff.id, name: staff.name, role: staff.role });
     return next();
   }
 
   // Fallback: env API_KEY acts as owner
-  if (token === c.env.API_KEY) {
+  if (normalizedToken === normalizedApiKey) {
     c.set('staff', { id: 'env-owner', name: 'Owner', role: 'owner' as const });
     return next();
   }
@@ -73,9 +80,11 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path,
     hasAuthorizationHeader: true,
     tokenLength: token.length,
+    normalizedTokenLength: normalizedToken.length,
     apiKeyConfigured: Boolean(c.env.API_KEY),
     apiKeyLength: c.env.API_KEY?.length ?? 0,
-    tokenFingerprint: await shortFingerprint(token),
+    normalizedApiKeyLength: normalizedApiKey.length,
+    tokenFingerprint: await shortFingerprint(normalizedToken),
     apiKeyFingerprint: await shortFingerprint(c.env.API_KEY),
   });
 
