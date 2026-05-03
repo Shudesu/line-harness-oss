@@ -8,157 +8,21 @@ import type {
   ReservationSlotWithAvailability,
 } from '@line-crm/shared';
 
-type ApiResponse<T> =
-  | { success: true; data: T }
-  | { success: false; error: string; code?: string };
-
-type StatusUpdateResponse = {
-  reservation: ReservationResponse;
-  changed: boolean;
-};
-
-const API_KEY_STORAGE_KEY = 'lh_reservation_admin_api_key';
-
-type State = {
-  apiKey: string;
-  mode: 'overview' | 'settings';
-  date: string;
-  viewMode: 'week' | 'month';
-  weekStart: string;
-  resourceId: string;
-  resources: ReservationResource[];
-  menus: ReservationMenu[];
-  schedules: ReservationSchedule[];
-  slots: ReservationSlotWithAvailability[];
-  slotsByDate: Record<string, ReservationSlotWithAvailability[]>;
-  reservations: ReservationResponse[];
-  externalSources: ExternalReservationSourceResponse[];
-  selectedReservation: ReservationResponse | null;
-  selectedSlotId: string | null;
-  bulkPreviewSlots: ReservationSlotWithAvailability[];
-  loading: boolean;
-  message: string | null;
-  error: string | null;
-};
-
-const state: State = {
-  apiKey: readSessionApiKey(),
-  mode: readAdminMode(),
-  date: todayJst(),
-  viewMode: 'week',
-  weekStart: startOfWeekYmd(todayJst()),
-  resourceId: '',
-  resources: [],
-  menus: [],
-  schedules: [],
-  slots: [],
-  slotsByDate: {},
-  reservations: [],
-  externalSources: [],
-  selectedReservation: null,
-  selectedSlotId: null,
-  bulkPreviewSlots: [],
-  loading: false,
-  message: null,
-  error: null,
-};
-
-function readSessionApiKey(): string {
-  try {
-    return sessionStorage.getItem(API_KEY_STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
-
-function saveSessionApiKey(value: string): void {
-  try {
-    if (value) {
-      sessionStorage.setItem(API_KEY_STORAGE_KEY, value);
-    } else {
-      sessionStorage.removeItem(API_KEY_STORAGE_KEY);
-    }
-  } catch {
-    // sessionStorage may be unavailable in strict browser modes.
-  }
-}
-
-function readAdminMode(): State['mode'] {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('mode') === 'settings' ? 'settings' : 'overview';
-}
-
-function setAdminMode(mode: State['mode']): void {
-  state.mode = mode;
-  const url = new URL(window.location.href);
-  url.searchParams.set('page', 'admin-reservations');
-  if (mode === 'settings') {
-    url.searchParams.set('mode', 'settings');
-  } else {
-    url.searchParams.delete('mode');
-  }
-  window.history.replaceState(null, '', url.toString());
-}
-
-function syncApiKeyFromInput(): void {
-  const element = document.getElementById('adminApiKey');
-  if (!(element instanceof HTMLInputElement)) return;
-
-  const value = element.value.trim();
-  if (value === state.apiKey) return;
-
-  state.apiKey = value;
-  saveSessionApiKey(value);
-}
-
-function todayJst(): string {
-  const formatter = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  return formatter.format(new Date());
-}
-
-function parseYmd(value: string): Date {
-  const [year, month, day] = value.split('-').map((part) => Number.parseInt(part, 10));
-  return new Date(year, month - 1, day);
-}
-
-function toYmd(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function addDaysYmd(value: string, days: number): string {
-  const date = parseYmd(value);
-  date.setDate(date.getDate() + days);
-  return toYmd(date);
-}
-
-function dateRangeYmd(dateFrom: string, dateTo: string): string[] {
-  const start = parseYmd(dateFrom);
-  const end = parseYmd(dateTo);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
-
-  const dates: string[] = [];
-  for (let current = toYmd(start); current <= dateTo; current = addDaysYmd(current, 1)) {
-    dates.push(current);
-    if (dates.length > 62) break;
-  }
-  return dates;
-}
-
-function startOfWeekYmd(value: string): string {
-  const date = parseYmd(value);
-  date.setDate(date.getDate() - date.getDay());
-  return toYmd(date);
-}
-
-function monthDates(year: number, monthIndex: number): string[] {
-  const total = new Date(year, monthIndex + 1, 0).getDate();
-  return Array.from({ length: total }, (_, index) => toYmd(new Date(year, monthIndex, index + 1)));
-}
+import { api } from './reservations-admin/api.js';
+import {
+  addDaysYmd,
+  dateRangeYmd,
+  dayLabel,
+  formatDateShort,
+  formatTime,
+  monthDates,
+  parseYmd,
+  startOfWeekYmd,
+  toYmd,
+} from './reservations-admin/date.js';
+import { escapeHtml } from './reservations-admin/dom.js';
+import { saveSessionApiKey, setAdminMode, state } from './reservations-admin/state.js';
+import type { StatusUpdateResponse } from './reservations-admin/types.js';
 
 function visibleDates(): string[] {
   if (state.viewMode === 'week') {
@@ -166,26 +30,6 @@ function visibleDates(): string[] {
   }
   const date = parseYmd(state.date);
   return monthDates(date.getFullYear(), date.getMonth());
-}
-
-function formatDateShort(value: string): string {
-  const date = parseYmd(value);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-function dayLabel(value: string): string {
-  return ['日', '月', '火', '水', '木', '金', '土'][parseYmd(value).getDay()] ?? '';
-}
-
-function escapeHtml(value: string | null | undefined): string {
-  const div = document.createElement('div');
-  div.textContent = value ?? '';
-  return div.innerHTML;
-}
-
-function formatTime(value: string): string {
-  const match = value.match(/T(\d{2}:\d{2})/);
-  return match ? match[1] : value;
 }
 
 function slotMark(slots: ReservationSlotWithAvailability[] | undefined): { mark: string; className: string; label: string } {
@@ -209,28 +53,6 @@ function reservationsForSlot(slotId: string): ReservationResponse[] {
 
 function activeReservationsForSlot(slotId: string): ReservationResponse[] {
   return reservationsForSlot(slotId).filter(isActiveReservation);
-}
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  syncApiKeyFromInput();
-
-  if (!state.apiKey) {
-    throw new Error('APIキーを入力してください');
-  }
-
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${state.apiKey}`,
-      ...init?.headers,
-    },
-  });
-  const body = await response.json().catch(() => null) as ApiResponse<T> | null;
-  if (!response.ok || !body?.success) {
-    throw new Error(body && !body.success ? body.error : `API error: ${response.status}`);
-  }
-  return body.data;
 }
 
 async function loadInitial(): Promise<void> {
