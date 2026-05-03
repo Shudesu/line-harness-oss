@@ -4,6 +4,7 @@ name: Deploy Worker
 # - CLOUDFLARE_API_TOKEN
 # - CLOUDFLARE_D1_DATABASE_ID
 #
+
 # Optional GitHub Variables:
 # - CLOUDFLARE_ACCOUNT_ID        can be a Secret or Variable
 # - WORKER_NAME                  default: line-harness-reservation
@@ -69,6 +70,12 @@ jobs:
           CF_WORKER_NAME: ${{ vars.WORKER_NAME }}
           CF_SECRETS_STORE_ID: ${{ vars.CLOUDFLARE_SECRETS_STORE_ID }}
           CF_SECRETS_STORE_BINDINGS: ${{ vars.CLOUDFLARE_SECRETS_STORE_BINDINGS }}
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          LIFF_URL: ${{ vars.LIFF_URL }}
+          LINE_CHANNEL_ID: ${{ vars.LINE_CHANNEL_ID }}
+          LINE_LOGIN_CHANNEL_ID: ${{ vars.LINE_LOGIN_CHANNEL_ID }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_REDIRECT_URI: ${{ vars.GOOGLE_OAUTH_REDIRECT_URI }}
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -119,13 +126,28 @@ jobs:
             bucket_name: r2BucketName,
           }];
 
+          const plainVars = [
+            'WORKER_URL',
+            'LIFF_URL',
+            'LINE_CHANNEL_ID',
+            'LINE_LOGIN_CHANNEL_ID',
+            'GOOGLE_OAUTH_CLIENT_ID',
+            'GOOGLE_OAUTH_REDIRECT_URI',
+          ].reduce((acc, key) => {
+            const value = process.env[key]?.trim();
+            if (value) acc[key] = value;
+            return acc;
+          }, {});
+          config.vars = {
+            ...(config.vars || {}),
+            ...plainVars,
+          };
+
           if (secretsStoreId) {
             const defaultBindings = [
               'API_KEY',
               'LINE_CHANNEL_SECRET',
               'LINE_CHANNEL_ACCESS_TOKEN',
-              'LIFF_URL',
-              'WORKER_URL',
             ];
             const rawBindings = process.env.CF_SECRETS_STORE_BINDINGS?.trim();
             const bindings = (rawBindings ? rawBindings.split(',') : defaultBindings)
