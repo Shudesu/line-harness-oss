@@ -1,205 +1,635 @@
-# 103. 予約画面UXフロー設計
+# 103. 予約UXフロー再設計
 
-この文書は、LIFF予約画面と予約管理画面の画面仕様を定義する。
+この文書は、予約LIFF画面と予約管理画面のUX仕様を定義する。
 
-実機のLINE LIFF確認は後工程とし、先に「ユーザーが迷わず予約できること」「管理者が枠と予約を壊さず扱えること」を満たす画面を作る。
+方針は次の通り。
 
-## ゴール
-
-- ユーザーは、日付、時間、残り枠を見て、スマホだけで予約できる。
-- ユーザーは、予約前に入力内容を確認できる。
-- ユーザーは、予約完了後に予約内容、注意事項、キャンセル導線を確認できる。
-- 管理者は、同じ空き枠情報を見ながら、予約状況、残数、外部取り込み、枠調整を確認できる。
-- hotpepper beautyのように、日付と時間の空き状況が直感的に分かるUIにする。
+- LIFF画面は、既存のDOM要素とCSSをできるだけ残す。
+- LIFF画面のTypeScript処理は、一度シンプルに作り直す。
+- 予約管理画面は、操作性は大きく変えず、`resource` / `menu` / `schedule` の意味と操作導線を分かりやすくする。
+- 在庫・予約状態・認可の安全性は、Worker APIとDB helperで担保する。フロントエンドは見やすさと誤操作防止に集中する。
 
 ## LIFF予約画面
 
-URL:
+### 目的
+
+ユーザーがスマホで迷わず予約できる画面にする。
+
+MVPでは、次の5ステップだけに絞る。
+
+```text
+1. 予約対象とメニューを選ぶ
+2. 人数を選ぶ
+3. 日付と時間枠を選ぶ
+4. 氏名・電話番号などを入力する
+5. 予約確認 → 予約完了
+```
+
+次の機能は、LIFF予約画面のMVPから外す。
+
+- 自分の予約一覧
+- 予約詳細画面
+- LIFF内キャンセル
+- token再発行UI
+- 複雑なタブ切替
+
+キャンセルや変更は、MVPでは完了画面に「LINEから店舗へ連絡してください」と表示する。
+
+### URL
+
+推奨URL:
 
 ```text
 /book?resourceId={RESOURCE_ID}&menuId={MENU_ID}
 ```
 
-LINE LIFF本番URL:
+LINE LIFF Endpoint URL:
 
 ```text
 https://liff.line.me/{LIFF_ID}?page=book&resourceId={RESOURCE_ID}&menuId={MENU_ID}
 ```
 
-実装状況:
+`resourceId` と `menuId` がない場合は、公開APIから有効なresource/menuを取得して先頭を選ぶ。ただし、取得失敗時に画面が「読み込み中」で止まらないよう、明確なエラーを出す。
 
-- `apps/worker/src/client/booking.ts` に、予約トップ、1週間/1か月空き枠表示、受付入力、予約確認、予約完了、自分の予約一覧、予約詳細、キャンセル確認、キャンセル完了を実装済み。
-- `resourceId` がURLにない場合は、`GET /api/public/reservation-resources` から有効な予約対象を取得し、先頭の予約対象を自動選択する。
-- 複数の予約対象がある場合は、予約トップで予約対象を選択できる。予約対象またはメニューを変更したら、古いslotキャッシュと選択中slotを破棄して取り直す。
-- `/book` は `liffId` / `resourceId` / `menuId` などのqueryを保持して `/?page=book` にリダイレクトする。
-- 確認画面へ進めない入力エラーは全画面エラーにせず、予約トップ内の注意表示として出す。
-- 公開APIは `LIFF_SESSION_TOKEN` を使い、`lineUserId` query指定は使わない。
-- 予約作成後の `detailToken` / `cancelToken` はlocalStorageに保存し、同じ端末・同じブラウザで予約詳細/キャンセル導線に使う。
-- 別端末やlocalStorage消去後は、LIFF sessionから本人予約の `detailToken` / `cancelToken` を再発行する。
+## 残すDOM要素
 
-### 画面一覧
+現在の見た目は大きく変えない。TypeScriptを作り直しても、以下のDOM構造・class名はできるだけ維持する。
 
-| 画面 | 目的 | 実装優先度 |
-|---|---|---|
-| 予約トップ | メニュー、人数、日付、時間を選ばせる | 必須 |
-| 空き枠カレンダー | 1週間/1か月の空き状況を表示する | 必須 |
-| 受付入力 | 名前、電話、メール、人数、備考を入力する | 必須 |
-| 予約確認 | 送信前に内容を確認する | 必須 |
-| 予約完了 | 予約ID、日時、人数、注意事項、キャンセル導線を表示する | 必須 |
-| 自分の予約一覧 | 今後の予約を確認する | 次点 |
-| 予約詳細 | 予約内容、状態、キャンセル可否を表示する | 次点 |
-| キャンセル確認 | キャンセル前に確認する | 次点 |
-| キャンセル完了 | キャンセル結果を表示する | 次点 |
+### 全体
 
-### 予約トップ
-
-表示するもの:
-
-- 施設名または予約対象名
-- メニュー名
-- 所要時間
-- 料金目安
-- 人数選択
-- 日付表示モード切替: `1週間` / `1か月`
-- 空き枠カレンダー
-
-初期表示:
-
-- スマホでは `1週間` 表示を初期値にする。
-- 横幅が広い場合は `1か月` 表示に切り替えられる。
-- 最短予約可能日から表示する。
-- 過去日は選択不可。
-
-### 空き枠カレンダー
-
-hotpepper beauty型の見せ方に寄せる。
-
-1週間表示:
-
-```text
-        5/10  5/11  5/12  5/13  5/14  5/15  5/16
-09:00     ◎     △     ×     ◎     ◎     △     ×
-10:00     △     ×     ×     ◎     △     △     ×
-11:00     ◎     ◎     △     ×     ◎     ×     ×
+```html
+<div class="booking-page reservation-liff">
+  <div class="booking-header">...</div>
+  ...
+</div>
 ```
 
-1か月表示:
+使うclass:
 
-- 月カレンダーに日別の空き概要を出す。
-- 日付を押すと、その日の時間別枠を下に表示する。
+- `.booking-page`
+- `.reservation-liff`
+- `.booking-header`
+- `.eyebrow`
+- `.card`
+- `.loading-spinner`
+- `.message`
+- `.error`
 
-表示記号:
+### 予約内容パネル
 
-| 表示 | 意味 |
-|---|---|
-| `◎` | 残り3枠以上 |
-| `△` | 残り1〜2枠 |
-| `×` | 満席 |
-| `-` | 予約不可、休業、未生成 |
+```html
+<section class="booking-panel">
+  <div class="section-title-row">
+    <h2>予約内容</h2>
+    <p>予約対象 / メニュー / 所要時間</p>
+  </div>
 
-残数表示:
+  <label class="field-label">
+    予約対象
+    <select data-field="resourceId">...</select>
+  </label>
 
-- `残り5`
-- `残り2`
-- `満席`
-- `受付停止`
+  <label class="field-label">
+    メニュー
+    <select data-field="menuId">...</select>
+  </label>
 
-重要な制約:
+  <div class="people-grid">...</div>
 
-- 表示の残数は `lineRemainingCapacity` を使う。
-- `status='open'` でも `lineRemainingCapacity <= 0` なら満席表示にする。
-- クライアント側で空き判定を信用しない。予約作成時は必ずサーバー側の条件付きUPDATEで再判定する。
+  <div class="view-toggle">
+    <button data-action="view-week">1週間で見る</button>
+    <button data-action="view-month">1か月で見る</button>
+  </div>
+</section>
+```
 
-### 受付入力
+使うclass:
 
-入力項目:
+- `.booking-panel`
+- `.section-title-row`
+- `.field-label`
+- `.people-grid`
+- `.view-toggle`
+- `.active`
 
-| 項目 | 必須 | 備考 |
-|---|---|---|
-| 大人人数 | 必須 | 初期値1 |
-| 子ども人数 | 任意 | 初期値0 |
-| 氏名 | 必須 | LIFF profile名を初期値にして編集可 |
-| 電話番号 | 必須 | 数字、ハイフン許可 |
-| メール | 任意 | 予約控え送信を将来入れるため |
-| 備考 | 任意 | 犬連れ、到着遅れ、質問など |
+### 空き状況 週表示
 
-バリデーション:
+```html
+<section class="booking-panel availability-panel">
+  <div class="calendar-header">
+    <button class="cal-nav" data-action="prev-week">&lt;</button>
+    <div>
+      <h2>空き状況</h2>
+      <p>対象週</p>
+    </div>
+    <button class="cal-nav" data-action="next-week">&gt;</button>
+  </div>
 
-- `adultCount + childCount >= menu.min_people`
-- `menu.max_people` がある場合は超過不可。
-- 電話番号は空欄不可。
-- slot未選択では確認画面へ進めない。
+  <div class="week-matrix">
+    <div class="week-cell week-head">時間</div>
+    <button class="week-cell week-day" data-date="YYYY-MM-DD">...</button>
+    <button class="week-cell mark many" data-slot-id="...">...</button>
+  </div>
+</section>
+```
+
+使うclass:
+
+- `.availability-panel`
+- `.calendar-header`
+- `.cal-nav`
+- `.week-matrix`
+- `.week-cell`
+- `.week-head`
+- `.week-time`
+- `.week-day`
+- `.mark`
+- `.many`
+- `.few`
+- `.full`
+- `.none`
+- `.selected`
+- `.week-empty`
+
+### 空き状況 月表示
+
+```html
+<section class="booking-panel availability-panel">
+  <div class="calendar-header">
+    <button class="cal-nav" data-action="prev-month">&lt;</button>
+    <div>
+      <h2>YYYY年M月</h2>
+      <p>日付を押すと時間別の枠を表示します</p>
+    </div>
+    <button class="cal-nav" data-action="next-month">&gt;</button>
+  </div>
+
+  <div class="cal-weekdays">...</div>
+  <div class="month-grid">
+    <button class="month-day many" data-date="YYYY-MM-DD">...</button>
+  </div>
+</section>
+```
+
+使うclass:
+
+- `.cal-weekdays`
+- `.month-grid`
+- `.month-day`
+- `.empty`
+- `.many`
+- `.few`
+- `.full`
+- `.selected`
+
+### 時間枠一覧
+
+```html
+<section class="booking-panel">
+  <h2>選択日</h2>
+  <div class="slots-grid">
+    <button class="slot-btn available" data-slot-id="...">...</button>
+    <button class="slot-btn full" disabled>...</button>
+  </div>
+</section>
+```
+
+使うclass:
+
+- `.slots-grid`
+- `.slot-btn`
+- `.available`
+- `.full`
+- `.selected`
+- `.muted`
+- `.slots-loading`
+
+### 受付情報
+
+```html
+<section class="booking-panel">
+  <h2>受付情報</h2>
+  <label class="field-label">氏名<input data-field="customerName"></label>
+  <label class="field-label">電話番号<input data-field="customerPhone"></label>
+  <label class="field-label">メール<input data-field="customerEmail"></label>
+  <label class="field-label">備考<textarea data-field="note"></textarea></label>
+</section>
+```
 
 ### 予約確認
 
-送信前に表示するもの:
+```html
+<section class="booking-panel confirm-card">
+  <h2>予約内容の確認</h2>
+  <div class="confirm-details">
+    <div class="confirm-row">
+      <span class="confirm-label">日付</span>
+      <span class="confirm-value">...</span>
+    </div>
+  </div>
+  <div class="booking-actions split">
+    <button class="close-btn" data-action="back-booking">入力に戻る</button>
+    <button class="book-btn" data-action="submit-booking">予約を確定する</button>
+  </div>
+</section>
+```
 
-- 予約対象
-- メニュー
-- 日付
-- 時間
-- 人数
-- 氏名
-- 電話番号
-- メール
-- 備考
-- キャンセルポリシー
+使うclass:
 
-ボタン:
-
-- `予約を確定する`
-- `入力に戻る`
-
-送信時の挙動:
-
-- 二重送信防止でボタンをdisabledにする。
-- API失敗時はエラー内容を表示し、再送できるようにする。
-- 在庫不足の場合は、最新の空き枠を再取得して「満席になりました」と表示する。
+- `.confirm-card`
+- `.confirm-details`
+- `.confirm-row`
+- `.confirm-label`
+- `.confirm-value`
+- `.booking-actions`
+- `.split`
+- `.book-btn`
+- `.close-btn`
+- `.policy-note`
 
 ### 予約完了
 
-表示するもの:
-
-- `予約を受け付けました`
-- 予約ID
-- 日時
-- メニュー
-- 人数
-- 氏名
-- 電話番号
-- 注意事項
-- `予約詳細を見る`
-- `キャンセルする`
-- `LINEに戻る`
-
-token利用:
-
-- 詳細表示は `detailToken` を使う。
-- キャンセルは `cancelToken` を使う。
-- `detailToken` でキャンセルできないようにする。
-
-### 自分の予約一覧
-
-表示条件:
-
-- `LIFF_SESSION_TOKEN` を持つユーザーのみ。
-- `lineUserId` query指定は使わない。
-
-表示するもの:
-
-- 今後の予約
-- 過去の予約
-- ステータス
-- キャンセル可否
-
-API:
-
-```text
-GET /api/public/me/reservations
-Authorization: Bearer LIFF_SESSION_TOKEN
+```html
+<section class="success-card">
+  <div class="success-icon">✓</div>
+  <h2>予約を受け付けました</h2>
+  <p class="success-message">予約ID: ...</p>
+  <button class="close-btn" data-action="close">LINEに戻る</button>
+</section>
 ```
 
+使うclass:
+
+- `.success-card`
+- `.success-icon`
+- `.success-message`
+- `.close-btn`
+
+## 残すCSS
+
+`apps/worker/index.html` の既存CSSは、次のまとまりを残す。
+
+### 共通CSS
+
+- `body`
+- `#app`
+- `.card`
+- `.loading-spinner`
+- `.message`
+- `.error`
+
+### LIFF予約画面CSS
+
+- `.booking-page`
+- `.booking-header`
+- `.reservation-liff`
+- `.eyebrow`
+- `.booking-panel`
+- `.section-title-row`
+- `.field-label`
+- `.people-grid`
+- `.view-toggle`
+- `.calendar-header`
+- `.cal-nav`
+- `.cal-weekdays`
+- `.month-grid`
+- `.month-day`
+- `.week-matrix`
+- `.week-cell`
+- `.week-head`
+- `.week-time`
+- `.week-day`
+- `.mark`
+- `.slots-grid`
+- `.slot-btn`
+- `.confirm-card`
+- `.confirm-details`
+- `.confirm-row`
+- `.book-btn`
+- `.booking-actions`
+- `.policy-note`
+- `.muted`
+- `.success-card`
+- `.success-icon`
+- `.close-btn`
+- `@media (max-width: 420px)`
+
+次のCSSはMVPでは使わないなら削除候補にする。
+
+- `.booking-tabs`
+- `.mini-btn`
+- `.text-btn`
+- `.reservation-list`
+- `.reservation-card`
+- `.muted-icon`
+- `.confirm-section`
+- `.booking-calendar`
+- `.cal-days`
+- `.cal-day`
+- `.slots-section`
+- `.no-slots`
+
+削除候補はすぐ消さず、TypeScript作り直し後に未使用classを確認してから削除する。
+
+## LIFF TypeScript 再設計
+
+### 基本方針
+
+イベント処理を「日付を押したら全部更新」のような暗黙トリガーにしない。
+
+各操作は、必ず独立したactionとして扱う。
+
+```text
+resource変更
+menu変更
+人数変更
+表示モード変更
+前週/次週
+前月/次月
+日付選択
+slot選択
+確認へ進む
+入力に戻る
+予約確定
+```
+
+### ファイル構成
+
+```text
+apps/worker/src/client/booking.ts
+  initBookingだけを公開する入口。
+
+apps/worker/src/client/booking/state.ts
+  BookingState、初期状態、selectedMenuなど。
+
+apps/worker/src/client/booking/api.ts
+  fetchResourceList、fetchMenus、fetchSlots、createReservation、createSession。
+
+apps/worker/src/client/booking/actions.ts
+  ユーザー操作ごとの状態更新。
+
+apps/worker/src/client/booking/render.ts
+  DOM文字列生成。副作用を持たない。
+
+apps/worker/src/client/booking/events.ts
+  data-action / data-field / data-date / data-slot-id のイベントbinding。
+
+apps/worker/src/client/booking/date.ts
+  日付処理。
+
+apps/worker/src/client/booking/types.ts
+  型定義。
+```
+
+`render.ts` は状態を変更しない。`events.ts` はDOMイベントをactionへ渡すだけにする。API呼び出しは `actions.ts` からだけ行う。
+
+### 状態設計
+
+```ts
+type BookingStep = 'input' | 'confirm' | 'success';
+type ViewMode = 'week' | 'month';
+
+type BookingState = {
+  step: BookingStep;
+  liffReady: boolean;
+  loadingInitial: boolean;
+  loadingSlots: boolean;
+  submitting: boolean;
+
+  resourceId: string | null;
+  menuId: string | null;
+  resources: Resource[];
+  menus: Menu[];
+
+  viewMode: ViewMode;
+  weekStart: string;
+  currentMonth: string;
+  selectedDate: string | null;
+  selectedSlotId: string | null;
+  slotsByDate: Record<string, Slot[]>;
+
+  form: {
+    adultCount: number;
+    childCount: number;
+    customerName: string;
+    customerPhone: string;
+    customerEmail: string;
+    note: string;
+  };
+
+  sessionToken: string | null;
+  lastReservation: Reservation | null;
+  notice: string | null;
+  error: string | null;
+};
+```
+
+重要なルール:
+
+- `selectedSlotId` だけを真実にする。`selectedSlot` オブジェクトを別で持たない。
+- slot本体は `slotsByDate` から毎回導出する。
+- `resourceId` / `menuId` / 人数が変わったら、`selectedDate` と `selectedSlotId` を必ずリセットする。
+- `viewMode` 変更では、`selectedDate` と `selectedSlotId` をリセットする。
+- APIの古いレスポンスで新しい状態を上書きしないよう、`requestSeq` を持つ。
+
+### API取得設計
+
+初期化:
+
+```text
+initBooking
+  → LIFF profile取得
+  → reservation-session作成
+  → resources取得
+  → resourceId決定
+  → menus取得
+  → menuId決定
+  → visible datesのslots取得
+  → render
+```
+
+resource取得:
+
+```text
+GET /api/public/reservation-resources
+```
+
+失敗時:
+
+- URLに `resourceId` があれば、fallback resourceとして表示する。
+- URLに `resourceId` がなければ、明確なエラーを出す。
+- 「予約対象を読み込み中」のまま止めない。
+
+menu取得:
+
+```text
+GET /api/public/reservation-resources/:resourceId/menus
+```
+
+失敗時:
+
+- `予約メニューを取得できません` を表示する。
+- slot取得へ進まない。
+
+slot取得:
+
+```text
+GET /api/public/reservation-resources/:resourceId/slots?date=YYYY-MM-DD&menuId=...&people=...
+```
+
+取得タイミング:
+
+- 初期表示時に表示範囲の日付を取得する。
+- `viewMode` を変えたら、その表示範囲の日付を取得する。
+- 前週/次週、前月/次月で表示範囲を変えたら取得する。
+- 日付を押した時点で未取得なら、その日だけ取得する。
+- 人数変更時は残数判定が変わるため、表示範囲を再取得する。
+
+### 表示モード設計
+
+週表示:
+
+```text
+viewMode = week
+weekStart = YYYY-MM-DD
+visibleDates = weekStartから7日
+```
+
+月表示:
+
+```text
+viewMode = month
+currentMonth = YYYY-MM
+visibleDates = その月の全日付
+```
+
+注意:
+
+- `1か月で見る` ボタンは、日付選択に依存しない。
+- `前へ/次へ` ボタンは、日付選択に依存しない。
+- カレンダーの日付タップは、`selectedDate` を変えるだけにする。
+- `selectedDate` が変わっても、表示モードは変えない。
+
+### イベント設計
+
+イベントbindingは、次のように役割を固定する。
+
+```text
+data-action
+  view-week
+  view-month
+  prev-week
+  next-week
+  prev-month
+  next-month
+  go-confirm
+  back-booking
+  submit-booking
+  close
+
+data-field
+  resourceId
+  menuId
+  adultCount
+  childCount
+  customerName
+  customerPhone
+  customerEmail
+  note
+
+data-date
+  YYYY-MM-DD
+
+data-slot-id
+  slot id
+```
+
+`data-date` のclick handlerで `data-action` を処理しない。逆も同じ。
+
+推奨:
+
+- `button` は必ず `type="button"` を付ける。
+- click handlerでは `event.preventDefault()` を呼ぶ。
+- `data-action` と `data-date` が同じ要素に付かないようにする。
+
+### 予約確認
+
+確認へ進む条件:
+
+- resourceIdがある
+- menuIdがある
+- selectedDateがある
+- selectedSlotIdがある
+- 人数がmenu制約内
+- 氏名がある
+- 電話番号がある
+
+確認画面ではAPIを呼ばない。表示だけにする。
+
+予約確定時だけ `POST /api/public/reservations` を呼ぶ。
+
+```text
+確認画面
+  → 予約を確定する
+  → POST /api/public/reservations
+  → 成功: success
+  → 失敗: inputへ戻して最新slotを再取得
+```
+
+### 予約作成失敗時
+
+在庫不足などで失敗した場合:
+
+- `step='input'` に戻す。
+- `selectedSlotId` を解除する。
+- 表示範囲のslotsを再取得する。
+- noticeに「満席になりました。別の時間を選んでください。」を出す。
+
+### LIFF画面テスト観点
+
+- resource取得失敗でも `resourceId` がURLにあれば読み込み中で止まらない。
+- `1か月で見る` が日付未選択でも動く。
+- `前週/次週` が日付未選択でも動く。
+- `前月/次月` が日付未選択でも動く。
+- 日付タップは日付選択だけを行う。
+- slotタップはslot選択だけを行う。
+- resource変更でslot選択が解除される。
+- menu変更でslot選択が解除される。
+- 人数変更でslot選択が解除され、slotsが再取得される。
+- 確認画面ではAPIを呼ばない。
+- 予約確定でだけ作成APIを呼ぶ。
+
 ## 予約管理画面
+
+### 現状の課題
+
+`resource` / `menu` / `schedule` が同じ画面内に並び、管理者から見ると「どれを先に作るべきか」「どれが何に影響するか」が分かりにくい。
+
+操作性は既存のままでよいが、意味の説明と導線を整理する。
+
+### 用語整理
+
+| 用語 | 意味 | 例 |
+|---|---|---|
+| Resource | 予約対象。枠を持つ単位。 | ブルーベリー摘み取り、カフェ席 |
+| Menu | ユーザーが選ぶプラン。resourceに属する。 | 食べ放題60分、摘み取り体験 |
+| Schedule | slotを生成する曜日ルール。resourceに属する。 | 月曜 9:00-15:00 60分間隔 |
+| Slot | 実際に予約できる日付と時間枠。scheduleから生成される。 | 2026-06-01 09:00 |
+| Reservation | slotを押さえた予約本体。 | 山田太郎 2名 |
+
+関係:
+
+```text
+Resource
+  ├─ Menu
+  ├─ Schedule
+  └─ Slot
+       └─ Reservation
+```
+
+### 管理画面の画面分離
+
+#### 予約確認画面
 
 URL:
 
@@ -207,316 +637,174 @@ URL:
 /admin/reservations
 ```
 
-画面は日常運用と設計変更を分ける。
+目的:
 
-```text
-/admin/reservations
-  予約確認画面。カレンダー、日別slot、予約客、軽いslot調整だけを扱う。
+- 今日・今週・今月の予約状況を見る。
+- slotの残数と予約客を見る。
+- 必要最小限のslot調整をする。
 
-/admin/reservations/settings
-  予約設計画面。resource/menu/schedule、Google Calendar接続、slot一括生成を扱う。
-```
+ここでは `resource/menu/schedule` の設計変更を目立たせない。
 
-実装状況:
-
-- `apps/worker/src/client/reservations-admin.ts` に、1週間/1か月の枠カレンダーを追加済み。
-- LIFF予約画面と同じ `◎ / △ / × / -` の空き状況表示を使う。
-- カレンダーの日付を押すと、下のslot一覧・予約一覧・詳細操作対象日が切り替わる。
-- slot編集UIには、安全制約の説明を表示する。実際の保存時制約はWorker APIとDB helperで担保する。
-- 予約確認画面と予約設計画面をUI上で分離し、日常確認中にresource/menu/scheduleを誤変更しにくい構成にする。
-
-### 認証
-
-管理画面のHTMLは、ブラウザで開けるように `authMiddleware` の認証スキップ対象にする。
-
-ただし、予約管理APIは公開しない。次のAPIは既存の管理APIと同じく `Authorization: Bearer <key>` を必須にする。
-
-```text
-GET  /api/reservation-resources
-POST /api/reservation-resources
-GET  /api/reservation-slots
-POST /api/reservation-slots/generate
-GET  /api/reservations
-PUT  /api/reservations/:id/status
-GET  /api/external-reservation-sources
-```
-
-`<key>` は次のどちらかを使う。
-
-- `staff_members.api_key` に保存されたスタッフAPIキー
-- Worker secret `API_KEY`
-
-Cloudflare Access は、Worker URLへ到達する前段の保護であり、アプリ内の管理API認証とは別である。Cloudflare Accessでログイン済みでも、管理画面UIから `Authorization: Bearer <key>` が送られなければ管理APIは `401 Unauthorized` を返す。
-
-管理画面UIでは、画面上の `管理APIキー` 入力値を `sessionStorage` に保存し、API呼び出し時に `Authorization: Bearer <key>` として送る。APIキーを `NEXT_PUBLIC_*` や `VITE_*` に入れてクライアントバンドルへ埋め込まない。
-
-### 画面一覧
-
-| 画面 | 目的 | 実装優先度 |
-|---|---|---|
-| 予約確認画面 | カレンダー、日別slot、予約客、軽いslot調整を見る | 必須 |
-| 予約設計画面 | resource/menu/schedule、Google Calendar、slot一括生成を管理する | 必須 |
-| 外部取り込みレビュー | じゃらん/Gmailのneeds_reviewを処理する | 次点 |
-| AI/MCPチャット | 将来、自然言語で予約確認・操作する | 将来 |
-
-### 予約確認画面
-
-日常運用で最初に開く画面。予約構造の変更ではなく、状況確認と軽い枠調整に集中する。
-
-初期表示:
+表示:
 
 - 管理APIキー
 - resource選択
+- 日付選択
 - 週/月切替
 - カレンダー
+- 選択日のslot一覧
+- 選択slotの予約客
+- 予約詳細
+- needs_review件数
 
-操作フロー:
+操作:
+
+- slotの軽微な調整
+- 予約詳細確認
+- active予約キャンセル
+- needs_reviewを確認済みにする
+
+#### 予約設計画面
+
+URL:
 
 ```text
-カレンダーを見る
-  → 日付をタップ
-  → 下にその日のslot一覧を表示
-  → slotをタップ
-  → そのslotの予約客一覧と顧客詳細を確認
+/admin/reservations/settings
 ```
 
-表示するもの:
+目的:
 
-- 1週間/1か月の枠カレンダー
-- 選択日のslot一覧
-- slotごとの残数、予約済み数、LINE枠、外部枠
-- 選択日の予約一覧
-- 選択予約の顧客情報
-- 要確認の外部取り込み件数
+- 予約の構造を作る。
+- resource/menu/scheduleを管理する。
+- Google Calendar接続とslot一括生成を管理する。
 
-許可する操作:
+表示順序を次のように固定する。
 
-- slotの `status`, `totalCapacity`, `lineCapacity`, `externalCapacity`, `bufferCapacity`, `note` の微調整
-- active予約のキャンセル
-- 予約詳細の再取得
-- 外部取り込みの `needs_review` を確認済みにする
+```text
+1. Resource
+2. Menu
+3. Schedule
+4. Slot一括生成
+5. Google Calendar
+```
 
-許可しない操作:
+### 予約設計画面のUX改善案
 
-- resource作成/削除
-- menu作成/削除
-- schedule作成/削除
-- Google Calendar接続開始
-- slotの大量生成/一括更新
+#### 1. 上部に「作成手順」を表示する
 
-### 枠カレンダー
+```text
+予約設計の手順
+1. Resourceを作る
+2. ResourceにMenuを追加する
+3. ResourceにScheduleを追加する
+4. ScheduleからSlotを生成する
+5. LIFF画面で確認する
+```
 
-LIFFと同じ空き枠記号を使う。
+これにより、初見でも何をすればよいか分かる。
 
-管理者向け追加表示:
+#### 2. Resource選択を常に上部に固定する
 
-- total remaining
-- line remaining
-- external remaining
-- reserved_count
-- line_reserved_count
-- external_reserved_count
-- buffer_capacity
-- status
+現在選択中のresourceを、設計画面の上部に固定表示する。
 
-重要な制約:
+```text
+現在編集中: ブルーベリー摘み取り
+```
 
+MenuとScheduleは、選択中resourceに属するものだけ表示する。
+
+#### 3. Resourceカードに「影響範囲」を表示する
+
+Resource編集は影響が大きいので、カード内に説明を出す。
+
+```text
+このResourceの変更は、この予約対象に属するMenu、Schedule、Slotに影響します。
+既存予約は削除されません。
+```
+
+#### 4. Menuカードに「LIFF表示される」ことを明記する
+
+Menuはユーザーが見るプランなので、管理用項目ではなく表示用項目として扱う。
+
+```text
+MenuはLIFF画面に表示される予約プランです。
+所要時間はslot時間と一致している必要があります。
+```
+
+#### 5. Scheduleカードに「slot生成ルール」と明記する
+
+Scheduleそのものは予約枠ではない。slotを作るための曜日ルールであることを強調する。
+
+```text
+Scheduleはslotを自動生成するための曜日ルールです。
+Scheduleを作っただけでは予約枠は増えません。Slot一括生成を実行してください。
+```
+
+#### 6. Slot一括生成はScheduleの下に置く
+
+Schedule設定直後にslot生成できるようにする。
+
+```text
+対象期間: 2026-06-01 〜 2026-06-30
+実行: scheduleに従ってslotを生成
+```
+
+#### 7. Google Calendarは外部同期として分ける
+
+Google Calendarは予約DBの本体ではない。外部同期先として明示する。
+
+```text
+Google Calendarは外部同期先です。
+予約DBの内容を正とし、Google Calendarの予定でDBを直接上書きしません。
+```
+
+### 管理画面の安全制約
+
+- Resource/Menu/Scheduleは物理削除しない。停止で扱う。
 - 予約が存在するslotは削除しない。
-- 停止は `status='closed'` または `hidden` で表現する。
-- `line_capacity < line_reserved_count` は保存不可。
-- `external_capacity < external_reserved_count` は保存不可。
-- `total_capacity < reserved_count + buffer_capacity` は保存不可。
-
-### 予約設計画面
-
-予約の構造を作る画面。日常確認画面とは分け、強い変更はここに集約する。
-
-表示するもの:
-
-- Resource CRUD
-- Menu CRUD
-- Schedule CRUD
-- slot一括生成
-- 日付/曜日ごとのslot一括調整
-- Google Calendar接続開始
-- Google Calendar connection ID設定
-
-安全制約:
-
-- 一括操作は実行前に対象期間、対象曜日、対象slot数を明示する。
-- slot一括調整は、プレビューで対象slot数と予約済みslot数を表示してから実行する。
-- 一括調整で空欄の項目は変更しない。
-- 予約済みslotを削除しない。
 - 予約済み数を下回るcapacity変更はAPIで拒否する。
-- `updated` 系外部取り込みは自動反映しない。
-- Google Calendarは予約DBの外部同期先であり、予約DBの真実を上書きしない。
+- 一括操作は必ずプレビューを出す。
+- Schedule変更だけでは既存slotを自動変更しない。
+- Google Calendar連携失敗でも予約DBの作成・キャンセルを巻き戻さない。
 
-### 予約一覧
-
-フィルタ:
-
-- 日付
-- 予約対象
-- メニュー
-- ステータス
-- 予約元 `source`
-- 在庫チャネル `capacity_channel`
-- 外部取り込み状態
-
-表示列:
-
-- 時間
-- 氏名
-- 人数
-- 電話
-- メニュー
-- ステータス
-- 予約元
-- 在庫チャネル
-- Google Calendar同期状態
-
-### 予約詳細
-
-表示するもの:
-
-- 予約ID
-- 顧客情報
-- slot情報
-- 人数
-- 金額またはメニュー情報
-- source
-- capacity_channel
-- 状態
-- イベント履歴
-- 外部予約番号
-- Gmail message ID
-- Google Calendar event ID
-
-操作:
-
-- confirmedへ変更
-- cancelledへ変更
-- completedへ変更
-- no_showへ変更
-- 備考更新
-
-安全制約:
-
-- 状態変更は必ず状態遷移表を通す。
-- キャンセル時の在庫戻しは1回だけ。
-- `source` ではなく `capacity_channel` で戻すカウンタを決める。
-- `completed` / `no_show` からのキャンセルで在庫を戻さない。
-
-### 外部取り込みレビュー
-
-対象:
-
-- `parse_status='needs_review'`
-- `event_type='updated'`
-- 枠不足
-- dedupeKey衝突
-- 対応slot未確定
-
-操作:
-
-- 既存予約に紐づける
-- 新規予約として確定する
-- ignoredにする
-- 手動でslotを選ぶ
-- raw textを見る
-
-MVPでは、`updated` は自動反映しない。
-
-## テスト方針
-
-### LIFF画面テスト
-
-- 日付を選ぶとslot APIを呼ぶ。
-- 残数0は選択できない。
-- 人数、電話番号が未入力なら確認へ進めない。
-- 確認画面で入力内容が正しく表示される。
-- 予約作成成功で完了画面が出る。
-- 在庫不足エラーで最新slotを再取得する。
-- detailTokenではキャンセルできない。
-- cancelTokenでキャンセルできる。
-
-### 管理画面テスト
+### 管理画面テスト観点
 
 - API_KEY未入力なら管理APIを呼ばない。
-- slot更新で予約済み数を下回るcapacityは拒否される。
-- closed slotにはLIFF側で予約できない。
-- 予約キャンセルで残数が1回だけ戻る。
-- needs_reviewをignoredにできる。
-- updated取り込みは予約を直接変更しない。
-
-### CIで守ること
-
-- `pnpm --filter @line-crm/db test`
-- `pnpm --filter @line-harness/sdk test`
-- `pnpm --filter worker build`
-
-UIの実機確認は後工程だが、API契約と在庫不変条件はCIで先に守る。
-
-## ローカル手動確認チェックリスト
-
-実機LINE確認の前に、ローカルWorkerで画面の基本操作を確認する。
-
-準備:
-
-```bash
-pnpm db:migrate:local
-pnpm db:seed:reservations:local
-pnpm dev:worker
-```
-
-管理画面:
-
-```text
-URL: http://localhost:8787/admin/reservations
-API_KEY: apps/worker/.dev.vars の API_KEY
-```
-
-確認すること:
-
-- APIキーを入力して `読込` を押すと、resource、slot、予約一覧が表示される。
-- `1週間` 表示で、日付 x 時間の枠が `◎ / △ / × / -` で見える。
-- `1か月` 表示で、日別の空き概要が見える。
-- カレンダーの日付を押すと、下のslot一覧と予約一覧の日付が切り替わる。
-- slotの `status`, `totalCapacity`, `lineCapacity`, `externalCapacity`, `bufferCapacity`, `note` を保存できる。
-- 予約済み人数を下回るcapacity変更はAPIエラーになる。
-- 予約詳細を開ける。
-- active予約をキャンセルできる。
-- キャンセル後に在庫が1回だけ戻る。
-- `needs_review` の外部取り込みを確認済みにできる。
-
-LIFF予約画面:
-
-```text
-URL: http://localhost:8787/book?resourceId=res_blueberry&menuId=menu_blueberry_60
-```
-
-本物のLIFF ID tokenが必要なため、ローカルPCブラウザだけでは完全確認できない。画面表示だけ確認する場合は、LIFF session作成部分で止まることを許容する。
-
-実機前に確認すること:
-
-- `resourceId` / `menuId` がない場合、分かるエラーが出る。
-- LINEアプリ内で開くと、LIFF profile取得後に予約画面へ進む。
-- 1週間/1か月の空き枠表示が見える。
-- 人数、氏名、電話番号、メール、備考を入力できる。
-- 確認画面に入力内容が正しく出る。
-- 予約完了画面に予約ID、日時、詳細導線、キャンセル導線が出る。
-- 自分の予約一覧が見える。
-- 同じ端末で作成した予約は `cancelToken` によりキャンセルできる。
-
-注意:
-
-- 別端末やlocalStorage削除後は、予約詳細画面の「キャンセル導線を復旧する」から `cancelToken` を再発行する。
+- Resource選択を変えるとMenu/Schedule/Slotが切り替わる。
+- Menu作成は選択中Resourceに紐づく。
+- Schedule作成は選択中Resourceに紐づく。
+- Schedule作成だけではSlotは増えない。
+- Slot一括生成でSlotが増える。
+- 予約済みslotのcapacityを予約済み数未満にできない。
+- 予約確認画面ではResource/Menu/Scheduleの作成UIが出ない。
 
 ## 実装順序
 
-1. 予約管理画面を `確認` / `設計` の2モードに分ける。
-2. 予約確認画面はカレンダー、日別slot、予約一覧、予約詳細、軽いslot調整だけにする。
-3. 予約設計画面へ resource/menu/schedule/Google/slot一括生成を移す。
-4. 外部取り込みレビュー画面を強化する。
-5. Google Calendar接続状態と同期結果を管理画面に出す。
-6. 実機LIFF確認、LINE Developers設定、Cloudflare本番deploy確認を行う。
+### LIFF画面
+
+1. 既存DOM/CSSを固定する。
+2. `BookingState` を `step`, `viewMode`, `selectedDate`, `selectedSlotId` 中心に作り直す。
+3. `api.ts` に resource/menu/slot/reservation APIを集約する。
+4. `actions.ts` に操作別の状態更新を集約する。
+5. `events.ts` はDOMイベントをactionに渡すだけにする。
+6. `render.ts` は状態からHTMLを返すだけにする。
+7. ローカルで週/月切替、日付選択、slot選択、確認画面を確認する。
+
+### 管理画面
+
+1. 現状UIのまま、用語説明と作成手順を画面上に追加する。
+2. Resource選択を設計画面上部に固定する。
+3. Resource/Menu/Scheduleそれぞれに影響範囲の説明を追加する。
+4. Slot一括生成をScheduleの直後に置く。
+5. Google Calendarを外部同期セクションに分離する。
+6. 余裕があればrenderファイルを分割する。
+
+## CIで守ること
+
+```text
+pnpm --filter @line-crm/db test
+pnpm --filter @line-harness/sdk test
+pnpm --filter worker build
+```
+
+UIの実機確認は後工程でもよい。ただし、API契約と在庫不変条件はCIで先に守る。

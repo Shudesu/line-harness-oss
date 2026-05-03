@@ -5,12 +5,21 @@
  * exchanges the LIFF ID token for a short-lived reservation session token.
  */
 
-import { apiJson } from './booking/api.js';
+import {
+  cancelReservation,
+  createReservation,
+  createReservationSession,
+  issueReservationTokens,
+  listMenus,
+  listMyReservations,
+  listResources,
+  listSlots,
+} from './booking/api.js';
 import { addDays, dateToString, isPastDate } from './booking/date.js';
 import { getApp } from './booking/html.js';
 import { renderError, renderHeader, renderScreen } from './booking/render.js';
 import { selectedMenu, state, totalPeople, UUID_STORAGE_KEY } from './booking/state.js';
-import { storeReservationTokens } from './booking/tokens.js';
+import { storeReservationTokens, storeTokensForReservation, tokenForReservation } from './booking/tokens.js';
 import type { Menu, Reservation, Resource, Slot } from './booking/types.js';
 
 declare const liff: {
@@ -76,6 +85,13 @@ function bindEvents(): void {
       selectSlot(element.dataset.slotId ?? '');
     });
   });
+  app.querySelectorAll<HTMLElement>('[data-reservation-id]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      selectReservation(element.dataset.reservationId ?? '');
+    });
+  });
   app.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-field]').forEach((element) => {
     if (element instanceof HTMLSelectElement) return;
     element.addEventListener('input', () => handleField(element.dataset.field ?? '', element.value));
@@ -121,6 +137,11 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     render();
     return;
   }
+  if (action === 'show-mine' || action === 'reload-mine') {
+    state.screen = 'mine';
+    await loadMine();
+    return;
+  }
   if (action === 'view-week' || action === 'view-month') {
     state.viewMode = action === 'view-week' ? 'week' : 'month';
     state.notice = null;
@@ -162,6 +183,32 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   }
   if (action === 'submit-booking') {
     await submitBooking();
+    return;
+  }
+  if (action === 'show-created-detail') {
+    if (state.lastReservation) {
+      state.selectedReservation = state.lastReservation;
+      state.screen = 'detail';
+      render();
+    }
+    return;
+  }
+  if (action === 'go-cancel') {
+    state.screen = 'cancel-confirm';
+    render();
+    return;
+  }
+  if (action === 'issue-tokens') {
+    await issueTokensForSelectedReservation();
+    return;
+  }
+  if (action === 'back-detail') {
+    state.screen = 'detail';
+    render();
+    return;
+  }
+  if (action === 'submit-cancel') {
+    await submitCancel();
     return;
   }
   if (action === 'close') {
@@ -208,7 +255,7 @@ function selectSlot(slotId: string): void {
 
 async function loadResources(): Promise<void> {
   try {
-    state.resources = await apiJson<Resource[]>('/api/public/reservation-resources');
+    state.resources = await listResources();
   } catch {
     if (state.resourceId) {
       state.resources = [{ id: state.resourceId, name: state.resourceId, isActive: true }];
@@ -229,7 +276,7 @@ async function loadResources(): Promise<void> {
 
 async function loadMenusForSelectedResource(): Promise<void> {
   if (!state.resourceId) return;
-  state.menus = await apiJson<Menu[]>(`/api/public/reservation-resources/${encodeURIComponent(state.resourceId)}/menus`);
+  state.menus = await listMenus(state.resourceId);
   if (!state.menus.length) {
     throw new Error('この予約対象には有効なメニューがありません。店舗側でメニューを有効化してください。');
   }
@@ -268,12 +315,7 @@ async function fetchSlots(date: string): Promise<Slot[]> {
   if (!state.resourceId || !state.menuId) return [];
   const resourceId = state.resourceId;
   const menuId = state.menuId;
-  const query = new URLSearchParams({
-    date,
-    menuId,
-    people: String(Math.max(1, totalPeople())),
-  });
-  const slots = await apiJson<Slot[]>(`/api/public/reservation-resources/${encodeURIComponent(resourceId)}/slots?${query}`);
+  const slots = await listSlots({ resourceId, menuId, date, people: totalPeople() });
   if (state.resourceId === resourceId && state.menuId === menuId) {
     state.slotsByDate[date] = slots;
   }
@@ -313,24 +355,21 @@ async function submitBooking(): Promise<void> {
   state.submitting = true;
   render();
   try {
-    const reservation = await apiJson<Reservation>('/api/public/reservations', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${state.sessionToken}` },
-      body: JSON.stringify({
-        resourceId: state.resourceId,
-        menuId: state.menuId,
-        slotId: state.selectedSlot.slotId,
-        adultCount: state.form.adultCount,
-        childCount: state.form.childCount,
-        customer: {
-          name: state.form.customerName.trim(),
-          phone: state.form.customerPhone.trim(),
-          email: state.form.customerEmail.trim() || null,
-        },
-        formData: {
-          note: state.form.note.trim() || null,
-        },
-      }),
+    const reservation = await createReservation({
+      token: state.sessionToken,
+      resourceId: state.resourceId,
+      menuId: state.menuId,
+      slotId: state.selectedSlot.slotId,
+      adultCount: state.form.adultCount,
+      childCount: state.form.childCount,
+      customer: {
+        name: state.form.customerName.trim(),
+        phone: state.form.customerPhone.trim(),
+        email: state.form.customerEmail.trim() || null,
+      },
+      formData: {
+        note: state.form.note.trim() || null,
+      },
     });
     storeReservationTokens(reservation);
     state.lastReservation = reservation;
@@ -352,6 +391,80 @@ async function submitBooking(): Promise<void> {
   render();
 }
 
+function selectReservation(id: string): void {
+  const reservation = state.reservations.find((item) => item.id === id) ?? null;
+  state.selectedReservation = reservation;
+  state.screen = reservation ? 'detail' : 'mine';
+  render();
+}
+
+async function loadMine(): Promise<void> {
+  if (!state.sessionToken) return;
+  state.loadingSlots = true;
+  render();
+  try {
+    state.reservations = await listMyReservations(state.sessionToken);
+  } catch (err) {
+    state.notice = err instanceof Error ? err.message : '予約一覧を取得できませんでした。';
+  } finally {
+    state.loadingSlots = false;
+    render();
+  }
+}
+
+async function issueTokensForSelectedReservation(): Promise<void> {
+  const reservation = state.selectedReservation;
+  if (!reservation || !state.sessionToken || state.submitting) return;
+  state.submitting = true;
+  render();
+  try {
+    const tokens = await issueReservationTokens({
+      reservationId: reservation.id,
+      token: state.sessionToken,
+    });
+    storeTokensForReservation(tokens.reservationId, {
+      detailToken: tokens.detailToken,
+      cancelToken: tokens.cancelToken,
+    });
+    state.screen = tokens.cancelToken ? 'cancel-confirm' : 'detail';
+  } catch (err) {
+    state.notice = err instanceof Error ? err.message : 'キャンセル用の確認情報を取得できませんでした。';
+    state.screen = 'detail';
+  } finally {
+    state.submitting = false;
+    render();
+  }
+}
+
+async function submitCancel(): Promise<void> {
+  const reservation = state.selectedReservation;
+  if (!reservation || state.submitting) return;
+  const cancelToken = tokenForReservation(reservation.id).cancelToken || reservation.cancelToken;
+  if (!cancelToken) {
+    await issueTokensForSelectedReservation();
+    return;
+  }
+
+  state.submitting = true;
+  render();
+  try {
+    const result = await cancelReservation({
+      reservationId: reservation.id,
+      cancelToken,
+    });
+    state.selectedReservation = result.reservation;
+    state.lastReservation = result.reservation;
+    state.reservations = state.reservations.map((item) => item.id === result.reservation.id ? result.reservation : item);
+    state.screen = 'cancelled';
+  } catch (err) {
+    state.notice = err instanceof Error ? err.message : 'キャンセルに失敗しました。';
+    state.screen = 'detail';
+  } finally {
+    state.submitting = false;
+    render();
+  }
+}
+
 export async function initBooking(): Promise<void> {
   try {
     const profile = await liff.getProfile();
@@ -367,10 +480,7 @@ export async function initBooking(): Promise<void> {
     const idToken = liff.getIDToken();
     if (!idToken) throw new Error('LINEログイン情報を取得できませんでした。もう一度開き直してください。');
 
-    const session = await apiJson<{ token: string; friendId: string; userId: string }>('/api/public/reservation-session', {
-      method: 'POST',
-      body: JSON.stringify({ idToken, displayName: profile.displayName }),
-    });
+    const session = await createReservationSession({ idToken, displayName: profile.displayName });
     state.sessionToken = session.token;
     state.friendId = session.friendId;
     state.userId = session.userId;

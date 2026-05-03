@@ -1,6 +1,7 @@
 import { addDays, dateToString, formatDateJa, formatTime, isPastDate } from './date.js';
 import { escapeHtml } from './html.js';
 import { selectedMenu, selectedResource, state } from './state.js';
+import { tokenForReservation } from './tokens.js';
 import type { Slot } from './types.js';
 
 function availabilityMark(slots: Slot[] | undefined): { mark: string; className: string; label: string } {
@@ -11,6 +12,27 @@ function availabilityMark(slots: Slot[] | undefined): { mark: string; className:
   return { mark: '×', className: 'full', label: '満席' };
 }
 
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: '受付済み',
+    confirmed: '確定',
+    cancelled: 'キャンセル',
+    completed: '来園済み',
+    no_show: '無断キャンセル',
+  };
+  return labels[status] ?? status;
+}
+
+function parseNote(formData?: string | null): string {
+  if (!formData) return '';
+  try {
+    const parsed = JSON.parse(formData) as { note?: unknown };
+    return typeof parsed.note === 'string' ? parsed.note : '';
+  } catch {
+    return '';
+  }
+}
+
 export function renderHeader(): string {
   return `
     <div class="booking-header">
@@ -18,12 +40,20 @@ export function renderHeader(): string {
       <h1>ブルーベリー観光農園 予約</h1>
       <p>日付と時間を選んで、内容確認後に予約できます。</p>
     </div>
+    <div class="booking-tabs">
+      <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約する</button>
+      <button type="button" class="${state.screen === 'mine' || state.screen === 'detail' || state.screen === 'cancel-confirm' || state.screen === 'cancelled' ? 'active' : ''}" data-action="show-mine">予約確認</button>
+    </div>
   `;
 }
 
 export function renderScreen(): string {
   if (state.screen === 'confirm') return renderConfirm();
   if (state.screen === 'success') return renderSuccess();
+  if (state.screen === 'mine') return renderMine();
+  if (state.screen === 'detail') return renderReservationDetail();
+  if (state.screen === 'cancel-confirm') return renderCancelConfirm();
+  if (state.screen === 'cancelled') return renderCancelled();
   return renderBooking();
 }
 
@@ -272,10 +302,97 @@ function renderSuccess(): string {
         email: reservation.customerEmail ?? state.form.customerEmail,
         note: state.form.note,
       })}
-      <p class="policy-note">当日は予約時間に合わせてお越しください。変更やキャンセルが必要な場合は、LINEから店舗へご連絡ください。</p>
+      <p class="policy-note">当日は予約時間に合わせてお越しください。キャンセルは予約確認画面から行えます。</p>
       <div class="booking-actions">
+        <button type="button" class="book-btn" data-action="show-created-detail">予約詳細を見る</button>
         <button type="button" class="close-btn" data-action="close">LINEに戻る</button>
       </div>
+    </section>
+  `;
+}
+
+function renderMine(): string {
+  return `
+    <section class="booking-panel">
+      <div class="section-title-row">
+        <div>
+          <h2>予約確認</h2>
+          <p>このLINEアカウントで受付中の予約を表示します。</p>
+        </div>
+        <button type="button" class="mini-btn" data-action="reload-mine">更新</button>
+      </div>
+      ${state.loadingSlots ? '<div class="slots-loading"><div class="loading-spinner"></div><p>予約を確認中...</p></div>' : ''}
+      ${state.reservations.length === 0 ? '<p class="muted">受付中の予約はありません。</p>' : `
+        <div class="reservation-list">
+          ${state.reservations.map((reservation) => `
+            <button type="button" class="reservation-card" data-reservation-id="${escapeHtml(reservation.id)}">
+              <span>${formatDateJa(reservation.reservationDate)} ${formatTime(reservation.startAt)}-${formatTime(reservation.endAt)}</span>
+              <strong>${escapeHtml(reservation.customerName || reservation.title || '予約')}</strong>
+              <small>${statusLabel(reservation.status)} / ${reservation.totalPeople}名</small>
+            </button>
+          `).join('')}
+        </div>
+      `}
+    </section>
+  `;
+}
+
+function renderReservationDetail(): string {
+  const reservation = state.selectedReservation;
+  if (!reservation) return renderMine();
+  const tokens = tokenForReservation(reservation.id);
+  const canCancel = reservation.status === 'pending' || reservation.status === 'confirmed';
+  return `
+    <section class="booking-panel">
+      <button type="button" class="text-btn" data-action="show-mine">← 予約一覧へ</button>
+      <h2>予約詳細</h2>
+      ${renderReservationSummary({
+        menuName: reservation.title,
+        date: reservation.reservationDate,
+        startAt: reservation.startAt,
+        endAt: reservation.endAt,
+        adultCount: reservation.adultCount,
+        childCount: reservation.childCount,
+        name: reservation.customerName ?? '',
+        phone: reservation.customerPhone ?? '',
+        email: reservation.customerEmail ?? '',
+        note: parseNote(reservation.formData),
+      })}
+      <div class="confirm-row"><span class="confirm-label">状態</span><span class="confirm-value">${statusLabel(reservation.status)}</span></div>
+      <div class="confirm-row"><span class="confirm-label">予約ID</span><span class="confirm-value">${escapeHtml(reservation.id)}</span></div>
+      ${canCancel ? `
+        <button type="button" class="close-btn danger" data-action="${tokens.cancelToken || reservation.cancelToken ? 'go-cancel' : 'issue-tokens'}">
+          ${tokens.cancelToken || reservation.cancelToken ? 'この予約をキャンセルする' : 'キャンセル用の確認情報を取得する'}
+        </button>
+      ` : '<p class="muted">この予約はキャンセルできない状態です。</p>'}
+    </section>
+  `;
+}
+
+function renderCancelConfirm(): string {
+  const reservation = state.selectedReservation;
+  if (!reservation) return renderMine();
+  return `
+    <section class="booking-panel">
+      <h2>キャンセル確認</h2>
+      <p class="policy-note">この予約をキャンセルします。キャンセル後、在庫は状態遷移表に従って1回だけ戻されます。</p>
+      <div class="confirm-row"><span class="confirm-label">日付</span><span class="confirm-value">${formatDateJa(reservation.reservationDate)}</span></div>
+      <div class="confirm-row"><span class="confirm-label">時間</span><span class="confirm-value">${formatTime(reservation.startAt)}-${formatTime(reservation.endAt)}</span></div>
+      <div class="booking-actions split">
+        <button type="button" class="close-btn" data-action="back-detail">戻る</button>
+        <button type="button" class="book-btn danger" data-action="submit-cancel" ${state.submitting ? 'disabled' : ''}>${state.submitting ? '処理中...' : 'キャンセルする'}</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderCancelled(): string {
+  return `
+    <section class="success-card">
+      <div class="success-icon muted-icon">✓</div>
+      <h2>キャンセルしました</h2>
+      <p class="success-message">予約のキャンセルを受け付けました。</p>
+      <button type="button" class="book-btn" data-action="show-mine">予約確認へ</button>
     </section>
   `;
 }
