@@ -4,7 +4,6 @@ name: Deploy Worker
 # - CLOUDFLARE_API_TOKEN
 # - CLOUDFLARE_D1_DATABASE_ID
 #
-
 # Optional GitHub Variables:
 # - CLOUDFLARE_ACCOUNT_ID        can be a Secret or Variable
 # - WORKER_NAME                  default: line-harness-reservation
