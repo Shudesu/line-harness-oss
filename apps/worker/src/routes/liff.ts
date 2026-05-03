@@ -19,6 +19,7 @@ import {
 } from '@line-crm/db';
 import { buildIntroMessage } from '../services/intro-message.js';
 import type { Env } from '../index.js';
+import { resolveBindingValue } from '../services/bindings.js';
 
 const liffRoutes = new Hono<Env>();
 
@@ -795,28 +796,40 @@ liffRoutes.get('/api/liff/config', async (c) => {
       return c.json({ success: false, error: 'liffId is required' }, 400);
     }
 
-    const account = await c.env.DB
-      .prepare('SELECT id, name, channel_access_token FROM line_accounts WHERE liff_id = ? AND is_active = 1')
-      .bind(liffId)
-      .first<{ id: string; name: string; channel_access_token: string }>();
+    let account: { id: string; name: string; channel_access_token: string } | null = null;
+    try {
+      account = await c.env.DB
+        .prepare('SELECT id, name, channel_access_token FROM line_accounts WHERE liff_id = ? AND is_active = 1')
+        .bind(liffId)
+        .first<{ id: string; name: string; channel_access_token: string }>();
+    } catch (err) {
+      // Older D1 schemas may not have line_accounts.liff_id yet. The LIFF page
+      // can still work with env/default account settings, so do not fail config.
+      console.warn('LIFF config account lookup skipped', {
+        liffId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // Fallback to default env account if liff_id not found in DB
-    const accessToken = account?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    const accessToken = account?.channel_access_token || await resolveBindingValue(c.env.LINE_CHANNEL_ACCESS_TOKEN);
     const accountName = account?.name || 'Default';
     const accountId = account?.id || 'default';
 
     // Fetch bot basic ID from LINE API
     let botBasicId = '';
-    try {
-      const botRes = await fetch('https://api.line.me/v2/bot/info', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (botRes.ok) {
-        const bot = await botRes.json() as { basicId?: string };
-        botBasicId = bot.basicId || '';
+    if (accessToken) {
+      try {
+        const botRes = await fetch('https://api.line.me/v2/bot/info', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (botRes.ok) {
+          const bot = await botRes.json() as { basicId?: string };
+          botBasicId = bot.basicId || '';
+        }
+      } catch {
+        // non-blocking
       }
-    } catch {
-      // non-blocking
     }
 
     return c.json({

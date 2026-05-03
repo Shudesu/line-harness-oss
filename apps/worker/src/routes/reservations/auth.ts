@@ -13,14 +13,15 @@ import {
   signReservationToken,
   verifyReservationToken,
 } from '../../services/reservation-tokens.js';
+import { liffIdToLoginChannelId, resolveBindingValue } from '../../services/bindings.js';
 
 export async function issueReservationSession(
   c: Context<Env>,
-  input: { idToken?: string; displayName?: string | null },
+  input: { idToken?: string; displayName?: string | null; liffId?: string | null },
 ) {
   if (!input.idToken) return { ok: false as const, status: 400, error: 'idToken is required' };
 
-  const verified = await verifyLineIdToken(c.env.DB, input.idToken, c.env.LINE_LOGIN_CHANNEL_ID);
+  const verified = await verifyLineIdToken(c.env.DB, input.idToken, c.env.LINE_LOGIN_CHANNEL_ID, input.liffId);
   if (!verified) return { ok: false as const, status: 401, error: 'Invalid idToken' };
 
   const friend = await getFriendByLineUserId(c.env.DB, verified.sub);
@@ -81,13 +82,28 @@ export async function verifyLineIdToken(
   db: D1Database,
   idToken: string,
   defaultLoginChannelId: string,
+  liffId?: string | null,
 ): Promise<{ sub: string; email?: string; name?: string } | null> {
-  const loginChannelIds = [defaultLoginChannelId];
-  const accounts = await getLineAccounts(db);
-  for (const account of accounts) {
-    if (account.login_channel_id && !loginChannelIds.includes(account.login_channel_id)) {
-      loginChannelIds.push(account.login_channel_id);
+  const loginChannelIds = new Set<string>();
+  const defaultChannelId = await resolveBindingValue(defaultLoginChannelId);
+  if (defaultChannelId) loginChannelIds.add(defaultChannelId);
+  const liffChannelId = liffIdToLoginChannelId(liffId);
+  if (liffChannelId) loginChannelIds.add(liffChannelId);
+
+  try {
+    const accounts = await getLineAccounts(db);
+    for (const account of accounts) {
+      if (account.login_channel_id) loginChannelIds.add(account.login_channel_id);
+      const accountLiffChannelId = liffIdToLoginChannelId(account.liff_id);
+      if (accountLiffChannelId) loginChannelIds.add(accountLiffChannelId);
     }
+  } catch {
+    // Older D1 schemas may not have login_channel_id/liff_id columns yet.
+    // Env/default channel ID and the request LIFF ID are enough for LIFF booking.
+  }
+
+  if (loginChannelIds.size === 0) {
+    return null;
   }
 
   for (const channelId of loginChannelIds) {

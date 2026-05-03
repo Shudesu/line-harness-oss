@@ -1,20 +1,10 @@
 import type { Context, Next } from 'hono';
 import { getStaffByApiKey } from '@line-crm/db';
 import type { Env } from '../index.js';
-
-type SecretLike = string | { get: () => Promise<string> } | undefined;
-
-function isSecretStoreBinding(value: unknown): value is { get: () => Promise<string> } {
-  return typeof value === 'object'
-    && value !== null
-    && 'get' in value
-    && typeof (value as { get?: unknown }).get === 'function';
-}
+import { isSecretStoreBinding, resolveBindingValue, type SecretLike } from '../services/bindings.js';
 
 async function resolveSecretValue(value: SecretLike): Promise<string> {
-  if (typeof value === 'string') return value.trim();
-  if (isSecretStoreBinding(value)) return (await value.get()).trim();
-  return '';
+  return resolveBindingValue(value);
 }
 
 function rawSecretLength(value: SecretLike): number | null {

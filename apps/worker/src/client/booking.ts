@@ -29,6 +29,11 @@ declare const liff: {
   closeWindow(): void;
 };
 
+function currentLiffId(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('liffId') || import.meta.env?.VITE_LIFF_ID || null;
+}
+
 function render(): void {
   const app = getApp();
   if (state.loading) {
@@ -227,7 +232,6 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     else window.close();
     return;
   }
-  if (element.dataset.date) selectDate(element.dataset.date);
 }
 
 function validateBooking(): string | null {
@@ -493,7 +497,11 @@ export async function initBooking(): Promise<void> {
     const idToken = liff.getIDToken();
     if (!idToken) throw new Error('LINEログイン情報を取得できませんでした。もう一度開き直してください。');
 
-    const session = await createReservationSession({ idToken, displayName: profile.displayName });
+    const session = await createReservationSession({
+      idToken,
+      displayName: profile.displayName,
+      liffId: currentLiffId(),
+    });
     state.sessionToken = session.token;
     state.friendId = session.friendId;
     state.userId = session.userId;

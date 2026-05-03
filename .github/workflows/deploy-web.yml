@@ -1,0 +1,73 @@
+name: Deploy Web
+
+# Deploys apps/web as a static Next.js export to Cloudflare Pages.
+#
+# Required GitHub Secrets:
+# - CLOUDFLARE_API_TOKEN
+#
+# Required GitHub Variables or Secrets:
+# - CLOUDFLARE_ACCOUNT_ID
+#
+# Required GitHub Variables:
+# - CLOUDFLARE_PAGES_PROJECT_NAME   example: line-harness-reservation-web
+# - NEXT_PUBLIC_API_URL             example: https://line-harness-reservation.example.workers.dev
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/deploy-web.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @line-crm/shared build
+
+      - name: Validate deployment settings
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+        run: |
+          node <<'NODE'
+          const required = [
+            'CLOUDFLARE_ACCOUNT_ID',
+            'CLOUDFLARE_PAGES_PROJECT_NAME',
+            'NEXT_PUBLIC_API_URL',
+          ];
+
+          for (const key of required) {
+            if (!process.env[key]?.trim()) {
+              throw new Error(`${key} is required`);
+            }
+          }
+          NODE
+
+      - name: Build web
+        run: pnpm --filter web build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+
+      - name: Deploy to Cloudflare Pages
+        run: pnpm exec wrangler pages deploy apps/web/out --project-name "$CLOUDFLARE_PAGES_PROJECT_NAME" --branch "$GITHUB_REF_NAME"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME }}

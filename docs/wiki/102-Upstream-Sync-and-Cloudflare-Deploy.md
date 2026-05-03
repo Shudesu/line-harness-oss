@@ -153,6 +153,57 @@ workflowは `apps/worker/wrangler.toml` を直接編集せず、CI内で生成�
 
 `RUN_D1_MIGRATIONS=true` にすると、deploy前に `packages/db/schema.sql` をremote D1へ適用する。初回セットアップでは便利だが、本番運用ではDB migrationをdeployと分離する方が安全。
 
+## apps/web の Cloudflare Pages deploy
+
+`apps/web` は Next.js だが、`apps/web/next.config.ts` で `output: 'export'` を指定している。そのため、SSR Workerではなく静的ファイルとして Cloudflare Pages へdeployする。
+
+```text
+pnpm --filter web build
+apps/web/out を Cloudflare Pages にアップロード
+```
+
+このforkでは Worker deploy と Web deploy を分ける。理由は、WorkerはD1/R2/Secrets Storeを持つAPIサーバーで、Webは静的な管理画面だからである。分けることで、`line-harness-oss` の Worker 設定更新と、管理画面のPages設定が衝突しにくくなる。
+
+GitHub Environment `production` に次を登録する。
+
+Secrets:
+
+```text
+CLOUDFLARE_API_TOKEN
+```
+
+Variables:
+
+```text
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_PAGES_PROJECT_NAME
+NEXT_PUBLIC_API_URL
+```
+
+推奨値:
+
+```text
+CLOUDFLARE_PAGES_PROJECT_NAME=line-harness-reservation-web
+NEXT_PUBLIC_API_URL=https://line-harness-reservation.<subdomain>.workers.dev
+```
+
+`NEXT_PUBLIC_API_URL` はブラウザに埋め込まれる公開値であり、secretではない。`API_KEY` は絶対に `NEXT_PUBLIC_*` に入れない。管理画面のAPI keyはログイン画面から入力し、ブラウザの `localStorage` に保存して `Authorization: Bearer ...` として送る。
+
+Cloudflare Pages project がまだ存在しない場合は、Dashboardで作るか、ローカルから次で作成する。
+
+```bash
+pnpm exec wrangler pages project create line-harness-reservation-web --production-branch main
+```
+
+GitHub Actionsでは `.github/workflows/deploy-web.yml` が次を行う。
+
+```text
+1. pnpm install
+2. packages/shared build
+3. NEXT_PUBLIC_API_URL を使って apps/web を static export
+4. `wrangler pages deploy apps/web/out` で Cloudflare Pages へdeploy
+```
+
 ### GitHub Actionsで実行されること
 
 ```text
