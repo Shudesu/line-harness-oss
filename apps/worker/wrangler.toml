@@ -16,7 +16,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "line-harness"
-database_id = "ccae2ecd-9b74-4698-b5b3-d125b2405e6e"
+database_id = "YOUR_DEV_D1_DATABASE_ID"
 
 
 
