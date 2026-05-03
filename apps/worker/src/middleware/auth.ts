@@ -59,5 +59,13 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     return next();
   }
 
+  console.warn('Unauthorized request', {
+    path,
+    hasAuthorizationHeader: true,
+    tokenLength: token.length,
+    apiKeyConfigured: Boolean(c.env.API_KEY),
+    apiKeyLength: c.env.API_KEY?.length ?? 0,
+  });
+
   return c.json({ success: false, error: 'Unauthorized' }, 401);
 }
