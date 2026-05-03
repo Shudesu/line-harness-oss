@@ -76,19 +76,68 @@ pnpm exec wrangler secret put GOOGLE_OAUTH_REDIRECT_URI
 
 自動deployでは、GitHub repository settingsに以下を登録する。
 
+このforkでは、`apps/worker/wrangler.toml` のプレースホルダーを直接commitしない。代わりに `.github/workflows/deploy-worker.yml` がCIランナー上だけで `wrangler.toml` を本番値に差し替えてからbuild/deployする。
+
+これにより、upstreamの `wrangler.toml` 更新を取り込みやすくしつつ、GitHub ActionsからCloudflareへdeployできる。
+
 Secrets:
 
 ```text
 CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_D1_DATABASE_ID
 ```
 
 Variables:
 
 ```text
-CLOUDFLARE_ACCOUNT_ID
+WORKER_NAME
+CLOUDFLARE_D1_DATABASE_NAME
+CLOUDFLARE_R2_BUCKET_NAME
+RUN_D1_MIGRATIONS
 VITE_LIFF_ID
 VITE_BOT_BASIC_ID
 VITE_CALENDAR_CONNECTION_ID
+```
+
+推奨値:
+
+```text
+WORKER_NAME=line-harness-reservation
+CLOUDFLARE_D1_DATABASE_NAME=line-crm
+CLOUDFLARE_R2_BUCKET_NAME=line-harness-images
+RUN_D1_MIGRATIONS=false
+```
+
+`RUN_D1_MIGRATIONS=true` にすると、deploy前に `packages/db/schema.sql` をremote D1へ適用する。初回セットアップでは便利だが、本番運用ではDB migrationをdeployと分離する方が安全。
+
+### GitHub Actionsで実行されること
+
+```text
+1. pnpm install
+2. shared / line-sdk / db build
+3. packages/db の予約不変条件テスト
+4. packages/sdk の予約SDKテスト
+5. CI上だけ wrangler.toml のCloudflare値を差し替え
+6. 必要ならD1 schema適用
+7. worker build
+8. wrangler deploy
+```
+
+### 事前にCloudflare側で必要なもの
+
+```text
+Cloudflare Workers 有効化
+Cloudflare D1 database 作成
+Cloudflare R2 有効化
+R2 bucket 作成
+Worker secrets 登録
+```
+
+R2が未有効化だと、deploy時に次のエラーで止まる。
+
+```text
+Please enable R2 through the Cloudflare Dashboard. [code: 10042]
 ```
 
 ## upstream取り込み手順
@@ -132,4 +181,3 @@ README.md
 - SDKは `packages/sdk/src/resources/reservations.ts` に集約する。
 - MCP toolは `packages/mcp-server/src/tools/reservations.ts` に集約する。
 - 新しい外部連携は、GASやGoogle Calendarのように `docs/` と専用serviceへ分ける。
-

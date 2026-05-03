@@ -128,6 +128,29 @@ describe('ReservationsResource', () => {
     )
   })
 
+  it('issuePublicTokens() re-issues detail/cancel tokens with LIFF session token', async () => {
+    const payload = {
+      reservationId: 'reservation-1',
+      detailToken: 'detail-token',
+      cancelToken: 'cancel-token',
+      expiresIn: 86400,
+    }
+    const http = mockHttp({ post: vi.fn().mockResolvedValue({ success: true, data: payload }) })
+    const resource = new ReservationsResource(http)
+
+    const result = await resource.issuePublicTokens({
+      reservationId: 'reservation-1',
+      sessionToken: 'session-token',
+    })
+
+    expect(http.post).toHaveBeenCalledWith(
+      '/api/public/reservations/reservation-1/tokens',
+      {},
+      { Authorization: 'Bearer session-token' },
+    )
+    expect(result).toEqual(payload)
+  })
+
   it('updateSlot() calls slot update endpoint', async () => {
     const slot = {
       id: 'slot-1',

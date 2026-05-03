@@ -7,6 +7,7 @@ import type {
   ExternalReservationSourceResponse,
   PublicReservationSlot,
   Reservation,
+  ReservationAccessTokensResponse,
   ReservationCancelResponse,
   ReservationCreateResponse,
   ReservationImportResponse,
@@ -170,6 +171,11 @@ export interface CancelPublicReservationInput {
   reservationId: string
   cancelToken: string
   reason?: string | null
+}
+
+export interface IssuePublicReservationTokensInput {
+  reservationId: string
+  sessionToken: string
 }
 
 export interface ImportJalanReservationInput {
@@ -394,6 +400,15 @@ export class ReservationsResource {
     const query = new URLSearchParams({ token: input.detailToken })
     const res = await this.http.get<ApiResponse<Reservation>>(
       `/api/public/reservations/${encodeURIComponent(input.reservationId)}?${query}`,
+    )
+    return res.data
+  }
+
+  async issuePublicTokens(input: IssuePublicReservationTokensInput): Promise<ReservationAccessTokensResponse> {
+    const res = await this.http.post<ApiResponse<ReservationAccessTokensResponse>>(
+      `/api/public/reservations/${encodeURIComponent(input.reservationId)}/tokens`,
+      {},
+      { Authorization: `Bearer ${input.sessionToken}` },
     )
     return res.data
   }

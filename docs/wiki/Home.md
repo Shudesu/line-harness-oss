@@ -107,6 +107,7 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 23. **[MCP Server](24-MCP-Server.md)** — MCP Server セットアップ、ツール一覧、URL自動追跡
 24. **[Reservations](101-Reservations.md)** — 予約システム設計、実装進捗、API/DB/SDK/MCP
 25. **[Upstream Sync and Cloudflare Deploy](102-Upstream-Sync-and-Cloudflare-Deploy.md)** — upstream追従とCloudflare登録方針
+26. **[Reservation UX Flows](103-Reservation-UX-Flows.md)** — LIFF予約画面、予約管理画面、確認/完了/キャンセル導線
 
 ## D1テーブル一覧（42テーブル）
 

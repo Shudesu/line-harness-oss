@@ -638,6 +638,23 @@ const spec = {
         },
       },
     },
+    '/api/public/reservations/{id}/tokens': {
+      post: {
+        tags: ['Reservations'],
+        summary: '公開予約の詳細/キャンセルtoken再発行',
+        description: 'Authorization: Bearer LIFF_SESSION_TOKEN が必要。本人の予約だけに detailToken / cancelToken を再発行する。',
+        security: [],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Re-issued detailToken/cancelToken' },
+          '401': { description: 'Unauthorized', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '403': { description: 'Forbidden', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '404': { description: 'Reservation not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+        },
+      },
+    },
     '/api/reservations': {
       get: {
         tags: ['Reservations'],

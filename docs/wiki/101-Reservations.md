@@ -19,9 +19,9 @@ LINE Harness に、ブルーベリー農園の摘み取り体験・カフェ予�
 
 最終更新: 2026-05-03
 
-全体進捗の目安は **約94%**。
+全体進捗の目安は **約96%**。
 
-「予約DBに安全に保存し、在庫を増減し、LIFF予約画面から予約を作る」中核は動いている。バックエンド不変条件テスト（Phase 1）、Worker API（Phase 2）、SDK（Phase 3）、MCP（Phase 4）、Web管理画面MVP（Phase 5）が完了した。Phase 6はGAS/Gmail raw取り込み口、安全な本文parser、GAS側スクリプトまで追加済み。まだ「resource/menu/schedule編集UI」「本物のGoogle Calendar OAuth接続」「実Gmailアカウントでの運用テスト」は残っている。
+「予約DBに安全に保存し、在庫を増減し、LIFF予約画面から予約を作る」中核は動いている。バックエンド不変条件テスト（Phase 1）、Worker API（Phase 2）、SDK（Phase 3）、MCP（Phase 4）、Web管理画面MVP（Phase 5）が完了した。Phase 6はGAS/Gmail raw取り込み口、安全な本文parser、GAS側スクリプトまで追加済み。LIFF予約画面は、人数・連絡先入力、1週間/1か月の空き枠表示、確認、完了、自分の予約一覧、予約詳細、キャンセル導線まで実装済み。まだ「本物のGoogle Calendar OAuth接続」「実Gmailアカウントでの運用テスト」「LINE LIFF実機確認」は残っている。
 
 ### テスト状況
 
@@ -69,10 +69,13 @@ Layer 2 内訳:
 - 公開LIFF APIを追加した。
 - 公開LIFF APIは `lineUserId` 直指定を信用せず、LINE ID token 検証後に発行する短命 `LIFF_SESSION_TOKEN` を使う。
 - `detailToken` と `cancelToken` を分離した。
+- LIFF sessionから本人予約の `detailToken` / `cancelToken` を再発行する公開APIを追加した。
 - じゃらん取り込みAPIの土台を追加した。
 - `eventType='updated'` は自動反映せず `needs_review` にする。
 - `eventType='cancelled'` は既存予約を検索し、状態遷移表に従ってキャンセルする。
 - LIFF予約画面 `apps/worker/src/client/booking.ts` を旧Google Calendar予約APIから新予約APIへ切り替えた。
+- LIFF予約画面に、メニュー選択、人数入力、電話番号、メール、備考、1週間/1か月の空き枠表示、予約確認、予約完了を追加した。
+- LIFF予約画面に、自分の予約一覧、予約詳細、予約作成時に保存した `cancelToken` によるキャンセル導線を追加した。
 - 予約機能をLINE Harness本体更新に耐えやすくするため、予約専用ファイルへ分離した。
 - 予約APIのrequest validation helperを `apps/worker/src/routes/reservations/requests.ts` に分離した。
 - 予約APIのエラーレスポンスを `apps/worker/src/routes/reservations/responses.ts` に分離し、`code` 付きの契約にした。
@@ -85,7 +88,8 @@ Layer 2 内訳:
 - `packages/mcp-server/src/tools/reservations.ts` を追加し、MCPから予約確認・予約作成・キャンセル・slot生成・じゃらん取り込みをSDK経由で呼べるようにした。
 - MCPの予約書き込み系toolは `execute=true` がない限りdry-runで止める安全設計にした。
 - Web管理画面MVP `/?page=admin-reservations` と `/admin/reservations` を追加した。
-- Web管理画面MVPでは、予約一覧、日別slot残数、slot生成、slot状態・容量・メモ更新、予約詳細、管理者キャンセル、外部取り込み `needs_review` 確認済み更新、resource/menu/schedule作成・更新・停止、Google Calendar接続開始導線を操作できる。
+- Web管理画面MVPでは、予約一覧、1週間/1か月のslot残数カレンダー、日別slot残数、slot生成、slot状態・容量・メモ更新、予約詳細、管理者キャンセル、外部取り込み `needs_review` 確認済み更新、resource/menu/schedule作成・更新・停止、Google Calendar接続開始導線を操作できる。
+- Web管理画面の枠カレンダーは、LIFFと同じ `◎ / △ / × / -` 表示を使い、LINE枠の残数を視覚的に確認できる。
 - Google Calendar接続開始は、管理画面が `GET /api/reservations/google-calendar/oauth-url` をAPIキー付きで呼び、返されたGoogle OAuth URLを開く。
 - Web管理画面のAPIキーは `sessionStorage` にだけ保存し、永続保存しない。
 - `GET /api/external-reservation-sources` と `PUT /api/external-reservation-sources/:id/parse-status` を追加した。
@@ -154,6 +158,31 @@ reservationId: d639739f-b709-4978-9920-a252525bb4ca
 - schedule は停止・再有効化できる
 ```
 
+2026-05-03 管理画面APIスモークテスト:
+
+```text
+URL:
+- http://localhost:8787/admin/reservations
+- http://localhost:8787/api/reservation-resources
+- http://localhost:8787/api/reservation-slots
+- http://localhost:8787/api/reservations
+
+確認済み:
+- 管理画面ページは 200 で配信される
+- API_KEY 付きで resource 一覧を取得できる
+- 2026-05-04 の slot を 6件取得できる
+- 管理APIから予約作成できる
+- 予約作成で reserved_count / line_reserved_count が 0 -> 3 になる
+- lineReservedCount=3 の状態で lineCapacity=1 へ下げる更新は 400 で拒否される
+- 管理APIからキャンセルできる
+- キャンセルで reserved_count / line_reserved_count が 3 -> 0 に戻る
+
+テスト予約:
+- reservationId: 5a94c305-7a38-40ad-b3ad-768c460c83a2
+- slotId: slot_blueberry_20260504_0900
+- menuId: menu_blueberry_60
+```
+
 ### 追加・変更した主なファイル
 
 ```text
@@ -204,15 +233,11 @@ apps/worker/src/services/*.test.ts: vitest type not found
 
 ### 未実装
 
-- 管理画面から既存resource/menu/scheduleを更新・停止するUI。
-- 予約が存在するslotの削除禁止を含むslot編集UI。
 - じゃらん実メールサンプルに合わせたparser調整。
 - 実GmailアカウントでのDRY_RUN確認。
-- Google Calendar接続を予約resourceへ紐付ける管理画面UI。
 - 本物のGoogle Calendarイベント作成・削除の結合テスト。
-- LIFF上の人数入力、電話番号、メール、備考フォームの整備。
 - 予約完了後のLINE通知メッセージ。
-- 予約一覧・予約詳細・キャンセル導線のLIFF UI。
+- LIFF実機でのID token/session/cancelToken再発行動作確認。
 
 ### 外部サービスから取得・設定が必要なもの
 

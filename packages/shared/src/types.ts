@@ -910,6 +910,13 @@ export interface ReservationCreateResponse extends ReservationResponse {
   cancelToken?: string;
 }
 
+export interface ReservationAccessTokensResponse {
+  reservationId: string;
+  detailToken: string;
+  cancelToken?: string;
+  expiresIn: number;
+}
+
 export interface ReservationSessionResponse {
   token: string;
   expiresIn: number;

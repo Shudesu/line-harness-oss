@@ -7,7 +7,7 @@ Upstream:
 - Repository: https://github.com/Shudesu/line-harness-oss
 - Project site / docs: https://shudesu.github.io/line-harness-oss/
 
-このforkでは、アオニサイファーム ブルーベリー観光農園での運用を想定し、LINE経由の予約、管理画面での予約確認、じゃらん/Gmail取り込み、Google Calendar連携の下地、SDK/MCP連携を追加しています。
+このforkでは、ブルーベリー観光農園での運用を想定し、LINE経由の予約、管理画面での予約確認、じゃらん/Gmail取り込み、Google Calendar連携の下地、SDK/MCP連携を追加しています。
 
 ## このforkで追加した主な機能
 

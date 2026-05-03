@@ -1,6 +1,15 @@
 name: Deploy Worker
 
-# Configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to enable auto-deploy
+# Required GitHub Secrets:
+# - CLOUDFLARE_API_TOKEN
+# - CLOUDFLARE_ACCOUNT_ID
+# - CLOUDFLARE_D1_DATABASE_ID
+#
+# Optional GitHub Variables:
+# - WORKER_NAME                  default: line-harness-reservation
+# - CLOUDFLARE_D1_DATABASE_NAME   default: line-crm
+# - CLOUDFLARE_R2_BUCKET_NAME     default: line-harness-images
+# - RUN_D1_MIGRATIONS             set true to apply packages/db/schema.sql before deploy
 on:
   workflow_dispatch:
   push:
@@ -27,6 +36,56 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db build
+      - run: pnpm --filter @line-crm/db test
+      - run: pnpm --filter @line-harness/sdk test
+
+      - name: Prepare Cloudflare deploy config
+        working-directory: apps/worker
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+          CF_D1_DATABASE_NAME: ${{ vars.CLOUDFLARE_D1_DATABASE_NAME }}
+          CF_R2_BUCKET_NAME: ${{ vars.CLOUDFLARE_R2_BUCKET_NAME }}
+          CF_WORKER_NAME: ${{ vars.WORKER_NAME }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const required = {
+            CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID,
+            CF_D1_DATABASE_ID: process.env.CF_D1_DATABASE_ID,
+          };
+
+          for (const [key, value] of Object.entries(required)) {
+            if (!value) {
+              throw new Error(`${key} is required`);
+            }
+          }
+
+          const accountId = process.env.CF_ACCOUNT_ID;
+          const d1DatabaseId = process.env.CF_D1_DATABASE_ID;
+          const d1DatabaseName = process.env.CF_D1_DATABASE_NAME || 'line-crm';
+          const r2BucketName = process.env.CF_R2_BUCKET_NAME || 'line-harness-images';
+          const workerName = process.env.CF_WORKER_NAME || 'line-harness-reservation';
+
+          let config = fs.readFileSync('wrangler.toml', 'utf8');
+          config = config.replace(/^name = "line-harness"/m, `name = "${workerName}"`);
+          config = config.replace(/account_id = "YOUR_DEV_ACCOUNT_ID"/g, `account_id = "${accountId}"`);
+          config = config.replace(/account_id = "YOUR_ACCOUNT_ID"/g, `account_id = "${accountId}"`);
+          config = config.replace(/database_name = "line-harness"/g, `database_name = "${d1DatabaseName}"`);
+          config = config.replace(/database_name = "line-crm"/g, `database_name = "${d1DatabaseName}"`);
+          config = config.replace(/database_id = "YOUR_DEV_D1_DATABASE_ID"/g, `database_id = "${d1DatabaseId}"`);
+          config = config.replace(/database_id = "YOUR_D1_DATABASE_ID"/g, `database_id = "${d1DatabaseId}"`);
+          config = config.replace(/bucket_name = "line-harness-images"/g, `bucket_name = "${r2BucketName}"`);
+          fs.writeFileSync('wrangler.toml', config);
+          NODE
+
+      - name: Apply D1 schema
+        if: ${{ vars.RUN_D1_MIGRATIONS == 'true' }}
+        working-directory: apps/worker
+        env:
+          CF_D1_DATABASE_NAME: ${{ vars.CLOUDFLARE_D1_DATABASE_NAME }}
+        run: pnpm exec wrangler d1 execute "${CF_D1_DATABASE_NAME:-line-crm}" --remote --file ../../packages/db/schema.sql
 
       - run: pnpm --filter worker build
         env:

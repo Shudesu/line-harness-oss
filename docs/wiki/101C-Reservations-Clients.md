@@ -2,11 +2,11 @@
 
 ## LIFF画面
 
-追加予定:
+実装済み:
 
-- `apps/worker/src/client/reservation.ts`
+- `apps/worker/src/client/booking.ts`
 
-変更予定:
+変更済み:
 
 - `apps/worker/src/client/main.ts`
 - `apps/worker/index.html`
@@ -22,12 +22,22 @@ https://liff.line.me/{LIFF_ID}?page=reservation&resourceId={RESOURCE_ID}
 1. `resourceId` から予約対象を取得する。
 2. メニュー一覧を取得する。
 3. LIFF SDK で profile を取得する。
-4. 日付選択画面を表示する。
-5. `lineRemainingCapacity` を反映した空き枠を表示する。
-6. 名前、電話番号、人数、メニュー別フォーム項目を入力する。
-7. 確認画面を表示する。
-8. 予約を作成する。
-9. 完了画面に日時、人数、予約ID、キャンセル導線を表示する。
+4. LINE ID tokenを `LIFF_SESSION_TOKEN` に交換する。
+5. メニュー、人数、1週間/1か月の空き枠を表示する。
+6. `lineRemainingCapacity` を反映した空き枠を `◎ / △ / × / -` で表示する。
+7. 名前、電話番号、メール、備考を入力する。
+8. 確認画面を表示する。
+9. 予約を作成する。
+10. 完了画面に日時、人数、予約ID、詳細導線、キャンセル導線を表示する。
+11. 自分の予約一覧と予約詳細を表示する。
+12. 予約作成時に保存した `cancelToken` がある場合は、LIFF上でキャンセルできる。
+
+制約:
+
+- 公開APIでは `lineUserId` query指定を信用しない。
+- 予約一覧は `LIFF_SESSION_TOKEN` で取得する。
+- キャンセルは `reservation:cancel` scopeの `cancelToken` が必要。
+- 別端末やlocalStorage消去後は、`POST /api/public/reservations/:id/tokens` で本人予約の `detailToken` / `cancelToken` を再発行する。
 
 ## Web管理画面
 
@@ -174,4 +184,3 @@ AI経由の更新は `reservation_events.actor_type = 'mcp'` を残す。
 - `packages/shared/src/index.ts`
 
 `packages/db/src/users.ts` には、予約専用の在庫・来園ロジックは入れない。予約側から必要な `createUser`, `getUserByPhone`, `linkFriendToUser` を使う。
-

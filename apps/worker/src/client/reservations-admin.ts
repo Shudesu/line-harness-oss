@@ -22,11 +22,14 @@ const API_KEY_STORAGE_KEY = 'lh_reservation_admin_api_key';
 type State = {
   apiKey: string;
   date: string;
+  viewMode: 'week' | 'month';
+  weekStart: string;
   resourceId: string;
   resources: ReservationResource[];
   menus: ReservationMenu[];
   schedules: ReservationSchedule[];
   slots: ReservationSlotWithAvailability[];
+  slotsByDate: Record<string, ReservationSlotWithAvailability[]>;
   reservations: ReservationResponse[];
   externalSources: ExternalReservationSourceResponse[];
   selectedReservation: ReservationResponse | null;
@@ -38,11 +41,14 @@ type State = {
 const state: State = {
   apiKey: readSessionApiKey(),
   date: todayJst(),
+  viewMode: 'week',
+  weekStart: startOfWeekYmd(todayJst()),
   resourceId: '',
   resources: [],
   menus: [],
   schedules: [],
   slots: [],
+  slotsByDate: {},
   reservations: [],
   externalSources: [],
   selectedReservation: null,
@@ -81,6 +87,49 @@ function todayJst(): string {
   return formatter.format(new Date());
 }
 
+function parseYmd(value: string): Date {
+  const [year, month, day] = value.split('-').map((part) => Number.parseInt(part, 10));
+  return new Date(year, month - 1, day);
+}
+
+function toYmd(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function addDaysYmd(value: string, days: number): string {
+  const date = parseYmd(value);
+  date.setDate(date.getDate() + days);
+  return toYmd(date);
+}
+
+function startOfWeekYmd(value: string): string {
+  const date = parseYmd(value);
+  date.setDate(date.getDate() - date.getDay());
+  return toYmd(date);
+}
+
+function monthDates(year: number, monthIndex: number): string[] {
+  const total = new Date(year, monthIndex + 1, 0).getDate();
+  return Array.from({ length: total }, (_, index) => toYmd(new Date(year, monthIndex, index + 1)));
+}
+
+function visibleDates(): string[] {
+  if (state.viewMode === 'week') {
+    return Array.from({ length: 7 }, (_, index) => addDaysYmd(state.weekStart, index));
+  }
+  const date = parseYmd(state.date);
+  return monthDates(date.getFullYear(), date.getMonth());
+}
+
+function formatDateShort(value: string): string {
+  const date = parseYmd(value);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function dayLabel(value: string): string {
+  return ['日', '月', '火', '水', '木', '金', '土'][parseYmd(value).getDay()] ?? '';
+}
+
 function escapeHtml(value: string | null | undefined): string {
   const div = document.createElement('div');
   div.textContent = value ?? '';
@@ -90,6 +139,17 @@ function escapeHtml(value: string | null | undefined): string {
 function formatTime(value: string): string {
   const match = value.match(/T(\d{2}:\d{2})/);
   return match ? match[1] : value;
+}
+
+function slotMark(slots: ReservationSlotWithAvailability[] | undefined): { mark: string; className: string; label: string } {
+  if (!slots || slots.length === 0) return { mark: '-', className: 'none', label: '未生成' };
+  const best = Math.max(...slots.map((slot) => {
+    const lineRemaining = slot.availability.lineRemainingCapacity ?? slot.availability.remainingCapacity;
+    return slot.availability.available ? lineRemaining : 0;
+  }));
+  if (best >= 3) return { mark: '◎', className: 'many', label: `LINE残${best}` };
+  if (best >= 1) return { mark: '△', className: 'few', label: `LINE残${best}` };
+  return { mark: '×', className: 'full', label: '満席' };
 }
 
 function isActiveReservation(reservation: ReservationResponse): boolean {
@@ -140,9 +200,7 @@ async function loadReservationsAndSlots(): Promise<void> {
     ? api<ReservationSchedule[]>(`/api/reservation-resources/${encodeURIComponent(state.resourceId)}/schedules`)
     : Promise.resolve([]);
   const slotsPromise = state.resourceId
-    ? api<ReservationSlotWithAvailability[]>(
-      `/api/reservation-slots?resourceId=${encodeURIComponent(state.resourceId)}&date=${encodeURIComponent(state.date)}&people=1`,
-    )
+    ? listSlotsForDate(state.date)
     : Promise.resolve([]);
 
   const [reservations, slots, externalSources, menus, schedules] = await Promise.all([
@@ -157,9 +215,33 @@ async function loadReservationsAndSlots(): Promise<void> {
   state.externalSources = externalSources;
   state.menus = menus;
   state.schedules = schedules;
+  state.slotsByDate[state.date] = slots;
+  await loadVisibleSlots();
   if (state.selectedReservation) {
     state.selectedReservation = reservations.find((item) => item.id === state.selectedReservation?.id) ?? null;
   }
+}
+
+async function listSlotsForDate(date: string): Promise<ReservationSlotWithAvailability[]> {
+  if (!state.resourceId) return [];
+  return api<ReservationSlotWithAvailability[]>(
+    `/api/reservation-slots?resourceId=${encodeURIComponent(state.resourceId)}&date=${encodeURIComponent(date)}&people=1`,
+  );
+}
+
+async function loadVisibleSlots(): Promise<void> {
+  if (!state.resourceId) {
+    state.slotsByDate = {};
+    return;
+  }
+  const entries = await Promise.all(
+    visibleDates().map(async (date) => {
+      const slots = await listSlotsForDate(date).catch(() => [] as ReservationSlotWithAvailability[]);
+      return [date, slots] as const;
+    }),
+  );
+  state.slotsByDate = Object.fromEntries(entries);
+  state.slots = state.slotsByDate[state.date] ?? state.slots;
 }
 
 async function generateSlots(): Promise<void> {
@@ -502,6 +584,26 @@ function render(): void {
       .admin-message.error{background:#fae4df;color:#8f2d20}
       .admin-section-title{font-size:18px;margin:0 0 12px;color:#1f2a21}
       .slot-list,.reservation-list{display:grid;gap:10px}
+      .availability-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+      .availability-toggle{display:flex;gap:8px;flex-wrap:wrap}
+      .availability-toggle button,.calendar-nav{border:1px solid rgba(31,42,33,.14);border-radius:999px;background:#fff;color:#1f2a21;padding:9px 12px;font-weight:800;cursor:pointer}
+      .availability-toggle button.active{background:#1e3b2f;color:#fff;border-color:#1e3b2f}
+      .calendar-navs{display:flex;gap:8px;align-items:center}
+      .availability-grid{overflow-x:auto;padding-bottom:2px}
+      .week-matrix{display:grid;grid-template-columns:64px repeat(7,86px);gap:5px}
+      .week-cell,.month-day{border:1px solid rgba(31,42,33,.12);border-radius:12px;background:#fff;min-height:56px;padding:7px 5px;text-align:center;color:#1f2a21}
+      .week-head,.week-time{background:#f8f4ea;font-size:12px;font-weight:900;position:sticky;left:0;z-index:1}
+      .week-day,.availability-mark,.month-day{cursor:pointer;font-family:inherit}
+      .week-day.selected,.availability-mark.selected,.month-day.selected{outline:2px solid #66804e;background:#edf2e7}
+      .week-day small,.availability-mark small,.month-day small{display:block;color:#697568;font-size:10px;line-height:1.4}
+      .availability-mark span,.month-day span{display:block;font-size:20px;font-weight:900;line-height:1.1}
+      .availability-mark.many span,.availability-mark.few span,.month-day.many span,.month-day.few span{color:#2f7a35}
+      .availability-mark.full span,.availability-mark.none span,.month-day.full span,.month-day.none span{color:#aaa}
+      .availability-mark:disabled,.month-day:disabled{cursor:not-allowed;opacity:.65}
+      .month-calendar{display:grid;grid-template-columns:repeat(7,minmax(58px,1fr));gap:6px}
+      .month-head{font-size:12px;font-weight:900;text-align:center;color:#697568;padding:4px}
+      .month-day.empty{visibility:hidden}
+      .safe-note{background:#f8f4ea;border:1px solid rgba(31,42,33,.08);border-radius:14px;padding:10px 12px;color:#52624d;font-size:12px;line-height:1.6;margin:12px 0}
       .slot-generator{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;background:#f8f4ea;border:1px solid rgba(31,42,33,.08);border-radius:16px;padding:12px;margin-bottom:12px}
       .slot-card,.reservation-card{border:1px solid rgba(31,42,33,.1);border-radius:16px;background:#fff;padding:14px;text-align:left}
       .slot-card.soldout{background:#f8eee9}
@@ -520,7 +622,7 @@ function render(): void {
       .detail-lines span:first-child{color:#697568}
       .external-raw{white-space:pre-wrap;max-height:180px;overflow:auto;background:#f8f4ea;border-radius:12px;padding:10px;font-size:12px;color:#3f493d;line-height:1.5;margin:12px 0}
       .empty{color:#74806d;font-size:14px;line-height:1.7}
-      @media (max-width:860px){.admin-grid,.admin-controls,.slot-generator,.settings-grid,.slot-editor{grid-template-columns:1fr}.admin-hero h1{font-size:24px}}
+      @media (max-width:860px){.admin-grid,.admin-controls,.slot-generator,.settings-grid,.slot-editor{grid-template-columns:1fr}.admin-hero h1{font-size:24px}.week-matrix{grid-template-columns:56px repeat(7,74px)}}
     </style>
     <main class="reservation-admin">
       <section class="admin-hero">
@@ -529,6 +631,7 @@ function render(): void {
       </section>
       ${renderMessage()}
       ${renderControls()}
+      ${renderAvailabilityCalendar()}
       <section class="admin-grid">
         <div>
           ${renderSlots()}
@@ -578,6 +681,84 @@ function renderControls(): string {
   `;
 }
 
+function renderAvailabilityCalendar(): string {
+  return `
+    <section class="admin-panel">
+      <div class="availability-toolbar">
+        <div>
+          <h2 class="admin-section-title" style="margin-bottom:4px">枠カレンダー</h2>
+          <p class="empty">LIFFと同じ見方でLINE枠の残数を確認します。◎=3枠以上、△=1〜2枠、×=満席、-=未生成/受付不可。</p>
+        </div>
+        <div class="availability-toggle">
+          <button class="${state.viewMode === 'week' ? 'active' : ''}" id="viewWeek">1週間</button>
+          <button class="${state.viewMode === 'month' ? 'active' : ''}" id="viewMonth">1か月</button>
+        </div>
+      </div>
+      <div class="calendar-navs" style="margin-bottom:12px">
+        <button class="calendar-nav" id="prevCalendar">&lt;</button>
+        <strong>${state.viewMode === 'week' ? `${formatDateShort(state.weekStart)}週` : `${parseYmd(state.date).getFullYear()}年${parseYmd(state.date).getMonth() + 1}月`}</strong>
+        <button class="calendar-nav" id="nextCalendar">&gt;</button>
+      </div>
+      ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
+    </section>
+  `;
+}
+
+function renderWeekAvailability(): string {
+  const dates = Array.from({ length: 7 }, (_, index) => addDaysYmd(state.weekStart, index));
+  const times = Array.from(new Set(
+    dates.flatMap((date) => (state.slotsByDate[date] ?? []).map((slot) => formatTime(slot.startAt))),
+  )).sort();
+  return `
+    <div class="availability-grid">
+      <div class="week-matrix">
+        <div class="week-cell week-head">時間</div>
+        ${dates.map((date) => `
+          <button class="week-cell week-day ${state.date === date ? 'selected' : ''}" data-calendar-date="${escapeHtml(date)}">
+            ${formatDateShort(date)}<small>${dayLabel(date)}</small>
+          </button>
+        `).join('')}
+        ${times.length === 0 ? '<div class="empty" style="grid-column:1/-1;padding:14px">表示できるslotがありません。先にslot生成を実行してください。</div>' : times.map((time) => `
+          <div class="week-cell week-time">${time}</div>
+          ${dates.map((date) => {
+            const slot = (state.slotsByDate[date] ?? []).find((item) => formatTime(item.startAt) === time);
+            if (!slot) return '<div class="week-cell availability-mark none"><span>-</span><small>未生成</small></div>';
+            const mark = slotMark([slot]);
+            return `
+              <button class="week-cell availability-mark ${mark.className} ${state.slots.some((item) => item.id === slot.id) ? 'selected' : ''}" data-calendar-date="${escapeHtml(date)}">
+                <span>${mark.mark}</span><small>${escapeHtml(mark.label)}</small>
+              </button>
+            `;
+          }).join('')}
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderMonthAvailability(): string {
+  const date = parseYmd(state.date);
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const blanks = first.getDay();
+  const dates = monthDates(date.getFullYear(), date.getMonth());
+  return `
+    <div class="month-calendar">
+      ${['日', '月', '火', '水', '木', '金', '土'].map((label) => `<div class="month-head">${label}</div>`).join('')}
+      ${Array.from({ length: blanks }, () => '<span class="month-day empty"></span>').join('')}
+      ${dates.map((item) => {
+        const mark = slotMark(state.slotsByDate[item]);
+        return `
+          <button class="month-day ${mark.className} ${state.date === item ? 'selected' : ''}" data-calendar-date="${escapeHtml(item)}">
+            <strong>${parseYmd(item).getDate()}</strong>
+            <span>${mark.mark}</span>
+            <small>${escapeHtml(mark.label)}</small>
+          </button>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 function renderSlots(): string {
   const body = state.slots.length
     ? `<div class="slot-list">${state.slots.map(renderSlotCard).join('')}</div>`
@@ -586,6 +767,7 @@ function renderSlots(): string {
     <section class="admin-panel">
       <h2 class="admin-section-title">予約枠の残数</h2>
       ${renderSlotGenerator()}
+      <div class="safe-note">安全制約: 予約が存在するslotは削除しません。総枠は予約済み数+バッファ未満にできず、LINE枠/外部枠も各予約済み数未満にできません。満席は手動sold_outではなく残数0で判定します。</div>
       ${body}
     </section>
   `;
@@ -905,9 +1087,54 @@ function bindEvents(): void {
   });
   document.getElementById('adminDate')?.addEventListener('change', (event) => {
     state.date = event.target instanceof HTMLInputElement ? event.target.value : state.date;
+    state.weekStart = startOfWeekYmd(state.date);
   });
   document.getElementById('adminResource')?.addEventListener('change', (event) => {
     state.resourceId = event.target instanceof HTMLSelectElement ? event.target.value : state.resourceId;
+    state.slotsByDate = {};
+    state.slots = [];
+  });
+  document.getElementById('viewWeek')?.addEventListener('click', () => {
+    state.viewMode = 'week';
+    state.weekStart = startOfWeekYmd(state.date);
+    void refresh();
+  });
+  document.getElementById('viewMonth')?.addEventListener('click', () => {
+    state.viewMode = 'month';
+    void refresh();
+  });
+  document.getElementById('prevCalendar')?.addEventListener('click', () => {
+    if (state.viewMode === 'week') {
+      state.weekStart = addDaysYmd(state.weekStart, -7);
+      state.date = state.weekStart;
+    } else {
+      const date = parseYmd(state.date);
+      date.setMonth(date.getMonth() - 1, 1);
+      state.date = toYmd(date);
+      state.weekStart = startOfWeekYmd(state.date);
+    }
+    void refresh();
+  });
+  document.getElementById('nextCalendar')?.addEventListener('click', () => {
+    if (state.viewMode === 'week') {
+      state.weekStart = addDaysYmd(state.weekStart, 7);
+      state.date = state.weekStart;
+    } else {
+      const date = parseYmd(state.date);
+      date.setMonth(date.getMonth() + 1, 1);
+      state.date = toYmd(date);
+      state.weekStart = startOfWeekYmd(state.date);
+    }
+    void refresh();
+  });
+  document.querySelectorAll<HTMLElement>('[data-calendar-date]').forEach((element) => {
+    element.addEventListener('click', () => {
+      const date = element.dataset.calendarDate;
+      if (!date) return;
+      state.date = date;
+      state.weekStart = startOfWeekYmd(date);
+      void refresh();
+    });
   });
   document.getElementById('reloadReservations')?.addEventListener('click', () => {
     const apiKey = document.getElementById('adminApiKey');

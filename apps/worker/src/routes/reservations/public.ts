@@ -204,6 +204,44 @@ publicReservations.get('/api/public/reservations/:id', async (c) => {
   }
 });
 
+publicReservations.post('/api/public/reservations/:id/tokens', async (c) => {
+  try {
+    const session = await requireReservationSession(c);
+    if (!session) return jsonError(c, 'unauthorized', 401);
+
+    const reservation = await getReservationById(c.env.DB, c.req.param('id'));
+    if (!reservation) return jsonError(c, 'not_found', 404, 'Reservation not found');
+    if (!canAccessReservation(session, reservation)) return jsonError(c, 'forbidden', 403);
+
+    const expiresIn = 60 * 60 * 24;
+    const secret = reservationTokenSecret(c.env);
+    const commonPayload = {
+      reservationId: reservation.id,
+      lineUserId: session.lineUserId,
+      friendId: session.friendId,
+      userId: session.userId,
+      exp: secondsFromNow(expiresIn),
+    };
+    const detailToken = await signReservationToken(
+      { ...commonPayload, scope: 'reservation:read' },
+      secret,
+    );
+    const cancelToken = reservation.status === 'pending' || reservation.status === 'confirmed'
+      ? await signReservationToken({ ...commonPayload, scope: 'reservation:cancel' }, secret)
+      : undefined;
+
+    return jsonOk(c, {
+      reservationId: reservation.id,
+      detailToken,
+      cancelToken,
+      expiresIn,
+    });
+  } catch (err) {
+    console.error('POST /api/public/reservations/:id/tokens error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
 publicReservations.post('/api/public/reservations/:id/cancel', async (c) => {
   try {
     const json = await readJsonObject(c);
