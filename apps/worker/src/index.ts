@@ -36,6 +36,7 @@ import { automations } from './routes/automations.js';
 import { richMenus } from './routes/rich-menus.js';
 import { trackedLinks } from './routes/tracked-links.js';
 import { forms } from './routes/forms.js';
+import { reservations } from './routes/reservations.js';
 import { adPlatforms } from './routes/ad-platforms.js';
 import { staff } from './routes/staff.js';
 import { images } from './routes/images.js';
@@ -62,6 +63,9 @@ export type Env = {
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
+    GOOGLE_OAUTH_CLIENT_ID?: string;
+    GOOGLE_OAUTH_CLIENT_SECRET?: string;
+    GOOGLE_OAUTH_REDIRECT_URI?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -107,6 +111,7 @@ app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
 app.route('/', forms);
+app.route('/', reservations);
 app.route('/', adPlatforms);
 app.route('/', staff);
 app.route('/', images);
@@ -315,6 +320,7 @@ body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;backgroun
 
 // Convenience redirect for /book path
 app.get('/book', (c) => c.redirect('/?page=book'));
+app.get('/admin/reservations', (c) => c.redirect('/?page=admin-reservations'));
 
 // 404 fallback — API paths return JSON 404, everything else serves from static assets (LIFF/admin)
 app.notFound(async (c) => {

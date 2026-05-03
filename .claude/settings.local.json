@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --filter @line-crm/db add -D vitest @cloudflare/vitest-pool-workers)",
+      "Bash(pnpm:*)",
+      "Bash(npx vitest:*)",
+      "Bash(ls node_modules/.pnpm/@cloudflare+vitest-pool-workers*/node_modules/@cloudflare/vitest-pool-workers/package.json)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(head:*)",
+      "Bash(node:*)"
+    ]
+  }
+}

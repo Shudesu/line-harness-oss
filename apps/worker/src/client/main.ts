@@ -16,6 +16,7 @@
 
 import { initBooking } from './booking.js';
 import { initForm } from './form.js';
+import { initReservationsAdmin } from './reservations-admin.js';
 
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
@@ -36,9 +37,6 @@ function detectLiffId(): string {
   return import.meta.env?.VITE_LIFF_ID || '';
 }
 const LIFF_ID = detectLiffId();
-if (!LIFF_ID) {
-  throw new Error('LIFF ID not found. Set ?liffId= in LIFF endpoint URL or VITE_LIFF_ID env.');
-}
 const UUID_STORAGE_KEY = 'lh_uuid';
 // Bot basic ID — resolved dynamically from API after liff.init()
 let BOT_BASIC_ID = '';
@@ -305,6 +303,16 @@ async function linkAndAddFlow() {
 
 async function main() {
   try {
+    const page = getPage();
+    if (page === 'admin-reservations') {
+      initReservationsAdmin();
+      return;
+    }
+
+    if (!LIFF_ID) {
+      throw new Error('LIFF ID not found. Set ?liffId= in LIFF endpoint URL or VITE_LIFF_ID env.');
+    }
+
     await liff.init({ liffId: LIFF_ID });
 
     if (!liff.isLoggedIn()) {
@@ -323,7 +331,6 @@ async function main() {
       // fallback: BOT_BASIC_ID remains empty, friend-add URL won't auto-redirect
     }
 
-    const page = getPage();
     if (page === 'book') {
       await initBooking();
     } else if (page === 'form') {

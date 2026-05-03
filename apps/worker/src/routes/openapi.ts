@@ -163,6 +163,120 @@ const spec = {
           totalRevenue: { type: 'number' },
         },
       },
+      ReservationApiError: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', const: false },
+          error: { type: 'string' },
+          code: {
+            type: 'string',
+            enum: [
+              'bad_request',
+              'unauthorized',
+              'forbidden',
+              'not_found',
+              'slot_not_available',
+              'invalid_slot',
+              'invalid_people',
+              'invalid_state_transition',
+              'missing_dedupe_key',
+              'internal_error',
+            ],
+          },
+          details: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+        },
+        required: ['success', 'error', 'code'],
+      },
+      Reservation: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          lineAccountId: { type: 'string', nullable: true },
+          userId: { type: 'string', nullable: true },
+          friendId: { type: 'string', nullable: true },
+          slotId: { type: 'string' },
+          source: { type: 'string', enum: ['line', 'jalan', 'phone', 'gmail', 'admin', 'mcp'] },
+          capacityChannel: { type: 'string', enum: ['line', 'external', 'manual'] },
+          title: { type: 'string' },
+          reservationDate: { type: 'string' },
+          startAt: { type: 'string', format: 'date-time' },
+          endAt: { type: 'string', format: 'date-time' },
+          status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled', 'completed', 'no_show'] },
+          adultCount: { type: 'integer' },
+          childCount: { type: 'integer' },
+          totalPeople: { type: 'integer' },
+          customerName: { type: 'string', nullable: true },
+          customerPhone: { type: 'string', nullable: true },
+          customerEmail: { type: 'string', nullable: true },
+          cancelReason: { type: 'string', nullable: true },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      ReservationCreateRequest: {
+        type: 'object',
+        properties: {
+          resourceId: { type: 'string' },
+          menuId: { type: 'string' },
+          slotId: { type: 'string' },
+          source: { type: 'string', enum: ['line', 'jalan', 'phone', 'gmail', 'admin', 'mcp'] },
+          capacityChannel: { type: 'string', enum: ['line', 'external', 'manual'] },
+          adultCount: { type: 'integer', minimum: 0 },
+          childCount: { type: 'integer', minimum: 0 },
+          customer: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', nullable: true },
+              phone: { type: 'string', nullable: true },
+              email: { type: 'string', nullable: true },
+            },
+          },
+          formData: { type: 'object' },
+          metadata: { type: 'object' },
+        },
+        required: ['resourceId', 'menuId', 'slotId'],
+      },
+      ReservationStatusUpdateRequest: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled', 'completed', 'no_show'] },
+          reason: { type: 'string', nullable: true },
+        },
+        required: ['status'],
+      },
+      JalanReservationImportRequest: {
+        type: 'object',
+        properties: {
+          eventType: { type: 'string', enum: ['created', 'updated', 'cancelled', 'unknown'] },
+          externalId: { type: 'string', nullable: true },
+          dedupeKey: { type: 'string', nullable: true },
+          gmailMessageId: { type: 'string', nullable: true },
+          receivedAt: { type: 'string', format: 'date-time', nullable: true },
+          rawText: { type: 'string', nullable: true },
+          parsedPayload: { type: 'string' },
+          resourceId: { type: 'string' },
+          menuId: { type: 'string' },
+          slotId: { type: 'string' },
+          adultCount: { type: 'integer', minimum: 0 },
+          childCount: { type: 'integer', minimum: 0 },
+          customerName: { type: 'string', nullable: true },
+          customerPhone: { type: 'string', nullable: true },
+          customerEmail: { type: 'string', nullable: true },
+        },
+        required: ['eventType'],
+      },
+      JalanGmailImportRequest: {
+        type: 'object',
+        properties: {
+          gmailMessageId: { type: 'string' },
+          receivedAt: { type: 'string', format: 'date-time', nullable: true },
+          rawText: { type: 'string' },
+          resourceId: { type: 'string' },
+          menuId: { type: 'string' },
+          slotId: { type: 'string' },
+        },
+        required: ['gmailMessageId', 'rawText'],
+      },
     },
   },
   paths: {
@@ -466,6 +580,129 @@ const spec = {
         responses: { '201': { description: 'Recorded' } },
       },
     },
+    // ── Reservations ───────────────────────────────────────────────────────
+    '/api/public/reservation-session': {
+      post: {
+        tags: ['Reservations'],
+        summary: 'LIFF ID tokenから予約用セッショントークンを発行',
+        security: [],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  idToken: { type: 'string' },
+                  displayName: { type: 'string', nullable: true },
+                },
+                required: ['idToken'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Session token issued' },
+          '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '401': { description: 'Invalid LINE ID token', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+        },
+      },
+    },
+    '/api/public/reservation-resources/{resourceId}/slots': {
+      get: {
+        tags: ['Reservations'],
+        summary: '公開予約枠一覧',
+        security: [],
+        parameters: [
+          { name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'date', in: 'query', required: true, schema: { type: 'string', format: 'date' } },
+          { name: 'people', in: 'query', schema: { type: 'integer', default: 1 } },
+        ],
+        responses: {
+          '200': { description: 'Available slots' },
+          '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+        },
+      },
+    },
+    '/api/public/reservations': {
+      post: {
+        tags: ['Reservations'],
+        summary: '公開予約作成',
+        description: 'Authorization: Bearer LIFF_SESSION_TOKEN が必要。lineUserId直指定は信用しない。',
+        security: [],
+        requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationCreateRequest' } } } },
+        responses: {
+          '201': { description: 'Created reservation with detailToken/cancelToken' },
+          '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '401': { description: 'Unauthorized', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '409': { description: 'Slot not available', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+        },
+      },
+    },
+    '/api/reservations': {
+      get: {
+        tags: ['Reservations'],
+        summary: '管理者向け予約一覧',
+        parameters: [
+          { name: 'date', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'slotId', in: 'query', schema: { type: 'string' } },
+          { name: 'userId', in: 'query', schema: { type: 'string' } },
+          { name: 'status', in: 'query', schema: { type: 'string', enum: ['pending', 'confirmed', 'cancelled', 'completed', 'no_show'] } },
+          { name: 'source', in: 'query', schema: { type: 'string', enum: ['line', 'jalan', 'phone', 'gmail', 'admin', 'mcp'] } },
+        ],
+        responses: { '200': { description: 'Reservations list' } },
+      },
+      post: {
+        tags: ['Reservations'],
+        summary: '管理者向け予約作成',
+        requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationCreateRequest' } } } },
+        responses: {
+          '201': { description: 'Created reservation' },
+          '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '409': { description: 'Slot not available', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+        },
+      },
+    },
+    '/api/reservations/{id}/status': {
+      put: {
+        tags: ['Reservations'],
+        summary: '予約状態変更',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationStatusUpdateRequest' } } } },
+        responses: {
+          '200': { description: 'Updated reservation status' },
+          '404': { description: 'Not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '409': { description: 'Invalid state transition', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+        },
+      },
+    },
+	    '/api/integrations/jalan/reservations/import': {
+      post: {
+        tags: ['Reservations'],
+        summary: 'じゃらん/Gmail予約メール取り込み',
+        description: 'createdは冪等作成、updatedは自動反映せずneeds_review、cancelledは状態遷移表に従ってキャンセルする。',
+        requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/JalanReservationImportRequest' } } } },
+        responses: {
+          '200': { description: 'Imported, duplicate, or cancelled' },
+          '202': { description: 'Needs manual review' },
+          '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+          '409': { description: 'Slot not available', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+	    },
+	    '/api/integrations/jalan/gmail/import': {
+	      post: {
+	        tags: ['Reservations'],
+	        summary: 'Gmail raw本文からじゃらん予約メールを取り込み',
+	        description: 'GASからgmailMessageIdとrawTextを受け取り、Worker側で本文を解析する。createdはslot/menuが揃う場合だけ予約作成し、updatedはneeds_reviewにする。',
+	        requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/JalanGmailImportRequest' } } } },
+	        responses: {
+	          '200': { description: 'Imported, duplicate, or cancelled' },
+	          '202': { description: 'Needs manual review' },
+	          '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+	          '409': { description: 'Slot not available', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReservationApiError' } } } },
+	        },
+	      },
+	    },
+      },
+    },
     // ── Webhook ─────────────────────────────────────────────────────────────
     '/webhook': {
       post: {
@@ -486,6 +723,7 @@ const spec = {
     { name: 'LINE Accounts', description: 'マルチLINEアカウント管理' },
     { name: 'Conversions', description: 'コンバージョン計測' },
     { name: 'Affiliates', description: 'アフィリエイト管理' },
+    { name: 'Reservations', description: '予約DB、LIFF予約、外部予約取り込み' },
     { name: 'Webhook', description: 'LINE Webhook' },
   ],
 };

@@ -19,12 +19,16 @@ declare const liff: {
   closeWindow(): void;
 };
 
-const CONNECTION_ID = import.meta.env?.VITE_CALENDAR_CONNECTION_ID || '';
+const params = new URLSearchParams(window.location.search);
+const RESOURCE_ID = params.get('resourceId') || import.meta.env?.VITE_RESERVATION_RESOURCE_ID || '';
+const MENU_ID = params.get('menuId') || import.meta.env?.VITE_RESERVATION_MENU_ID || '';
 
 interface Slot {
+  slotId: string;
   startAt: string;
   endAt: string;
   available: boolean;
+  lineRemainingCapacity?: number;
 }
 
 interface BookingState {
@@ -35,6 +39,8 @@ interface BookingState {
   selectedSlot: Slot | null;
   profile: { userId: string; displayName: string; pictureUrl?: string } | null;
   friendId: string | null;
+  userId: string | null;
+  sessionToken: string | null;
   loading: boolean;
   submitting: boolean;
 }
@@ -47,6 +53,8 @@ const state: BookingState = {
   selectedSlot: null,
   profile: null,
   friendId: null,
+  userId: null,
+  sessionToken: null,
   loading: false,
   submitting: false,
 };
@@ -186,7 +194,7 @@ function renderSlots(): string {
     const cls = slot.available
       ? (isSelected ? 'slot-btn selected' : 'slot-btn available')
       : 'slot-btn full';
-    return `<button class="${cls}" ${slot.available ? `data-start="${slot.startAt}" data-end="${slot.endAt}"` : 'disabled'}>${formatTime(slot.startAt)} - ${formatTime(slot.endAt)}</button>`;
+    return `<button class="${cls}" ${slot.available ? `data-slot-id="${slot.slotId}" data-start="${slot.startAt}" data-end="${slot.endAt}"` : 'disabled'}>${formatTime(slot.startAt)} - ${formatTime(slot.endAt)}</button>`;
   }).join('');
 
   return `
@@ -346,7 +354,8 @@ function attachEvents(): void {
     btn.addEventListener('click', () => {
       const startAt = (btn as HTMLElement).dataset.start!;
       const endAt = (btn as HTMLElement).dataset.end!;
-      state.selectedSlot = { startAt, endAt, available: true };
+      const slotId = (btn as HTMLElement).dataset.slotId!;
+      state.selectedSlot = { slotId, startAt, endAt, available: true };
       render();
       // Scroll to confirm
       setTimeout(() => {
@@ -365,13 +374,28 @@ function attachEvents(): void {
 
 async function fetchSlots(date: string): Promise<void> {
   try {
-    const params = new URLSearchParams({ date });
-    if (CONNECTION_ID) params.set('connectionId', CONNECTION_ID);
-    const res = await apiCall(`/api/integrations/google-calendar/slots?${params}`);
+    if (!RESOURCE_ID || !MENU_ID) throw new Error('予約対象またはメニューが未設定です');
+    const query = new URLSearchParams({ date, menuId: MENU_ID, people: '1' });
+    const res = await apiCall(`/api/public/reservation-resources/${encodeURIComponent(RESOURCE_ID)}/slots?${query}`);
     if (!res.ok) throw new Error('スロット取得に失敗しました');
-    const json = await res.json() as { success: boolean; data: Slot[] };
+    const json = await res.json() as {
+      success: boolean;
+      data: Array<{
+        slotId: string;
+        startAt: string;
+        endAt: string;
+        available: boolean;
+        lineRemainingCapacity: number;
+      }>;
+    };
     if (!json.success) throw new Error('スロット取得に失敗しました');
-    state.slots = json.data;
+    state.slots = json.data.map((slot) => ({
+      slotId: slot.slotId,
+      startAt: slot.startAt,
+      endAt: slot.endAt,
+      available: slot.available,
+      lineRemainingCapacity: slot.lineRemainingCapacity,
+    }));
   } catch (err) {
     state.slots = [];
     console.error('fetchSlots error:', err);
@@ -382,8 +406,8 @@ async function fetchSlots(date: string): Promise<void> {
 }
 
 async function submitBooking(): Promise<void> {
-  const { selectedSlot, selectedDate, profile, friendId } = state;
-  if (!selectedSlot || !selectedDate || !profile || state.submitting) return;
+  const { selectedSlot, selectedDate, profile, sessionToken } = state;
+  if (!selectedSlot || !selectedDate || !profile || !sessionToken || state.submitting) return;
   state.submitting = true;
 
   const confirmBtn = getApp().querySelector('[data-action="confirm-booking"]') as HTMLButtonElement | null;
@@ -393,17 +417,19 @@ async function submitBooking(): Promise<void> {
   }
 
   try {
-    const body: Record<string, unknown> = {
-      title: `${profile.displayName}様 予約`,
-      startAt: selectedSlot.startAt,
-      endAt: selectedSlot.endAt,
-    };
-    if (CONNECTION_ID) body.connectionId = CONNECTION_ID;
-    if (friendId) body.friendId = friendId;
+    if (!RESOURCE_ID || !MENU_ID) throw new Error('予約対象またはメニューが未設定です');
 
-    const res = await apiCall('/api/integrations/google-calendar/book', {
+    const res = await apiCall('/api/public/reservations', {
       method: 'POST',
-      body: JSON.stringify(body),
+      headers: { Authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({
+        resourceId: RESOURCE_ID,
+        menuId: MENU_ID,
+        slotId: selectedSlot.slotId,
+        adultCount: 1,
+        childCount: 0,
+        customer: { name: profile.displayName },
+      }),
     });
 
     if (!res.ok) {
@@ -421,6 +447,11 @@ async function submitBooking(): Promise<void> {
 // ========== Init ==========
 
 export async function initBooking(): Promise<void> {
+  if (!RESOURCE_ID || !MENU_ID) {
+    renderError('予約対象またはメニューが未設定です。URLに resourceId と menuId を指定してください。');
+    return;
+  }
+
   const profile = await liff.getProfile();
   state.profile = profile;
 
@@ -432,28 +463,37 @@ export async function initBooking(): Promise<void> {
     // silent
   }
 
-  // Silent UUID linking (same as main flow)
   const rawIdToken = liff.getIDToken();
-  if (rawIdToken) {
-    const existingUuid = state.friendId;
-    apiCall('/api/liff/link', {
+  if (!rawIdToken) {
+    renderError('LINEログイン情報を取得できませんでした。もう一度開き直してください。');
+    return;
+  }
+
+  try {
+    const sessionRes = await apiCall('/api/public/reservation-session', {
       method: 'POST',
       body: JSON.stringify({
         idToken: rawIdToken,
         displayName: profile.displayName,
-        existingUuid: existingUuid,
       }),
-    }).then(async (res) => {
-      if (res.ok) {
-        const data = await res.json() as { success: boolean; data?: { userId?: string } };
-        if (data?.data?.userId) {
-          try {
-            localStorage.setItem(UUID_STORAGE_KEY, data.data.userId);
-            state.friendId = data.data.userId;
-          } catch { /* silent */ }
-        }
-      }
-    }).catch(() => { /* silent */ });
+    });
+    const sessionJson = await sessionRes.json() as {
+      success: boolean;
+      data?: { token: string; friendId: string; userId: string };
+      error?: string;
+    };
+    if (!sessionRes.ok || !sessionJson.success || !sessionJson.data?.token) {
+      throw new Error(sessionJson.error || '予約セッションの作成に失敗しました');
+    }
+    state.sessionToken = sessionJson.data.token;
+    state.friendId = sessionJson.data.friendId;
+    state.userId = sessionJson.data.userId;
+    try {
+      localStorage.setItem(UUID_STORAGE_KEY, sessionJson.data.userId);
+    } catch { /* silent */ }
+  } catch (err) {
+    renderError(err instanceof Error ? err.message : '予約セッションの作成に失敗しました');
+    return;
   }
 
   render();

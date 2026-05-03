@@ -1,3 +1,8 @@
+
+
+#　これはLINE Harnessをforkして開発しています。
+## 以下は、https://shudesu.github.io/line-harness-oss/　のREADMEを記載
+
 # LINE Harness
 
 > ### **[LINE で無料体験する](https://shudesu.github.io/line-harness-oss/)** 👈

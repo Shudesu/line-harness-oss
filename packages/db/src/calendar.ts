@@ -5,6 +5,7 @@ export interface GoogleCalendarConnectionRow {
   id: string;
   calendar_id: string;
   access_token: string | null;
+  access_token_expires_at: string | null;
   refresh_token: string | null;
   api_key: string | null;
   auth_type: string;
@@ -40,16 +41,63 @@ export async function getCalendarConnectionById(db: D1Database, id: string): Pro
 
 export async function createCalendarConnection(
   db: D1Database,
-  input: { calendarId: string; authType: string; accessToken?: string; refreshToken?: string; apiKey?: string },
+  input: {
+    calendarId: string;
+    authType: string;
+    accessToken?: string;
+    accessTokenExpiresAt?: string;
+    refreshToken?: string;
+    apiKey?: string;
+  },
 ): Promise<GoogleCalendarConnectionRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
   await db
-    .prepare(`INSERT INTO google_calendar_connections (id, calendar_id, auth_type, access_token, refresh_token, api_key, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.calendarId, input.authType, input.accessToken ?? null, input.refreshToken ?? null, input.apiKey ?? null, now, now)
+    .prepare(`INSERT INTO google_calendar_connections
+                (id, calendar_id, auth_type, access_token, access_token_expires_at, refresh_token, api_key, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(
+      id,
+      input.calendarId,
+      input.authType,
+      input.accessToken ?? null,
+      input.accessTokenExpiresAt ?? null,
+      input.refreshToken ?? null,
+      input.apiKey ?? null,
+      now,
+      now,
+    )
     .run();
   return (await getCalendarConnectionById(db, id))!;
+}
+
+export async function updateCalendarConnectionTokens(
+  db: D1Database,
+  id: string,
+  input: { accessToken: string; accessTokenExpiresAt?: string | null; refreshToken?: string | null },
+): Promise<GoogleCalendarConnectionRow | null> {
+  const existing = await getCalendarConnectionById(db, id);
+  if (!existing) return null;
+
+  await db
+    .prepare(
+      `UPDATE google_calendar_connections
+       SET access_token = ?,
+           access_token_expires_at = ?,
+           refresh_token = ?,
+           updated_at = ?
+       WHERE id = ?`,
+    )
+    .bind(
+      input.accessToken,
+      input.accessTokenExpiresAt ?? null,
+      input.refreshToken ?? existing.refresh_token,
+      jstNow(),
+      id,
+    )
+    .run();
+
+  return getCalendarConnectionById(db, id);
 }
 
 export async function deleteCalendarConnection(db: D1Database, id: string): Promise<void> {

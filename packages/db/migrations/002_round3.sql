@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS google_calendar_connections (
   id            TEXT PRIMARY KEY,
   calendar_id   TEXT NOT NULL,
   access_token  TEXT,
+  access_token_expires_at TEXT,
   refresh_token TEXT,
   api_key       TEXT,
   auth_type     TEXT NOT NULL DEFAULT 'api_key',  -- oauth, api_key

@@ -11,6 +11,7 @@ import { StaffResource } from './resources/staff.js'
 import { ImagesResource } from './resources/images.js'
 import { AutoRepliesResource } from './resources/auto-replies.js'
 import { ConversationsResource } from './resources/conversations.js'
+import { ReservationsResource } from './resources/reservations.js'
 import { Workflows } from './workflows.js'
 import type { LineHarnessConfig, StepDefinition, ScenarioTriggerType, ScenarioWithSteps, Broadcast, MessageType, SegmentCondition } from './types.js'
 
@@ -27,6 +28,7 @@ export class LineHarness {
   readonly images: ImagesResource
   readonly autoReplies: AutoRepliesResource
   readonly conversations: ConversationsResource
+  readonly reservations: ReservationsResource
 
   private readonly apiUrl: string
   private readonly defaultAccountId: string | undefined
@@ -61,6 +63,7 @@ export class LineHarness {
     this.images = new ImagesResource(http)
     this.autoReplies = new AutoRepliesResource(http, this.defaultAccountId)
     this.conversations = new ConversationsResource(http, this.defaultAccountId)
+    this.reservations = new ReservationsResource(http)
     this.workflows = new Workflows(this.friends, this.scenarios, this.broadcasts)
 
     this.createStepScenario = this.workflows.createStepScenario.bind(this.workflows)

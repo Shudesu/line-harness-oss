@@ -33,6 +33,9 @@
     "ai"
   ],
   "license": "MIT",
+  "dependencies": {
+    "@line-crm/shared": "workspace:*"
+  },
   "devDependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",

@@ -11,11 +11,15 @@
     "migrations"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
-    "typescript": "^5.7.0"
+    "miniflare": "^4.20260430.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.0.0"
   },
   "keywords": [
     "line",

@@ -671,6 +671,285 @@ export interface StaffProfile {
   email: string | null;
 }
 
+// -----------------------------------------------------------------------------
+// 予約 (Reservations)
+// -----------------------------------------------------------------------------
+
+export type ReservationSource = 'line' | 'jalan' | 'phone' | 'gmail' | 'admin' | 'mcp';
+export type ReservationCustomerSource = ReservationSource | 'unknown';
+export type CapacityChannel = 'line' | 'external' | 'manual';
+export type ReservationStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+export type ReservationSlotStatus = 'open' | 'closed' | 'sold_out' | 'hidden';
+export type ReservationCustomerStatus = 'prospect' | 'reserved' | 'visited' | 'cancelled' | 'inactive';
+export type ReservationEventType =
+  | 'created'
+  | 'updated'
+  | 'confirmed'
+  | 'cancelled'
+  | 'completed'
+  | 'no_show'
+  | 'sync_failed'
+  | 'imported';
+export type ReservationActorType = 'customer' | 'admin' | 'gas' | 'mcp' | 'system';
+export type ExternalReservationEventType = 'created' | 'updated' | 'cancelled' | 'unknown';
+export type ExternalReservationParseStatus =
+  | 'pending'
+  | 'parsed'
+  | 'imported'
+  | 'needs_review'
+  | 'failed'
+  | 'duplicate'
+  | 'ignored';
+export type ExternalSyncProvider = 'jalan' | 'google_calendar';
+export type ExternalSyncTaskType =
+  | 'reduce_capacity'
+  | 'restore_capacity'
+  | 'create_event'
+  | 'cancel_event'
+  | 'review';
+export type ExternalSyncTaskStatus = 'pending' | 'done' | 'failed' | 'skipped';
+
+export interface ReservationCustomerProfile {
+  userId: string;
+  status: ReservationCustomerStatus;
+  source: ReservationCustomerSource;
+  memo: string | null;
+  metadata: string;
+  firstReservedAt: string | null;
+  lastReservedAt: string | null;
+  firstVisitedAt: string | null;
+  lastVisitedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReservationResource {
+  id: string;
+  lineAccountId: string | null;
+  name: string;
+  description: string | null;
+  defaultDurationMinutes: number;
+  defaultCapacity: number;
+  defaultLineCapacity: number | null;
+  defaultExternalCapacity: number | null;
+  defaultBufferCapacity: number;
+  googleCalendarConnectionId: string | null;
+  slotIntervalMinutes: number;
+  timezone: string;
+  isActive: boolean;
+  displayOrder: number;
+  metadata: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReservationMenu {
+  id: string;
+  resourceId: string;
+  name: string;
+  description: string | null;
+  durationMinutes: number;
+  unitType: 'person' | 'group' | 'seat' | 'table';
+  minPeople: number;
+  maxPeople: number | null;
+  priceAdult: number | null;
+  priceChild: number | null;
+  formFields: string;
+  isActive: boolean;
+  displayOrder: number;
+  metadata: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReservationSchedule {
+  id: string;
+  resourceId: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  slotIntervalMinutes: number;
+  defaultCapacity: number;
+  defaultLineCapacity: number | null;
+  defaultExternalCapacity: number | null;
+  defaultBufferCapacity: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReservationSlot {
+  id: string;
+  resourceId: string;
+  date: string;
+  startAt: string;
+  endAt: string;
+  totalCapacity: number;
+  lineCapacity: number | null;
+  externalCapacity: number | null;
+  bufferCapacity: number;
+  reservedCount: number;
+  lineReservedCount: number;
+  externalReservedCount: number;
+  status: ReservationSlotStatus;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Reservation {
+  id: string;
+  lineAccountId: string | null;
+  userId: string | null;
+  friendId: string | null;
+  slotId: string;
+  source: ReservationSource;
+  capacityChannel: CapacityChannel;
+  externalReservationId: string | null;
+  dedupeKey: string | null;
+  title: string;
+  reservationDate: string;
+  startAt: string;
+  endAt: string;
+  status: ReservationStatus;
+  adultCount: number;
+  childCount: number;
+  totalPeople: number;
+  customerNameSnapshot: string | null;
+  customerPhoneSnapshot: string | null;
+  customerEmailSnapshot: string | null;
+  cancelReason: string | null;
+  formData: string;
+  metadata: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReservationResponse {
+  id: string;
+  lineAccountId: string | null;
+  userId: string | null;
+  friendId: string | null;
+  slotId: string;
+  source: ReservationSource;
+  capacityChannel: CapacityChannel;
+  externalReservationId: string | null;
+  dedupeKey: string | null;
+  title: string;
+  reservationDate: string;
+  startAt: string;
+  endAt: string;
+  status: ReservationStatus;
+  adultCount: number;
+  childCount: number;
+  totalPeople: number;
+  customerName: string | null;
+  customerPhone: string | null;
+  customerEmail: string | null;
+  cancelReason: string | null;
+  formData: string;
+  metadata: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReservationSlotAvailability {
+  slotId: string;
+  resourceId: string;
+  date: string;
+  startAt: string;
+  endAt: string;
+  remainingCapacity: number;
+  lineRemainingCapacity: number;
+  externalRemainingCapacity: number;
+  available: boolean;
+}
+
+export interface ReservationSlotWithAvailability extends ReservationSlot {
+  availability: ReservationSlotAvailability;
+}
+
+export interface PublicReservationSlot {
+  slotId: string;
+  resourceId: string;
+  date: string;
+  startAt: string;
+  endAt: string;
+  remainingCapacity: number;
+  lineRemainingCapacity: number;
+  externalRemainingCapacity: number;
+  available: boolean;
+}
+
+export type ReservationApiErrorCode =
+  | 'bad_request'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'not_found'
+  | 'slot_not_available'
+  | 'invalid_slot'
+  | 'invalid_people'
+  | 'invalid_state_transition'
+  | 'missing_dedupe_key'
+  | 'internal_error';
+
+export type ReservationApiResponse<T> =
+  | {
+      success: true;
+      data: T;
+    }
+  | {
+      success: false;
+      error: string;
+      code: ReservationApiErrorCode;
+      details?: Record<string, string[]>;
+    };
+
+export interface ReservationCreateResponse extends ReservationResponse {
+  detailToken?: string;
+  cancelToken?: string;
+}
+
+export interface ReservationSessionResponse {
+  token: string;
+  expiresIn: number;
+  friendId: string;
+  userId: string;
+  lineAccountId: string | null;
+  lineUserId: string;
+}
+
+export interface ReservationCancelResponse {
+  reservation: ReservationResponse;
+  changed: boolean;
+}
+
+export interface ExternalReservationSourceResponse {
+  id: string;
+  source: string;
+  eventType: ExternalReservationEventType;
+  externalId: string | null;
+  dedupeKey: string | null;
+  reservationId: string | null;
+  rawText: string | null;
+  parsedPayload: string;
+  parseStatus: ExternalReservationParseStatus;
+  receivedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReservationImportResponse =
+  | {
+      status: 'imported' | 'duplicate' | 'cancelled';
+      reservation: ReservationResponse;
+    }
+  | {
+      status: 'needs_review';
+      source: ExternalReservationSourceResponse;
+    };
+
 // =============================================================================
 // API レスポンスラッパー型
 // =============================================================================

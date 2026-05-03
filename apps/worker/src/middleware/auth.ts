@@ -7,6 +7,10 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   // Skip auth for OpenAPI docs — public documentation
   const path = new URL(c.req.url).pathname;
   if (
+    path === '/' ||
+    path === '/book' ||
+    path === '/admin/reservations' ||
+    path.startsWith('/assets/') ||
     path === '/webhook' ||
     path === '/docs' ||
     path === '/openapi.json' ||
@@ -16,6 +20,11 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.startsWith('/pool/') ||
     path.startsWith('/images/') ||
     path.startsWith('/api/liff/') ||
+    path.startsWith('/api/public/reservation-') ||
+    path.startsWith('/api/public/me/reservations') ||
+    path.match(/^\/api\/public\/reservations\/[^/]+$/) ||
+    path.match(/^\/api\/public\/reservations\/[^/]+\/cancel$/) ||
+    path === '/api/integrations/google-calendar/oauth/callback' ||
     path.startsWith('/auth/') ||
     path === '/setup' ||
     path === '/api/integrations/stripe/webhook' ||
