@@ -127,28 +127,20 @@ GitHub Environment `production` のVariablesへ次を登録する。
 CLOUDFLARE_SECRETS_STORE_ID=<Secrets Store ID>
 ```
 
-secret名とWorker binding名が同じ場合、`CLOUDFLARE_SECRETS_STORE_BINDINGS` は省略できる。省略時は次を自動でbindingする。
+secret名とWorker binding名が同じ場合、`CLOUDFLARE_SECRETS_STORE_BINDINGS` は省略できる。省略時は必須最小セットとして次を自動でbindingする。
 
 ```text
 API_KEY
 LINE_CHANNEL_SECRET
 LINE_CHANNEL_ACCESS_TOKEN
-LINE_CHANNEL_ID
-LINE_LOGIN_CHANNEL_ID
-LINE_LOGIN_CHANNEL_SECRET
 LIFF_URL
 WORKER_URL
-GOOGLE_OAUTH_CLIENT_ID
-GOOGLE_OAUTH_CLIENT_SECRET
-GOOGLE_OAUTH_REDIRECT_URI
-IG_HARNESS_LINK_SECRET
-STRIPE_WEBHOOK_SECRET
 ```
 
-Secrets Store上のsecret名を変えている場合は、カンマ区切りで対応を書く。
+Google Calendar、LINE Login、IG連携、Stripeなど任意機能のsecretもSecrets Storeからbindしたい場合、またはSecrets Store上のsecret名を変えている場合は、カンマ区切りで対応を書く。ここに書いたsecretはCloudflare Secrets Store内に存在している必要がある。存在しないsecretを指定すると、deployは `code: 10182` で失敗する。
 
 ```text
-CLOUDFLARE_SECRETS_STORE_BINDINGS=API_KEY=prod-api-key,LINE_CHANNEL_SECRET=prod-line-channel-secret,LINE_CHANNEL_ACCESS_TOKEN=prod-line-channel-access-token
+CLOUDFLARE_SECRETS_STORE_BINDINGS=API_KEY=prod-api-key,LINE_CHANNEL_SECRET=prod-line-channel-secret,LINE_CHANNEL_ACCESS_TOKEN=prod-line-channel-access-token,GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET,GOOGLE_OAUTH_REDIRECT_URI
 ```
 
 workflowは `apps/worker/wrangler.toml` を直接編集せず、CI内で生成する `.wrangler-ci.json` にだけ `secrets_store_secrets` を追加する。これにより、upstream更新時に `wrangler.toml` のconflictを増やさない。

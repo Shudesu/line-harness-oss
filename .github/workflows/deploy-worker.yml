@@ -13,7 +13,7 @@ name: Deploy Worker
 # - CLOUDFLARE_SECRETS_STORE_ID   binds Cloudflare Secrets Store secrets when set
 # - CLOUDFLARE_SECRETS_STORE_BINDINGS
 #     optional comma-separated map: BINDING_NAME=SECRET_NAME,OTHER_NAME
-#     when omitted, the Worker secret binding names are used as secret names
+#     when omitted, only required Worker secret binding names are used as secret names
 # - RUN_D1_MIGRATIONS             set true to apply packages/db/schema.sql before deploy
 on:
   workflow_dispatch:
@@ -125,16 +125,8 @@ jobs:
               'API_KEY',
               'LINE_CHANNEL_SECRET',
               'LINE_CHANNEL_ACCESS_TOKEN',
-              'LINE_CHANNEL_ID',
-              'LINE_LOGIN_CHANNEL_ID',
-              'LINE_LOGIN_CHANNEL_SECRET',
               'LIFF_URL',
               'WORKER_URL',
-              'GOOGLE_OAUTH_CLIENT_ID',
-              'GOOGLE_OAUTH_CLIENT_SECRET',
-              'GOOGLE_OAUTH_REDIRECT_URI',
-              'IG_HARNESS_LINK_SECRET',
-              'STRIPE_WEBHOOK_SECRET',
             ];
             const rawBindings = process.env.CF_SECRETS_STORE_BINDINGS?.trim();
             const bindings = (rawBindings ? rawBindings.split(',') : defaultBindings)
