@@ -2,10 +2,10 @@ name: Deploy Worker
 
 # Required GitHub Secrets:
 # - CLOUDFLARE_API_TOKEN
-# - CLOUDFLARE_ACCOUNT_ID
 # - CLOUDFLARE_D1_DATABASE_ID
 #
 # Optional GitHub Variables:
+# - CLOUDFLARE_ACCOUNT_ID        can be a Secret or Variable
 # - WORKER_NAME                  default: line-harness-reservation
 # - CLOUDFLARE_D1_DATABASE_NAME   default: line-crm
 # - CLOUDFLARE_R2_BUCKET_NAME     default: line-harness-images
@@ -24,6 +24,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +45,7 @@ jobs:
         working-directory: apps/worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
           CF_D1_DATABASE_NAME: ${{ vars.CLOUDFLARE_D1_DATABASE_NAME }}
         run: pnpm exec wrangler d1 execute "${CF_D1_DATABASE_NAME:-line-crm}" --remote --file ../../packages/db/schema.sql
 
@@ -57,7 +58,7 @@ jobs:
       - name: Generate Cloudflare deploy config
         working-directory: apps/worker
         env:
-          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
           CF_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
           CF_D1_DATABASE_NAME: ${{ vars.CLOUDFLARE_D1_DATABASE_NAME }}
           CF_R2_BUCKET_NAME: ${{ vars.CLOUDFLARE_R2_BUCKET_NAME }}
@@ -118,6 +119,6 @@ jobs:
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/worker
           command: deploy --config .wrangler-ci.json

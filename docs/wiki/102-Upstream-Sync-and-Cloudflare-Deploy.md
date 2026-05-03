@@ -76,6 +76,8 @@ pnpm exec wrangler secret put GOOGLE_OAUTH_REDIRECT_URI
 
 自動deployでは、GitHub repository settingsに以下を登録する。
 
+このworkflowは `environment: production` を指定する。GitHubの Environment `production` にSecrets/Variablesを保存している場合、その値がdeploy jobから読まれる。
+
 このforkでは、`apps/worker/wrangler.toml` のプレースホルダーを直接commitしない。また、CIランナー上でも source の `wrangler.toml` は書き換えない。
 
 GitHub Actionsでは、`pnpm --filter worker build` 後にVite/Cloudflare pluginが生成する `apps/worker/dist/**/wrangler.json` を読み取り、deploy専用の一時ファイル `apps/worker/.wrangler-ci.json` を生成する。その一時configにだけ本番の `account_id`, `database_id`, Worker名, R2 bucket名を入れ、`wrangler deploy --config .wrangler-ci.json` でデプロイする。
@@ -86,13 +88,13 @@ Secrets:
 
 ```text
 CLOUDFLARE_API_TOKEN
-CLOUDFLARE_ACCOUNT_ID
 CLOUDFLARE_D1_DATABASE_ID
 ```
 
 Variables:
 
 ```text
+CLOUDFLARE_ACCOUNT_ID
 WORKER_NAME
 CLOUDFLARE_D1_DATABASE_NAME
 CLOUDFLARE_R2_BUCKET_NAME
@@ -110,6 +112,8 @@ CLOUDFLARE_D1_DATABASE_NAME=line-crm
 CLOUDFLARE_R2_BUCKET_NAME=line-harness-images
 RUN_D1_MIGRATIONS=false
 ```
+
+`CLOUDFLARE_ACCOUNT_ID` はsecretではないため、GitHub Variablesへ登録してよい。workflowは `secrets.CLOUDFLARE_ACCOUNT_ID` と `vars.CLOUDFLARE_ACCOUNT_ID` の両方に対応する。
 
 `RUN_D1_MIGRATIONS=true` にすると、deploy前に `packages/db/schema.sql` をremote D1へ適用する。初回セットアップでは便利だが、本番運用ではDB migrationをdeployと分離する方が安全。
 
