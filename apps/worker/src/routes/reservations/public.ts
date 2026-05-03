@@ -3,6 +3,7 @@ import {
   createReservationWithCapacityCheck,
   getReservationById,
   getReservationSlotAvailability,
+  listReservationResources,
   listReservationMenus,
   listReservationSlots,
   listReservations,
@@ -33,7 +34,7 @@ import {
   queryRequired,
   readJsonObject,
 } from './requests.js';
-import { toMenuResponse, toReservationResponse } from './serializers.js';
+import { toMenuResponse, toReservationResponse, toResourceResponse } from './serializers.js';
 import { canAccessReservation } from './validators.js';
 
 const publicReservations = new Hono<Env>();
@@ -50,6 +51,16 @@ publicReservations.post('/api/public/reservation-session', async (c) => {
     return jsonOk(c, result.data);
   } catch (err) {
     console.error('POST /api/public/reservation-session error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+publicReservations.get('/api/public/reservation-resources', async (c) => {
+  try {
+    const resources = await listReservationResources(c.env.DB);
+    return jsonOk(c, resources.filter((resource) => resource.is_active === 1).map(toResourceResponse));
+  } catch (err) {
+    console.error('GET /api/public/reservation-resources error:', err);
     return jsonError(c, 'internal_error', 500);
   }
 });

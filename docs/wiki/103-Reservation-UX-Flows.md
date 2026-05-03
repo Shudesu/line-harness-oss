@@ -29,6 +29,10 @@ https://liff.line.me/{LIFF_ID}?page=book&resourceId={RESOURCE_ID}&menuId={MENU_I
 実装状況:
 
 - `apps/worker/src/client/booking.ts` に、予約トップ、1週間/1か月空き枠表示、受付入力、予約確認、予約完了、自分の予約一覧、予約詳細、キャンセル確認、キャンセル完了を実装済み。
+- `resourceId` がURLにない場合は、`GET /api/public/reservation-resources` から有効な予約対象を取得し、先頭の予約対象を自動選択する。
+- 複数の予約対象がある場合は、予約トップで予約対象を選択できる。予約対象またはメニューを変更したら、古いslotキャッシュと選択中slotを破棄して取り直す。
+- `/book` は `liffId` / `resourceId` / `menuId` などのqueryを保持して `/?page=book` にリダイレクトする。
+- 確認画面へ進めない入力エラーは全画面エラーにせず、予約トップ内の注意表示として出す。
 - 公開APIは `LIFF_SESSION_TOKEN` を使い、`lineUserId` query指定は使わない。
 - 予約作成後の `detailToken` / `cancelToken` はlocalStorageに保存し、同じ端末・同じブラウザで予約詳細/キャンセル導線に使う。
 - 別端末やlocalStorage消去後は、LIFF sessionから本人予約の `detailToken` / `cancelToken` を再発行する。
@@ -203,12 +207,23 @@ URL:
 /admin/reservations
 ```
 
+画面は日常運用と設計変更を分ける。
+
+```text
+/admin/reservations
+  予約確認画面。カレンダー、日別slot、予約客、軽いslot調整だけを扱う。
+
+/admin/reservations/settings
+  予約設計画面。resource/menu/schedule、Google Calendar接続、slot一括生成を扱う。
+```
+
 実装状況:
 
 - `apps/worker/src/client/reservations-admin.ts` に、1週間/1か月の枠カレンダーを追加済み。
 - LIFF予約画面と同じ `◎ / △ / × / -` の空き状況表示を使う。
 - カレンダーの日付を押すと、下のslot一覧・予約一覧・詳細操作対象日が切り替わる。
 - slot編集UIには、安全制約の説明を表示する。実際の保存時制約はWorker APIとDB helperで担保する。
+- 予約確認画面と予約設計画面をUI上で分離し、日常確認中にresource/menu/scheduleを誤変更しにくい構成にする。
 
 ### 認証
 
@@ -239,33 +254,55 @@ Cloudflare Access は、Worker URLへ到達する前段の保護であり、ア�
 
 | 画面 | 目的 | 実装優先度 |
 |---|---|---|
-| 予約ダッシュボード | 今日/週/月の予約と残数を把握する | 必須 |
-| 枠カレンダー | LIFFと同じ枠表示で残数を管理する | 必須 |
-| 予約一覧 | 日付、状態、予約元で絞り込む | 必須 |
-| 予約詳細 | 顧客、予約、状態遷移、イベント履歴を確認する | 必須 |
-| 枠編集 | total/line/external/buffer/statusを安全に変更する | 必須 |
-| 外部取り込みレビュー | じゃらん/Gmailのneeds_reviewを処理する | 必須 |
-| リソース/メニュー/スケジュール設定 | 予約対象と営業ルールを管理する | 必須 |
-| Google Calendar連携 | 接続開始、connection ID確認、同期状態確認 | 次点 |
+| 予約確認画面 | カレンダー、日別slot、予約客、軽いslot調整を見る | 必須 |
+| 予約設計画面 | resource/menu/schedule、Google Calendar、slot一括生成を管理する | 必須 |
+| 外部取り込みレビュー | じゃらん/Gmailのneeds_reviewを処理する | 次点 |
 | AI/MCPチャット | 将来、自然言語で予約確認・操作する | 将来 |
 
-### 予約ダッシュボード
+### 予約確認画面
+
+日常運用で最初に開く画面。予約構造の変更ではなく、状況確認と軽い枠調整に集中する。
+
+初期表示:
+
+- 管理APIキー
+- resource選択
+- 週/月切替
+- カレンダー
+
+操作フロー:
+
+```text
+カレンダーを見る
+  → 日付をタップ
+  → 下にその日のslot一覧を表示
+  → slotをタップ
+  → そのslotの予約客一覧と顧客詳細を確認
+```
 
 表示するもの:
 
-- 今日の予約数
-- 明日の予約数
-- 今週の予約数
-- 満席枠数
-- 要確認の外部取り込み数
-- Google Calendar同期失敗数
+- 1週間/1か月の枠カレンダー
+- 選択日のslot一覧
+- slotごとの残数、予約済み数、LINE枠、外部枠
+- 選択日の予約一覧
+- 選択予約の顧客情報
+- 要確認の外部取り込み件数
 
-優先アクション:
+許可する操作:
 
-- `今日の予約を見る`
-- `要確認を処理する`
-- `枠を追加する`
-- `Google Calendarを接続する`
+- slotの `status`, `totalCapacity`, `lineCapacity`, `externalCapacity`, `bufferCapacity`, `note` の微調整
+- active予約のキャンセル
+- 予約詳細の再取得
+- 外部取り込みの `needs_review` を確認済みにする
+
+許可しない操作:
+
+- resource作成/削除
+- menu作成/削除
+- schedule作成/削除
+- Google Calendar接続開始
+- slotの大量生成/一括更新
 
 ### 枠カレンダー
 
@@ -289,6 +326,30 @@ LIFFと同じ空き枠記号を使う。
 - `line_capacity < line_reserved_count` は保存不可。
 - `external_capacity < external_reserved_count` は保存不可。
 - `total_capacity < reserved_count + buffer_capacity` は保存不可。
+
+### 予約設計画面
+
+予約の構造を作る画面。日常確認画面とは分け、強い変更はここに集約する。
+
+表示するもの:
+
+- Resource CRUD
+- Menu CRUD
+- Schedule CRUD
+- slot一括生成
+- 日付/曜日ごとのslot一括調整
+- Google Calendar接続開始
+- Google Calendar connection ID設定
+
+安全制約:
+
+- 一括操作は実行前に対象期間、対象曜日、対象slot数を明示する。
+- slot一括調整は、プレビューで対象slot数と予約済みslot数を表示してから実行する。
+- 一括調整で空欄の項目は変更しない。
+- 予約済みslotを削除しない。
+- 予約済み数を下回るcapacity変更はAPIで拒否する。
+- `updated` 系外部取り込みは自動反映しない。
+- Google Calendarは予約DBの外部同期先であり、予約DBの真実を上書きしない。
 
 ### 予約一覧
 
@@ -453,10 +514,9 @@ URL: http://localhost:8787/book?resourceId=res_blueberry&menuId=menu_blueberry_6
 
 ## 実装順序
 
-1. LIFF予約画面の受付入力、確認、完了を完成させる。
-2. LIFF予約一覧、予約詳細、キャンセルを追加する。
-3. 管理画面の枠カレンダーをLIFFと同じ表示ルールに揃える。
-4. 管理画面の予約詳細と状態変更を強化する。
-5. 外部取り込みレビュー画面を強化する。
-6. Google Calendar接続状態と同期結果を管理画面に出す。
-7. 実機LIFF確認、LINE Developers設定、Cloudflare本番deploy確認を行う。
+1. 予約管理画面を `確認` / `設計` の2モードに分ける。
+2. 予約確認画面はカレンダー、日別slot、予約一覧、予約詳細、軽いslot調整だけにする。
+3. 予約設計画面へ resource/menu/schedule/Google/slot一括生成を移す。
+4. 外部取り込みレビュー画面を強化する。
+5. Google Calendar接続状態と同期結果を管理画面に出す。
+6. 実機LIFF確認、LINE Developers設定、Cloudflare本番deploy確認を行う。

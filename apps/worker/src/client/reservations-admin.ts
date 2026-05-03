@@ -21,6 +21,7 @@ const API_KEY_STORAGE_KEY = 'lh_reservation_admin_api_key';
 
 type State = {
   apiKey: string;
+  mode: 'overview' | 'settings';
   date: string;
   viewMode: 'week' | 'month';
   weekStart: string;
@@ -33,6 +34,8 @@ type State = {
   reservations: ReservationResponse[];
   externalSources: ExternalReservationSourceResponse[];
   selectedReservation: ReservationResponse | null;
+  selectedSlotId: string | null;
+  bulkPreviewSlots: ReservationSlotWithAvailability[];
   loading: boolean;
   message: string | null;
   error: string | null;
@@ -40,6 +43,7 @@ type State = {
 
 const state: State = {
   apiKey: readSessionApiKey(),
+  mode: readAdminMode(),
   date: todayJst(),
   viewMode: 'week',
   weekStart: startOfWeekYmd(todayJst()),
@@ -52,6 +56,8 @@ const state: State = {
   reservations: [],
   externalSources: [],
   selectedReservation: null,
+  selectedSlotId: null,
+  bulkPreviewSlots: [],
   loading: false,
   message: null,
   error: null,
@@ -75,6 +81,23 @@ function saveSessionApiKey(value: string): void {
   } catch {
     // sessionStorage may be unavailable in strict browser modes.
   }
+}
+
+function readAdminMode(): State['mode'] {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('mode') === 'settings' ? 'settings' : 'overview';
+}
+
+function setAdminMode(mode: State['mode']): void {
+  state.mode = mode;
+  const url = new URL(window.location.href);
+  url.searchParams.set('page', 'admin-reservations');
+  if (mode === 'settings') {
+    url.searchParams.set('mode', 'settings');
+  } else {
+    url.searchParams.delete('mode');
+  }
+  window.history.replaceState(null, '', url.toString());
 }
 
 function syncApiKeyFromInput(): void {
@@ -111,6 +134,19 @@ function addDaysYmd(value: string, days: number): string {
   const date = parseYmd(value);
   date.setDate(date.getDate() + days);
   return toYmd(date);
+}
+
+function dateRangeYmd(dateFrom: string, dateTo: string): string[] {
+  const start = parseYmd(dateFrom);
+  const end = parseYmd(dateTo);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+
+  const dates: string[] = [];
+  for (let current = toYmd(start); current <= dateTo; current = addDaysYmd(current, 1)) {
+    dates.push(current);
+    if (dates.length > 62) break;
+  }
+  return dates;
 }
 
 function startOfWeekYmd(value: string): string {
@@ -165,6 +201,14 @@ function slotMark(slots: ReservationSlotWithAvailability[] | undefined): { mark:
 
 function isActiveReservation(reservation: ReservationResponse): boolean {
   return reservation.status === 'pending' || reservation.status === 'confirmed';
+}
+
+function reservationsForSlot(slotId: string): ReservationResponse[] {
+  return state.reservations.filter((item) => item.slotId === slotId);
+}
+
+function activeReservationsForSlot(slotId: string): ReservationResponse[] {
+  return reservationsForSlot(slotId).filter(isActiveReservation);
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -230,6 +274,9 @@ async function loadReservationsAndSlots(): Promise<void> {
   state.schedules = schedules;
   state.slotsByDate[state.date] = slots;
   await loadVisibleSlots();
+  if (state.selectedSlotId && !slots.some((item) => item.id === state.selectedSlotId)) {
+    state.selectedSlotId = null;
+  }
   if (state.selectedReservation) {
     state.selectedReservation = reservations.find((item) => item.id === state.selectedReservation?.id) ?? null;
   }
@@ -306,6 +353,109 @@ async function updateSlotFromCard(slotId: string): Promise<void> {
     });
     await loadReservationsAndSlots();
     state.message = 'slotを更新しました';
+  });
+}
+
+function selectedBulkDays(): number[] {
+  const checked = Array.from(document.querySelectorAll<HTMLInputElement>('.bulk-day:checked'))
+    .map((item) => Number(item.value))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6);
+  return checked.length ? checked : [0, 1, 2, 3, 4, 5, 6];
+}
+
+async function previewBulkSlotAdjustment(): Promise<void> {
+  const dateFrom = inputValue('bulkAdjustDateFrom') || state.date;
+  const dateTo = inputValue('bulkAdjustDateTo') || state.date;
+  const dates = dateRangeYmd(dateFrom, dateTo);
+  const days = new Set(selectedBulkDays());
+
+  if (!state.resourceId) {
+    state.error = 'resourceを選択してください';
+    render();
+    return;
+  }
+  if (dates.length === 0) {
+    state.error = '一括調整の対象期間を正しく入力してください';
+    render();
+    return;
+  }
+  if (dates.length > 62) {
+    state.error = '一括調整は一度に62日以内にしてください';
+    render();
+    return;
+  }
+
+  await withLoading(async () => {
+    const entries = await Promise.all(dates.map(async (date) => {
+      const slots = await listSlotsForDate(date);
+      return slots.filter((slot) => days.has(parseYmd(slot.date).getDay()));
+    }));
+    state.bulkPreviewSlots = entries.flat();
+    state.message = `${state.bulkPreviewSlots.length}件のslotが一括調整対象です。内容を確認してから実行してください。`;
+  });
+}
+
+function bulkSlotUpdatePayload(): Partial<{
+  status: string;
+  totalCapacity: number;
+  lineCapacity: number;
+  externalCapacity: number;
+  bufferCapacity: number;
+  note: string;
+}> {
+  const payload: Partial<{
+    status: string;
+    totalCapacity: number;
+    lineCapacity: number;
+    externalCapacity: number;
+    bufferCapacity: number;
+    note: string;
+  }> = {};
+  const status = inputValue('bulkAdjustStatus');
+  const note = inputValue('bulkAdjustNote');
+  const totalCapacity = numberValue('bulkAdjustTotal');
+  const lineCapacity = numberValue('bulkAdjustLine');
+  const externalCapacity = numberValue('bulkAdjustExternal');
+  const bufferCapacity = numberValue('bulkAdjustBuffer');
+
+  if (status) payload.status = status;
+  if (totalCapacity !== undefined) payload.totalCapacity = totalCapacity;
+  if (lineCapacity !== undefined) payload.lineCapacity = lineCapacity;
+  if (externalCapacity !== undefined) payload.externalCapacity = externalCapacity;
+  if (bufferCapacity !== undefined) payload.bufferCapacity = bufferCapacity;
+  if (note) payload.note = note;
+  return payload;
+}
+
+async function applyBulkSlotAdjustment(): Promise<void> {
+  const payload = bulkSlotUpdatePayload();
+  const entries = Object.entries(payload);
+  if (state.bulkPreviewSlots.length === 0) {
+    state.error = '先にプレビューを実行してください';
+    render();
+    return;
+  }
+  if (entries.length === 0) {
+    state.error = '変更する項目を1つ以上入力してください';
+    render();
+    return;
+  }
+
+  const reservedSlots = state.bulkPreviewSlots.filter((slot) => slot.reservedCount > 0).length;
+  if (!window.confirm(`${state.bulkPreviewSlots.length}件のslotを一括更新します。予約済みslot ${reservedSlots}件はDB制約で安全性を確認しながら更新します。`)) {
+    return;
+  }
+
+  await withLoading(async () => {
+    for (const slot of state.bulkPreviewSlots) {
+      await api<ReservationSlot>(`/api/reservation-slots/${encodeURIComponent(slot.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+    }
+    state.bulkPreviewSlots = [];
+    await loadReservationsAndSlots();
+    state.message = `${entries.map(([key]) => key).join(', ')} を一括更新しました`;
   });
 }
 
@@ -573,6 +723,9 @@ function render(): void {
       .admin-hero{background:linear-gradient(135deg,#1e3b2f,#66804e);color:#fff;border-radius:28px;padding:28px;box-shadow:0 20px 60px rgba(31,42,33,.18);margin-bottom:18px}
       .admin-hero h1{font-size:30px;margin:0 0 8px;letter-spacing:.04em}
       .admin-hero p{margin:0;color:rgba(255,255,255,.82);line-height:1.7}
+      .admin-tabs{display:flex;gap:10px;flex-wrap:wrap;margin:-6px 0 16px}
+      .admin-tab{border:1px solid rgba(31,42,33,.14);border-radius:999px;background:#fff;color:#1f2a21;padding:11px 16px;font-weight:900;cursor:pointer;text-decoration:none}
+      .admin-tab.active{background:#1e3b2f;color:#fff;border-color:#1e3b2f}
       .admin-panel{background:rgba(255,255,255,.86);border:1px solid rgba(31,42,33,.1);border-radius:22px;padding:18px;box-shadow:0 12px 32px rgba(31,42,33,.08);margin-bottom:16px}
       .admin-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
       .admin-controls{display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:10px;align-items:end}
@@ -620,6 +773,20 @@ function render(): void {
       .slot-generator{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;background:#f8f4ea;border:1px solid rgba(31,42,33,.08);border-radius:16px;padding:12px;margin-bottom:12px}
       .slot-card,.reservation-card{border:1px solid rgba(31,42,33,.1);border-radius:16px;background:#fff;padding:14px;text-align:left}
       .slot-card.soldout{background:#f8eee9}
+      .slot-card.selected{outline:2px solid #66804e;background:#edf2e7}
+      .slot-card{cursor:pointer}
+      .slot-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+      .slot-summary div{border-radius:12px;background:#f8f4ea;padding:8px 9px}
+      .slot-summary span{display:block;font-size:11px;color:#697568;font-weight:800}
+      .slot-summary strong{display:block;font-size:16px;color:#1f2a21;margin-top:2px}
+      .customer-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+      .customer-chip{border-radius:999px;background:#edf2e7;color:#2f5130;padding:5px 8px;font-size:12px;font-weight:800}
+      .slot-hint{font-size:11px;color:#697568;margin-top:8px}
+      .bulk-days{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px}
+      .bulk-days label{display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:#f8f4ea;padding:7px 9px;font-size:12px;font-weight:800;color:#52624d}
+      .bulk-days input{width:auto}
+      .bulk-preview{display:grid;gap:8px;margin-top:12px}
+      .bulk-preview-row{display:grid;grid-template-columns:92px 1fr auto;gap:10px;align-items:center;border-radius:12px;background:#fff;padding:10px;border:1px solid rgba(31,42,33,.08)}
       .slot-editor{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:12px}
       .slot-editor .admin-field input,.slot-editor .admin-field select{padding:8px 9px;font-size:13px}
       .slot-editor-actions{display:flex;gap:8px;align-items:end}
@@ -639,33 +806,65 @@ function render(): void {
     </style>
     <main class="reservation-admin">
       <section class="admin-hero">
-        <h1>予約管理</h1>
-        <p>予約一覧、予約枠の残数、予約詳細、キャンセルを同じ画面で確認します。APIキーはこのブラウザのセッション中だけ保存します。</p>
+        <h1>${state.mode === 'settings' ? '予約設計' : '予約確認'}</h1>
+        <p>${state.mode === 'settings'
+          ? '予約対象、メニュー、営業ルール、Google Calendar接続、slot一括生成を管理します。日常確認とは分け、構造変更を安全に扱います。'
+          : '最初はカレンダーだけを見て、日付を選ぶと下に枠情報、枠を選ぶと予約客を確認できます。APIキーはこのブラウザのセッション中だけ保存します。'
+        }</p>
       </section>
+      ${renderModeTabs()}
       ${renderMessage()}
       ${renderControls()}
-      ${renderAvailabilityCalendar()}
-      <section class="admin-grid">
-        <div>
-          ${renderSlots()}
-          ${renderReservations()}
-        </div>
-        <aside>
-          ${renderDetail()}
-          ${renderExternalSources()}
-        </aside>
-      </section>
-      ${renderSettings()}
-      ${renderAiMcpRoadmap()}
+      ${state.mode === 'settings' ? renderSettingsPage() : renderOverviewPage()}
     </main>
   `;
   bindEvents();
+}
+
+function renderModeTabs(): string {
+  return `
+    <nav class="admin-tabs" aria-label="予約管理画面切替">
+      <button class="admin-tab ${state.mode === 'overview' ? 'active' : ''}" data-admin-mode="overview">予約確認</button>
+      <button class="admin-tab ${state.mode === 'settings' ? 'active' : ''}" data-admin-mode="settings">予約設計</button>
+    </nav>
+  `;
 }
 
 function renderMessage(): string {
   if (state.error) return `<div class="admin-message error">${escapeHtml(state.error)}</div>`;
   if (state.message) return `<div class="admin-message ok">${escapeHtml(state.message)}</div>`;
   return '';
+}
+
+function renderOverviewPage(): string {
+  return `
+    ${renderAvailabilityCalendar()}
+    <section class="admin-grid">
+      <div>
+        ${renderSlots({ includeGenerator: false })}
+        ${renderReservations()}
+      </div>
+      <aside>
+        ${renderDetail()}
+        ${renderExternalSources()}
+      </aside>
+    </section>
+  `;
+}
+
+function renderSettingsPage(): string {
+  return `
+    ${renderSettingsIntro()}
+    ${renderSettings()}
+    <section class="admin-grid">
+      <div>
+        ${renderSlotGeneratorPanel()}
+        ${renderBulkSlotAdjustmentPanel()}
+      </div>
+      <aside>${renderExternalSources()}</aside>
+    </section>
+    ${renderAiMcpRoadmap()}
+  `;
 }
 
 function renderControls(): string {
@@ -772,16 +971,86 @@ function renderMonthAvailability(): string {
   `;
 }
 
-function renderSlots(): string {
+function renderSlots(options: { includeGenerator: boolean } = { includeGenerator: true }): string {
   const body = state.slots.length
     ? `<div class="slot-list">${state.slots.map(renderSlotCard).join('')}</div>`
     : '<p class="empty">この日付・リソースの予約枠はまだありません。</p>';
   return `
     <section class="admin-panel">
       <h2 class="admin-section-title">予約枠の残数</h2>
-      ${renderSlotGenerator()}
+      ${options.includeGenerator ? renderSlotGenerator() : ''}
       <div class="safe-note">安全制約: 予約が存在するslotは削除しません。総枠は予約済み数+バッファ未満にできず、LINE枠/外部枠も各予約済み数未満にできません。満席は手動sold_outではなく残数0で判定します。</div>
       ${body}
+    </section>
+  `;
+}
+
+function renderSlotGeneratorPanel(): string {
+  const body = state.slots.length
+    ? `<div class="slot-list">${state.slots.map(renderSlotCard).join('')}</div>`
+    : '<p class="empty">選択日のslotはまだありません。生成後にここで確認できます。</p>';
+  const activeSchedules = state.schedules.filter((item) => item.isActive);
+  return `
+    <section class="admin-panel">
+      <h2 class="admin-section-title">予約枠の一括生成</h2>
+      <p class="empty">選択中resourceのscheduleから、指定期間のslotを生成します。既存slotはDB helper側で重複作成されません。</p>
+      <div class="safe-note">生成元schedule: 有効 ${activeSchedules.length}件 / 全 ${state.schedules.length}件。期間を広げる前に、曜日・時間・capacityが正しいか下のSchedule設定で確認してください。</div>
+      ${renderSlotGenerator()}
+      <div class="safe-note">生成後のcapacity微調整はここでも可能です。予約済み数を下回る変更はAPIで拒否されます。</div>
+      ${body}
+    </section>
+  `;
+}
+
+function renderBulkSlotAdjustmentPanel(): string {
+  const dayLabels = ['日', '月', '火', '水', '木', '金', '土'];
+  const reservedCount = state.bulkPreviewSlots.filter((slot) => slot.reservedCount > 0).length;
+  const preview = state.bulkPreviewSlots.length
+    ? `<div class="bulk-preview">
+        <div class="safe-note">対象 ${state.bulkPreviewSlots.length}件 / 予約済みslot ${reservedCount}件。保存時は各slotごとにAPI制約を通します。</div>
+        ${state.bulkPreviewSlots.slice(0, 12).map((slot) => `
+          <div class="bulk-preview-row">
+            <strong>${escapeHtml(slot.date)}</strong>
+            <span>${formatTime(slot.startAt)}-${formatTime(slot.endAt)} / 予約 ${slot.reservedCount}/${slot.totalCapacity} / LINE ${slot.lineReservedCount}/${slot.lineCapacity ?? '-'}</span>
+            <span class="badge ${slot.reservedCount > 0 ? 'warn' : ''}">${escapeHtml(slot.status)}</span>
+          </div>
+        `).join('')}
+        ${state.bulkPreviewSlots.length > 12 ? `<p class="empty">ほか${state.bulkPreviewSlots.length - 12}件</p>` : ''}
+      </div>`
+    : '<p class="empty">プレビューを押すと、対象slotと予約済みslot数を確認できます。</p>';
+
+  return `
+    <section class="admin-panel">
+      <h2 class="admin-section-title">slot一括調整プレビュー</h2>
+      <p class="empty">日付範囲と曜日でslotを絞り込み、変更内容を確認してから一括更新します。空欄の項目は変更しません。</p>
+      <div class="slot-generator">
+        <div class="admin-field"><label for="bulkAdjustDateFrom">開始日</label><input id="bulkAdjustDateFrom" type="date" value="${escapeHtml(state.date)}"></div>
+        <div class="admin-field"><label for="bulkAdjustDateTo">終了日</label><input id="bulkAdjustDateTo" type="date" value="${escapeHtml(state.date)}"></div>
+        <button class="admin-button secondary" id="previewBulkSlots" ${state.loading || !state.resourceId ? 'disabled' : ''}>プレビュー</button>
+      </div>
+      <div class="bulk-days">
+        ${dayLabels.map((label, index) => `<label><input class="bulk-day" type="checkbox" value="${index}" checked>${label}</label>`).join('')}
+      </div>
+      <div class="slot-editor">
+        <div class="admin-field">
+          <label for="bulkAdjustStatus">状態</label>
+          <select id="bulkAdjustStatus">
+            <option value="">変更なし</option>
+            <option value="open">open</option>
+            <option value="closed">closed</option>
+            <option value="hidden">hidden</option>
+          </select>
+        </div>
+        <div class="admin-field"><label for="bulkAdjustTotal">総枠</label><input id="bulkAdjustTotal" type="number" placeholder="変更なし"></div>
+        <div class="admin-field"><label for="bulkAdjustLine">LINE枠</label><input id="bulkAdjustLine" type="number" placeholder="変更なし"></div>
+        <div class="admin-field"><label for="bulkAdjustExternal">外部枠</label><input id="bulkAdjustExternal" type="number" placeholder="変更なし"></div>
+        <div class="admin-field"><label for="bulkAdjustBuffer">バッファ</label><input id="bulkAdjustBuffer" type="number" placeholder="変更なし"></div>
+        <div class="admin-field" style="grid-column:span 2"><label for="bulkAdjustNote">メモ</label><input id="bulkAdjustNote" placeholder="空欄なら変更なし"></div>
+        <div class="slot-editor-actions">
+          <button class="admin-button danger" id="applyBulkSlots" ${state.loading || state.bulkPreviewSlots.length === 0 ? 'disabled' : ''}>確認して一括更新</button>
+        </div>
+      </div>
+      ${preview}
     </section>
   `;
 }
@@ -805,11 +1074,19 @@ function renderSlotGenerator(): string {
 function renderSlotCard(slot: ReservationSlotWithAvailability): string {
   const availability = slot.availability;
   const soldOut = !availability.available || availability.remainingCapacity <= 0;
+  const selected = state.selectedSlotId === slot.id;
+  const slotReservations = activeReservationsForSlot(slot.id);
+  const customerPreview = slotReservations.slice(0, 4).map((reservation) => (
+    `<span class="customer-chip">${escapeHtml(reservation.customerName || reservation.title)} ${reservation.totalPeople}名</span>`
+  )).join('');
+  const extraCustomers = slotReservations.length > 4
+    ? `<span class="customer-chip">ほか${slotReservations.length - 4}件</span>`
+    : '';
   const statusOptions = ['open', 'closed', 'sold_out', 'hidden']
     .map((status) => `<option value="${status}" ${slot.status === status ? 'selected' : ''}>${status}</option>`)
     .join('');
   return `
-    <article class="slot-card ${soldOut ? 'soldout' : ''}">
+    <article class="slot-card ${soldOut ? 'soldout' : ''} ${selected ? 'selected' : ''}" data-select-slot-id="${escapeHtml(slot.id)}">
       <div class="card-row">
         <div>
           <div class="card-title">${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</div>
@@ -817,6 +1094,13 @@ function renderSlotCard(slot: ReservationSlotWithAvailability): string {
         </div>
         <span class="badge ${soldOut ? 'warn' : ''}">${soldOut ? '満席' : `残 ${availability.remainingCapacity}`}</span>
       </div>
+      <div class="slot-summary">
+        <div><span>予約客</span><strong>${slotReservations.length}件</strong></div>
+        <div><span>LINE残</span><strong>${availability.lineRemainingCapacity}</strong></div>
+        <div><span>外部残</span><strong>${availability.externalRemainingCapacity}</strong></div>
+      </div>
+      ${customerPreview || extraCustomers ? `<div class="customer-chips">${customerPreview}${extraCustomers}</div>` : '<p class="slot-hint">この枠の予約客はまだいません。</p>'}
+      <p class="slot-hint">${selected ? 'この枠の予約客を下に表示中です。' : 'タップすると、この枠の予約客だけを表示します。'}</p>
       <div class="slot-editor">
         <div class="admin-field"><label for="slotStatus-${escapeHtml(slot.id)}">状態</label><select id="slotStatus-${escapeHtml(slot.id)}">${statusOptions}</select></div>
         <div class="admin-field"><label for="slotTotal-${escapeHtml(slot.id)}">総枠</label><input id="slotTotal-${escapeHtml(slot.id)}" type="number" value="${slot.totalCapacity}"></div>
@@ -833,12 +1117,17 @@ function renderSlotCard(slot: ReservationSlotWithAvailability): string {
 }
 
 function renderReservations(): string {
-  const body = state.reservations.length
-    ? `<div class="reservation-list">${state.reservations.map(renderReservationCard).join('')}</div>`
-    : '<p class="empty">この日の予約はありません。</p>';
+  const reservations = state.selectedSlotId
+    ? state.reservations.filter((item) => item.slotId === state.selectedSlotId)
+    : state.reservations;
+  const slot = state.selectedSlotId ? state.slots.find((item) => item.id === state.selectedSlotId) : null;
+  const body = reservations.length
+    ? `<div class="reservation-list">${reservations.map(renderReservationCard).join('')}</div>`
+    : `<p class="empty">${state.selectedSlotId ? 'この枠の予約客はいません。' : 'この日の予約はありません。'}</p>`;
   return `
     <section class="admin-panel">
-      <h2 class="admin-section-title">予約一覧</h2>
+      <h2 class="admin-section-title">${slot ? `${formatTime(slot.startAt)}-${formatTime(slot.endAt)} の予約客` : '選択日の予約客'}</h2>
+      ${state.selectedSlotId ? '<p class="empty">枠選択を解除するには、カレンダーの日付をもう一度選び直してください。</p>' : '<p class="empty">枠をタップすると、その枠の予約客だけを表示します。</p>'}
       ${body}
     </section>
   `;
@@ -917,6 +1206,16 @@ function renderExternalSourceCard(source: ExternalReservationSourceResponse): st
       ${raw ? `<pre class="external-raw">${escapeHtml(raw).slice(0, 800)}</pre>` : ''}
       <button class="admin-button secondary external-ignore" data-external-source-id="${escapeHtml(source.id)}" ${state.loading ? 'disabled' : ''}>確認済みにする</button>
     </article>
+  `;
+}
+
+function renderSettingsIntro(): string {
+  return `
+    <section class="admin-panel">
+      <h2 class="admin-section-title">予約設計で扱うこと</h2>
+      <p class="empty">この画面では予約対象、メニュー、曜日別schedule、Google Calendar接続、slot一括生成を扱います。日常の予約確認は「予約確認」へ戻ってください。</p>
+      <div class="safe-note">安全制約: resource/menu/scheduleは物理削除せず停止で扱います。予約済みslotは削除せず、capacity変更は予約済み数を下回れません。</div>
+    </section>
   `;
 }
 
@@ -1093,6 +1392,14 @@ function renderAiMcpRoadmap(): string {
 }
 
 function bindEvents(): void {
+  document.querySelectorAll<HTMLElement>('[data-admin-mode]').forEach((element) => {
+    element.addEventListener('click', () => {
+      const mode = element.dataset.adminMode === 'settings' ? 'settings' : 'overview';
+      setAdminMode(mode);
+      state.selectedSlotId = null;
+      render();
+    });
+  });
   document.getElementById('adminApiKey')?.addEventListener('change', (event) => {
     const value = event.target instanceof HTMLInputElement ? event.target.value.trim() : '';
     state.apiKey = value;
@@ -1146,6 +1453,8 @@ function bindEvents(): void {
       if (!date) return;
       state.date = date;
       state.weekStart = startOfWeekYmd(date);
+      state.selectedSlotId = null;
+      state.selectedReservation = null;
       void refresh();
     });
   });
@@ -1160,10 +1469,27 @@ function bindEvents(): void {
   document.getElementById('generateSlots')?.addEventListener('click', () => {
     void generateSlots();
   });
+  document.getElementById('previewBulkSlots')?.addEventListener('click', () => {
+    void previewBulkSlotAdjustment();
+  });
+  document.getElementById('applyBulkSlots')?.addEventListener('click', () => {
+    void applyBulkSlotAdjustment();
+  });
   document.querySelectorAll<HTMLElement>('.update-slot[data-slot-id]').forEach((element) => {
     element.addEventListener('click', () => {
       const id = element.dataset.slotId;
       if (id) void updateSlotFromCard(id);
+    });
+  });
+  document.querySelectorAll<HTMLElement>('[data-select-slot-id]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest('.slot-editor')) return;
+      const id = element.dataset.selectSlotId;
+      if (!id) return;
+      state.selectedSlotId = state.selectedSlotId === id ? null : id;
+      state.selectedReservation = null;
+      render();
     });
   });
   document.getElementById('createResource')?.addEventListener('click', () => {

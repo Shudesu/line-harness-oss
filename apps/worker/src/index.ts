@@ -318,9 +318,26 @@ body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;backgroun
 </html>`);
 });
 
-// Convenience redirect for /book path
-app.get('/book', (c) => c.redirect('/?page=book'));
-app.get('/admin/reservations', (c) => c.redirect('/?page=admin-reservations'));
+// Convenience redirect for /book path. Preserve LIFF/resource/menu params.
+app.get('/book', (c) => {
+  const url = new URL(c.req.url);
+  const target = new URL('/', url.origin);
+  target.searchParams.set('page', 'book');
+  for (const [key, value] of url.searchParams.entries()) {
+    target.searchParams.set(key, value);
+  }
+  return c.redirect(`${target.pathname}${target.search}`);
+});
+app.get('/admin/reservations', (c) => {
+  const url = new URL(c.req.url);
+  const target = new URL('/', url.origin);
+  target.searchParams.set('page', 'admin-reservations');
+  for (const [key, value] of url.searchParams.entries()) {
+    target.searchParams.set(key, value);
+  }
+  return c.redirect(`${target.pathname}${target.search}`);
+});
+app.get('/admin/reservations/settings', (c) => c.redirect('/?page=admin-reservations&mode=settings'));
 
 // 404 fallback — API paths return JSON 404, everything else serves from static assets (LIFF/admin)
 app.notFound(async (c) => {

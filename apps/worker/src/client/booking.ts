@@ -33,6 +33,13 @@ interface Slot {
   available: boolean;
 }
 
+interface Resource {
+  id: string;
+  name: string;
+  description?: string | null;
+  isActive: boolean;
+}
+
 interface Menu {
   id: string;
   resourceId: string;
@@ -91,6 +98,7 @@ interface BookingState {
   screen: Screen;
   resourceId: string;
   menuId: string;
+  resources: Resource[];
   menus: Menu[];
   currentYear: number;
   currentMonth: number;
@@ -111,6 +119,7 @@ interface BookingState {
   loadingSlots: boolean;
   submitting: boolean;
   error: string | null;
+  notice: string | null;
 }
 
 const today = new Date();
@@ -119,6 +128,7 @@ const state: BookingState = {
   screen: 'booking',
   resourceId: INITIAL_RESOURCE_ID,
   menuId: INITIAL_MENU_ID,
+  resources: [],
   menus: [],
   currentYear: today.getFullYear(),
   currentMonth: today.getMonth(),
@@ -146,6 +156,7 @@ const state: BookingState = {
   loadingSlots: false,
   submitting: false,
   error: null,
+  notice: null,
 };
 
 function getApp(): HTMLElement {
@@ -208,6 +219,10 @@ function isPastDate(dateStr: string): boolean {
 
 function selectedMenu(): Menu | null {
   return state.menus.find((menu) => menu.id === state.menuId) ?? null;
+}
+
+function selectedResource(): Resource | null {
+  return state.resources.find((resource) => resource.id === state.resourceId) ?? null;
 }
 
 function totalPeople(): number {
@@ -339,14 +354,28 @@ function renderBooking(): string {
 
 function renderBookingControls(): string {
   const menu = selectedMenu();
+  const resource = selectedResource();
   return `
     <section class="booking-panel">
       <div class="section-title-row">
         <div>
           <h2>予約内容</h2>
-          <p>${menu ? `${escapeHtml(menu.name)} / ${menu.durationMinutes}分` : 'メニューを選択してください'}</p>
+          <p>${resource ? `${escapeHtml(resource.name)} / ` : ''}${menu ? `${escapeHtml(menu.name)} / ${menu.durationMinutes}分` : 'メニューを選択してください'}</p>
         </div>
       </div>
+      ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
+      ${state.resources.length > 1 ? `
+        <label class="field-label">
+          予約対象
+          <select data-field="resourceId">
+            ${state.resources.map((item) => `
+              <option value="${escapeHtml(item.id)}" ${item.id === state.resourceId ? 'selected' : ''}>
+                ${escapeHtml(item.name)}
+              </option>
+            `).join('')}
+          </select>
+        </label>
+      ` : ''}
       <label class="field-label">
         メニュー
         <select data-field="menuId">
@@ -713,9 +742,15 @@ function bindEvents(): void {
 }
 
 function handleField(field: string, value: string): void {
+  state.notice = null;
+  if (field === 'resourceId') {
+    void changeResource(value);
+    return;
+  }
   if (field === 'menuId') {
     state.menuId = value;
     state.selectedSlot = null;
+    state.slotsByDate = {};
     void loadVisibleAvailability();
     render();
     return;
@@ -724,6 +759,7 @@ function handleField(field: string, value: string): void {
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
     state.selectedSlot = null;
+    state.slotsByDate = {};
     void loadVisibleAvailability();
     render();
     return;
@@ -737,6 +773,7 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   if (action === 'show-booking' || action === 'back-booking') {
     state.screen = 'booking';
     state.error = null;
+    state.notice = null;
     render();
     return;
   }
@@ -751,11 +788,13 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   }
   if (action === 'view-week') {
     state.viewMode = 'week';
+    state.notice = null;
     await loadVisibleAvailability();
     return;
   }
   if (action === 'view-month') {
     state.viewMode = 'month';
+    state.notice = null;
     await loadVisibleAvailability();
     return;
   }
@@ -780,10 +819,12 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   if (action === 'go-confirm') {
     const error = validateBooking();
     if (error) {
-      state.error = error;
+      state.notice = error;
+      state.screen = 'booking';
       render();
       return;
     }
+    state.notice = null;
     state.screen = 'confirm';
     render();
     return;
@@ -849,15 +890,20 @@ function validateBooking(): string | null {
 
 function selectDate(date: string): void {
   if (!date || isPastDate(date)) return;
+  state.notice = null;
   state.selectedDate = date;
   state.selectedSlot = null;
-  if (!state.slotsByDate[date]) void fetchSlots(date);
+  if (!state.slotsByDate[date]) void fetchSlots(date).catch((err) => {
+    state.notice = err instanceof Error ? err.message : '予約枠を取得できませんでした。';
+    render();
+  });
   render();
 }
 
 function selectSlot(slotId: string): void {
   const slot = Object.values(state.slotsByDate).flat().find((item) => item.slotId === slotId);
   if (!slot || !slot.available) return;
+  state.notice = null;
   state.selectedDate = slot.date;
   state.selectedSlot = slot;
   render();
@@ -868,6 +914,58 @@ function selectReservation(id: string): void {
   state.selectedReservation = reservation;
   state.screen = reservation ? 'detail' : 'mine';
   render();
+}
+
+async function loadResources(): Promise<void> {
+  state.resources = await apiJson<Resource[]>('/api/public/reservation-resources');
+  if (!state.resources.length) {
+    throw new Error('予約対象がまだ公開されていません。店舗側で予約対象を有効化してください。');
+  }
+  if (!state.resourceId) {
+    state.resourceId = state.resources[0].id;
+    return;
+  }
+  if (!state.resources.some((resource) => resource.id === state.resourceId)) {
+    state.resourceId = state.resources[0].id;
+    state.notice = '指定された予約対象が見つからないため、現在受付中の予約対象を表示しています。';
+  }
+}
+
+async function loadMenusForSelectedResource(): Promise<void> {
+  if (!state.resourceId) return;
+  state.menus = await apiJson<Menu[]>(`/api/public/reservation-resources/${encodeURIComponent(state.resourceId)}/menus`);
+  if (!state.menus.length) {
+    throw new Error('この予約対象には有効なメニューがありません。店舗側でメニューを有効化してください。');
+  }
+  if (!state.menuId || !state.menus.some((menu) => menu.id === state.menuId)) {
+    state.menuId = state.menus[0].id;
+  }
+  const menu = selectedMenu();
+  if (menu && totalPeople() < menu.minPeople) {
+    state.form.adultCount = menu.minPeople;
+    state.form.childCount = 0;
+  }
+}
+
+async function changeResource(resourceId: string): Promise<void> {
+  if (!resourceId || resourceId === state.resourceId) return;
+  state.resourceId = resourceId;
+  state.menuId = '';
+  state.menus = [];
+  state.selectedDate = null;
+  state.selectedSlot = null;
+  state.slotsByDate = {};
+  state.loadingSlots = true;
+  render();
+  try {
+    await loadMenusForSelectedResource();
+    await loadVisibleAvailability();
+  } catch (err) {
+    state.error = err instanceof Error ? err.message : '予約対象の切り替えに失敗しました。';
+    render();
+  } finally {
+    state.loadingSlots = false;
+  }
 }
 
 async function fetchSlots(date: string): Promise<Slot[]> {
@@ -900,7 +998,7 @@ async function loadVisibleAvailability(): Promise<void> {
 async function submitBooking(): Promise<void> {
   const error = validateBooking();
   if (error) {
-    state.error = error;
+    state.notice = error;
     state.screen = 'booking';
     render();
     return;
@@ -937,7 +1035,7 @@ async function submitBooking(): Promise<void> {
   } catch (err) {
     state.submitting = false;
     state.screen = 'booking';
-    state.error = err instanceof Error ? err.message : '予約に失敗しました。';
+    state.notice = err instanceof Error ? err.message : '予約に失敗しました。';
     if (state.selectedDate) {
       await fetchSlots(state.selectedDate).catch(() => []);
     }
@@ -1027,13 +1125,6 @@ function parseNote(formData?: string | null): string {
 }
 
 export async function initBooking(): Promise<void> {
-  if (!state.resourceId) {
-    state.loading = false;
-    state.error = '予約対象が未設定です。URLに resourceId を指定してください。';
-    render();
-    return;
-  }
-
   try {
     const profile = await liff.getProfile();
     state.profile = profile;
@@ -1061,16 +1152,8 @@ export async function initBooking(): Promise<void> {
       // optional only
     }
 
-    state.menus = await apiJson<Menu[]>(`/api/public/reservation-resources/${encodeURIComponent(state.resourceId)}/menus`);
-    if (!state.menuId) state.menuId = state.menus[0]?.id ?? '';
-    if (!state.menuId || !state.menus.some((menu) => menu.id === state.menuId)) {
-      throw new Error('予約メニューが見つかりません。');
-    }
-    const menu = selectedMenu();
-    if (menu && state.form.adultCount + state.form.childCount < menu.minPeople) {
-      state.form.adultCount = menu.minPeople;
-      state.form.childCount = 0;
-    }
+    await loadResources();
+    await loadMenusForSelectedResource();
 
     state.loading = false;
     render();
