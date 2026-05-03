@@ -28,6 +28,7 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 | 通知システム | イベント連動の通知ルール |
 | Webhook IN/OUT | 受信/送信Webhook、外部システム連携 |
 | Google Calendar | GCal接続、予約管理 |
+| 予約管理 | LIFF予約、予約枠、じゃらん/Gmail取り込み、管理画面、SDK/MCP連携 |
 | Stripe連携 | 決済イベント連携（テーブル準備済み） |
 | BANモニタリング | アカウントヘルスチェック |
 | スタッフ管理 | owner/admin/staffの3ロール権限制御、APIキー個別発行 |
@@ -104,6 +105,8 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 21. **[Operations](22-Operations.md)** — 運用、監視、トラブルシューティング
 22. **[Claude Code Integration](23-Claude-Code-Integration.md)** — AI連携、プロンプト例
 23. **[MCP Server](24-MCP-Server.md)** — MCP Server セットアップ、ツール一覧、URL自動追跡
+24. **[Reservations](101-Reservations.md)** — 予約システム設計、実装進捗、API/DB/SDK/MCP
+25. **[Upstream Sync and Cloudflare Deploy](102-Upstream-Sync-and-Cloudflare-Deploy.md)** — upstream追従とCloudflare登録方針
 
 ## D1テーブル一覧（42テーブル）
 
