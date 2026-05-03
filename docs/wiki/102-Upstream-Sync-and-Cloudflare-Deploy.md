@@ -76,7 +76,9 @@ pnpm exec wrangler secret put GOOGLE_OAUTH_REDIRECT_URI
 
 自動deployでは、GitHub repository settingsに以下を登録する。
 
-このforkでは、`apps/worker/wrangler.toml` のプレースホルダーを直接commitしない。代わりに `.github/workflows/deploy-worker.yml` がCIランナー上だけで `wrangler.toml` を本番値に差し替えてからbuild/deployする。
+このforkでは、`apps/worker/wrangler.toml` のプレースホルダーを直接commitしない。また、CIランナー上でも source の `wrangler.toml` は書き換えない。
+
+GitHub Actionsでは、`pnpm --filter worker build` 後にVite/Cloudflare pluginが生成する `apps/worker/dist/**/wrangler.json` を読み取り、deploy専用の一時ファイル `apps/worker/.wrangler-ci.json` を生成する。その一時configにだけ本番の `account_id`, `database_id`, Worker名, R2 bucket名を入れ、`wrangler deploy --config .wrangler-ci.json` でデプロイする。
 
 これにより、upstreamの `wrangler.toml` 更新を取り込みやすくしつつ、GitHub ActionsからCloudflareへdeployできる。
 
@@ -118,11 +120,32 @@ RUN_D1_MIGRATIONS=false
 2. shared / line-sdk / db build
 3. packages/db の予約不変条件テスト
 4. packages/sdk の予約SDKテスト
-5. CI上だけ wrangler.toml のCloudflare値を差し替え
-6. 必要ならD1 schema適用
-7. worker build
-8. wrangler deploy
+5. 必要ならD1 schema適用
+6. worker build
+7. build成果物から `.wrangler-ci.json` を生成
+8. `wrangler deploy --config .wrangler-ci.json`
 ```
+
+### CI/CD設計の責務分離
+
+```text
+apps/worker/wrangler.toml
+  upstream追従用のテンプレート。Cloudflare固有値を書かない。
+
+GitHub Secrets / Variables
+  本番deployに必要なCloudflare固有値を保持する。
+
+apps/worker/dist/**/wrangler.json
+  build時に生成される成果物。Git管理しない。
+
+apps/worker/.wrangler-ci.json
+  GitHub Actions内だけで生成される一時deploy config。Git管理しない。
+
+Cloudflare Worker secrets
+  LINE/Google/API_KEYなど、実行時secretを保持する。
+```
+
+この構成なら、`line-harness-oss` から `wrangler.toml` の更新が入っても、このforkの本番IDとconflictしない。
 
 ### 事前にCloudflare側で必要なもの
 

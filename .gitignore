@@ -2,6 +2,7 @@ node_modules/
 dist/
 .next/
 .wrangler/
+.wrangler-ci.json
 .vercel/
 .env
 .env.local

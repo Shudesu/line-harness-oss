@@ -39,7 +39,22 @@ jobs:
       - run: pnpm --filter @line-crm/db test
       - run: pnpm --filter @line-harness/sdk test
 
-      - name: Prepare Cloudflare deploy config
+      - name: Apply D1 schema
+        if: ${{ vars.RUN_D1_MIGRATIONS == 'true' }}
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_D1_DATABASE_NAME: ${{ vars.CLOUDFLARE_D1_DATABASE_NAME }}
+        run: pnpm exec wrangler d1 execute "${CF_D1_DATABASE_NAME:-line-crm}" --remote --file ../../packages/db/schema.sql
+
+      - run: pnpm --filter worker build
+        env:
+          VITE_LIFF_ID: ${{ vars.VITE_LIFF_ID }}
+          VITE_BOT_BASIC_ID: ${{ vars.VITE_BOT_BASIC_ID }}
+          VITE_CALENDAR_CONNECTION_ID: ${{ vars.VITE_CALENDAR_CONNECTION_ID }}
+
+      - name: Generate Cloudflare deploy config
         working-directory: apps/worker
         env:
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -50,6 +65,7 @@ jobs:
         run: |
           node <<'NODE'
           const fs = require('node:fs');
+          const path = require('node:path');
 
           const required = {
             CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID,
@@ -57,45 +73,51 @@ jobs:
           };
 
           for (const [key, value] of Object.entries(required)) {
-            if (!value) {
-              throw new Error(`${key} is required`);
-            }
+            if (!value) throw new Error(`${key} is required`);
           }
 
-          const accountId = process.env.CF_ACCOUNT_ID;
-          const d1DatabaseId = process.env.CF_D1_DATABASE_ID;
+          const distDir = path.join(process.cwd(), 'dist');
+          const candidates = fs.readdirSync(distDir)
+            .map((name) => path.join(distDir, name, 'wrangler.json'))
+            .filter((file) => fs.existsSync(file))
+            .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+
+          if (candidates.length === 0) throw new Error('Generated wrangler.json was not found');
+
+          const sourcePath = candidates[0];
+          const sourceDir = path.dirname(sourcePath);
+          const config = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+          const workerName = process.env.CF_WORKER_NAME || 'line-harness-reservation';
           const d1DatabaseName = process.env.CF_D1_DATABASE_NAME || 'line-crm';
           const r2BucketName = process.env.CF_R2_BUCKET_NAME || 'line-harness-images';
-          const workerName = process.env.CF_WORKER_NAME || 'line-harness-reservation';
 
-          let config = fs.readFileSync('wrangler.toml', 'utf8');
-          config = config.replace(/^name = "line-harness"/m, `name = "${workerName}"`);
-          config = config.replace(/account_id = "YOUR_DEV_ACCOUNT_ID"/g, `account_id = "${accountId}"`);
-          config = config.replace(/account_id = "YOUR_ACCOUNT_ID"/g, `account_id = "${accountId}"`);
-          config = config.replace(/database_name = "line-harness"/g, `database_name = "${d1DatabaseName}"`);
-          config = config.replace(/database_name = "line-crm"/g, `database_name = "${d1DatabaseName}"`);
-          config = config.replace(/database_id = "YOUR_DEV_D1_DATABASE_ID"/g, `database_id = "${d1DatabaseId}"`);
-          config = config.replace(/database_id = "YOUR_D1_DATABASE_ID"/g, `database_id = "${d1DatabaseId}"`);
-          config = config.replace(/bucket_name = "line-harness-images"/g, `bucket_name = "${r2BucketName}"`);
-          fs.writeFileSync('wrangler.toml', config);
+          config.name = workerName;
+          config.topLevelName = workerName;
+          config.account_id = process.env.CF_ACCOUNT_ID;
+          config.main = path.relative(process.cwd(), path.join(sourceDir, config.main)).replaceAll('\\', '/');
+          if (config.assets?.directory) {
+            config.assets.directory = path.relative(
+              process.cwd(),
+              path.join(sourceDir, config.assets.directory),
+            ).replaceAll('\\', '/');
+          }
+          config.d1_databases = [{
+            binding: 'DB',
+            database_name: d1DatabaseName,
+            database_id: process.env.CF_D1_DATABASE_ID,
+          }];
+          config.r2_buckets = [{
+            binding: 'IMAGES',
+            bucket_name: r2BucketName,
+          }];
+
+          const deployConfigPath = path.join(process.cwd(), '.wrangler-ci.json');
+          fs.writeFileSync(deployConfigPath, JSON.stringify(config, null, 2));
           NODE
-
-      - name: Apply D1 schema
-        if: ${{ vars.RUN_D1_MIGRATIONS == 'true' }}
-        working-directory: apps/worker
-        env:
-          CF_D1_DATABASE_NAME: ${{ vars.CLOUDFLARE_D1_DATABASE_NAME }}
-        run: pnpm exec wrangler d1 execute "${CF_D1_DATABASE_NAME:-line-crm}" --remote --file ../../packages/db/schema.sql
-
-      - run: pnpm --filter worker build
-        env:
-          VITE_LIFF_ID: ${{ vars.VITE_LIFF_ID }}
-          VITE_BOT_BASIC_ID: ${{ vars.VITE_BOT_BASIC_ID }}
-          VITE_CALENDAR_CONNECTION_ID: ${{ vars.VITE_CALENDAR_CONNECTION_ID }}
 
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/worker
-          command: deploy
+          command: deploy --config .wrangler-ci.json
