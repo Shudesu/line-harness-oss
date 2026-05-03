@@ -2,12 +2,34 @@ import type { Context, Next } from 'hono';
 import { getStaffByApiKey } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-function normalizeBearerSecret(value: string | undefined): string {
-  return value?.trim() ?? '';
+type SecretLike = string | { get: () => Promise<string> } | undefined;
+
+function isSecretStoreBinding(value: unknown): value is { get: () => Promise<string> } {
+  return typeof value === 'object'
+    && value !== null
+    && 'get' in value
+    && typeof (value as { get?: unknown }).get === 'function';
 }
 
-async function shortFingerprint(value: string | undefined): Promise<string | null> {
-  const normalized = normalizeBearerSecret(value);
+async function resolveSecretValue(value: SecretLike): Promise<string> {
+  if (typeof value === 'string') return value.trim();
+  if (isSecretStoreBinding(value)) return (await value.get()).trim();
+  return '';
+}
+
+function rawSecretLength(value: SecretLike): number | null {
+  return typeof value === 'string' ? value.length : null;
+}
+
+function secretBindingType(value: SecretLike): 'string' | 'secrets_store' | 'missing' | 'unknown' {
+  if (typeof value === 'string') return 'string';
+  if (isSecretStoreBinding(value)) return 'secrets_store';
+  if (value === undefined) return 'missing';
+  return 'unknown';
+}
+
+async function shortFingerprint(value: SecretLike): Promise<string | null> {
+  const normalized = await resolveSecretValue(value);
   if (!normalized) return null;
 
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
@@ -60,8 +82,8 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   }
 
   const token = authHeader.slice('Bearer '.length);
-  const normalizedToken = normalizeBearerSecret(token);
-  const normalizedApiKey = normalizeBearerSecret(c.env.API_KEY);
+  const normalizedToken = await resolveSecretValue(token);
+  const normalizedApiKey = await resolveSecretValue(c.env.API_KEY as unknown as SecretLike);
 
   // Check staff_members table first
   const staff = await getStaffByApiKey(c.env.DB, normalizedToken);
@@ -82,10 +104,11 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     tokenLength: token.length,
     normalizedTokenLength: normalizedToken.length,
     apiKeyConfigured: Boolean(c.env.API_KEY),
-    apiKeyLength: c.env.API_KEY?.length ?? 0,
+    apiKeyBindingType: secretBindingType(c.env.API_KEY as unknown as SecretLike),
+    apiKeyLength: rawSecretLength(c.env.API_KEY as unknown as SecretLike),
     normalizedApiKeyLength: normalizedApiKey.length,
     tokenFingerprint: await shortFingerprint(normalizedToken),
-    apiKeyFingerprint: await shortFingerprint(c.env.API_KEY),
+    apiKeyFingerprint: await shortFingerprint(c.env.API_KEY as unknown as SecretLike),
   });
 
   return c.json({ success: false, error: 'Unauthorized' }, 401);
