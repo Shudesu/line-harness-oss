@@ -84,7 +84,7 @@ function renderBookingControls(): string {
       <label class="field-label">
         予約対象
         <select data-field="resourceId">
-          ${state.resources.length === 0 ? '<option value="">予約対象を読み込み中</option>' : state.resources.map((item) => `
+          ${state.resources.length === 0 ? '<option value="">予約対象がありません</option>' : state.resources.map((item) => `
             <option value="${escapeHtml(item.id)}" ${item.id === state.resourceId ? 'selected' : ''}>
               ${escapeHtml(item.name)}
             </option>
@@ -94,7 +94,7 @@ function renderBookingControls(): string {
       <label class="field-label">
         メニュー
         <select data-field="menuId">
-          ${state.menus.map((item) => `
+          ${state.menus.length === 0 ? '<option value="">メニューがありません</option>' : state.menus.map((item) => `
             <option value="${escapeHtml(item.id)}" ${item.id === state.menuId ? 'selected' : ''}>
               ${escapeHtml(item.name)}（${item.durationMinutes}分）
             </option>

@@ -60,45 +60,55 @@ function render(): void {
 
 function bindEvents(): void {
   const app = getApp();
-  app.onclick = null;
-  app.oninput = null;
-  app.onchange = null;
+  app.onclick = (event) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) return;
 
-  app.querySelectorAll<HTMLElement>('[data-action]').forEach((element) => {
-    element.addEventListener('click', (event) => {
+    const actionEl = target.closest<HTMLElement>('[data-action]');
+    if (actionEl && app.contains(actionEl)) {
       event.preventDefault();
       event.stopPropagation();
-      void handleAction(element.dataset.action ?? '', element);
-    });
-  });
-  app.querySelectorAll<HTMLElement>('[data-date]').forEach((element) => {
-    element.addEventListener('click', (event) => {
+      void handleAction(actionEl.dataset.action ?? '', actionEl);
+      return;
+    }
+
+    const slotEl = target.closest<HTMLElement>('[data-slot-id]');
+    if (slotEl && app.contains(slotEl)) {
       event.preventDefault();
       event.stopPropagation();
-      selectDate(element.dataset.date ?? '');
-    });
-  });
-  app.querySelectorAll<HTMLElement>('[data-slot-id]').forEach((element) => {
-    element.addEventListener('click', (event) => {
+      selectSlot(slotEl.dataset.slotId ?? '');
+      return;
+    }
+
+    const reservationEl = target.closest<HTMLElement>('[data-reservation-id]');
+    if (reservationEl && app.contains(reservationEl)) {
       event.preventDefault();
       event.stopPropagation();
-      selectSlot(element.dataset.slotId ?? '');
-    });
-  });
-  app.querySelectorAll<HTMLElement>('[data-reservation-id]').forEach((element) => {
-    element.addEventListener('click', (event) => {
+      selectReservation(reservationEl.dataset.reservationId ?? '');
+      return;
+    }
+
+    const dateEl = target.closest<HTMLElement>('[data-date]');
+    if (dateEl && app.contains(dateEl)) {
       event.preventDefault();
       event.stopPropagation();
-      selectReservation(element.dataset.reservationId ?? '');
-    });
-  });
-  app.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-field]').forEach((element) => {
-    if (element instanceof HTMLSelectElement) return;
-    element.addEventListener('input', () => handleField(element.dataset.field ?? '', element.value));
-  });
-  app.querySelectorAll<HTMLSelectElement>('select[data-field]').forEach((element) => {
-    element.addEventListener('change', () => handleField(element.dataset.field ?? '', element.value));
-  });
+      selectDate(dateEl.dataset.date ?? '');
+    }
+  };
+
+  app.oninput = (event) => {
+    const element = event.target;
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
+    const field = element.dataset.field;
+    if (field) handleField(field, element.value);
+  };
+
+  app.onchange = (event) => {
+    const element = event.target;
+    if (!(element instanceof HTMLSelectElement)) return;
+    const field = element.dataset.field;
+    if (field) handleField(field, element.value);
+  };
 }
 
 function handleField(field: string, value: string): void {
@@ -109,6 +119,7 @@ function handleField(field: string, value: string): void {
   }
   if (field === 'menuId') {
     state.menuId = value;
+    ensurePeopleWithinSelectedMenu();
     state.selectedSlot = null;
     state.slotsByDate = {};
     void loadVisibleAvailability();
@@ -266,9 +277,7 @@ async function loadResources(): Promise<void> {
   }
   if (!state.resourceId) {
     state.resourceId = state.resources[0].id;
-    return;
-  }
-  if (!state.resources.some((resource) => resource.id === state.resourceId)) {
+  } else if (!state.resources.some((resource) => resource.id === state.resourceId)) {
     state.resources = [{ id: state.resourceId, name: state.resourceId, isActive: true }, ...state.resources];
     state.notice = 'URLで指定された予約対象を使います。';
   }
@@ -283,6 +292,10 @@ async function loadMenusForSelectedResource(): Promise<void> {
   if (!state.menuId || !state.menus.some((menu) => menu.id === state.menuId)) {
     state.menuId = state.menus[0].id;
   }
+  ensurePeopleWithinSelectedMenu();
+}
+
+function ensurePeopleWithinSelectedMenu(): void {
   const menu = selectedMenu();
   if (menu && totalPeople() < menu.minPeople) {
     state.form.adultCount = menu.minPeople;

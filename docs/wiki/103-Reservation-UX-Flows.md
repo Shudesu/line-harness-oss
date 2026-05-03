@@ -40,16 +40,18 @@ MVPでは、次の5ステップだけに絞る。
 推奨URL:
 
 ```text
-/book?resourceId={RESOURCE_ID}&menuId={MENU_ID}
+/?page=book
 ```
 
 LINE LIFF Endpoint URL:
 
 ```text
-https://liff.line.me/{LIFF_ID}?page=book&resourceId={RESOURCE_ID}&menuId={MENU_ID}
+https://liff.line.me/{LIFF_ID}?page=book
 ```
 
-`resourceId` と `menuId` がない場合は、公開APIから有効なresource/menuを取得して先頭を選ぶ。ただし、取得失敗時に画面が「読み込み中」で止まらないよう、明確なエラーを出す。
+ユーザーはURLでresource/menuを指定しない。画面内で予約対象とメニューを選ぶ。
+
+`resourceId` と `menuId` がqueryにある場合は初期選択として使ってよいが、必須にはしない。公開APIから有効なresource/menu候補を取得して選択肢に出す。取得失敗時に画面が「読み込み中」で止まらないよう、明確なエラーを出す。
 
 ## 残すDOM要素
 
@@ -512,10 +514,13 @@ visibleDates = その月の全日付
 
 ### イベント設計
 
-イベントbindingは、次のように役割を固定する。
+イベントbindingは、次のように役割を固定する。`data-action` を最優先で処理し、日付クリックが画面遷移や表示切替のトリガーを奪わないようにする。
 
 ```text
 data-action
+  show-booking
+  show-mine
+  reload-mine
   view-week
   view-month
   prev-week
@@ -525,6 +530,11 @@ data-action
   go-confirm
   back-booking
   submit-booking
+  show-created-detail
+  issue-tokens
+  go-cancel
+  back-detail
+  submit-cancel
   close
 
 data-field
@@ -544,7 +554,7 @@ data-slot-id
   slot id
 ```
 
-`data-date` のclick handlerで `data-action` を処理しない。逆も同じ。
+`data-date` のclick handlerで `data-action` を処理しない。逆も同じ。1つのDOM要素に `data-action` と `data-date` を同時に付けない。
 
 推奨:
 
