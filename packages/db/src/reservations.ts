@@ -810,7 +810,7 @@ export async function generateReservationSlots(
 
   const created: ReservationSlot[] = [];
   for (const date of eachDate(input.dateFrom, input.dateTo)) {
-    const dayOfWeek = new Date(`${date}T00:00:00+09:00`).getDay();
+    const dayOfWeek = dayOfWeekFromDateString(date);
     for (const schedule of schedules.filter((item) => item.day_of_week === dayOfWeek)) {
       for (const range of eachTimeRange(date, schedule.start_time, schedule.end_time, schedule.slot_interval_minutes)) {
         const id = crypto.randomUUID();
@@ -1526,6 +1526,11 @@ function calculateAmount(menu: ReservationMenu, adultCount: number, childCount: 
 
 function slotDurationMinutes(slot: ReservationSlot): number {
   return Math.round((new Date(slot.end_at).getTime() - new Date(slot.start_at).getTime()) / 60_000);
+}
+
+function dayOfWeekFromDateString(date: string): number {
+  const [year, month, day] = date.split('-').map((part) => Number.parseInt(part, 10));
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
 function eachDate(dateFrom: string, dateTo: string): string[] {
