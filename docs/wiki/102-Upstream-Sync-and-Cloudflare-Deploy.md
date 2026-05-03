@@ -98,6 +98,8 @@ CLOUDFLARE_ACCOUNT_ID
 WORKER_NAME
 CLOUDFLARE_D1_DATABASE_NAME
 CLOUDFLARE_R2_BUCKET_NAME
+CLOUDFLARE_SECRETS_STORE_ID
+CLOUDFLARE_SECRETS_STORE_BINDINGS
 RUN_D1_MIGRATIONS
 VITE_LIFF_ID
 VITE_BOT_BASIC_ID
@@ -114,6 +116,42 @@ RUN_D1_MIGRATIONS=false
 ```
 
 `CLOUDFLARE_ACCOUNT_ID` はsecretではないため、GitHub Variablesへ登録してよい。workflowは `secrets.CLOUDFLARE_ACCOUNT_ID` と `vars.CLOUDFLARE_ACCOUNT_ID` の両方に対応する。
+
+### Cloudflare Secrets Storeを使う場合
+
+Cloudflare Secrets StoreへLINE/Google/API_KEYなどを保存している場合、Worker secret値をGitHub Secretsへ複製しない。
+
+GitHub Environment `production` のVariablesへ次を登録する。
+
+```text
+CLOUDFLARE_SECRETS_STORE_ID=<Secrets Store ID>
+```
+
+secret名とWorker binding名が同じ場合、`CLOUDFLARE_SECRETS_STORE_BINDINGS` は省略できる。省略時は次を自動でbindingする。
+
+```text
+API_KEY
+LINE_CHANNEL_SECRET
+LINE_CHANNEL_ACCESS_TOKEN
+LINE_CHANNEL_ID
+LINE_LOGIN_CHANNEL_ID
+LINE_LOGIN_CHANNEL_SECRET
+LIFF_URL
+WORKER_URL
+GOOGLE_OAUTH_CLIENT_ID
+GOOGLE_OAUTH_CLIENT_SECRET
+GOOGLE_OAUTH_REDIRECT_URI
+IG_HARNESS_LINK_SECRET
+STRIPE_WEBHOOK_SECRET
+```
+
+Secrets Store上のsecret名を変えている場合は、カンマ区切りで対応を書く。
+
+```text
+CLOUDFLARE_SECRETS_STORE_BINDINGS=API_KEY=prod-api-key,LINE_CHANNEL_SECRET=prod-line-channel-secret,LINE_CHANNEL_ACCESS_TOKEN=prod-line-channel-access-token
+```
+
+workflowは `apps/worker/wrangler.toml` を直接編集せず、CI内で生成する `.wrangler-ci.json` にだけ `secrets_store_secrets` を追加する。これにより、upstream更新時に `wrangler.toml` のconflictを増やさない。
 
 `RUN_D1_MIGRATIONS=true` にすると、deploy前に `packages/db/schema.sql` をremote D1へ適用する。初回セットアップでは便利だが、本番運用ではDB migrationをdeployと分離する方が安全。
 

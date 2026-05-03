@@ -77,6 +77,17 @@ function saveSessionApiKey(value: string): void {
   }
 }
 
+function syncApiKeyFromInput(): void {
+  const element = document.getElementById('adminApiKey');
+  if (!(element instanceof HTMLInputElement)) return;
+
+  const value = element.value.trim();
+  if (value === state.apiKey) return;
+
+  state.apiKey = value;
+  saveSessionApiKey(value);
+}
+
 function todayJst(): string {
   const formatter = new Intl.DateTimeFormat('sv-SE', {
     timeZone: 'Asia/Tokyo',
@@ -157,6 +168,8 @@ function isActiveReservation(reservation: ReservationResponse): boolean {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  syncApiKeyFromInput();
+
   if (!state.apiKey) {
     throw new Error('APIキーを入力してください');
   }

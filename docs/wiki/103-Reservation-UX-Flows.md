@@ -210,6 +210,31 @@ URL:
 - カレンダーの日付を押すと、下のslot一覧・予約一覧・詳細操作対象日が切り替わる。
 - slot編集UIには、安全制約の説明を表示する。実際の保存時制約はWorker APIとDB helperで担保する。
 
+### 認証
+
+管理画面のHTMLは、ブラウザで開けるように `authMiddleware` の認証スキップ対象にする。
+
+ただし、予約管理APIは公開しない。次のAPIは既存の管理APIと同じく `Authorization: Bearer <key>` を必須にする。
+
+```text
+GET  /api/reservation-resources
+POST /api/reservation-resources
+GET  /api/reservation-slots
+POST /api/reservation-slots/generate
+GET  /api/reservations
+PUT  /api/reservations/:id/status
+GET  /api/external-reservation-sources
+```
+
+`<key>` は次のどちらかを使う。
+
+- `staff_members.api_key` に保存されたスタッフAPIキー
+- Worker secret `API_KEY`
+
+Cloudflare Access は、Worker URLへ到達する前段の保護であり、アプリ内の管理API認証とは別である。Cloudflare Accessでログイン済みでも、管理画面UIから `Authorization: Bearer <key>` が送られなければ管理APIは `401 Unauthorized` を返す。
+
+管理画面UIでは、画面上の `管理APIキー` 入力値を `sessionStorage` に保存し、API呼び出し時に `Authorization: Bearer <key>` として送る。APIキーを `NEXT_PUBLIC_*` や `VITE_*` に入れてクライアントバンドルへ埋め込まない。
+
 ### 画面一覧
 
 | 画面 | 目的 | 実装優先度 |
