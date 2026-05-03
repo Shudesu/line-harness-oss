@@ -10,8 +10,8 @@ import { addDays, dateToString, isPastDate } from './booking/date.js';
 import { getApp } from './booking/html.js';
 import { renderError, renderHeader, renderScreen } from './booking/render.js';
 import { selectedMenu, state, totalPeople, UUID_STORAGE_KEY } from './booking/state.js';
-import { storeReservationTokens, storeTokensForReservation, tokenForReservation } from './booking/tokens.js';
-import type { Menu, Reservation, ReservationAccessTokens, Resource, Slot } from './booking/types.js';
+import { storeReservationTokens } from './booking/tokens.js';
+import type { Menu, Reservation, Resource, Slot } from './booking/types.js';
 
 declare const liff: {
   getProfile(): Promise<{ userId: string; displayName: string; pictureUrl?: string }>;
@@ -51,51 +51,38 @@ function render(): void {
 
 function bindEvents(): void {
   const app = getApp();
-  app.onclick = (event) => {
-    const target = event.target instanceof HTMLElement ? event.target : null;
-    if (!target) return;
+  app.onclick = null;
+  app.oninput = null;
+  app.onchange = null;
 
-    const actionEl = target.closest<HTMLElement>('[data-action]');
-    if (actionEl) {
+  app.querySelectorAll<HTMLElement>('[data-action]').forEach((element) => {
+    element.addEventListener('click', (event) => {
       event.preventDefault();
-      void handleAction(actionEl.dataset.action ?? '', actionEl);
-      return;
-    }
-
-    const dateEl = target.closest<HTMLElement>('[data-date]');
-    if (dateEl) {
+      event.stopPropagation();
+      void handleAction(element.dataset.action ?? '', element);
+    });
+  });
+  app.querySelectorAll<HTMLElement>('[data-date]').forEach((element) => {
+    element.addEventListener('click', (event) => {
       event.preventDefault();
-      selectDate(dateEl.dataset.date ?? '');
-      return;
-    }
-
-    const slotEl = target.closest<HTMLElement>('[data-slot-id]');
-    if (slotEl) {
+      event.stopPropagation();
+      selectDate(element.dataset.date ?? '');
+    });
+  });
+  app.querySelectorAll<HTMLElement>('[data-slot-id]').forEach((element) => {
+    element.addEventListener('click', (event) => {
       event.preventDefault();
-      selectSlot(slotEl.dataset.slotId ?? '');
-      return;
-    }
-
-    const reservationEl = target.closest<HTMLElement>('[data-reservation-id]');
-    if (reservationEl) {
-      event.preventDefault();
-      selectReservation(reservationEl.dataset.reservationId ?? '');
-    }
-  };
-
-  app.oninput = (event) => {
-    const element = event.target;
-    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
-    const field = element.dataset.field;
-    if (field) handleField(field, element.value);
-  };
-
-  app.onchange = (event) => {
-    const element = event.target;
-    if (!(element instanceof HTMLSelectElement)) return;
-    const field = element.dataset.field;
-    if (field) handleField(field, element.value);
-  };
+      event.stopPropagation();
+      selectSlot(element.dataset.slotId ?? '');
+    });
+  });
+  app.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-field]').forEach((element) => {
+    if (element instanceof HTMLSelectElement) return;
+    element.addEventListener('input', () => handleField(element.dataset.field ?? '', element.value));
+  });
+  app.querySelectorAll<HTMLSelectElement>('select[data-field]').forEach((element) => {
+    element.addEventListener('change', () => handleField(element.dataset.field ?? '', element.value));
+  });
 }
 
 function handleField(field: string, value: string): void {
@@ -134,14 +121,11 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     render();
     return;
   }
-  if (action === 'show-mine' || action === 'reload-mine') {
-    state.screen = 'mine';
-    await loadMine();
-    return;
-  }
   if (action === 'view-week' || action === 'view-month') {
     state.viewMode = action === 'view-week' ? 'week' : 'month';
     state.notice = null;
+    state.selectedDate = null;
+    state.selectedSlot = null;
     await loadVisibleAvailability();
     return;
   }
@@ -178,40 +162,6 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   }
   if (action === 'submit-booking') {
     await submitBooking();
-    return;
-  }
-  if (action === 'show-created-detail') {
-    if (state.lastReservation) {
-      state.selectedReservation = state.lastReservation;
-      state.screen = 'detail';
-      render();
-    }
-    return;
-  }
-  if (action === 'cancel-created') {
-    if (state.lastReservation) {
-      state.selectedReservation = state.lastReservation;
-      state.screen = 'cancel-confirm';
-      render();
-    }
-    return;
-  }
-  if (action === 'go-cancel') {
-    state.screen = 'cancel-confirm';
-    render();
-    return;
-  }
-  if (action === 'issue-tokens') {
-    await issueTokensForSelectedReservation();
-    return;
-  }
-  if (action === 'back-detail') {
-    state.screen = 'detail';
-    render();
-    return;
-  }
-  if (action === 'submit-cancel') {
-    await submitCancel();
     return;
   }
   if (action === 'close') {
@@ -256,25 +206,24 @@ function selectSlot(slotId: string): void {
   render();
 }
 
-function selectReservation(id: string): void {
-  const reservation = state.reservations.find((item) => item.id === id) ?? null;
-  state.selectedReservation = reservation;
-  state.screen = reservation ? 'detail' : 'mine';
-  render();
-}
-
 async function loadResources(): Promise<void> {
-  state.resources = await apiJson<Resource[]>('/api/public/reservation-resources');
-  if (!state.resources.length) {
-    throw new Error('予約対象がまだ公開されていません。店舗側で予約対象を有効化してください。');
+  try {
+    state.resources = await apiJson<Resource[]>('/api/public/reservation-resources');
+  } catch {
+    if (state.resourceId) {
+      state.resources = [{ id: state.resourceId, name: state.resourceId, isActive: true }];
+      state.notice = '予約対象一覧を取得できないため、URLで指定された予約対象を使います。';
+      return;
+    }
+    throw new Error('予約対象を取得できません。LIFF URLに resourceId を指定してください。');
   }
   if (!state.resourceId) {
     state.resourceId = state.resources[0].id;
     return;
   }
   if (!state.resources.some((resource) => resource.id === state.resourceId)) {
-    state.resourceId = state.resources[0].id;
-    state.notice = '指定された予約対象が見つからないため、現在受付中の予約対象を表示しています。';
+    state.resources = [{ id: state.resourceId, name: state.resourceId, isActive: true }, ...state.resources];
+    state.notice = 'URLで指定された予約対象を使います。';
   }
 }
 
@@ -401,74 +350,6 @@ async function submitBooking(): Promise<void> {
   }
   state.submitting = false;
   render();
-}
-
-async function loadMine(): Promise<void> {
-  if (!state.sessionToken) return;
-  state.loading = true;
-  render();
-  try {
-    state.reservations = await apiJson<Reservation[]>('/api/public/me/reservations?status=active', {
-      headers: { Authorization: `Bearer ${state.sessionToken}` },
-    });
-  } catch (err) {
-    state.error = err instanceof Error ? err.message : '予約一覧を取得できませんでした。';
-  } finally {
-    state.loading = false;
-    render();
-  }
-}
-
-async function submitCancel(): Promise<void> {
-  const reservation = state.selectedReservation;
-  if (!reservation || state.submitting) return;
-  const token = tokenForReservation(reservation.id).cancelToken || reservation.cancelToken;
-  if (!token) {
-    state.error = 'この予約をキャンセルするためのトークンがありません。LINEから店舗へご連絡ください。';
-    render();
-    return;
-  }
-  state.submitting = true;
-  render();
-  try {
-    const result = await apiJson<{ reservation: Reservation; changed: boolean }>(`/api/public/reservations/${encodeURIComponent(reservation.id)}/cancel`, {
-      method: 'POST',
-      body: JSON.stringify({ token, reason: 'customer_requested' }),
-    });
-    state.selectedReservation = result.reservation;
-    state.lastReservation = result.reservation;
-    state.reservations = state.reservations.map((item) => item.id === result.reservation.id ? result.reservation : item);
-    state.screen = 'cancelled';
-  } catch (err) {
-    state.error = err instanceof Error ? err.message : 'キャンセルに失敗しました。';
-  } finally {
-    state.submitting = false;
-    render();
-  }
-}
-
-async function issueTokensForSelectedReservation(): Promise<void> {
-  const reservation = state.selectedReservation;
-  if (!reservation || !state.sessionToken || state.submitting) return;
-  state.submitting = true;
-  render();
-  try {
-    const tokens = await apiJson<ReservationAccessTokens>(`/api/public/reservations/${encodeURIComponent(reservation.id)}/tokens`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${state.sessionToken}` },
-      body: JSON.stringify({}),
-    });
-    storeTokensForReservation(tokens.reservationId, {
-      detailToken: tokens.detailToken,
-      cancelToken: tokens.cancelToken,
-    });
-    state.screen = tokens.cancelToken ? 'cancel-confirm' : 'detail';
-  } catch (err) {
-    state.error = err instanceof Error ? err.message : '予約操作用tokenの再発行に失敗しました。';
-  } finally {
-    state.submitting = false;
-    render();
-  }
 }
 
 export async function initBooking(): Promise<void> {
