@@ -14,7 +14,7 @@
 URL:
 
 ```text
-https://liff.line.me/{LIFF_ID}?page=reservation&resourceId={RESOURCE_ID}
+https://liff.line.me/{LIFF_ID}?page=book&resourceId={RESOURCE_ID}&menuId={MENU_ID}
 ```
 
 画面フロー:
