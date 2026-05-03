@@ -125,8 +125,8 @@ function handleField(field: string, value: string): void {
   if (field === 'menuId') {
     state.menuId = value;
     ensurePeopleWithinSelectedMenu();
+    state.selectedDate = null;
     state.selectedSlot = null;
-    state.slotsByDate = {};
     void loadVisibleAvailability();
     render();
     return;
@@ -135,7 +135,6 @@ function handleField(field: string, value: string): void {
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
     state.selectedSlot = null;
-    state.slotsByDate = {};
     void loadVisibleAvailability();
     render();
     return;
@@ -252,10 +251,6 @@ function selectDate(date: string): void {
   state.notice = null;
   state.selectedDate = date;
   state.selectedSlot = null;
-  if (!state.slotsByDate[date]) void fetchSlots(date).catch((err) => {
-    state.notice = err instanceof Error ? err.message : '予約枠を取得できませんでした。';
-    render();
-  });
   render();
 }
 
@@ -353,6 +348,12 @@ async function loadVisibleAvailability(): Promise<void> {
       state.selectedSlot = null;
     }
     await Promise.all(dates.filter((date) => !isPastDate(date)).map((date) => fetchSlots(date).catch(() => [])));
+    if (state.selectedSlot) {
+      const updated = (state.slotsByDate[state.selectedSlot.date] ?? []).find((s) => s.slotId === state.selectedSlot!.slotId);
+      if (!updated || !updated.available) {
+        state.selectedSlot = null;
+      }
+    }
   } finally {
     if (requestId !== state.availabilityRequestId) return;
     state.loadingSlots = false;

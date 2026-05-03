@@ -61,7 +61,8 @@ function renderBooking(): string {
   return `
     ${renderBookingControls()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
-    ${renderSlots()}
+    ${state.viewMode === 'month' ? renderSlots() : ''}
+    ${renderSelectedSlotSummary()}
     ${renderInputForm()}
     <div class="booking-actions">
       <button type="button" class="book-btn" data-action="go-confirm">予約内容を確認する</button>
@@ -136,7 +137,7 @@ function renderWeekAvailability(): string {
       ${state.loadingSlots ? '<div class="slots-loading"><div class="loading-spinner"></div><p>空き枠を確認中...</p></div>' : ''}
       <div class="week-matrix">
         <div class="week-cell week-head">時間</div>
-        ${days.map((day) => `<button type="button" class="week-cell week-day ${state.selectedDate === dateToString(day) ? 'selected' : ''}" data-date="${dateToString(day)}">${day.getMonth() + 1}/${day.getDate()}<small>${['日', '月', '火', '水', '木', '金', '土'][day.getDay()]}</small></button>`).join('')}
+        ${days.map((day) => `<div class="week-cell week-day">${day.getMonth() + 1}/${day.getDate()}<small>${['日', '月', '火', '水', '木', '金', '土'][day.getDay()]}</small></div>`).join('')}
         ${timeLabels.length === 0 ? '<div class="week-empty">表示できる予約枠がありません</div>' : timeLabels.map((time) => {
           return `
             <div class="week-cell week-time">${time}</div>
@@ -226,6 +227,19 @@ function renderSlots(): string {
             </button>
           `;
         }).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderSelectedSlotSummary(): string {
+  const slot = state.selectedSlot;
+  if (!slot) return '';
+  return `
+    <section class="booking-panel">
+      <div class="confirm-row">
+        <span class="confirm-label">選択中</span>
+        <span class="confirm-value">${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</span>
       </div>
     </section>
   `;
