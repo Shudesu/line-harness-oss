@@ -44,6 +44,9 @@ jobs:
       - run: pnpm --filter @line-crm/db test
       - run: pnpm --filter @line-harness/sdk test
 
+      - name: Remove local dev secrets
+        run: rm -f apps/worker/.dev.vars
+
       - name: Apply D1 schema
         if: ${{ vars.RUN_D1_MIGRATIONS == 'true' }}
         working-directory: apps/worker
@@ -58,6 +61,9 @@ jobs:
           VITE_LIFF_ID: ${{ vars.VITE_LIFF_ID }}
           VITE_BOT_BASIC_ID: ${{ vars.VITE_BOT_BASIC_ID }}
           VITE_CALENDAR_CONNECTION_ID: ${{ vars.VITE_CALENDAR_CONNECTION_ID }}
+
+      - name: Remove generated dev secrets
+        run: find apps/worker/dist -name .dev.vars -type f -delete
 
       - name: Generate Cloudflare deploy config
         working-directory: apps/worker

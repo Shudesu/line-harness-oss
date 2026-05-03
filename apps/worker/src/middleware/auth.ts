@@ -2,6 +2,16 @@ import type { Context, Next } from 'hono';
 import { getStaffByApiKey } from '@line-crm/db';
 import type { Env } from '../index.js';
 
+async function shortFingerprint(value: string | undefined): Promise<string | null> {
+  if (!value) return null;
+
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 6)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export async function authMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
   // Skip auth for the LINE webhook endpoint — it uses signature verification instead
   // Skip auth for OpenAPI docs — public documentation
@@ -65,6 +75,8 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     tokenLength: token.length,
     apiKeyConfigured: Boolean(c.env.API_KEY),
     apiKeyLength: c.env.API_KEY?.length ?? 0,
+    tokenFingerprint: await shortFingerprint(token),
+    apiKeyFingerprint: await shortFingerprint(c.env.API_KEY),
   });
 
   return c.json({ success: false, error: 'Unauthorized' }, 401);
