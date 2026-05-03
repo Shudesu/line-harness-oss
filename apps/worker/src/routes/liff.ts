@@ -194,13 +194,18 @@ async function applyRefAttribution(
         { ...fresh, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1],
         c.env.WORKER_URL,
       );
-      await lineClient.pushMessage(lineUserId, [buildMessage(firstStep.message_type, expanded)]);
+      const pushedMessage = buildMessage(firstStep.message_type, expanded);
+      await lineClient.pushMessage(lineUserId, [pushedMessage]);
 
       // Log the push so the cooldown above sees it on subsequent calls,
-      // and so /chats and analytics show the message.
+      // and so /chats and analytics show the message. Derive content from the
+      // built message object (post cleanEmptyNodes / parse-failure fallback)
+      // so the dashboard mirrors LINE exactly.
       const nowIso = new Date(Date.now() + 9 * 60 * 60_000)
         .toISOString()
         .slice(0, -1) + '+09:00';
+      const { messageToLogPayload } = await import('../services/step-delivery.js');
+      const liffLogPayload = messageToLogPayload(pushedMessage);
       await db
         .prepare(
           `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
@@ -209,8 +214,8 @@ async function applyRefAttribution(
         .bind(
           crypto.randomUUID(),
           friend.id,
-          firstStep.message_type,
-          firstStep.message_content,
+          liffLogPayload.messageType,
+          liffLogPayload.content,
           firstStep.id,
           nowIso,
         )

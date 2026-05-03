@@ -461,45 +461,138 @@ async function runSetupInner(
   }
 
   // Step 12: Register LINE account in DB
+  // The Worker may not be reachable for a few seconds right after deploy,
+  // so we retry. We also DO NOT mark this step as done unless the row was
+  // actually created — otherwise users get stuck without an account row
+  // and have to register manually from the dashboard.
   if (!isDone(state, "lineAccount")) {
     const s = p.spinner();
     s.start("LINE アカウント登録中...");
-    try {
-      const res = await fetch(`${state.workerUrl}/api/line-accounts`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${state.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "LINE Harness",
-          channelId: state.lineChannelId,
-          channelAccessToken: state.lineChannelAccessToken,
-          channelSecret: state.lineChannelSecret,
-        }),
-      });
-      if (res.ok) {
-        // Set login_channel_id (not supported by API, update DB directly)
-        try {
-          await wrangler([
-            "d1",
-            "execute",
-            state.d1DatabaseName!,
-            "--remote",
-            "--command",
-            `UPDATE line_accounts SET login_channel_id = '${state.lineLoginChannelId}' WHERE channel_id = '${state.lineChannelId}'`,
-          ]);
-        } catch {
-          // Non-critical
+
+    const MAX_ATTEMPTS = 5;
+    const RETRY_DELAY_MS = 5000;
+    let lastError: string | null = null;
+    let succeeded = false;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(`${state.workerUrl}/api/line-accounts`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${state.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "LINE Harness",
+            channelId: state.lineChannelId,
+            channelAccessToken: state.lineChannelAccessToken,
+            channelSecret: state.lineChannelSecret,
+          }),
+        });
+        if (res.ok) {
+          succeeded = true;
+          break;
         }
-        s.stop("LINE アカウント登録完了");
-      } else {
-        const data = (await res.json()) as Record<string, unknown>;
-        s.stop(`LINE アカウント登録: ${data.error || "エラー"}`);
+        // 409 = duplicate channelId. The row exists, but the credentials
+        // we just collected may be newer (token rotation, manual edit).
+        // Sync them via PUT so we don't leave stale tokens in the DB.
+        // Critically: only mark this attempt successful if the sync itself
+        // succeeds — silently advancing on PUT failure would leave the user
+        // with stale credentials and a green checkmark.
+        if (res.status === 409) {
+          let putErr: string | null = null;
+          try {
+            const listRes = await fetch(`${state.workerUrl}/api/line-accounts`, {
+              headers: { Authorization: `Bearer ${state.apiKey}` },
+            });
+            if (!listRes.ok) {
+              putErr = `account list lookup failed: HTTP ${listRes.status}`;
+            } else {
+              const listData = (await listRes.json()) as {
+                data?: Array<{ id: string; channelId: string }>;
+              };
+              const existing = (listData.data ?? []).find(
+                (a) => a.channelId === state.lineChannelId,
+              );
+              if (!existing) {
+                putErr = "channelId reported duplicate but list lookup did not find it";
+              } else {
+                const putRes = await fetch(
+                  `${state.workerUrl}/api/line-accounts/${existing.id}`,
+                  {
+                    method: "PUT",
+                    headers: {
+                      Authorization: `Bearer ${state.apiKey}`,
+                      "Content-Type": "application/json",
+                    },
+                    // Intentionally do NOT send `name` — preserve whatever
+                    // label the operator assigned in the dashboard.
+                    body: JSON.stringify({
+                      channelAccessToken: state.lineChannelAccessToken,
+                      channelSecret: state.lineChannelSecret,
+                    }),
+                  },
+                );
+                if (!putRes.ok) {
+                  putErr = `credential sync PUT failed: HTTP ${putRes.status}`;
+                }
+              }
+            }
+          } catch (err) {
+            putErr = err instanceof Error ? err.message : String(err);
+          }
+          if (!putErr) {
+            succeeded = true;
+            break;
+          }
+          // Sync failed — preserve the specific putErr instead of letting
+          // the generic "HTTP 409" branch below overwrite it. Skip to the
+          // next attempt directly so the retry loop reports the real cause
+          // (list lookup or PUT failure) when retries are exhausted.
+          lastError = putErr;
+          if (attempt < MAX_ATTEMPTS) {
+            s.message(`LINE アカウント登録 リトライ (${attempt}/${MAX_ATTEMPTS - 1})...`);
+            await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+          }
+          continue;
+        }
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        lastError = `HTTP ${res.status}: ${String(data.error ?? "unknown")}`;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
       }
-    } catch {
-      s.stop("LINE アカウント登録スキップ（Worker 起動待ち）");
+      if (attempt < MAX_ATTEMPTS) {
+        s.message(`LINE アカウント登録 リトライ (${attempt}/${MAX_ATTEMPTS - 1})...`);
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      }
     }
+
+    if (!succeeded) {
+      s.stop(`LINE アカウント登録に失敗: ${lastError ?? "unknown error"}`);
+      // Do NOT markDone — re-run will retry. Surface the failure so the user
+      // knows they should re-run instead of registering manually from the UI.
+      p.log.error(
+        `自動登録できませんでした。Worker のヘルスを確認してから 'npx create-line-harness@latest' を再実行してください。`,
+      );
+      saveState(repoDir, state);
+      process.exit(1);
+    }
+
+    // Set login_channel_id (not supported by API, update DB directly)
+    try {
+      await wrangler([
+        "d1",
+        "execute",
+        state.d1DatabaseName!,
+        "--remote",
+        "--command",
+        `UPDATE line_accounts SET login_channel_id = '${state.lineLoginChannelId}' WHERE channel_id = '${state.lineChannelId}'`,
+      ]);
+    } catch {
+      // Non-critical — login_channel_id can be set later via dashboard.
+    }
+
+    s.stop("LINE アカウント登録完了");
     markDone(state, "lineAccount");
     saveState(repoDir, state);
   } else {

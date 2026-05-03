@@ -285,14 +285,21 @@ friends.put('/api/friends/:id/metadata', async (c) => {
 friends.get('/api/friends/:id/messages', async (c) => {
   try {
     const friendId = c.req.param('id');
+    // Fetch the latest 200 messages (DESC) then reverse to ASC for display.
+    // Using ORDER BY ASC LIMIT 200 returns the OLDEST 200 rows, which silently
+    // hides recent activity for chatty friends. Exclude delivery_type='test'
+    // to stay consistent with /api/chats/:id, so the same friend shows the
+    // same history across DirectMessagePanel and the chat panel.
     const result = await c.env.DB
       .prepare(
         `SELECT id, direction, message_type as messageType, content, created_at as createdAt
-         FROM messages_log WHERE friend_id = ? ORDER BY created_at ASC LIMIT 200`,
+         FROM messages_log WHERE friend_id = ?
+           AND (delivery_type IS NULL OR delivery_type != 'test')
+         ORDER BY created_at DESC LIMIT 200`,
       )
       .bind(friendId)
       .all<{ id: string; direction: string; messageType: string; content: string; createdAt: string }>();
-    return c.json({ success: true, data: result.results });
+    return c.json({ success: true, data: result.results.reverse() });
   } catch (err) {
     console.error('GET /api/friends/:id/messages error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);

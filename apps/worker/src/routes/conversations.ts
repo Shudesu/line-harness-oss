@@ -216,7 +216,18 @@ conversations.get('/api/conversations/:friendId', async (c) => {
       messageType: m.message_type,
       content: m.content,
       deliveryType: m.delivery_type,
-      source: m.source ?? (m.direction === 'incoming' ? 'user' : 'manual'),
+      // Infer source from associated foreign keys / delivery_type when missing.
+      // Historically some writers (incl. orphan deploys before migration 028)
+      // left source NULL on scenario/broadcast/auto_reply outgoings. Mirrors
+      // the backfill rules in migrations/028_messages_log_source.sql so the
+      // dashboard does not misclassify automated messages as operator replies.
+      source: m.source ?? (
+        m.direction === 'incoming' ? 'user'
+          : m.scenario_step_id ? 'scenario'
+          : (m.broadcast_id || m.delivery_type === 'test') ? 'broadcast'
+          : m.delivery_type === 'reply' ? 'auto_reply'
+          : 'manual'
+      ),
       createdAt: m.created_at,
     }));
 

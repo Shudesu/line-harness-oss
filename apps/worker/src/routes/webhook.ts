@@ -142,14 +142,17 @@ async function handleEvent(
                 await lineClient.replyMessage(event.replyToken, [message]);
                 console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
 
-                // Log outgoing message (replyMessage = 無料)
+                // Log what was actually delivered (post buildMessage normalization)
+                // so the dashboard chat view mirrors LINE 1:1.
                 const logId = crypto.randomUUID();
+                const { messageToLogPayload: logPayload1 } = await import('../services/step-delivery.js');
+                const wbScenarioPayload = logPayload1(message);
                 await db
                   .prepare(
                     `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
                      VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', 'scenario', ?)`,
                   )
-                  .bind(logId, friend.id, firstStep.message_type, firstStep.message_content, firstStep.id, jstNow())
+                  .bind(logId, friend.id, wbScenarioPayload.messageType, wbScenarioPayload.content, firstStep.id, jstNow())
                   .run();
 
                 // Advance or complete the friend_scenario
@@ -422,14 +425,18 @@ async function handleEvent(
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
           replyTokenConsumed = true;
 
-          // 送信ログ（replyMessage = 無料）
+          // 送信ログ（replyMessage = 無料）— derive content from the built
+          // reply message so any cleanEmptyNodes / parse-failure fallback is
+          // reflected in the dashboard.
           const outLogId = crypto.randomUUID();
+          const { messageToLogPayload: logPayload2 } = await import('../services/step-delivery.js');
+          const wbAutoReplyPayload = logPayload2(replyMsg);
           await db
             .prepare(
               `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
                VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'auto_reply', ?)`,
             )
-            .bind(outLogId, friend.id, rule.response_type, rule.response_content, jstNow())
+            .bind(outLogId, friend.id, wbAutoReplyPayload.messageType, wbAutoReplyPayload.content, jstNow())
             .run();
         } catch (err) {
           console.error('Failed to send auto-reply', err);

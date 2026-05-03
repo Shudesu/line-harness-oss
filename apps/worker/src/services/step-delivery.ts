@@ -240,14 +240,17 @@ async function processSingleDelivery(
   }
   await deliveryClient.pushMessage(friend.line_user_id, [message]);
 
-  // Log outgoing message
+  // Log what we actually pushed: variables expanded, URLs auto-tracked, AND
+  // any cleanEmptyNodes() mutation or parse-failure text fallback applied by
+  // buildMessage(). Use scenario_step_id to recover the original template.
   const logId = crypto.randomUUID();
+  const logPayload = messageToLogPayload(message);
   await db
     .prepare(
       `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
        VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?)`,
     )
-    .bind(logId, friend.id, currentStep.message_type, currentStep.message_content, currentStep.id, jstNow())
+    .bind(logId, friend.id, logPayload.messageType, logPayload.content, currentStep.id, jstNow())
     .run();
 
   // Determine next step (find the step after currentStep in the sorted list)
@@ -345,6 +348,27 @@ function cleanEmptyNodes(obj: unknown): void {
       return true;
     });
   }
+}
+
+/**
+ * Derive (messageType, content) from a built `Message` object so that what
+ * lands in messages_log mirrors what was actually pushed to LINE — including
+ * cleanEmptyNodes() mutations and any parse-failure text fallback inside
+ * buildMessage(). Use this whenever you log a message you just pushed.
+ */
+export function messageToLogPayload(message: Message): { messageType: string; content: string } {
+  if (message.type === 'text') return { messageType: 'text', content: message.text };
+  if (message.type === 'flex') return { messageType: 'flex', content: JSON.stringify(message.contents) };
+  if (message.type === 'image') {
+    return {
+      messageType: 'image',
+      content: JSON.stringify({
+        originalContentUrl: message.originalContentUrl,
+        previewImageUrl: message.previewImageUrl,
+      }),
+    };
+  }
+  return { messageType: message.type, content: JSON.stringify(message) };
 }
 
 export function buildMessage(messageType: string, messageContent: string, altText?: string): Message {

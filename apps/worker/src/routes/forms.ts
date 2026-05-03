@@ -333,6 +333,13 @@ forms.post('/api/forms/:id/submit', async (c) => {
               }
               const lineClient = new LineClient(accessToken);
               await lineClient.pushMessage(friend.line_user_id, [{ type: 'text', text: form.on_submit_webhook_fail_message }]);
+              await c.env.DB
+                .prepare(
+                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+                   VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'auto_reply', ?)`,
+                )
+                .bind(crypto.randomUUID(), friend.id, form.on_submit_webhook_fail_message, jstNow())
+                .run();
             } catch (e) {
               console.error('Failed to send webhook fail message:', e);
             }
@@ -462,6 +469,13 @@ forms.post('/api/forms/:id/submit', async (c) => {
             await lineClient.pushMessage(friend.line_user_id, [
               { type: 'flex', altText: 'ヒアリングの準備ができました', contents: meetFlex },
             ]);
+            await db
+              .prepare(
+                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+                 VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'auto_reply', ?)`,
+              )
+              .bind(crypto.randomUUID(), friend.id, JSON.stringify(meetFlex), jstNow())
+              .run();
           })(),
         );
       }
@@ -548,6 +562,22 @@ forms.post('/api/forms/:id/submit', async (c) => {
           }
 
           await lineClient.pushMessage(friend.line_user_id, messages);
+
+          // Mirror every pushed message into messages_log so the dashboard chat
+          // view stays consistent with what the user actually receives in LINE.
+          // Without this the form's auto-reply is invisible to operators.
+          const { messageToLogPayload } = await import('../services/step-delivery.js');
+          const sentAt = jstNow();
+          for (const m of messages) {
+            const payload = messageToLogPayload(m);
+            await db
+              .prepare(
+                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+                 VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'auto_reply', ?)`,
+              )
+              .bind(crypto.randomUUID(), friend.id, payload.messageType, payload.content, sentAt)
+              .run();
+          }
         })(),
       );
 
