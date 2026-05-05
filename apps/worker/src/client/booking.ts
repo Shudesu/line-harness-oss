@@ -20,7 +20,7 @@ import { getApp } from './booking/html.js';
 import { renderError, renderHeader, renderScreen } from './booking/render.js';
 import { selectedMenu, state, totalPeople, UUID_STORAGE_KEY } from './booking/state.js';
 import { storeReservationTokens, storeTokensForReservation, tokenForReservation } from './booking/tokens.js';
-import type { Menu, Reservation, Resource, Slot } from './booking/types.js';
+import type { Slot } from './booking/types.js';
 
 declare const liff: {
   getProfile(): Promise<{ userId: string; displayName: string; pictureUrl?: string }>;
@@ -74,30 +74,6 @@ function bindEvents(): void {
       event.preventDefault();
       event.stopPropagation();
       void handleAction(actionEl.dataset.action ?? '', actionEl);
-      return;
-    }
-
-    const slotEl = target.closest<HTMLElement>('[data-slot-id]');
-    if (slotEl && app.contains(slotEl)) {
-      event.preventDefault();
-      event.stopPropagation();
-      selectSlot(slotEl.dataset.slotId ?? '');
-      return;
-    }
-
-    const reservationEl = target.closest<HTMLElement>('[data-reservation-id]');
-    if (reservationEl && app.contains(reservationEl)) {
-      event.preventDefault();
-      event.stopPropagation();
-      selectReservation(reservationEl.dataset.reservationId ?? '');
-      return;
-    }
-
-    const dateEl = target.closest<HTMLElement>('[data-date]');
-    if (dateEl && app.contains(dateEl)) {
-      event.preventDefault();
-      event.stopPropagation();
-      selectDate(dateEl.dataset.date ?? '');
     }
   };
 
@@ -145,6 +121,18 @@ function handleField(field: string, value: string): void {
 }
 
 async function handleAction(action: string, element: HTMLElement): Promise<void> {
+  if (action === 'select-date') {
+    selectDate(element.dataset.date ?? '');
+    return;
+  }
+  if (action === 'select-slot') {
+    selectSlot(element.dataset.slotId ?? '');
+    return;
+  }
+  if (action === 'select-reservation') {
+    selectReservation(element.dataset.reservationId ?? '');
+    return;
+  }
   if (action === 'show-booking' || action === 'back-booking') {
     state.screen = 'booking';
     state.error = null;

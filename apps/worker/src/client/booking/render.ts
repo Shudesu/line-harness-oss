@@ -146,7 +146,7 @@ function renderWeekAvailability(): string {
               const slot = (state.slotsByDate[date] ?? []).find((item) => formatTime(item.startAt) === time);
               if (!slot) return '<div class="week-cell mark none">-</div>';
               const mark = availabilityMark([slot]);
-              return `<button type="button" class="week-cell mark ${mark.className} ${state.selectedSlot?.slotId === slot.slotId ? 'selected' : ''}" ${slot.available ? `data-slot-id="${escapeHtml(slot.slotId)}"` : 'disabled'}><span>${mark.mark}</span><small>${escapeHtml(mark.label)}</small></button>`;
+              return `<button type="button" class="week-cell mark ${mark.className} ${state.selectedSlot?.slotId === slot.slotId ? 'selected' : ''}" ${slot.available ? `data-action="select-slot" data-slot-id="${escapeHtml(slot.slotId)}"` : 'disabled'}><span>${mark.mark}</span><small>${escapeHtml(mark.label)}</small></button>`;
             }).join('')}
           `;
         }).join('')}
@@ -182,7 +182,7 @@ function renderMonthAvailability(): string {
           const mark = availabilityMark(state.slotsByDate[date]);
           const disabled = isPastDate(date);
           return `
-            <button type="button" class="month-day ${mark.className} ${state.selectedDate === date ? 'selected' : ''}" ${disabled ? 'disabled' : `data-date="${date}"`}>
+            <button type="button" class="month-day ${mark.className} ${state.selectedDate === date ? 'selected' : ''}" ${disabled ? 'disabled' : `data-action="select-date" data-date="${date}"`}>
               <strong>${day}</strong>
               <span>${disabled ? '-' : mark.mark}</span>
               <small>${disabled ? '終了' : escapeHtml(mark.label)}</small>
@@ -221,7 +221,7 @@ function renderSlots(): string {
         ${slots.map((slot) => {
           const mark = availabilityMark([slot]);
           return `
-            <button type="button" class="slot-btn ${slot.available ? 'available' : 'full'} ${state.selectedSlot?.slotId === slot.slotId ? 'selected' : ''}" ${slot.available ? `data-slot-id="${escapeHtml(slot.slotId)}"` : 'disabled'}>
+            <button type="button" class="slot-btn ${slot.available ? 'available' : 'full'} ${state.selectedSlot?.slotId === slot.slotId ? 'selected' : ''}" ${slot.available ? `data-action="select-slot" data-slot-id="${escapeHtml(slot.slotId)}"` : 'disabled'}>
               <strong>${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</strong>
               <span>${mark.mark} ${escapeHtml(mark.label)}</span>
             </button>
@@ -339,7 +339,7 @@ function renderMine(): string {
       ${state.reservations.length === 0 ? '<p class="muted">受付中の予約はありません。</p>' : `
         <div class="reservation-list">
           ${state.reservations.map((reservation) => `
-            <button type="button" class="reservation-card" data-reservation-id="${escapeHtml(reservation.id)}">
+            <button type="button" class="reservation-card" data-action="select-reservation" data-reservation-id="${escapeHtml(reservation.id)}">
               <span>${formatDateJa(reservation.reservationDate)} ${formatTime(reservation.startAt)}-${formatTime(reservation.endAt)}</span>
               <strong>${escapeHtml(reservation.customerName || reservation.title || '予約')}</strong>
               <small>${statusLabel(reservation.status)} / ${reservation.totalPeople}名</small>
