@@ -5,6 +5,7 @@ import {
   getLineAccounts,
   getUserByEmail,
   linkFriendToUser,
+  upsertFriend,
 } from '@line-crm/db';
 import type { Env } from '../../index.js';
 import {
@@ -55,8 +56,13 @@ export async function issueReservationSession(
     return { ok: false as const, status: 401, error: 'Invalid idToken' };
   }
 
-  const friend = await getFriendByLineUserId(c.env.DB, verified.sub);
-  if (!friend) return { ok: false as const, status: 404, error: 'Friend not found' };
+  let friend = await getFriendByLineUserId(c.env.DB, verified.sub);
+  if (!friend) {
+    friend = await upsertFriend(c.env.DB, {
+      lineUserId: verified.sub,
+      displayName: input.displayName ?? verified.name ?? null,
+    });
+  }
 
   let userId = friend.user_id;
   if (!userId) {

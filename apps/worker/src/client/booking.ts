@@ -34,6 +34,35 @@ function currentLiffId(): string | null {
   return params.get('liffId') || import.meta.env?.VITE_LIFF_ID || null;
 }
 
+function eventElement(target: EventTarget | null): HTMLElement | null {
+  if (target instanceof HTMLElement) return target;
+  if (target instanceof Node && target.parentElement instanceof HTMLElement) {
+    return target.parentElement;
+  }
+  return null;
+}
+
+function renderShell(): void {
+  const app = getApp();
+  if (!app.querySelector('[data-booking-shell]')) {
+    app.innerHTML = `
+      <div class="booking-page reservation-liff" data-booking-shell>
+        ${renderHeader()}
+        <div data-booking-content></div>
+      </div>
+    `;
+    bindEvents();
+    return;
+  }
+
+  const shell = app.querySelector<HTMLElement>('[data-booking-shell]');
+  if (!shell) return;
+  shell.innerHTML = `
+    ${renderHeader()}
+    <div data-booking-content></div>
+  `;
+}
+
 function render(): void {
   const app = getApp();
   if (state.loading) {
@@ -54,19 +83,15 @@ function render(): void {
     return;
   }
 
-  app.innerHTML = `
-    <div class="booking-page reservation-liff">
-      ${renderHeader()}
-      ${renderScreen()}
-    </div>
-  `;
-  bindEvents();
+  renderShell();
+  const content = app.querySelector<HTMLElement>('[data-booking-content]');
+  if (content) content.innerHTML = renderScreen();
 }
 
 function bindEvents(): void {
   const app = getApp();
   app.onclick = (event) => {
-    const target = event.target instanceof HTMLElement ? event.target : null;
+    const target = eventElement(event.target);
     if (!target) return;
 
     const actionEl = target.closest<HTMLElement>('[data-action]');
@@ -78,14 +103,14 @@ function bindEvents(): void {
   };
 
   app.oninput = (event) => {
-    const element = event.target;
+    const element = eventElement(event.target);
     if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
     const field = element.dataset.field;
     if (field) handleField(field, element.value);
   };
 
   app.onchange = (event) => {
-    const element = event.target;
+    const element = eventElement(event.target);
     if (!(element instanceof HTMLSelectElement)) return;
     const field = element.dataset.field;
     if (field) handleField(field, element.value);
