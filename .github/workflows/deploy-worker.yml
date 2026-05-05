@@ -152,8 +152,15 @@ jobs:
           if (secretsStoreId) {
             const defaultBindings = [
               'API_KEY',
-              'LINE_CHANNEL_SECRET',
               'LINE_CHANNEL_ACCESS_TOKEN',
+              'LINE_CHANNEL_SECRET',
+              'LINE_LOGIN_CHANNEL_ID',
+              'LINE_LOGIN_CHANNEL_SECRET',
+              'LIFF_URL',
+              'WORKER_URL',
+              'GOOGLE_OAUTH_CLIENT_ID',
+              'GOOGLE_OAUTH_CLIENT_SECRET',
+              'GOOGLE_OAUTH_REDIRECT_URI',
             ];
             const rawBindings = process.env.CF_SECRETS_STORE_BINDINGS?.trim();
             const bindings = (rawBindings ? rawBindings.split(',') : defaultBindings)

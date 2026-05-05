@@ -89,7 +89,7 @@ export async function issueReservationSession(
       lineAccountId: friend.line_account_id,
       exp: secondsFromNow(60 * 60),
     },
-    reservationTokenSecret(c.env),
+    await reservationTokenSecret(c.env),
   );
 
   return {
@@ -110,7 +110,7 @@ export async function requireReservationSession(c: Context<Env>) {
   if (!authHeader?.startsWith('Bearer ')) return null;
   return verifyReservationToken(
     authHeader.slice('Bearer '.length),
-    reservationTokenSecret(c.env),
+    await reservationTokenSecret(c.env),
     'reservations:read',
   );
 }

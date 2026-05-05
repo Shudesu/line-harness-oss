@@ -27,6 +27,8 @@ import {
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
 } from '../../services/reservation-google-calendar.js';
+import { resolveBindingValue } from '../../services/bindings.js';
+import { signGoogleOAuthState } from '../../services/google-oauth.js';
 import {
   toExternalReservationSourceResponse,
   toMenuResponse,
@@ -494,16 +496,28 @@ adminReservations.put('/api/external-reservation-sources/:id/parse-status', asyn
 
 adminReservations.get('/api/reservations/google-calendar/oauth-url', async (c) => {
   try {
-    if (!c.env.GOOGLE_OAUTH_CLIENT_ID) {
+    const clientId = await resolveBindingValue(c.env.GOOGLE_OAUTH_CLIENT_ID);
+    const apiKey = await resolveBindingValue(c.env.API_KEY);
+    if (!clientId) {
       return jsonError(c, 'bad_request', 400, 'GOOGLE_OAUTH_CLIENT_ID is not configured');
+    }
+    if (!apiKey) {
+      return jsonError(c, 'bad_request', 400, 'API_KEY is not configured');
     }
     const calendarId = c.req.query('calendarId') || 'primary';
     const returnTo = c.req.query('returnTo') || `${new URL(c.req.url).origin}/admin/reservations`;
-    const redirectUri = c.env.GOOGLE_OAUTH_REDIRECT_URI
+    const redirectUri = await resolveBindingValue(c.env.GOOGLE_OAUTH_REDIRECT_URI)
       || `${new URL(c.req.url).origin}/api/integrations/google-calendar/oauth/callback`;
-    const state = btoa(JSON.stringify({ calendarId, returnTo }));
+    const state = await signGoogleOAuthState(
+      {
+        calendarId,
+        returnTo,
+        exp: Math.floor(Date.now() / 1000) + 10 * 60,
+      },
+      apiKey,
+    );
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    url.searchParams.set('client_id', c.env.GOOGLE_OAUTH_CLIENT_ID);
+    url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'https://www.googleapis.com/auth/calendar.events');

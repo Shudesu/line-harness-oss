@@ -19,6 +19,7 @@ import {
   signGoogleOAuthState,
   verifyGoogleOAuthState,
 } from '../services/google-oauth.js';
+import { resolveBindingValue } from '../services/bindings.js';
 import type { Env } from '../index.js';
 
 const calendar = new Hono<Env>();
@@ -27,24 +28,27 @@ const calendar = new Hono<Env>();
 
 calendar.get('/api/integrations/google-calendar/oauth/start', async (c) => {
   try {
-    if (!c.env.GOOGLE_OAUTH_CLIENT_ID || !c.env.GOOGLE_OAUTH_CLIENT_SECRET) {
+    const clientId = await resolveBindingValue(c.env.GOOGLE_OAUTH_CLIENT_ID);
+    const clientSecret = await resolveBindingValue(c.env.GOOGLE_OAUTH_CLIENT_SECRET);
+    const apiKey = await resolveBindingValue(c.env.API_KEY);
+    if (!clientId || !clientSecret || !apiKey) {
       return c.json({ success: false, error: 'Google OAuth client is not configured' }, 500);
     }
 
     const calendarId = c.req.query('calendarId') || 'primary';
     const returnTo = c.req.query('returnTo') || null;
-    const redirectUri = googleOAuthRedirectUri(c);
+    const redirectUri = await googleOAuthRedirectUri(c);
     const state = await signGoogleOAuthState(
       {
         calendarId,
         returnTo,
         exp: Math.floor(Date.now() / 1000) + 10 * 60,
       },
-      c.env.API_KEY,
+      apiKey,
     );
 
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    url.searchParams.set('client_id', c.env.GOOGLE_OAUTH_CLIENT_ID);
+    url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', 'https://www.googleapis.com/auth/calendar');
@@ -61,7 +65,10 @@ calendar.get('/api/integrations/google-calendar/oauth/start', async (c) => {
 
 calendar.get('/api/integrations/google-calendar/oauth/callback', async (c) => {
   try {
-    if (!c.env.GOOGLE_OAUTH_CLIENT_ID || !c.env.GOOGLE_OAUTH_CLIENT_SECRET) {
+    const clientId = await resolveBindingValue(c.env.GOOGLE_OAUTH_CLIENT_ID);
+    const clientSecret = await resolveBindingValue(c.env.GOOGLE_OAUTH_CLIENT_SECRET);
+    const apiKey = await resolveBindingValue(c.env.API_KEY);
+    if (!clientId || !clientSecret || !apiKey) {
       return c.text('Google OAuth client is not configured', 500);
     }
 
@@ -72,14 +79,14 @@ calendar.get('/api/integrations/google-calendar/oauth/callback', async (c) => {
     const stateParam = c.req.query('state');
     if (!code || !stateParam) return c.text('Missing code or state', 400);
 
-    const state = await verifyGoogleOAuthState(stateParam, c.env.API_KEY);
+    const state = await verifyGoogleOAuthState(stateParam, apiKey);
     if (!state) return c.text('Invalid or expired state', 401);
 
     const token = await exchangeGoogleAuthorizationCode({
       code,
-      clientId: c.env.GOOGLE_OAUTH_CLIENT_ID,
-      clientSecret: c.env.GOOGLE_OAUTH_CLIENT_SECRET,
-      redirectUri: googleOAuthRedirectUri(c),
+      clientId,
+      clientSecret,
+      redirectUri: await googleOAuthRedirectUri(c),
     });
 
     if (!token.refreshToken) {
@@ -364,8 +371,9 @@ calendar.put('/api/integrations/google-calendar/bookings/:id/status', async (c) 
   }
 });
 
-function googleOAuthRedirectUri(c: { env: Env['Bindings']; req: { url: string } }): string {
-  return c.env.GOOGLE_OAUTH_REDIRECT_URI || `${new URL(c.req.url).origin}/api/integrations/google-calendar/oauth/callback`;
+async function googleOAuthRedirectUri(c: { env: Env['Bindings']; req: { url: string } }): Promise<string> {
+  return await resolveBindingValue(c.env.GOOGLE_OAUTH_REDIRECT_URI)
+    || `${new URL(c.req.url).origin}/api/integrations/google-calendar/oauth/callback`;
 }
 
 function escapeHtml(str: string): string {

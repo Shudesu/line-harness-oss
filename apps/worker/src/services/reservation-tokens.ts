@@ -1,3 +1,5 @@
+import { resolveBindingValue, type SecretLike } from './bindings.js';
+
 export type ReservationTokenScope = 'reservations:read' | 'reservation:read' | 'reservation:cancel';
 
 export interface ReservationTokenPayload {
@@ -45,12 +47,15 @@ export async function verifyReservationToken(
   return payload;
 }
 
-export function reservationTokenSecret(env: {
-  API_KEY?: string;
-  LINE_CHANNEL_SECRET?: string;
-  LINE_LOGIN_CHANNEL_SECRET?: string;
-}): string {
-  return env.API_KEY || env.LINE_CHANNEL_SECRET || env.LINE_LOGIN_CHANNEL_SECRET || 'line-harness-reservation-dev-secret';
+export async function reservationTokenSecret(env: {
+  API_KEY?: SecretLike;
+  LINE_CHANNEL_SECRET?: SecretLike;
+  LINE_LOGIN_CHANNEL_SECRET?: SecretLike;
+}): Promise<string> {
+  return (await resolveBindingValue(env.API_KEY))
+    || (await resolveBindingValue(env.LINE_CHANNEL_SECRET))
+    || (await resolveBindingValue(env.LINE_LOGIN_CHANNEL_SECRET))
+    || 'line-harness-reservation-dev-secret';
 }
 
 export function secondsFromNow(seconds: number): number {

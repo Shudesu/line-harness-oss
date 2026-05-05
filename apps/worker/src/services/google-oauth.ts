@@ -3,12 +3,13 @@ import {
   updateCalendarConnectionTokens,
   type GoogleCalendarConnectionRow,
 } from '@line-crm/db';
+import { resolveBindingValue, type SecretLike } from './bindings.js';
 
 export interface GoogleOAuthEnv {
-  GOOGLE_OAUTH_CLIENT_ID?: string;
-  GOOGLE_OAUTH_CLIENT_SECRET?: string;
-  GOOGLE_OAUTH_REDIRECT_URI?: string;
-  API_KEY?: string;
+  GOOGLE_OAUTH_CLIENT_ID?: SecretLike;
+  GOOGLE_OAUTH_CLIENT_SECRET?: SecretLike;
+  GOOGLE_OAUTH_REDIRECT_URI?: SecretLike;
+  API_KEY?: SecretLike;
 }
 
 export async function getUsableGoogleCalendarConnection(
@@ -20,11 +21,13 @@ export async function getUsableGoogleCalendarConnection(
   if (!conn) return null;
   if (conn.access_token && !isExpiringSoon(conn.access_token_expires_at)) return conn;
   if (!conn.refresh_token) return conn.access_token ? conn : null;
-  if (!env.GOOGLE_OAUTH_CLIENT_ID || !env.GOOGLE_OAUTH_CLIENT_SECRET) return conn.access_token ? conn : null;
+  const clientId = await resolveBindingValue(env.GOOGLE_OAUTH_CLIENT_ID);
+  const clientSecret = await resolveBindingValue(env.GOOGLE_OAUTH_CLIENT_SECRET);
+  if (!clientId || !clientSecret) return conn.access_token ? conn : null;
 
   const refreshed = await refreshGoogleAccessToken({
-    clientId: env.GOOGLE_OAUTH_CLIENT_ID,
-    clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+    clientId,
+    clientSecret,
     refreshToken: conn.refresh_token,
   });
 

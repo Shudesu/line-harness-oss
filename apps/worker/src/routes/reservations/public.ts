@@ -146,7 +146,7 @@ publicReservations.post('/api/public/reservations', async (c) => {
     }
     c.executionCtx.waitUntil(syncReservationCreatedToGoogleCalendar(c.env.DB, result.reservation, c.env));
 
-    const secret = reservationTokenSecret(c.env);
+    const secret = await reservationTokenSecret(c.env);
     const detailToken = await signReservationToken(
       {
         scope: 'reservation:read',
@@ -201,7 +201,7 @@ publicReservations.get('/api/public/reservations/:id', async (c) => {
   try {
     const token = c.req.query('token');
     if (!token) return jsonError(c, 'unauthorized', 401, 'token is required');
-    const payload = await verifyReservationToken(token, reservationTokenSecret(c.env), 'reservation:read');
+    const payload = await verifyReservationToken(token, await reservationTokenSecret(c.env), 'reservation:read');
     if (!payload || payload.reservationId !== c.req.param('id')) {
       return jsonError(c, 'unauthorized', 401);
     }
@@ -225,7 +225,7 @@ publicReservations.post('/api/public/reservations/:id/tokens', async (c) => {
     if (!canAccessReservation(session, reservation)) return jsonError(c, 'forbidden', 403);
 
     const expiresIn = 60 * 60 * 24;
-    const secret = reservationTokenSecret(c.env);
+    const secret = await reservationTokenSecret(c.env);
     const commonPayload = {
       reservationId: reservation.id,
       lineUserId: session.lineUserId,
@@ -259,7 +259,7 @@ publicReservations.post('/api/public/reservations/:id/cancel', async (c) => {
     if (!json.ok) return jsonError(c, json.error.code, json.error.status, json.error.message);
     const token = typeof json.value.token === 'string' ? json.value.token : undefined;
     if (!token) return jsonError(c, 'unauthorized', 401, 'token is required');
-    const payload = await verifyReservationToken(token, reservationTokenSecret(c.env), 'reservation:cancel');
+    const payload = await verifyReservationToken(token, await reservationTokenSecret(c.env), 'reservation:cancel');
     if (!payload || payload.reservationId !== c.req.param('id')) {
       return jsonError(c, 'unauthorized', 401);
     }
