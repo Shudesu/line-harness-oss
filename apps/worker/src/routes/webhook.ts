@@ -20,43 +20,72 @@ import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
 
-webhook.post('/webhook', async (c) => {
-  const rawBody = await c.req.text();
-  const signature = c.req.header('X-Line-Signature') ?? '';
-  const db = c.env.DB;
+// Maximum accepted webhook body size. 512KB leaves ample headroom while
+// bounding the memory + CPU an unauthenticated request can force the
+// worker to spend.
+const MAX_WEBHOOK_BODY_SIZE = 512 * 1024;
 
-  let body: WebhookRequestBody;
-  try {
-    body = JSON.parse(rawBody) as WebhookRequestBody;
-  } catch {
-    console.error('Failed to parse webhook body');
+webhook.post('/webhook', async (c) => {
+  // Reject oversized payloads via Content-Length before reading the body.
+  // This avoids buffering attacker-controlled bytes into worker memory at all.
+  const contentLengthHeader = c.req.header('Content-Length');
+  if (contentLengthHeader) {
+    const contentLength = parseInt(contentLengthHeader, 10);
+    if (Number.isFinite(contentLength) && contentLength > MAX_WEBHOOK_BODY_SIZE) {
+      return c.json({ status: 'payload too large' }, 413);
+    }
+  }
+
+  // Read the body, then double-check the size in case Content-Length was
+  // missing or untrustworthy (chunked transfer encoding etc.).
+  const rawBody = await c.req.text();
+  if (rawBody.length > MAX_WEBHOOK_BODY_SIZE) {
+    return c.json({ status: 'payload too large' }, 413);
+  }
+
+  const signature = c.req.header('X-Line-Signature') ?? '';
+  if (!signature) {
+    console.error('Invalid LINE signature');
     return c.json({ status: 'ok' }, 200);
   }
 
-  // Multi-account: resolve credentials from DB by destination (channel user ID)
-  // or fall back to environment variables (default account)
+  // Verify the HMAC signature BEFORE JSON.parse so that unverified input
+  // never reaches the parser. Try the env default secret first as a fast
+  // path, then fall back to DB-registered accounts.
+  const db = c.env.DB;
   let channelSecret = c.env.LINE_CHANNEL_SECRET;
   let channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
   let matchedAccountId: string | null = null;
+  let valid = false;
 
-  if ((body as { destination?: string }).destination) {
+  if (channelSecret) {
+    valid = await verifySignature(channelSecret, rawBody, signature);
+  }
+
+  if (!valid) {
     const accounts = await getLineAccounts(db);
     for (const account of accounts) {
       if (!account.is_active) continue;
-      const isValid = await verifySignature(account.channel_secret, rawBody, signature);
-      if (isValid) {
+      if (await verifySignature(account.channel_secret, rawBody, signature)) {
         channelSecret = account.channel_secret;
         channelAccessToken = account.channel_access_token;
         matchedAccountId = account.id;
+        valid = true;
         break;
       }
     }
   }
 
-  // Verify with resolved secret
-  const valid = await verifySignature(channelSecret, rawBody, signature);
   if (!valid) {
     console.error('Invalid LINE signature');
+    return c.json({ status: 'ok' }, 200);
+  }
+
+  let body: WebhookRequestBody;
+  try {
+    body = JSON.parse(rawBody) as WebhookRequestBody;
+  } catch {
+    console.error('Failed to parse verified webhook body');
     return c.json({ status: 'ok' }, 200);
   }
 
