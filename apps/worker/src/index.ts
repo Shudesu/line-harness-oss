@@ -75,8 +75,18 @@ export type Env = {
 
 const app = new Hono<Env>();
 
-// CORS — allow all origins for MVP
-app.use('*', cors({ origin: '*' }));
+const corsHeaders = {
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Authorization', 'Content-Type', 'X-Requested-With'],
+  exposeHeaders: ['Content-Length', 'Content-Type'],
+  maxAge: 86400,
+};
+
+// CORS — Pages/app clients call the Worker API with Authorization headers.
+// Preflight must be answered before rate-limit/auth middleware.
+app.use('*', cors(corsHeaders));
+app.options('*', cors(corsHeaders), (c) => c.body(null, 204));
 
 // Rate limiting — runs before auth to block abuse early
 app.use('*', rateLimitMiddleware);
