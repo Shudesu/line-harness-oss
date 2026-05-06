@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import { LineClient } from '@line-crm/line-sdk';
 import { getLineAccounts, getTrafficPoolBySlug, getRandomPoolAccount, getPoolAccounts } from '@line-crm/db';
 import { processStepDeliveries } from './services/step-delivery.js';
@@ -75,18 +74,35 @@ export type Env = {
 
 const app = new Hono<Env>();
 
-const corsHeaders = {
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Authorization', 'Content-Type', 'X-Requested-With'],
-  exposeHeaders: ['Content-Length', 'Content-Type'],
-  maxAge: 86400,
+const corsHeaderValues = {
+  allowOrigin: '*',
+  allowMethods: 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+  allowHeaders: 'Authorization,Content-Type,X-Requested-With',
+  exposeHeaders: 'Content-Length,Content-Type',
+  maxAge: '86400',
 };
+
+function applyCorsHeaders(headers: Headers): void {
+  headers.set('Access-Control-Allow-Origin', corsHeaderValues.allowOrigin);
+  headers.set('Access-Control-Allow-Methods', corsHeaderValues.allowMethods);
+  headers.set('Access-Control-Allow-Headers', corsHeaderValues.allowHeaders);
+  headers.set('Access-Control-Expose-Headers', corsHeaderValues.exposeHeaders);
+  headers.set('Access-Control-Max-Age', corsHeaderValues.maxAge);
+  headers.append('Vary', 'Origin');
+}
 
 // CORS — Pages/app clients call the Worker API with Authorization headers.
 // Preflight must be answered before rate-limit/auth middleware.
-app.use('*', cors(corsHeaders));
-app.options('*', cors(corsHeaders), (c) => c.body(null, 204));
+app.use('*', async (c, next) => {
+  if (c.req.method === 'OPTIONS') {
+    const headers = new Headers();
+    applyCorsHeaders(headers);
+    return new Response(null, { status: 204, headers });
+  }
+
+  await next();
+  applyCorsHeaders(c.res.headers);
+});
 
 // Rate limiting — runs before auth to block abuse early
 app.use('*', rateLimitMiddleware);
