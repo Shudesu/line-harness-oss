@@ -15,17 +15,18 @@ export default function LoginPage() {
 
     try {
       // Validate by calling a simple endpoint
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787'
+      const normalizedApiKey = apiKey.trim()
+      const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787').trim().replace(/\/+$/, '')
       const res = await fetch(`${apiUrl}/api/friends/count`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { Authorization: `Bearer ${normalizedApiKey}` },
       })
 
       if (res.ok) {
-        localStorage.setItem('lh_api_key', apiKey)
+        localStorage.setItem('lh_api_key', normalizedApiKey)
         // Fetch staff profile for name/role display
         try {
           const profileRes = await fetch(`${apiUrl}/api/staff/me`, {
-            headers: { Authorization: `Bearer ${apiKey}` },
+            headers: { Authorization: `Bearer ${normalizedApiKey}` },
           })
           if (profileRes.ok) {
             const profileData = await profileRes.json()
