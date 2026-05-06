@@ -19,7 +19,13 @@ import {
 } from '@line-crm/db';
 import { buildIntroMessage } from '../services/intro-message.js';
 import type { Env } from '../index.js';
-import { resolveBindingValue } from '../services/bindings.js';
+import {
+  defaultLiffUrl,
+  defaultLineAccessToken,
+  defaultLineLoginChannelId,
+  defaultLineLoginChannelSecret,
+  workerBaseUrl,
+} from '../services/line-bindings.js';
 
 const liffRoutes = new Hono<Env>();
 
@@ -138,8 +144,8 @@ liffRoutes.get('/auth/line', async (c) => {
 
   // Multi-account: resolve LINE Login channel + LIFF
   // Priority: ?account= param > traffic pool "main" > env default
-  let channelId = c.env.LINE_LOGIN_CHANNEL_ID;
-  let liffUrl = c.env.LIFF_URL;
+  let channelId = await defaultLineLoginChannelId(c.env);
+  let liffUrl = await defaultLiffUrl(c.env);
   if (accountParam) {
     const account = await getLineAccountByChannelId(c.env.DB, accountParam);
     if (account?.login_channel_id) {
@@ -318,7 +324,7 @@ liffRoutes.get('/auth/oauth', async (c) => {
   const baseUrl = new URL(c.req.url).origin;
 
   // Pool / account resolution — same logic as /auth/line
-  let channelId = c.env.LINE_LOGIN_CHANNEL_ID;
+  let channelId = await defaultLineLoginChannelId(c.env);
   if (accountParam) {
     const account = await getLineAccountByChannelId(c.env.DB, accountParam);
     if (account?.login_channel_id) channelId = account.login_channel_id;
@@ -419,8 +425,8 @@ liffRoutes.get('/auth/callback', async (c) => {
     const callbackUrl = `${baseUrl}/auth/callback`;
 
     // Multi-account: resolve LINE Login credentials from DB
-    let loginChannelId = c.env.LINE_LOGIN_CHANNEL_ID;
-    let loginChannelSecret = c.env.LINE_LOGIN_CHANNEL_SECRET;
+    let loginChannelId = await defaultLineLoginChannelId(c.env);
+    let loginChannelSecret = await defaultLineLoginChannelSecret(c.env);
     if (accountParam) {
       const account = await getLineAccountByChannelId(c.env.DB, accountParam);
       if (account?.login_channel_id && account?.login_channel_secret) {
@@ -640,7 +646,7 @@ liffRoutes.get('/auth/callback', async (c) => {
         : null;
 
       // Get access token for this account
-      let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+      let accessToken = await defaultLineAccessToken(c.env);
       if (accountParam) {
         const acct = await getLineAccountByChannelId(db, accountParam);
         if (acct) accessToken = acct.channel_access_token;
@@ -662,7 +668,7 @@ liffRoutes.get('/auth/callback', async (c) => {
               const expandedContent = expandVariables(
                 firstStep.message_content,
                 { ...friend, metadata: resolvedMetaLiff } as Parameters<typeof expandVariables>[1],
-                c.env.WORKER_URL,
+                await workerBaseUrl(c.env, c.req.url),
               );
               await lineClient.pushMessage(lineUserId, [buildMessage(firstStep.message_type, expandedContent)]);
             }
@@ -698,7 +704,7 @@ liffRoutes.get('/auth/callback', async (c) => {
         let formLiffUrl = `${new URL(c.req.url).origin}?${formQuery.toString()}`;
         const { LineClient } = await import('@line-crm/line-sdk');
         const { getLineAccountById: getAcctById } = await import('@line-crm/db');
-        let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+        let accessToken = await defaultLineAccessToken(c.env);
         if (friend.line_account_id) {
           const account = await getAcctById(db, friend.line_account_id);
           if (account?.channel_access_token) accessToken = account.channel_access_token;
@@ -707,7 +713,7 @@ liffRoutes.get('/auth/callback', async (c) => {
           }
         }
         if (formLiffUrl.startsWith(`${new URL(c.req.url).origin}`)) {
-          const envLiffUrl = c.env.LIFF_URL || '';
+          const envLiffUrl = await defaultLiffUrl(c.env);
           const envLiffIdMatch = envLiffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
           if (envLiffIdMatch) {
             formLiffUrl = `https://liff.line.me/${envLiffIdMatch[1]}?${formQuery.toString()}`;
@@ -812,7 +818,7 @@ liffRoutes.get('/api/liff/config', async (c) => {
     }
 
     // Fallback to default env account if liff_id not found in DB
-    const accessToken = account?.channel_access_token || await resolveBindingValue(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const accessToken = account?.channel_access_token || await defaultLineAccessToken(c.env);
     const accountName = account?.name || 'Default';
     const accountId = account?.id || 'default';
 
@@ -888,7 +894,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
     }
 
     // Try verifying with default Login channel, then DB accounts
-    const loginChannelIds = [c.env.LINE_LOGIN_CHANNEL_ID];
+    const loginChannelIds = [await defaultLineLoginChannelId(c.env)].filter(Boolean);
     const dbAccounts = await getLineAccounts(c.env.DB);
     for (const acct of dbAccounts) {
       if (acct.login_channel_id && !loginChannelIds.includes(acct.login_channel_id)) {
@@ -1168,7 +1174,7 @@ liffRoutes.post('/api/links/wrap', async (c) => {
       return c.json({ success: false, error: 'url is required' }, 400);
     }
 
-    const liffUrl = c.env.LIFF_URL;
+    const liffUrl = await defaultLiffUrl(c.env);
     if (!liffUrl) {
       return c.json({ success: false, error: 'LIFF_URL not configured' }, 500);
     }
@@ -1437,7 +1443,7 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
 
     // Verify idToken — ensures caller is the actual user
     {
-      const loginChannelIds = [c.env.LINE_LOGIN_CHANNEL_ID];
+      const loginChannelIds = [await defaultLineLoginChannelId(c.env)].filter(Boolean);
       const dbAccounts = await getLineAccounts(c.env.DB);
       for (const acct of dbAccounts) {
         if (acct.login_channel_id) loginChannelIds.push(acct.login_channel_id);
@@ -1488,7 +1494,7 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
     if (xh) formQuery.set('xh', xh);
     let formLiffUrl = `${new URL(c.req.url).origin}?${formQuery.toString()}`;
     const { LineClient } = await import('@line-crm/line-sdk');
-    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    let accessToken = await defaultLineAccessToken(c.env);
     if ((friend as any).line_account_id) {
       const account = await getLineAccountById(db, (friend as any).line_account_id);
       if (account?.channel_access_token) accessToken = account.channel_access_token;
@@ -1498,7 +1504,7 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
     }
     if (formLiffUrl.startsWith(`${new URL(c.req.url).origin}`)) {
       // Fallback: use env LIFF_URL if no account-specific liff_id
-      const liffUrl = c.env.LIFF_URL || '';
+      const liffUrl = await defaultLiffUrl(c.env);
       const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
       if (liffIdMatch) {
         formLiffUrl = `https://liff.line.me/${liffIdMatch[1]}?${formQuery.toString()}`;

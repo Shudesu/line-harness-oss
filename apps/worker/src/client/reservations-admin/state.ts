@@ -44,6 +44,7 @@ export const state: AdminState = {
   externalSources: [],
   selectedReservation: null,
   selectedSlotId: null,
+  showExternalDetails: false,
   bulkPreviewSlots: [],
   loading: false,
   message: null,

@@ -195,6 +195,40 @@ Cloudflare Pages project がまだ存在しない場合は、Dashboardで作る�
 pnpm exec wrangler pages project create line-harness-reservation-web --production-branch main
 ```
 
+## 既存LINE公式アカウントにLINE harnessを載せる方針
+
+このプロジェクトでは、LINE公式アカウントを別アカウントへ移行するのではなく、既存のLINE公式アカウントにLINE harness Workerを接続する。
+
+やること:
+
+```text
+1. 既存LINE公式アカウントのMessaging APIを有効化する。
+2. Channel secret / channel access token をCloudflare Secrets Storeへ保存する。
+3. LINE DevelopersのWebhook URLを `https://<worker>/webhook` に設定する。
+4. Webhook利用をONにする。
+5. LINE Login / LIFFを同じまたは対応するLINE Developers providerで作成する。
+6. LIFF Endpoint URLを `https://<worker>/?page=book` などに設定する。
+7. LINE harness管理画面から `line_accounts` に既存アカウント情報を登録する。
+```
+
+重要:
+
+- 既存の友だちをLINE APIで全件取得することはできない。
+- 既にこのDBに `line_user_id` がある友だちは、そのまま `friends` として移行できる。
+- DBに存在しない既存友だちは、次にメッセージ・LIFF・フォーム・予約などで接触した時点で `friends` に登録・更新される。
+- 既存リッチメニューは、旧アカウントではなく同じ既存アカウント上のリッチメニューとして扱う。LINE APIから一覧を取得し、LINE harness管理画面で確認・default設定・個別link/unlinkする。
+- 既存のLINE Official Account Managerで作ったリッチメニューをLINE harness管理下へ完全同期したい場合は、`/api/rich-menus` で一覧取得し、DB側に管理用メタデータを保存する同期機能を追加する。
+
+初回接続時の安全確認:
+
+```text
+1. `/api/health` が通る。
+2. LINE DevelopersのWebhook検証が成功する。
+3. 友だち追加またはメッセージ送信で `friends` が作成・更新される。
+4. `/api/rich-menus` で既存リッチメニュー一覧が見える。
+5. LIFF予約画面でsession tokenが発行される。
+```
+
 GitHub Actionsでは `.github/workflows/deploy-web.yml` が次を行う。
 
 ```text

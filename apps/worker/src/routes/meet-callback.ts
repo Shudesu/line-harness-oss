@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { getFriendByLineUserId } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
+import { defaultLineAccessToken } from '../services/line-bindings.js';
 
 const app = new Hono<Env>();
 
@@ -31,7 +32,7 @@ app.post('/api/meet-callback', async (c) => {
   }
 
   // Resolve LINE access token (multi-account support)
-  let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+  let accessToken = await defaultLineAccessToken(c.env);
   if ((friend as unknown as Record<string, unknown>).line_account_id) {
     const { getLineAccountById } = await import('@line-crm/db');
     const account = await getLineAccountById(c.env.DB, (friend as unknown as Record<string, unknown>).line_account_id as string);

@@ -13,6 +13,7 @@ import { processSegmentSend } from '../services/segment-send.js';
 import type { SegmentCondition } from '../services/segment-query.js';
 import { getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { defaultLineAccessToken, workerBaseUrl } from '../services/line-bindings.js';
 
 const broadcasts = new Hono<Env>();
 
@@ -211,7 +212,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     }
 
     // 500人以下またはtarget_type='all'は即時送信
-    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    let accessToken = await defaultLineAccessToken(c.env);
     const broadcastAccountId = (existing as unknown as Record<string, unknown>).line_account_id;
     if (broadcastAccountId) {
       const { getLineAccountById } = await import('@line-crm/db');
@@ -219,7 +220,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       if (account) accessToken = account.channel_access_token;
     }
     const lineClient = new LineClient(accessToken);
-    await processBroadcastSend(c.env.DB, lineClient, id, c.env.WORKER_URL);
+    await processBroadcastSend(c.env.DB, lineClient, id, await workerBaseUrl(c.env, c.req.url));
 
     const result = await getBroadcastById(c.env.DB, id);
     return c.json({ success: true, data: result ? serializeBroadcast(result) : null });
@@ -319,7 +320,7 @@ broadcasts.post('/api/broadcasts/:id/fetch-insight', async (c) => {
     }
 
     // LINE APIクライアントを解決
-    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    let accessToken = await defaultLineAccessToken(c.env);
     const accountId = rawBroadcast?.line_account_id || null;
     if (accountId) {
       const { getLineAccountById } = await import('@line-crm/db');
@@ -425,7 +426,7 @@ broadcasts.post('/api/broadcasts/:id/test-send', async (c) => {
 
     // Auto-track URLs
     const { autoTrackContent } = await import('../services/auto-track.js');
-    const tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, c.env.WORKER_URL);
+    const tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, await workerBaseUrl(c.env, c.req.url));
 
     const { extractFlexAltText } = await import('../utils/flex-alt-text.js');
     const altText = raw.alt_text as string || (tracked.messageType === 'flex' ? extractFlexAltText(tracked.content) : undefined);

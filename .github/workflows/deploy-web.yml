@@ -1,5 +1,6 @@
 name: Deploy Web
 
+
 # Deploys apps/web as a static Next.js export to Cloudflare Pages.
 #
 # Required GitHub Secrets:

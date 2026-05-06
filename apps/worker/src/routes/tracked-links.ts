@@ -12,6 +12,7 @@ import {
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { TrackedLink } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { defaultLiffUrl, workerBaseUrl } from '../services/line-bindings.js';
 
 const trackedLinks = new Hono<Env>();
 
@@ -244,9 +245,10 @@ trackedLinks.get('/t/:linkId', async (c) => {
   // Skip LIFF redirect for app-link domains (they'll come from Safari via externalBrowser)
   const ua = c.req.header('user-agent') || '';
   const isLineApp = /\bLine\b/i.test(ua);
-  if (!useAppRedirect && !lineUserId && !friendId && isLineApp && c.env.LIFF_URL) {
-    const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
-    const liffRedirect = `${c.env.LIFF_URL}?redirect=${encodeURIComponent(directUrl)}`;
+  const liffUrl = await defaultLiffUrl(c.env);
+  if (!useAppRedirect && !lineUserId && !friendId && isLineApp && liffUrl) {
+    const directUrl = `${await workerBaseUrl(c.env, c.req.url)}/t/${linkId}`;
+    const liffRedirect = `${liffUrl}?redirect=${encodeURIComponent(directUrl)}`;
     return c.redirect(liffRedirect, 302);
   }
 

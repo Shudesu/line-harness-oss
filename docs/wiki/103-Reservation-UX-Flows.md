@@ -15,7 +15,9 @@
 
 ユーザーがスマホで迷わず予約できる画面にする。
 
-MVPでは、次の5ステップだけに絞る。
+LIFF画面では、予約作成だけでなく、同じLINEアカウントに紐づく予約確認・詳細・キャンセルまで扱う。
+
+予約作成は、次の5ステップに絞る。
 
 ```text
 1. 予約対象とメニューを選ぶ
@@ -25,15 +27,25 @@ MVPでは、次の5ステップだけに絞る。
 5. 予約確認 → 予約完了
 ```
 
-次の機能は、LIFF予約画面のMVPから外す。
+予約確認は、予約作成とは別のタブとして扱う。
 
-- 自分の予約一覧
-- 予約詳細画面
-- LIFF内キャンセル
-- token再発行UI
-- 複雑なタブ切替
+```text
+予約する
+  予約対象・メニュー・人数・日付・時間・受付情報を入力する
 
-キャンセルや変更は、MVPでは完了画面に「LINEから店舗へ連絡してください」と表示する。
+予約確認
+  自分の予約一覧を見る
+  予約詳細を見る
+  pending / confirmed の予約だけキャンセルできる
+```
+
+重要な制約:
+
+- 公開APIは `lineUserId` の直指定を信用しない。
+- `GET /api/public/me/reservations` は短命 `reservation session token` が必須。
+- キャンセルは `detailToken` ではなく `cancelToken` が必須。
+- `cancelToken` が手元にない場合は、session tokenで `POST /api/public/reservations/:id/tokens` を呼び、本人確認済みの状態で再発行する。
+- キャンセル実行後の在庫戻しはDB helperの状態遷移表に任せる。フロントエンドで在庫を直接変更しない。
 
 ### URL
 
@@ -267,6 +279,59 @@ https://liff.line.me/{LIFF_ID}?page=book
 - `.success-message`
 - `.close-btn`
 
+### 予約確認タブ
+
+```html
+<div class="booking-tabs">
+  <button data-action="show-booking">予約する</button>
+  <button data-action="show-mine">予約確認</button>
+</div>
+
+<section class="booking-panel">
+  <div class="section-title-row">
+    <h2>予約確認</h2>
+    <button class="mini-btn" data-action="reload-mine">更新</button>
+  </div>
+  <div class="reservation-list">
+    <button class="reservation-card" data-action="select-reservation" data-reservation-id="...">...</button>
+  </div>
+</section>
+```
+
+使うclass:
+
+- `.booking-tabs`
+- `.mini-btn`
+- `.reservation-list`
+- `.reservation-card`
+- `.text-btn`
+- `.danger`
+- `.muted-icon`
+
+### 予約詳細とキャンセル
+
+```html
+<section class="booking-panel">
+  <button class="text-btn" data-action="show-mine">予約一覧へ</button>
+  <h2>予約詳細</h2>
+  <div class="confirm-details">...</div>
+  <button class="close-btn danger" data-action="issue-tokens">キャンセル用の確認情報を取得する</button>
+  <button class="close-btn danger" data-action="go-cancel">この予約をキャンセルする</button>
+</section>
+
+<section class="booking-panel">
+  <h2>キャンセル確認</h2>
+  <button class="close-btn" data-action="back-detail">戻る</button>
+  <button class="book-btn danger" data-action="submit-cancel">キャンセルする</button>
+</section>
+```
+
+キャンセル可能条件:
+
+- `reservation.status` が `pending` または `confirmed`
+- `cancelToken` がある、または session token で再発行できる
+- `completed` / `no_show` / `cancelled` はLIFFからキャンセルできない
+
 ## 残すCSS
 
 `apps/worker/index.html` の既存CSSは、次のまとまりを残す。
@@ -316,14 +381,8 @@ https://liff.line.me/{LIFF_ID}?page=book
 - `.close-btn`
 - `@media (max-width: 420px)`
 
-次のCSSはMVPでは使わないなら削除候補にする。
+次のCSSは未使用なら削除候補にする。
 
-- `.booking-tabs`
-- `.mini-btn`
-- `.text-btn`
-- `.reservation-list`
-- `.reservation-card`
-- `.muted-icon`
 - `.confirm-section`
 - `.booking-calendar`
 - `.cal-days`
@@ -388,7 +447,7 @@ apps/worker/src/client/booking/types.ts
 ### 状態設計
 
 ```ts
-type BookingStep = 'input' | 'confirm' | 'success';
+type BookingStep = 'input' | 'confirm' | 'success' | 'mine' | 'detail' | 'cancel-confirm' | 'cancelled';
 type ViewMode = 'week' | 'month';
 
 type BookingState = {
@@ -421,6 +480,8 @@ type BookingState = {
 
   sessionToken: string | null;
   lastReservation: Reservation | null;
+  reservations: Reservation[];
+  selectedReservationId: string | null;
   notice: string | null;
   error: string | null;
 };
@@ -552,6 +613,9 @@ data-date
 
 data-slot-id
   slot id
+
+data-reservation-id
+  reservation id
 ```
 
 `data-date` のclick handlerで `data-action` を処理しない。逆も同じ。1つのDOM要素に `data-action` と `data-date` を同時に付けない。
@@ -586,6 +650,85 @@ data-slot-id
   → 失敗: inputへ戻して最新slotを再取得
 ```
 
+### 自分の予約一覧
+
+予約確認タブを押した時だけ一覧APIを呼ぶ。
+
+```text
+show-mine
+  → screen='mine'
+  → GET /api/public/me/reservations
+  → reservations を更新
+```
+
+一覧APIには必ず session token を付ける。
+
+```http
+Authorization: Bearer RESERVATION_SESSION_TOKEN
+```
+
+`lineUserId` はqueryに出さない。
+
+### 予約詳細
+
+予約カードを押した時は、APIを呼ばず、取得済みの `reservations` から選択する。
+
+```text
+select-reservation
+  → selectedReservationId を更新
+  → screen='detail'
+```
+
+詳細画面に表示する情報:
+
+- 日付
+- 時間
+- メニュー名
+- 人数
+- 予約者名
+- 電話番号
+- メール
+- 予約状態
+- 予約ID
+
+### LIFF内キャンセル
+
+キャンセルは2段階にする。
+
+```text
+detail
+  → キャンセル用tokenがあるなら go-cancel
+  → tokenがなければ issue-tokens
+
+cancel-confirm
+  → submit-cancel
+  → POST /api/public/reservations/:id/cancel
+  → cancelled
+```
+
+`issue-tokens` は session token が必要。
+
+```http
+POST /api/public/reservations/:id/tokens
+Authorization: Bearer RESERVATION_SESSION_TOKEN
+```
+
+`submit-cancel` は cancel token が必要。
+
+```json
+{
+  "token": "SIGNED_CANCEL_TOKEN",
+  "reason": "customer_requested"
+}
+```
+
+フロントエンドの責務:
+
+- キャンセル可能状態だけボタンを出す。
+- 二重送信中はボタンをdisabledにする。
+- 成功したら一覧内の予約状態を更新する。
+- 在庫戻しの正しさはDB helperに任せる。
+
 ### 予約作成失敗時
 
 在庫不足などで失敗した場合:
@@ -608,6 +751,12 @@ data-slot-id
 - 人数変更でslot選択が解除され、slotsが再取得される。
 - 確認画面ではAPIを呼ばない。
 - 予約確定でだけ作成APIを呼ぶ。
+- 予約確認タブを押した時だけ自分の予約一覧APIを呼ぶ。
+- 予約カードを押しても日付選択や表示モード変更は起きない。
+- `detailToken` だけではキャンセルできない。
+- `cancelToken` がない場合だけtoken再発行APIを呼ぶ。
+- `completed` / `cancelled` / `no_show` はキャンセルボタンが出ない。
+- キャンセル成功後、一覧と詳細の状態が `cancelled` に更新される。
 
 ## 予約管理画面
 

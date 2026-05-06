@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
+import { workerBaseUrl } from '../services/line-bindings.js';
 
 const images = new Hono<Env>();
 
@@ -59,7 +60,7 @@ images.post('/api/images', async (c) => {
       customMetadata: { originalFilename: filename ?? key },
     });
 
-    const workerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+    const workerUrl = await workerBaseUrl(c.env, c.req.url);
     const url = `${workerUrl}/images/${key}`;
 
     return c.json({

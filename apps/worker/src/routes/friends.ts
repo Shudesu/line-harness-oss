@@ -14,6 +14,7 @@ import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
+import { defaultLineAccessToken, workerBaseUrl } from '../services/line-bindings.js';
 
 const friends = new Hono<Env>();
 
@@ -321,7 +322,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
 
     const { LineClient } = await import('@line-crm/line-sdk');
     // Resolve access token from friend's account (multi-account support)
-    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    let accessToken = await defaultLineAccessToken(c.env);
     if ((friend as unknown as Record<string, unknown>).line_account_id) {
       const { getLineAccountById } = await import('@line-crm/db');
       const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
@@ -334,7 +335,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
     const { autoTrackContent } = await import('../services/auto-track.js');
     const tracked = await autoTrackContent(
       db, messageType, body.content,
-      c.env.WORKER_URL || new URL(c.req.url).origin,
+      await workerBaseUrl(c.env, c.req.url),
     );
 
     const message = buildMessage(tracked.messageType, tracked.content, body.altText);

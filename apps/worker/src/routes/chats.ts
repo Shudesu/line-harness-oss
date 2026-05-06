@@ -15,6 +15,7 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { defaultLineAccessToken } from '../services/line-bindings.js';
 
 const chats = new Hono<Env>();
 
@@ -405,7 +406,7 @@ chats.post('/api/chats/:id/loading', async (c) => {
     const { friend, accessToken } = await resolveFriendAndAccessToken(
       c.env.DB,
       chat.friend_id,
-      c.env.LINE_CHANNEL_ACCESS_TOKEN,
+      await defaultLineAccessToken(c.env),
     );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 
@@ -436,7 +437,7 @@ chats.post('/api/chats/:id/send', async (c) => {
     const { friend, accessToken } = await resolveFriendAndAccessToken(
       c.env.DB,
       chat.friend_id,
-      c.env.LINE_CHANNEL_ACCESS_TOKEN,
+      await defaultLineAccessToken(c.env),
     );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 

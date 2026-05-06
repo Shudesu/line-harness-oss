@@ -316,7 +316,7 @@ function renderSuccess(): string {
         email: reservation.customerEmail ?? state.form.customerEmail,
         note: state.form.note,
       })}
-      <p class="policy-note">当日は予約時間に合わせてお越しください。キャンセルは予約確認画面から行えます。</p>
+      <p class="policy-note">当日は予約時間に合わせてお越しください。予約確認画面から詳細確認とキャンセルができます。</p>
       <div class="booking-actions">
         <button type="button" class="book-btn" data-action="show-created-detail">予約詳細を見る</button>
         <button type="button" class="close-btn" data-action="close">LINEに戻る</button>
@@ -335,6 +335,7 @@ function renderMine(): string {
         </div>
         <button type="button" class="mini-btn" data-action="reload-mine">更新</button>
       </div>
+      ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
       ${state.loadingSlots ? '<div class="slots-loading"><div class="loading-spinner"></div><p>予約を確認中...</p></div>' : ''}
       ${state.reservations.length === 0 ? '<p class="muted">受付中の予約はありません。</p>' : `
         <div class="reservation-list">
@@ -360,6 +361,7 @@ function renderReservationDetail(): string {
     <section class="booking-panel">
       <button type="button" class="text-btn" data-action="show-mine">← 予約一覧へ</button>
       <h2>予約詳細</h2>
+      ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
       ${renderReservationSummary({
         menuName: reservation.title,
         date: reservation.reservationDate,
@@ -375,7 +377,7 @@ function renderReservationDetail(): string {
       <div class="confirm-row"><span class="confirm-label">状態</span><span class="confirm-value">${statusLabel(reservation.status)}</span></div>
       <div class="confirm-row"><span class="confirm-label">予約ID</span><span class="confirm-value">${escapeHtml(reservation.id)}</span></div>
       ${canCancel ? `
-        <button type="button" class="close-btn danger" data-action="${tokens.cancelToken || reservation.cancelToken ? 'go-cancel' : 'issue-tokens'}">
+        <button type="button" class="close-btn danger" data-action="${tokens.cancelToken || reservation.cancelToken ? 'go-cancel' : 'issue-tokens'}" ${state.submitting ? 'disabled' : ''}>
           ${tokens.cancelToken || reservation.cancelToken ? 'この予約をキャンセルする' : 'キャンセル用の確認情報を取得する'}
         </button>
       ` : '<p class="muted">この予約はキャンセルできない状態です。</p>'}

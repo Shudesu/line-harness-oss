@@ -13,6 +13,7 @@ import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { Form as DbForm, FormSubmission as DbFormSubmission } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { defaultLineAccessToken } from '../services/line-bindings.js';
 
 const forms = new Hono<Env>();
 
@@ -325,7 +326,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
           if (friend?.line_user_id) {
             try {
               const { LineClient } = await import('@line-crm/line-sdk');
-              let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+              let accessToken = await defaultLineAccessToken(c.env);
               if ((friend as unknown as Record<string, unknown>).line_account_id) {
                 const { getLineAccountById } = await import('@line-crm/db');
                 const account = await getLineAccountById(c.env.DB, (friend as unknown as Record<string, unknown>).line_account_id as string);
@@ -424,7 +425,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
             const friend = await getFriendById(db, friendId!);
             if (!friend?.line_user_id) return;
             const { LineClient } = await import('@line-crm/line-sdk');
-            let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+            let accessToken = await defaultLineAccessToken(c.env);
             if ((friend as unknown as Record<string, unknown>).line_account_id) {
               const { getLineAccountById } = await import('@line-crm/db');
               const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
@@ -475,7 +476,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
           console.log('Form reply: sending to', friend.line_user_id);
           const { LineClient } = await import('@line-crm/line-sdk');
           // Resolve access token from friend's account (multi-account support)
-          let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+          let accessToken = await defaultLineAccessToken(c.env);
           if ((friend as unknown as Record<string, unknown>).line_account_id) {
             const { getLineAccountById } = await import('@line-crm/db');
             const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);

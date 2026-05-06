@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
 import { getFriendById, getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { defaultLineAccessToken } from '../services/line-bindings.js';
 
 const richMenus = new Hono<Env>();
 
@@ -12,7 +13,7 @@ async function resolveLineClient(c: { env: Env['Bindings']; req: { query(key: st
     const account = await getLineAccountById(c.env.DB, accountId);
     if (account) return new LineClient(account.channel_access_token);
   }
-  return new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+  return new LineClient(await defaultLineAccessToken(c.env));
 }
 
 // GET /api/rich-menus — list all rich menus from LINE API
@@ -86,7 +87,7 @@ richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
 
-    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    let accessToken = await defaultLineAccessToken(c.env);
     const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
     if (friendAccountId) {
       const account = await getLineAccountById(db, friendAccountId);
@@ -114,7 +115,7 @@ richMenus.delete('/api/friends/:friendId/rich-menu', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
 
-    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    let accessToken = await defaultLineAccessToken(c.env);
     const friendAccId = (friend as unknown as Record<string, string | null>).line_account_id;
     if (friendAccId) {
       const account = await getLineAccountById(c.env.DB, friendAccId);

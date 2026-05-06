@@ -35,6 +35,7 @@ export type AdminState = {
   externalSources: ExternalReservationSourceResponse[];
   selectedReservation: ReservationResponse | null;
   selectedSlotId: string | null;
+  showExternalDetails: boolean;
   bulkPreviewSlots: ReservationSlotWithAvailability[];
   loading: boolean;
   message: string | null;

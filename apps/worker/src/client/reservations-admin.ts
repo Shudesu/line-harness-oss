@@ -55,6 +55,18 @@ function activeReservationsForSlot(slotId: string): ReservationResponse[] {
   return reservationsForSlot(slotId).filter(isActiveReservation);
 }
 
+function externalSourcesForSelectedDate(): ExternalReservationSourceResponse[] {
+  return state.externalSources.filter((source) => {
+    const text = [
+      source.receivedAt,
+      source.rawText,
+      source.parsedPayload,
+      source.lastError,
+    ].filter(Boolean).join(' ');
+    return text.includes(state.date) || text.includes(state.date.replaceAll('-', '/'));
+  });
+}
+
 async function loadInitial(): Promise<void> {
   await withLoading(async () => {
     const resources = await api<ReservationResource[]>('/api/reservation-resources');
@@ -160,15 +172,15 @@ async function generateSlots(): Promise<void> {
 }
 
 async function updateSlotFromCard(slotId: string): Promise<void> {
+  const payload = {
+    status: inputValue(`slotStatus-${slotId}`),
+    totalCapacity: numberValue(`slotTotal-${slotId}`),
+    lineCapacity: nullableNumberValue(`slotLine-${slotId}`),
+    externalCapacity: nullableNumberValue(`slotExternal-${slotId}`),
+    bufferCapacity: numberValue(`slotBuffer-${slotId}`),
+    note: inputValue(`slotNote-${slotId}`) || null,
+  };
   await withLoading(async () => {
-    const payload = {
-      status: inputValue(`slotStatus-${slotId}`),
-      totalCapacity: numberValue(`slotTotal-${slotId}`),
-      lineCapacity: nullableNumberValue(`slotLine-${slotId}`),
-      externalCapacity: nullableNumberValue(`slotExternal-${slotId}`),
-      bufferCapacity: numberValue(`slotBuffer-${slotId}`),
-      note: inputValue(`slotNote-${slotId}`) || null,
-    };
     await api<ReservationSlot>(`/api/reservation-slots/${encodeURIComponent(slotId)}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
@@ -306,19 +318,20 @@ async function createResourceFromForm(): Promise<void> {
     render();
     return;
   }
+  const payload = {
+    name,
+    description: inputValue('resourceDescription') || null,
+    defaultDurationMinutes: numberValue('resourceDuration') ?? 60,
+    defaultCapacity: numberValue('resourceCapacity') ?? 20,
+    defaultLineCapacity: nullableNumberValue('resourceLineCapacity'),
+    defaultExternalCapacity: nullableNumberValue('resourceExternalCapacity'),
+    slotIntervalMinutes: numberValue('resourceSlotInterval') ?? 60,
+    googleCalendarConnectionId: inputValue('resourceGoogleConnectionId') || null,
+  };
   await withLoading(async () => {
     const resource = await api<ReservationResource>('/api/reservation-resources', {
       method: 'POST',
-      body: JSON.stringify({
-        name,
-        description: inputValue('resourceDescription') || null,
-        defaultDurationMinutes: numberValue('resourceDuration') ?? 60,
-        defaultCapacity: numberValue('resourceCapacity') ?? 20,
-        defaultLineCapacity: nullableNumberValue('resourceLineCapacity'),
-        defaultExternalCapacity: nullableNumberValue('resourceExternalCapacity'),
-        slotIntervalMinutes: numberValue('resourceSlotInterval') ?? 60,
-        googleCalendarConnectionId: inputValue('resourceGoogleConnectionId') || null,
-      }),
+      body: JSON.stringify(payload),
     });
     state.resources = await api<ReservationResource[]>('/api/reservation-resources');
     state.resourceId = resource.id;
@@ -328,21 +341,22 @@ async function createResourceFromForm(): Promise<void> {
 }
 
 async function updateResourceFromCard(resourceId: string): Promise<void> {
+  const payload = {
+    name: inputValue(`resourceName-${resourceId}`),
+    description: inputValue(`resourceDescription-${resourceId}`) || null,
+    defaultDurationMinutes: numberValue(`resourceDuration-${resourceId}`),
+    defaultCapacity: numberValue(`resourceCapacity-${resourceId}`),
+    defaultLineCapacity: nullableNumberValue(`resourceLineCapacity-${resourceId}`),
+    defaultExternalCapacity: nullableNumberValue(`resourceExternalCapacity-${resourceId}`),
+    defaultBufferCapacity: numberValue(`resourceBufferCapacity-${resourceId}`),
+    slotIntervalMinutes: numberValue(`resourceSlotInterval-${resourceId}`),
+    googleCalendarConnectionId: inputValue(`resourceGoogleConnectionId-${resourceId}`) || null,
+    isActive: checkedValue(`resourceActive-${resourceId}`),
+  };
   await withLoading(async () => {
     await api<ReservationResource>(`/api/reservation-resources/${encodeURIComponent(resourceId)}`, {
       method: 'PUT',
-      body: JSON.stringify({
-        name: inputValue(`resourceName-${resourceId}`),
-        description: inputValue(`resourceDescription-${resourceId}`) || null,
-        defaultDurationMinutes: numberValue(`resourceDuration-${resourceId}`),
-        defaultCapacity: numberValue(`resourceCapacity-${resourceId}`),
-        defaultLineCapacity: nullableNumberValue(`resourceLineCapacity-${resourceId}`),
-        defaultExternalCapacity: nullableNumberValue(`resourceExternalCapacity-${resourceId}`),
-        defaultBufferCapacity: numberValue(`resourceBufferCapacity-${resourceId}`),
-        slotIntervalMinutes: numberValue(`resourceSlotInterval-${resourceId}`),
-        googleCalendarConnectionId: inputValue(`resourceGoogleConnectionId-${resourceId}`) || null,
-        isActive: checkedValue(`resourceActive-${resourceId}`),
-      }),
+      body: JSON.stringify(payload),
     });
     state.resources = await api<ReservationResource[]>('/api/reservation-resources');
     await loadReservationsAndSlots();
@@ -362,19 +376,20 @@ async function createMenuFromForm(): Promise<void> {
     render();
     return;
   }
+  const payload = {
+    name,
+    description: inputValue('menuDescription') || null,
+    durationMinutes: numberValue('menuDuration') ?? 60,
+    unitType: 'person',
+    minPeople: numberValue('menuMinPeople') ?? 1,
+    maxPeople: nullableNumberValue('menuMaxPeople'),
+    priceAdult: nullableNumberValue('menuPriceAdult'),
+    priceChild: nullableNumberValue('menuPriceChild'),
+  };
   await withLoading(async () => {
     await api<ReservationMenu>(`/api/reservation-resources/${encodeURIComponent(state.resourceId)}/menus`, {
       method: 'POST',
-      body: JSON.stringify({
-        name,
-        description: inputValue('menuDescription') || null,
-        durationMinutes: numberValue('menuDuration') ?? 60,
-        unitType: 'person',
-        minPeople: numberValue('menuMinPeople') ?? 1,
-        maxPeople: nullableNumberValue('menuMaxPeople'),
-        priceAdult: nullableNumberValue('menuPriceAdult'),
-        priceChild: nullableNumberValue('menuPriceChild'),
-      }),
+      body: JSON.stringify(payload),
     });
     await loadReservationsAndSlots();
     state.message = 'menuを作成しました';
@@ -383,19 +398,20 @@ async function createMenuFromForm(): Promise<void> {
 
 async function updateMenuFromCard(menuId: string): Promise<void> {
   if (!state.resourceId) return;
+  const payload = {
+    name: inputValue(`menuName-${menuId}`),
+    description: inputValue(`menuDescription-${menuId}`) || null,
+    durationMinutes: numberValue(`menuDuration-${menuId}`),
+    minPeople: numberValue(`menuMinPeople-${menuId}`),
+    maxPeople: nullableNumberValue(`menuMaxPeople-${menuId}`),
+    priceAdult: nullableNumberValue(`menuPriceAdult-${menuId}`),
+    priceChild: nullableNumberValue(`menuPriceChild-${menuId}`),
+    isActive: checkedValue(`menuActive-${menuId}`),
+  };
   await withLoading(async () => {
     await api<ReservationMenu>(`/api/reservation-resources/${encodeURIComponent(state.resourceId)}/menus/${encodeURIComponent(menuId)}`, {
       method: 'PUT',
-      body: JSON.stringify({
-        name: inputValue(`menuName-${menuId}`),
-        description: inputValue(`menuDescription-${menuId}`) || null,
-        durationMinutes: numberValue(`menuDuration-${menuId}`),
-        minPeople: numberValue(`menuMinPeople-${menuId}`),
-        maxPeople: nullableNumberValue(`menuMaxPeople-${menuId}`),
-        priceAdult: nullableNumberValue(`menuPriceAdult-${menuId}`),
-        priceChild: nullableNumberValue(`menuPriceChild-${menuId}`),
-        isActive: checkedValue(`menuActive-${menuId}`),
-      }),
+      body: JSON.stringify(payload),
     });
     await loadReservationsAndSlots();
     state.message = 'menuを更新しました';
@@ -408,19 +424,20 @@ async function createScheduleFromForm(): Promise<void> {
     render();
     return;
   }
+  const payload = {
+    dayOfWeek: numberValue('scheduleDayOfWeek') ?? 0,
+    startTime: inputValue('scheduleStartTime') || '09:00',
+    endTime: inputValue('scheduleEndTime') || '15:00',
+    slotIntervalMinutes: numberValue('scheduleSlotInterval') ?? 60,
+    defaultCapacity: numberValue('scheduleCapacity') ?? 20,
+    defaultLineCapacity: nullableNumberValue('scheduleLineCapacity'),
+    defaultExternalCapacity: nullableNumberValue('scheduleExternalCapacity'),
+    defaultBufferCapacity: numberValue('scheduleBufferCapacity') ?? 0,
+  };
   await withLoading(async () => {
     await api<ReservationSchedule>(`/api/reservation-resources/${encodeURIComponent(state.resourceId)}/schedules`, {
       method: 'POST',
-      body: JSON.stringify({
-        dayOfWeek: numberValue('scheduleDayOfWeek') ?? 0,
-        startTime: inputValue('scheduleStartTime') || '09:00',
-        endTime: inputValue('scheduleEndTime') || '15:00',
-        slotIntervalMinutes: numberValue('scheduleSlotInterval') ?? 60,
-        defaultCapacity: numberValue('scheduleCapacity') ?? 20,
-        defaultLineCapacity: nullableNumberValue('scheduleLineCapacity'),
-        defaultExternalCapacity: nullableNumberValue('scheduleExternalCapacity'),
-        defaultBufferCapacity: numberValue('scheduleBufferCapacity') ?? 0,
-      }),
+      body: JSON.stringify(payload),
     });
     await loadReservationsAndSlots();
     state.message = 'scheduleを作成しました';
@@ -429,20 +446,21 @@ async function createScheduleFromForm(): Promise<void> {
 
 async function updateScheduleFromCard(scheduleId: string): Promise<void> {
   if (!state.resourceId) return;
+  const payload = {
+    dayOfWeek: numberValue(`scheduleDayOfWeek-${scheduleId}`),
+    startTime: inputValue(`scheduleStartTime-${scheduleId}`),
+    endTime: inputValue(`scheduleEndTime-${scheduleId}`),
+    slotIntervalMinutes: numberValue(`scheduleSlotInterval-${scheduleId}`),
+    defaultCapacity: numberValue(`scheduleCapacity-${scheduleId}`),
+    defaultLineCapacity: nullableNumberValue(`scheduleLineCapacity-${scheduleId}`),
+    defaultExternalCapacity: nullableNumberValue(`scheduleExternalCapacity-${scheduleId}`),
+    defaultBufferCapacity: numberValue(`scheduleBufferCapacity-${scheduleId}`),
+    isActive: checkedValue(`scheduleActive-${scheduleId}`),
+  };
   await withLoading(async () => {
     await api<ReservationSchedule>(`/api/reservation-resources/${encodeURIComponent(state.resourceId)}/schedules/${encodeURIComponent(scheduleId)}`, {
       method: 'PUT',
-      body: JSON.stringify({
-        dayOfWeek: numberValue(`scheduleDayOfWeek-${scheduleId}`),
-        startTime: inputValue(`scheduleStartTime-${scheduleId}`),
-        endTime: inputValue(`scheduleEndTime-${scheduleId}`),
-        slotIntervalMinutes: numberValue(`scheduleSlotInterval-${scheduleId}`),
-        defaultCapacity: numberValue(`scheduleCapacity-${scheduleId}`),
-        defaultLineCapacity: nullableNumberValue(`scheduleLineCapacity-${scheduleId}`),
-        defaultExternalCapacity: nullableNumberValue(`scheduleExternalCapacity-${scheduleId}`),
-        defaultBufferCapacity: numberValue(`scheduleBufferCapacity-${scheduleId}`),
-        isActive: checkedValue(`scheduleActive-${scheduleId}`),
-      }),
+      body: JSON.stringify(payload),
     });
     await loadReservationsAndSlots();
     state.message = 'scheduleを更新しました';
@@ -594,9 +612,12 @@ function render(): void {
       .safe-note{background:#f8f4ea;border:1px solid rgba(31,42,33,.08);border-radius:14px;padding:10px 12px;color:#52624d;font-size:12px;line-height:1.6;margin:12px 0}
       .slot-generator{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;background:#f8f4ea;border:1px solid rgba(31,42,33,.08);border-radius:16px;padding:12px;margin-bottom:12px}
       .slot-card,.reservation-card{border:1px solid rgba(31,42,33,.1);border-radius:16px;background:#fff;padding:14px;text-align:left}
+      .slot-card.compact{padding:10px 12px}
       .slot-card.soldout{background:#f8eee9}
       .slot-card.selected{outline:2px solid #66804e;background:#edf2e7}
       .slot-card{cursor:pointer}
+      .slot-card summary{list-style:none;cursor:pointer}
+      .slot-card summary::-webkit-details-marker{display:none}
       .slot-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
       .slot-summary div{border-radius:12px;background:#f8f4ea;padding:8px 9px}
       .slot-summary span{display:block;font-size:11px;color:#697568;font-weight:800}
@@ -612,6 +633,8 @@ function render(): void {
       .slot-editor{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:12px}
       .slot-editor .admin-field input,.slot-editor .admin-field select{padding:8px 9px;font-size:13px}
       .slot-editor-actions{display:flex;gap:8px;align-items:end}
+      .external-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px}
+      .external-summary strong{font-size:18px}
       .reservation-card{cursor:pointer}
       .reservation-card.active{outline:2px solid #66804e}
       .card-row{display:flex;justify-content:space-between;gap:12px;align-items:center}
@@ -661,6 +684,7 @@ function renderMessage(): string {
 function renderOverviewPage(): string {
   return `
     ${renderAvailabilityCalendar()}
+    ${renderExternalSourcesSummary()}
     <section class="admin-grid">
       <div>
         ${renderSlots({ includeGenerator: false })}
@@ -668,7 +692,6 @@ function renderOverviewPage(): string {
       </div>
       <aside>
         ${renderDetail()}
-        ${renderExternalSources()}
       </aside>
     </section>
   `;
@@ -759,7 +782,7 @@ function renderWeekAvailability(): string {
             if (!slot) return '<div class="week-cell availability-mark none"><span>-</span><small>未生成</small></div>';
             const mark = slotMark([slot]);
             return `
-              <button class="week-cell availability-mark ${mark.className} ${state.slots.some((item) => item.id === slot.id) ? 'selected' : ''}" data-calendar-date="${escapeHtml(date)}">
+              <button class="week-cell availability-mark ${mark.className} ${state.selectedSlotId === slot.id ? 'selected' : ''}" data-calendar-slot-id="${escapeHtml(slot.id)}" data-calendar-date="${escapeHtml(date)}">
                 <span>${mark.mark}</span><small>${escapeHtml(mark.label)}</small>
               </button>
             `;
@@ -898,32 +921,22 @@ function renderSlotCard(slot: ReservationSlotWithAvailability): string {
   const soldOut = !availability.available || availability.remainingCapacity <= 0;
   const selected = state.selectedSlotId === slot.id;
   const slotReservations = activeReservationsForSlot(slot.id);
-  const customerPreview = slotReservations.slice(0, 4).map((reservation) => (
-    `<span class="customer-chip">${escapeHtml(reservation.customerName || reservation.title)} ${reservation.totalPeople}名</span>`
-  )).join('');
-  const extraCustomers = slotReservations.length > 4
-    ? `<span class="customer-chip">ほか${slotReservations.length - 4}件</span>`
-    : '';
   const statusOptions = ['open', 'closed', 'sold_out', 'hidden']
     .map((status) => `<option value="${status}" ${slot.status === status ? 'selected' : ''}>${status}</option>`)
     .join('');
   return `
-    <article class="slot-card ${soldOut ? 'soldout' : ''} ${selected ? 'selected' : ''}" data-select-slot-id="${escapeHtml(slot.id)}">
-      <div class="card-row">
-        <div>
-          <div class="card-title">${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</div>
-          <div class="card-sub">総予約 ${slot.reservedCount}/${slot.totalCapacity}・LINE ${slot.lineReservedCount}/${slot.lineCapacity ?? '-'}・外部 ${slot.externalReservedCount}/${slot.externalCapacity ?? '-'}</div>
+    <details class="slot-card compact ${soldOut ? 'soldout' : ''} ${selected ? 'selected' : ''}">
+      <summary data-select-slot-id="${escapeHtml(slot.id)}">
+        <div class="card-row">
+          <div>
+            <div class="card-title">${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</div>
+            <div class="card-sub">予約 ${slot.reservedCount}/${slot.totalCapacity}・LINE残 ${availability.lineRemainingCapacity}・外部残 ${availability.externalRemainingCapacity}</div>
+          </div>
+          <span class="badge ${soldOut ? 'warn' : ''}">${soldOut ? '満席' : `残 ${availability.remainingCapacity}`}</span>
         </div>
-        <span class="badge ${soldOut ? 'warn' : ''}">${soldOut ? '満席' : `残 ${availability.remainingCapacity}`}</span>
-      </div>
-      <div class="slot-summary">
-        <div><span>予約客</span><strong>${slotReservations.length}件</strong></div>
-        <div><span>LINE残</span><strong>${availability.lineRemainingCapacity}</strong></div>
-        <div><span>外部残</span><strong>${availability.externalRemainingCapacity}</strong></div>
-      </div>
-      ${customerPreview || extraCustomers ? `<div class="customer-chips">${customerPreview}${extraCustomers}</div>` : '<p class="slot-hint">この枠の予約客はまだいません。</p>'}
-      <p class="slot-hint">${selected ? 'この枠の予約客を下に表示中です。' : 'タップすると、この枠の予約客だけを表示します。'}</p>
-      <div class="slot-editor">
+      </summary>
+      <p class="slot-hint">${selected ? 'この枠の予約客を下に表示中です。' : '開くと枠の調整フォームを表示します。'}</p>
+      <div class="slot-editor" data-slot-editor>
         <div class="admin-field"><label for="slotStatus-${escapeHtml(slot.id)}">状態</label><select id="slotStatus-${escapeHtml(slot.id)}">${statusOptions}</select></div>
         <div class="admin-field"><label for="slotTotal-${escapeHtml(slot.id)}">総枠</label><input id="slotTotal-${escapeHtml(slot.id)}" type="number" value="${slot.totalCapacity}"></div>
         <div class="admin-field"><label for="slotLine-${escapeHtml(slot.id)}">LINE枠</label><input id="slotLine-${escapeHtml(slot.id)}" type="number" value="${slot.lineCapacity ?? ''}" placeholder="空なら総枠"></div>
@@ -934,7 +947,7 @@ function renderSlotCard(slot: ReservationSlotWithAvailability): string {
           <button class="admin-button secondary update-slot" data-slot-id="${escapeHtml(slot.id)}" ${state.loading ? 'disabled' : ''}>slot保存</button>
         </div>
       </div>
-    </article>
+    </details>
   `;
 }
 
@@ -1003,14 +1016,32 @@ function renderDetail(): string {
 }
 
 function renderExternalSources(): string {
-  const body = state.externalSources.length
-    ? `<div class="reservation-list">${state.externalSources.map(renderExternalSourceCard).join('')}</div>`
-    : '<p class="empty">要確認の外部取り込みはありません。</p>';
+  const sources = state.mode === 'overview' ? externalSourcesForSelectedDate() : state.externalSources;
+  const body = sources.length
+    ? `<div class="reservation-list">${sources.map(renderExternalSourceCard).join('')}</div>`
+    : '<p class="empty">表示できる外部取り込みはありません。</p>';
   return `
     <section class="admin-panel">
       <h2 class="admin-section-title">外部取り込み 要確認</h2>
       ${body}
     </section>
+  `;
+}
+
+function renderExternalSourcesSummary(): string {
+  const selectedDateSources = externalSourcesForSelectedDate();
+  const total = state.externalSources.length;
+  return `
+    <section class="admin-panel external-summary">
+      <div>
+        <div class="admin-section-title" style="margin:0">外部取り込み</div>
+        <p class="empty" style="margin:2px 0 0">選択日 ${escapeHtml(state.date)}: <strong>${selectedDateSources.length}</strong>件 / 要確認合計 ${total}件</p>
+      </div>
+      <button class="admin-button secondary" id="toggleExternalSources" ${total === 0 ? 'disabled' : ''}>
+        ${state.showExternalDetails ? '詳細を閉じる' : '選択日の詳細'}
+      </button>
+    </section>
+    ${state.showExternalDetails ? renderExternalSources() : ''}
   `;
 }
 
@@ -1273,12 +1304,17 @@ function bindEvents(): void {
     element.addEventListener('click', () => {
       const date = element.dataset.calendarDate;
       if (!date) return;
+      const slotId = element.dataset.calendarSlotId;
       state.date = date;
       state.weekStart = startOfWeekYmd(date);
-      state.selectedSlotId = null;
+      state.selectedSlotId = slotId || null;
       state.selectedReservation = null;
       void refresh();
     });
+  });
+  document.getElementById('toggleExternalSources')?.addEventListener('click', () => {
+    state.showExternalDetails = !state.showExternalDetails;
+    render();
   });
   document.getElementById('reloadReservations')?.addEventListener('click', () => {
     const apiKey = document.getElementById('adminApiKey');
@@ -1306,7 +1342,7 @@ function bindEvents(): void {
   document.querySelectorAll<HTMLElement>('[data-select-slot-id]').forEach((element) => {
     element.addEventListener('click', (event) => {
       const target = event.target;
-      if (target instanceof HTMLElement && target.closest('.slot-editor')) return;
+      if (target instanceof HTMLElement && target.closest('[data-slot-editor]')) return;
       const id = element.dataset.selectSlotId;
       if (!id) return;
       state.selectedSlotId = state.selectedSlotId === id ? null : id;

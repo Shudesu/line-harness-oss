@@ -10,8 +10,8 @@ import {
   createReservation,
   createReservationSession,
   issueReservationTokens,
-  listMenus,
   listMyReservations,
+  listMenus,
   listResources,
   listSlots,
 } from './booking/api.js';
@@ -221,13 +221,13 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     }
     return;
   }
+  if (action === 'issue-tokens') {
+    await issueTokensForSelectedReservation();
+    return;
+  }
   if (action === 'go-cancel') {
     state.screen = 'cancel-confirm';
     render();
-    return;
-  }
-  if (action === 'issue-tokens') {
-    await issueTokensForSelectedReservation();
     return;
   }
   if (action === 'back-detail') {
@@ -424,6 +424,7 @@ async function submitBooking(): Promise<void> {
 
 function selectReservation(id: string): void {
   const reservation = state.reservations.find((item) => item.id === id) ?? null;
+  state.notice = null;
   state.selectedReservation = reservation;
   state.screen = reservation ? 'detail' : 'mine';
   render();
@@ -431,6 +432,7 @@ function selectReservation(id: string): void {
 
 async function loadMine(): Promise<void> {
   if (!state.sessionToken) return;
+  state.notice = null;
   state.loadingSlots = true;
   render();
   try {
@@ -447,6 +449,7 @@ async function issueTokensForSelectedReservation(): Promise<void> {
   const reservation = state.selectedReservation;
   if (!reservation || !state.sessionToken || state.submitting) return;
   state.submitting = true;
+  state.notice = null;
   render();
   try {
     const tokens = await issueReservationTokens({
@@ -477,6 +480,7 @@ async function submitCancel(): Promise<void> {
   }
 
   state.submitting = true;
+  state.notice = null;
   render();
   try {
     const result = await cancelReservation({

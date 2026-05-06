@@ -17,6 +17,7 @@ import {
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
+import { defaultLiffUrl, defaultLineAccessToken, defaultLineChannelSecret, workerBaseUrl } from '../services/line-bindings.js';
 
 const webhook = new Hono<Env>();
 
@@ -35,8 +36,8 @@ webhook.post('/webhook', async (c) => {
 
   // Multi-account: resolve credentials from DB by destination (channel user ID)
   // or fall back to environment variables (default account)
-  let channelSecret = c.env.LINE_CHANNEL_SECRET;
-  let channelAccessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+  let channelSecret = await defaultLineChannelSecret(c.env);
+  let channelAccessToken = await defaultLineAccessToken(c.env);
   let matchedAccountId: string | null = null;
 
   if ((body as { destination?: string }).destination) {
@@ -66,7 +67,15 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin);
+        await handleEvent(
+          db,
+          lineClient,
+          event,
+          channelAccessToken,
+          matchedAccountId,
+          await workerBaseUrl(c.env, c.req.url),
+          await defaultLiffUrl(c.env),
+        );
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -85,6 +94,7 @@ async function handleEvent(
   lineAccessToken: string,
   lineAccountId: string | null = null,
   workerUrl?: string,
+  liffUrl?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -358,7 +368,7 @@ async function handleEvent(
               footer: { type: 'box', layout: 'vertical', paddingAll: '16px',
                 contents: [
                   { type: 'button', action: { type: 'message', label: '導入について相談する', text: '導入支援を希望します' }, style: 'primary', color: '#06C755' },
-                  ...(c.env.LIFF_URL ? [{ type: 'button', action: { type: 'uri', label: 'フィードバックを送る', uri: `${c.env.LIFF_URL}?page=form` }, style: 'secondary', margin: 'sm' }] : []),
+                  ...(liffUrl ? [{ type: 'button', action: { type: 'uri', label: 'フィードバックを送る', uri: `${liffUrl}?page=form` }, style: 'secondary', margin: 'sm' }] : []),
                 ],
               },
             }))]);

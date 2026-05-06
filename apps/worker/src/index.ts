@@ -46,6 +46,7 @@ import { autoReplies } from './routes/auto-replies.js';
 import { trafficPools } from './routes/traffic-pools.js';
 import { meetCallback } from './routes/meet-callback.js';
 import { messageTemplates } from './routes/message-templates.js';
+import { defaultLiffUrl, defaultLineAccessToken, workerBaseUrl } from './services/line-bindings.js';
 
 export type Env = {
   Bindings: {
@@ -148,7 +149,7 @@ app.get('/r/:ref', async (c) => {
   const baseUrl = new URL(c.req.url).origin;
 
   // Resolve LIFF URL from pool (same logic as /auth/line)
-  let liffUrl = c.env.LIFF_URL;
+  let liffUrl = await defaultLiffUrl(c.env);
   const poolSlug = c.req.query('pool') || 'main';
   const pool = await getTrafficPoolBySlug(c.env.DB, poolSlug);
   if (pool) {
@@ -365,15 +366,16 @@ async function scheduled(
       lineClients.set(account.id, new LineClient(account.channel_access_token));
     }
   }
-  const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
+  const defaultLineClient = new LineClient(await defaultLineAccessToken(env));
+  const baseWorkerUrl = await workerBaseUrl(env);
 
   // 配信系は1回だけ実行（内部でfriendのline_account_idから正しいlineClientを動的解決）
   // 以前はアカウントごとにループしていたが、アカウントフィルタなしのDBクエリで
   // 全アカウントの配信が各ループで重複実行されていたバグを修正
   const jobs = [];
   jobs.push(
-    processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL),
-    processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
+    processStepDeliveries(env.DB, defaultLineClient, baseWorkerUrl),
+    processScheduledBroadcasts(env.DB, defaultLineClient, baseWorkerUrl),
     processReminderDeliveries(env.DB, defaultLineClient),
   );
   // キュー処理は1回だけ実行（内部でアカウント別lineClientを解決する）
@@ -381,7 +383,7 @@ async function scheduled(
   const { recoverStalledBroadcasts, recoverStuckDeliveries } = await import('@line-crm/db');
   jobs.push(recoverStuckDeliveries(env.DB));
   jobs.push(recoverStalledBroadcasts(env.DB));
-  jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL));
+  jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, baseWorkerUrl));
   jobs.push(checkAccountHealth(env.DB));
   jobs.push(refreshLineAccessTokens(env.DB));
 
