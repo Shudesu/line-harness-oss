@@ -7,20 +7,24 @@
 CREATE TABLE IF NOT EXISTS friends (
   id               TEXT PRIMARY KEY,
   line_user_id     TEXT UNIQUE NOT NULL,
+  line_account_id  TEXT REFERENCES line_accounts(id) ON DELETE SET NULL,
   display_name     TEXT,
   picture_url      TEXT,
   status_message   TEXT,
   is_following     INTEGER NOT NULL DEFAULT 1,
   user_id          TEXT,
   ig_igsid         TEXT,
+  ref_code         TEXT,
   score            INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
+CREATE INDEX IF NOT EXISTS idx_friends_line_account_id ON friends (line_account_id);
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
+CREATE INDEX IF NOT EXISTS idx_friends_ref_code ON friends (ref_code);
 
 -- ============================================================
 -- Tags
@@ -439,6 +443,7 @@ CREATE TABLE IF NOT EXISTS chats (
   id            TEXT PRIMARY KEY,
   friend_id     TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   operator_id   TEXT REFERENCES operators (id) ON DELETE SET NULL,
+  line_account_id TEXT,
   status        TEXT NOT NULL DEFAULT 'unread' CHECK (status IN ('unread', 'in_progress', 'resolved')),
   notes         TEXT,
   last_message_at TEXT,
@@ -449,6 +454,7 @@ CREATE TABLE IF NOT EXISTS chats (
 CREATE INDEX IF NOT EXISTS idx_chats_friend ON chats (friend_id);
 CREATE INDEX IF NOT EXISTS idx_chats_operator ON chats (operator_id);
 CREATE INDEX IF NOT EXISTS idx_chats_status ON chats (status);
+CREATE INDEX IF NOT EXISTS idx_chats_line_account_id ON chats (line_account_id);
 
 -- ============================================================
 -- Round 3: 通知機能
@@ -552,6 +558,44 @@ CREATE TABLE IF NOT EXISTS automation_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_automation_logs_automation ON automation_logs (automation_id);
+
+-- ============================================================
+-- Entry Routes / Ref Tracking
+-- ============================================================
+CREATE TABLE IF NOT EXISTS entry_routes (
+  id           TEXT PRIMARY KEY,
+  ref_code     TEXT UNIQUE NOT NULL,
+  name         TEXT NOT NULL,
+  tag_id       TEXT REFERENCES tags (id) ON DELETE SET NULL,
+  scenario_id  TEXT REFERENCES scenarios (id) ON DELETE SET NULL,
+  redirect_url TEXT,
+  is_active    INTEGER NOT NULL DEFAULT 1,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS ref_tracking (
+  id             TEXT PRIMARY KEY,
+  ref_code       TEXT NOT NULL,
+  friend_id      TEXT REFERENCES friends (id) ON DELETE CASCADE,
+  entry_route_id TEXT REFERENCES entry_routes (id) ON DELETE SET NULL,
+  source_url     TEXT,
+  fbclid         TEXT,
+  gclid          TEXT,
+  twclid         TEXT,
+  ttclid         TEXT,
+  utm_source     TEXT,
+  utm_medium     TEXT,
+  utm_campaign   TEXT,
+  user_agent     TEXT,
+  ip_address     TEXT,
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_entry_routes_ref ON entry_routes (ref_code);
+CREATE INDEX IF NOT EXISTS idx_ref_tracking_ref ON ref_tracking (ref_code);
+CREATE INDEX IF NOT EXISTS idx_ref_tracking_friend ON ref_tracking (friend_id);
+CREATE INDEX IF NOT EXISTS idx_ref_tracking_entry_route ON ref_tracking (entry_route_id);
 
 -- ============================================================
 -- Tracked Links

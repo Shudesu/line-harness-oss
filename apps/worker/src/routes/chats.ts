@@ -76,7 +76,7 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
 
   const lastMsg = await db
     .prepare(
-      `SELECT MAX(created_at) AS last FROM messages_log WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')`,
+      `SELECT MAX(created_at) AS last FROM messages_log WHERE friend_id = ?`,
     )
     .bind(friend.id)
     .first<{ last: string | null }>();
@@ -194,7 +194,6 @@ chats.get('/api/chats', async (c) => {
       WITH activity AS (
         SELECT friend_id, MAX(created_at) AS last_message_at
         FROM messages_log
-        WHERE delivery_type IS NULL OR delivery_type != 'test'
         GROUP BY friend_id
         UNION ALL
         SELECT friend_id, last_message_at
@@ -315,7 +314,7 @@ chats.get('/api/chats/:id', async (c) => {
       .prepare(
         `SELECT id, friend_id, direction, message_type, content, created_at
          FROM messages_log
-         WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')
+         WHERE friend_id = ?
          ORDER BY created_at DESC LIMIT 1000`,
       )
       .bind(resolvedFriendId)
