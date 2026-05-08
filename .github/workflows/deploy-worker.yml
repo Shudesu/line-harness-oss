@@ -13,7 +13,7 @@ name: Deploy Worker
 # - CLOUDFLARE_SECRETS_STORE_BINDINGS
 #     optional comma-separated map: BINDING_NAME=SECRET_NAME,OTHER_NAME
 #     when omitted, only required Worker secret binding names are used as secret names
-# - RUN_D1_MIGRATIONS             set true to apply packages/db/schema.sql before deploy
+# - RUN_D1_MIGRATIONS             set true to apply production-safe D1 compatibility patches before deploy
 on:
   workflow_dispatch:
   
@@ -48,7 +48,7 @@ jobs:
       - name: Remove local dev secrets
         run: rm -f apps/worker/.dev.vars
 
-      - name: Apply D1 schema
+      - name: Apply D1 compatibility patches
         if: ${{ vars.RUN_D1_MIGRATIONS == 'true' }}
         working-directory: apps/worker
         env:
@@ -78,7 +78,63 @@ jobs:
             }],
           }, null, 2));
           NODE
-          pnpm exec wrangler d1 execute "${CF_D1_DATABASE_NAME:-line-crm}" --remote --file ../../packages/db/schema.sql --config .wrangler-d1-ci.json
+          db="${CF_D1_DATABASE_NAME:-line-crm}"
+          wrangler_d1() {
+            pnpm exec wrangler d1 execute "$db" --remote --config .wrangler-d1-ci.json "$@"
+          }
+          wrangler_d1_allow_duplicate() {
+            set +e
+            output=$(pnpm exec wrangler d1 execute "$db" --remote --config .wrangler-d1-ci.json "$@" 2>&1)
+            status=$?
+            set -e
+            echo "$output"
+            if [ "$status" -eq 0 ]; then
+              return 0
+            fi
+            if echo "$output" | grep -qiE 'duplicate column name|already exists'; then
+              echo "Ignoring already-applied D1 patch."
+              return 0
+            fi
+            return "$status"
+          }
+
+          # Do not execute packages/db/schema.sql against an existing production DB.
+          # CREATE TABLE IF NOT EXISTS does not add newly introduced columns, so
+          # later CREATE INDEX statements can fail with "no such column".
+          # Apply only additive, idempotent compatibility patches here.
+          wrangler_d1 --command "CREATE TABLE IF NOT EXISTS entry_routes (id TEXT PRIMARY KEY, ref_code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, tag_id TEXT REFERENCES tags (id) ON DELETE SET NULL, scenario_id TEXT REFERENCES scenarios (id) ON DELETE SET NULL, redirect_url TEXT, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+          wrangler_d1 --command "CREATE TABLE IF NOT EXISTS ref_tracking (id TEXT PRIMARY KEY, ref_code TEXT NOT NULL, friend_id TEXT REFERENCES friends (id) ON DELETE CASCADE, entry_route_id TEXT REFERENCES entry_routes (id) ON DELETE SET NULL, source_url TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_entry_routes_ref ON entry_routes (ref_code)"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_ref_tracking_ref ON ref_tracking (ref_code)"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_ref_tracking_friend ON ref_tracking (friend_id)"
+          wrangler_d1 --file ../../packages/db/migrations/006_tracked_links.sql || true
+          wrangler_d1 --file ../../packages/db/migrations/007_forms.sql || true
+          wrangler_d1 --file ../../packages/db/migrations/024_form_opens.sql || true
+
+          wrangler_d1_allow_duplicate --command "ALTER TABLE friends ADD COLUMN line_account_id TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE friends ADD COLUMN ref_code TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE chats ADD COLUMN line_account_id TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE tracked_links ADD COLUMN intro_template_id TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE tracked_links ADD COLUMN reward_template_id TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_message_type TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_message_content TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_webhook_url TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_webhook_headers TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_webhook_fail_message TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN fbclid TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN gclid TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN twclid TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN ttclid TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN utm_source TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN utm_medium TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN utm_campaign TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN user_agent TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN ip_address TEXT"
+
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_friends_line_account_id ON friends (line_account_id)"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_friends_ref_code ON friends (ref_code)"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_chats_line_account_id ON chats (line_account_id)"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_ref_tracking_entry_route ON ref_tracking (entry_route_id)"
 
       - run: pnpm --filter worker build
         env:
