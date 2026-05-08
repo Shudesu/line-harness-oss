@@ -554,6 +554,75 @@ CREATE TABLE IF NOT EXISTS automation_logs (
 CREATE INDEX IF NOT EXISTS idx_automation_logs_automation ON automation_logs (automation_id);
 
 -- ============================================================
+-- Tracked Links
+-- ============================================================
+CREATE TABLE IF NOT EXISTS tracked_links (
+  id                TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  original_url      TEXT NOT NULL,
+  tag_id            TEXT REFERENCES tags (id) ON DELETE SET NULL,
+  scenario_id       TEXT REFERENCES scenarios (id) ON DELETE SET NULL,
+  intro_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL,
+  reward_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL,
+  is_active         INTEGER NOT NULL DEFAULT 1,
+  click_count       INTEGER NOT NULL DEFAULT 0,
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS link_clicks (
+  id              TEXT PRIMARY KEY,
+  tracked_link_id TEXT NOT NULL REFERENCES tracked_links (id) ON DELETE CASCADE,
+  friend_id       TEXT REFERENCES friends (id) ON DELETE SET NULL,
+  clicked_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_link_clicks_link ON link_clicks (tracked_link_id);
+CREATE INDEX IF NOT EXISTS idx_link_clicks_friend ON link_clicks (friend_id);
+
+-- ============================================================
+-- Forms
+-- ============================================================
+CREATE TABLE IF NOT EXISTS forms (
+  id                             TEXT PRIMARY KEY,
+  name                           TEXT NOT NULL,
+  description                    TEXT,
+  fields                         TEXT NOT NULL DEFAULT '[]',
+  on_submit_tag_id               TEXT REFERENCES tags (id) ON DELETE SET NULL,
+  on_submit_scenario_id          TEXT REFERENCES scenarios (id) ON DELETE SET NULL,
+  on_submit_message_type         TEXT CHECK (on_submit_message_type IN ('text', 'flex')) DEFAULT NULL,
+  on_submit_message_content      TEXT DEFAULT NULL,
+  on_submit_webhook_url          TEXT,
+  on_submit_webhook_headers      TEXT,
+  on_submit_webhook_fail_message TEXT,
+  save_to_metadata               INTEGER NOT NULL DEFAULT 1,
+  is_active                      INTEGER NOT NULL DEFAULT 1,
+  submit_count                   INTEGER NOT NULL DEFAULT 0,
+  created_at                     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at                     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS form_submissions (
+  id         TEXT PRIMARY KEY,
+  form_id    TEXT NOT NULL REFERENCES forms (id) ON DELETE CASCADE,
+  friend_id  TEXT REFERENCES friends (id) ON DELETE SET NULL,
+  data       TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS form_opens (
+  id          TEXT PRIMARY KEY,
+  form_id     TEXT NOT NULL REFERENCES forms (id) ON DELETE CASCADE,
+  friend_id   TEXT REFERENCES friends (id) ON DELETE SET NULL,
+  friend_name TEXT,
+  opened_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_form_submissions_form ON form_submissions (form_id);
+CREATE INDEX IF NOT EXISTS idx_form_submissions_friend ON form_submissions (friend_id);
+CREATE INDEX IF NOT EXISTS idx_form_opens_form ON form_opens (form_id, opened_at);
+
+-- ============================================================
 -- Ad Platform Configuration
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ad_platforms (

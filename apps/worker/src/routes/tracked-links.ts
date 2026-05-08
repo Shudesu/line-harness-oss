@@ -16,6 +16,11 @@ import { defaultLiffUrl, workerBaseUrl } from '../services/line-bindings.js';
 
 const trackedLinks = new Hono<Env>();
 
+// Backward-compatible aliases for clients/configs that used snake_case.
+// The canonical API path is /api/tracked-links.
+trackedLinks.all('/api/tracked_links', (c) => c.redirect('/api/tracked-links', 307));
+trackedLinks.all('/api/tracked_links/:id', (c) => c.redirect(`/api/tracked-links/${encodeURIComponent(c.req.param('id'))}`, 307));
+
 function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
   const trackingUrl = `${baseUrl}/t/${row.id}`;
   return {
