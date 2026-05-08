@@ -16,6 +16,7 @@ name: Deploy Worker
 # - RUN_D1_MIGRATIONS             set true to apply packages/db/schema.sql before deploy
 on:
   workflow_dispatch:
+  
   push:
     branches: [main]
     paths:
