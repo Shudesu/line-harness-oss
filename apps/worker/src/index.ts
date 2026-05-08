@@ -432,7 +432,22 @@ async function scheduled(
 }
 
 export default {
-  fetch: app.fetch,
+  async fetch(request: Request, env: Env['Bindings'], ctx: ExecutionContext): Promise<Response> {
+    if (request.method === 'OPTIONS') {
+      const headers = new Headers();
+      applyCorsHeaders(headers);
+      return new Response(null, { status: 204, headers });
+    }
+
+    const response = await app.fetch(request, env, ctx);
+    const headers = new Headers(response.headers);
+    applyCorsHeaders(headers);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  },
   scheduled,
 };
 // redeploy trigger
