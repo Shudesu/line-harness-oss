@@ -36,9 +36,12 @@ function parseNote(formData?: string | null): string {
 export function renderHeader(): string {
   return `
     <div class="booking-header">
-      <p class="eyebrow">AONISAI FARM</p>
-      <h1>ブルーベリー予約</h1>
-      <p>日付と時間をえらんで、農園へあそびに行こう。</p>
+      <img class="booking-header-logo" src="/aonisai/aonisai_blue.jpg" alt="アオニサイファーム ブルーベリー">
+      <div class="booking-header-copy">
+        <p class="eyebrow">AONISAI FARM</p>
+        <h1>ブルーベリー予約</h1>
+        <p>日付と時間をえらんで、農園へあそびに行こう。</p>
+      </div>
     </div>
     <div class="booking-tabs">
       <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約する</button>

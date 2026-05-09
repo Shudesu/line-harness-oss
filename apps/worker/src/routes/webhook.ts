@@ -21,6 +21,40 @@ import { defaultLiffUrl, defaultLineAccessToken, defaultLineChannelSecret, worke
 
 const webhook = new Hono<Env>();
 
+async function ensureWebhookFriend(
+  db: D1Database,
+  lineClient: LineClient,
+  lineUserId: string,
+  lineAccountId: string | null,
+) {
+  let friend = await getFriendByLineUserId(db, lineUserId);
+  if (!friend) {
+    let profile;
+    try {
+      profile = await lineClient.getProfile(lineUserId);
+    } catch (err) {
+      console.error('Failed to get profile for webhook message', lineUserId, err);
+    }
+    friend = await upsertFriend(db, {
+      lineUserId,
+      displayName: profile?.displayName ?? null,
+      pictureUrl: profile?.pictureUrl ?? null,
+      statusMessage: profile?.statusMessage ?? null,
+    });
+    console.log(`[webhook] auto-created friend from message userId=${lineUserId} friendId=${friend.id}`);
+  }
+
+  if (lineAccountId && friend.line_account_id !== lineAccountId) {
+    await db
+      .prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
+      .bind(lineAccountId, jstNow(), friend.id)
+      .run();
+    friend = (await getFriendByLineUserId(db, lineUserId)) ?? friend;
+  }
+
+  return friend;
+}
+
 webhook.post('/webhook', async (c) => {
   const rawBody = await c.req.text();
   const signature = c.req.header('X-Line-Signature') ?? '';
@@ -207,8 +241,7 @@ async function handleEvent(
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
-    if (!friend) return;
+    const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
 
@@ -253,8 +286,7 @@ async function handleEvent(
   if (event.type === 'message' && event.message.type !== 'text') {
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
-    const friend = await getFriendByLineUserId(db, userId);
-    if (!friend) return;
+    const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
 
     const msg = event.message as { type: string; fileName?: string; title?: string };
     const labels: Record<string, string> = {
@@ -274,6 +306,7 @@ async function handleEvent(
       )
       .bind(crypto.randomUUID(), friend.id, msg.type, content, jstNow())
       .run();
+    await upsertChatOnMessage(db, friend.id);
     return;
   }
 
@@ -283,8 +316,7 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
-    if (!friend) return;
+    const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
 
     const incomingText = textMessage.text;
     const now = jstNow();
