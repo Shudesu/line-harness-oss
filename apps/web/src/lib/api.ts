@@ -61,6 +61,28 @@ function getApiKey(): string {
   return ''
 }
 
+export type RichMenuBounds = { x: number; y: number; width: number; height: number }
+export type RichMenuAction =
+  | { type: 'postback'; data: string; displayText?: string; label?: string }
+  | { type: 'message'; text: string; label?: string }
+  | { type: 'uri'; uri: string; label?: string }
+export type RichMenuArea = { bounds: RichMenuBounds; action: RichMenuAction }
+export type RichMenu = {
+  richMenuId: string
+  size: { width: number; height: number }
+  selected: boolean
+  name: string
+  chatBarText: string
+  areas: RichMenuArea[]
+}
+export type CreateRichMenuInput = {
+  size: { width: number; height: number }
+  selected: boolean
+  name: string
+  chatBarText: string
+  areas: RichMenuArea[]
+}
+
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -405,6 +427,34 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+  },
+  richMenus: {
+    list: (params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?' + new URLSearchParams({ accountId: params.accountId }) : ''
+      return fetchApi<ApiResponse<RichMenu[]>>('/api/rich-menus' + query)
+    },
+    create: (data: CreateRichMenuInput, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?' + new URLSearchParams({ accountId: params.accountId }) : ''
+      return fetchApi<ApiResponse<{ richMenuId: string }>>('/api/rich-menus' + query, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    },
+    uploadImage: (richMenuId: string, data: { image: string; contentType: 'image/png' | 'image/jpeg' }, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?' + new URLSearchParams({ accountId: params.accountId }) : ''
+      return fetchApi<ApiResponse<null>>(`/api/rich-menus/${encodeURIComponent(richMenuId)}/image${query}`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    },
+    setDefault: (richMenuId: string, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?' + new URLSearchParams({ accountId: params.accountId }) : ''
+      return fetchApi<ApiResponse<null>>(`/api/rich-menus/${encodeURIComponent(richMenuId)}/default${query}`, { method: 'POST' })
+    },
+    delete: (richMenuId: string, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?' + new URLSearchParams({ accountId: params.accountId }) : ''
+      return fetchApi<ApiResponse<null>>(`/api/rich-menus/${encodeURIComponent(richMenuId)}${query}`, { method: 'DELETE' })
+    },
   },
   reminders: {
     list: (params?: { accountId?: string }) => {

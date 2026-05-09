@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
+import type { FlexContainer } from '@line-crm/line-sdk';
 import {
   getOperators,
   getOperatorById,
@@ -22,6 +23,42 @@ const chats = new Hono<Env>();
 function clampLoadingSeconds(value: number | undefined): number {
   const n = Number.isFinite(value) ? Math.floor(value as number) : 5;
   return Math.min(60, Math.max(5, n));
+}
+
+function validateChatSendBody(body: { messageType?: string; content?: unknown }):
+  | { ok: true; messageType: 'text' | 'flex'; content: string; flexContents?: FlexContainer }
+  | { ok: false; status: 400; error: string } {
+  const messageType = body.messageType ?? 'text';
+  if (messageType !== 'text' && messageType !== 'flex') {
+    return { ok: false, status: 400, error: 'messageType must be text or flex' };
+  }
+
+  if (typeof body.content !== 'string') {
+    return { ok: false, status: 400, error: 'content is required' };
+  }
+
+  const content = messageType === 'text' ? body.content.trim() : body.content;
+  if (!content) {
+    return { ok: false, status: 400, error: 'content is required' };
+  }
+
+  if (messageType === 'text' && content.length > 5000) {
+    return { ok: false, status: 400, error: 'text content must be 5000 characters or less' };
+  }
+
+  if (messageType === 'flex') {
+    try {
+      const flexContents = JSON.parse(content) as Record<string, unknown>;
+      if (!flexContents || (flexContents.type !== 'bubble' && flexContents.type !== 'carousel')) {
+        return { ok: false, status: 400, error: 'flex content must be a LINE bubble or carousel JSON' };
+      }
+      return { ok: true, messageType, content, flexContents: flexContents as FlexContainer };
+    } catch {
+      return { ok: false, status: 400, error: 'flex content must be valid JSON' };
+    }
+  }
+
+  return { ok: true, messageType, content };
 }
 
 async function startLoadingAnimation(
@@ -430,8 +467,9 @@ chats.post('/api/chats/:id/send', async (c) => {
     const chat = await resolveOrCreateChat(c.env.DB, chatId);
     if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
 
-    const body = await c.req.json<{ messageType?: string; content: string }>();
-    if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
+    const body = await c.req.json<{ messageType?: string; content?: unknown }>();
+    const parsed = validateChatSendBody(body);
+    if (!parsed.ok) return c.json({ success: false, error: parsed.error }, parsed.status);
 
     const { friend, accessToken } = await resolveFriendAndAccessToken(
       c.env.DB,
@@ -443,20 +481,19 @@ chats.post('/api/chats/:id/send', async (c) => {
     // LINE APIでメッセージ送信
     const { LineClient } = await import('@line-crm/line-sdk');
     const lineClient = new LineClient(accessToken);
-    const messageType = body.messageType ?? 'text';
+    const messageType = parsed.messageType;
 
     if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
+      await lineClient.pushTextMessage(friend.line_user_id, parsed.content);
     } else if (messageType === 'flex') {
-      const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
+      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(parsed.flexContents), parsed.flexContents);
     }
 
     // メッセージログに記録
     const logId = crypto.randomUUID();
     await c.env.DB
       .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, created_at) VALUES (?, ?, 'outgoing', ?, ?, 'manual', ?)`)
-      .bind(logId, friend.id, messageType, body.content, jstNow())
+      .bind(logId, friend.id, messageType, parsed.content, jstNow())
       .run();
 
     // チャットの最終メッセージ日時を更新（chat.id を直接使う — friend_id で呼ばれても resolveOrCreateChat 済み）
