@@ -75,6 +75,10 @@ function renderShell(): void {
   if (!app.querySelector('[data-booking-shell]')) {
     app.innerHTML = `
       <div class="booking-page reservation-liff" data-booking-shell>
+        <div class="farm-sticky-brand" aria-label="アオニサイファーム">
+          <img src="/aonisai/aonisai_blue.jpg" alt="">
+          <span>AONISAI FARM</span>
+        </div>
         ${renderHeader()}
         <div data-booking-content></div>
       </div>
@@ -86,6 +90,10 @@ function renderShell(): void {
   const shell = app.querySelector<HTMLElement>('[data-booking-shell]');
   if (!shell) return;
   shell.innerHTML = `
+    <div class="farm-sticky-brand" aria-label="アオニサイファーム">
+      <img src="/aonisai/aonisai_blue.jpg" alt="">
+      <span>AONISAI FARM</span>
+    </div>
     ${renderHeader()}
     <div data-booking-content></div>
   `;
