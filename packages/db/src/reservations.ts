@@ -316,6 +316,17 @@ export type UpdateReservationSlotResult =
   | { ok: true; slot: ReservationSlot }
   | { ok: false; reason: 'not_found' | 'invalid_capacity' };
 
+export interface DeleteReservationSlotsInput {
+  resourceId: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
+export interface DeleteReservationSlotsResult {
+  deletedCount: number;
+  skippedCount: number;
+}
+
 export interface CreateReservationInput {
   id?: string;
   lineAccountId?: string | null;
@@ -936,6 +947,52 @@ export async function listReservationSlots(
     .bind(params.resourceId, params.date)
     .all<ReservationSlot>();
   return result.results;
+}
+
+export async function deleteReservationSlotsByDateRange(
+  db: D1Database,
+  input: DeleteReservationSlotsInput,
+): Promise<DeleteReservationSlotsResult> {
+  const existing = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM reservation_slots
+       WHERE resource_id = ?
+         AND date BETWEEN ? AND ?`,
+    )
+    .bind(input.resourceId, input.dateFrom, input.dateTo)
+    .first<{ count: number }>();
+
+  await db
+    .prepare(
+      `DELETE FROM reservation_slots
+       WHERE resource_id = ?
+         AND date BETWEEN ? AND ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM reservations
+           WHERE reservations.slot_id = reservation_slots.id
+         )`,
+    )
+    .bind(input.resourceId, input.dateFrom, input.dateTo)
+    .run();
+
+  const remaining = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM reservation_slots
+       WHERE resource_id = ?
+         AND date BETWEEN ? AND ?`,
+    )
+    .bind(input.resourceId, input.dateFrom, input.dateTo)
+    .first<{ count: number }>();
+
+  const beforeCount = existing?.count ?? 0;
+  const skippedCount = remaining?.count ?? 0;
+  return {
+    deletedCount: Math.max(beforeCount - skippedCount, 0),
+    skippedCount,
+  };
 }
 
 export async function updateReservationSlot(

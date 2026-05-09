@@ -96,6 +96,7 @@ export default function ReservationsPage() {
   const [weekStart, setWeekStart] = useState(startOfWeek(toYmd(new Date())))
   const [resources, setResources] = useState<ReservationResource[]>([])
   const [resourceId, setResourceId] = useState('')
+  const [menuId, setMenuId] = useState('')
   const [menus, setMenus] = useState<ReservationMenu[]>([])
   const [schedules, setSchedules] = useState<ReservationSchedule[]>([])
   const [slots, setSlots] = useState<ReservationSlotWithAvailability[]>([])
@@ -161,6 +162,10 @@ export default function ReservationsPage() {
       setReservations(nextReservations)
       setExternalSources(nextExternalSources)
       setMenus(nextMenus)
+      setMenuId((current) => {
+        if (current && nextMenus.some((menu) => menu.id === current)) return current
+        return nextMenus.find((menu) => menu.isActive)?.id ?? nextMenus[0]?.id ?? ''
+      })
       setSchedules(nextSchedules)
       setSlotsByDate(nextSlotsByDate)
       setSlots(nextSlotsByDate[nextDate] ?? [])
@@ -184,7 +189,7 @@ export default function ReservationsPage() {
     try {
       const result = await fn()
       const reloadResourceId = result?.resourceId ?? resourceId
-      setMessage(success)
+      if (success) setMessage(success)
       await load(reloadResourceId, date)
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存に失敗しました')
@@ -218,10 +223,25 @@ export default function ReservationsPage() {
     const dateFrom = String(formData.get('dateFrom') || date)
     const dateTo = String(formData.get('dateTo') || date)
     if (!resourceId) throw new Error('予約対象を選択してください')
+    if (!menuId) throw new Error('メニューを選択してください')
     await apiData<ReservationSlot[]>('/api/reservation-slots/generate', {
       method: 'POST',
       body: JSON.stringify({ resourceId, dateFrom, dateTo }),
     })
+  }
+
+  const deleteSlots = async (formData: FormData) => {
+    const dateFrom = String(formData.get('dateFrom') || date)
+    const dateTo = String(formData.get('dateTo') || date)
+    if (!resourceId) throw new Error('予約対象を選択してください')
+    if (!confirm(`${dateFrom} から ${dateTo} の未予約Slotを削除します。予約があるSlotは残します。実行しますか？`)) {
+      throw new Error('Slot削除をキャンセルしました')
+    }
+    const query = new URLSearchParams({ resourceId, dateFrom, dateTo })
+    const result = await apiData<{ deletedCount: number; skippedCount: number }>(`/api/reservation-slots?${query}`, {
+      method: 'DELETE',
+    })
+    setMessage(`Slotを${result.deletedCount}件削除しました。予約ありなどで残したSlot: ${result.skippedCount}件`)
   }
 
   const updateSlot = async (slot: ReservationSlotWithAvailability, formData: FormData) => {
@@ -370,9 +390,22 @@ export default function ReservationsPage() {
         <SettingsPanel
           resources={resources}
           resourceId={resourceId}
+          menuId={menuId}
           menus={menus}
           schedules={schedules}
+          date={date}
+          viewMode={viewMode}
+          visibleDates={visibleDates}
+          slotsByDate={slotsByDate}
           loading={loading || saving}
+          onSelectDate={(nextDate) => changeDate(nextDate)}
+          onMoveRange={moveRange}
+          onSetViewMode={setViewMode}
+          onSelectResource={(nextResourceId) => {
+            setResourceId(nextResourceId)
+            setSelectedSlotId(null)
+          }}
+          onSelectMenu={setMenuId}
           onCreateResource={(formData) => runSaving(async () => {
             const resource = await apiData<ReservationResource>('/api/reservation-resources', {
               method: 'POST',
@@ -387,12 +420,22 @@ export default function ReservationsPage() {
               body: JSON.stringify(resourcePayload(formData, true)),
             })
           }, '予約対象を保存しました')}
+          onDeleteResource={(resource) => runSaving(async () => {
+            if (!confirm(`${resource.name} を削除しますか？過去予約は残し、今後の選択肢から外します。`)) return
+            await apiData<ReservationResource>(`/api/reservation-resources/${encodeURIComponent(resource.id)}`, {
+              method: 'DELETE',
+            })
+            const nextResourceId = resources.find((item) => item.id !== resource.id && item.isActive)?.id ?? ''
+            setResourceId(nextResourceId)
+            return { resourceId: nextResourceId }
+          }, '予約対象を削除しました')}
           onCreateMenu={(formData) => runSaving(async () => {
             if (!resourceId) throw new Error('予約対象を選択してください')
-            await apiData<ReservationMenu>(`/api/reservation-resources/${encodeURIComponent(resourceId)}/menus`, {
+            const menu = await apiData<ReservationMenu>(`/api/reservation-resources/${encodeURIComponent(resourceId)}/menus`, {
               method: 'POST',
               body: JSON.stringify(menuPayload(formData)),
             })
+            setMenuId(menu.id)
           }, 'メニューを作成しました')}
           onUpdateMenu={(menu, formData) => runSaving(async () => {
             await apiData<ReservationMenu>(`/api/reservation-resources/${encodeURIComponent(menu.resourceId)}/menus/${encodeURIComponent(menu.id)}`, {
@@ -400,6 +443,13 @@ export default function ReservationsPage() {
               body: JSON.stringify(menuPayload(formData, true)),
             })
           }, 'メニューを保存しました')}
+          onDeleteMenu={(menu) => runSaving(async () => {
+            if (!confirm(`${menu.name} を削除しますか？過去予約は残し、今後の選択肢から外します。`)) return
+            await apiData<ReservationMenu>(`/api/reservation-resources/${encodeURIComponent(menu.resourceId)}/menus/${encodeURIComponent(menu.id)}`, {
+              method: 'DELETE',
+            })
+            setMenuId((current) => current === menu.id ? '' : current)
+          }, 'メニューを削除しました')}
           onCreateSchedule={(formData) => runSaving(async () => {
             if (!resourceId) throw new Error('予約対象を選択してください')
             await apiData<ReservationSchedule>(`/api/reservation-resources/${encodeURIComponent(resourceId)}/schedules`, {
@@ -414,6 +464,7 @@ export default function ReservationsPage() {
             })
           }, '営業時間を保存しました')}
           onGenerateSlots={(formData) => runSaving(() => generateSlots(formData), '予約枠を生成しました')}
+          onDeleteSlots={(formData) => runSaving(() => deleteSlots(formData), '')}
           onGoogleOAuth={(formData) => runSaving(() => startGoogleOAuth(formData), 'Google Calendar接続を開始しました')}
         />
       )}
@@ -670,119 +721,192 @@ function ReservationDetailCard({
 function SettingsPanel(props: {
   resources: ReservationResource[]
   resourceId: string
+  menuId: string
   menus: ReservationMenu[]
   schedules: ReservationSchedule[]
+  date: string
+  viewMode: ViewMode
+  visibleDates: string[]
+  slotsByDate: Record<string, ReservationSlotWithAvailability[]>
   loading: boolean
+  onSelectDate: (date: string, slotId?: string) => void
+  onMoveRange: (direction: -1 | 1) => void
+  onSetViewMode: (mode: ViewMode) => void
+  onSelectResource: (resourceId: string) => void
+  onSelectMenu: (menuId: string) => void
   onCreateResource: (formData: FormData) => void
   onUpdateResource: (resource: ReservationResource, formData: FormData) => void
+  onDeleteResource: (resource: ReservationResource) => void
   onCreateMenu: (formData: FormData) => void
   onUpdateMenu: (menu: ReservationMenu, formData: FormData) => void
+  onDeleteMenu: (menu: ReservationMenu) => void
   onCreateSchedule: (formData: FormData) => void
   onUpdateSchedule: (schedule: ReservationSchedule, formData: FormData) => void
   onGenerateSlots: (formData: FormData) => void
+  onDeleteSlots: (formData: FormData) => void
   onGoogleOAuth: (formData: FormData) => void
 }) {
   const currentResource = props.resources.find((resource) => resource.id === props.resourceId)
+  const activeResources = props.resources.filter((resource) => resource.isActive)
+  const activeMenus = props.menus.filter((menu) => menu.isActive)
   const today = toYmd(new Date())
   const nextWeek = addDays(today, 6)
   const nextMonth = addDays(today, 30)
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
-        <h2 className="text-base font-bold text-blue-950">予約枠を作る順番</h2>
-        <div className="mt-3 grid gap-2 text-sm text-blue-900 md:grid-cols-4">
-          <div className="rounded-lg bg-white p-3"><b>1. 予約対象</b><br />例: ブルーベリー園</div>
-          <div className="rounded-lg bg-white p-3"><b>2. メニュー</b><br />例: 食べ放題60分</div>
-          <div className="rounded-lg bg-white p-3"><b>3. 営業時間</b><br />曜日・時間・枠数</div>
-          <div className="rounded-lg bg-white p-3"><b>4. Slot生成</b><br />日付範囲を指定して作成</div>
-        </div>
-        <p className="mt-3 text-xs text-blue-800">
-          選択中: {currentResource ? currentResource.name : '予約対象が未選択です。先にResourceを作成してください。'}
-        </p>
-      </div>
+      <CalendarCard
+        date={props.date}
+        viewMode={props.viewMode}
+        visibleDates={props.visibleDates}
+        slotsByDate={props.slotsByDate}
+        onSelectDate={props.onSelectDate}
+        onMoveRange={props.onMoveRange}
+        onSetViewMode={props.onSetViewMode}
+      />
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <SettingsCard title="1. 予約対象 Resource">
-        <form action={props.onCreateResource} className="space-y-3">
-          <Field label="名前"><input name="name" className="input" placeholder="ブルーベリー摘み取り" /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="標準時間"><input name="defaultDurationMinutes" type="number" defaultValue={60} className="input" /></Field>
-            <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
-          </div>
-          <button disabled={props.loading} className="btn-primary">resource作成</button>
-        </form>
-        {currentResource && <ResourceEditor resource={currentResource} loading={props.loading} onSubmit={props.onUpdateResource} />}
-        <form action={props.onGoogleOAuth} className="mt-4 border-t border-gray-100 pt-4">
-          <Field label="Google Calendar ID"><input name="calendarId" defaultValue="primary" className="input" /></Field>
-          <button disabled={props.loading} className="btn-secondary mt-3">Google Calendar接続</button>
-        </form>
-        </SettingsCard>
-
-        <SettingsCard title="2. メニュー Menu">
-        {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先に予約対象Resourceを作成・選択してください。</p>}
-        <form action={props.onCreateMenu} className="space-y-3">
-          <Field label="名前"><input name="name" className="input" placeholder="食べ放題60分" /></Field>
-          <Field label="説明"><input name="description" className="input" /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="時間"><input name="durationMinutes" type="number" defaultValue={60} className="input" /></Field>
-            <Field label="最小人数"><input name="minPeople" type="number" defaultValue={1} className="input" /></Field>
-            <Field label="大人料金"><input name="priceAdult" type="number" className="input" /></Field>
-            <Field label="子ども料金"><input name="priceChild" type="number" className="input" /></Field>
-            <Field label="幼児料金"><input name="priceInfant" type="number" className="input" /></Field>
-          </div>
-          <div className="grid gap-2 text-xs text-gray-600">
-            <label><input name="capacityCountAdult" type="checkbox" defaultChecked className="mr-2" />大人は枠を消費</label>
-            <label><input name="capacityCountChild" type="checkbox" defaultChecked className="mr-2" />子どもは枠を消費</label>
-            <label><input name="capacityCountInfant" type="checkbox" defaultChecked className="mr-2" />幼児は枠を消費</label>
-          </div>
-          <button disabled={props.loading || !props.resourceId} className="btn-primary">menu作成</button>
-        </form>
-        <div className="mt-4 space-y-3">
-          {props.menus.map((menu) => <MenuEditor key={menu.id} menu={menu} loading={props.loading} onSubmit={props.onUpdateMenu} />)}
+      <SettingsCard title="追加するResourceとMenu">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="Resource">
+            <select value={props.resourceId} onChange={(event) => props.onSelectResource(event.target.value)} className="input">
+              {activeResources.length === 0 && <option value="">未登録</option>}
+              {activeResources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Menu">
+            <select value={props.menuId} onChange={(event) => props.onSelectMenu(event.target.value)} className="input" disabled={!props.resourceId}>
+              {activeMenus.length === 0 && <option value="">未登録</option>}
+              {activeMenus.map((menu) => <option key={menu.id} value={menu.id}>{menu.name}</option>)}
+            </select>
+          </Field>
         </div>
-        </SettingsCard>
+      </SettingsCard>
 
-        <SettingsCard title="3. 営業時間 Schedule / 4. Slot生成">
-        {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先に予約対象Resourceを作成・選択してください。</p>}
-        <form action={props.onCreateSchedule} className="space-y-3">
-          <p className="text-sm text-gray-600">Scheduleは「何曜日の何時から何時まで営業するか」のルールです。まだ予約枠は作られません。</p>
-          <div className="grid grid-cols-3 gap-3">
-            <Field label="曜日">
-              <select name="dayOfWeek" className="input">
-                {dayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}
-              </select>
-            </Field>
-            <Field label="開始"><input name="startTime" type="time" defaultValue="09:00" className="input" /></Field>
-            <Field label="終了"><input name="endTime" type="time" defaultValue="15:00" className="input" /></Field>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="間隔"><input name="slotIntervalMinutes" type="number" defaultValue={60} className="input" /></Field>
-            <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
-          </div>
-          <button disabled={props.loading || !props.resourceId} className="btn-primary">schedule作成</button>
-        </form>
-        <form action={props.onGenerateSlots} className="mt-4 rounded-lg bg-green-50 p-3">
-          <p className="text-sm font-bold text-green-900">4. 予約枠一括生成</p>
-          <p className="mt-1 text-xs text-green-800">作成済みScheduleに合う曜日だけ、指定した日付範囲にSlotを作ります。例: 月曜Scheduleなら、範囲内の月曜日だけ作成されます。</p>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="開始日"><input name="dateFrom" type="date" defaultValue={today} className="input" /></Field>
-            <Field label="終了日"><input name="dateTo" type="date" defaultValue={nextWeek} className="input" /></Field>
-          </div>
-          <p className="mt-2 text-xs text-green-800">目安: 1週間なら {today} - {nextWeek}、1か月なら {today} - {nextMonth}</p>
-          <button disabled={props.loading || !props.resourceId} className="btn-secondary mt-3">slot生成</button>
-        </form>
-        <div className="mt-4 space-y-3">
-          {props.schedules.map((schedule) => <ScheduleEditor key={schedule.id} schedule={schedule} loading={props.loading} onSubmit={props.onUpdateSchedule} />)}
+      <SettingsCard title="Slotの追加・削除">
+        {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
+        {!props.menuId && props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にMenuを選択してください。</p>}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <form action={props.onGenerateSlots} className="rounded-lg border border-green-100 bg-green-50 p-3">
+            <p className="text-sm font-bold text-green-900">Slot一括追加</p>
+            <p className="mt-1 text-xs text-green-800">選択ResourceのScheduleに合う日だけSlotを作成します。</p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Field label="開始日"><input name="dateFrom" type="date" defaultValue={props.date || today} className="input" /></Field>
+              <Field label="終了日"><input name="dateTo" type="date" defaultValue={nextWeek} className="input" /></Field>
+            </div>
+            <p className="mt-2 text-xs text-green-800">目安: 1週間なら {today} - {nextWeek}、1か月なら {today} - {nextMonth}</p>
+            <button disabled={props.loading || !props.resourceId || !props.menuId} className="btn-primary mt-3">Slot追加</button>
+          </form>
+          <form action={props.onDeleteSlots} className="rounded-lg border border-red-100 bg-red-50 p-3">
+            <p className="text-sm font-bold text-red-900">Slot一括削除</p>
+            <p className="mt-1 text-xs text-red-800">指定範囲の未予約Slotだけ削除します。予約済みSlotは残ります。</p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Field label="開始日"><input name="dateFrom" type="date" defaultValue={props.date || today} className="input" /></Field>
+              <Field label="終了日"><input name="dateTo" type="date" defaultValue={props.date || today} className="input" /></Field>
+            </div>
+            <button disabled={props.loading || !props.resourceId} className="mt-3 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">未予約Slot削除</button>
+          </form>
         </div>
-        </SettingsCard>
-      </div>
+      </SettingsCard>
+
+      <details>
+        <summary className="cursor-pointer rounded-xl border border-gray-200 bg-white p-4 text-base font-bold text-gray-900 shadow-sm">Option: Resource、Menu、Scheduleの追加・削除</summary>
+        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          <SettingsCard title="Resource">
+            <form action={props.onCreateResource} className="space-y-3">
+              <Field label="名前"><input name="name" className="input" placeholder="ブルーベリー摘み取り" /></Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="標準時間"><input name="defaultDurationMinutes" type="number" defaultValue={60} className="input" /></Field>
+                <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
+              </div>
+              <button disabled={props.loading} className="btn-primary">Resource追加</button>
+            </form>
+            {currentResource && (
+              <ResourceEditor
+                resource={currentResource}
+                loading={props.loading}
+                onSubmit={props.onUpdateResource}
+                onDelete={props.onDeleteResource}
+              />
+            )}
+            <form action={props.onGoogleOAuth} className="mt-4 border-t border-gray-100 pt-4">
+              <Field label="Google Calendar ID"><input name="calendarId" defaultValue="primary" className="input" /></Field>
+              <button disabled={props.loading} className="btn-secondary mt-3">Google Calendar接続</button>
+            </form>
+          </SettingsCard>
+
+          <SettingsCard title="Menu">
+            {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
+            <form action={props.onCreateMenu} className="space-y-3">
+              <Field label="名前"><input name="name" className="input" placeholder="食べ放題60分" /></Field>
+              <Field label="説明"><input name="description" className="input" /></Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="時間"><input name="durationMinutes" type="number" defaultValue={60} className="input" /></Field>
+                <Field label="最小人数"><input name="minPeople" type="number" defaultValue={1} className="input" /></Field>
+                <Field label="大人料金"><input name="priceAdult" type="number" className="input" /></Field>
+                <Field label="子ども料金"><input name="priceChild" type="number" className="input" /></Field>
+                <Field label="幼児料金"><input name="priceInfant" type="number" className="input" /></Field>
+              </div>
+              <div className="grid gap-2 text-xs text-gray-600">
+                <label><input name="capacityCountAdult" type="checkbox" defaultChecked className="mr-2" />大人は枠を消費</label>
+                <label><input name="capacityCountChild" type="checkbox" defaultChecked className="mr-2" />子どもは枠を消費</label>
+                <label><input name="capacityCountInfant" type="checkbox" defaultChecked className="mr-2" />幼児は枠を消費</label>
+              </div>
+              <button disabled={props.loading || !props.resourceId} className="btn-primary">Menu追加</button>
+            </form>
+            <div className="mt-4 space-y-3">
+              {props.menus.map((menu) => (
+                <MenuEditor
+                  key={menu.id}
+                  menu={menu}
+                  loading={props.loading}
+                  onSubmit={props.onUpdateMenu}
+                  onDelete={props.onDeleteMenu}
+                />
+              ))}
+            </div>
+          </SettingsCard>
+
+          <SettingsCard title="Schedule">
+            {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
+            <form action={props.onCreateSchedule} className="space-y-3">
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="曜日">
+                  <select name="dayOfWeek" className="input">
+                    {dayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}
+                  </select>
+                </Field>
+                <Field label="開始"><input name="startTime" type="time" defaultValue="09:00" className="input" /></Field>
+                <Field label="終了"><input name="endTime" type="time" defaultValue="15:00" className="input" /></Field>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="間隔"><input name="slotIntervalMinutes" type="number" defaultValue={60} className="input" /></Field>
+                <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
+              </div>
+              <button disabled={props.loading || !props.resourceId} className="btn-primary">Schedule追加</button>
+            </form>
+            <div className="mt-4 space-y-3">
+              {props.schedules.map((schedule) => <ScheduleEditor key={schedule.id} schedule={schedule} loading={props.loading} onSubmit={props.onUpdateSchedule} />)}
+            </div>
+          </SettingsCard>
+        </div>
+      </details>
     </div>
   )
 }
 
-function ResourceEditor({ resource, loading, onSubmit }: { resource: ReservationResource; loading: boolean; onSubmit: (resource: ReservationResource, formData: FormData) => void }) {
+function ResourceEditor({
+  resource,
+  loading,
+  onSubmit,
+  onDelete,
+}: {
+  resource: ReservationResource
+  loading: boolean
+  onSubmit: (resource: ReservationResource, formData: FormData) => void
+  onDelete: (resource: ReservationResource) => void
+}) {
   return (
     <form action={(formData) => onSubmit(resource, formData)} className="mt-4 space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+      {!resource.isActive && <p className="rounded-md bg-gray-200 px-2 py-1 text-xs text-gray-600">削除済み</p>}
       <Field label="名前"><input name="name" defaultValue={resource.name} className="input" /></Field>
       <Field label="説明"><input name="description" defaultValue={resource.description ?? ''} className="input" /></Field>
       <div className="grid grid-cols-2 gap-3">
@@ -792,15 +916,34 @@ function ResourceEditor({ resource, loading, onSubmit }: { resource: Reservation
         <Field label="外部枠"><input name="defaultExternalCapacity" type="number" defaultValue={resource.defaultExternalCapacity ?? ''} className="input" /></Field>
       </div>
       <Field label="Google connection ID"><input name="googleCalendarConnectionId" defaultValue={resource.googleCalendarConnectionId ?? ''} className="input" /></Field>
-      <button disabled={loading} className="btn-secondary">resource保存</button>
+      <div className="flex gap-2">
+        <button disabled={loading} className="btn-secondary">Resource保存</button>
+        {resource.isActive && (
+          <button type="button" disabled={loading} onClick={() => onDelete(resource)} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50">
+            削除
+          </button>
+        )}
+      </div>
     </form>
   )
 }
 
-function MenuEditor({ menu, loading, onSubmit }: { menu: ReservationMenu; loading: boolean; onSubmit: (menu: ReservationMenu, formData: FormData) => void }) {
+function MenuEditor({
+  menu,
+  loading,
+  onSubmit,
+  onDelete,
+}: {
+  menu: ReservationMenu
+  loading: boolean
+  onSubmit: (menu: ReservationMenu, formData: FormData) => void
+  onDelete: (menu: ReservationMenu) => void
+}) {
   return (
     <details className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-      <summary className="cursor-pointer text-sm font-bold text-gray-800">{menu.name}</summary>
+      <summary className="cursor-pointer text-sm font-bold text-gray-800">
+        {menu.name}{!menu.isActive && <span className="ml-2 rounded-md bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">削除済み</span>}
+      </summary>
       <form action={(formData) => onSubmit(menu, formData)} className="mt-3 space-y-3">
         <Field label="名前"><input name="name" defaultValue={menu.name} className="input" /></Field>
         <Field label="説明"><input name="description" defaultValue={menu.description ?? ''} className="input" /></Field>
@@ -816,7 +959,14 @@ function MenuEditor({ menu, loading, onSubmit }: { menu: ReservationMenu; loadin
           <label><input name="capacityCountChild" type="checkbox" defaultChecked={menu.capacityCountChild} className="mr-2" />子どもは枠を消費</label>
           <label><input name="capacityCountInfant" type="checkbox" defaultChecked={menu.capacityCountInfant} className="mr-2" />幼児は枠を消費</label>
         </div>
-        <button disabled={loading} className="btn-secondary">menu保存</button>
+        <div className="flex gap-2">
+          <button disabled={loading} className="btn-secondary">Menu保存</button>
+          {menu.isActive && (
+            <button type="button" disabled={loading} onClick={() => onDelete(menu)} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50">
+              削除
+            </button>
+          )}
+        </div>
       </form>
     </details>
   )

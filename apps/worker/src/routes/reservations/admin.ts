@@ -4,6 +4,7 @@ import {
   createReservationResource,
   createReservationSchedule,
   createReservationWithCapacityCheck,
+  deleteReservationSlotsByDateRange,
   generateReservationSlots,
   getReservationById,
   getReservationMenuById,
@@ -153,6 +154,19 @@ adminReservations.put('/api/reservation-resources/:resourceId', async (c) => {
   }
 });
 
+adminReservations.delete('/api/reservation-resources/:resourceId', async (c) => {
+  try {
+    const result = await updateReservationResource(c.env.DB, c.req.param('resourceId'), {
+      isActive: false,
+    });
+    if (!result.ok) return updateMasterError(c, result.reason);
+    return jsonOk(c, toResourceResponse(result.item));
+  } catch (err) {
+    console.error('DELETE /api/reservation-resources/:resourceId error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
 adminReservations.get('/api/reservation-resources/:resourceId/menus', async (c) => {
   try {
     const menus = await listReservationMenus(c.env.DB, c.req.param('resourceId'));
@@ -225,6 +239,21 @@ adminReservations.put('/api/reservation-resources/:resourceId/menus/:menuId', as
     return jsonOk(c, toMenuResponse(result.item));
   } catch (err) {
     console.error('PUT /api/reservation-resources/:resourceId/menus/:menuId error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+adminReservations.delete('/api/reservation-resources/:resourceId/menus/:menuId', async (c) => {
+  try {
+    const existing = await getReservationMenuById(c.env.DB, c.req.param('menuId'));
+    if (!existing || existing.resource_id !== c.req.param('resourceId')) return jsonError(c, 'not_found', 404, 'Menu not found');
+    const result = await updateReservationMenu(c.env.DB, c.req.param('menuId'), {
+      isActive: false,
+    });
+    if (!result.ok) return updateMasterError(c, result.reason);
+    return jsonOk(c, toMenuResponse(result.item));
+  } catch (err) {
+    console.error('DELETE /api/reservation-resources/:resourceId/menus/:menuId error:', err);
     return jsonError(c, 'internal_error', 500);
   }
 });
@@ -336,6 +365,26 @@ adminReservations.post('/api/reservation-slots/generate', async (c) => {
     return jsonOk(c, slots.map(toSlotResponse), 201);
   } catch (err) {
     console.error('POST /api/reservation-slots/generate error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+adminReservations.delete('/api/reservation-slots', async (c) => {
+  try {
+    const resourceId = queryRequired(c, 'resourceId');
+    if (!resourceId.ok) return jsonError(c, resourceId.error.code, resourceId.error.status, resourceId.error.message);
+    const dateFrom = queryRequired(c, 'dateFrom');
+    if (!dateFrom.ok) return jsonError(c, dateFrom.error.code, dateFrom.error.status, dateFrom.error.message);
+    const dateTo = queryRequired(c, 'dateTo');
+    if (!dateTo.ok) return jsonError(c, dateTo.error.code, dateTo.error.status, dateTo.error.message);
+    const result = await deleteReservationSlotsByDateRange(c.env.DB, {
+      resourceId: resourceId.value,
+      dateFrom: dateFrom.value,
+      dateTo: dateTo.value,
+    });
+    return jsonOk(c, result);
+  } catch (err) {
+    console.error('DELETE /api/reservation-slots error:', err);
     return jsonError(c, 'internal_error', 500);
   }
 });

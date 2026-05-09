@@ -45,14 +45,9 @@ jobs:
           echo "Set confirm_remote=true to run a migration against the remote D1 database."
           exit 1
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
 
       - name: Prepare Wrangler D1 config
         working-directory: apps/worker
@@ -110,5 +105,4 @@ jobs:
         run: |
           db="$(cat .database-name)"
           migration_file="$(cat .migration-file)"
-          pnpm exec wrangler d1 execute "$db" --remote --config .wrangler-d1-ci.json --file "$migration_file"
-
+          npx wrangler@4 d1 execute "$db" --remote --config .wrangler-d1-ci.json --file "$migration_file"
