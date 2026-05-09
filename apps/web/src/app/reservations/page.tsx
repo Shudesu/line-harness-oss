@@ -106,6 +106,9 @@ export default function ReservationsPage() {
   const [selectedReservation, setSelectedReservation] = useState<ReservationResponse | null>(null)
   const [externalSources, setExternalSources] = useState<AdminExternalSource[]>([])
   const [showExternalDetails, setShowExternalDetails] = useState(false)
+  const [showResourceForm, setShowResourceForm] = useState(false)
+  const [showMenuForm, setShowMenuForm] = useState(false)
+  const [showScheduleForm, setShowScheduleForm] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -312,40 +315,6 @@ export default function ReservationsPage() {
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
       {message && <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">{message}</div>}
 
-      <div className="mb-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm md:flex-row md:items-end">
-        <label className="flex-1 text-sm font-medium text-gray-700">
-          予約対象
-          <select
-            value={resourceId}
-            onChange={(event) => {
-              setResourceId(event.target.value)
-              setSelectedSlotId(null)
-            }}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none"
-          >
-            {resources.length === 0 && <option value="">未登録</option>}
-            {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
-          </select>
-        </label>
-        <label className="text-sm font-medium text-gray-700">
-          日付
-          <input
-            type="date"
-            value={date}
-            onChange={(event) => changeDate(event.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none md:w-44"
-          />
-        </label>
-        <button
-          onClick={() => load(resourceId, date)}
-          disabled={loading}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          style={{ backgroundColor: '#06C755' }}
-        >
-          更新
-        </button>
-      </div>
-
       {mode === 'overview' ? (
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
           <div className="space-y-4">
@@ -357,6 +326,31 @@ export default function ReservationsPage() {
               onSelectDate={(nextDate) => changeDate(nextDate)}
               onMoveRange={moveRange}
               onSetViewMode={setViewMode}
+              headerControls={
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <label className="min-w-56 text-xs font-medium text-gray-600">
+                    Resource
+                    <select
+                      value={resourceId}
+                      onChange={(event) => {
+                        setResourceId(event.target.value)
+                        setSelectedSlotId(null)
+                      }}
+                      className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none"
+                    >
+                      {resources.length === 0 && <option value="">未登録</option>}
+                      {resources.filter((resource) => resource.isActive).map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+                    </select>
+                  </label>
+                  <button
+                    onClick={() => load(resourceId, date)}
+                    disabled={loading}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50"
+                  >
+                    更新
+                  </button>
+                </div>
+              }
             />
             <ExternalSourcesCard
               sources={selectedDateExternalSources}
@@ -466,6 +460,12 @@ export default function ReservationsPage() {
           onGenerateSlots={(formData) => runSaving(() => generateSlots(formData), '予約枠を生成しました')}
           onDeleteSlots={(formData) => runSaving(() => deleteSlots(formData), '')}
           onGoogleOAuth={(formData) => runSaving(() => startGoogleOAuth(formData), 'Google Calendar接続を開始しました')}
+          showResourceForm={showResourceForm}
+          showMenuForm={showMenuForm}
+          showScheduleForm={showScheduleForm}
+          onToggleResourceForm={() => setShowResourceForm((value) => !value)}
+          onToggleMenuForm={() => setShowMenuForm((value) => !value)}
+          onToggleScheduleForm={() => setShowScheduleForm((value) => !value)}
         />
       )}
 
@@ -482,6 +482,7 @@ function CalendarCard({
   onSelectDate,
   onMoveRange,
   onSetViewMode,
+  headerControls,
 }: {
   date: string
   viewMode: ViewMode
@@ -490,6 +491,7 @@ function CalendarCard({
   onSelectDate: (date: string, slotId?: string) => void
   onMoveRange: (direction: -1 | 1) => void
   onSetViewMode: (mode: ViewMode) => void
+  headerControls?: React.ReactNode
 }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -498,11 +500,14 @@ function CalendarCard({
           <h2 className="text-base font-bold text-gray-900">空き状況カレンダー</h2>
           <p className="text-xs text-gray-500">日付を選ぶと下に枠情報、枠を選ぶと右側に予約詳細を表示します。</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => onMoveRange(-1)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50">←</button>
-          <button onClick={() => onSetViewMode('week')} className={`rounded-lg px-3 py-2 text-sm ${viewMode === 'week' ? 'bg-green-50 text-green-700' : 'border border-gray-200 text-gray-600'}`}>1週間</button>
-          <button onClick={() => onSetViewMode('month')} className={`rounded-lg px-3 py-2 text-sm ${viewMode === 'month' ? 'bg-green-50 text-green-700' : 'border border-gray-200 text-gray-600'}`}>1か月</button>
-          <button onClick={() => onMoveRange(1)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50">→</button>
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+          {headerControls}
+          <div className="flex items-center gap-2">
+            <button onClick={() => onMoveRange(-1)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50">←</button>
+            <button onClick={() => onSetViewMode('week')} className={`rounded-lg px-3 py-2 text-sm ${viewMode === 'week' ? 'bg-green-50 text-green-700' : 'border border-gray-200 text-gray-600'}`}>1週間</button>
+            <button onClick={() => onSetViewMode('month')} className={`rounded-lg px-3 py-2 text-sm ${viewMode === 'month' ? 'bg-green-50 text-green-700' : 'border border-gray-200 text-gray-600'}`}>1か月</button>
+            <button onClick={() => onMoveRange(1)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50">→</button>
+          </div>
         </div>
       </div>
       <div className={`grid gap-px bg-gray-100 p-px ${viewMode === 'week' ? 'grid-cols-7' : 'grid-cols-7'}`}>
@@ -745,8 +750,15 @@ function SettingsPanel(props: {
   onGenerateSlots: (formData: FormData) => void
   onDeleteSlots: (formData: FormData) => void
   onGoogleOAuth: (formData: FormData) => void
+  showResourceForm: boolean
+  showMenuForm: boolean
+  showScheduleForm: boolean
+  onToggleResourceForm: () => void
+  onToggleMenuForm: () => void
+  onToggleScheduleForm: () => void
 }) {
   const currentResource = props.resources.find((resource) => resource.id === props.resourceId)
+  const currentMenu = props.menus.find((menu) => menu.id === props.menuId)
   const activeResources = props.resources.filter((resource) => resource.isActive)
   const activeMenus = props.menus.filter((menu) => menu.isActive)
   const today = toYmd(new Date())
@@ -809,84 +821,159 @@ function SettingsPanel(props: {
 
       <details>
         <summary className="cursor-pointer rounded-xl border border-gray-200 bg-white p-4 text-base font-bold text-gray-900 shadow-sm">Option: Resource、Menu、Scheduleの追加・削除</summary>
-        <div className="mt-4 grid gap-4 xl:grid-cols-3">
-          <SettingsCard title="Resource">
-            <form action={props.onCreateResource} className="space-y-3">
-              <Field label="名前"><input name="name" className="input" placeholder="ブルーベリー摘み取り" /></Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="標準時間"><input name="defaultDurationMinutes" type="number" defaultValue={60} className="input" /></Field>
-                <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
-              </div>
-              <button disabled={props.loading} className="btn-primary">Resource追加</button>
-            </form>
-            {currentResource && (
-              <ResourceEditor
-                resource={currentResource}
-                loading={props.loading}
-                onSubmit={props.onUpdateResource}
-                onDelete={props.onDeleteResource}
-              />
-            )}
-            <form action={props.onGoogleOAuth} className="mt-4 border-t border-gray-100 pt-4">
-              <Field label="Google Calendar ID"><input name="calendarId" defaultValue="primary" className="input" /></Field>
-              <button disabled={props.loading} className="btn-secondary mt-3">Google Calendar接続</button>
-            </form>
-          </SettingsCard>
-
-          <SettingsCard title="Menu">
-            {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
-            <form action={props.onCreateMenu} className="space-y-3">
-              <Field label="名前"><input name="name" className="input" placeholder="食べ放題60分" /></Field>
-              <Field label="説明"><input name="description" className="input" /></Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="時間"><input name="durationMinutes" type="number" defaultValue={60} className="input" /></Field>
-                <Field label="最小人数"><input name="minPeople" type="number" defaultValue={1} className="input" /></Field>
-                <Field label="大人料金"><input name="priceAdult" type="number" className="input" /></Field>
-                <Field label="子ども料金"><input name="priceChild" type="number" className="input" /></Field>
-                <Field label="幼児料金"><input name="priceInfant" type="number" className="input" /></Field>
-              </div>
-              <div className="grid gap-2 text-xs text-gray-600">
-                <label><input name="capacityCountAdult" type="checkbox" defaultChecked className="mr-2" />大人は枠を消費</label>
-                <label><input name="capacityCountChild" type="checkbox" defaultChecked className="mr-2" />子どもは枠を消費</label>
-                <label><input name="capacityCountInfant" type="checkbox" defaultChecked className="mr-2" />幼児は枠を消費</label>
-              </div>
-              <button disabled={props.loading || !props.resourceId} className="btn-primary">Menu追加</button>
-            </form>
-            <div className="mt-4 space-y-3">
-              {props.menus.map((menu) => (
-                <MenuEditor
-                  key={menu.id}
-                  menu={menu}
-                  loading={props.loading}
-                  onSubmit={props.onUpdateMenu}
-                  onDelete={props.onDeleteMenu}
-                />
-              ))}
-            </div>
-          </SettingsCard>
-
-          <SettingsCard title="Schedule">
-            {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
-            <form action={props.onCreateSchedule} className="space-y-3">
-              <div className="grid grid-cols-3 gap-3">
-                <Field label="曜日">
-                  <select name="dayOfWeek" className="input">
-                    {dayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}
+        <div className="mt-4 space-y-4">
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="grid gap-4 xl:grid-cols-[1fr_1fr_1.4fr]">
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-bold text-gray-900">Resource</h3>
+                  <button type="button" onClick={props.onToggleResourceForm} className="rounded-full border border-gray-200 px-3 py-1 text-sm font-bold text-gray-700">
+                    {props.showResourceForm ? '閉じる' : '+'}
+                  </button>
+                </div>
+                <Field label="選択">
+                  <select value={props.resourceId} onChange={(event) => props.onSelectResource(event.target.value)} className="input">
+                    {activeResources.length === 0 && <option value="">未登録</option>}
+                    {activeResources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
                   </select>
                 </Field>
-                <Field label="開始"><input name="startTime" type="time" defaultValue="09:00" className="input" /></Field>
-                <Field label="終了"><input name="endTime" type="time" defaultValue="15:00" className="input" /></Field>
+                {currentResource ? (
+                  <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+                    <p className="font-semibold text-gray-900">{currentResource.name}</p>
+                    <p className="mt-1">標準{currentResource.defaultDurationMinutes}分 / 総枠{currentResource.defaultCapacity}</p>
+                    <p className="mt-1 text-xs text-gray-500">LINE {currentResource.defaultLineCapacity ?? '-'} / 外部 {currentResource.defaultExternalCapacity ?? '-'}</p>
+                  </div>
+                ) : <p className="mt-3 text-sm text-gray-400">Resourceがありません。</p>}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="間隔"><input name="slotIntervalMinutes" type="number" defaultValue={60} className="input" /></Field>
-                <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
+
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-bold text-gray-900">Menu</h3>
+                  <button type="button" onClick={props.onToggleMenuForm} className="rounded-full border border-gray-200 px-3 py-1 text-sm font-bold text-gray-700" disabled={!props.resourceId}>
+                    {props.showMenuForm ? '閉じる' : '+'}
+                  </button>
+                </div>
+                <Field label="選択">
+                  <select value={props.menuId} onChange={(event) => props.onSelectMenu(event.target.value)} className="input" disabled={!props.resourceId}>
+                    {activeMenus.length === 0 && <option value="">未登録</option>}
+                    {activeMenus.map((menu) => <option key={menu.id} value={menu.id}>{menu.name}</option>)}
+                  </select>
+                </Field>
+                {currentMenu ? (
+                  <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+                    <p className="font-semibold text-gray-900">{currentMenu.name}</p>
+                    <p className="mt-1">{currentMenu.durationMinutes}分 / {currentMenu.minPeople}-{currentMenu.maxPeople ?? '上限なし'}名</p>
+                    <p className="mt-1 text-xs text-gray-500">大人{currentMenu.priceAdult ?? '-'} / 子ども{currentMenu.priceChild ?? '-'} / 幼児{currentMenu.priceInfant ?? '-'}</p>
+                  </div>
+                ) : <p className="mt-3 text-sm text-gray-400">Menuがありません。</p>}
               </div>
-              <button disabled={props.loading || !props.resourceId} className="btn-primary">Schedule追加</button>
-            </form>
-            <div className="mt-4 space-y-3">
-              {props.schedules.map((schedule) => <ScheduleEditor key={schedule.id} schedule={schedule} loading={props.loading} onSubmit={props.onUpdateSchedule} />)}
+
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-bold text-gray-900">Schedule</h3>
+                  <button type="button" onClick={props.onToggleScheduleForm} className="rounded-full border border-gray-200 px-3 py-1 text-sm font-bold text-gray-700" disabled={!props.resourceId}>
+                    {props.showScheduleForm ? '閉じる' : '+'}
+                  </button>
+                </div>
+                <div className="mt-2 grid gap-2">
+                  {props.schedules.length === 0 ? <p className="text-sm text-gray-400">Scheduleがありません。</p> : props.schedules.map((schedule) => (
+                    <div key={schedule.id} className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-semibold text-gray-900">{dayLabels[schedule.dayOfWeek]} {schedule.startTime}-{schedule.endTime}</p>
+                        {!schedule.isActive && <span className="rounded-md bg-gray-200 px-2 py-0.5 text-xs text-gray-600">停止中</span>}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">{schedule.slotIntervalMinutes}分間隔 / 総枠{schedule.defaultCapacity}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </SettingsCard>
+          </div>
+
+          {(currentResource || props.showResourceForm || currentMenu || props.showMenuForm || props.showScheduleForm) && (
+            <div className="grid gap-4 xl:grid-cols-3">
+              <SettingsCard title="Resource編集">
+                {props.showResourceForm && (
+                  <form action={props.onCreateResource} className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                    <Field label="名前"><input name="name" className="input" placeholder="ブルーベリー摘み取り" /></Field>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="標準時間"><input name="defaultDurationMinutes" type="number" defaultValue={60} className="input" /></Field>
+                      <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
+                    </div>
+                    <button disabled={props.loading} className="btn-primary">Resource追加</button>
+                  </form>
+                )}
+                {currentResource && (
+                  <ResourceEditor
+                    resource={currentResource}
+                    loading={props.loading}
+                    onSubmit={props.onUpdateResource}
+                    onDelete={props.onDeleteResource}
+                  />
+                )}
+                <form action={props.onGoogleOAuth} className="mt-4 border-t border-gray-100 pt-4">
+                  <Field label="Google Calendar ID"><input name="calendarId" defaultValue="primary" className="input" /></Field>
+                  <button disabled={props.loading} className="btn-secondary mt-3">Google Calendar接続</button>
+                </form>
+              </SettingsCard>
+
+              <SettingsCard title="Menu編集">
+                {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
+                {props.showMenuForm && (
+                  <form action={props.onCreateMenu} className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                    <Field label="名前"><input name="name" className="input" placeholder="食べ放題60分" /></Field>
+                    <Field label="説明"><input name="description" className="input" /></Field>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="時間"><input name="durationMinutes" type="number" defaultValue={60} className="input" /></Field>
+                      <Field label="最小人数"><input name="minPeople" type="number" defaultValue={1} className="input" /></Field>
+                      <Field label="大人料金"><input name="priceAdult" type="number" className="input" /></Field>
+                      <Field label="子ども料金"><input name="priceChild" type="number" className="input" /></Field>
+                      <Field label="幼児料金"><input name="priceInfant" type="number" className="input" /></Field>
+                    </div>
+                    <div className="grid gap-2 text-xs text-gray-600">
+                      <label><input name="capacityCountAdult" type="checkbox" defaultChecked className="mr-2" />大人は枠を消費</label>
+                      <label><input name="capacityCountChild" type="checkbox" defaultChecked className="mr-2" />子どもは枠を消費</label>
+                      <label><input name="capacityCountInfant" type="checkbox" defaultChecked className="mr-2" />幼児は枠を消費</label>
+                    </div>
+                    <button disabled={props.loading || !props.resourceId} className="btn-primary">Menu追加</button>
+                  </form>
+                )}
+                {currentMenu && (
+                  <MenuEditor
+                    menu={currentMenu}
+                    loading={props.loading}
+                    onSubmit={props.onUpdateMenu}
+                    onDelete={props.onDeleteMenu}
+                  />
+                )}
+              </SettingsCard>
+
+              <SettingsCard title="Schedule編集">
+                {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
+                {props.showScheduleForm && (
+                  <form action={props.onCreateSchedule} className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                    <div className="grid grid-cols-3 gap-3">
+                      <Field label="曜日">
+                        <select name="dayOfWeek" className="input">
+                          {dayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="開始"><input name="startTime" type="time" defaultValue="09:00" className="input" /></Field>
+                      <Field label="終了"><input name="endTime" type="time" defaultValue="15:00" className="input" /></Field>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="間隔"><input name="slotIntervalMinutes" type="number" defaultValue={60} className="input" /></Field>
+                      <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
+                    </div>
+                    <button disabled={props.loading || !props.resourceId} className="btn-primary">Schedule追加</button>
+                  </form>
+                )}
+                <div className="mt-4 space-y-3">
+                  {props.schedules.map((schedule) => <ScheduleEditor key={schedule.id} schedule={schedule} loading={props.loading} onSubmit={props.onUpdateSchedule} />)}
+                </div>
+              </SettingsCard>
+            </div>
+          )}
         </div>
       </details>
     </div>
