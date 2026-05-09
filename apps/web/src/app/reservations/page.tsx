@@ -132,7 +132,8 @@ export default function ReservationsPage() {
     setError('')
     try {
       const allResources = await apiData<ReservationResource[]>('/api/reservation-resources')
-      const resolvedResourceId = nextResourceId || allResources[0]?.id || ''
+      const fallbackResourceId = allResources.find((resource) => resource.isActive)?.id ?? allResources[0]?.id ?? ''
+      const resolvedResourceId = nextResourceId || fallbackResourceId
       setResources(allResources)
       setResourceId(resolvedResourceId)
 
@@ -220,6 +221,18 @@ export default function ReservationsPage() {
     const next = toYmd(d)
     setDate(next)
     setWeekStart(startOfWeek(next))
+  }
+
+  const changeResource = (nextResourceId: string) => {
+    setResourceId(nextResourceId)
+    setMenuId('')
+    setMenus([])
+    setSchedules([])
+    setSlots([])
+    setSlotsByDate({})
+    setSelectedSlotId(null)
+    setSelectedReservation(null)
+    void load(nextResourceId, date)
   }
 
   const generateSlots = async (formData: FormData) => {
@@ -333,8 +346,7 @@ export default function ReservationsPage() {
                     <select
                       value={resourceId}
                       onChange={(event) => {
-                        setResourceId(event.target.value)
-                        setSelectedSlotId(null)
+                        changeResource(event.target.value)
                       }}
                       className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none"
                     >
@@ -395,10 +407,7 @@ export default function ReservationsPage() {
           onSelectDate={(nextDate) => changeDate(nextDate)}
           onMoveRange={moveRange}
           onSetViewMode={setViewMode}
-          onSelectResource={(nextResourceId) => {
-            setResourceId(nextResourceId)
-            setSelectedSlotId(null)
-          }}
+          onSelectResource={changeResource}
           onSelectMenu={setMenuId}
           onCreateResource={(formData) => runSaving(async () => {
             const resource = await apiData<ReservationResource>('/api/reservation-resources', {
