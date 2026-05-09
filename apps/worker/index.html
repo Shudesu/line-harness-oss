@@ -16,6 +16,13 @@
       align-items: center;
       min-height: 100vh;
     }
+    body:has(.reservation-liff) {
+      background:
+        radial-gradient(circle at 18% 8%, rgba(95, 138, 59, .18), transparent 26%),
+        radial-gradient(circle at 82% 0%, rgba(43, 48, 139, .2), transparent 28%),
+        linear-gradient(180deg, #fffaf0 0%, #eef0ff 58%, #f6fbef 100%);
+      align-items: flex-start;
+    }
     #app {
       max-width: 480px;
       width: 100%;
@@ -118,29 +125,89 @@
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
     }
+    .reservation-liff {
+      --berry-900: #1b1f5f;
+      --berry-700: #29308b;
+      --berry-500: #4f58b8;
+      --berry-100: #eef0ff;
+      --leaf-700: #315f34;
+      --leaf-500: #5f8a3b;
+      --cream-50: #fffaf0;
+      --cream-100: #f7efd7;
+      --soil-700: #4a3528;
+      --ink: #263124;
+      --muted: #75806f;
+      --line: rgba(43, 48, 118, .13);
+      --shadow: 0 18px 42px rgba(27, 31, 95, .13);
+      padding-bottom: 24px;
+      position: relative;
+    }
+    .reservation-liff::before,
+    .reservation-liff::after {
+      content: '';
+      position: fixed;
+      pointer-events: none;
+      z-index: -1;
+      border-radius: 999px;
+      filter: blur(2px);
+    }
+    .reservation-liff::before {
+      width: 260px;
+      height: 260px;
+      top: -96px;
+      right: -96px;
+      background: radial-gradient(circle, rgba(78, 88, 184, .28), rgba(78, 88, 184, 0) 68%);
+    }
+    .reservation-liff::after {
+      width: 220px;
+      height: 220px;
+      left: -90px;
+      bottom: 40px;
+      background: radial-gradient(circle, rgba(95, 138, 59, .2), rgba(95, 138, 59, 0) 70%);
+    }
     .booking-header {
       text-align: center;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
+      padding: 20px 18px 18px;
+      border: 1px solid rgba(255,255,255,.72);
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(95,138,59,.18), transparent 34%),
+        radial-gradient(circle at 85% 8%, rgba(79,88,184,.2), transparent 30%),
+        linear-gradient(160deg, rgba(255,250,240,.98), rgba(239,242,255,.94));
+      box-shadow: var(--shadow);
+    }
+    .farm-logo-wrap {
+      width: min(220px, 72%);
+      margin: 0 auto 12px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.74);
+      box-shadow: inset 0 0 0 1px rgba(27,31,95,.08);
+    }
+    .farm-logo {
+      display: block;
+      width: 100%;
+      height: auto;
     }
     .booking-header h1 {
-      font-size: 22px;
-      color: #333;
-      margin-bottom: 4px;
+      font-size: 25px;
+      color: var(--berry-900);
+      line-height: 1.25;
+      letter-spacing: .02em;
+      margin-bottom: 8px;
     }
     .booking-header p {
       font-size: 13px;
-      color: #999;
-    }
-    .reservation-liff {
-      padding-bottom: 24px;
+      color: var(--soil-700);
     }
     .eyebrow {
-      color: #06C755 !important;
+      color: var(--leaf-700) !important;
       font-size: 11px !important;
       font-weight: 800;
-      letter-spacing: .08em;
+      letter-spacing: .12em;
       text-transform: uppercase;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
     .booking-tabs {
       display: grid;
@@ -157,34 +224,36 @@
     }
     .booking-tabs button,
     .view-toggle button {
-      border: 1px solid #dfe8e2;
-      background: #fff;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.88);
       border-radius: 999px;
       padding: 10px 12px;
-      color: #587060;
+      color: var(--berry-700);
       font-size: 13px;
       font-weight: 800;
     }
     .booking-tabs button.active,
     .view-toggle button.active {
-      background: #153b2b;
-      border-color: #153b2b;
+      background: linear-gradient(135deg, var(--berry-900), var(--berry-500));
+      border-color: transparent;
       color: #fff;
+      box-shadow: 0 10px 22px rgba(27, 31, 95, .22);
     }
     .booking-panel {
-      background: #fff;
-      border-radius: 18px;
+      background: rgba(255,255,255,.94);
+      border: 1px solid rgba(255,255,255,.78);
+      border-radius: 22px;
       padding: 16px;
-      box-shadow: 0 8px 24px rgba(21, 59, 43, .08);
+      box-shadow: var(--shadow);
       margin-bottom: 14px;
     }
     .booking-panel h2 {
       font-size: 16px;
-      color: #1f3327;
+      color: var(--berry-900);
       margin-bottom: 6px;
     }
     .booking-panel p {
-      color: #7a897f;
+      color: var(--muted);
       font-size: 12px;
       line-height: 1.55;
     }
@@ -198,7 +267,7 @@
     .field-label {
       display: grid;
       gap: 6px;
-      color: #47594e;
+      color: var(--leaf-700);
       font-size: 12px;
       font-weight: 800;
       margin-top: 12px;
@@ -208,13 +277,13 @@
     .field-label select,
     .field-label textarea {
       width: 100%;
-      border: 1px solid #dfe8e2;
-      background: #fbfdfb;
-      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--cream-50);
+      border-radius: 14px;
       padding: 12px;
       font: inherit;
       font-size: 15px;
-      color: #1f3327;
+      color: var(--ink);
     }
     .people-grid {
       display: grid;
@@ -257,11 +326,11 @@
     .cal-nav {
       width: 36px;
       height: 36px;
-      border: none;
-      background: #f5f5f5;
+      border: 1px solid var(--line);
+      background: var(--cream-50);
       border-radius: 50%;
       font-size: 16px;
-      color: #333;
+      color: var(--berry-900);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -269,7 +338,7 @@
       transition: background 0.15s;
     }
     .cal-nav:active {
-      background: #e0e0e0;
+      background: var(--berry-100);
     }
     .cal-weekdays {
       display: grid;
@@ -313,7 +382,7 @@
       color: #333;
     }
     .cal-day.active:active {
-      background: #e8faf0;
+      background: var(--berry-100);
     }
     .cal-day.sun { color: #e53e3e; }
     .cal-day.sat { color: #3b82f6; }
@@ -329,10 +398,10 @@
       width: 4px;
       height: 4px;
       border-radius: 50%;
-      background: #06C755;
+      background: var(--berry-500);
     }
     .cal-day.selected {
-      background: #06C755 !important;
+      background: var(--berry-700) !important;
       color: #fff !important;
       font-weight: 700;
     }
@@ -343,13 +412,13 @@
     }
     .month-day {
       min-height: 58px;
-      border: 1px solid #e3ece6;
-      border-radius: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
       background: #fff;
       display: grid;
       place-items: center;
       padding: 6px 2px;
-      color: #324537;
+      color: var(--ink);
       font-family: inherit;
       cursor: pointer;
     }
@@ -366,18 +435,18 @@
     }
     .month-day small {
       font-size: 9px;
-      color: #78867e;
+      color: var(--muted);
     }
     .month-day.many span,
     .month-day.few span {
-      color: #06C755;
+      color: var(--leaf-500);
     }
     .month-day.full span {
       color: #b7b7b7;
     }
     .month-day.selected {
-      border-color: #06C755;
-      box-shadow: 0 0 0 2px rgba(6,199,85,.15);
+      border-color: var(--berry-500);
+      box-shadow: 0 0 0 3px rgba(79,88,184,.16);
     }
     .month-day:disabled {
       opacity: .42;
@@ -392,19 +461,19 @@
     }
     .week-cell {
       min-height: 48px;
-      border: 1px solid #e3ece6;
-      border-radius: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
       background: #fff;
       display: grid;
       place-items: center;
       padding: 4px 2px;
       font-family: inherit;
-      color: #324537;
+      color: var(--ink);
       text-align: center;
     }
     .week-head,
     .week-time {
-      background: #f3f8f5;
+      background: linear-gradient(180deg, var(--cream-50), var(--berry-100));
       font-size: 11px;
       font-weight: 800;
       position: sticky;
@@ -420,7 +489,7 @@
     .mark small {
       display: block;
       font-size: 9px;
-      color: #78867e;
+      color: var(--muted);
       font-weight: 700;
     }
     .mark {
@@ -432,7 +501,7 @@
     }
     .mark.many span,
     .mark.few span {
-      color: #06C755;
+      color: var(--leaf-500);
     }
     .mark.full,
     .mark.none {
@@ -441,8 +510,8 @@
     }
     .week-cell.selected,
     .mark.selected {
-      border-color: #06C755;
-      box-shadow: 0 0 0 2px rgba(6,199,85,.15);
+      border-color: var(--berry-500);
+      box-shadow: 0 0 0 3px rgba(79,88,184,.16);
     }
     .week-empty {
       grid-column: 1 / -1;
@@ -504,18 +573,18 @@
       font-size: 11px;
     }
     .slot-btn.available {
-      background: #e8faf0;
-      color: #06C755;
-      border: 1.5px solid #06C755;
+      background: var(--berry-100);
+      color: var(--berry-900);
+      border: 1.5px solid var(--berry-500);
     }
     .slot-btn.available:active {
-      background: #06C755;
+      background: var(--berry-700);
       color: #fff;
     }
     .slot-btn.selected {
-      background: #06C755;
+      background: linear-gradient(135deg, var(--berry-900), var(--berry-500));
       color: #fff;
-      border: 1.5px solid #06C755;
+      border: 1.5px solid var(--berry-700);
       transform: scale(1.03);
     }
     .slot-btn.full {
@@ -560,18 +629,18 @@
       border-bottom: none;
     }
     .confirm-label {
-      color: #999;
+      color: var(--muted);
     }
     .confirm-value {
       font-weight: 600;
-      color: #333;
+      color: var(--ink);
     }
     .book-btn {
       width: 100%;
       padding: 14px;
       border: none;
-      border-radius: 8px;
-      background: #06C755;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--berry-900), var(--berry-500));
       color: #fff;
       font-size: 16px;
       font-weight: 700;
@@ -583,7 +652,7 @@
       opacity: 0.85;
     }
     .book-btn:disabled {
-      background: #bbb;
+      background: #b7b7c8;
       cursor: not-allowed;
     }
     .book-btn.danger {
@@ -599,14 +668,14 @@
     }
     .policy-note,
     .muted {
-      color: #7a897f;
+      color: var(--muted);
       font-size: 12px;
       line-height: 1.6;
       margin: 10px 0;
     }
     .mini-btn {
-      border: 1px solid #06C755;
-      color: #06C755;
+      border: 1px solid var(--berry-500);
+      color: var(--berry-700);
       background: #fff;
       border-radius: 999px;
       padding: 8px 12px;
@@ -616,7 +685,7 @@
     .text-btn {
       border: none;
       background: transparent;
-      color: #06C755;
+      color: var(--berry-700);
       font-weight: 800;
       margin-bottom: 12px;
     }
@@ -626,9 +695,9 @@
       margin-top: 12px;
     }
     .reservation-card {
-      border: 1px solid #dfe8e2;
-      background: #fbfdfb;
-      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--cream-50);
+      border-radius: 16px;
       padding: 12px;
       text-align: left;
       display: grid;
@@ -637,23 +706,23 @@
       cursor: pointer;
     }
     .reservation-card span {
-      color: #06C755;
+      color: var(--berry-700);
       font-size: 12px;
       font-weight: 900;
     }
     .reservation-card strong {
-      color: #1f3327;
+      color: var(--ink);
       font-size: 15px;
     }
     .reservation-card small {
-      color: #78867e;
+      color: var(--muted);
       font-size: 12px;
     }
 
     /* Success */
     .success-card {
       background: #fff;
-      border-radius: 12px;
+      border-radius: 24px;
       padding: 32px 24px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
       text-align: center;
@@ -663,7 +732,7 @@
       width: 64px;
       height: 64px;
       border-radius: 50%;
-      background: #06C755;
+      background: linear-gradient(135deg, var(--leaf-700), var(--berry-500));
       color: #fff;
       font-size: 32px;
       line-height: 64px;
@@ -671,7 +740,7 @@
     }
     .success-card h2 {
       font-size: 18px;
-      color: #06C755;
+      color: var(--berry-700);
       margin-bottom: 16px;
     }
     .success-message {
@@ -684,10 +753,10 @@
       margin-top: 24px;
       width: 100%;
       padding: 14px;
-      border: 1.5px solid #06C755;
-      border-radius: 8px;
+      border: 1.5px solid var(--berry-500);
+      border-radius: 999px;
       background: #fff;
-      color: #06C755;
+      color: var(--berry-700);
       font-size: 16px;
       font-weight: 700;
       cursor: pointer;
@@ -695,7 +764,7 @@
       font-family: inherit;
     }
     .close-btn:active {
-      background: #e8faf0;
+      background: var(--berry-100);
     }
     .close-btn.danger {
       border-color: #d84a3a;
