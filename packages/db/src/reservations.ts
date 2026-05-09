@@ -29,6 +29,37 @@ export type ExternalReservationParseStatus =
   | 'duplicate'
   | 'ignored';
 
+let reservationPeopleCapacitySchemaReady = false;
+
+async function ensureReservationPeopleCapacitySchema(db: D1Database): Promise<void> {
+  if (reservationPeopleCapacitySchemaReady) return;
+  await ensureColumns(db, 'reservation_menus', [
+    ['price_infant', 'INTEGER'],
+    ['capacity_count_adult', 'INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0, 1))'],
+    ['capacity_count_child', 'INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0, 1))'],
+    ['capacity_count_infant', 'INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0, 1))'],
+  ]);
+  await ensureColumns(db, 'reservations', [
+    ['infant_count', 'INTEGER NOT NULL DEFAULT 0'],
+    ['capacity_people', 'INTEGER NOT NULL DEFAULT 0'],
+  ]);
+  await ensureColumns(db, 'reservation_items', [
+    ['infant_count', 'INTEGER NOT NULL DEFAULT 0'],
+    ['capacity_people', 'INTEGER NOT NULL DEFAULT 0'],
+  ]);
+  reservationPeopleCapacitySchemaReady = true;
+}
+
+async function ensureColumns(db: D1Database, tableName: string, columns: Array<[string, string]>): Promise<void> {
+  const result = await db.prepare(`PRAGMA table_info(${tableName})`).all<{ name: string }>();
+  const existing = new Set((result.results ?? []).map((column) => column.name));
+  for (const [name, definition] of columns) {
+    if (!existing.has(name)) {
+      await db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${name} ${definition}`).run();
+    }
+  }
+}
+
 export interface ReservationResource {
   id: string;
   line_account_id: string | null;
@@ -661,6 +692,7 @@ export async function createReservationMenu(
   db: D1Database,
   input: CreateReservationMenuInput,
 ): Promise<ReservationMenu> {
+  await ensureReservationPeopleCapacitySchema(db);
   const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
 
@@ -703,6 +735,7 @@ export async function updateReservationMenu(
   id: string,
   input: UpdateReservationMenuInput,
 ): Promise<UpdateReservationMasterResult<ReservationMenu>> {
+  await ensureReservationPeopleCapacitySchema(db);
   const menu = await getReservationMenuById(db, id);
   if (!menu) return { ok: false, reason: 'not_found' };
 
@@ -1018,6 +1051,7 @@ export async function createReservationWithCapacityCheck(
   db: D1Database,
   input: CreateReservationInput,
 ): Promise<CreateReservationResult> {
+  await ensureReservationPeopleCapacitySchema(db);
   const [resource, menu, slot] = await Promise.all([
     getReservationResourceById(db, input.resourceId),
     getReservationMenuById(db, input.menuId),

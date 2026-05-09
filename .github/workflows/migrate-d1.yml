@@ -1,0 +1,114 @@
+name: Migrate D1
+
+# Required GitHub Secrets:
+# - CLOUDFLARE_API_TOKEN
+# - CLOUDFLARE_D1_DATABASE_ID
+#
+# Optional GitHub Variables:
+# - CLOUDFLARE_ACCOUNT_ID        can be a Secret or Variable
+# - CLOUDFLARE_D1_DATABASE_NAME   default: line-crm
+
+on:
+  workflow_dispatch:
+    inputs:
+      migration_file:
+        description: SQL file under packages/db/migrations to execute
+        required: true
+        default: packages/db/migrations/031_reservation_people_capacity.sql
+      database_name:
+        description: Remote D1 database name
+        required: false
+        default: line-crm
+      confirm_remote:
+        description: I understand this executes against the remote D1 database
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: d1-migration-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require remote confirmation
+        if: ${{ inputs.confirm_remote != true }}
+        run: |
+          echo "Set confirm_remote=true to run a migration against the remote D1 database."
+          exit 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare Wrangler D1 config
+        working-directory: apps/worker
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+          CF_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+          CF_D1_DATABASE_NAME: ${{ inputs.database_name || vars.CLOUDFLARE_D1_DATABASE_NAME || 'line-crm' }}
+          MIGRATION_FILE: ${{ inputs.migration_file }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const accountId = process.env.CF_ACCOUNT_ID?.trim();
+          const databaseId = process.env.CF_D1_DATABASE_ID?.trim();
+          const databaseName = process.env.CF_D1_DATABASE_NAME?.trim() || 'line-crm';
+          const migrationFile = process.env.MIGRATION_FILE?.trim();
+
+          if (!accountId) throw new Error('CF_ACCOUNT_ID is required');
+          if (!databaseId) throw new Error('CF_D1_DATABASE_ID is required');
+          if (!migrationFile) throw new Error('migration_file is required');
+          if (!migrationFile.startsWith('packages/db/migrations/') || !migrationFile.endsWith('.sql')) {
+            throw new Error('migration_file must be a .sql file under packages/db/migrations/');
+          }
+
+          const repoRoot = path.resolve(process.cwd(), '../..');
+          const absoluteMigrationFile = path.resolve(repoRoot, migrationFile);
+          const migrationsDir = path.resolve(repoRoot, 'packages/db/migrations');
+          if (!absoluteMigrationFile.startsWith(migrationsDir + path.sep)) {
+            throw new Error('migration_file must stay inside packages/db/migrations/');
+          }
+          if (!fs.existsSync(absoluteMigrationFile)) {
+            throw new Error(`Migration file not found: ${migrationFile}`);
+          }
+
+          fs.writeFileSync('.wrangler-d1-ci.json', JSON.stringify({
+            name: 'line-harness-d1-migration',
+            account_id: accountId,
+            compatibility_date: '2024-12-01',
+            d1_databases: [{
+              binding: 'DB',
+              database_name: databaseName,
+              database_id: databaseId,
+            }],
+          }, null, 2));
+
+          fs.writeFileSync('.migration-file', path.relative(process.cwd(), absoluteMigrationFile).replaceAll('\\', '/'));
+          fs.writeFileSync('.database-name', databaseName);
+          NODE
+
+      - name: Apply migration
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          db="$(cat .database-name)"
+          migration_file="$(cat .migration-file)"
+          pnpm exec wrangler d1 execute "$db" --remote --config .wrangler-d1-ci.json --file "$migration_file"
+

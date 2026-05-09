@@ -683,9 +683,26 @@ function SettingsPanel(props: {
   onGoogleOAuth: (formData: FormData) => void
 }) {
   const currentResource = props.resources.find((resource) => resource.id === props.resourceId)
+  const today = toYmd(new Date())
+  const nextWeek = addDays(today, 6)
+  const nextMonth = addDays(today, 30)
   return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      <SettingsCard title="予約対象 Resource">
+    <div className="space-y-4">
+      <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+        <h2 className="text-base font-bold text-blue-950">予約枠を作る順番</h2>
+        <div className="mt-3 grid gap-2 text-sm text-blue-900 md:grid-cols-4">
+          <div className="rounded-lg bg-white p-3"><b>1. 予約対象</b><br />例: ブルーベリー園</div>
+          <div className="rounded-lg bg-white p-3"><b>2. メニュー</b><br />例: 食べ放題60分</div>
+          <div className="rounded-lg bg-white p-3"><b>3. 営業時間</b><br />曜日・時間・枠数</div>
+          <div className="rounded-lg bg-white p-3"><b>4. Slot生成</b><br />日付範囲を指定して作成</div>
+        </div>
+        <p className="mt-3 text-xs text-blue-800">
+          選択中: {currentResource ? currentResource.name : '予約対象が未選択です。先にResourceを作成してください。'}
+        </p>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <SettingsCard title="1. 予約対象 Resource">
         <form action={props.onCreateResource} className="space-y-3">
           <Field label="名前"><input name="name" className="input" placeholder="ブルーベリー摘み取り" /></Field>
           <div className="grid grid-cols-2 gap-3">
@@ -699,9 +716,10 @@ function SettingsPanel(props: {
           <Field label="Google Calendar ID"><input name="calendarId" defaultValue="primary" className="input" /></Field>
           <button disabled={props.loading} className="btn-secondary mt-3">Google Calendar接続</button>
         </form>
-      </SettingsCard>
+        </SettingsCard>
 
-      <SettingsCard title="メニュー Menu">
+        <SettingsCard title="2. メニュー Menu">
+        {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先に予約対象Resourceを作成・選択してください。</p>}
         <form action={props.onCreateMenu} className="space-y-3">
           <Field label="名前"><input name="name" className="input" placeholder="食べ放題60分" /></Field>
           <Field label="説明"><input name="description" className="input" /></Field>
@@ -722,10 +740,12 @@ function SettingsPanel(props: {
         <div className="mt-4 space-y-3">
           {props.menus.map((menu) => <MenuEditor key={menu.id} menu={menu} loading={props.loading} onSubmit={props.onUpdateMenu} />)}
         </div>
-      </SettingsCard>
+        </SettingsCard>
 
-      <SettingsCard title="営業時間 Schedule / Slot">
+        <SettingsCard title="3. 営業時間 Schedule / 4. Slot生成">
+        {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先に予約対象Resourceを作成・選択してください。</p>}
         <form action={props.onCreateSchedule} className="space-y-3">
+          <p className="text-sm text-gray-600">Scheduleは「何曜日の何時から何時まで営業するか」のルールです。まだ予約枠は作られません。</p>
           <div className="grid grid-cols-3 gap-3">
             <Field label="曜日">
               <select name="dayOfWeek" className="input">
@@ -742,17 +762,20 @@ function SettingsPanel(props: {
           <button disabled={props.loading || !props.resourceId} className="btn-primary">schedule作成</button>
         </form>
         <form action={props.onGenerateSlots} className="mt-4 rounded-lg bg-green-50 p-3">
-          <p className="mb-2 text-sm font-bold text-green-900">予約枠一括生成</p>
+          <p className="text-sm font-bold text-green-900">4. 予約枠一括生成</p>
+          <p className="mt-1 text-xs text-green-800">作成済みScheduleに合う曜日だけ、指定した日付範囲にSlotを作ります。例: 月曜Scheduleなら、範囲内の月曜日だけ作成されます。</p>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="開始日"><input name="dateFrom" type="date" defaultValue={toYmd(new Date())} className="input" /></Field>
-            <Field label="終了日"><input name="dateTo" type="date" defaultValue={toYmd(new Date())} className="input" /></Field>
+            <Field label="開始日"><input name="dateFrom" type="date" defaultValue={today} className="input" /></Field>
+            <Field label="終了日"><input name="dateTo" type="date" defaultValue={nextWeek} className="input" /></Field>
           </div>
+          <p className="mt-2 text-xs text-green-800">目安: 1週間なら {today} - {nextWeek}、1か月なら {today} - {nextMonth}</p>
           <button disabled={props.loading || !props.resourceId} className="btn-secondary mt-3">slot生成</button>
         </form>
         <div className="mt-4 space-y-3">
           {props.schedules.map((schedule) => <ScheduleEditor key={schedule.id} schedule={schedule} loading={props.loading} onSubmit={props.onUpdateSchedule} />)}
         </div>
-      </SettingsCard>
+        </SettingsCard>
+      </div>
     </div>
   )
 }
