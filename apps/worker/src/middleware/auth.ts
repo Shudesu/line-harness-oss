@@ -49,8 +49,10 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.startsWith('/images/') ||
     path.startsWith('/api/liff/') ||
     path.startsWith('/api/public/reservation-') ||
+    path === '/api/public/reservations' ||
     path.startsWith('/api/public/me/reservations') ||
     path.match(/^\/api\/public\/reservations\/[^/]+$/) ||
+    path.match(/^\/api\/public\/reservations\/[^/]+\/tokens$/) ||
     path.match(/^\/api\/public\/reservations\/[^/]+\/cancel$/) ||
     path === '/api/integrations/google-calendar/oauth/callback' ||
     path.startsWith('/auth/') ||

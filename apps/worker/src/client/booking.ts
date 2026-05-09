@@ -34,6 +34,34 @@ function currentLiffId(): string | null {
   return params.get('liffId') || import.meta.env?.VITE_LIFF_ID || null;
 }
 
+async function refreshReservationSession(): Promise<void> {
+  const idToken = liff.getIDToken();
+  if (!idToken) throw new Error('LINEログイン情報を取得できませんでした。もう一度開き直してください。');
+
+  const session = await createReservationSession({
+    idToken,
+    displayName: state.profile?.displayName ?? state.form.customerName,
+    liffId: currentLiffId(),
+  });
+  state.sessionToken = session.token;
+  state.sessionExpiresAt = Date.now() + Math.max(60, (session.expiresIn ?? 3600) - 60) * 1000;
+  state.friendId = session.friendId;
+  state.userId = session.userId;
+  try {
+    localStorage.setItem(UUID_STORAGE_KEY, session.userId);
+  } catch {
+    // optional only
+  }
+}
+
+async function ensureReservationSession(): Promise<string> {
+  if (!state.sessionToken || !state.sessionExpiresAt || Date.now() >= state.sessionExpiresAt) {
+    await refreshReservationSession();
+  }
+  if (!state.sessionToken) throw new Error('予約セッションを取得できませんでした。画面を開き直してください。');
+  return state.sessionToken;
+}
+
 function eventElement(target: EventTarget | null): HTMLElement | null {
   if (target instanceof HTMLElement) return target;
   if (target instanceof Node && target.parentElement instanceof HTMLElement) {
@@ -382,12 +410,13 @@ async function submitBooking(): Promise<void> {
     render();
     return;
   }
-  if (!state.selectedSlot || !state.sessionToken || state.submitting) return;
+  if (!state.selectedSlot || state.submitting) return;
   state.submitting = true;
   render();
   try {
+    const sessionToken = await ensureReservationSession();
     const reservation = await createReservation({
-      token: state.sessionToken,
+      token: sessionToken,
       resourceId: state.resourceId,
       menuId: state.menuId,
       slotId: state.selectedSlot.slotId,
@@ -431,12 +460,11 @@ function selectReservation(id: string): void {
 }
 
 async function loadMine(): Promise<void> {
-  if (!state.sessionToken) return;
   state.notice = null;
   state.loadingSlots = true;
   render();
   try {
-    state.reservations = await listMyReservations(state.sessionToken);
+    state.reservations = await listMyReservations(await ensureReservationSession());
   } catch (err) {
     state.notice = err instanceof Error ? err.message : '予約一覧を取得できませんでした。';
   } finally {
@@ -447,14 +475,14 @@ async function loadMine(): Promise<void> {
 
 async function issueTokensForSelectedReservation(): Promise<void> {
   const reservation = state.selectedReservation;
-  if (!reservation || !state.sessionToken || state.submitting) return;
+  if (!reservation || state.submitting) return;
   state.submitting = true;
   state.notice = null;
   render();
   try {
     const tokens = await issueReservationTokens({
       reservationId: reservation.id,
-      token: state.sessionToken,
+      token: await ensureReservationSession(),
     });
     storeTokensForReservation(tokens.reservationId, {
       detailToken: tokens.detailToken,
@@ -512,22 +540,7 @@ export async function initBooking(): Promise<void> {
       // optional only
     }
 
-    const idToken = liff.getIDToken();
-    if (!idToken) throw new Error('LINEログイン情報を取得できませんでした。もう一度開き直してください。');
-
-    const session = await createReservationSession({
-      idToken,
-      displayName: profile.displayName,
-      liffId: currentLiffId(),
-    });
-    state.sessionToken = session.token;
-    state.friendId = session.friendId;
-    state.userId = session.userId;
-    try {
-      localStorage.setItem(UUID_STORAGE_KEY, session.userId);
-    } catch {
-      // optional only
-    }
+    await refreshReservationSession();
 
     await loadResources();
     await loadMenusForSelectedResource();

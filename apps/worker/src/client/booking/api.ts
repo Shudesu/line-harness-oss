@@ -16,7 +16,7 @@ export async function apiJson<T>(path: string, options?: RequestInit): Promise<T
 }
 
 export function createReservationSession(input: { idToken: string; displayName: string; liffId?: string | null }) {
-  return apiJson<{ token: string; friendId: string; userId: string }>('/api/public/reservation-session', {
+  return apiJson<{ token: string; friendId: string; userId: string; expiresIn?: number }>('/api/public/reservation-session', {
     method: 'POST',
     body: JSON.stringify(input),
   });

@@ -91,6 +91,7 @@ export interface BookingState {
   friendId: string | null;
   userId: string | null;
   sessionToken: string | null;
+  sessionExpiresAt: number | null;
   form: BookingForm;
   reservations: Reservation[];
   selectedReservation: Reservation | null;

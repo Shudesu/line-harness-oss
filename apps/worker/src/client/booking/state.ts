@@ -25,6 +25,7 @@ export const state: BookingState = {
   friendId: null,
   userId: null,
   sessionToken: null,
+  sessionExpiresAt: null,
   form: {
     adultCount: 1,
     childCount: 0,
