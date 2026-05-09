@@ -386,11 +386,14 @@ export function calculateReservationPeople(
   const adultCount = Math.max(0, Math.floor(input.adultCount ?? 0));
   const childCount = Math.max(0, Math.floor(input.childCount ?? 0));
   const infantCount = Math.max(0, Math.floor(input.infantCount ?? 0));
+  const capacityCountAdult = Number.isFinite(menu.capacity_count_adult) ? menu.capacity_count_adult : 1;
+  const capacityCountChild = Number.isFinite(menu.capacity_count_child) ? menu.capacity_count_child : 1;
+  const capacityCountInfant = Number.isFinite(menu.capacity_count_infant) ? menu.capacity_count_infant : 1;
   const totalPeople = adultCount + childCount + infantCount;
   const capacityPeople =
-    adultCount * menu.capacity_count_adult +
-    childCount * menu.capacity_count_child +
-    infantCount * menu.capacity_count_infant;
+    adultCount * capacityCountAdult +
+    childCount * capacityCountChild +
+    infantCount * capacityCountInfant;
 
   return { adultCount, childCount, infantCount, totalPeople, capacityPeople };
 }

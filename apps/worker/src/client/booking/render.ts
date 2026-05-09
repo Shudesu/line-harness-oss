@@ -105,25 +105,30 @@ function renderBookingControls(): string {
           `).join('')}
         </select>
       </label>
-      <div class="people-grid">
-        <label class="field-label">
-          大人
-          <input type="number" min="0" inputmode="numeric" data-field="adultCount" value="${state.form.adultCount}">
-        </label>
-        <label class="field-label">
-          子ども
-          <input type="number" min="0" inputmode="numeric" data-field="childCount" value="${state.form.childCount}">
-        </label>
-        <label class="field-label">
-          幼児
-          <input type="number" min="0" inputmode="numeric" data-field="infantCount" value="${state.form.infantCount}">
-        </label>
+      <div class="people-stepper-grid">
+        ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
+        ${renderPeopleStepper('childCount', '子ども', state.form.childCount)}
+        ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
       </div>
+      <p class="people-total">合計 ${state.form.adultCount + state.form.childCount + state.form.infantCount}名</p>
       <div class="view-toggle">
         <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
         <button type="button" class="${state.viewMode === 'month' ? 'active' : ''}" data-action="view-month">1か月で見る</button>
       </div>
     </section>
+  `;
+}
+
+function renderPeopleStepper(field: 'adultCount' | 'childCount' | 'infantCount', label: string, value: number): string {
+  return `
+    <div class="people-stepper">
+      <span>${label}</span>
+      <div class="stepper-control">
+        <button type="button" data-action="people-step" data-field="${field}" data-delta="-1" aria-label="${label}を減らす">−</button>
+        <input type="number" min="0" inputmode="numeric" data-field="${field}" value="${value}" aria-label="${label}の人数">
+        <button type="button" data-action="people-step" data-field="${field}" data-delta="1" aria-label="${label}を増やす">＋</button>
+      </div>
+    </div>
   `;
 }
 

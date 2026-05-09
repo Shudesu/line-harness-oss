@@ -257,13 +257,63 @@
       font-size: 15px;
       color: var(--ink);
     }
-    .people-grid {
+    .people-grid,
+    .people-stepper-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 10px;
     }
+    .people-stepper {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 16px;
+      padding: 10px;
+    }
+    .people-stepper > span {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--sky-700);
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .stepper-control {
+      display: grid;
+      grid-template-columns: 44px 1fr 44px;
+      align-items: center;
+      gap: 6px;
+    }
+    .stepper-control button {
+      min-height: 44px;
+      border: 0;
+      border-radius: 12px;
+      background: var(--sky-500);
+      color: #fff;
+      font-size: 20px;
+      font-weight: 900;
+      cursor: pointer;
+      box-shadow: 0 4px 0 var(--sky-700);
+    }
+    .stepper-control input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--sky-100);
+      border-radius: 12px;
+      padding: 10px 4px;
+      text-align: center;
+      font: inherit;
+      font-size: 18px;
+      font-weight: 900;
+      color: var(--ink);
+    }
+    .people-total {
+      margin-top: 8px;
+      color: var(--sky-700) !important;
+      font-size: 13px !important;
+      font-weight: 900;
+    }
     @media (max-width: 420px) {
-      .people-grid {
+      .people-grid,
+      .people-stepper-grid {
         grid-template-columns: 1fr;
       }
     }

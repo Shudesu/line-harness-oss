@@ -174,6 +174,14 @@ function handleField(field: string, value: string): void {
 }
 
 async function handleAction(action: string, element: HTMLElement): Promise<void> {
+  if (action === 'people-step') {
+    const field = element.dataset.field;
+    const delta = Number.parseInt(element.dataset.delta ?? '0', 10);
+    if (field === 'adultCount' || field === 'childCount' || field === 'infantCount') {
+      handleField(field, String(Math.max(0, state.form[field] + (Number.isFinite(delta) ? delta : 0))));
+    }
+    return;
+  }
   if (action === 'select-date') {
     selectDate(element.dataset.date ?? '');
     return;

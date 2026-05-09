@@ -177,14 +177,15 @@ export default function ReservationsPage() {
     load()
   }, [load])
 
-  const runSaving = async (fn: () => Promise<void>, success: string) => {
+  const runSaving = async (fn: () => Promise<{ resourceId?: string } | void>, success: string) => {
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      await fn()
+      const result = await fn()
+      const reloadResourceId = result?.resourceId ?? resourceId
       setMessage(success)
-      await load(resourceId, date)
+      await load(reloadResourceId, date)
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存に失敗しました')
     } finally {
@@ -333,7 +334,7 @@ export default function ReservationsPage() {
               viewMode={viewMode}
               visibleDates={visibleDates}
               slotsByDate={slotsByDate}
-              onSelectDate={changeDate}
+              onSelectDate={(nextDate) => changeDate(nextDate)}
               onMoveRange={moveRange}
               onSetViewMode={setViewMode}
             />
@@ -378,6 +379,7 @@ export default function ReservationsPage() {
               body: JSON.stringify(resourcePayload(formData)),
             })
             setResourceId(resource.id)
+            return { resourceId: resource.id }
           }, '予約対象を作成しました')}
           onUpdateResource={(resource, formData) => runSaving(async () => {
             await apiData<ReservationResource>(`/api/reservation-resources/${encodeURIComponent(resource.id)}`, {
@@ -460,7 +462,7 @@ function CalendarCard({
           return (
             <button
               key={d}
-              onClick={() => onSelectDate(d, bestSlot?.id)}
+              onClick={() => onSelectDate(d)}
               className={`min-h-24 bg-white p-2 text-left transition hover:bg-green-50 ${d === date ? 'ring-2 ring-inset ring-green-500' : ''}`}
             >
               <div className="flex items-center justify-between">
@@ -538,37 +540,67 @@ function SlotsCard({
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-100 p-4">
-        <h2 className="text-base font-bold text-gray-900">選択日の予約枠</h2>
+        <h2 className="text-base font-bold text-gray-900">選択日の予約枠・予約客</h2>
+        <p className="mt-1 text-xs text-gray-500">枠を開くと、その枠の予約客を下に展開します。枠調整は各枠の一番下です。</p>
       </div>
       <div className="divide-y divide-gray-100">
         {slots.length === 0 ? <p className="p-6 text-sm text-gray-400">予約枠がありません。予約設計から生成してください。</p> : slots.map((slot) => {
           const label = slotLabel(slot)
-          const count = reservations.filter((reservation) => reservation.slotId === slot.id).length
+          const slotReservations = reservations.filter((reservation) => reservation.slotId === slot.id)
+          const count = slotReservations.length
           const open = selectedSlotId === slot.id
           return (
             <details key={slot.id} open={open} className="group">
-              <summary onClick={(event) => { event.preventDefault(); onSelect(slot.id) }} className="flex cursor-pointer items-center justify-between gap-3 p-4 hover:bg-gray-50">
+              <summary onClick={(event) => { event.preventDefault(); onSelect(slot.id) }} className="flex cursor-pointer items-center justify-between gap-3 p-3 hover:bg-gray-50">
                 <div>
                   <p className="font-semibold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</p>
                   <p className="text-xs text-gray-500">予約 {count}件 / 総枠 {slot.totalCapacity} / LINE {slot.lineReservedCount}/{slot.lineCapacity ?? slot.totalCapacity} / 外部 {slot.externalReservedCount}/{slot.externalCapacity ?? slot.totalCapacity}</p>
                 </div>
                 <span className={`rounded-full px-2 py-1 text-xs font-bold ${label.className}`}>{label.mark} {label.text}</span>
               </summary>
-              <form action={(formData) => onSaveSlot(slot, formData)} className="grid gap-3 bg-gray-50 p-4 sm:grid-cols-6">
-                <Field label="状態">
-                  <select name="status" defaultValue={slot.status} className="input">
-                    {(['open', 'closed', 'sold_out', 'hidden'] satisfies ReservationSlotStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}
-                  </select>
-                </Field>
-                <Field label="総枠"><input name="totalCapacity" type="number" defaultValue={slot.totalCapacity} className="input" /></Field>
-                <Field label="LINE枠"><input name="lineCapacity" type="number" defaultValue={slot.lineCapacity ?? ''} className="input" /></Field>
-                <Field label="外部枠"><input name="externalCapacity" type="number" defaultValue={slot.externalCapacity ?? ''} className="input" /></Field>
-                <Field label="バッファ"><input name="bufferCapacity" type="number" defaultValue={slot.bufferCapacity} className="input" /></Field>
-                <Field label="メモ"><input name="note" defaultValue={slot.note ?? ''} className="input" /></Field>
-                <div className="sm:col-span-6">
-                  <button disabled={saving} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">slot保存</button>
+              <div className="bg-white px-4 pb-4">
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-bold text-gray-900">予約客</p>
+                    <span className="text-xs text-gray-500">{count}件</span>
+                  </div>
+                  {slotReservations.length === 0 ? (
+                    <p className="mt-2 text-sm text-gray-400">この枠の予約はありません。</p>
+                  ) : (
+                    <div className="mt-2 grid gap-2">
+                      {slotReservations.map((reservation) => (
+                        <div key={reservation.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-semibold text-gray-900">{reservation.customerName || reservation.title}</p>
+                            <StatusBadge status={reservation.status} />
+                          </div>
+                          <p className="mt-1 text-xs text-gray-500">
+                            {reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount} / {reservation.customerPhone || '電話未登録'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </form>
+                <details className="mt-3 rounded-lg border border-gray-200 bg-white">
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-bold text-gray-700">枠調整</summary>
+                  <form action={(formData) => onSaveSlot(slot, formData)} className="grid gap-3 border-t border-gray-100 bg-gray-50 p-3 sm:grid-cols-6">
+                    <Field label="状態">
+                      <select name="status" defaultValue={slot.status} className="input">
+                        {(['open', 'closed', 'sold_out', 'hidden'] satisfies ReservationSlotStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="総枠"><input name="totalCapacity" type="number" defaultValue={slot.totalCapacity} className="input" /></Field>
+                    <Field label="LINE枠"><input name="lineCapacity" type="number" defaultValue={slot.lineCapacity ?? ''} className="input" /></Field>
+                    <Field label="外部枠"><input name="externalCapacity" type="number" defaultValue={slot.externalCapacity ?? ''} className="input" /></Field>
+                    <Field label="バッファ"><input name="bufferCapacity" type="number" defaultValue={slot.bufferCapacity} className="input" /></Field>
+                    <Field label="メモ"><input name="note" defaultValue={slot.note ?? ''} className="input" /></Field>
+                    <div className="sm:col-span-6">
+                      <button disabled={saving} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">slot保存</button>
+                    </div>
+                  </form>
+                </details>
+              </div>
             </details>
           )
         })}
