@@ -17,7 +17,7 @@
       min-height: 100vh;
     }
     body:has(.reservation-liff) {
-      background: #f7fbfe url('/aonisai/aonisai_blue.jpg') center 18px / min(420px, 86vw) auto no-repeat fixed;
+      background: #f7fbfe;
       align-items: flex-start;
     }
     #app {
@@ -134,27 +134,48 @@
       --muted: #638097;
       --line: rgba(105, 163, 208, .26);
       --shadow: 0 10px 24px rgba(105, 163, 208, .18);
-      padding-top: 168px;
+      padding-top: 0;
       padding-bottom: 24px;
       position: relative;
-    }
-    .reservation-liff::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: -1;
-      background: rgba(247, 251, 254, .34);
     }
     .booking-header {
       text-align: center;
       margin-bottom: 18px;
-      padding: 18px;
+      padding: 12px 18px 18px;
       border: 3px solid #fff;
       border-radius: 28px;
-      background: rgba(255, 255, 255, .82);
-      backdrop-filter: blur(8px);
+      background: #fff;
       box-shadow: var(--shadow);
+    }
+    .farm-sticky-brand {
+      position: sticky;
+      top: 8px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: fit-content;
+      max-width: 100%;
+      margin: 0 auto 14px;
+      padding: 6px 12px 6px 6px;
+      border: 2px solid #fff;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .94);
+      box-shadow: 0 8px 18px rgba(105, 163, 208, .22);
+    }
+    .farm-sticky-brand img {
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      object-fit: cover;
+      border: 2px solid var(--sky-200);
+    }
+    .farm-sticky-brand span {
+      color: var(--sky-700);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .08em;
+      white-space: nowrap;
     }
     .booking-header h1 {
       font-size: 25px;
@@ -206,8 +227,7 @@
       box-shadow: 0 6px 0 var(--sky-700);
     }
     .booking-panel {
-      background: rgba(255, 255, 255, .86);
-      backdrop-filter: blur(8px);
+      background: #fff;
       border: 2px solid var(--sky-200);
       border-radius: 22px;
       padding: 16px;
@@ -689,8 +709,7 @@
 
     /* Success */
     .success-card {
-      background: rgba(255, 255, 255, .88);
-      backdrop-filter: blur(8px);
+      background: #fff;
       border-radius: 24px;
       padding: 32px 24px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);

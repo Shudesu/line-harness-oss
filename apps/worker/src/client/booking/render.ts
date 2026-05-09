@@ -36,6 +36,10 @@ function parseNote(formData?: string | null): string {
 export function renderHeader(): string {
   return `
     <div class="booking-header">
+      <div class="farm-sticky-brand" aria-label="アオニサイファーム">
+        <img src="/aonisai/aonisai_blue.jpg" alt="">
+        <span>AONISAI FARM</span>
+      </div>
       <p class="eyebrow">AONISAI FARM</p>
       <h1>ブルーベリー予約</h1>
       <p>日付と時間をえらんで、農園へあそびに行こう。</p>
