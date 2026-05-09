@@ -29,6 +29,7 @@ export const state: BookingState = {
   form: {
     adultCount: 1,
     childCount: 0,
+    infantCount: 0,
     customerName: '',
     customerPhone: '',
     customerEmail: '',
@@ -54,5 +55,5 @@ export function selectedResource() {
 }
 
 export function totalPeople(): number {
-  return state.form.adultCount + state.form.childCount;
+  return state.form.adultCount + state.form.childCount + state.form.infantCount;
 }

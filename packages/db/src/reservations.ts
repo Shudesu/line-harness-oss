@@ -60,6 +60,10 @@ export interface ReservationMenu {
   max_people: number | null;
   price_adult: number | null;
   price_child: number | null;
+  price_infant: number | null;
+  capacity_count_adult: number;
+  capacity_count_child: number;
+  capacity_count_infant: number;
   form_fields: string;
   is_active: number;
   display_order: number;
@@ -120,7 +124,9 @@ export interface Reservation {
   status: ReservationStatus;
   adult_count: number;
   child_count: number;
+  infant_count: number;
   total_people: number;
+  capacity_people: number;
   customer_name_snapshot: string | null;
   customer_phone_snapshot: string | null;
   customer_email_snapshot: string | null;
@@ -203,6 +209,10 @@ export interface CreateReservationMenuInput {
   maxPeople?: number | null;
   priceAdult?: number | null;
   priceChild?: number | null;
+  priceInfant?: number | null;
+  capacityCountAdult?: boolean;
+  capacityCountChild?: boolean;
+  capacityCountInfant?: boolean;
   formFields?: string;
   displayOrder?: number;
   metadata?: string;
@@ -217,6 +227,10 @@ export interface UpdateReservationMenuInput {
   maxPeople?: number | null;
   priceAdult?: number | null;
   priceChild?: number | null;
+  priceInfant?: number | null;
+  capacityCountAdult?: boolean;
+  capacityCountChild?: boolean;
+  capacityCountInfant?: boolean;
   formFields?: string;
   isActive?: boolean;
   displayOrder?: number;
@@ -286,6 +300,7 @@ export interface CreateReservationInput {
   status?: Extract<ReservationStatus, 'pending' | 'confirmed'>;
   adultCount?: number;
   childCount?: number;
+  infantCount?: number;
   customerName?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -324,6 +339,7 @@ export interface ImportExternalReservationInput {
   slotId?: string;
   adultCount?: number;
   childCount?: number;
+  infantCount?: number;
   customerName?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -361,6 +377,22 @@ export function getReservationSlotAvailability(
     external_remaining_capacity: externalRemaining,
     available: slot.status === 'open' && lineRemaining >= requestedPeople && remaining >= requestedPeople,
   };
+}
+
+export function calculateReservationPeople(
+  menu: Pick<ReservationMenu, 'capacity_count_adult' | 'capacity_count_child' | 'capacity_count_infant'>,
+  input: { adultCount?: number; childCount?: number; infantCount?: number },
+): { adultCount: number; childCount: number; infantCount: number; totalPeople: number; capacityPeople: number } {
+  const adultCount = Math.max(0, Math.floor(input.adultCount ?? 0));
+  const childCount = Math.max(0, Math.floor(input.childCount ?? 0));
+  const infantCount = Math.max(0, Math.floor(input.infantCount ?? 0));
+  const totalPeople = adultCount + childCount + infantCount;
+  const capacityPeople =
+    adultCount * menu.capacity_count_adult +
+    childCount * menu.capacity_count_child +
+    infantCount * menu.capacity_count_infant;
+
+  return { adultCount, childCount, infantCount, totalPeople, capacityPeople };
 }
 
 export async function getReservationResourceById(
@@ -633,8 +665,9 @@ export async function createReservationMenu(
     .prepare(
       `INSERT INTO reservation_menus
          (id, resource_id, name, description, duration_minutes, unit_type, min_people, max_people,
-          price_adult, price_child, form_fields, is_active, display_order, metadata, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+          price_adult, price_child, price_infant, capacity_count_adult, capacity_count_child, capacity_count_infant,
+          form_fields, is_active, display_order, metadata, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -647,6 +680,10 @@ export async function createReservationMenu(
       input.maxPeople ?? null,
       input.priceAdult ?? null,
       input.priceChild ?? null,
+      input.priceInfant ?? null,
+      input.capacityCountAdult === undefined ? 1 : input.capacityCountAdult ? 1 : 0,
+      input.capacityCountChild === undefined ? 1 : input.capacityCountChild ? 1 : 0,
+      input.capacityCountInfant === undefined ? 1 : input.capacityCountInfant ? 1 : 0,
       input.formFields ?? '[]',
       input.displayOrder ?? 0,
       input.metadata ?? '{}',
@@ -681,6 +718,10 @@ export async function updateReservationMenu(
            max_people = ?,
            price_adult = ?,
            price_child = ?,
+           price_infant = ?,
+           capacity_count_adult = ?,
+           capacity_count_child = ?,
+           capacity_count_infant = ?,
            form_fields = ?,
            is_active = ?,
            display_order = ?,
@@ -697,6 +738,10 @@ export async function updateReservationMenu(
       maxPeople,
       input.priceAdult === undefined ? menu.price_adult : input.priceAdult,
       input.priceChild === undefined ? menu.price_child : input.priceChild,
+      input.priceInfant === undefined ? menu.price_infant : input.priceInfant,
+      input.capacityCountAdult === undefined ? menu.capacity_count_adult : input.capacityCountAdult ? 1 : 0,
+      input.capacityCountChild === undefined ? menu.capacity_count_child : input.capacityCountChild ? 1 : 0,
+      input.capacityCountInfant === undefined ? menu.capacity_count_infant : input.capacityCountInfant ? 1 : 0,
       input.formFields ?? menu.form_fields,
       input.isActive === undefined ? menu.is_active : input.isActive ? 1 : 0,
       input.displayOrder ?? menu.display_order,
@@ -985,15 +1030,18 @@ export async function createReservationWithCapacityCheck(
     return { ok: false, reason: 'invalid_slot' };
   }
 
-  const adultCount = input.adultCount ?? 0;
-  const childCount = input.childCount ?? 0;
-  const totalPeople = adultCount + childCount;
-  if (totalPeople <= 0 || totalPeople < menu.min_people || (menu.max_people !== null && totalPeople > menu.max_people)) {
+  const { adultCount, childCount, infantCount, totalPeople, capacityPeople } = calculateReservationPeople(menu, input);
+  if (
+    totalPeople <= 0 ||
+    capacityPeople <= 0 ||
+    totalPeople < menu.min_people ||
+    (menu.max_people !== null && totalPeople > menu.max_people)
+  ) {
     return { ok: false, reason: 'invalid_people' };
   }
 
   const capacityChannel = input.capacityChannel ?? 'line';
-  const reserved = await reserveSlotCapacity(db, slot.id, totalPeople, capacityChannel);
+  const reserved = await reserveSlotCapacity(db, slot.id, capacityPeople, capacityChannel);
   if (!reserved) return { ok: false, reason: 'slot_not_available' };
 
   const id = input.id ?? crypto.randomUUID();
@@ -1009,9 +1057,9 @@ export async function createReservationWithCapacityCheck(
         `INSERT INTO reservations
            (id, line_account_id, user_id, friend_id, slot_id, source, capacity_channel,
             external_reservation_id, dedupe_key, title, reservation_date, start_at, end_at, status,
-            adult_count, child_count, total_people, customer_name_snapshot, customer_phone_snapshot,
+            adult_count, child_count, infant_count, total_people, capacity_people, customer_name_snapshot, customer_phone_snapshot,
             customer_email_snapshot, form_data, metadata, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -1030,7 +1078,9 @@ export async function createReservationWithCapacityCheck(
         status,
         adultCount,
         childCount,
+        infantCount,
         totalPeople,
+        capacityPeople,
         nullableText(input.customerName),
         nullableText(input.customerPhone),
         nullableText(input.customerEmail),
@@ -1044,9 +1094,9 @@ export async function createReservationWithCapacityCheck(
     await db
       .prepare(
         `INSERT INTO reservation_items
-           (id, reservation_id, menu_id, resource_id, name_snapshot, quantity, adult_count, child_count,
-            unit_price, amount, metadata, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, '{}', ?)`,
+           (id, reservation_id, menu_id, resource_id, name_snapshot, quantity, adult_count, child_count, infant_count,
+            capacity_people, unit_price, amount, metadata, created_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '{}', ?)`,
       )
       .bind(
         crypto.randomUUID(),
@@ -1056,8 +1106,10 @@ export async function createReservationWithCapacityCheck(
         menu.name,
         adultCount,
         childCount,
+        infantCount,
+        capacityPeople,
         menu.price_adult,
-        calculateAmount(menu, adultCount, childCount),
+        calculateAmount(menu, adultCount, childCount, infantCount),
         now,
       )
       .run();
@@ -1067,7 +1119,7 @@ export async function createReservationWithCapacityCheck(
     if (input.userId) await recomputeReservationCustomerProfileStatus(db, input.userId, input.source ?? 'line');
     return { ok: true, reservation };
   } catch (error) {
-    await releaseSlotCapacity(db, slot.id, totalPeople, capacityChannel);
+    await releaseSlotCapacity(db, slot.id, capacityPeople, capacityChannel);
     throw error;
   }
 }
@@ -1093,7 +1145,7 @@ export async function updateReservationStatus(
       .prepare(`UPDATE reservations SET status = 'cancelled', cancel_reason = ?, updated_at = ? WHERE id = ?`)
       .bind(input.reason ?? null, now, id)
       .run();
-    await releaseSlotCapacity(db, reservation.slot_id, reservation.total_people, reservation.capacity_channel);
+    await releaseSlotCapacity(db, reservation.slot_id, reservation.capacity_people, reservation.capacity_channel);
     const updated = (await getReservationById(db, id))!;
     await createReservationEvent(
       db,
@@ -1285,6 +1337,7 @@ export async function importExternalReservation(
     dedupeKey,
     adultCount: input.adultCount ?? 0,
     childCount: input.childCount ?? 0,
+    infantCount: input.infantCount ?? 0,
     customerName: input.customerName,
     customerPhone: input.customerPhone,
     customerEmail: input.customerEmail,
@@ -1381,7 +1434,7 @@ async function createRestoreCapacityTaskIfNeeded(db: D1Database, reservation: Re
       crypto.randomUUID(),
       reservation.id,
       reservation.slot_id,
-      reservation.total_people,
+      reservation.capacity_people,
       'Restore external capacity after LINE reservation cancellation',
       jstNow(),
     )
@@ -1519,9 +1572,9 @@ async function saveExternalReservationSource(
     .first<ExternalReservationSourceRow>())!;
 }
 
-function calculateAmount(menu: ReservationMenu, adultCount: number, childCount: number): number | null {
-  if (menu.price_adult === null && menu.price_child === null) return null;
-  return (menu.price_adult ?? 0) * adultCount + (menu.price_child ?? 0) * childCount;
+function calculateAmount(menu: ReservationMenu, adultCount: number, childCount: number, infantCount: number): number | null {
+  if (menu.price_adult === null && menu.price_child === null && menu.price_infant === null) return null;
+  return (menu.price_adult ?? 0) * adultCount + (menu.price_child ?? 0) * childCount + (menu.price_infant ?? 0) * infantCount;
 }
 
 function slotDurationMinutes(slot: ReservationSlot): number {

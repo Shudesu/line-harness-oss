@@ -38,13 +38,13 @@ const SCHEMA_STATEMENTS: string[] = [
   `CREATE TABLE IF NOT EXISTS friends (id TEXT PRIMARY KEY, line_user_id TEXT UNIQUE NOT NULL, display_name TEXT, picture_url TEXT, status_message TEXT, is_following INTEGER NOT NULL DEFAULT 1, user_id TEXT, ig_igsid TEXT, score INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS reservation_customer_profiles (user_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'prospect' CHECK (status IN ('prospect','reserved','visited','cancelled','inactive')), source TEXT NOT NULL DEFAULT 'line' CHECK (source IN ('line','jalan','phone','gmail','admin','mcp','unknown')), memo TEXT, metadata TEXT NOT NULL DEFAULT '{}', first_reserved_at TEXT, last_reserved_at TEXT, first_visited_at TEXT, last_visited_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS reservation_resources (id TEXT PRIMARY KEY, line_account_id TEXT, name TEXT NOT NULL, description TEXT, default_duration_minutes INTEGER NOT NULL DEFAULT 60, default_capacity INTEGER NOT NULL DEFAULT 1, default_line_capacity INTEGER, default_external_capacity INTEGER, default_buffer_capacity INTEGER NOT NULL DEFAULT 0, google_calendar_connection_id TEXT, slot_interval_minutes INTEGER NOT NULL DEFAULT 60, timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo', is_active INTEGER NOT NULL DEFAULT 1, display_order INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-  `CREATE TABLE IF NOT EXISTS reservation_menus (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES reservation_resources (id) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT, duration_minutes INTEGER NOT NULL DEFAULT 60, unit_type TEXT NOT NULL DEFAULT 'person' CHECK (unit_type IN ('person','group','seat','table')), min_people INTEGER NOT NULL DEFAULT 1, max_people INTEGER, price_adult INTEGER, price_child INTEGER, form_fields TEXT NOT NULL DEFAULT '[]', is_active INTEGER NOT NULL DEFAULT 1, display_order INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS reservation_menus (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES reservation_resources (id) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT, duration_minutes INTEGER NOT NULL DEFAULT 60, unit_type TEXT NOT NULL DEFAULT 'person' CHECK (unit_type IN ('person','group','seat','table')), min_people INTEGER NOT NULL DEFAULT 1, max_people INTEGER, price_adult INTEGER, price_child INTEGER, price_infant INTEGER, capacity_count_adult INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0,1)), capacity_count_child INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0,1)), capacity_count_infant INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0,1)), form_fields TEXT NOT NULL DEFAULT '[]', is_active INTEGER NOT NULL DEFAULT 1, display_order INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS reservation_schedules (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES reservation_resources (id) ON DELETE CASCADE, day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 0 AND 6), start_time TEXT NOT NULL, end_time TEXT NOT NULL, slot_interval_minutes INTEGER NOT NULL DEFAULT 60, default_capacity INTEGER NOT NULL DEFAULT 1, default_line_capacity INTEGER, default_external_capacity INTEGER, default_buffer_capacity INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS reservation_slots (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES reservation_resources (id) ON DELETE CASCADE, date TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, total_capacity INTEGER NOT NULL CHECK (total_capacity >= 0), line_capacity INTEGER CHECK (line_capacity IS NULL OR line_capacity >= 0), external_capacity INTEGER CHECK (external_capacity IS NULL OR external_capacity >= 0), buffer_capacity INTEGER NOT NULL DEFAULT 0 CHECK (buffer_capacity >= 0), reserved_count INTEGER NOT NULL DEFAULT 0 CHECK (reserved_count >= 0), line_reserved_count INTEGER NOT NULL DEFAULT 0 CHECK (line_reserved_count >= 0), external_reserved_count INTEGER NOT NULL DEFAULT 0 CHECK (external_reserved_count >= 0), status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','sold_out','hidden')), note TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(resource_id, start_at, end_at))`,
-  `CREATE TABLE IF NOT EXISTS reservations (id TEXT PRIMARY KEY, line_account_id TEXT, user_id TEXT, friend_id TEXT, slot_id TEXT NOT NULL REFERENCES reservation_slots (id) ON DELETE RESTRICT, source TEXT NOT NULL DEFAULT 'line' CHECK (source IN ('line','jalan','phone','gmail','admin','mcp')), capacity_channel TEXT NOT NULL DEFAULT 'line' CHECK (capacity_channel IN ('line','external','manual')), external_reservation_id TEXT, dedupe_key TEXT, title TEXT NOT NULL, reservation_date TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('pending','confirmed','cancelled','completed','no_show')), adult_count INTEGER NOT NULL DEFAULT 0 CHECK (adult_count >= 0), child_count INTEGER NOT NULL DEFAULT 0 CHECK (child_count >= 0), total_people INTEGER NOT NULL DEFAULT 1 CHECK (total_people > 0), customer_name_snapshot TEXT, customer_phone_snapshot TEXT, customer_email_snapshot TEXT, cancel_reason TEXT, form_data TEXT NOT NULL DEFAULT '{}', metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS reservations (id TEXT PRIMARY KEY, line_account_id TEXT, user_id TEXT, friend_id TEXT, slot_id TEXT NOT NULL REFERENCES reservation_slots (id) ON DELETE RESTRICT, source TEXT NOT NULL DEFAULT 'line' CHECK (source IN ('line','jalan','phone','gmail','admin','mcp')), capacity_channel TEXT NOT NULL DEFAULT 'line' CHECK (capacity_channel IN ('line','external','manual')), external_reservation_id TEXT, dedupe_key TEXT, title TEXT NOT NULL, reservation_date TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('pending','confirmed','cancelled','completed','no_show')), adult_count INTEGER NOT NULL DEFAULT 0 CHECK (adult_count >= 0), child_count INTEGER NOT NULL DEFAULT 0 CHECK (child_count >= 0), infant_count INTEGER NOT NULL DEFAULT 0 CHECK (infant_count >= 0), total_people INTEGER NOT NULL DEFAULT 1 CHECK (total_people > 0), capacity_people INTEGER NOT NULL DEFAULT 1 CHECK (capacity_people > 0), customer_name_snapshot TEXT, customer_phone_snapshot TEXT, customer_email_snapshot TEXT, cancel_reason TEXT, form_data TEXT NOT NULL DEFAULT '{}', metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE UNIQUE INDEX IF NOT EXISTS uniq_reservations_external_id ON reservations (source, external_reservation_id) WHERE external_reservation_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS uniq_reservations_dedupe_key ON reservations (source, dedupe_key) WHERE dedupe_key IS NOT NULL`,
-  `CREATE TABLE IF NOT EXISTS reservation_items (id TEXT PRIMARY KEY, reservation_id TEXT NOT NULL REFERENCES reservations (id) ON DELETE CASCADE, menu_id TEXT, resource_id TEXT, name_snapshot TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 1, adult_count INTEGER NOT NULL DEFAULT 0, child_count INTEGER NOT NULL DEFAULT 0, unit_price INTEGER, amount INTEGER, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS reservation_items (id TEXT PRIMARY KEY, reservation_id TEXT NOT NULL REFERENCES reservations (id) ON DELETE CASCADE, menu_id TEXT, resource_id TEXT, name_snapshot TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 1, adult_count INTEGER NOT NULL DEFAULT 0, child_count INTEGER NOT NULL DEFAULT 0, infant_count INTEGER NOT NULL DEFAULT 0, capacity_people INTEGER NOT NULL DEFAULT 1, unit_price INTEGER, amount INTEGER, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS reservation_events (id TEXT PRIMARY KEY, reservation_id TEXT NOT NULL REFERENCES reservations (id) ON DELETE CASCADE, event_type TEXT NOT NULL CHECK (event_type IN ('created','updated','confirmed','cancelled','completed','no_show','sync_failed','imported')), actor_type TEXT NOT NULL DEFAULT 'system' CHECK (actor_type IN ('customer','admin','gas','mcp','system')), actor_id TEXT, before_payload TEXT, after_payload TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS visits (id TEXT PRIMARY KEY, user_id TEXT, reservation_id TEXT, visited_at TEXT NOT NULL, party_size INTEGER, spend_amount INTEGER, memo TEXT, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(reservation_id))`,
   `CREATE TABLE IF NOT EXISTS external_reservation_sources (id TEXT PRIMARY KEY, source TEXT NOT NULL CHECK (source IN ('jalan','gmail','phone','manual')), event_type TEXT NOT NULL DEFAULT 'unknown' CHECK (event_type IN ('created','updated','cancelled','unknown')), external_id TEXT, dedupe_key TEXT, reservation_id TEXT, raw_text TEXT, parsed_payload TEXT NOT NULL DEFAULT '{}', parse_status TEXT NOT NULL DEFAULT 'pending' CHECK (parse_status IN ('pending','parsed','imported','needs_review','failed','duplicate','ignored')), received_at TEXT, last_error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
@@ -186,6 +186,110 @@ describe('reservations — D1 integration', () => {
       }));
       expect(r.ok).toBe(true);
       expect(await slotCounters(slot.id)).toEqual({ reserved: 3, line: 0, ext: 0 });
+    });
+
+    it('stores adult_count, child_count, infant_count, total_people and capacity_people separately', async () => {
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id, {
+        adultCount: 2, childCount: 1, infantCount: 1,
+      }));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.reservation.adult_count).toBe(2);
+      expect(r.reservation.child_count).toBe(1);
+      expect(r.reservation.infant_count).toBe(1);
+      expect(r.reservation.total_people).toBe(4);
+      expect(r.reservation.capacity_people).toBe(4);
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 4, line: 4, ext: 0 });
+    });
+
+    it('uses menu capacity_count_* flags to calculate capacity_people before reserving slot capacity', async () => {
+      await createReservationMenu(db, {
+        id: 'menu_no_infant_capacity',
+        resourceId: RES_ID,
+        name: '幼児枠消費なし',
+        capacityCountInfant: false,
+      });
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id, {
+        menuId: 'menu_no_infant_capacity',
+        adultCount: 1,
+        childCount: 1,
+        infantCount: 1,
+      }));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.reservation.total_people).toBe(3);
+      expect(r.reservation.capacity_people).toBe(2);
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 2, line: 2, ext: 0 });
+    });
+
+    it('releases reservation.capacity_people, not total_people, when cancelling', async () => {
+      await createReservationMenu(db, {
+        id: 'menu_no_infant_capacity_cancel',
+        resourceId: RES_ID,
+        name: '幼児枠消費なしキャンセル',
+        capacityCountInfant: false,
+      });
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id, {
+        menuId: 'menu_no_infant_capacity_cancel',
+        adultCount: 1,
+        childCount: 1,
+        infantCount: 3,
+      }));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 2, line: 2, ext: 0 });
+      const cancelled = await updateReservationStatus(db, r.reservation.id, { status: 'cancelled' });
+      expect(cancelled.ok).toBe(true);
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 0, line: 0, ext: 0 });
+    });
+
+    it('keeps cancellation release stable even if menu capacity_count_* flags change after booking', async () => {
+      await createReservationMenu(db, {
+        id: 'menu_change_after_booking',
+        resourceId: RES_ID,
+        name: '予約後設定変更',
+        capacityCountInfant: false,
+      });
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id, {
+        menuId: 'menu_change_after_booking',
+        adultCount: 1,
+        childCount: 1,
+        infantCount: 3,
+      }));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      await db
+        .prepare(`UPDATE reservation_menus SET capacity_count_infant = 1 WHERE id = ?`)
+        .bind('menu_change_after_booking')
+        .run();
+      const cancelled = await updateReservationStatus(db, r.reservation.id, { status: 'cancelled' });
+      expect(cancelled.ok).toBe(true);
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 0, line: 0, ext: 0 });
+    });
+
+    it('rejects a booking whose calculated capacity_people is zero', async () => {
+      await createReservationMenu(db, {
+        id: 'menu_zero_capacity',
+        resourceId: RES_ID,
+        name: '枠消費なし',
+        capacityCountAdult: false,
+        capacityCountChild: false,
+        capacityCountInfant: false,
+      });
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id, {
+        menuId: 'menu_zero_capacity',
+        adultCount: 1,
+        childCount: 1,
+        infantCount: 1,
+      }));
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toBe('invalid_people');
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 0, line: 0, ext: 0 });
     });
 
     it('rejects when total capacity exceeded', async () => {

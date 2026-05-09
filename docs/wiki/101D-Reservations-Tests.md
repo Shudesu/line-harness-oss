@@ -23,6 +23,14 @@
 - `line_capacity` を超えるLINE予約は拒否する。
 - `external_capacity` を超える外部予約は自動作成しない。
 - 人数予約で `reserved_count` と `line_reserved_count` が増える。
+- 大人/子ども/幼児を分けて保存できる。
+- `total_people = adult_count + child_count + infant_count` になる。
+- `capacity_people` は `menu.capacity_count_*` に基づいて計算される。
+- 幼児も枠を消費する初期設定では、`adult=1, child=1, infant=1` の予約が3枠消費する。
+- `capacity_count_infant=0` のメニューでは、`adult=1, child=1, infant=1` の予約が2枠だけ消費する。
+- キャンセル時は `total_people` ではなく、予約作成時に保存した `capacity_people` だけ在庫が戻る。
+- 予約後にメニューの `capacity_count_infant` を変更しても、既存予約キャンセル時の戻し数は変わらない。
+- `capacity_people <= 0` になる予約は拒否する。
 - じゃらん予約で `reserved_count` と `external_reserved_count` が増える。
 - `source=admin`, `capacity_channel=line` の予約をキャンセルすると `line_reserved_count` が戻る。
 - `source=mcp`, `capacity_channel=external` の予約をキャンセルすると `external_reserved_count` が戻る。
@@ -87,6 +95,8 @@
 - 満席枠を選択不可にする。
 - `lineRemainingCapacity < people` の枠を選択不可にする。
 - 名前/電話番号/人数のバリデーションが効く。
+- 大人/子ども/幼児の3入力ができる。
+- 幼児の在庫消費有無はクライアントで決めず、サーバーの空き枠API結果に従う。
 - 予約完了画面に日時、人数、予約IDを表示する。
 
 ## Web UI tests
@@ -126,6 +136,19 @@
 1. `packages/shared` に予約型、ステータス、`capacity_channel`、外部取り込み型を追加する。
 2. `packages/db/migrations/029_reservations.sql` を作る。
 3. seed 方針を決め、ブルーベリー摘み取り・カフェの初期 resource/menu/schedule を作れるようにする。
+
+### Phase 1.5: 人数区分と在庫消費人数の拡張
+
+DB変更を伴うため、SDK/UIより先にDB helperとテストを固める。
+
+1. `reservation_menus` に `price_infant`, `capacity_count_adult`, `capacity_count_child`, `capacity_count_infant` を追加する。
+2. `reservations` に `infant_count`, `capacity_people` を追加する。
+3. `reservation_items` に `infant_count`, `capacity_people` を追加する。
+4. 既存データの移行では `infant_count=0`, `capacity_people=total_people` とする。
+5. `CreateReservationInput` に `infantCount` を追加する。
+6. 在庫確保・在庫戻し・外部同期タスクの `adjustment_count` は `capacity_people` を使う。
+7. serializer/API/SDK/LIFF/Web管理画面に `infantCount` と `capacityPeople` を追加する。
+8. じゃらんparserは `幼児(4歳〜)` と `3歳以下` の扱いを分ける。MVPでは両方を `infantCount` に合算し、raw payloadには内訳を残す。
 
 ### Phase 2: DB helper と安全性テスト
 

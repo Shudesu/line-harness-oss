@@ -259,8 +259,13 @@
     }
     .people-grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 10px;
+    }
+    @media (max-width: 420px) {
+      .people-grid {
+        grid-template-columns: 1fr;
+      }
     }
     .view-toggle {
       display: grid;

@@ -30,6 +30,10 @@ export interface Menu {
   maxPeople?: number | null;
   priceAdult?: number | null;
   priceChild?: number | null;
+  priceInfant?: number | null;
+  capacityCountAdult?: boolean;
+  capacityCountChild?: boolean;
+  capacityCountInfant?: boolean;
 }
 
 export interface Reservation {
@@ -42,7 +46,9 @@ export interface Reservation {
   status: string;
   adultCount: number;
   childCount: number;
+  infantCount: number;
   totalPeople: number;
+  capacityPeople: number;
   customerName?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -68,6 +74,7 @@ export interface ReservationAccessTokens {
 export interface BookingForm {
   adultCount: number;
   childCount: number;
+  infantCount: number;
   customerName: string;
   customerPhone: string;
   customerEmail: string;

@@ -160,7 +160,7 @@ function handleField(field: string, value: string): void {
     render();
     return;
   }
-  if (field === 'adultCount' || field === 'childCount') {
+  if (field === 'adultCount' || field === 'childCount' || field === 'infantCount') {
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
     state.selectedSlot = null;
@@ -340,6 +340,7 @@ function ensurePeopleWithinSelectedMenu(): void {
   if (menu && totalPeople() < menu.minPeople) {
     state.form.adultCount = menu.minPeople;
     state.form.childCount = 0;
+    state.form.infantCount = 0;
   }
 }
 
@@ -368,7 +369,15 @@ async function fetchSlots(date: string): Promise<Slot[]> {
   if (!state.resourceId || !state.menuId) return [];
   const resourceId = state.resourceId;
   const menuId = state.menuId;
-  const slots = await listSlots({ resourceId, menuId, date, people: totalPeople() });
+  const slots = await listSlots({
+    resourceId,
+    menuId,
+    date,
+    people: totalPeople(),
+    adultCount: state.form.adultCount,
+    childCount: state.form.childCount,
+    infantCount: state.form.infantCount,
+  });
   if (state.resourceId === resourceId && state.menuId === menuId) {
     state.slotsByDate[date] = slots;
   }
@@ -422,6 +431,7 @@ async function submitBooking(): Promise<void> {
       slotId: state.selectedSlot.slotId,
       adultCount: state.form.adultCount,
       childCount: state.form.childCount,
+      infantCount: state.form.infantCount,
       customer: {
         name: state.form.customerName.trim(),
         phone: state.form.customerPhone.trim(),

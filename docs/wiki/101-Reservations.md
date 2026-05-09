@@ -19,9 +19,11 @@ LINE Harness に、ブルーベリー農園の摘み取り体験・カフェ予�
 
 最終更新: 2026-05-03
 
-全体進捗の目安は **約96%**。
+全体進捗の目安は **約94%**。
 
-「予約DBに安全に保存し、在庫を増減し、LIFF予約画面から予約を作る」中核は動いている。バックエンド不変条件テスト（Phase 1）、Worker API（Phase 2）、SDK（Phase 3）、MCP（Phase 4）、Web管理画面MVP（Phase 5）が完了した。Phase 6はGAS/Gmail raw取り込み口、安全な本文parser、GAS側スクリプトまで追加済み。LIFF予約画面は、人数・連絡先入力、1週間/1か月の空き枠表示、確認、完了、自分の予約一覧、予約詳細、キャンセル導線まで実装済み。まだ「本物のGoogle Calendar OAuth接続」「実Gmailアカウントでの運用テスト」「LINE LIFF実機確認」は残っている。
+「予約DBに安全に保存し、在庫を増減し、LIFF予約画面から予約を作る」中核は動いている。バックエンド不変条件テスト（Phase 1）、Worker API（Phase 2）、SDK（Phase 3）、MCP（Phase 4）、Web管理画面MVP（Phase 5）が完了した。Phase 6はGAS/Gmail raw取り込み口、安全な本文parser、GAS側スクリプトまで追加済み。LIFF予約画面は、人数・連絡先入力、1週間/1か月の空き枠表示、確認、完了、自分の予約一覧、予約詳細、キャンセル導線まで実装済み。実機での予約確認も完了している。
+
+未実装の設計変更として、大人/子ども/幼児の3区分化が残っている。現行DBは `adult_count`, `child_count`, `total_people` の2区分+合計で、幼児を独立保存できない。今後は `infant_count` と `capacity_people` を追加し、表示上の合計人数と予約枠を消費する人数を分離する。
 
 ### テスト状況
 

@@ -92,6 +92,10 @@ CREATE TABLE IF NOT EXISTS reservation_menus (
   max_people INTEGER,
   price_adult INTEGER,
   price_child INTEGER,
+  price_infant INTEGER,
+  capacity_count_adult INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0, 1)),
+  capacity_count_child INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0, 1)),
+  capacity_count_infant INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0, 1)),
   form_fields TEXT NOT NULL DEFAULT '[]',
   is_active INTEGER NOT NULL DEFAULT 1,
   display_order INTEGER NOT NULL DEFAULT 0,
@@ -196,7 +200,9 @@ CREATE TABLE IF NOT EXISTS reservations (
     CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed', 'no_show')),
   adult_count INTEGER NOT NULL DEFAULT 0 CHECK (adult_count >= 0),
   child_count INTEGER NOT NULL DEFAULT 0 CHECK (child_count >= 0),
+  infant_count INTEGER NOT NULL DEFAULT 0 CHECK (infant_count >= 0),
   total_people INTEGER NOT NULL DEFAULT 1 CHECK (total_people > 0),
+  capacity_people INTEGER NOT NULL DEFAULT 1 CHECK (capacity_people > 0),
   customer_name_snapshot TEXT,
   customer_phone_snapshot TEXT,
   customer_email_snapshot TEXT,
@@ -235,6 +241,8 @@ CREATE TABLE IF NOT EXISTS reservation_items (
   quantity INTEGER NOT NULL DEFAULT 1,
   adult_count INTEGER NOT NULL DEFAULT 0,
   child_count INTEGER NOT NULL DEFAULT 0,
+  infant_count INTEGER NOT NULL DEFAULT 0,
+  capacity_people INTEGER NOT NULL DEFAULT 1,
   unit_price INTEGER,
   amount INTEGER,
   metadata TEXT NOT NULL DEFAULT '{}',
@@ -392,6 +400,49 @@ CREATE INDEX IF NOT EXISTS idx_external_sync_tasks_status ON external_sync_tasks
 
 `capacity_channel = 'manual'` は、LINE枠・外部枠のどちらにも属さない共通予約として扱う。電話予約や現地受付などで、特定チャネル枠を消費させたくない場合に使う。ただし、LINE枠または外部枠を明示的に減らしたい管理者予約では `line` / `external` を指定する。
 
+## 人数区分と在庫消費人数
+
+予約人数は、表示・料金・在庫消費で役割が異なる。
+
+MVPでは人数区分を以下の3つに分ける。
+
+| カラム | 意味 |
+|---|---|
+| `adult_count` | 大人 |
+| `child_count` | 子ども |
+| `infant_count` | 幼児 |
+
+`total_people` は来園する実人数の合計で、常に以下で計算する。
+
+```text
+total_people = adult_count + child_count + infant_count
+```
+
+一方、予約枠の残数を消費する人数は `capacity_people` として別に保存する。
+
+```text
+capacity_people =
+  adult_count * menu.capacity_count_adult +
+  child_count * menu.capacity_count_child +
+  infant_count * menu.capacity_count_infant
+```
+
+`capacity_count_*` は `0` または `1` のフラグとする。
+
+例:
+
+| 運用 | adult | child | infant |
+|---|---:|---:|---:|
+| 大人・子ども・幼児すべて枠を消費する | 1 | 1 | 1 |
+| 幼児だけ枠を消費しない | 1 | 1 | 0 |
+| 大人だけ枠を消費する特殊運用 | 1 | 0 | 0 |
+
+初期値は安全側に倒し、`adult=1`, `child=1`, `infant=1` とする。つまり幼児も予約枠を消費する。
+
+キャンセル時の在庫戻しは `total_people` ではなく、予約作成時に保存した `reservations.capacity_people` を使う。これは、予約後にメニュー側の `capacity_count_*` 設定が変わっても、作成時に確保した在庫数だけを正しく戻すためである。
+
+`capacity_people <= 0` になる予約は作成しない。幼児だけ予約を許可したい場合でも、在庫を消費しない予約が作られると残数・キャンセル処理・来園管理が壊れやすいため、MVPでは少なくとも1枠を消費する設計にする。
+
 ## 残数計算
 
 MVPから `line_capacity` と `external_capacity` を使う。
@@ -412,15 +463,15 @@ LINE予約画面では以下を満たす枠だけ選択可能にする。
 
 ```text
 status = 'open'
-AND line_remaining >= requested_people
-AND total_remaining >= requested_people
+AND line_remaining >= requested_capacity_people
+AND total_remaining >= requested_capacity_people
 ```
 
 じゃらん取り込みでは以下を満たす場合だけ通常取り込みにする。
 
 ```text
-external_remaining >= requested_people
-AND total_remaining >= requested_people
+external_remaining >= requested_capacity_people
+AND total_remaining >= requested_capacity_people
 ```
 
 満たさない場合は、`external_reservation_sources.parse_status = 'needs_review'` として保存し、reservation は作らず、管理画面で要確認にする。じゃらん側で確定済み予約の場合でも、過剰予約を自動作成しない。
@@ -428,6 +479,8 @@ AND total_remaining >= requested_people
 ## 在庫確保
 
 予約作成は、予約レコード作成より先に slot の在庫を条件付き `UPDATE` で確保する。
+
+ここで使う `?` は `total_people` ではなく `capacity_people` とする。
 
 `capacity_channel = 'line'`:
 
@@ -473,6 +526,8 @@ WHERE id = ?
 ## 在庫戻し
 
 在庫を戻すのは、予約が占有状態から `cancelled` へ遷移した時だけ。
+
+ここで戻す `?` は `reservations.capacity_people` とする。
 
 ```sql
 UPDATE reservation_slots

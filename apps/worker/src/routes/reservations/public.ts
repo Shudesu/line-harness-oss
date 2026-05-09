@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import {
   createReservationWithCapacityCheck,
+  calculateReservationPeople,
   getReservationById,
   getReservationSlotAvailability,
+  getReservationMenuById,
   listReservationResources,
   listReservationMenus,
   listReservationSlots,
@@ -82,7 +84,15 @@ publicReservations.get('/api/public/reservation-resources/:resourceId/slots', as
     if (!date.ok) return jsonError(c, date.error.code, date.error.status, date.error.message);
 
     const slots = await listReservationSlots(c.env.DB, { resourceId, date: date.value });
-    const requestedPeople = queryPositiveInt(c, 'people', 1);
+    const menuId = c.req.query('menuId');
+    const menu = menuId ? await getReservationMenuById(c.env.DB, menuId) : null;
+    const requestedPeople = menu
+      ? calculateReservationPeople(menu, {
+        adultCount: queryPositiveInt(c, 'adultCount', queryPositiveInt(c, 'people', 1)),
+        childCount: queryPositiveInt(c, 'childCount', 0),
+        infantCount: queryPositiveInt(c, 'infantCount', 0),
+      }).capacityPeople
+      : queryPositiveInt(c, 'people', 1);
     return jsonOk(
       c,
       slots.map((slot) => {
@@ -128,6 +138,7 @@ publicReservations.post('/api/public/reservations', async (c) => {
       friendId: session.friendId ?? null,
       adultCount: body.adultCount ?? 0,
       childCount: body.childCount ?? 0,
+      infantCount: body.infantCount ?? 0,
       customerName: body.customer?.name ?? null,
       customerPhone: body.customer?.phone ?? null,
       customerEmail: body.customer?.email ?? null,

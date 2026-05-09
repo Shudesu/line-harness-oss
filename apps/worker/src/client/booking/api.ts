@@ -30,12 +30,23 @@ export function listMenus(resourceId: string) {
   return apiJson<Menu[]>(`/api/public/reservation-resources/${encodeURIComponent(resourceId)}/menus`);
 }
 
-export function listSlots(input: { resourceId: string; menuId: string; date: string; people: number }) {
+export function listSlots(input: {
+  resourceId: string;
+  menuId: string;
+  date: string;
+  people: number;
+  adultCount?: number;
+  childCount?: number;
+  infantCount?: number;
+}) {
   const query = new URLSearchParams({
     date: input.date,
     menuId: input.menuId,
     people: String(Math.max(1, input.people)),
   });
+  if (input.adultCount !== undefined) query.set('adultCount', String(Math.max(0, input.adultCount)));
+  if (input.childCount !== undefined) query.set('childCount', String(Math.max(0, input.childCount)));
+  if (input.infantCount !== undefined) query.set('infantCount', String(Math.max(0, input.infantCount)));
   return apiJson<Slot[]>(`/api/public/reservation-resources/${encodeURIComponent(input.resourceId)}/slots?${query}`);
 }
 
@@ -46,6 +57,7 @@ export function createReservation(input: {
   slotId: string;
   adultCount: number;
   childCount: number;
+  infantCount: number;
   customer: { name: string; phone: string; email: string | null };
   formData: { note: string | null };
 }) {
@@ -58,6 +70,7 @@ export function createReservation(input: {
       slotId: input.slotId,
       adultCount: input.adultCount,
       childCount: input.childCount,
+      infantCount: input.infantCount,
       customer: input.customer,
       formData: input.formData,
     }),

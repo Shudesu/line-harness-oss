@@ -52,7 +52,9 @@ const reservation: Reservation = {
   status: 'confirmed',
   adultCount: 1,
   childCount: 0,
+  infantCount: 0,
   totalPeople: 1,
+  capacityPeople: 1,
   customerName: 'Yamada',
   customerPhone: null,
   customerEmail: null,
@@ -81,6 +83,7 @@ describe('ReservationsResource', () => {
       slotId: 'slot-1',
       adultCount: 1,
       childCount: 0,
+      infantCount: 1,
     }
     const http = mockHttp({ post: vi.fn().mockResolvedValue({ success: true, data: reservation }) })
     const resource = new ReservationsResource(http)
@@ -111,6 +114,7 @@ describe('ReservationsResource', () => {
       menuId: 'menu_60',
       slotId: 'slot-1',
       adultCount: 1,
+      infantCount: 1,
     })
 
     expect(http.post).toHaveBeenCalledWith(
@@ -121,6 +125,7 @@ describe('ReservationsResource', () => {
         slotId: 'slot-1',
         adultCount: 1,
         childCount: undefined,
+        infantCount: 1,
         customer: undefined,
         formData: undefined,
       },

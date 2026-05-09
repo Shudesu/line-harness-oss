@@ -204,7 +204,9 @@ const spec = {
           status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled', 'completed', 'no_show'] },
           adultCount: { type: 'integer' },
           childCount: { type: 'integer' },
+          infantCount: { type: 'integer' },
           totalPeople: { type: 'integer' },
+          capacityPeople: { type: 'integer' },
           customerName: { type: 'string', nullable: true },
           customerPhone: { type: 'string', nullable: true },
           customerEmail: { type: 'string', nullable: true },
@@ -223,6 +225,7 @@ const spec = {
           capacityChannel: { type: 'string', enum: ['line', 'external', 'manual'] },
           adultCount: { type: 'integer', minimum: 0 },
           childCount: { type: 'integer', minimum: 0 },
+          infantCount: { type: 'integer', minimum: 0 },
           customer: {
             type: 'object',
             properties: {
@@ -259,6 +262,7 @@ const spec = {
           slotId: { type: 'string' },
           adultCount: { type: 'integer', minimum: 0 },
           childCount: { type: 'integer', minimum: 0 },
+          infantCount: { type: 'integer', minimum: 0 },
           customerName: { type: 'string', nullable: true },
           customerPhone: { type: 'string', nullable: true },
           customerEmail: { type: 'string', nullable: true },

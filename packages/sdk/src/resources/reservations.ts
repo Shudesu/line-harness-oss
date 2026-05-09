@@ -52,6 +52,10 @@ export interface CreateReservationMenuInput {
   maxPeople?: number | null
   priceAdult?: number | null
   priceChild?: number | null
+  priceInfant?: number | null
+  capacityCountAdult?: boolean
+  capacityCountChild?: boolean
+  capacityCountInfant?: boolean
   formFields?: string
   displayOrder?: number
   metadata?: string
@@ -96,6 +100,9 @@ export interface ListReservationSlotsParams {
   resourceId: string
   date: string
   people?: number
+  adultCount?: number
+  childCount?: number
+  infantCount?: number
 }
 
 export interface ListReservationsParams {
@@ -117,6 +124,7 @@ export interface CreateReservationInput {
   friendId?: string | null
   adultCount?: number
   childCount?: number
+  infantCount?: number
   customer?: {
     name?: string | null
     phone?: string | null
@@ -140,6 +148,9 @@ export interface ListPublicReservationSlotsParams {
   resourceId: string
   date: string
   people?: number
+  adultCount?: number
+  childCount?: number
+  infantCount?: number
 }
 
 export interface CreatePublicReservationInput {
@@ -149,6 +160,7 @@ export interface CreatePublicReservationInput {
   slotId: string
   adultCount?: number
   childCount?: number
+  infantCount?: number
   customer?: {
     name?: string | null
     phone?: string | null
@@ -191,6 +203,7 @@ export interface ImportJalanReservationInput {
   slotId?: string
   adultCount?: number
   childCount?: number
+  infantCount?: number
   customerName?: string | null
   customerPhone?: string | null
   customerEmail?: string | null
@@ -315,6 +328,9 @@ export class ReservationsResource {
       date: params.date,
     })
     if (params.people !== undefined) query.set('people', String(params.people))
+    if (params.adultCount !== undefined) query.set('adultCount', String(params.adultCount))
+    if (params.childCount !== undefined) query.set('childCount', String(params.childCount))
+    if (params.infantCount !== undefined) query.set('infantCount', String(params.infantCount))
     const res = await this.http.get<ApiResponse<ReservationSlotWithAvailability[]>>(`/api/reservation-slots?${query}`)
     return res.data
   }
@@ -364,6 +380,9 @@ export class ReservationsResource {
   async listPublicSlots(params: ListPublicReservationSlotsParams): Promise<PublicReservationSlot[]> {
     const query = new URLSearchParams({ date: params.date })
     if (params.people !== undefined) query.set('people', String(params.people))
+    if (params.adultCount !== undefined) query.set('adultCount', String(params.adultCount))
+    if (params.childCount !== undefined) query.set('childCount', String(params.childCount))
+    if (params.infantCount !== undefined) query.set('infantCount', String(params.infantCount))
     const res = await this.http.get<ApiResponse<PublicReservationSlot[]>>(
       `/api/public/reservation-resources/${encodeURIComponent(params.resourceId)}/slots?${query}`,
     )
@@ -379,6 +398,7 @@ export class ReservationsResource {
         slotId: input.slotId,
         adultCount: input.adultCount,
         childCount: input.childCount,
+        infantCount: input.infantCount,
         customer: input.customer,
         formData: input.formData,
       },

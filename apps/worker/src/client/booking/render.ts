@@ -114,6 +114,10 @@ function renderBookingControls(): string {
           子ども
           <input type="number" min="0" inputmode="numeric" data-field="childCount" value="${state.form.childCount}">
         </label>
+        <label class="field-label">
+          幼児
+          <input type="number" min="0" inputmode="numeric" data-field="infantCount" value="${state.form.infantCount}">
+        </label>
       </div>
       <div class="view-toggle">
         <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
@@ -285,6 +289,7 @@ function renderConfirm(): string {
         endAt: slot?.endAt,
         adultCount: state.form.adultCount,
         childCount: state.form.childCount,
+        infantCount: state.form.infantCount,
         name: state.form.customerName,
         phone: state.form.customerPhone,
         email: state.form.customerEmail,
@@ -314,6 +319,7 @@ function renderSuccess(): string {
         endAt: reservation.endAt,
         adultCount: reservation.adultCount,
         childCount: reservation.childCount,
+        infantCount: reservation.infantCount,
         name: reservation.customerName ?? state.form.customerName,
         phone: reservation.customerPhone ?? state.form.customerPhone,
         email: reservation.customerEmail ?? state.form.customerEmail,
@@ -372,6 +378,7 @@ function renderReservationDetail(): string {
         endAt: reservation.endAt,
         adultCount: reservation.adultCount,
         childCount: reservation.childCount,
+        infantCount: reservation.infantCount,
         name: reservation.customerName ?? '',
         phone: reservation.customerPhone ?? '',
         email: reservation.customerEmail ?? '',
@@ -423,6 +430,7 @@ function renderReservationSummary(input: {
   endAt?: string;
   adultCount: number;
   childCount: number;
+  infantCount: number;
   name: string;
   phone: string;
   email?: string | null;
@@ -433,7 +441,7 @@ function renderReservationSummary(input: {
       <div class="confirm-row"><span class="confirm-label">メニュー</span><span class="confirm-value">${escapeHtml(input.menuName)}</span></div>
       <div class="confirm-row"><span class="confirm-label">日付</span><span class="confirm-value">${input.date ? formatDateJa(input.date) : '未選択'}</span></div>
       <div class="confirm-row"><span class="confirm-label">時間</span><span class="confirm-value">${input.startAt && input.endAt ? `${formatTime(input.startAt)}-${formatTime(input.endAt)}` : '未選択'}</span></div>
-      <div class="confirm-row"><span class="confirm-label">人数</span><span class="confirm-value">大人${input.adultCount}名 / 子ども${input.childCount}名</span></div>
+      <div class="confirm-row"><span class="confirm-label">人数</span><span class="confirm-value">大人${input.adultCount}名 / 子ども${input.childCount}名 / 幼児${input.infantCount}名</span></div>
       <div class="confirm-row"><span class="confirm-label">氏名</span><span class="confirm-value">${escapeHtml(input.name)}</span></div>
       <div class="confirm-row"><span class="confirm-label">電話</span><span class="confirm-value">${escapeHtml(input.phone)}</span></div>
       ${input.email ? `<div class="confirm-row"><span class="confirm-label">メール</span><span class="confirm-value">${escapeHtml(input.email)}</span></div>` : ''}

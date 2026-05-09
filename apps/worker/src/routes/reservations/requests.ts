@@ -85,6 +85,7 @@ export function parseReservationCreateBody(body: JsonObject): ValidationResult<{
   friendId?: string | null;
   adultCount: number;
   childCount: number;
+  infantCount: number;
   customer: { name?: string | null; phone?: string | null; email?: string | null };
   formData: Record<string, unknown>;
   metadata: Record<string, unknown>;
@@ -115,6 +116,7 @@ export function parseReservationCreateBody(body: JsonObject): ValidationResult<{
       friendId: optionalString(body, 'friendId'),
       adultCount: optionalNumber(body, 'adultCount') ?? 0,
       childCount: optionalNumber(body, 'childCount') ?? 0,
+      infantCount: optionalNumber(body, 'infantCount') ?? 0,
       customer: {
         name: optionalString(customer, 'name'),
         phone: optionalString(customer, 'phone'),
@@ -149,6 +151,7 @@ export function parseJalanImportBody(body: JsonObject): ValidationResult<{
   slotId?: string;
   adultCount?: number;
   childCount?: number;
+  infantCount?: number;
   customerName?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -171,6 +174,7 @@ export function parseJalanImportBody(body: JsonObject): ValidationResult<{
       slotId: optionalString(body, 'slotId') ?? undefined,
       adultCount: optionalNumber(body, 'adultCount'),
       childCount: optionalNumber(body, 'childCount'),
+      infantCount: optionalNumber(body, 'infantCount'),
       customerName: optionalString(body, 'customerName'),
       customerPhone: optionalString(body, 'customerPhone'),
       customerEmail: optionalString(body, 'customerEmail'),

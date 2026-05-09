@@ -68,6 +68,7 @@ reservationIntegrations.post('/api/integrations/jalan/gmail/import', async (c) =
       slotId,
       adultCount: parsed.adultCount ?? undefined,
       childCount: parsed.childCount ?? undefined,
+      infantCount: parsed.infantCount ?? undefined,
       customerName: parsed.customerName,
       customerPhone: parsed.customerPhone,
       customerEmail: parsed.customerEmail,

@@ -35,6 +35,30 @@ scope = reservation:cancel
 GET /api/public/reservation-resources/:resourceId/menus
 ```
 
+レスポンスには、人数区分ごとの価格と在庫消費ルールを含める。
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "menu_picking_60",
+      "resourceId": "res_blueberry",
+      "name": "ブルーベリー摘み取り体験 60分",
+      "durationMinutes": 60,
+      "minPeople": 1,
+      "maxPeople": 8,
+      "priceAdult": 2000,
+      "priceChild": 1000,
+      "priceInfant": 0,
+      "capacityCountAdult": true,
+      "capacityCountChild": true,
+      "capacityCountInfant": true
+    }
+  ]
+}
+```
+
 ### 空き枠取得
 
 ```http
@@ -61,7 +85,13 @@ GET /api/public/reservation-resources/:resourceId/slots?date=2026-06-01&menuId=m
 }
 ```
 
-`available` は `lineRemainingCapacity >= people` の時だけ `true`。
+`people` は後方互換のため残すが、3区分対応後は以下のqueryを優先する。
+
+```http
+GET /api/public/reservation-resources/:resourceId/slots?date=2026-06-01&menuId=menu_picking_60&adultCount=2&childCount=1&infantCount=1
+```
+
+サーバーは `menu.capacity_count_*` から `requestedCapacityPeople` を計算し、`lineRemainingCapacity >= requestedCapacityPeople` の時だけ `available=true` にする。
 
 ### 予約作成
 
@@ -80,6 +110,7 @@ Content-Type: application/json
   "slotId": "slot_20260601_0900_blueberry",
   "adultCount": 2,
   "childCount": 1,
+  "infantCount": 1,
   "customer": {
     "name": "山田太郎",
     "phone": "09000000000",
@@ -100,7 +131,9 @@ slot.status === 'open'
 menu.is_active === true
 resource.is_active === true
 slot duration === menu.duration_minutes
-adultCount + childCount === totalPeople
+adultCount + childCount + infantCount === totalPeople
+capacityPeople = adultCount * menu.capacity_count_adult + childCount * menu.capacity_count_child + infantCount * menu.capacity_count_infant
+capacityPeople > 0
 totalPeople >= menu.min_people
 menu.max_people があれば totalPeople <= menu.max_people
 ```
@@ -118,7 +151,11 @@ menu.max_people があれば totalPeople <= menu.max_people
     "reservationDate": "2026-06-01",
     "startAt": "2026-06-01T09:00:00+09:00",
     "endAt": "2026-06-01T10:00:00+09:00",
-    "totalPeople": 3,
+    "adultCount": 2,
+    "childCount": 1,
+    "infantCount": 1,
+    "totalPeople": 4,
+    "capacityPeople": 4,
     "menuName": "ブルーベリー摘み取り体験 60分",
     "customerName": "山田太郎",
     "detailToken": "SIGNED_DETAIL_TOKEN",
@@ -231,7 +268,8 @@ POST /api/reservations
   "source": "admin",
   "capacityChannel": "line",
   "adultCount": 2,
-  "childCount": 1
+  "childCount": 1,
+  "infantCount": 0
 }
 ```
 
@@ -273,6 +311,7 @@ POST /api/integrations/jalan/reservations/import
     "startTime": "10:00",
     "adultCount": 2,
     "childCount": 1,
+    "infantCount": 0,
     "customerName": "山田太郎",
     "phone": "09000000000",
     "planName": "ブルーベリー摘み取り"
@@ -320,7 +359,7 @@ Gmail/じゃらん取り込みAPIは、新規予約だけでなく、キャン�
 ```text
 1. じゃらん予約番号 externalId
 2. Gmail messageId
-3. source + reservationDate + startTime + normalizedPhone + adultCount + childCount + normalizedPlanName
+3. source + reservationDate + startTime + normalizedPhone + adultCount + childCount + infantCount + normalizedPlanName
 ```
 
 電話番号は数字のみ、プラン名は空白除去・全角半角正規化後に使う。

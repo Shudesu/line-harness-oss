@@ -9,6 +9,7 @@ export interface ParsedJalanMail {
   totalPeople: number | null;
   adultCount: number | null;
   childCount: number | null;
+  infantCount: number | null;
   customerName: string | null;
   customerPhone: string | null;
   customerEmail: string | null;
@@ -29,6 +30,7 @@ export function parseJalanMail(rawText: string): ParsedJalanMail {
     totalPeople: parseTotalPeople(text),
     adultCount: parseAdultCount(text),
     childCount: parseChildCount(text),
+    infantCount: parseInfantCount(text),
     customerName: firstMatch(text, [
       /体験者氏名\s*[:：]?\s*(.+?)(?:\([^)\n\r]*\))?様?(?:\n|$)/,
       /(?:氏名|お名前|予約者名|代表者名)\s*[:：]?\s*([^\n\r]+)/,
@@ -112,9 +114,18 @@ function parseChildCount(text: string): number | null {
   const target = details ?? text;
   const counts = [
     parsePeopleCount(target, ['小学生']),
+    parsePeopleCount(target, ['子供', '子ども', '小人', 'child']),
+  ];
+  const found = counts.filter((count): count is number => count !== null);
+  return found.length > 0 ? found.reduce((sum, count) => sum + count, 0) : null;
+}
+
+function parseInfantCount(text: string): number | null {
+  const details = firstMatch(text, [/人数\s*[:：]?.*?\((.+?)\)/]);
+  const target = details ?? text;
+  const counts = [
     parsePeopleCount(target, ['幼児\\(4歳～\\)', '幼児']),
     parsePeopleCount(target, ['3歳以下']),
-    parsePeopleCount(target, ['子供', '子ども', '小人', 'child']),
   ];
   const found = counts.filter((count): count is number => count !== null);
   return found.length > 0 ? found.reduce((sum, count) => sum + count, 0) : null;

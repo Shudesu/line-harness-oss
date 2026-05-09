@@ -23,7 +23,7 @@ https://liff.line.me/{LIFF_ID}?page=book&resourceId={RESOURCE_ID}&menuId={MENU_I
 2. メニュー一覧を取得する。
 3. LIFF SDK で profile を取得する。
 4. LINE ID tokenを `LIFF_SESSION_TOKEN` に交換する。
-5. メニュー、人数、1週間/1か月の空き枠を表示する。
+5. メニュー、大人/子ども/幼児の人数、1週間/1か月の空き枠を表示する。
 6. `lineRemainingCapacity` を反映した空き枠を `◎ / △ / × / -` で表示する。
 7. 名前、電話番号、メール、備考を入力する。
 8. 確認画面を表示する。
@@ -89,7 +89,9 @@ SDK API:
 const slots = await lh.reservations.listSlots('resource-id', {
   date: '2026-06-01',
   menuId: 'menu_picking_60',
-  people: 3,
+  adultCount: 2,
+  childCount: 1,
+  infantCount: 1,
 });
 
 const reservation = await lh.reservations.create({
@@ -98,6 +100,7 @@ const reservation = await lh.reservations.create({
   slotId: 'slot_20260601_0900_blueberry',
   adultCount: 2,
   childCount: 1,
+  infantCount: 1,
   customer: {
     name: '山田太郎',
     phone: '09000000000',
@@ -182,5 +185,11 @@ AI経由の更新は `reservation_events.actor_type = 'mcp'` を残す。
 - `packages/db/src/users.ts`
 - `packages/shared/src/types.ts`
 - `packages/shared/src/index.ts`
+
+人数区分:
+
+- LIFF入力は `adultCount`, `childCount`, `infantCount` の3つに分ける。
+- 空き枠取得では、クライアントで単純に `adult + child + infant` を送るだけにしない。メニューごとの在庫消費ルールはサーバーが持つため、3区分を送ってサーバー側で `capacityPeople` を計算する。
+- 表示上の合計人数は `totalPeople`、残数判定に使う人数は `capacityPeople` として区別する。
 
 `packages/db/src/users.ts` には、予約専用の在庫・来園ロジックは入れない。予約側から必要な `createUser`, `getUserByPhone`, `linkFriendToUser` を使う。

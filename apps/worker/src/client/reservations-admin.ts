@@ -385,6 +385,10 @@ async function createMenuFromForm(): Promise<void> {
     maxPeople: nullableNumberValue('menuMaxPeople'),
     priceAdult: nullableNumberValue('menuPriceAdult'),
     priceChild: nullableNumberValue('menuPriceChild'),
+    priceInfant: nullableNumberValue('menuPriceInfant'),
+    capacityCountAdult: checkedValue('menuCapacityAdult'),
+    capacityCountChild: checkedValue('menuCapacityChild'),
+    capacityCountInfant: checkedValue('menuCapacityInfant'),
   };
   await withLoading(async () => {
     await api<ReservationMenu>(`/api/reservation-resources/${encodeURIComponent(state.resourceId)}/menus`, {
@@ -406,6 +410,10 @@ async function updateMenuFromCard(menuId: string): Promise<void> {
     maxPeople: nullableNumberValue(`menuMaxPeople-${menuId}`),
     priceAdult: nullableNumberValue(`menuPriceAdult-${menuId}`),
     priceChild: nullableNumberValue(`menuPriceChild-${menuId}`),
+    priceInfant: nullableNumberValue(`menuPriceInfant-${menuId}`),
+    capacityCountAdult: checkedValue(`menuCapacityAdult-${menuId}`),
+    capacityCountChild: checkedValue(`menuCapacityChild-${menuId}`),
+    capacityCountInfant: checkedValue(`menuCapacityInfant-${menuId}`),
     isActive: checkedValue(`menuActive-${menuId}`),
   };
   await withLoading(async () => {
@@ -1002,7 +1010,8 @@ function renderDetail(): string {
         <div><span>日時</span><strong>${escapeHtml(reservation.reservationDate)} ${formatTime(reservation.startAt)}-${formatTime(reservation.endAt)}</strong></div>
         <div><span>顧客</span><strong>${escapeHtml(reservation.customerName || '-')}</strong></div>
         <div><span>電話</span><strong>${escapeHtml(reservation.customerPhone || '-')}</strong></div>
-        <div><span>人数</span><strong>${reservation.totalPeople}名 大人${reservation.adultCount} / 子ども${reservation.childCount}</strong></div>
+        <div><span>人数</span><strong>${reservation.totalPeople}名 大人${reservation.adultCount} / 子ども${reservation.childCount} / 幼児${reservation.infantCount}</strong></div>
+        <div><span>枠消費</span><strong>${reservation.capacityPeople}枠</strong></div>
         <div><span>状態</span><strong>${escapeHtml(reservation.status)}</strong></div>
         <div><span>在庫チャネル</span><strong>${escapeHtml(reservation.capacityChannel)}</strong></div>
         <div><span>作成元</span><strong>${escapeHtml(reservation.source)}</strong></div>
@@ -1151,6 +1160,10 @@ function renderMenuSettings(): string {
         <div class="admin-field"><label for="menuMaxPeople">最大人数</label><input id="menuMaxPeople" type="number" placeholder="空なら制限なし"></div>
         <div class="admin-field"><label for="menuPriceAdult">大人料金</label><input id="menuPriceAdult" type="number" placeholder="例 2000"></div>
         <div class="admin-field"><label for="menuPriceChild">子ども料金</label><input id="menuPriceChild" type="number" placeholder="例 1000"></div>
+        <div class="admin-field"><label for="menuPriceInfant">幼児料金</label><input id="menuPriceInfant" type="number" placeholder="例 0"></div>
+        <label class="check-row"><input id="menuCapacityAdult" type="checkbox" checked>大人は枠を消費</label>
+        <label class="check-row"><input id="menuCapacityChild" type="checkbox" checked>子どもは枠を消費</label>
+        <label class="check-row"><input id="menuCapacityInfant" type="checkbox" checked>幼児は枠を消費</label>
         <button class="admin-button" id="createMenu" ${state.loading || !state.resourceId ? 'disabled' : ''}>menu作成</button>
       </div>
       <div class="settings-list">${menus}</div>
@@ -1172,7 +1185,13 @@ function renderMenuEditor(item: ReservationMenu): string {
         <div class="admin-field"><label for="menuMaxPeople-${escapeHtml(item.id)}">最大人数</label><input id="menuMaxPeople-${escapeHtml(item.id)}" type="number" value="${item.maxPeople ?? ''}"></div>
         <div class="admin-field"><label for="menuPriceAdult-${escapeHtml(item.id)}">大人料金</label><input id="menuPriceAdult-${escapeHtml(item.id)}" type="number" value="${item.priceAdult ?? ''}"></div>
       </div>
-      <div class="admin-field"><label for="menuPriceChild-${escapeHtml(item.id)}">子ども料金</label><input id="menuPriceChild-${escapeHtml(item.id)}" type="number" value="${item.priceChild ?? ''}"></div>
+      <div class="settings-editor-row">
+        <div class="admin-field"><label for="menuPriceChild-${escapeHtml(item.id)}">子ども料金</label><input id="menuPriceChild-${escapeHtml(item.id)}" type="number" value="${item.priceChild ?? ''}"></div>
+        <div class="admin-field"><label for="menuPriceInfant-${escapeHtml(item.id)}">幼児料金</label><input id="menuPriceInfant-${escapeHtml(item.id)}" type="number" value="${item.priceInfant ?? ''}"></div>
+      </div>
+      <label class="check-row"><input id="menuCapacityAdult-${escapeHtml(item.id)}" type="checkbox" ${item.capacityCountAdult ? 'checked' : ''}>大人は枠を消費</label>
+      <label class="check-row"><input id="menuCapacityChild-${escapeHtml(item.id)}" type="checkbox" ${item.capacityCountChild ? 'checked' : ''}>子どもは枠を消費</label>
+      <label class="check-row"><input id="menuCapacityInfant-${escapeHtml(item.id)}" type="checkbox" ${item.capacityCountInfant ? 'checked' : ''}>幼児は枠を消費</label>
       <button class="admin-button secondary update-menu" data-menu-id="${escapeHtml(item.id)}" ${state.loading ? 'disabled' : ''}>menu保存</button>
     </div>
   `;
