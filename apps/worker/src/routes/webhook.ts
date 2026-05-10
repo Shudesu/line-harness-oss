@@ -18,6 +18,7 @@ import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 import { defaultLiffUrl, defaultLineAccessToken, defaultLineChannelSecret, workerBaseUrl } from '../services/line-bindings.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const webhook = new Hono<Env>();
 
@@ -44,7 +45,7 @@ async function ensureWebhookFriend(
     console.log(`[webhook] auto-created friend from message userId=${lineUserId} friendId=${friend.id}`);
   }
 
-  if (lineAccountId && friend.line_account_id !== lineAccountId) {
+  if (lineAccountId && await hasColumn(db, 'friends', 'line_account_id') && friend.line_account_id !== lineAccountId) {
     await db
       .prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
       .bind(lineAccountId, jstNow(), friend.id)
@@ -157,7 +158,7 @@ async function handleEvent(
     console.log(`[follow] friend.id=${friend.id} friend.line_account_id=${(friend as any).line_account_id}`);
 
     // Set line_account_id for multi-account tracking (always update on follow)
-    if (lineAccountId) {
+    if (lineAccountId && await hasColumn(db, 'friends', 'line_account_id')) {
       await db.prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
         .bind(lineAccountId, jstNow(), friend.id).run();
       console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
@@ -377,9 +378,11 @@ async function handleEvent(
         const friendRecord = await db.prepare('SELECT user_id FROM friends WHERE id = ?').bind(friend.id).first<{ user_id: string | null }>();
         if (friendRecord?.user_id) {
           // Find the same user on other accounts
-          const otherFriends = await db.prepare(
-            'SELECT f.line_user_id, la.channel_access_token FROM friends f INNER JOIN line_accounts la ON la.id = f.line_account_id WHERE f.user_id = ? AND f.line_account_id != ? AND f.is_following = 1'
-          ).bind(friendRecord.user_id, lineAccountId).all<{ line_user_id: string; channel_access_token: string }>();
+          const otherFriends = await (await hasColumn(db, 'friends', 'line_account_id')
+            ? db.prepare(
+                'SELECT f.line_user_id, la.channel_access_token FROM friends f INNER JOIN line_accounts la ON la.id = f.line_account_id WHERE f.user_id = ? AND f.line_account_id != ? AND f.is_following = 1'
+              ).bind(friendRecord.user_id, lineAccountId).all<{ line_user_id: string; channel_access_token: string }>()
+            : Promise.resolve({ results: [] as { line_user_id: string; channel_access_token: string }[] }));
 
           for (const other of otherFriends.results) {
             const otherClient = new LineClient(other.channel_access_token);

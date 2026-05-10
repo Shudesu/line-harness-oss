@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const conversations = new Hono<Env>();
 
@@ -13,8 +14,18 @@ conversations.get('/api/conversations', async (c) => {
     const maxHoursSince = maxHoursSinceParam !== null ? Number(maxHoursSinceParam) : null;
     const limit = Math.min(Number(url.searchParams.get('limit') ?? '50'), 200);
     const offset = Number(url.searchParams.get('offset') ?? '0');
+    const hasFriendLineAccountId = await hasColumn(c.env.DB, 'friends', 'line_account_id');
 
-    const whereAccount = accountId ? 'AND f.line_account_id = ?' : '';
+    if (accountId && !hasFriendLineAccountId) {
+      return c.json({ success: true, data: { total: 0, items: [] } });
+    }
+
+    const whereAccount = accountId && hasFriendLineAccountId ? 'AND f.line_account_id = ?' : '';
+    const accountIdSelect = hasFriendLineAccountId ? 'f.line_account_id' : 'NULL';
+    const accountJoin = hasFriendLineAccountId
+      ? 'LEFT JOIN line_accounts la ON la.id = f.line_account_id'
+      : '';
+    const accountNameSelect = hasFriendLineAccountId ? 'la.name' : 'NULL';
     const whereMaxHours =
       maxHoursSince !== null
         ? `AND ((strftime('%s', 'now') - strftime('%s', li.at)) / 3600.0) <= ?`
@@ -47,14 +58,14 @@ conversations.get('/api/conversations', async (c) => {
         f.id AS friend_id,
         f.line_user_id,
         f.display_name,
-        f.line_account_id,
-        la.name AS line_account_name,
+        ${accountIdSelect} AS line_account_id,
+        ${accountNameSelect} AS line_account_name,
         li.at AS last_incoming_at,
         (strftime('%s', 'now') - strftime('%s', li.at)) / 3600.0 AS hours_since,
         substr(lm.content, 1, 80) AS last_incoming_preview,
         lm.message_type AS last_incoming_type
       FROM friends f
-      LEFT JOIN line_accounts la ON la.id = f.line_account_id
+      ${accountJoin}
       INNER JOIN last_incoming li ON li.friend_id = f.id
       LEFT JOIN last_human lh ON lh.friend_id = f.id
       LEFT JOIN latest_msg lm ON lm.friend_id = f.id
@@ -158,10 +169,18 @@ conversations.get('/api/conversations/:friendId', async (c) => {
     const url = new URL(c.req.url);
     const limit = Math.min(Number(url.searchParams.get('limit') ?? '50'), 200);
     const before = url.searchParams.get('before');
+    const hasFriendLineAccountId = await hasColumn(c.env.DB, 'friends', 'line_account_id');
+    const accountIdSelect = hasFriendLineAccountId ? 'f.line_account_id' : 'NULL';
+    const accountNameSelect = hasFriendLineAccountId ? 'la.name' : 'NULL';
+    const accountJoin = hasFriendLineAccountId
+      ? 'LEFT JOIN line_accounts la ON la.id = f.line_account_id'
+      : '';
 
     const friend = await c.env.DB.prepare(
-      `SELECT f.id, f.line_user_id, f.display_name, f.is_following, f.line_account_id, la.name AS line_account_name
-       FROM friends f LEFT JOIN line_accounts la ON la.id = f.line_account_id WHERE f.id = ?`,
+      `SELECT f.id, f.line_user_id, f.display_name, f.is_following,
+              ${accountIdSelect} AS line_account_id,
+              ${accountNameSelect} AS line_account_name
+       FROM friends f ${accountJoin} WHERE f.id = ?`,
     )
       .bind(friendId)
       .first<{

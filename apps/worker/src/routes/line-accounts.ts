@@ -9,6 +9,7 @@ import {
 import type { LineAccount as DbLineAccount } from '@line-crm/db';
 import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const lineAccounts = new Hono<Env>();
 
@@ -51,24 +52,27 @@ lineAccounts.get('/api/line-accounts', async (c) => {
   try {
     const db = c.env.DB;
     const items = await getLineAccounts(db);
+    const hasFriendLineAccountId = await hasColumn(db, 'friends', 'line_account_id');
 
     // Get stats for all accounts in parallel
     const results = await Promise.all(
       items.map(async (item) => {
-        const [profile, friendCount, scenarioCount, msgCount] = await Promise.all([
-          fetchBotProfile(item.channel_access_token),
-          db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?`).bind(item.id).first<{ count: number }>(),
-          db.prepare(
-            `SELECT COUNT(*) as count FROM friend_scenarios fs
-             INNER JOIN friends f ON f.id = fs.friend_id
-             WHERE fs.status = 'active' AND f.line_account_id = ?`,
-          ).bind(item.id).first<{ count: number }>(),
-          db.prepare(
-            `SELECT COUNT(*) as count FROM messages_log ml
-             INNER JOIN friends f ON f.id = ml.friend_id
-             WHERE ml.direction = 'outgoing' AND (ml.delivery_type IS NULL OR ml.delivery_type = 'push') AND ml.created_at >= date('now', '-30 days') AND f.line_account_id = ?`,
-          ).bind(item.id).first<{ count: number }>(),
-        ]);
+        const profile = await fetchBotProfile(item.channel_access_token);
+        const [friendCount, scenarioCount, msgCount] = hasFriendLineAccountId
+          ? await Promise.all([
+              db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?`).bind(item.id).first<{ count: number }>(),
+              db.prepare(
+                `SELECT COUNT(*) as count FROM friend_scenarios fs
+                 INNER JOIN friends f ON f.id = fs.friend_id
+                 WHERE fs.status = 'active' AND f.line_account_id = ?`,
+              ).bind(item.id).first<{ count: number }>(),
+              db.prepare(
+                `SELECT COUNT(*) as count FROM messages_log ml
+                 INNER JOIN friends f ON f.id = ml.friend_id
+                 WHERE ml.direction = 'outgoing' AND (ml.delivery_type IS NULL OR ml.delivery_type = 'push') AND ml.created_at >= date('now', '-30 days') AND f.line_account_id = ?`,
+              ).bind(item.id).first<{ count: number }>(),
+            ])
+          : [null, null, null];
 
         return {
           ...serializeLineAccount(item),

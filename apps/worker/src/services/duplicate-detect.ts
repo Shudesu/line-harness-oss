@@ -6,6 +6,8 @@
  * We extract this token and match friends across accounts to auto-tag duplicates.
  */
 
+import { hasColumn } from '../utils/db-compat.js';
+
 /**
  * Map of line_account_id → duplicate tag ID.
  * Loaded from DB (account_settings key='duplicate_tag_mapping') at runtime.
@@ -63,6 +65,10 @@ const URL_TOKEN_SQL = `
  * Runs incrementally — only processes friends updated since last run.
  */
 export async function processDuplicateDetection(db: D1Database): Promise<void> {
+  if (!await hasColumn(db, 'friends', 'line_account_id')) {
+    return;
+  }
+
   // Load tag mapping from DB
   const tagIds = await getTagIds(db);
   if (Object.keys(tagIds).length === 0) {

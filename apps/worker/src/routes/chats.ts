@@ -17,6 +17,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { defaultLineAccessToken } from '../services/line-bindings.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const chats = new Hono<Env>();
 
@@ -150,7 +151,7 @@ async function resolveFriendAndAccessToken(
   }
 
   const account = await getLineAccountById(db, friend.line_account_id);
-  if (!account) {
+  if (!account || !account.is_active) {
     return { friend, accessToken: defaultAccessToken };
   }
 
@@ -223,6 +224,7 @@ chats.get('/api/chats', async (c) => {
     const status = c.req.query('status') ?? undefined;
     const operatorId = c.req.query('operatorId') ?? undefined;
     const lineAccountId = c.req.query('lineAccountId') ?? undefined;
+    const hasFriendLineAccountId = await hasColumn(c.env.DB, 'friends', 'line_account_id');
 
     // List everyone who has any message history (incoming or outgoing — push/broadcast/scenario included)
     // PLUS any chats row that exists even before any messages_log entry is written.
@@ -247,7 +249,7 @@ chats.get('/api/chats', async (c) => {
         f.display_name,
         f.picture_url,
         f.line_user_id,
-        f.line_account_id,
+        ${hasFriendLineAccountId ? 'f.line_account_id' : 'NULL'} AS line_account_id,
         c.operator_id,
         COALESCE(c.status, 'resolved') AS status,
         c.notes,
@@ -272,6 +274,9 @@ chats.get('/api/chats', async (c) => {
       bindings.push(operatorId);
     }
     if (lineAccountId) {
+      if (!hasFriendLineAccountId) {
+        return c.json({ success: true, data: [] });
+      }
       conditions.push('f.line_account_id = ?');
       bindings.push(lineAccountId);
     }
@@ -391,7 +396,7 @@ chats.post('/api/chats', async (c) => {
     if (!body.friendId) return c.json({ success: false, error: 'friendId is required' }, 400);
     const item = await createChat(c.env.DB, body);
     // Save line_account_id if provided
-    if (body.lineAccountId) {
+    if (body.lineAccountId && await hasColumn(c.env.DB, 'chats', 'line_account_id')) {
       await c.env.DB.prepare(`UPDATE chats SET line_account_id = ? WHERE id = ?`)
         .bind(body.lineAccountId, item.id).run();
     }
@@ -445,6 +450,9 @@ chats.post('/api/chats/:id/loading', async (c) => {
       await defaultLineAccessToken(c.env),
     );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
+    if (!accessToken) {
+      return c.json({ success: false, error: 'LINE channel access token is not configured' }, 500);
+    }
 
     await startLoadingAnimation(
       accessToken,
@@ -477,6 +485,9 @@ chats.post('/api/chats/:id/send', async (c) => {
       await defaultLineAccessToken(c.env),
     );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
+    if (!accessToken) {
+      return c.json({ success: false, error: 'LINE channel access token is not configured' }, 500);
+    }
 
     // LINE APIでメッセージ送信
     const { LineClient } = await import('@line-crm/line-sdk');
@@ -485,7 +496,7 @@ chats.post('/api/chats/:id/send', async (c) => {
 
     if (messageType === 'text') {
       await lineClient.pushTextMessage(friend.line_user_id, parsed.content);
-    } else if (messageType === 'flex') {
+    } else if (messageType === 'flex' && parsed.flexContents) {
       await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(parsed.flexContents), parsed.flexContents);
     }
 
@@ -501,8 +512,9 @@ chats.post('/api/chats/:id/send', async (c) => {
 
     return c.json({ success: true, data: { sent: true, messageId: logId } });
   } catch (err) {
-    console.error('POST /api/chats/:id/send error:', err);
-    return c.json({ success: false, error: 'Internal server error' }, 500);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('POST /api/chats/:id/send error:', message);
+    return c.json({ success: false, error: message }, 500);
   }
 });
 

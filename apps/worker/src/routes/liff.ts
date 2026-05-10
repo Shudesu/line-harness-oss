@@ -26,6 +26,7 @@ import {
   defaultLineLoginChannelSecret,
   workerBaseUrl,
 } from '../services/line-bindings.js';
+import { hasColumn, hasTable } from '../utils/db-compat.js';
 
 const liffRoutes = new Hono<Env>();
 
@@ -1047,8 +1048,24 @@ liffRoutes.get('/api/analytics/ref-summary', async (c) => {
   try {
     const db = c.env.DB;
     const lineAccountId = c.req.query('lineAccountId');
-    const accountFilter = lineAccountId ? 'AND f.line_account_id = ?' : '';
-    const accountBinds = lineAccountId ? [lineAccountId] : [];
+    const hasEntryRoutes = await hasTable(db, 'entry_routes');
+    const hasRefTracking = await hasTable(db, 'ref_tracking');
+    const hasFriendLineAccountId = await hasColumn(db, 'friends', 'line_account_id');
+    const hasRefCode = await hasColumn(db, 'friends', 'ref_code');
+    if (!hasEntryRoutes || !hasRefTracking) {
+      const totalFriendsRes = await db.prepare(`SELECT COUNT(*) as count FROM friends`).first<{ count: number }>();
+      return c.json({
+        success: true,
+        data: {
+          routes: [],
+          totalFriends: totalFriendsRes?.count ?? 0,
+          friendsWithRef: 0,
+          friendsWithoutRef: totalFriendsRes?.count ?? 0,
+        },
+      });
+    }
+    const accountFilter = lineAccountId && hasFriendLineAccountId ? 'AND f.line_account_id = ?' : '';
+    const accountBinds = lineAccountId && hasFriendLineAccountId ? [lineAccountId] : [];
 
     const rows = await db
       .prepare(
@@ -1073,15 +1090,17 @@ liffRoutes.get('/api/analytics/ref-summary', async (c) => {
         latest_at: string | null;
       }>();
 
-    const totalStmt = lineAccountId
+    const totalStmt = lineAccountId && hasFriendLineAccountId
       ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE line_account_id = ?`).bind(lineAccountId)
       : db.prepare(`SELECT COUNT(*) as count FROM friends`);
     const totalFriendsRes = await totalStmt.first<{ count: number }>();
 
-    const refStmt = lineAccountId
+    const refStmt = hasRefCode && lineAccountId && hasFriendLineAccountId
       ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != '' AND line_account_id = ?`).bind(lineAccountId)
-      : db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != ''`);
-    const friendsWithRefRes = await refStmt.first<{ count: number }>();
+      : hasRefCode
+        ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != ''`)
+        : null;
+    const friendsWithRefRes = refStmt ? await refStmt.first<{ count: number }>() : null;
 
     const totalFriends = totalFriendsRes?.count ?? 0;
     const friendsWithRef = friendsWithRefRes?.count ?? 0;
@@ -1114,6 +1133,9 @@ liffRoutes.get('/api/analytics/ref/:refCode', async (c) => {
   try {
     const db = c.env.DB;
     const refCode = c.req.param('refCode');
+    if (!await hasTable(db, 'entry_routes')) {
+      return c.json({ success: false, error: 'Entry route not found' }, 404);
+    }
 
     const routeRow = await db
       .prepare(`SELECT ref_code, name FROM entry_routes WHERE ref_code = ?`)
@@ -1125,8 +1147,13 @@ liffRoutes.get('/api/analytics/ref/:refCode', async (c) => {
     }
 
     const lineAccountId = c.req.query('lineAccountId');
-    const accountFilter = lineAccountId ? 'AND f.line_account_id = ?' : '';
-    const binds = lineAccountId ? [refCode, refCode, lineAccountId] : [refCode, refCode];
+    const hasFriendLineAccountId = await hasColumn(db, 'friends', 'line_account_id');
+    const hasRefCode = await hasColumn(db, 'friends', 'ref_code');
+    if (!hasRefCode) {
+      return c.json({ success: true, data: { route: routeRow, friends: [] } });
+    }
+    const accountFilter = lineAccountId && hasFriendLineAccountId ? 'AND f.line_account_id = ?' : '';
+    const binds = lineAccountId && hasFriendLineAccountId ? [refCode, refCode, lineAccountId] : [refCode, refCode];
 
     const friends = await db
       .prepare(

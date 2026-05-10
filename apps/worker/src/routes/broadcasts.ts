@@ -14,6 +14,7 @@ import type { SegmentCondition } from '../services/segment-query.js';
 import { getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { defaultLineAccessToken, workerBaseUrl } from '../services/line-bindings.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const broadcasts = new Hono<Env>();
 
@@ -484,7 +485,7 @@ broadcasts.post('/api/segments/count', async (c) => {
 
     let accountSql = sql;
     const accountBindings = [...bindings];
-    if (body.accountId) {
+    if (body.accountId && await hasColumn(c.env.DB, 'friends', 'line_account_id')) {
       accountSql = sql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
       accountBindings.unshift(body.accountId);
     }

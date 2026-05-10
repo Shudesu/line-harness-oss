@@ -105,6 +105,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   onSent: () => void
 }) {
   const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
   const [messages, setMessages] = useState<MessageLog[]>([])
   const [loadingMessages, setLoadingMessages] = useState(true)
@@ -129,6 +130,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
     if (!message.trim() || sending || sendLockRef.current) return
     sendLockRef.current = true
     setSending(true)
+    setError('')
     try {
       await fetchApi(`/api/friends/${friendId}/messages`, {
         method: 'POST',
@@ -142,7 +144,10 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
         createdAt: new Date().toISOString(),
       }])
       setMessage('')
-    } catch { /* silent */ }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'unknown'
+      setError(`メッセージの送信に失敗しました: ${detail}`)
+    }
     setSending(false)
     sendLockRef.current = false
   }
@@ -217,6 +222,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
         )}
       </div>
       <div className="px-4 py-3 border-t border-gray-200">
+        {error && <p className="mb-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
         <div className="flex gap-2">
           <input
             type="text"
@@ -468,8 +474,9 @@ export default function ChatsPage() {
           return bt - at
         })
       })
-    } catch {
-      setError('メッセージの送信に失敗しました。')
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'unknown'
+      setError(`メッセージの送信に失敗しました: ${detail}`)
     } finally {
       setSending(false)
       sendLockRef.current = false

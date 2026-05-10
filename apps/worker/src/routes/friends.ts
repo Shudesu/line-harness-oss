@@ -15,6 +15,7 @@ import { fireEvent } from '../services/event-bus.js';
 import { buildMessage } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 import { defaultLineAccessToken, workerBaseUrl } from '../services/line-bindings.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const friends = new Hono<Env>();
 
@@ -55,6 +56,7 @@ friends.get('/api/friends', async (c) => {
     const search = c.req.query('search');
 
     const db = c.env.DB;
+    const hasFriendLineAccountId = await hasColumn(db, 'friends', 'line_account_id');
 
     // Build WHERE conditions
     const conditions: string[] = [];
@@ -64,6 +66,18 @@ friends.get('/api/friends', async (c) => {
       binds.push(tagId);
     }
     if (lineAccountId) {
+      if (!hasFriendLineAccountId) {
+        return c.json({
+          success: true,
+          data: {
+            items: [],
+            total: 0,
+            page: Math.floor(offset / limit) + 1,
+            limit,
+            hasNextPage: false,
+          },
+        });
+      }
       conditions.push('f.line_account_id = ?');
       binds.push(lineAccountId);
     }
@@ -123,6 +137,9 @@ friends.get('/api/friends/count', async (c) => {
     const lineAccountId = c.req.query('lineAccountId');
     let count: number;
     if (lineAccountId) {
+      if (!await hasColumn(c.env.DB, 'friends', 'line_account_id')) {
+        return c.json({ success: true, data: { count: 0 } });
+      }
       const row = await c.env.DB.prepare('SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?')
         .bind(lineAccountId).first<{ count: number }>();
       count = row?.count ?? 0;
@@ -140,6 +157,11 @@ friends.get('/api/friends/count', async (c) => {
 friends.get('/api/friends/ref-stats', async (c) => {
   try {
     const lineAccountId = c.req.query('lineAccountId');
+    const hasFriendLineAccountId = await hasColumn(c.env.DB, 'friends', 'line_account_id');
+    const hasRefCode = await hasColumn(c.env.DB, 'friends', 'ref_code');
+    if (!hasRefCode || (lineAccountId && !hasFriendLineAccountId)) {
+      return c.json({ success: true, data: { routes: [], totalWithRef: 0 } });
+    }
     const where = lineAccountId ? 'WHERE line_account_id = ?' : 'WHERE ref_code IS NOT NULL';
     const binds = lineAccountId ? [lineAccountId] : [];
     const stmt = c.env.DB.prepare(
@@ -326,7 +348,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
     if ((friend as unknown as Record<string, unknown>).line_account_id) {
       const { getLineAccountById } = await import('@line-crm/db');
       const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-      if (account) accessToken = account.channel_access_token;
+      if (account?.is_active) accessToken = account.channel_access_token;
     }
     const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';

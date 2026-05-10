@@ -14,6 +14,7 @@ import type { Broadcast } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 
@@ -240,7 +241,7 @@ async function processQueuedBroadcastBatches(
     // アカウントフィルタを追加（line_account_idで絞り込み）
     let accountSql = sql;
     const accountBindings = [...bindings];
-    if (accountId) {
+    if (accountId && await hasColumn(db, 'friends', 'line_account_id')) {
       accountSql = sql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
       accountBindings.unshift(accountId);
     }

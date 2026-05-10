@@ -92,7 +92,20 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
       ...options?.headers,
     },
   })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    if (text) {
+      let detail: unknown
+      try {
+        const body = JSON.parse(text) as { error?: unknown; message?: unknown; code?: unknown }
+        detail = body.error || body.message || body.code
+      } catch {
+        detail = text
+      }
+      throw new Error(String(detail || text))
+    }
+    throw new Error(`API error: ${res.status}`)
+  }
   return res.json() as Promise<T>
 }
 
