@@ -146,6 +146,7 @@ export function parseJalanImportBody(body: JsonObject): ValidationResult<{
   receivedAt?: string | null;
   rawText?: string | null;
   parsedPayload?: string;
+  reviewReason?: string | null;
   resourceId?: string;
   menuId?: string;
   slotId?: string;
@@ -169,6 +170,7 @@ export function parseJalanImportBody(body: JsonObject): ValidationResult<{
       receivedAt: optionalString(body, 'receivedAt'),
       rawText: optionalString(body, 'rawText'),
       parsedPayload: typeof body.parsedPayload === 'string' ? body.parsedPayload : undefined,
+      reviewReason: optionalString(body, 'reviewReason'),
       resourceId: optionalString(body, 'resourceId') ?? undefined,
       menuId: optionalString(body, 'menuId') ?? undefined,
       slotId: optionalString(body, 'slotId') ?? undefined,
@@ -189,6 +191,8 @@ export function parseJalanGmailImportBody(body: JsonObject): ValidationResult<{
   resourceId?: string;
   menuId?: string;
   slotId?: string;
+  routeName?: string | null;
+  routeKeyword?: string | null;
 }> {
   const gmailMessageId = requireString(body, 'gmailMessageId');
   if (!gmailMessageId.ok) return gmailMessageId;
@@ -203,6 +207,8 @@ export function parseJalanGmailImportBody(body: JsonObject): ValidationResult<{
       resourceId: optionalString(body, 'resourceId') ?? undefined,
       menuId: optionalString(body, 'menuId') ?? undefined,
       slotId: optionalString(body, 'slotId') ?? undefined,
+      routeName: optionalString(body, 'routeName'),
+      routeKeyword: optionalString(body, 'routeKeyword'),
     },
   };
 }

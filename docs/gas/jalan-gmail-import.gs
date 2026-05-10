@@ -10,10 +10,11 @@
  * Required Script Properties:
  * - WORKER_URL: https://your-worker.example.workers.dev
  * - WORKER_API_KEY: Worker admin API key
- * - RESOURCE_ID: reservation resource id, e.g. res_blueberry
- * - MENU_ID: reservation menu id, e.g. menu_picking_60
  *
  * Optional Script Properties:
+ * - DEFAULT_RESOURCE_ID: fallback reservation resource id
+ * - DEFAULT_MENU_ID: fallback reservation menu id
+ * - ROUTING_RULES_JSON: JSON array of { name, resourceId, menuId, keywords }
  * - GMAIL_QUERY: Gmail search query
  * - PROCESSED_LABEL: label for imported messages
  * - REVIEW_LABEL: label for needs_review messages
@@ -27,8 +28,16 @@ function setupJalanImporterProperties() {
     {
       WORKER_URL: 'https://your-worker.example.workers.dev',
       WORKER_API_KEY: 'replace-with-worker-api-key',
-      RESOURCE_ID: 'res_blueberry',
-      MENU_ID: 'menu_picking_60',
+      DEFAULT_RESOURCE_ID: '',
+      DEFAULT_MENU_ID: '',
+      ROUTING_RULES_JSON: JSON.stringify([
+        {
+          name: 'blueberry-60',
+          resourceId: 'res_blueberry',
+          menuId: 'menu_picking_60',
+          keywords: ['ブルーベリー', '食べ放題60分'],
+        },
+      ]),
       GMAIL_QUERY: 'from:(jalan_active_support@r.recruit.co.jp) newer_than:30d',
       PROCESSED_LABEL: 'line-harness/jalan-imported',
       REVIEW_LABEL: 'line-harness/jalan-needs-review',
@@ -41,6 +50,7 @@ function setupJalanImporterProperties() {
 
 function importJalanReservationMails() {
   const config = getJalanImporterConfig_();
+  logJalanCatalog_(config);
   const processedLabel = getOrCreateLabel_(config.processedLabel);
   const reviewLabel = getOrCreateLabel_(config.reviewLabel);
   const query = `${config.gmailQuery} -label:"${config.processedLabel}" -label:"${config.reviewLabel}"`;
@@ -75,8 +85,9 @@ function getJalanImporterConfig_() {
   return {
     workerUrl,
     workerApiKey,
-    resourceId: requiredProperty_(props, 'RESOURCE_ID'),
-    menuId: requiredProperty_(props, 'MENU_ID'),
+    defaultResourceId: props.getProperty('DEFAULT_RESOURCE_ID') || props.getProperty('RESOURCE_ID') || '',
+    defaultMenuId: props.getProperty('DEFAULT_MENU_ID') || props.getProperty('MENU_ID') || '',
+    routingRules: parseRoutingRules_(props.getProperty('ROUTING_RULES_JSON') || '[]'),
     gmailQuery: props.getProperty('GMAIL_QUERY') || 'from:(jalan_active_support@r.recruit.co.jp) newer_than:30d',
     processedLabel: props.getProperty('PROCESSED_LABEL') || 'line-harness/jalan-imported',
     reviewLabel: props.getProperty('REVIEW_LABEL') || 'line-harness/jalan-needs-review',
@@ -94,13 +105,75 @@ function requiredProperty_(props, key) {
 }
 
 function buildJalanPayload_(message, config) {
+  const rawText = message.getPlainBody();
+  const route = resolveJalanRoute_(rawText, config);
   return {
     gmailMessageId: message.getId(),
     receivedAt: message.getDate().toISOString(),
-    rawText: message.getPlainBody(),
-    resourceId: config.resourceId,
-    menuId: config.menuId,
+    rawText,
+    resourceId: route.resourceId || undefined,
+    menuId: route.menuId || undefined,
+    routeName: route.name || null,
+    routeKeyword: route.keyword || null,
   };
+}
+
+function parseRoutingRules_(value) {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((rule) => ({
+        name: String(rule.name || ''),
+        resourceId: String(rule.resourceId || ''),
+        menuId: String(rule.menuId || ''),
+        keywords: Array.isArray(rule.keywords) ? rule.keywords.map(String).filter(Boolean) : [],
+      }))
+      .filter((rule) => rule.resourceId && rule.menuId && rule.keywords.length > 0);
+  } catch (err) {
+    throw new Error(`ROUTING_RULES_JSON is invalid JSON: ${err.message}`);
+  }
+}
+
+function resolveJalanRoute_(rawText, config) {
+  const normalized = normalizeRouteText_(rawText);
+  for (const rule of config.routingRules) {
+    const keyword = rule.keywords.find((item) => normalized.indexOf(normalizeRouteText_(item)) !== -1);
+    if (keyword) {
+      return {
+        name: rule.name,
+        keyword,
+        resourceId: rule.resourceId,
+        menuId: rule.menuId,
+      };
+    }
+  }
+
+  return {
+    name: 'default',
+    keyword: null,
+    resourceId: config.defaultResourceId,
+    menuId: config.defaultMenuId,
+  };
+}
+
+function normalizeRouteText_(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function logJalanCatalog_(config) {
+  if (!config.dryRun) return;
+  const response = UrlFetchApp.fetch(`${config.workerUrl}/api/integrations/jalan/catalog`, {
+    method: 'get',
+    headers: {
+      Authorization: `Bearer ${config.workerApiKey}`,
+    },
+    muteHttpExceptions: true,
+  });
+  console.log(response.getContentText());
 }
 
 function postJalanPayload_(payload, config) {

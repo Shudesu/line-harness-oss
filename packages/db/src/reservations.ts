@@ -376,6 +376,7 @@ export interface ImportExternalReservationInput {
   receivedAt?: string | null;
   rawText?: string | null;
   parsedPayload?: string;
+  reviewReason?: string | null;
   resourceId?: string;
   menuId?: string;
   slotId?: string;
@@ -1375,7 +1376,7 @@ export async function importExternalReservation(
       dedupeKey,
       reservationId: existingReservation?.id ?? null,
       parseStatus: 'needs_review',
-      lastError: existingReservation ? 'updated event requires manual review' : 'updated event has no matching reservation',
+      lastError: input.reviewReason ?? (existingReservation ? 'updated event requires manual review' : 'updated event has no matching reservation'),
     });
     return { ok: true, status: 'needs_review', source };
   }
@@ -1416,7 +1417,7 @@ export async function importExternalReservation(
       dedupeKey,
       reservationId: existingReservation?.id ?? null,
       parseStatus: 'needs_review',
-      lastError: 'created event is missing resourceId/menuId/slotId',
+      lastError: input.reviewReason ?? 'created event is missing resourceId/menuId/slotId',
     });
     return { ok: true, status: 'needs_review', source };
   }
