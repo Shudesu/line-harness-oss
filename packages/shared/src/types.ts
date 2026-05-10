@@ -827,6 +827,7 @@ export interface Reservation {
   cancelReason: string | null;
   formData: string;
   metadata: string;
+  amount: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -857,6 +858,7 @@ export interface ReservationResponse {
   cancelReason: string | null;
   formData: string;
   metadata: string;
+  amount: number | null;
   createdAt: string;
   updatedAt: string;
 }

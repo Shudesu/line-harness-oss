@@ -164,6 +164,7 @@ export interface Reservation {
   cancel_reason: string | null;
   form_data: string;
   metadata: string;
+  total_amount?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -467,7 +468,12 @@ export async function getReservationById(
   db: D1Database,
   id: string,
 ): Promise<Reservation | null> {
-  return db.prepare(`SELECT * FROM reservations WHERE id = ?`).bind(id).first<Reservation>();
+  return db.prepare(
+    `SELECT r.*,
+            (SELECT SUM(amount) FROM reservation_items WHERE reservation_id = r.id) AS total_amount
+     FROM reservations r
+     WHERE r.id = ?`,
+  ).bind(id).first<Reservation>();
 }
 
 export async function listReservationResources(db: D1Database): Promise<ReservationResource[]> {
@@ -516,32 +522,34 @@ export async function listReservations(
   const values: unknown[] = [];
 
   if (params.date) {
-    where.push('reservation_date = ?');
+    where.push('r.reservation_date = ?');
     values.push(params.date);
   }
   if (params.slotId) {
-    where.push('slot_id = ?');
+    where.push('r.slot_id = ?');
     values.push(params.slotId);
   }
   if (params.userId) {
-    where.push('user_id = ?');
+    where.push('r.user_id = ?');
     values.push(params.userId);
   }
   if (params.status) {
-    where.push('status = ?');
+    where.push('r.status = ?');
     values.push(params.status);
   }
   if (params.source) {
-    where.push('source = ?');
+    where.push('r.source = ?');
     values.push(params.source);
   }
 
   values.push(Math.min(params.limit ?? 100, 500));
   const result = await db
     .prepare(
-      `SELECT * FROM reservations
+      `SELECT r.*,
+              (SELECT SUM(amount) FROM reservation_items WHERE reservation_id = r.id) AS total_amount
+       FROM reservations r
        ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-       ORDER BY start_at ASC, created_at DESC
+       ORDER BY r.start_at ASC, r.created_at DESC
        LIMIT ?`,
     )
     .bind(...values)

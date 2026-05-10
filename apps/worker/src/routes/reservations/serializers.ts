@@ -153,6 +153,7 @@ export function toReservationResponse(item: Reservation): ReservationResponse {
     cancelReason: item.cancel_reason,
     formData: item.form_data,
     metadata: item.metadata,
+    amount: item.total_amount ?? null,
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };
