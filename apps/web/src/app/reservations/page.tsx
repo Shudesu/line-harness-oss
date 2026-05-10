@@ -622,19 +622,23 @@ function SlotsCard({
 	          const open = selectedSlotId === slot.id
 	          return (
 	            <details key={slot.id} open={open} className="group">
-	              <summary onClick={(event) => { event.preventDefault(); onSelect(slot.id) }} className="flex cursor-pointer items-center justify-between gap-3 p-3 hover:bg-gray-50">
-	                <div className="min-w-0 flex-1">
-	                  <p className="font-semibold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</p>
-	                  <div className="mt-2 grid gap-2 text-xs sm:grid-cols-4">
-	                    <SlotMetric label="組数" value={`${count}組`} />
-	                    <SlotMetric label="人数" value={`${totalPeople}名`} />
-	                    <SlotMetric label="枠消費" value={`${capacityPeople}/${slot.totalCapacity}`} />
-	                    <SlotMetric label="内訳" value={`大${adultCount} 子${childCount} 幼${infantCount}`} />
-	                  </div>
-	                  <p className="mt-2 text-xs text-gray-500">LINE {slot.lineReservedCount}/{slot.lineCapacity ?? slot.totalCapacity} / 外部 {slot.externalReservedCount}/{slot.externalCapacity ?? slot.totalCapacity}</p>
-	                </div>
-	                <span className={`rounded-full px-2 py-1 text-xs font-bold ${label.className}`}>{label.mark} {label.text}</span>
-	              </summary>
+              <summary onClick={(event) => { event.preventDefault(); onSelect(slot.id) }} className="cursor-pointer p-3 hover:bg-gray-50">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</p>
+                    <p className="mt-1 text-xs text-gray-500">LINE {slot.lineReservedCount}/{slot.lineCapacity ?? slot.totalCapacity} / 外部 {slot.externalReservedCount}/{slot.externalCapacity ?? slot.totalCapacity}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-bold ${label.className}`}>{label.mark} {label.text}</span>
+                </div>
+                <div className="mt-3 min-w-0">
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <SlotMetric label="組数" value={`${count}組`} />
+                    <SlotMetric label="人数" value={`${totalPeople}名`} />
+                    <SlotMetric label="枠消費" value={`${capacityPeople}/${slot.totalCapacity}`} />
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">内訳: 大人{adultCount} / 子ども{childCount} / 幼児{infantCount}</p>
+                </div>
+              </summary>
               <div className="bg-white px-4 pb-4">
                 <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                   <div className="flex items-center justify-between">
@@ -647,12 +651,15 @@ function SlotsCard({
                     <div className="mt-2 grid gap-2">
                       {slotReservations.map((reservation) => (
                         <div key={reservation.id} className="rounded-lg border border-gray-200 bg-white p-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="font-semibold text-gray-900">{reservation.customerName || reservation.title}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-gray-900">{reservation.customerName || reservation.title}</p>
+                              <p className="mt-1 text-xs text-gray-500">{reservation.customerPhone || '電話未登録'}</p>
+                            </div>
                             <StatusBadge status={reservation.status} />
                           </div>
                           <p className="mt-1 text-xs text-gray-500">
-                            {reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount} / {reservation.customerPhone || '電話未登録'}
+                            {reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount}
                           </p>
                         </div>
                       ))}
@@ -746,9 +753,9 @@ function ReservationDetailCard({
 
 function SlotMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-gray-50 px-3 py-2">
+    <div className="min-w-0 rounded-lg bg-gray-50 px-2 py-2 text-center sm:px-3">
       <p className="text-[11px] font-medium text-gray-500">{label}</p>
-      <p className="mt-0.5 text-sm font-bold text-gray-900">{value}</p>
+      <p className="mt-0.5 truncate text-sm font-bold text-gray-900">{value}</p>
     </div>
   )
 }

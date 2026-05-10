@@ -847,7 +847,7 @@ export default function ChatsPage() {
           ) : null}
         </div>
       </div>
-      <CcPromptButton prompts={ccPrompts} />
+      <CcPromptButton prompts={ccPrompts} placement="top" />
     </div>
   )
 }

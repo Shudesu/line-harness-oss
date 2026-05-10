@@ -630,6 +630,10 @@ function render(): void {
       .slot-summary div{border-radius:12px;background:#f8f4ea;padding:8px 9px}
       .slot-summary span{display:block;font-size:11px;color:#697568;font-weight:800}
       .slot-summary strong{display:block;font-size:16px;color:#1f2a21;margin-top:2px}
+      .slot-guest-list{display:grid;gap:8px;margin-top:10px}
+      .slot-guest{border:1px solid rgba(31,42,33,.08);border-radius:12px;background:#fff;padding:9px}
+      .slot-guest strong{display:block;font-size:13px;color:#1f2a21}
+      .slot-guest span{display:block;font-size:12px;color:#697568;margin-top:2px}
       .customer-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
       .customer-chip{border-radius:999px;background:#edf2e7;color:#2f5130;padding:5px 8px;font-size:12px;font-weight:800}
       .slot-hint{font-size:11px;color:#697568;margin-top:8px}
@@ -655,7 +659,7 @@ function render(): void {
       .detail-lines span:first-child{color:#697568}
       .external-raw{white-space:pre-wrap;max-height:180px;overflow:auto;background:#f8f4ea;border-radius:12px;padding:10px;font-size:12px;color:#3f493d;line-height:1.5;margin:12px 0}
       .empty{color:#74806d;font-size:14px;line-height:1.7}
-      @media (max-width:860px){.admin-grid,.admin-controls,.slot-generator,.settings-grid,.slot-editor{grid-template-columns:1fr}.admin-hero h1{font-size:24px}.week-matrix{grid-template-columns:56px repeat(7,74px)}}
+      @media (max-width:860px){.admin-grid,.admin-controls,.slot-generator,.settings-grid,.slot-editor{grid-template-columns:1fr}.admin-hero h1{font-size:24px}.week-matrix{grid-template-columns:56px repeat(7,74px)}.slot-summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.slot-summary div{padding:7px 6px;text-align:center}.slot-summary strong{font-size:14px}}
     </style>
     <main class="reservation-admin">
       <section class="admin-hero">
@@ -929,6 +933,9 @@ function renderSlotCard(slot: ReservationSlotWithAvailability): string {
   const soldOut = !availability.available || availability.remainingCapacity <= 0;
   const selected = state.selectedSlotId === slot.id;
   const slotReservations = activeReservationsForSlot(slot.id);
+  const partyCount = slotReservations.length;
+  const totalPeople = slotReservations.reduce((sum, item) => sum + item.totalPeople, 0);
+  const capacityPeople = slotReservations.reduce((sum, item) => sum + item.capacityPeople, 0);
   const statusOptions = ['open', 'closed', 'sold_out', 'hidden']
     .map((status) => `<option value="${status}" ${slot.status === status ? 'selected' : ''}>${status}</option>`)
     .join('');
@@ -941,6 +948,21 @@ function renderSlotCard(slot: ReservationSlotWithAvailability): string {
             <div class="card-sub">予約 ${slot.reservedCount}/${slot.totalCapacity}・LINE残 ${availability.lineRemainingCapacity}・外部残 ${availability.externalRemainingCapacity}</div>
           </div>
           <span class="badge ${soldOut ? 'warn' : ''}">${soldOut ? '満席' : `残 ${availability.remainingCapacity}`}</span>
+        </div>
+        <div class="slot-summary">
+          <div><span>組数</span><strong>${partyCount}組</strong></div>
+          <div><span>人数</span><strong>${totalPeople}名</strong></div>
+          <div><span>枠消費</span><strong>${capacityPeople}/${slot.totalCapacity}</strong></div>
+        </div>
+        <div class="slot-guest-list">
+          ${slotReservations.length === 0
+            ? '<div class="slot-guest"><span>この枠の予約者はいません。</span></div>'
+            : slotReservations.map((reservation) => `
+              <div class="slot-guest">
+                <strong>${escapeHtml(reservation.customerName || reservation.title)}</strong>
+                <span>${escapeHtml(reservation.customerPhone || '電話未登録')} / ${reservation.totalPeople}名</span>
+              </div>
+            `).join('')}
         </div>
       </summary>
       <p class="slot-hint">${selected ? 'この枠の予約客を下に表示中です。' : '開くと枠の調整フォームを表示します。'}</p>

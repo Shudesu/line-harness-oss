@@ -433,10 +433,11 @@ export function calculateReservationPeople(
   const capacityCountChild = Number.isFinite(menu.capacity_count_child) ? menu.capacity_count_child : 1;
   const capacityCountInfant = Number.isFinite(menu.capacity_count_infant) ? menu.capacity_count_infant : 1;
   const totalPeople = adultCount + childCount + infantCount;
-  const capacityPeople =
+  const configuredCapacityPeople =
     adultCount * capacityCountAdult +
     childCount * capacityCountChild +
     infantCount * capacityCountInfant;
+  const capacityPeople = configuredCapacityPeople > 0 ? configuredCapacityPeople : totalPeople;
 
   return { adultCount, childCount, infantCount, totalPeople, capacityPeople };
 }

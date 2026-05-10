@@ -260,14 +260,15 @@
     .people-grid,
     .people-stepper-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
     }
     .people-stepper {
       border: 1px solid var(--line);
       background: #fff;
-      border-radius: 16px;
-      padding: 10px;
+      border-radius: 14px;
+      padding: 8px;
+      min-width: 0;
     }
     .people-stepper > span {
       display: block;
@@ -278,30 +279,32 @@
     }
     .stepper-control {
       display: grid;
-      grid-template-columns: 44px 1fr 44px;
+      grid-template-columns: 34px minmax(28px, 1fr) 34px;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
     }
     .stepper-control button {
-      min-height: 44px;
+      min-height: 38px;
+      width: 34px;
       border: 0;
-      border-radius: 12px;
+      border-radius: 10px;
       background: var(--sky-500);
       color: #fff;
       font-size: 20px;
       font-weight: 900;
       cursor: pointer;
-      box-shadow: 0 4px 0 var(--sky-700);
+      box-shadow: 0 3px 0 var(--sky-700);
     }
     .stepper-control input {
       width: 100%;
       border: 1px solid var(--line);
       background: var(--sky-100);
-      border-radius: 12px;
-      padding: 10px 4px;
+      min-width: 0;
+      border-radius: 10px;
+      padding: 9px 2px;
       text-align: center;
       font: inherit;
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 900;
       color: var(--ink);
     }
@@ -314,8 +317,14 @@
     @media (max-width: 420px) {
       .people-grid,
       .people-stepper-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
       }
+      .people-stepper { padding: 7px 5px; }
+      .people-stepper > span { font-size: 12px; }
+      .stepper-control { grid-template-columns: 30px minmax(24px, 1fr) 30px; gap: 3px; }
+      .stepper-control button { width: 30px; min-height: 36px; font-size: 18px; }
+      .stepper-control input { font-size: 15px; padding-left: 0; padding-right: 0; }
     }
     .view-toggle {
       display: grid;
