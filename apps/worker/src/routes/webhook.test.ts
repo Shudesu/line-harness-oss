@@ -120,6 +120,33 @@ describe('POST /webhook — payload size limits', () => {
 
     expect(res.status).toBe(413);
   });
+
+  test('post-read fallback rejects oversized body when Content-Length is absent', async () => {
+    // ReadableStream bodies do not get an automatic Content-Length, so the
+    // pre-check is bypassed and only the post-read fallback can reject.
+    const oversized = 'x'.repeat(600 * 1024);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(oversized));
+        controller.close();
+      },
+    });
+
+    const req = new Request('http://localhost/webhook', {
+      method: 'POST',
+      headers: { 'X-Line-Signature': 'dummy' },
+      body: stream,
+      // @ts-expect-error duplex is required for streaming bodies in Node fetch
+      duplex: 'half',
+    });
+    expect(req.headers.get('Content-Length')).toBeNull();
+
+    const app = new Hono();
+    app.route('/', webhook);
+    const { db } = recordingDb();
+    const res = await app.fetch(req, baseEnv(db));
+    expect(res.status).toBe(413);
+  });
 });
 
 describe('POST /webhook — signature gates JSON.parse', () => {
