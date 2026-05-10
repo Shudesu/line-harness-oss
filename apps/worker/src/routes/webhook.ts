@@ -36,10 +36,12 @@ webhook.post('/webhook', async (c) => {
     }
   }
 
-  // Read the body, then double-check the size in case Content-Length was
-  // missing or untrustworthy (chunked transfer encoding etc.).
+  // Post-read fallback for missing/untrustworthy Content-Length (chunked etc.).
+  // Use UTF-8 byte length, not String.prototype.length (UTF-16 code units would
+  // undercount multi-byte payloads and let oversized JP bodies slip through).
   const rawBody = await c.req.text();
-  if (rawBody.length > MAX_WEBHOOK_BODY_SIZE) {
+  const rawBodyByteLength = new TextEncoder().encode(rawBody).byteLength;
+  if (rawBodyByteLength > MAX_WEBHOOK_BODY_SIZE) {
     return c.json({ status: 'payload too large' }, 413);
   }
 
