@@ -271,7 +271,7 @@ describe('reservations — D1 integration', () => {
       expect(await slotCounters(slot.id)).toEqual({ reserved: 0, line: 0, ext: 0 });
     });
 
-    it('rejects a booking whose calculated capacity_people is zero', async () => {
+    it('falls back to total people when all capacity count flags are disabled', async () => {
       await createReservationMenu(db, {
         id: 'menu_zero_capacity',
         resourceId: RES_ID,
@@ -287,9 +287,10 @@ describe('reservations — D1 integration', () => {
         childCount: 1,
         infantCount: 1,
       }));
-      expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.reason).toBe('invalid_people');
-      expect(await slotCounters(slot.id)).toEqual({ reserved: 0, line: 0, ext: 0 });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.reservation.capacity_people).toBe(3);
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 3, line: 3, ext: 0 });
     });
 
     it('rejects when total capacity exceeded', async () => {
