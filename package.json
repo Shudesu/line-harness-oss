@@ -9,7 +9,7 @@
     "build": "pnpm -r build",
     "deploy:worker": "pnpm --filter worker deploy",
     "deploy:web": "pnpm --filter web build",
-    "db:migrate": "wrangler d1 execute line-crm --file=packages/db/schema.sql",
+    "db:migrate": "wrangler d1 execute line-crm --env production --config apps/worker/wrangler.toml --file=packages/db/schema.sql",
     "db:migrate:local": "wrangler d1 execute line-harness --local --config apps/worker/wrangler.toml --file=packages/db/schema.sql",
     "deploy:setup": "node packages/create-line-harness/dist/index.js",
     "deploy:update": "node packages/create-line-harness/dist/index.js update"
