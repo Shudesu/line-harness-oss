@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildIntroMessage, DEFAULT_FORM_LINK_FLEX } from './intro-message.js';
+import type { IntroMessage } from './intro-message.js';
 import type { MessageTemplate } from '@line-crm/db';
 
 describe('buildIntroMessage', () => {
@@ -108,7 +109,7 @@ describe('buildIntroMessage', () => {
 describe('DEFAULT_FORM_LINK_FLEX', () => {
   it('formUrl がボタンの uri にセットされる', () => {
     const url = 'https://liff.line.me/abc?page=form&id=xyz';
-    const flex = DEFAULT_FORM_LINK_FLEX(url);
+    const flex = DEFAULT_FORM_LINK_FLEX(url) as Extract<IntroMessage, { type: 'flex' }>;
     expect(flex.type).toBe('flex');
     expect(flex.altText).toBe('🎁 特典を受け取る');
     const contents = flex.contents as { footer: { contents: Array<{ action: { uri: string } }> } };
