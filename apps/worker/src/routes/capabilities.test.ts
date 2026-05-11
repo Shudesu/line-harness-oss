@@ -21,7 +21,7 @@ describe('GET /api/capabilities', () => {
     const app = setupApp('owner');
     const res = await app.request('/api/capabilities');
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as { success: boolean; data: Record<string, unknown> };
     expect(body.success).toBe(true);
     expect(body.data.harness_kind).toBe('line');
     expect(body.data.harness_version).toMatch(/^\d+\.\d+\.\d+$/);
