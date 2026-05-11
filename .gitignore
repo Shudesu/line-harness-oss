@@ -5,6 +5,7 @@ dist/
 .vercel/
 .env
 .env.local
+.dev.vars
 *.log
 .DS_Store
 .mcp.json
