@@ -11,6 +11,11 @@ dist/
 *.toml.bak
 .env.production
 .env.staging
+.dev.vars
+**/.dev.vars
+.cursor/
+.line-harness-config.json
+.line-harness-setup.json
 apps/web/out/
 apps/worker/dist/
 .worktrees/
