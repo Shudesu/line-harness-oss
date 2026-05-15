@@ -104,7 +104,7 @@ function BroadcastList() {
     try {
       const [broadcastsRes, tagsRes] = await Promise.all([
         api.broadcasts.list({ accountId: selectedAccountId || undefined }),
-        api.tags.list(),
+        api.tags.list({ accountId: selectedAccountId || undefined }),
       ])
       if (broadcastsRes.success) setBroadcasts(broadcastsRes.data)
       else setError(broadcastsRes.error)

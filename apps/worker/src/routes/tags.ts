@@ -10,6 +10,7 @@ function serializeTag(row: DbTag) {
     id: row.id,
     name: row.name,
     color: row.color,
+    lineAccountId: row.line_account_id ?? null,
     createdAt: row.created_at,
   };
 }
@@ -17,7 +18,8 @@ function serializeTag(row: DbTag) {
 // GET /api/tags - list all tags
 tags.get('/api/tags', async (c) => {
   try {
-    const items = await getTags(c.env.DB);
+    const lineAccountId = c.req.query('lineAccountId') ?? null;
+    const items = await getTags(c.env.DB, lineAccountId);
     return c.json({ success: true, data: items.map(serializeTag) });
   } catch (err) {
     console.error('GET /api/tags error:', err);
@@ -28,7 +30,7 @@ tags.get('/api/tags', async (c) => {
 // POST /api/tags - create tag
 tags.post('/api/tags', async (c) => {
   try {
-    const body = await c.req.json<{ name: string; color?: string }>();
+    const body = await c.req.json<{ name: string; color?: string; lineAccountId?: string | null }>();
 
     if (!body.name) {
       return c.json({ success: false, error: 'name is required' }, 400);
@@ -37,6 +39,7 @@ tags.post('/api/tags', async (c) => {
     const tag = await createTag(c.env.DB, {
       name: body.name,
       color: body.color,
+      lineAccountId: body.lineAccountId ?? null,
     });
 
     return c.json({ success: true, data: serializeTag(tag) }, 201);

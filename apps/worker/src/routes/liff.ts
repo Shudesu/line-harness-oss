@@ -873,10 +873,9 @@ liffRoutes.get('/auth/callback', async (c) => {
         resolveStepContent: resolveStepLiff,
         addTagToFriend: addTagLiff,
       } = await import('@line-crm/db');
-      const scenarios = runAccountScenariosLiff ? await getScenarios(db) : [];
+      const scenarios = runAccountScenariosLiff ? await getScenarios(db, matchedAccountId) : [];
       for (const scenario of scenarios) {
-        const scenarioAccountMatch = !scenario.line_account_id || !matchedAccountId || scenario.line_account_id === matchedAccountId;
-        if (scenario.trigger_type === 'friend_add' && scenario.is_active && scenarioAccountMatch) {
+        if (scenario.trigger_type === 'friend_add' && scenario.is_active) {
           const enrollment = await enroll(db, friend.id, scenario.id);
           if (enrollment) {
             // 即時送信は scenario.delivery_mode を踏まえて「now 以前にスケジュールされる」場合のみ。

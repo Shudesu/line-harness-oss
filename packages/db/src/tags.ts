@@ -3,6 +3,7 @@ export interface Tag {
   id: string;
   name: string;
   color: string;
+  line_account_id: string | null;
   created_at: string;
 }
 
@@ -12,16 +13,18 @@ export interface FriendTag {
   assigned_at: string;
 }
 
-export async function getTags(db: D1Database): Promise<Tag[]> {
-  const result = await db
-    .prepare(`SELECT * FROM tags ORDER BY name ASC`)
-    .all<Tag>();
+export async function getTags(db: D1Database, lineAccountId?: string | null): Promise<Tag[]> {
+  const stmt = lineAccountId
+    ? db.prepare(`SELECT * FROM tags WHERE line_account_id = ? ORDER BY name ASC`).bind(lineAccountId)
+    : db.prepare(`SELECT * FROM tags ORDER BY name ASC`);
+  const result = await stmt.all<Tag>();
   return result.results;
 }
 
 export interface CreateTagInput {
   name: string;
   color?: string;
+  lineAccountId?: string | null;
 }
 
 export async function createTag(
@@ -34,10 +37,10 @@ export async function createTag(
 
   await db
     .prepare(
-      `INSERT INTO tags (id, name, color, created_at)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO tags (id, name, color, line_account_id, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-    .bind(id, input.name, color, now)
+    .bind(id, input.name, color, input.lineAccountId ?? null, now)
     .run();
 
   return (await db

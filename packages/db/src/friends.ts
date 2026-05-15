@@ -18,36 +18,35 @@ export interface GetFriendsOptions {
   limit?: number;
   offset?: number;
   tagId?: string;
+  lineAccountId?: string | null;
 }
 
 export async function getFriends(
   db: D1Database,
   opts: GetFriendsOptions = {},
 ): Promise<Friend[]> {
-  const { limit = 50, offset = 0, tagId } = opts;
+  const { limit = 50, offset = 0, tagId, lineAccountId } = opts;
+  const conditions: string[] = [];
+  const binds: unknown[] = [];
 
   if (tagId) {
-    const result = await db
-      .prepare(
-        `SELECT f.*
-         FROM friends f
-         INNER JOIN friend_tags ft ON ft.friend_id = f.id
-         WHERE ft.tag_id = ?
-         ORDER BY f.created_at DESC
-         LIMIT ? OFFSET ?`,
-      )
-      .bind(tagId, limit, offset)
-      .all<Friend>();
-    return result.results;
+    conditions.push('EXISTS (SELECT 1 FROM friend_tags ft WHERE ft.friend_id = f.id AND ft.tag_id = ?)');
+    binds.push(tagId);
+  }
+  if (lineAccountId) {
+    conditions.push('f.line_account_id = ?');
+    binds.push(lineAccountId);
   }
 
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const result = await db
     .prepare(
-      `SELECT * FROM friends
-       ORDER BY created_at DESC
+      `SELECT f.* FROM friends f
+       ${where}
+       ORDER BY f.created_at DESC
        LIMIT ? OFFSET ?`,
     )
-    .bind(limit, offset)
+    .bind(...binds, limit, offset)
     .all<Friend>();
   return result.results;
 }
@@ -93,7 +92,15 @@ export async function getFollowingLineUserIdsByTag(
 export async function getFriendByLineUserId(
   db: D1Database,
   lineUserId: string,
+  lineAccountId?: string | null,
 ): Promise<Friend | null> {
+  if (lineAccountId) {
+    return db
+      .prepare(`SELECT * FROM friends WHERE line_user_id = ? AND line_account_id = ?`)
+      .bind(lineUserId, lineAccountId)
+      .first<Friend>();
+  }
+
   return db
     .prepare(`SELECT * FROM friends WHERE line_user_id = ?`)
     .bind(lineUserId)
@@ -136,6 +143,7 @@ export async function setFriendFirstTrackedLinkIfNull(
 
 export interface UpsertFriendInput {
   lineUserId: string;
+  lineAccountId?: string | null;
   displayName?: string | null;
   pictureUrl?: string | null;
   statusMessage?: string | null;
@@ -146,7 +154,7 @@ export async function upsertFriend(
   input: UpsertFriendInput,
 ): Promise<Friend> {
   const now = jstNow();
-  const existing = await getFriendByLineUserId(db, input.lineUserId);
+  const existing = await getFriendByLineUserId(db, input.lineUserId, input.lineAccountId ?? null);
 
   if (existing) {
     await db
@@ -157,7 +165,7 @@ export async function upsertFriend(
              status_message = ?,
              is_following = 1,
              updated_at = ?
-         WHERE line_user_id = ?`,
+         WHERE line_user_id = ? AND (line_account_id = ? OR (? IS NULL AND line_account_id IS NULL))`,
       )
       .bind(
         'displayName' in input ? (input.displayName ?? null) : existing.display_name,
@@ -165,17 +173,19 @@ export async function upsertFriend(
         'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
         now,
         input.lineUserId,
+        input.lineAccountId ?? null,
+        input.lineAccountId ?? null,
       )
       .run();
 
-    return (await getFriendByLineUserId(db, input.lineUserId))!;
+    return (await getFriendByLineUserId(db, input.lineUserId, input.lineAccountId ?? null))!;
   }
 
   const id = crypto.randomUUID();
   await db
     .prepare(
-      `INSERT INTO friends (id, line_user_id, display_name, picture_url, status_message, is_following, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO friends (id, line_user_id, display_name, picture_url, status_message, is_following, line_account_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -183,6 +193,7 @@ export async function upsertFriend(
       input.displayName ?? null,
       input.pictureUrl ?? null,
       input.statusMessage ?? null,
+      input.lineAccountId ?? null,
       now,
       now,
     )
@@ -195,7 +206,20 @@ export async function updateFriendFollowStatus(
   db: D1Database,
   lineUserId: string,
   isFollowing: boolean,
+  lineAccountId?: string | null,
 ): Promise<void> {
+  if (lineAccountId) {
+    await db
+      .prepare(
+        `UPDATE friends
+         SET is_following = ?, updated_at = ?
+         WHERE line_user_id = ? AND line_account_id = ?`,
+      )
+      .bind(isFollowing ? 1 : 0, jstNow(), lineUserId, lineAccountId)
+      .run();
+    return;
+  }
+
   await db
     .prepare(
       `UPDATE friends

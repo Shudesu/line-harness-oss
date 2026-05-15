@@ -6,11 +6,12 @@
 -- ============================================================
 CREATE TABLE IF NOT EXISTS friends (
   id               TEXT PRIMARY KEY,
-  line_user_id     TEXT UNIQUE NOT NULL,
+  line_user_id     TEXT NOT NULL,
   display_name     TEXT,
   picture_url      TEXT,
   status_message   TEXT,
   is_following     INTEGER NOT NULL DEFAULT 1,
+  line_account_id  TEXT REFERENCES line_accounts (id) ON DELETE SET NULL,
   user_id          TEXT,
   ig_igsid         TEXT,
   score            INTEGER NOT NULL DEFAULT 0,
@@ -19,6 +20,9 @@ CREATE TABLE IF NOT EXISTS friends (
 );
 
 CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
+CREATE INDEX IF NOT EXISTS idx_friends_account ON friends (line_account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_line_user_account_unique ON friends (line_user_id, line_account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_line_user_null_account_unique ON friends (line_user_id) WHERE line_account_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
 
@@ -27,10 +31,15 @@ CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS tags (
   id         TEXT PRIMARY KEY,
-  name       TEXT UNIQUE NOT NULL,
+  name       TEXT NOT NULL,
   color      TEXT NOT NULL DEFAULT '#3B82F6',
+  line_account_id TEXT REFERENCES line_accounts (id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_tags_account ON tags (line_account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_account_name_unique ON tags (line_account_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_null_account_name_unique ON tags (name) WHERE line_account_id IS NULL;
 
 -- ============================================================
 -- Friend <-> Tag join
@@ -53,6 +62,7 @@ CREATE TABLE IF NOT EXISTS scenarios (
   description     TEXT,
   trigger_type    TEXT NOT NULL CHECK (trigger_type IN ('friend_add', 'tag_added', 'manual')),
   trigger_tag_id  TEXT REFERENCES tags (id) ON DELETE SET NULL,
+  line_account_id TEXT REFERENCES line_accounts (id) ON DELETE SET NULL,
   is_active       INTEGER NOT NULL DEFAULT 1,
   delivery_mode   TEXT NOT NULL DEFAULT 'relative' CHECK (delivery_mode IN ('relative', 'elapsed', 'absolute_time')),
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),

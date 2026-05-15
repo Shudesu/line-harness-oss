@@ -144,9 +144,8 @@ async function processAutomations(
 ): Promise<void> {
   try {
     const allAutomations = await getActiveAutomationsByEvent(db, eventType);
-    // Filter by account: match this account's automations + unassigned (backward compat)
     const automations = allAutomations.filter(
-      (a) => !a.line_account_id || !lineAccountId || a.line_account_id === lineAccountId,
+      (a) => lineAccountId ? a.line_account_id === lineAccountId : a.line_account_id === null,
     );
 
     for (const automation of automations) {
@@ -251,8 +250,8 @@ async function executeAction(
     case 'send_message': {
       if (!lineAccessToken || !friendId) break;
       const friend = await db
-        .prepare('SELECT line_user_id FROM friends WHERE id = ?')
-        .bind(friendId)
+        .prepare(lineAccountId ? 'SELECT line_user_id FROM friends WHERE id = ? AND line_account_id = ?' : 'SELECT line_user_id FROM friends WHERE id = ?')
+        .bind(...(lineAccountId ? [friendId, lineAccountId] : [friendId]))
         .first<{ line_user_id: string }>();
       if (!friend) break;
       const lineClient = new LineClient(lineAccessToken);
@@ -345,8 +344,8 @@ async function executeAction(
     case 'switch_rich_menu': {
       if (!lineAccessToken || !friendId) break;
       const friend = await db
-        .prepare('SELECT line_user_id FROM friends WHERE id = ?')
-        .bind(friendId)
+        .prepare(lineAccountId ? 'SELECT line_user_id FROM friends WHERE id = ? AND line_account_id = ?' : 'SELECT line_user_id FROM friends WHERE id = ?')
+        .bind(...(lineAccountId ? [friendId, lineAccountId] : [friendId]))
         .first<{ line_user_id: string }>();
       if (!friend) break;
       const lineClient = new LineClient(lineAccessToken);
@@ -357,8 +356,8 @@ async function executeAction(
     case 'remove_rich_menu': {
       if (!lineAccessToken || !friendId) break;
       const friend = await db
-        .prepare('SELECT line_user_id FROM friends WHERE id = ?')
-        .bind(friendId)
+        .prepare(lineAccountId ? 'SELECT line_user_id FROM friends WHERE id = ? AND line_account_id = ?' : 'SELECT line_user_id FROM friends WHERE id = ?')
+        .bind(...(lineAccountId ? [friendId, lineAccountId] : [friendId]))
         .first<{ line_user_id: string }>();
       if (!friend) break;
       const lineClient = new LineClient(lineAccessToken);

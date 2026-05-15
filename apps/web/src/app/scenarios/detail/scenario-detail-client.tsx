@@ -194,7 +194,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
     Promise.all([
       api.scenarios.stats(id).catch(() => null),
       api.templates.list().catch(() => null),
-      api.tags.list().catch(() => null),
+      api.tags.list({ accountId: scenario?.lineAccountId || undefined }).catch(() => null),
     ]).then(([statsRes, tplRes, tagRes]) => {
       if (cancelled) return
       if (statsRes && statsRes.success) setStats(statsRes.data)
@@ -212,7 +212,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
       }
     })
     return () => { cancelled = true }
-  }, [id])
+  }, [id, scenario?.lineAccountId])
 
   const reloadStats = useCallback(() => {
     api.scenarios.stats(id).then((r) => { if (r.success) setStats(r.data) }).catch(() => {})

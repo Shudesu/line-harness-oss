@@ -85,6 +85,8 @@ export interface Tag {
   name: string;
   /** 表示色 (HEX: #RRGGBB) */
   color: string;
+  /** 紐づく LINE アカウント ID。null = レガシー/共通タグ */
+  lineAccountId: string | null;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
 }

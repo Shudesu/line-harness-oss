@@ -57,16 +57,24 @@ export interface FriendScenario {
 
 export type ScenarioWithStepCount = Scenario & { step_count: number };
 
-export async function getScenarios(db: D1Database): Promise<ScenarioWithStepCount[]> {
-  const result = await db
-    .prepare(
-      `SELECT s.*, COUNT(ss.id) as step_count
-       FROM scenarios s
-       LEFT JOIN scenario_steps ss ON s.id = ss.scenario_id
-       GROUP BY s.id
-       ORDER BY s.created_at DESC`,
-    )
-    .all<ScenarioWithStepCount>();
+export async function getScenarios(db: D1Database, lineAccountId?: string | null): Promise<ScenarioWithStepCount[]> {
+  const stmt = lineAccountId
+    ? db.prepare(
+        `SELECT s.*, COUNT(ss.id) as step_count
+         FROM scenarios s
+         LEFT JOIN scenario_steps ss ON s.id = ss.scenario_id
+         WHERE s.line_account_id = ?
+         GROUP BY s.id
+         ORDER BY s.created_at DESC`,
+      ).bind(lineAccountId)
+    : db.prepare(
+        `SELECT s.*, COUNT(ss.id) as step_count
+         FROM scenarios s
+         LEFT JOIN scenario_steps ss ON s.id = ss.scenario_id
+         GROUP BY s.id
+         ORDER BY s.created_at DESC`,
+      );
+  const result = await stmt.all<ScenarioWithStepCount>();
   return result.results;
 }
 
