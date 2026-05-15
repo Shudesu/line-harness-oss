@@ -552,6 +552,21 @@ adminReservations.put('/api/external-reservation-sources/:id/parse-status', asyn
   }
 });
 
+adminReservations.post('/api/reservations/:id/google-calendar/sync', async (c) => {
+  try {
+    const reservation = await getReservationById(c.env.DB, c.req.param('id'));
+    if (!reservation) return jsonError(c, 'not_found', 404, 'Reservation not found');
+    if (reservation.status === 'cancelled' || reservation.status === 'no_show') {
+      return jsonError(c, 'bad_request', 400, 'Only active reservations can be synced');
+    }
+    await syncReservationCreatedToGoogleCalendar(c.env.DB, reservation, c.env);
+    return jsonOk(c, toReservationResponse(reservation));
+  } catch (err) {
+    console.error('POST /api/reservations/:id/google-calendar/sync error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
 adminReservations.get('/api/reservations/google-calendar/oauth-url', async (c) => {
   try {
     const clientId = await resolveBindingValue(c.env.GOOGLE_OAUTH_CLIENT_ID);

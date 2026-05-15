@@ -275,6 +275,10 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/integrations/google-calendar/${encodeURIComponent(id)}`, {
         method: 'DELETE',
       }),
+    syncReservation: (reservationId: string) =>
+      fetchApi<ApiResponse<unknown>>(`/api/reservations/${encodeURIComponent(reservationId)}/google-calendar/sync`, {
+        method: 'POST',
+      }),
   },
 
   segments: {

@@ -319,6 +319,35 @@ export default function ReservationOpsPage() {
     }, 'Google Calendar連携を削除しました')
   }
 
+  const assignCalendarConnection = async (resourceIdToUpdate: string, connectionId: string) => {
+    if (!resourceIdToUpdate) return
+    await runAction(async () => {
+      const resource = resources.find((item) => item.id === resourceIdToUpdate)
+      if (!resource) throw new Error('予約対象が見つかりません')
+      await apiData(`/api/reservation-resources/${encodeURIComponent(resourceIdToUpdate)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: resource.name,
+          googleCalendarConnectionId: connectionId || null,
+        }),
+      })
+    }, connectionId ? '予約対象にGoogle Calendar連携を設定しました' : '予約対象からGoogle Calendar連携を外しました')
+  }
+
+  const syncTodayReservationsToCalendar = async () => {
+    const active = reservations.filter(activeReservation)
+    if (active.length === 0) {
+      setNotice('同期対象の予約はありません')
+      return
+    }
+    if (!confirm(`${date} の有効予約 ${active.length}件をGoogle Calendarへ同期します。既に同期済みの予約は二重作成しません。よいですか？`)) return
+    await runAction(async () => {
+      for (const reservation of active) {
+        await api.calendar.syncReservation(reservation.id)
+      }
+    }, '選択日の予約をGoogle Calendarへ同期しました')
+  }
+
   return (
     <div>
       <Header
@@ -409,11 +438,15 @@ export default function ReservationOpsPage() {
             <CalendarPanel
               connections={calendarConnections}
               resources={resources}
+              reservations={reservations}
+              selectedDate={date}
               calendarId={calendarId}
               saving={saving}
               onCalendarIdChange={setCalendarId}
               onConnect={startGoogleOAuth}
               onDelete={deleteCalendarConnection}
+              onAssignResource={assignCalendarConnection}
+              onSyncReservations={syncTodayReservationsToCalendar}
             />
           )}
         </div>
@@ -425,20 +458,29 @@ export default function ReservationOpsPage() {
 function CalendarPanel({
   connections,
   resources,
+  reservations,
+  selectedDate,
   calendarId,
   saving,
   onCalendarIdChange,
   onConnect,
   onDelete,
+  onAssignResource,
+  onSyncReservations,
 }: {
   connections: ApiCalendarConnection[]
   resources: ReservationResource[]
+  reservations: ReservationResponse[]
+  selectedDate: string
   calendarId: string
   saving: boolean
   onCalendarIdChange: (value: string) => void
   onConnect: () => void
   onDelete: (connection: ApiCalendarConnection) => void
+  onAssignResource: (resourceId: string, connectionId: string) => void
+  onSyncReservations: () => void
 }) {
+  const activeReservations = reservations.filter(activeReservation)
   return (
     <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -465,6 +507,19 @@ function CalendarPanel({
         <p className="mt-3 text-xs text-gray-400">
           Googleの承認画面が別タブで開きます。完了後、この画面を再読み込みすると接続状態が反映されます。
         </p>
+        <div className="mt-5 rounded-xl border border-green-100 bg-green-50 p-3">
+          <p className="text-sm font-bold text-green-950">選択日の既存予約を同期</p>
+          <p className="mt-1 text-xs text-green-800">
+            Google連携前に作成した予約は自動では過去同期されません。必要な場合だけ手動同期してください。
+          </p>
+          <button
+            disabled={saving || activeReservations.length === 0}
+            onClick={onSyncReservations}
+            className="mt-3 rounded-lg bg-green-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+          >
+            {selectedDate} の有効予約 {activeReservations.length}件を同期
+          </button>
+        </div>
       </div>
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <h2 className="text-lg font-bold text-gray-900">連携中のGoogleアカウント/カレンダー</h2>
@@ -511,6 +566,32 @@ function CalendarPanel({
               </div>
             )
           })}
+        </div>
+        <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <p className="text-sm font-bold text-gray-900">予約対象への紐づけ</p>
+          <p className="mt-1 text-xs text-gray-500">
+            ここでResourceにconnection IDを設定しないと、予約確定時にGoogle Calendarへ反映されません。
+          </p>
+          <div className="mt-3 space-y-2">
+            {resources.length === 0 ? (
+              <p className="text-sm text-gray-400">予約対象がありません。</p>
+            ) : resources.map((resource) => (
+              <label key={resource.id} className="grid gap-2 rounded-lg bg-white p-3 text-xs font-medium text-gray-600 md:grid-cols-[1fr_1.4fr] md:items-center">
+                <span>{resource.name}</span>
+                <select
+                  value={resource.googleCalendarConnectionId ?? ''}
+                  disabled={saving}
+                  onChange={(event) => onAssignResource(resource.id, event.target.value)}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">未連携</option>
+                  {connections.map((connection) => (
+                    <option key={connection.id} value={connection.id}>{connection.calendarId}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
         </div>
       </div>
     </section>

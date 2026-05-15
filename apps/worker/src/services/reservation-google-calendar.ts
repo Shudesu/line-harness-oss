@@ -21,14 +21,8 @@ export async function syncReservationCreatedToGoogleCalendar(
   const resource = await getResourceForReservation(db, reservation);
   if (!resource?.google_calendar_connection_id) return;
 
-  const booking = await createCalendarBooking(db, {
-    connectionId: resource.google_calendar_connection_id,
-    friendId: reservation.friend_id ?? undefined,
-    title: reservation.title,
-    startAt: reservation.start_at,
-    endAt: reservation.end_at,
-    metadata: JSON.stringify({ reservationId: reservation.id, source: 'reservations' }),
-  });
+  const booking = await getOrCreateCalendarBooking(db, reservation, resource.google_calendar_connection_id);
+  if (booking.event_id) return;
 
   const conn = await getUsableGoogleCalendarConnection(db, resource.google_calendar_connection_id, env);
   if (!conn?.access_token) return;
@@ -65,6 +59,35 @@ export async function syncReservationCreatedToGoogleCalendar(
       )
       .run();
   }
+}
+
+async function getOrCreateCalendarBooking(
+  db: D1Database,
+  reservation: Reservation,
+  connectionId: string,
+): Promise<{ id: string; event_id: string | null }> {
+  const existing = await db
+    .prepare(
+      `SELECT id, event_id
+       FROM calendar_bookings
+       WHERE json_extract(metadata, '$.reservationId') = ?
+         AND status != 'cancelled'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .bind(reservation.id)
+    .first<{ id: string; event_id: string | null }>();
+  if (existing) return existing;
+
+  const created = await createCalendarBooking(db, {
+    connectionId,
+    friendId: reservation.friend_id ?? undefined,
+    title: reservation.title,
+    startAt: reservation.start_at,
+    endAt: reservation.end_at,
+    metadata: JSON.stringify({ reservationId: reservation.id, source: 'reservations' }),
+  });
+  return { id: created.id, event_id: created.event_id };
 }
 
 export async function syncReservationCancelledToGoogleCalendar(
