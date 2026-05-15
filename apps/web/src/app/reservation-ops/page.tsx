@@ -150,6 +150,7 @@ export default function ReservationOpsPage() {
   const [chats, setChats] = useState<ChatItem[]>([])
   const [selectedChat, setSelectedChat] = useState<ChatDetail | null>(null)
   const [selectedReservation, setSelectedReservation] = useState<ReservationResponse | null>(null)
+  const [reservationCalendarOpen, setReservationCalendarOpen] = useState(false)
   const [reply, setReply] = useState('')
   const [broadcasts, setBroadcasts] = useState<ApiBroadcast[]>([])
   const [calendarConnections, setCalendarConnections] = useState<ApiCalendarConnection[]>([])
@@ -451,6 +452,7 @@ export default function ReservationOpsPage() {
               reservationsBySlot={reservationsBySlot}
               reservations={reservations}
               selectedReservation={selectedReservation}
+              calendarOpen={reservationCalendarOpen}
               onDateChange={(nextDate) => {
                 setDate(nextDate)
                 setSelectedReservation(null)
@@ -462,6 +464,8 @@ export default function ReservationOpsPage() {
                 void loadReservations(nextResourceId, date)
               }}
               onSelectReservation={setSelectedReservation}
+              onOpenCalendar={() => setReservationCalendarOpen(true)}
+              onCloseCalendar={() => setReservationCalendarOpen(false)}
             />
           )}
           {tab === 'chats' && (
@@ -738,9 +742,12 @@ function ReservationsPanel({
   reservationsBySlot,
   reservations,
   selectedReservation,
+  calendarOpen,
   onDateChange,
   onResourceChange,
   onSelectReservation,
+  onOpenCalendar,
+  onCloseCalendar,
 }: {
   date: string
   resources: ReservationResource[]
@@ -749,102 +756,91 @@ function ReservationsPanel({
   reservationsBySlot: Map<string, ReservationResponse[]>
   reservations: ReservationResponse[]
   selectedReservation: ReservationResponse | null
+  calendarOpen: boolean
   onDateChange: (date: string) => void
   onResourceChange: (resourceId: string) => void
   onSelectReservation: (reservation: ReservationResponse | null) => void
+  onOpenCalendar: () => void
+  onCloseCalendar: () => void
 }) {
   const weekDates = Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(date), index))
   const selectedResourceName = resources.find((resource) => resource.id === resourceId)?.name ?? '予約対象未選択'
   const activeReservations = reservations.filter(activeReservation)
   const totalPeople = activeReservations.reduce((sum, reservation) => sum + reservation.totalPeople, 0)
   const remaining = slots.reduce((sum, slot) => sum + Math.max(0, slot.availability.remainingCapacity), 0)
+  const reservationsByTime = activeReservations.reduce<Record<string, ReservationResponse[]>>((acc, reservation) => {
+    const key = formatTime(reservation.startAt)
+    acc[key] = [...(acc[key] ?? []), reservation]
+    return acc
+  }, {})
+  const times = Object.keys(reservationsByTime).sort()
   return (
-    <section className="grid gap-4 xl:grid-cols-[1.4fr_0.6fr]">
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <div className="border-b border-gray-100 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">予約確認</h2>
-              <p className="text-sm text-gray-500">{selectedResourceName} / {date}</p>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label className="text-xs font-medium text-gray-600">日付
-                <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-              </label>
-              <label className="text-xs font-medium text-gray-600">予約対象
-                <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-                  {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
-                </select>
-              </label>
-            </div>
-          </div>
-          <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-            {weekDates.map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => onDateChange(d)}
-                className={`min-w-[72px] rounded-2xl border px-3 py-2 text-center transition ${d === date ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
-              >
-                <p className="text-[11px] font-bold">{['日', '月', '火', '水', '木', '金', '土'][parseYmd(d).getDay()]}</p>
-                <p className="text-xl font-black leading-tight">{Number(d.slice(-2))}</p>
-              </button>
-            ))}
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-            <OpsDailyMetric label="予約" value={`${activeReservations.length}件`} />
-            <OpsDailyMetric label="人数" value={`${totalPeople}名`} />
-            <OpsDailyMetric label="枠数" value={`${slots.length}枠`} />
-            <OpsDailyMetric label="残数合計" value={`${remaining}`} />
-          </div>
-        </div>
-        <div className="grid gap-3 p-4">
-          {slots.length === 0 ? (
-            <p className="rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-400">この日の予約枠はありません。詳細設定でSlotを生成してください。</p>
-          ) : slots.map((slot) => {
-            const items = reservationsBySlot.get(slot.id) ?? []
-            const activeItems = items.filter(activeReservation)
-            const label = slotAvailabilityLabel(slot)
-            return (
-              <details key={slot.id} className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
-                <summary className="cursor-pointer px-4 py-3 hover:bg-blue-50">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-bold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</p>
-                      <p className="text-xs text-gray-500">
-                        予約 {activeItems.length}件 / 人数 {activeItems.reduce((sum, reservation) => sum + reservation.totalPeople, 0)}名 / 総枠 {slot.totalCapacity}
-                      </p>
-                    </div>
-                    <span className={`rounded-full px-2 py-1 text-xs font-bold ${label.className}`}>
-                      {label.mark} {label.text}
-                    </span>
-                  </div>
-                </summary>
-                <div className="border-t border-gray-200 bg-white p-3">
-                  {items.length === 0 ? <p className="text-sm text-gray-400">予約客はいません。</p> : items.map((reservation) => (
-                    <button key={reservation.id} type="button" onClick={() => onSelectReservation(reservation)} className="w-full rounded-lg border border-gray-100 p-3 text-left hover:bg-gray-50">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-gray-900">{reservationName(reservation)}</p>
-                        <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{sourceBadge(reservation.source)}</span>
-                      </div>
-                      <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount} / {reservation.customerPhone || '電話未登録'}</p>
-                    </button>
-                  ))}
-                </div>
-              </details>
-            )
-          })}
+    <section className="space-y-4">
+      <div className="sticky top-0 z-20 -mx-4 border-y border-gray-100 bg-white/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-2xl sm:border sm:shadow-sm">
+        <div className="flex gap-2 overflow-x-auto">
+          <button type="button" onClick={onOpenCalendar} className="shrink-0 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+            カレンダー
+          </button>
+          <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm" />
+          <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="min-w-48 shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm">
+            {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+          </select>
         </div>
       </div>
+
+      {calendarOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+          <div className="max-h-[86vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl sm:mx-auto sm:max-w-xl sm:rounded-2xl">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="font-bold text-gray-900">日付を選択</p>
+              <button type="button" onClick={onCloseCalendar} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
+            </div>
+            <input type="date" value={date} onChange={(event) => { onDateChange(event.target.value); onCloseCalendar() }} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+              {weekDates.map((d) => (
+                <button key={d} type="button" onClick={() => { onDateChange(d); onCloseCalendar() }} className={`min-w-[72px] rounded-2xl border px-3 py-2 text-center transition ${d === date ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}>
+                  <p className="text-[11px] font-bold">{['日', '月', '火', '水', '木', '金', '土'][parseYmd(d).getDay()]}</p>
+                  <p className="text-xl font-black leading-tight">{Number(d.slice(-2))}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h3 className="font-bold text-gray-900">選択日の一覧</h3>
-        <p className="mt-1 text-xs text-gray-500">枠をまたいだ全予約です。</p>
-        <div className="mt-3 space-y-2">
-          {reservations.length === 0 ? <p className="text-sm text-gray-400">予約はありません。</p> : reservations.map((reservation) => (
-            <button key={reservation.id} type="button" onClick={() => onSelectReservation(reservation)} className="w-full rounded-lg bg-gray-50 p-3 text-left hover:bg-gray-100">
-              <p className="font-semibold text-gray-900">{reservationName(reservation)}</p>
-              <p className="text-xs text-gray-500">{formatTime(reservation.startAt)} / {reservation.status} / {sourceBadge(reservation.source)}</p>
-            </button>
+        <p className="text-sm font-bold text-gray-900">{selectedResourceName} / {date}</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          <OpsDailyMetric label="予約" value={`${activeReservations.length}件`} />
+          <OpsDailyMetric label="人数" value={`${totalPeople}名`} />
+          <OpsDailyMetric label="枠数" value={`${slots.length}枠`} />
+          <OpsDailyMetric label="残数合計" value={`${remaining}`} />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="font-bold text-gray-900">予約客リスト</h3>
+        <div className="mt-3 space-y-3">
+          {times.length === 0 ? <p className="text-sm text-gray-400">予約はありません。</p> : times.map((time) => (
+            <section key={time} className="rounded-xl border border-gray-200">
+              <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2">
+                <p className="font-bold text-gray-900">{time}</p>
+                <p className="text-xs text-gray-500">{reservationsByTime[time].length}組</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {reservationsByTime[time].map((reservation) => (
+                  <button key={reservation.id} type="button" onClick={() => onSelectReservation(reservation)} className="w-full p-3 text-left hover:bg-gray-50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-gray-900">{reservationName(reservation)}</p>
+                        <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / {reservation.customerPhone || '電話未登録'}</p>
+                      </div>
+                      <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{sourceBadge(reservation.source)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       </div>

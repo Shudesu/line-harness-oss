@@ -339,7 +339,6 @@ export default function ReservationsPage() {
     <div>
       <Header
         title="予約管理"
-        description="予約カレンダー、予約枠、予約対象・メニュー・営業時間を管理します。"
         action={
           <div className="flex rounded-lg bg-gray-100 p-1">
             <button
@@ -363,17 +362,21 @@ export default function ReservationsPage() {
 
       {mode === 'overview' ? (
         <section className="space-y-4">
-          <ReservationOverviewHeader
+          <ReservationOverviewToolbar
             date={date}
             resourceId={resourceId}
             resources={resources}
-            slots={slots}
-            reservations={reservations}
             onDateChange={(nextDate) => changeDate(nextDate)}
             onResourceChange={changeResource}
             onReload={() => load(resourceId, date)}
             onOpenCalendar={() => setCalendarOpen(true)}
             loading={loading}
+          />
+          <ReservationDaySummary
+            date={date}
+            resource={resources.find((resource) => resource.id === resourceId)}
+            slots={slots}
+            reservations={reservations}
           />
           {calendarOpen && (
             <CalendarModal onClose={() => setCalendarOpen(false)}>
@@ -391,46 +394,15 @@ export default function ReservationsPage() {
               />
             </CalendarModal>
           )}
-          <ReservationDisplayTabs
-            mode={reservationDisplayMode}
-            onChange={(nextMode) => {
-              setReservationDisplayMode(nextMode)
-              setSelectedSlotId(null)
-              setSelectedReservation(null)
-            }}
+          <ReservationListPanel
+            date={date}
+            mode="all"
+            reservations={reservations}
+            selectedReservation={selectedReservation}
+            onSelect={setSelectedReservation}
+            onCancel={cancelReservation}
+            saving={saving}
           />
-          {reservationDisplayMode === 'time' ? (
-            <SlotsCard
-              slots={slots}
-              reservations={reservations}
-              selectedSlotId={selectedSlotId}
-              onSelect={(slotId) => {
-                setSelectedSlotId(selectedSlotId === slotId ? null : slotId)
-                setSelectedReservation(null)
-              }}
-              onSaveSlot={(slot, formData) => runSaving(() => updateSlot(slot, formData), '予約枠を更新しました')}
-              saving={saving}
-            />
-          ) : (
-            <ReservationListPanel
-              date={date}
-              mode={reservationDisplayMode}
-              reservations={reservations}
-              selectedReservation={selectedReservation}
-              onSelect={setSelectedReservation}
-              onCancel={cancelReservation}
-              saving={saving}
-            />
-          )}
-          {reservationDisplayMode === 'jalan' && (
-            <ExternalSourcesCard
-              sources={selectedDateExternalSources}
-              showDetails={showExternalDetails}
-              onToggle={() => setShowExternalDetails((value) => !value)}
-              onIgnore={markExternalIgnored}
-              saving={saving}
-            />
-          )}
         </section>
       ) : (
         <SettingsPanel
@@ -523,12 +495,10 @@ export default function ReservationsPage() {
   )
 }
 
-function ReservationOverviewHeader({
+function ReservationOverviewToolbar({
   date,
   resourceId,
   resources,
-  slots,
-  reservations,
   onDateChange,
   onResourceChange,
   onReload,
@@ -538,46 +508,49 @@ function ReservationOverviewHeader({
   date: string
   resourceId: string
   resources: ReservationResource[]
-  slots: ReservationSlotWithAvailability[]
-  reservations: ReservationResponse[]
   onDateChange: (date: string) => void
   onResourceChange: (resourceId: string) => void
   onReload: () => void
   onOpenCalendar: () => void
   loading: boolean
 }) {
+  return (
+    <div className="sticky top-0 z-30 -mx-4 border-y border-gray-100 bg-white/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-2xl sm:border sm:shadow-sm">
+      <div className="flex gap-2 overflow-x-auto">
+        <button onClick={onOpenCalendar} className="shrink-0 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+          カレンダー
+        </button>
+        <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm" />
+        <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="min-w-48 shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm">
+          {resources.length === 0 && <option value="">未登録</option>}
+          {resources.filter((resource) => resource.isActive).map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+        </select>
+        <button onClick={onReload} disabled={loading} className="shrink-0 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 disabled:opacity-50">
+          更新
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ReservationDaySummary({
+  date,
+  resource,
+  slots,
+  reservations,
+}: {
+  date: string
+  resource?: ReservationResource
+  slots: ReservationSlotWithAvailability[]
+  reservations: ReservationResponse[]
+}) {
   const activeReservations = reservations.filter(isActiveReservation)
   const totalPeople = activeReservations.reduce((sum, reservation) => sum + reservation.totalPeople, 0)
   const remaining = slots.reduce((sum, slot) => sum + Math.max(0, slot.availability.remainingCapacity), 0)
-  const selectedResource = resources.find((resource) => resource.id === resourceId)
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">予約確認</h2>
-          <p className="mt-1 text-sm text-gray-500">{selectedResource?.name ?? '予約対象未選択'} / {date}</p>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-[160px_1fr_auto_auto] sm:items-end">
-          <label className="text-xs font-medium text-gray-600">
-            日付
-            <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          </label>
-          <label className="text-xs font-medium text-gray-600">
-            Resource
-            <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-              {resources.length === 0 && <option value="">未登録</option>}
-              {resources.filter((resource) => resource.isActive).map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
-            </select>
-          </label>
-          <button onClick={onOpenCalendar} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white">
-            カレンダー
-          </button>
-          <button onClick={onReload} disabled={loading} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">
-            更新
-          </button>
-        </div>
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+      <p className="text-sm font-bold text-gray-900">{resource?.name ?? '予約対象未選択'} / {date}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
         <DailyMetric label="予約" value={`${activeReservations.length}件`} />
         <DailyMetric label="人数" value={`${totalPeople}名`} />
         <DailyMetric label="枠数" value={`${slots.length}枠`} />
