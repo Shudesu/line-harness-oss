@@ -149,6 +149,7 @@ export default function ReservationOpsPage() {
   const [externalSources, setExternalSources] = useState<ExternalSource[]>([])
   const [chats, setChats] = useState<ChatItem[]>([])
   const [selectedChat, setSelectedChat] = useState<ChatDetail | null>(null)
+  const [selectedReservation, setSelectedReservation] = useState<ReservationResponse | null>(null)
   const [reply, setReply] = useState('')
   const [broadcasts, setBroadcasts] = useState<ApiBroadcast[]>([])
   const [calendarConnections, setCalendarConnections] = useState<ApiCalendarConnection[]>([])
@@ -449,14 +450,18 @@ export default function ReservationOpsPage() {
               slots={slots}
               reservationsBySlot={reservationsBySlot}
               reservations={reservations}
+              selectedReservation={selectedReservation}
               onDateChange={(nextDate) => {
                 setDate(nextDate)
+                setSelectedReservation(null)
                 void loadReservations(resourceId, nextDate)
               }}
               onResourceChange={(nextResourceId) => {
                 setResourceId(nextResourceId)
+                setSelectedReservation(null)
                 void loadReservations(nextResourceId, date)
               }}
+              onSelectReservation={setSelectedReservation}
             />
           )}
           {tab === 'chats' && (
@@ -732,8 +737,10 @@ function ReservationsPanel({
   slots,
   reservationsBySlot,
   reservations,
+  selectedReservation,
   onDateChange,
   onResourceChange,
+  onSelectReservation,
 }: {
   date: string
   resources: ReservationResource[]
@@ -741,11 +748,16 @@ function ReservationsPanel({
   slots: ReservationSlotWithAvailability[]
   reservationsBySlot: Map<string, ReservationResponse[]>
   reservations: ReservationResponse[]
+  selectedReservation: ReservationResponse | null
   onDateChange: (date: string) => void
   onResourceChange: (resourceId: string) => void
+  onSelectReservation: (reservation: ReservationResponse | null) => void
 }) {
   const weekDates = Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(date), index))
   const selectedResourceName = resources.find((resource) => resource.id === resourceId)?.name ?? '予約対象未選択'
+  const activeReservations = reservations.filter(activeReservation)
+  const totalPeople = activeReservations.reduce((sum, reservation) => sum + reservation.totalPeople, 0)
+  const remaining = slots.reduce((sum, slot) => sum + Math.max(0, slot.availability.remainingCapacity), 0)
   return (
     <section className="grid gap-4 xl:grid-cols-[1.4fr_0.6fr]">
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -779,6 +791,12 @@ function ReservationsPanel({
               </button>
             ))}
           </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <OpsDailyMetric label="予約" value={`${activeReservations.length}件`} />
+            <OpsDailyMetric label="人数" value={`${totalPeople}名`} />
+            <OpsDailyMetric label="枠数" value={`${slots.length}枠`} />
+            <OpsDailyMetric label="残数合計" value={`${remaining}`} />
+          </div>
         </div>
         <div className="grid gap-3 p-4">
           {slots.length === 0 ? (
@@ -804,13 +822,13 @@ function ReservationsPanel({
                 </summary>
                 <div className="border-t border-gray-200 bg-white p-3">
                   {items.length === 0 ? <p className="text-sm text-gray-400">予約客はいません。</p> : items.map((reservation) => (
-                    <div key={reservation.id} className="rounded-lg border border-gray-100 p-3">
+                    <button key={reservation.id} type="button" onClick={() => onSelectReservation(reservation)} className="w-full rounded-lg border border-gray-100 p-3 text-left hover:bg-gray-50">
                       <div className="flex items-center justify-between gap-2">
                         <p className="font-semibold text-gray-900">{reservationName(reservation)}</p>
                         <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{sourceBadge(reservation.source)}</span>
                       </div>
                       <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount} / {reservation.customerPhone || '電話未登録'}</p>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </details>
@@ -823,14 +841,60 @@ function ReservationsPanel({
         <p className="mt-1 text-xs text-gray-500">枠をまたいだ全予約です。</p>
         <div className="mt-3 space-y-2">
           {reservations.length === 0 ? <p className="text-sm text-gray-400">予約はありません。</p> : reservations.map((reservation) => (
-            <div key={reservation.id} className="rounded-lg bg-gray-50 p-3">
+            <button key={reservation.id} type="button" onClick={() => onSelectReservation(reservation)} className="w-full rounded-lg bg-gray-50 p-3 text-left hover:bg-gray-100">
               <p className="font-semibold text-gray-900">{reservationName(reservation)}</p>
               <p className="text-xs text-gray-500">{formatTime(reservation.startAt)} / {reservation.status} / {sourceBadge(reservation.source)}</p>
-            </div>
+            </button>
           ))}
         </div>
       </div>
+      {selectedReservation && (
+        <OpsReservationDetailModal reservation={selectedReservation} onClose={() => onSelectReservation(null)} />
+      )}
     </section>
+  )
+}
+
+function OpsDailyMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-blue-50 px-3 py-2">
+      <p className="text-[11px] font-bold text-blue-700">{label}</p>
+      <p className="mt-0.5 text-lg font-black text-blue-950">{value}</p>
+    </div>
+  )
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[80px_1fr] gap-3 rounded-lg bg-gray-50 px-3 py-2">
+      <dt className="text-xs font-bold text-gray-500">{label}</dt>
+      <dd className="min-w-0 break-words text-sm text-gray-900">{value}</dd>
+    </div>
+  )
+}
+
+function OpsReservationDetailModal({ reservation, onClose }: { reservation: ReservationResponse; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+      <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl sm:mx-auto sm:max-w-lg sm:rounded-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">{reservationName(reservation)}</h3>
+            <p className="mt-1 text-xs text-gray-500">{sourceBadge(reservation.source)} / {reservation.status}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
+        </div>
+        <dl className="mt-4 space-y-2 text-sm">
+          <Info label="時間" value={`${formatTime(reservation.startAt)} - ${formatTime(reservation.endAt)}`} />
+          <Info label="電話" value={reservation.customerPhone || '-'} />
+          <Info label="メール" value={reservation.customerEmail || '-'} />
+          <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 子ども${reservation.childCount} / 幼児${reservation.infantCount}`} />
+          <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
+          <Info label="状態" value={reservation.status} />
+          <Info label="外部ID" value={reservation.externalReservationId || '-'} />
+        </dl>
+      </div>
+    </div>
   )
 }
 

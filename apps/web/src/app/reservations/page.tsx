@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type {
   ApiResponse,
   ExternalReservationSourceResponse,
@@ -142,6 +142,7 @@ export default function ReservationsPage() {
   const [selectedReservation, setSelectedReservation] = useState<ReservationResponse | null>(null)
   const [externalSources, setExternalSources] = useState<AdminExternalSource[]>([])
   const [showExternalDetails, setShowExternalDetails] = useState(false)
+  const [calendarOpen, setCalendarOpen] = useState(false)
   const [showResourceForm, setShowResourceForm] = useState(false)
   const [showMenuForm, setShowMenuForm] = useState(false)
   const [showScheduleForm, setShowScheduleForm] = useState(false)
@@ -362,39 +363,34 @@ export default function ReservationsPage() {
 
       {mode === 'overview' ? (
         <section className="space-y-4">
-          <CalendarCard
+          <ReservationOverviewHeader
             date={date}
-            viewMode={viewMode}
-            visibleDates={visibleDates}
-            slotsByDate={slotsByDate}
-            onSelectDate={(nextDate) => changeDate(nextDate)}
-            onMoveRange={moveRange}
-            onSetViewMode={setViewMode}
-            headerControls={
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <label className="min-w-56 text-xs font-medium text-gray-600">
-                  Resource
-                  <select
-                    value={resourceId}
-                    onChange={(event) => {
-                      changeResource(event.target.value)
-                    }}
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none"
-                  >
-                    {resources.length === 0 && <option value="">未登録</option>}
-                    {resources.filter((resource) => resource.isActive).map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
-                  </select>
-                </label>
-                <button
-                  onClick={() => load(resourceId, date)}
-                  disabled={loading}
-                  className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50"
-                >
-                  更新
-                </button>
-              </div>
-            }
+            resourceId={resourceId}
+            resources={resources}
+            slots={slots}
+            reservations={reservations}
+            onDateChange={(nextDate) => changeDate(nextDate)}
+            onResourceChange={changeResource}
+            onReload={() => load(resourceId, date)}
+            onOpenCalendar={() => setCalendarOpen(true)}
+            loading={loading}
           />
+          {calendarOpen && (
+            <CalendarModal onClose={() => setCalendarOpen(false)}>
+              <CalendarCard
+                date={date}
+                viewMode={viewMode}
+                visibleDates={visibleDates}
+                slotsByDate={slotsByDate}
+                onSelectDate={(nextDate) => {
+                  changeDate(nextDate)
+                  setCalendarOpen(false)
+                }}
+                onMoveRange={moveRange}
+                onSetViewMode={setViewMode}
+              />
+            </CalendarModal>
+          )}
           <ReservationDisplayTabs
             mode={reservationDisplayMode}
             onChange={(nextMode) => {
@@ -523,6 +519,93 @@ export default function ReservationsPage() {
       )}
 
       {loading && <div className="mt-4 text-sm text-gray-400">読み込み中...</div>}
+    </div>
+  )
+}
+
+function ReservationOverviewHeader({
+  date,
+  resourceId,
+  resources,
+  slots,
+  reservations,
+  onDateChange,
+  onResourceChange,
+  onReload,
+  onOpenCalendar,
+  loading,
+}: {
+  date: string
+  resourceId: string
+  resources: ReservationResource[]
+  slots: ReservationSlotWithAvailability[]
+  reservations: ReservationResponse[]
+  onDateChange: (date: string) => void
+  onResourceChange: (resourceId: string) => void
+  onReload: () => void
+  onOpenCalendar: () => void
+  loading: boolean
+}) {
+  const activeReservations = reservations.filter(isActiveReservation)
+  const totalPeople = activeReservations.reduce((sum, reservation) => sum + reservation.totalPeople, 0)
+  const remaining = slots.reduce((sum, slot) => sum + Math.max(0, slot.availability.remainingCapacity), 0)
+  const selectedResource = resources.find((resource) => resource.id === resourceId)
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">予約確認</h2>
+          <p className="mt-1 text-sm text-gray-500">{selectedResource?.name ?? '予約対象未選択'} / {date}</p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-[160px_1fr_auto_auto] sm:items-end">
+          <label className="text-xs font-medium text-gray-600">
+            日付
+            <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+          </label>
+          <label className="text-xs font-medium text-gray-600">
+            Resource
+            <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              {resources.length === 0 && <option value="">未登録</option>}
+              {resources.filter((resource) => resource.isActive).map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+            </select>
+          </label>
+          <button onClick={onOpenCalendar} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white">
+            カレンダー
+          </button>
+          <button onClick={onReload} disabled={loading} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">
+            更新
+          </button>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <DailyMetric label="予約" value={`${activeReservations.length}件`} />
+        <DailyMetric label="人数" value={`${totalPeople}名`} />
+        <DailyMetric label="枠数" value={`${slots.length}枠`} />
+        <DailyMetric label="残数合計" value={`${remaining}`} />
+      </div>
+    </div>
+  )
+}
+
+function DailyMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-blue-50 px-3 py-2">
+      <p className="text-[11px] font-bold text-blue-700">{label}</p>
+      <p className="mt-0.5 text-lg font-black text-blue-950">{value}</p>
+    </div>
+  )
+}
+
+function CalendarModal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+      <div className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white p-3 shadow-xl sm:mx-auto sm:max-w-5xl sm:rounded-2xl">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-base font-bold text-gray-900">カレンダーから日付を選択</h3>
+          <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
+        </div>
+        {children}
+      </div>
     </div>
   )
 }
@@ -797,7 +880,7 @@ function ReservationListPanel({
   mode: Exclude<ReservationDisplayMode, 'time'>
   reservations: ReservationResponse[]
   selectedReservation: ReservationResponse | null
-  onSelect: (reservation: ReservationResponse) => void
+  onSelect: (reservation: ReservationResponse | null) => void
   onCancel: (reservation: ReservationResponse) => void
   saving: boolean
 }) {
@@ -821,7 +904,7 @@ function ReservationListPanel({
         <h2 className="text-base font-bold text-gray-900">{title} の予約</h2>
         <p className="text-xs text-gray-500">{date} / {filtered.length}件</p>
       </div>
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="p-4">
         <div className="space-y-3">
           {times.length === 0 ? <p className="text-sm text-gray-400">予約はありません。</p> : times.map((time) => {
             const group = grouped[time]
@@ -855,31 +938,56 @@ function ReservationListPanel({
             )
           })}
         </div>
-        <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
-          {!selectedReservation ? (
-            <p className="text-sm text-gray-400">予約を選ぶと詳細を表示します。</p>
-          ) : (
-            <>
-              <h3 className="font-bold text-gray-900">{selectedReservation.customerName || selectedReservation.title}</h3>
-              <dl className="mt-3 space-y-2 text-sm">
-                <Info label="媒体" value={sourceLabel(selectedReservation.source)} />
-                <Info label="時間" value={`${formatTime(selectedReservation.startAt)} - ${formatTime(selectedReservation.endAt)}`} />
-                <Info label="電話" value={selectedReservation.customerPhone || '-'} />
-                <Info label="メール" value={selectedReservation.customerEmail || '-'} />
-                <Info label="人数" value={`${selectedReservation.totalPeople}名 大人${selectedReservation.adultCount} / 子ども${selectedReservation.childCount} / 幼児${selectedReservation.infantCount}`} />
-                <Info label="枠消費" value={`${selectedReservation.capacityPeople}枠`} />
-                {selectedReservation.source === 'jalan' && <Info label="予約金額" value={formatCurrency(selectedReservation.amount)} />}
-                <Info label="状態" value={selectedReservation.status} />
-                <Info label="外部ID" value={selectedReservation.externalReservationId || '-'} />
-              </dl>
-              {(selectedReservation.status === 'pending' || selectedReservation.status === 'confirmed') && (
-                <button disabled={saving} onClick={() => onCancel(selectedReservation)} className="mt-4 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
-                  キャンセル
-                </button>
-              )}
-            </>
-          )}
+      </div>
+      {selectedReservation && (
+        <ReservationDetailModal
+          reservation={selectedReservation}
+          saving={saving}
+          onClose={() => onSelect(null)}
+          onCancel={onCancel}
+        />
+      )}
+    </div>
+  )
+}
+
+function ReservationDetailModal({
+  reservation,
+  saving,
+  onClose,
+  onCancel,
+}: {
+  reservation: ReservationResponse
+  saving: boolean
+  onClose: () => void
+  onCancel: (reservation: ReservationResponse) => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+      <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl sm:mx-auto sm:max-w-lg sm:rounded-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">{reservation.customerName || reservation.title}</h3>
+            <p className="mt-1 text-xs text-gray-500">{sourceLabel(reservation.source)} / {reservation.status}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
         </div>
+        <dl className="mt-4 space-y-2 text-sm">
+          <Info label="媒体" value={sourceLabel(reservation.source)} />
+          <Info label="時間" value={`${formatTime(reservation.startAt)} - ${formatTime(reservation.endAt)}`} />
+          <Info label="電話" value={reservation.customerPhone || '-'} />
+          <Info label="メール" value={reservation.customerEmail || '-'} />
+          <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 子ども${reservation.childCount} / 幼児${reservation.infantCount}`} />
+          <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
+          {reservation.source === 'jalan' && <Info label="予約金額" value={formatCurrency(reservation.amount)} />}
+          <Info label="状態" value={reservation.status} />
+          <Info label="外部ID" value={reservation.externalReservationId || '-'} />
+        </dl>
+        {(reservation.status === 'pending' || reservation.status === 'confirmed') && (
+          <button disabled={saving} onClick={() => onCancel(reservation)} className="mt-4 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
+            キャンセル
+          </button>
+        )}
       </div>
     </div>
   )
