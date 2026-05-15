@@ -33,6 +33,11 @@ let reservationPeopleCapacitySchemaReady = false;
 
 async function ensureReservationPeopleCapacitySchema(db: D1Database): Promise<void> {
   if (reservationPeopleCapacitySchemaReady) return;
+  await ensureColumns(db, 'reservation_resources', [
+    ['google_calendar_connection_id', 'TEXT'],
+    ['slot_interval_minutes', 'INTEGER NOT NULL DEFAULT 60'],
+    ['timezone', "TEXT NOT NULL DEFAULT 'Asia/Tokyo'"],
+  ]);
   await ensureColumns(db, 'reservation_menus', [
     ['price_infant', 'INTEGER'],
     ['capacity_count_adult', 'INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0, 1))'],
@@ -447,6 +452,7 @@ export async function getReservationResourceById(
   db: D1Database,
   id: string,
 ): Promise<ReservationResource | null> {
+  await ensureReservationPeopleCapacitySchema(db);
   return db.prepare(`SELECT * FROM reservation_resources WHERE id = ?`).bind(id).first<ReservationResource>();
 }
 
@@ -477,6 +483,7 @@ export async function getReservationById(
 }
 
 export async function listReservationResources(db: D1Database): Promise<ReservationResource[]> {
+  await ensureReservationPeopleCapacitySchema(db);
   const result = await db
     .prepare(`SELECT * FROM reservation_resources ORDER BY display_order ASC, created_at DESC`)
     .all<ReservationResource>();
@@ -615,6 +622,7 @@ export async function createReservationResource(
   db: D1Database,
   input: CreateReservationResourceInput,
 ): Promise<ReservationResource> {
+  await ensureReservationPeopleCapacitySchema(db);
   const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
 

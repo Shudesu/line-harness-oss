@@ -111,9 +111,26 @@ jobs:
           wrangler_d1 --file ../../packages/db/migrations/007_forms.sql || true
           wrangler_d1 --file ../../packages/db/migrations/024_form_opens.sql || true
 
+          # Google Calendar integration tables. Safe for existing production DBs.
+          wrangler_d1 --command "CREATE TABLE IF NOT EXISTS google_calendar_connections (id TEXT PRIMARY KEY, calendar_id TEXT NOT NULL, access_token TEXT, access_token_expires_at TEXT, refresh_token TEXT, api_key TEXT, auth_type TEXT NOT NULL DEFAULT 'api_key', is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')))"
+          wrangler_d1 --command "CREATE TABLE IF NOT EXISTS calendar_bookings (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES google_calendar_connections (id) ON DELETE CASCADE, friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL, event_id TEXT, title TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'cancelled', 'completed')), metadata TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')))"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_calendar_bookings_friend ON calendar_bookings (friend_id)"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_calendar_bookings_start ON calendar_bookings (start_at)"
+
           wrangler_d1_allow_duplicate --command "ALTER TABLE friends ADD COLUMN line_account_id TEXT"
           wrangler_d1_allow_duplicate --command "ALTER TABLE friends ADD COLUMN ref_code TEXT"
           wrangler_d1_allow_duplicate --command "ALTER TABLE chats ADD COLUMN line_account_id TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_resources ADD COLUMN google_calendar_connection_id TEXT"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_resources ADD COLUMN slot_interval_minutes INTEGER NOT NULL DEFAULT 60"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_resources ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo'"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN price_infant INTEGER"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN capacity_count_adult INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0, 1))"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN capacity_count_child INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0, 1))"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN capacity_count_infant INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0, 1))"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservations ADD COLUMN infant_count INTEGER NOT NULL DEFAULT 0"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservations ADD COLUMN capacity_people INTEGER NOT NULL DEFAULT 0"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_items ADD COLUMN infant_count INTEGER NOT NULL DEFAULT 0"
+          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_items ADD COLUMN capacity_people INTEGER NOT NULL DEFAULT 0"
           wrangler_d1_allow_duplicate --command "ALTER TABLE tracked_links ADD COLUMN intro_template_id TEXT"
           wrangler_d1_allow_duplicate --command "ALTER TABLE tracked_links ADD COLUMN reward_template_id TEXT"
           wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_message_type TEXT"
@@ -135,6 +152,7 @@ jobs:
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_friends_ref_code ON friends (ref_code)"
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_chats_line_account_id ON chats (line_account_id)"
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_ref_tracking_entry_route ON ref_tracking (entry_route_id)"
+          wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_reservation_resources_account ON reservation_resources (line_account_id)"
 
       - run: pnpm --filter worker build
         env:
