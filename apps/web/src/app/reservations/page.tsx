@@ -81,6 +81,25 @@ function formatCurrency(value: number | null): string {
   return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(value)
 }
 
+function formatRangeLabel(viewMode: ViewMode, date: string, visibleDates: string[]): string {
+  if (viewMode === 'month') {
+    const d = parseYmd(date)
+    return `${d.getFullYear()}年${d.getMonth() + 1}月`
+  }
+  const first = visibleDates[0]
+  const last = visibleDates[visibleDates.length - 1]
+  return first && last ? `${Number(first.slice(5, 7))}/${Number(first.slice(8, 10))} - ${Number(last.slice(5, 7))}/${Number(last.slice(8, 10))}` : ''
+}
+
+function dateSummary(slots: ReservationSlotWithAvailability[]): { slots: number; remaining: number; reserved: number } {
+  return slots.reduce((acc, slot) => {
+    acc.slots += 1
+    acc.remaining += Math.max(0, slot.availability.remainingCapacity)
+    acc.reserved += slot.reservedCount
+    return acc
+  }, { slots: 0, remaining: 0, reserved: 0 })
+}
+
 function slotLabel(slot: ReservationSlotWithAvailability): { mark: string; className: string; text: string } {
   if (!slot.availability.available) return { mark: '×', className: 'text-red-600 bg-red-50', text: '満席' }
   const line = slot.availability.lineRemainingCapacity ?? slot.availability.remainingCapacity
@@ -527,42 +546,53 @@ function CalendarCard({
   onSetViewMode: (mode: ViewMode) => void
   headerControls?: React.ReactNode
 }) {
+  const rangeLabel = formatRangeLabel(viewMode, date, visibleDates)
   return (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-gray-100 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-base font-bold text-gray-900">空き状況カレンダー</h2>
-          <p className="text-xs text-gray-500">日付を選ぶと下に枠情報、枠を選ぶと右側に予約詳細を表示します。</p>
-        </div>
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="border-b border-gray-100 p-3 sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           {headerControls}
-          <div className="flex items-center gap-2">
-            <button onClick={() => onMoveRange(-1)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50">←</button>
-            <button onClick={() => onSetViewMode('week')} className={`rounded-lg px-3 py-2 text-sm ${viewMode === 'week' ? 'bg-green-50 text-green-700' : 'border border-gray-200 text-gray-600'}`}>1週間</button>
-            <button onClick={() => onSetViewMode('month')} className={`rounded-lg px-3 py-2 text-sm ${viewMode === 'month' ? 'bg-green-50 text-green-700' : 'border border-gray-200 text-gray-600'}`}>1か月</button>
-            <button onClick={() => onMoveRange(1)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50">→</button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => onMoveRange(-1)} className="rounded-full border border-gray-200 px-3 py-2 text-sm font-bold hover:bg-gray-50">←</button>
+            <div className="min-w-32 rounded-full bg-blue-50 px-4 py-2 text-center text-sm font-bold text-blue-900">{rangeLabel}</div>
+            <button onClick={() => onMoveRange(1)} className="rounded-full border border-gray-200 px-3 py-2 text-sm font-bold hover:bg-gray-50">→</button>
+            <div className="ml-0 flex rounded-full bg-gray-100 p-1 sm:ml-2">
+              <button onClick={() => onSetViewMode('week')} className={`rounded-full px-3 py-1.5 text-xs font-bold ${viewMode === 'week' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500'}`}>1週間</button>
+              <button onClick={() => onSetViewMode('month')} className={`rounded-full px-3 py-1.5 text-xs font-bold ${viewMode === 'month' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500'}`}>1か月</button>
+            </div>
           </div>
         </div>
       </div>
-      <div className={`grid gap-px bg-gray-100 p-px ${viewMode === 'week' ? 'grid-cols-7' : 'grid-cols-7'}`}>
+      <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50 text-center text-[11px] font-bold text-gray-400">
+        {dayLabels.map((label) => <div key={label} className="py-2">{label}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-px bg-gray-100 p-px">
         {visibleDates.map((d) => {
           const slots = slotsByDate[d] ?? []
           const bestSlot = slots.find((slot) => slot.availability.available) ?? slots[0]
           const label = bestSlot ? slotLabel(bestSlot) : { mark: '-', className: 'text-gray-400 bg-gray-50', text: '未生成' }
+          const summary = dateSummary(slots)
+          const isSelected = d === date
+          const isOtherMonth = viewMode === 'month' && d.slice(0, 7) !== date.slice(0, 7)
           return (
             <button
               key={d}
               onClick={() => onSelectDate(d)}
-              className={`min-h-24 bg-white p-2 text-left transition hover:bg-green-50 ${d === date ? 'ring-2 ring-inset ring-green-500' : ''}`}
+              className={`min-h-24 bg-white p-2 text-left transition hover:bg-blue-50 sm:min-h-28 ${isSelected ? 'ring-2 ring-inset ring-blue-500' : ''} ${isOtherMonth ? 'opacity-45' : ''}`}
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-gray-700">{Number(d.slice(-2))}</span>
-                <span className="text-[11px] text-gray-400">{dayLabels[parseYmd(d).getDay()]}</span>
+                <span className={`grid h-7 w-7 place-items-center rounded-full text-sm font-bold ${isSelected ? 'bg-blue-600 text-white' : 'text-gray-800'}`}>
+                  {Number(d.slice(-2))}
+                </span>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${label.className}`}>{label.mark}</span>
               </div>
-              <div className={`mt-3 inline-flex rounded-full px-2 py-1 text-xs font-bold ${label.className}`}>
-                {label.mark} {label.text}
+              <p className="mt-3 text-xs font-bold text-gray-700">{label.text}</p>
+              <p className="mt-1 text-[11px] text-gray-400">{summary.slots}枠 / 予約{summary.reserved} / 残{summary.remaining}</p>
+              <div className="mt-2 hidden gap-1 sm:flex">
+                {slots.slice(0, 4).map((slot) => (
+                  <span key={slot.id} className={`h-1.5 flex-1 rounded-full ${slot.availability.available ? 'bg-blue-300' : 'bg-red-300'}`} />
+                ))}
               </div>
-              <p className="mt-2 text-[11px] text-gray-400">{slots.length}枠</p>
             </button>
           )
         })}

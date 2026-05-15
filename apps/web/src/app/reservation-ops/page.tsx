@@ -53,6 +53,23 @@ function toYmd(date: Date): string {
   return `${y}-${m}-${d}`
 }
 
+function parseYmd(value: string): Date {
+  const [y, m, d] = value.split('-').map(Number)
+  return new Date(y, (m || 1) - 1, d || 1)
+}
+
+function addDays(value: string, days: number): string {
+  const date = parseYmd(value)
+  date.setDate(date.getDate() + days)
+  return toYmd(date)
+}
+
+function startOfWeek(value: string): string {
+  const date = parseYmd(value)
+  date.setDate(date.getDate() - date.getDay())
+  return toYmd(date)
+}
+
 function formatTime(value: string | null): string {
   if (!value) return '-'
   const match = value.match(/T(\d{2}:\d{2})/)
@@ -76,6 +93,13 @@ function reservationName(reservation: ReservationResponse): string {
 
 function activeReservation(reservation: ReservationResponse): boolean {
   return reservation.status === 'pending' || reservation.status === 'confirmed'
+}
+
+function slotAvailabilityLabel(slot: ReservationSlotWithAvailability): { mark: string; text: string; className: string } {
+  if (!slot.availability.available) return { mark: '×', text: '満席', className: 'bg-red-50 text-red-700' }
+  const remaining = slot.availability.remainingCapacity
+  if (remaining >= 3) return { mark: '◎', text: `残${remaining}`, className: 'bg-blue-50 text-blue-700' }
+  return { mark: '△', text: `残${remaining}`, className: 'bg-amber-50 text-amber-700' }
 }
 
 function googleSyncReasonLabel(reason: string): string {
@@ -720,40 +744,61 @@ function ReservationsPanel({
   onDateChange: (date: string) => void
   onResourceChange: (resourceId: string) => void
 }) {
+  const weekDates = Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(date), index))
+  const selectedResourceName = resources.find((resource) => resource.id === resourceId)?.name ?? '予約対象未選択'
   return (
-    <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">予約管理</h2>
-            <p className="text-sm text-gray-500">日付と予約対象を選ぶと、その日の枠と予約客だけを表示します。</p>
+    <section className="grid gap-4 xl:grid-cols-[1.4fr_0.6fr]">
+      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">予約確認</h2>
+              <p className="text-sm text-gray-500">{selectedResourceName} / {date}</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-xs font-medium text-gray-600">日付
+                <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+              </label>
+              <label className="text-xs font-medium text-gray-600">予約対象
+                <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                  {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+                </select>
+              </label>
+            </div>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="text-xs font-medium text-gray-600">日付
-              <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </label>
-            <label className="text-xs font-medium text-gray-600">予約対象
-              <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-                {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
-              </select>
-            </label>
+          <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+            {weekDates.map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => onDateChange(d)}
+                className={`min-w-[72px] rounded-2xl border px-3 py-2 text-center transition ${d === date ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                <p className="text-[11px] font-bold">{['日', '月', '火', '水', '木', '金', '土'][parseYmd(d).getDay()]}</p>
+                <p className="text-xl font-black leading-tight">{Number(d.slice(-2))}</p>
+              </button>
+            ))}
           </div>
         </div>
-        <div className="mt-4 grid gap-3">
+        <div className="grid gap-3 p-4">
           {slots.length === 0 ? (
             <p className="rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-400">この日の予約枠はありません。詳細設定でSlotを生成してください。</p>
           ) : slots.map((slot) => {
             const items = reservationsBySlot.get(slot.id) ?? []
+            const activeItems = items.filter(activeReservation)
+            const label = slotAvailabilityLabel(slot)
             return (
-              <details key={slot.id} className="rounded-xl border border-gray-200 bg-gray-50">
-                <summary className="cursor-pointer px-4 py-3">
+              <details key={slot.id} className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
+                <summary className="cursor-pointer px-4 py-3 hover:bg-blue-50">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="font-bold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</p>
-                      <p className="text-xs text-gray-500">予約 {items.length}件 / 残 {slot.availability.remainingCapacity} / 総枠 {slot.totalCapacity}</p>
+                      <p className="text-xs text-gray-500">
+                        予約 {activeItems.length}件 / 人数 {activeItems.reduce((sum, reservation) => sum + reservation.totalPeople, 0)}名 / 総枠 {slot.totalCapacity}
+                      </p>
                     </div>
-                    <span className={`rounded-full px-2 py-1 text-xs font-bold ${slot.availability.available ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {slot.availability.available ? '受付可' : '満席'}
+                    <span className={`rounded-full px-2 py-1 text-xs font-bold ${label.className}`}>
+                      {label.mark} {label.text}
                     </span>
                   </div>
                 </summary>
@@ -774,7 +819,8 @@ function ReservationsPanel({
         </div>
       </div>
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h3 className="font-bold text-gray-900">本日の予約一覧</h3>
+        <h3 className="font-bold text-gray-900">選択日の一覧</h3>
+        <p className="mt-1 text-xs text-gray-500">枠をまたいだ全予約です。</p>
         <div className="mt-3 space-y-2">
           {reservations.length === 0 ? <p className="text-sm text-gray-400">予約はありません。</p> : reservations.map((reservation) => (
             <div key={reservation.id} className="rounded-lg bg-gray-50 p-3">
