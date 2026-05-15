@@ -51,6 +51,12 @@ export type ApiCalendarConnection = {
   updatedAt?: string | null
 }
 
+export type CalendarSyncResult =
+  | { status: 'created'; reservationId: string; bookingId: string; eventId: string }
+  | { status: 'already_synced'; reservationId: string; bookingId: string; eventId: string }
+  | { status: 'skipped'; reservationId: string; reason: string }
+  | { status: 'failed'; reservationId: string; reason: string }
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '')
 if (!API_URL) {
   throw new Error(
@@ -276,9 +282,10 @@ export const api = {
         method: 'DELETE',
       }),
     syncReservation: (reservationId: string) =>
-      fetchApi<ApiResponse<unknown>>(`/api/reservations/${encodeURIComponent(reservationId)}/google-calendar/sync`, {
-        method: 'POST',
-      }),
+      fetchApi<ApiResponse<{ reservation: unknown; sync: CalendarSyncResult }>>(
+        `/api/reservations/${encodeURIComponent(reservationId)}/google-calendar/sync`,
+        { method: 'POST' },
+      ),
   },
 
   segments: {

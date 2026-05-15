@@ -13,19 +13,39 @@ interface ReservationGoogleCalendarEnv extends GoogleOAuthEnv {
   NEXT_PUBLIC_WEB_URL?: SecretLike;
 }
 
+export type ReservationGoogleCalendarSyncResult =
+  | { status: 'created'; reservationId: string; bookingId: string; eventId: string }
+  | { status: 'already_synced'; reservationId: string; bookingId: string; eventId: string }
+  | { status: 'skipped'; reservationId: string; reason: 'resource_not_found' | 'resource_not_connected' | 'connection_not_usable' }
+  | { status: 'failed'; reservationId: string; reason: string };
+
 export async function syncReservationCreatedToGoogleCalendar(
   db: D1Database,
   reservation: Reservation,
   env: ReservationGoogleCalendarEnv = {},
-): Promise<void> {
+): Promise<ReservationGoogleCalendarSyncResult> {
   const resource = await getResourceForReservation(db, reservation);
-  if (!resource?.google_calendar_connection_id) return;
+  if (!resource) return { status: 'skipped', reservationId: reservation.id, reason: 'resource_not_found' };
+  if (!resource.google_calendar_connection_id) {
+    return { status: 'skipped', reservationId: reservation.id, reason: 'resource_not_connected' };
+  }
 
   const booking = await getOrCreateCalendarBooking(db, reservation, resource.google_calendar_connection_id);
-  if (booking.event_id) return;
+  if (booking.event_id) {
+    return { status: 'already_synced', reservationId: reservation.id, bookingId: booking.id, eventId: booking.event_id };
+  }
 
-  const conn = await getUsableGoogleCalendarConnection(db, resource.google_calendar_connection_id, env);
-  if (!conn?.access_token) return;
+  let conn;
+  try {
+    conn = await getUsableGoogleCalendarConnection(db, resource.google_calendar_connection_id, env);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await insertGoogleCalendarSyncFailure(db, reservation, 'Google Calendar connection refresh failed', reason);
+    return { status: 'failed', reservationId: reservation.id, reason };
+  }
+  if (!conn?.access_token) {
+    return { status: 'skipped', reservationId: reservation.id, reason: 'connection_not_usable' };
+  }
 
   try {
     const gcal = new GoogleCalendarClient({
@@ -42,7 +62,20 @@ export async function syncReservationCreatedToGoogleCalendar(
       .prepare(`UPDATE calendar_bookings SET event_id = ?, updated_at = datetime('now') WHERE id = ?`)
       .bind(eventId, booking.id)
       .run();
+    return { status: 'created', reservationId: reservation.id, bookingId: booking.id, eventId };
   } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await insertGoogleCalendarSyncFailure(db, reservation, 'Google Calendar event creation failed', reason);
+    return { status: 'failed', reservationId: reservation.id, reason };
+  }
+}
+
+async function insertGoogleCalendarSyncFailure(
+  db: D1Database,
+  reservation: Reservation,
+  note: string,
+  reason: string,
+): Promise<void> {
     await db
       .prepare(
         `INSERT INTO external_sync_tasks
@@ -54,11 +87,10 @@ export async function syncReservationCreatedToGoogleCalendar(
         reservation.id,
         reservation.slot_id,
         reservation.total_people,
-        'Google Calendar event creation failed',
-        err instanceof Error ? err.message : String(err),
+        note,
+        reason,
       )
       .run();
-  }
 }
 
 async function getOrCreateCalendarBooking(

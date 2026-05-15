@@ -9,7 +9,7 @@ import type {
   ReservationSlotWithAvailability,
 } from '@line-crm/shared'
 import Header from '@/components/layout/header'
-import { api, fetchApi, type ApiBroadcast, type ApiCalendarConnection } from '@/lib/api'
+import { api, fetchApi, type ApiBroadcast, type ApiCalendarConnection, type CalendarSyncResult } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 
 type Tab = 'reservations' | 'chats' | 'jalan' | 'broadcasts' | 'calendar'
@@ -77,6 +77,15 @@ function reservationName(reservation: ReservationResponse): string {
 
 function activeReservation(reservation: ReservationResponse): boolean {
   return reservation.status === 'pending' || reservation.status === 'confirmed'
+}
+
+function googleSyncReasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    resource_not_found: '予約枠に紐づく予約対象が見つかりません',
+    resource_not_connected: '予約対象にGoogle connection IDが設定されていません',
+    connection_not_usable: 'Google接続のアクセストークンを利用できません',
+  }
+  return labels[reason] ?? reason
 }
 
 function sourceBadge(source: ReservationResponse['source']): string {
@@ -341,11 +350,32 @@ export default function ReservationOpsPage() {
       return
     }
     if (!confirm(`${date} の有効予約 ${active.length}件をGoogle Calendarへ同期します。既に同期済みの予約は二重作成しません。よいですか？`)) return
-    await runAction(async () => {
+    setSaving(true)
+    setNotice('')
+    setError('')
+    try {
+      const results: CalendarSyncResult[] = []
       for (const reservation of active) {
-        await api.calendar.syncReservation(reservation.id)
+        const res = await api.calendar.syncReservation(reservation.id)
+        if (!res.success) throw new Error(res.error)
+        results.push(res.data.sync)
       }
-    }, '選択日の予約をGoogle Calendarへ同期しました')
+      const created = results.filter((item) => item.status === 'created').length
+      const alreadySynced = results.filter((item) => item.status === 'already_synced').length
+      const skipped = results.filter((item) => item.status === 'skipped').length
+      const failed = results.filter((item) => item.status === 'failed').length
+      const firstProblem = results.find((item) => item.status === 'failed' || item.status === 'skipped')
+      const reason = firstProblem && 'reason' in firstProblem ? googleSyncReasonLabel(firstProblem.reason) : ''
+      setNotice(
+        `Google Calendar同期: 作成 ${created}件 / 同期済み ${alreadySynced}件 / スキップ ${skipped}件 / 失敗 ${failed}件`
+        + (reason ? `（例: ${reason}）` : ''),
+      )
+      await loadAll()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google Calendar同期に失敗しました')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (

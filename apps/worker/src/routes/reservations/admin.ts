@@ -559,8 +559,11 @@ adminReservations.post('/api/reservations/:id/google-calendar/sync', async (c) =
     if (reservation.status === 'cancelled' || reservation.status === 'no_show') {
       return jsonError(c, 'bad_request', 400, 'Only active reservations can be synced');
     }
-    await syncReservationCreatedToGoogleCalendar(c.env.DB, reservation, c.env);
-    return jsonOk(c, toReservationResponse(reservation));
+    const sync = await syncReservationCreatedToGoogleCalendar(c.env.DB, reservation, c.env);
+    return jsonOk(c, {
+      reservation: toReservationResponse(reservation),
+      sync,
+    });
   } catch (err) {
     console.error('POST /api/reservations/:id/google-calendar/sync error:', err);
     return jsonError(c, 'internal_error', 500);
