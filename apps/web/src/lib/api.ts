@@ -42,6 +42,15 @@ export type BroadcastInsight = {
   fetchedAt?: string | null
 }
 
+export type ApiCalendarConnection = {
+  id: string
+  calendarId: string
+  authType: string
+  isActive: boolean
+  createdAt: string
+  updatedAt?: string | null
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '')
 if (!API_URL) {
   throw new Error(
@@ -249,6 +258,22 @@ export const api = {
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}/send-segment`, {
         method: 'POST',
         body: JSON.stringify({ conditions }),
+      }),
+  },
+
+  calendar: {
+    listConnections: () =>
+      fetchApi<ApiResponse<ApiCalendarConnection[]>>('/api/integrations/google-calendar'),
+    oauthUrl: (params: { calendarId?: string; returnTo?: string }) =>
+      fetchApi<ApiResponse<{ url: string }>>(
+        '/api/reservations/google-calendar/oauth-url?' + new URLSearchParams({
+          calendarId: params.calendarId || 'primary',
+          ...(params.returnTo ? { returnTo: params.returnTo } : {}),
+        }),
+      ),
+    deleteConnection: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/integrations/google-calendar/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
       }),
   },
 

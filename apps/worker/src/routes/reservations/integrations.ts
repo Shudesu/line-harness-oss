@@ -9,6 +9,10 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../../index.js';
 import { parseJalanMail } from '../../services/jalan-mail-parser.js';
+import {
+  syncReservationCancelledToGoogleCalendar,
+  syncReservationCreatedToGoogleCalendar,
+} from '../../services/reservation-google-calendar.js';
 import { jsonError, jsonOk } from './responses.js';
 import { parseJalanGmailImportBody, parseJalanImportBody, readJsonObject } from './requests.js';
 import { toExternalReservationSourceResponse, toReservationResponse } from './serializers.js';
@@ -78,6 +82,7 @@ reservationIntegrations.post('/api/integrations/jalan/reservations/import', asyn
     if (result.status === 'needs_review') {
       return jsonOk(c, { status: result.status, source: toExternalReservationSourceResponse(result.source) }, 202);
     }
+    scheduleExternalCalendarSync(c, result);
     return jsonOk(c, { status: result.status, reservation: toReservationResponse(result.reservation) });
   } catch (err) {
     console.error('POST /api/integrations/jalan/reservations/import error:', err);
@@ -136,6 +141,7 @@ reservationIntegrations.post('/api/integrations/jalan/gmail/import', async (c) =
       customerEmail: parsed.customerEmail,
     });
 
+    scheduleExternalCalendarSync(c, result);
     return importResponse(c, result, parsed, { slotUnavailableAsReview: true });
   } catch (err) {
     console.error('POST /api/integrations/jalan/gmail/import error:', err);
@@ -218,6 +224,20 @@ function importResponse(
     return jsonOk(c, { status: result.status, source: toExternalReservationSourceResponse(result.source), parsed }, 202);
   }
   return jsonOk(c, { status: result.status, reservation: toReservationResponse(result.reservation), parsed });
+}
+
+function scheduleExternalCalendarSync(
+  c: Parameters<typeof jsonOk>[0],
+  result: ImportResult,
+): void {
+  if (!result.ok || result.status === 'needs_review') return;
+  if (result.status === 'imported') {
+    c.executionCtx.waitUntil(syncReservationCreatedToGoogleCalendar(c.env.DB, result.reservation, c.env));
+    return;
+  }
+  if (result.status === 'cancelled') {
+    c.executionCtx.waitUntil(syncReservationCancelledToGoogleCalendar(c.env.DB, result.reservation, c.env));
+  }
 }
 
 export { reservationIntegrations };

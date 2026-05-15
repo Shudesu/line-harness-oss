@@ -14,6 +14,7 @@ export interface ParsedJalanMail {
   customerPhone: string | null;
   customerEmail: string | null;
   planName: string | null;
+  totalAmount: number | null;
 }
 
 export function parseJalanMail(rawText: string): ParsedJalanMail {
@@ -44,6 +45,12 @@ export function parseJalanMail(rawText: string): ParsedJalanMail {
     ]),
     planName: firstMatch(text, [
       /(?:プラン名|予約内容|メニュー)\s*[:：]?\s*([^\n\r]+)/,
+    ]),
+    totalAmount: parseMoney(text, [
+      /合計料金\s*\(税込\)\s*[:：]?\s*([0-9,]+)\s*円/,
+      /合計金額\s*\(税込\)\s*[:：]?\s*([0-9,]+)\s*円/,
+      /合計料金\s*[:：]?\s*([0-9,]+)\s*円/,
+      /合計金額\s*[:：]?\s*([0-9,]+)\s*円/,
     ]),
   };
 }
@@ -136,6 +143,17 @@ function parsePeopleCount(text: string, labels: string[]): number | null {
     const pattern = new RegExp(`${label}\\s*[:：]?\\s*(\\d+)\\s*(?:名|人)?`, 'i');
     const match = text.match(pattern);
     if (match?.[1]) return Number.parseInt(match[1], 10);
+  }
+  return null;
+}
+
+function parseMoney(text: string, patterns: RegExp[]): number | null {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const value = match?.[1]?.replace(/,/g, '');
+    if (!value) continue;
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
   }
   return null;
 }

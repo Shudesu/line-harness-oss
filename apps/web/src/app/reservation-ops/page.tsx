@@ -9,10 +9,10 @@ import type {
   ReservationSlotWithAvailability,
 } from '@line-crm/shared'
 import Header from '@/components/layout/header'
-import { api, fetchApi, type ApiBroadcast } from '@/lib/api'
+import { api, fetchApi, type ApiBroadcast, type ApiCalendarConnection } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 
-type Tab = 'reservations' | 'chats' | 'jalan' | 'broadcasts'
+type Tab = 'reservations' | 'chats' | 'jalan' | 'broadcasts' | 'calendar'
 
 type ChatItem = {
   id: string
@@ -44,6 +44,7 @@ const tabs: Array<{ key: Tab; label: string; hint: string }> = [
   { key: 'chats', label: 'チャット', hint: '未読・対応中だけ' },
   { key: 'jalan', label: 'じゃらん', hint: '要確認メール' },
   { key: 'broadcasts', label: '一斉配信', hint: '下書き確認と送信' },
+  { key: 'calendar', label: 'カレンダー', hint: 'Google連携状態' },
 ]
 
 function toYmd(date: Date): string {
@@ -118,6 +119,8 @@ export default function ReservationOpsPage() {
   const [selectedChat, setSelectedChat] = useState<ChatDetail | null>(null)
   const [reply, setReply] = useState('')
   const [broadcasts, setBroadcasts] = useState<ApiBroadcast[]>([])
+  const [calendarConnections, setCalendarConnections] = useState<ApiCalendarConnection[]>([])
+  const [calendarId, setCalendarId] = useState('primary')
   const [broadcastDraft, setBroadcastDraft] = useState({ title: '', messageContent: '' })
   const [imageUrl, setImageUrl] = useState('')
   const [uploadingImage, setUploadingImage] = useState(false)
@@ -129,6 +132,7 @@ export default function ReservationOpsPage() {
   const activeReservations = reservations.filter(activeReservation)
   const unreadChats = chats.filter((chat) => chat.status === 'unread')
   const draftBroadcasts = broadcasts.filter((broadcast) => broadcast.status === 'draft' || broadcast.status === 'scheduled')
+  const activeCalendarConnections = calendarConnections.filter((connection) => connection.isActive)
 
   const reservationsBySlot = useMemo(() => {
     const grouped = new Map<string, ReservationResponse[]>()
@@ -177,17 +181,23 @@ export default function ReservationOpsPage() {
     else throw new Error(res.error)
   }, [selectedAccountId])
 
+  const loadCalendarConnections = useCallback(async () => {
+    const res = await api.calendar.listConnections()
+    if (res.success) setCalendarConnections(res.data)
+    else throw new Error(res.error)
+  }, [])
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts()])
+      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadCalendarConnections()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '読み込みに失敗しました')
     } finally {
       setLoading(false)
     }
-  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts])
+  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadCalendarConnections])
 
   useEffect(() => {
     loadAll()
@@ -293,6 +303,22 @@ export default function ReservationOpsPage() {
     }, '一斉配信を開始しました')
   }
 
+  const startGoogleOAuth = async () => {
+    await runAction(async () => {
+      const res = await api.calendar.oauthUrl({ calendarId, returnTo: window.location.href })
+      if (!res.success) throw new Error(res.error)
+      window.open(res.data.url, '_blank', 'noopener,noreferrer')
+    }, 'Google Calendar接続を開始しました')
+  }
+
+  const deleteCalendarConnection = async (connection: ApiCalendarConnection) => {
+    if (!confirm(`${connection.calendarId} のGoogle Calendar連携を削除します。予約対象に設定中の場合は同期されなくなります。よいですか？`)) return
+    await runAction(async () => {
+      const res = await api.calendar.deleteConnection(connection.id)
+      if (!res.success) throw new Error(res.error)
+    }, 'Google Calendar連携を削除しました')
+  }
+
   return (
     <div>
       <Header
@@ -301,11 +327,12 @@ export default function ReservationOpsPage() {
         action={<a href="/reservations" className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">詳細設定へ</a>}
       />
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-5">
         <SummaryCard label="本日の予約" value={`${activeReservations.length}件`} tone="green" />
         <SummaryCard label="未読チャット" value={`${unreadChats.length}件`} tone="red" />
         <SummaryCard label="じゃらん要確認" value={`${externalSources.length}件`} tone="amber" />
         <SummaryCard label="配信下書き" value={`${draftBroadcasts.length}件`} tone="blue" />
+        <SummaryCard label="Google連携" value={`${activeCalendarConnections.length}件`} tone="green" />
       </div>
 
       <div className="mt-5 rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
@@ -378,9 +405,115 @@ export default function ReservationOpsPage() {
               onUploadImage={uploadImage}
             />
           )}
+          {tab === 'calendar' && (
+            <CalendarPanel
+              connections={calendarConnections}
+              resources={resources}
+              calendarId={calendarId}
+              saving={saving}
+              onCalendarIdChange={setCalendarId}
+              onConnect={startGoogleOAuth}
+              onDelete={deleteCalendarConnection}
+            />
+          )}
         </div>
       )}
     </div>
+  )
+}
+
+function CalendarPanel({
+  connections,
+  resources,
+  calendarId,
+  saving,
+  onCalendarIdChange,
+  onConnect,
+  onDelete,
+}: {
+  connections: ApiCalendarConnection[]
+  resources: ReservationResource[]
+  calendarId: string
+  saving: boolean
+  onCalendarIdChange: (value: string) => void
+  onConnect: () => void
+  onDelete: (connection: ApiCalendarConnection) => void
+}) {
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-bold text-gray-900">Google Calendar連携</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          予約確定時に、予約対象へ紐づいたGoogle Calendarへ予定を作ります。じゃらん予約は合計金額も予定本文に入ります。
+        </p>
+        <label className="mt-4 block text-xs font-medium text-gray-600">
+          連携するCalendar ID
+          <input
+            value={calendarId}
+            onChange={(event) => onCalendarIdChange(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            placeholder="primary または calendar-id@example.com"
+          />
+        </label>
+        <button
+          disabled={saving || !calendarId.trim()}
+          onClick={onConnect}
+          className="mt-3 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+        >
+          Google Calendar接続開始
+        </button>
+        <p className="mt-3 text-xs text-gray-400">
+          Googleの承認画面が別タブで開きます。完了後、この画面を再読み込みすると接続状態が反映されます。
+        </p>
+      </div>
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-bold text-gray-900">連携中のGoogleアカウント/カレンダー</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          現在保存している情報はCalendar ID、認証方式、接続状態です。Googleアカウントのメールアドレス表示は追加scopeが必要です。
+        </p>
+        <div className="mt-4 space-y-3">
+          {connections.length === 0 ? (
+            <p className="rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-400">Google Calendar連携はまだありません。</p>
+          ) : connections.map((connection) => {
+            const linkedResources = resources.filter((resource) => resource.googleCalendarConnectionId === connection.id)
+            return (
+              <div key={connection.id} className="rounded-xl border border-gray-200 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-gray-900">{connection.calendarId}</p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Connection ID: {connection.id}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      認証: {connection.authType} / 状態: {connection.isActive ? '有効' : '無効'} / 作成: {formatDateTime(connection.createdAt)}
+                    </p>
+                  </div>
+                  <button
+                    disabled={saving}
+                    onClick={() => onDelete(connection)}
+                    className="rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-50"
+                  >
+                    削除
+                  </button>
+                </div>
+                <div className="mt-3 rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs font-bold text-gray-500">この接続を使う予約対象</p>
+                  {linkedResources.length === 0 ? (
+                    <p className="mt-1 text-xs text-gray-400">未設定です。詳細設定のResourceで Google connection ID にこのIDを設定してください。</p>
+                  ) : (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {linkedResources.map((resource) => (
+                        <span key={resource.id} className="rounded-full bg-green-50 px-2 py-1 text-xs font-bold text-green-700">{resource.name}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </section>
   )
 }
 

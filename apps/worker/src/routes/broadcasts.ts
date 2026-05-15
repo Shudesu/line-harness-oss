@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import {
-  getBroadcasts,
   getBroadcastById,
   createBroadcast,
   updateBroadcast,
@@ -14,7 +13,7 @@ import type { SegmentCondition } from '../services/segment-query.js';
 import { getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { defaultLineAccessToken, workerBaseUrl } from '../services/line-bindings.js';
-import { hasColumn } from '../utils/db-compat.js';
+import { hasColumn, hasTable } from '../utils/db-compat.js';
 
 const broadcasts = new Hono<Env>();
 
@@ -43,13 +42,48 @@ function serializeBroadcast(row: DbBroadcast) {
 broadcasts.get('/api/broadcasts', async (c) => {
   try {
     const lineAccountId = c.req.query('lineAccountId');
-    const items = await getBroadcasts(c.env.DB, lineAccountId || undefined);
+    const items = await getBroadcastsCompat(c.env.DB, lineAccountId || undefined);
     return c.json({ success: true, data: items.map(serializeBroadcast) });
   } catch (err) {
     console.error('GET /api/broadcasts error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
+
+async function getBroadcastsCompat(db: D1Database, lineAccountId?: string): Promise<DbBroadcast[]> {
+  const hasInsights = await hasTable(db, 'broadcast_insights');
+  const hasLineAccountId = await hasColumn(db, 'broadcasts', 'line_account_id');
+  const hasSentAt = await hasColumn(db, 'broadcasts', 'sent_at');
+  const hasScheduledAt = await hasColumn(db, 'broadcasts', 'scheduled_at');
+
+  let sql = hasInsights
+    ? `SELECT b.*,
+       bi.status as insight_status,
+       bi.open_rate, bi.click_rate
+FROM broadcasts b
+LEFT JOIN broadcast_insights bi ON b.id = bi.broadcast_id
+  AND bi.id = (SELECT id FROM broadcast_insights WHERE broadcast_id = b.id ORDER BY created_at DESC LIMIT 1)`
+    : `SELECT b.* FROM broadcasts b`;
+
+  const params: unknown[] = [];
+  if (lineAccountId && hasLineAccountId) {
+    sql += ` WHERE b.line_account_id = ?`;
+    params.push(lineAccountId);
+  }
+
+  const orderFields = [
+    hasSentAt ? 'b.sent_at' : null,
+    hasScheduledAt ? 'b.scheduled_at' : null,
+    'b.created_at',
+  ].filter(Boolean) as string[];
+  const orderExpr = orderFields.length > 1 ? `COALESCE(${orderFields.join(', ')})` : orderFields[0];
+  sql += ` ORDER BY ${orderExpr} DESC`;
+
+  const result = params.length > 0
+    ? await db.prepare(sql).bind(...params).all<DbBroadcast>()
+    : await db.prepare(sql).all<DbBroadcast>();
+  return result.results;
+}
 
 // GET /api/broadcasts/:id - get single
 broadcasts.get('/api/broadcasts/:id', async (c) => {
