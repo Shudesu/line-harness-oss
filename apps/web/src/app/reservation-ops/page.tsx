@@ -8,7 +8,6 @@ import type {
   ReservationResponse,
   ReservationSlotWithAvailability,
 } from '@line-crm/shared'
-import Header from '@/components/layout/header'
 import { api, fetchApi, type ApiBroadcast, type ApiCalendarConnection, type CalendarSyncResult } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 
@@ -133,6 +132,7 @@ export default function ReservationOpsPage() {
   const [broadcastDraft, setBroadcastDraft] = useState({ title: '', messageContent: '' })
   const [imageUrl, setImageUrl] = useState('')
   const [uploadingImage, setUploadingImage] = useState(false)
+  const [calendarSettingsOpen, setCalendarSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
@@ -380,32 +380,30 @@ export default function ReservationOpsPage() {
 
   return (
     <div>
-      <Header
-        title="予約オペレーション"
-        description="予約・顧客チャット・じゃらんメール・一斉配信だけに絞った現場用ダッシュボード"
-        action={<a href="/reservations" className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">詳細設定へ</a>}
-      />
-
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+        <div className="flex min-w-max gap-2">
         <SummaryCard label="本日の予約" value={`${activeReservations.length}件`} tone="green" />
         <SummaryCard label="未読チャット" value={`${unreadChats.length}件`} tone="red" />
         <SummaryCard label="じゃらん要確認" value={`${externalSources.length}件`} tone="amber" />
         <SummaryCard label="配信下書き" value={`${draftBroadcasts.length}件`} tone="blue" />
         <SummaryCard label="Google連携" value={`${activeCalendarConnections.length}件`} tone="green" />
+        </div>
       </div>
 
-      <div className="mt-5 rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
-        <div className="grid gap-2 md:grid-cols-4">
+      <div className="sticky top-0 z-20 -mx-4 mt-3 border-y border-gray-100 bg-white/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-2xl sm:border sm:shadow-sm">
+        <div className="flex gap-2 overflow-x-auto">
           {tabs.map((item) => (
             <button
               key={item.key}
               onClick={() => setTab(item.key)}
-              className={`rounded-xl px-4 py-3 text-left transition ${tab === item.key ? 'bg-green-600 text-white' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition ${tab === item.key ? 'bg-green-600 text-white' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}
             >
-              <p className="font-bold">{item.label}</p>
-              <p className={`text-xs ${tab === item.key ? 'text-green-100' : 'text-gray-400'}`}>{item.hint}</p>
+              {item.label}
             </button>
           ))}
+          <a href="/reservations" className="shrink-0 rounded-full border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50">
+            詳細設定
+          </a>
         </div>
       </div>
 
@@ -472,11 +470,14 @@ export default function ReservationOpsPage() {
               selectedDate={date}
               calendarId={calendarId}
               saving={saving}
+              settingsOpen={calendarSettingsOpen}
               onCalendarIdChange={setCalendarId}
               onConnect={startGoogleOAuth}
               onDelete={deleteCalendarConnection}
               onAssignResource={assignCalendarConnection}
               onSyncReservations={syncTodayReservationsToCalendar}
+              onOpenSettings={() => setCalendarSettingsOpen(true)}
+              onCloseSettings={() => setCalendarSettingsOpen(false)}
             />
           )}
         </div>
@@ -492,11 +493,14 @@ function CalendarPanel({
   selectedDate,
   calendarId,
   saving,
+  settingsOpen,
   onCalendarIdChange,
   onConnect,
   onDelete,
   onAssignResource,
   onSyncReservations,
+  onOpenSettings,
+  onCloseSettings,
 }: {
   connections: ApiCalendarConnection[]
   resources: ReservationResource[]
@@ -504,126 +508,171 @@ function CalendarPanel({
   selectedDate: string
   calendarId: string
   saving: boolean
+  settingsOpen: boolean
   onCalendarIdChange: (value: string) => void
   onConnect: () => void
   onDelete: (connection: ApiCalendarConnection) => void
   onAssignResource: (resourceId: string, connectionId: string) => void
   onSyncReservations: () => void
+  onOpenSettings: () => void
+  onCloseSettings: () => void
 }) {
   const activeReservations = reservations.filter(activeReservation)
+  const activeConnections = connections.filter((connection) => connection.isActive)
   return (
-    <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-gray-900">Google Calendar連携</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          予約確定時に、予約対象へ紐づいたGoogle Calendarへ予定を作ります。じゃらん予約は合計金額も予定本文に入ります。
-        </p>
-        <label className="mt-4 block text-xs font-medium text-gray-600">
-          連携するCalendar ID
-          <input
-            value={calendarId}
-            onChange={(event) => onCalendarIdChange(event.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder="primary または calendar-id@example.com"
-          />
-        </label>
-        <button
-          disabled={saving || !calendarId.trim()}
-          onClick={onConnect}
-          className="mt-3 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-        >
-          Google Calendar接続開始
-        </button>
-        <p className="mt-3 text-xs text-gray-400">
-          Googleの承認画面が別タブで開きます。完了後、この画面を再読み込みすると接続状態が反映されます。
-        </p>
-        <div className="mt-5 rounded-xl border border-green-100 bg-green-50 p-3">
-          <p className="text-sm font-bold text-green-950">選択日の既存予約を同期</p>
-          <p className="mt-1 text-xs text-green-800">
-            Google連携前に作成した予約は自動では過去同期されません。必要な場合だけ手動同期してください。
+    <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Google Calendar</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            予約確定時に、予約対象へ紐づいたカレンダーへ予定を作成します。
           </p>
-          <button
-            disabled={saving || activeReservations.length === 0}
-            onClick={onSyncReservations}
-            className="mt-3 rounded-lg bg-green-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
-          >
-            {selectedDate} の有効予約 {activeReservations.length}件を同期
-          </button>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="w-fit rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+        >
+          接続設定
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl bg-gray-50 p-3">
+          <p className="text-xs font-bold text-gray-500">有効な接続</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">{activeConnections.length}件</p>
+        </div>
+        <div className="rounded-xl bg-gray-50 p-3">
+          <p className="text-xs font-bold text-gray-500">選択日の有効予約</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">{activeReservations.length}件</p>
+        </div>
+        <div className="rounded-xl bg-gray-50 p-3">
+          <p className="text-xs font-bold text-gray-500">紐づき済み予約対象</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">
+            {resources.filter((resource) => resource.googleCalendarConnectionId).length}件
+          </p>
         </div>
       </div>
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-gray-900">連携中のGoogleアカウント/カレンダー</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          現在保存している情報はCalendar ID、認証方式、接続状態です。Googleアカウントのメールアドレス表示は追加scopeが必要です。
-        </p>
-        <div className="mt-4 space-y-3">
-          {connections.length === 0 ? (
-            <p className="rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-400">Google Calendar連携はまだありません。</p>
-          ) : connections.map((connection) => {
-            const linkedResources = resources.filter((resource) => resource.googleCalendarConnectionId === connection.id)
-            return (
-              <div key={connection.id} className="rounded-xl border border-gray-200 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-gray-900">{connection.calendarId}</p>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Connection ID: {connection.id}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-500">
-                      認証: {connection.authType} / 状態: {connection.isActive ? '有効' : '無効'} / 作成: {formatDateTime(connection.createdAt)}
-                    </p>
-                  </div>
-                  <button
-                    disabled={saving}
-                    onClick={() => onDelete(connection)}
-                    className="rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-50"
-                  >
-                    削除
-                  </button>
+
+      <button
+        disabled={saving || activeReservations.length === 0}
+        onClick={onSyncReservations}
+        className="mt-4 rounded-lg bg-green-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+      >
+        {selectedDate} の有効予約 {activeReservations.length}件を同期
+      </button>
+
+      <div className="mt-4 space-y-2">
+        {connections.length === 0 ? (
+          <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-400">Google Calendar連携はまだありません。接続設定から追加してください。</p>
+        ) : connections.map((connection) => {
+          const linkedResources = resources.filter((resource) => resource.googleCalendarConnectionId === connection.id)
+          return (
+            <div key={connection.id} className="rounded-xl border border-gray-200 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-gray-900">{connection.calendarId}</p>
+                  <p className="text-xs text-gray-500">状態: {connection.isActive ? '有効' : '無効'} / 予約対象 {linkedResources.length}件</p>
                 </div>
-                <div className="mt-3 rounded-lg bg-gray-50 p-3">
-                  <p className="text-xs font-bold text-gray-500">この接続を使う予約対象</p>
-                  {linkedResources.length === 0 ? (
-                    <p className="mt-1 text-xs text-gray-400">未設定です。詳細設定のResourceで Google connection ID にこのIDを設定してください。</p>
-                  ) : (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {linkedResources.map((resource) => (
-                        <span key={resource.id} className="rounded-full bg-green-50 px-2 py-1 text-xs font-bold text-green-700">{resource.name}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-bold ${connection.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {connection.isActive ? '接続中' : '停止'}
+                </span>
               </div>
-            )
-          })}
-        </div>
-        <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-3">
-          <p className="text-sm font-bold text-gray-900">予約対象への紐づけ</p>
-          <p className="mt-1 text-xs text-gray-500">
-            ここでResourceにconnection IDを設定しないと、予約確定時にGoogle Calendarへ反映されません。
-          </p>
-          <div className="mt-3 space-y-2">
-            {resources.length === 0 ? (
-              <p className="text-sm text-gray-400">予約対象がありません。</p>
-            ) : resources.map((resource) => (
-              <label key={resource.id} className="grid gap-2 rounded-lg bg-white p-3 text-xs font-medium text-gray-600 md:grid-cols-[1fr_1.4fr] md:items-center">
-                <span>{resource.name}</span>
-                <select
-                  value={resource.googleCalendarConnectionId ?? ''}
-                  disabled={saving}
-                  onChange={(event) => onAssignResource(resource.id, event.target.value)}
-                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                >
-                  <option value="">未連携</option>
-                  {connections.map((connection) => (
-                    <option key={connection.id} value={connection.id}>{connection.calendarId}</option>
-                  ))}
-                </select>
-              </label>
-            ))}
+            </div>
+          )
+        })}
+      </div>
+
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+          <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl sm:mx-auto sm:max-w-3xl sm:rounded-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Google Calendar接続設定</h3>
+                <p className="mt-1 text-sm text-gray-500">接続追加、削除、予約対象への紐づけをここで管理します。</p>
+              </div>
+              <button type="button" onClick={onCloseSettings} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
+            </div>
+
+            <label className="mt-4 block text-xs font-medium text-gray-600">
+              連携するCalendar ID
+              <input
+                value={calendarId}
+                onChange={(event) => onCalendarIdChange(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                placeholder="primary または calendar-id@example.com"
+              />
+            </label>
+            <button
+              disabled={saving || !calendarId.trim()}
+              onClick={onConnect}
+              className="mt-3 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+            >
+              Google Calendar接続開始
+            </button>
+
+            <div className="mt-5 space-y-3">
+              <p className="text-sm font-bold text-gray-900">接続中のカレンダー</p>
+              {connections.length === 0 ? (
+                <p className="rounded-xl bg-gray-50 p-4 text-center text-sm text-gray-400">Google Calendar連携はまだありません。</p>
+              ) : connections.map((connection) => {
+                const linkedResources = resources.filter((resource) => resource.googleCalendarConnectionId === connection.id)
+                return (
+                  <div key={connection.id} className="rounded-xl border border-gray-200 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-gray-900">{connection.calendarId}</p>
+                        <p className="mt-1 text-xs text-gray-500">Connection ID: {connection.id}</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          認証: {connection.authType} / 状態: {connection.isActive ? '有効' : '無効'} / 作成: {formatDateTime(connection.createdAt)}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {linkedResources.length === 0 ? (
+                            <span className="text-xs text-gray-400">予約対象未設定</span>
+                          ) : linkedResources.map((resource) => (
+                            <span key={resource.id} className="rounded-full bg-green-50 px-2 py-1 text-xs font-bold text-green-700">{resource.name}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        disabled={saving}
+                        onClick={() => onDelete(connection)}
+                        className="shrink-0 rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-50"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-sm font-bold text-gray-900">予約対象への紐づけ</p>
+              <div className="mt-3 space-y-2">
+                {resources.length === 0 ? (
+                  <p className="text-sm text-gray-400">予約対象がありません。</p>
+                ) : resources.map((resource) => (
+                  <label key={resource.id} className="grid gap-2 rounded-lg bg-white p-3 text-xs font-medium text-gray-600 sm:grid-cols-[1fr_1.4fr] sm:items-center">
+                    <span>{resource.name}</span>
+                    <select
+                      value={resource.googleCalendarConnectionId ?? ''}
+                      disabled={saving}
+                      onChange={(event) => onAssignResource(resource.id, event.target.value)}
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">未連携</option>
+                      {connections.map((connection) => (
+                        <option key={connection.id} value={connection.id}>{connection.calendarId}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </section>
   )
 }
@@ -645,9 +694,9 @@ function SummaryCard({ label, value, tone }: { label: string; value: string; ton
     blue: 'bg-blue-50 text-blue-700 border-blue-100',
   }
   return (
-    <div className={`rounded-2xl border p-4 ${colors[tone]}`}>
-      <p className="text-xs font-medium opacity-80">{label}</p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
+    <div className={`min-w-[112px] rounded-xl border px-3 py-2 ${colors[tone]}`}>
+      <p className="text-[11px] font-medium leading-tight opacity-80">{label}</p>
+      <p className="mt-0.5 text-base font-bold leading-tight">{value}</p>
     </div>
   )
 }
