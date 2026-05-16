@@ -314,6 +314,61 @@
       font-size: 13px !important;
       font-weight: 900;
     }
+    .price-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 10px 0 12px;
+    }
+    .price-chips span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--sky-100);
+      border: 1px solid var(--sky-200);
+      color: var(--sky-700);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .price-note {
+      margin: 8px 0 10px;
+      color: var(--muted) !important;
+      font-size: 12px !important;
+    }
+    .price-estimate {
+      margin: 12px 0 16px;
+      padding: 12px;
+      border-radius: 16px;
+      background: #f8fbff;
+      border: 1px solid var(--sky-200);
+    }
+    .price-estimate.compact {
+      margin: 8px 0 12px;
+      padding: 10px 12px;
+    }
+    .price-estimate span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .price-estimate strong {
+      display: block;
+      margin-top: 2px;
+      color: var(--sky-700);
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 900;
+    }
+    .price-estimate small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
     @media (max-width: 420px) {
       .people-grid,
       .people-stepper-grid {

@@ -2,7 +2,7 @@ import { addDays, dateToString, formatDateJa, formatTime, isPastDate } from './d
 import { escapeHtml } from './html.js';
 import { selectedMenu, selectedResource, state } from './state.js';
 import { tokenForReservation } from './tokens.js';
-import type { Slot } from './types.js';
+import type { Menu, Slot } from './types.js';
 
 function availabilityMark(slots: Slot[] | undefined): { mark: string; className: string; label: string } {
   if (!slots || slots.length === 0) return { mark: '-', className: 'none', label: '未生成' };
@@ -31,6 +31,69 @@ function parseNote(formData?: string | null): string {
   } catch {
     return '';
   }
+}
+
+function formatYen(value: number): string {
+  return `${Math.max(0, value).toLocaleString('ja-JP')}円`;
+}
+
+function hasPrice(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function hasAnyMenuPrice(menu: Menu | null | undefined): boolean {
+  return Boolean(menu && (hasPrice(menu.priceAdult) || hasPrice(menu.priceChild) || hasPrice(menu.priceInfant)));
+}
+
+function calculateEstimatedTotal(menu: Menu | null | undefined, counts: { adultCount: number; childCount: number; infantCount: number }): number | null {
+  if (!hasAnyMenuPrice(menu)) return null;
+  if (!menu) return null;
+  if (counts.adultCount > 0 && !hasPrice(menu.priceAdult)) return null;
+  if (counts.childCount > 0 && !hasPrice(menu.priceChild)) return null;
+  if (counts.infantCount > 0 && !hasPrice(menu.priceInfant)) return null;
+  return (
+    counts.adultCount * (menu.priceAdult ?? 0) +
+    counts.childCount * (menu.priceChild ?? 0) +
+    counts.infantCount * (menu.priceInfant ?? 0)
+  );
+}
+
+function renderMenuPriceSummary(menu: Menu | null | undefined): string {
+  if (!hasAnyMenuPrice(menu) || !menu) {
+    return '<p class="price-note">料金は当日・現地でご確認ください。</p>';
+  }
+  const rows = [
+    hasPrice(menu.priceAdult) ? `大人 ${formatYen(menu.priceAdult)}` : null,
+    hasPrice(menu.priceChild) ? `子ども ${formatYen(menu.priceChild)}` : null,
+    hasPrice(menu.priceInfant) ? `幼児 ${formatYen(menu.priceInfant)}` : null,
+  ].filter(Boolean);
+  return `<div class="price-chips" aria-label="料金単価">${rows.map((row) => `<span>${escapeHtml(row ?? '')}</span>`).join('')}</div>`;
+}
+
+function renderPriceEstimate(menu: Menu | null | undefined, counts: { adultCount: number; childCount: number; infantCount: number }, compact = false): string {
+  if (!hasAnyMenuPrice(menu)) return '';
+  const total = calculateEstimatedTotal(menu, counts);
+  if (total === null) {
+    return `
+      <div class="price-estimate ${compact ? 'compact' : ''}">
+        <span>料金目安</span>
+        <strong>現地確認</strong>
+        <small>未設定の料金区分があるため、合計は表示していません。</small>
+      </div>
+    `;
+  }
+  return `
+    <div class="price-estimate ${compact ? 'compact' : ''}">
+      <span>料金目安</span>
+      <strong>${formatYen(total)}</strong>
+      <small>実際の請求額はクーポン・現地精算で変わる場合があります。</small>
+    </div>
+  `;
+}
+
+function menuForReservationTitle(title?: string | null): Menu | null {
+  if (!title) return null;
+  return state.menus.find((menu) => menu.name === title) ?? null;
 }
 
 export function renderHeader(): string {
@@ -105,12 +168,14 @@ function renderBookingControls(): string {
           `).join('')}
         </select>
       </label>
+      ${renderMenuPriceSummary(menu)}
       <div class="people-stepper-grid">
         ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
         ${renderPeopleStepper('childCount', '子ども', state.form.childCount)}
         ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
       </div>
       <p class="people-total">合計 ${state.form.adultCount + state.form.childCount + state.form.infantCount}名</p>
+      ${renderPriceEstimate(menu, state.form, true)}
       <div class="view-toggle">
         <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
         <button type="button" class="${state.viewMode === 'month' ? 'active' : ''}" data-action="view-month">1か月で見る</button>
@@ -300,6 +365,7 @@ function renderConfirm(): string {
         email: state.form.customerEmail,
         note: state.form.note,
       })}
+      ${renderPriceEstimate(menu, state.form)}
       <p class="policy-note">内容に間違いがなければ予約を確定してください。満席になった場合は確定時にエラーになります。</p>
       <div class="booking-actions split">
         <button type="button" class="close-btn" data-action="back-booking">入力に戻る</button>
@@ -312,13 +378,14 @@ function renderConfirm(): string {
 function renderSuccess(): string {
   const reservation = state.lastReservation;
   if (!reservation) return renderError('予約情報を表示できません');
+  const menu = selectedMenu();
   return `
     <section class="success-card">
       <div class="success-icon">✓</div>
       <h2>予約を受け付けました</h2>
       <p class="success-message">予約ID: ${escapeHtml(reservation.id)}</p>
       ${renderReservationSummary({
-        menuName: selectedMenu()?.name ?? reservation.title,
+        menuName: menu?.name ?? reservation.title,
         date: reservation.reservationDate,
         startAt: reservation.startAt,
         endAt: reservation.endAt,
@@ -330,6 +397,7 @@ function renderSuccess(): string {
         email: reservation.customerEmail ?? state.form.customerEmail,
         note: state.form.note,
       })}
+      ${renderPriceEstimate(menu, reservation, true)}
       <p class="policy-note">当日は予約時間に合わせてお越しください。予約確認画面から詳細確認とキャンセルができます。</p>
       <div class="booking-actions">
         <button type="button" class="book-btn" data-action="show-created-detail">予約詳細を見る</button>
@@ -369,6 +437,7 @@ function renderMine(): string {
 function renderReservationDetail(): string {
   const reservation = state.selectedReservation;
   if (!reservation) return renderMine();
+  const menu = menuForReservationTitle(reservation.title);
   const tokens = tokenForReservation(reservation.id);
   const canCancel = reservation.status === 'pending' || reservation.status === 'confirmed';
   return `
@@ -389,6 +458,7 @@ function renderReservationDetail(): string {
         email: reservation.customerEmail ?? '',
         note: parseNote(reservation.formData),
       })}
+      ${menu ? renderPriceEstimate(menu, reservation, true) : ''}
       <div class="confirm-row"><span class="confirm-label">状態</span><span class="confirm-value">${statusLabel(reservation.status)}</span></div>
       <div class="confirm-row"><span class="confirm-label">予約ID</span><span class="confirm-value">${escapeHtml(reservation.id)}</span></div>
       ${canCancel ? `
