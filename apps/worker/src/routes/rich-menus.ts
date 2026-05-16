@@ -6,12 +6,33 @@ import { defaultLineAccessToken } from '../services/line-bindings.js';
 
 const richMenus = new Hono<Env>();
 
+function normalizeAccessToken(value?: string | null): string {
+  return value?.trim() ?? '';
+}
+
+function isLineUnauthorizedError(message: string): boolean {
+  return message.includes('LINE API error: 401') || message.includes('Authentication failed');
+}
+
+function richMenuError(message: string, operation: string) {
+  if (isLineUnauthorizedError(message)) {
+    return {
+      error: `${operation}: LINEアクセストークンが無効です。選択中のLINEアカウントに保存された Channel access token を更新してください。Cloudflare Secrets Store の LINE_CHANNEL_ACCESS_TOKEN ではなく、画面上で選択中の line_accounts のトークンが使われています。`,
+      status: 401,
+    };
+  }
+  return { error: `${operation}: ${message}`, status: 500 };
+}
+
 /** Resolve LINE access token — uses accountId query param if provided, otherwise default */
 async function resolveLineClient(c: { env: Env['Bindings']; req: { query(key: string): string | undefined } }): Promise<LineClient> {
   const accountId = c.req.query('accountId');
   if (accountId) {
     const account = await getLineAccountById(c.env.DB, accountId);
-    if (account) return new LineClient(account.channel_access_token);
+    if (!account) throw new Error('Selected LINE account was not found');
+    const token = normalizeAccessToken(account.channel_access_token);
+    if (!token) throw new Error('Selected LINE account channel access token is not configured');
+    return new LineClient(token);
   }
   return new LineClient(await defaultLineAccessToken(c.env));
 }
@@ -25,7 +46,8 @@ richMenus.get('/api/rich-menus', async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('GET /api/rich-menus error:', message);
-    return c.json({ success: false, error: `Failed to fetch rich menus: ${message}` }, 500);
+    const mapped = richMenuError(message, 'Failed to fetch rich menus');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
   }
 });
 
@@ -39,7 +61,8 @@ richMenus.post('/api/rich-menus', async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('POST /api/rich-menus error:', message);
-    return c.json({ success: false, error: `Failed to create rich menu: ${message}` }, 500);
+    const mapped = richMenuError(message, 'Failed to create rich menu');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
   }
 });
 
@@ -53,7 +76,8 @@ richMenus.delete('/api/rich-menus/:id', async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('DELETE /api/rich-menus/:id error:', message);
-    return c.json({ success: false, error: `Failed to delete rich menu: ${message}` }, 500);
+    const mapped = richMenuError(message, 'Failed to delete rich menu');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
   }
 });
 
@@ -67,7 +91,8 @@ richMenus.post('/api/rich-menus/:id/default', async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('POST /api/rich-menus/:id/default error:', message);
-    return c.json({ success: false, error: `Failed to set default rich menu: ${message}` }, 500);
+    const mapped = richMenuError(message, 'Failed to set default rich menu');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
   }
 });
 
@@ -91,7 +116,7 @@ richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
     const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
     if (friendAccountId) {
       const account = await getLineAccountById(db, friendAccountId);
-      if (account) accessToken = account.channel_access_token;
+      if (account) accessToken = normalizeAccessToken(account.channel_access_token);
     }
     const lineClient = new LineClient(accessToken);
     await lineClient.linkRichMenuToUser(friend.line_user_id, body.richMenuId);
@@ -100,7 +125,8 @@ richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('POST /api/friends/:friendId/rich-menu error:', message);
-    return c.json({ success: false, error: `Failed to link rich menu to friend: ${message}` }, 500);
+    const mapped = richMenuError(message, 'Failed to link rich menu to friend');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
   }
 });
 
@@ -119,7 +145,7 @@ richMenus.delete('/api/friends/:friendId/rich-menu', async (c) => {
     const friendAccId = (friend as unknown as Record<string, string | null>).line_account_id;
     if (friendAccId) {
       const account = await getLineAccountById(c.env.DB, friendAccId);
-      if (account) accessToken = account.channel_access_token;
+      if (account) accessToken = normalizeAccessToken(account.channel_access_token);
     }
     const lineClient = new LineClient(accessToken);
     await lineClient.unlinkRichMenuFromUser(friend.line_user_id);
@@ -128,7 +154,8 @@ richMenus.delete('/api/friends/:friendId/rich-menu', async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('DELETE /api/friends/:friendId/rich-menu error:', message);
-    return c.json({ success: false, error: `Failed to unlink rich menu from friend: ${message}` }, 500);
+    const mapped = richMenuError(message, 'Failed to unlink rich menu from friend');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
   }
 });
 
@@ -173,6 +200,7 @@ richMenus.post('/api/rich-menus/:id/image', async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('POST /api/rich-menus/:id/image error:', message);
-    return c.json({ success: false, error: `Failed to upload rich menu image: ${message}` }, 500);
+    const mapped = richMenuError(message, 'Failed to upload rich menu image');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
   }
 });
