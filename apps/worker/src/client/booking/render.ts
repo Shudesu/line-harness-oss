@@ -435,8 +435,12 @@ function renderMine(): string {
         <button type="button" class="mini-btn" data-action="reload-mine">更新</button>
       </div>
       ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
-      ${state.loadingSlots ? '<div class="slots-loading"><div class="loading-spinner"></div><p>予約を確認中...</p></div>' : ''}
-      ${state.reservations.length === 0 ? '<p class="muted">受付中の予約はありません。</p>' : `
+      ${state.loadingSlots ? '<div class="slots-loading"><div class="loading-spinner"></div><p>予約を確認中...</p></div>' : state.reservations.length === 0 ? `
+        <div class="empty-state">
+          <p class="muted">予約はありません。</p>
+          <button type="button" class="book-btn" data-action="show-booking">予約する</button>
+        </div>
+      ` : `
         <div class="reservation-list">
           ${state.reservations.map((reservation) => `
             <button type="button" class="reservation-card" data-action="select-reservation" data-reservation-id="${escapeHtml(reservation.id)}">
