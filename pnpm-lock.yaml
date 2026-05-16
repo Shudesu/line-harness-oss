@@ -20,6 +20,9 @@ importers:
       '@line-crm/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@line-harness/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       next:
         specifier: ^15.1.0
         version: 15.5.14(react-dom@19.2.4(react@19.2.4))(react@19.2.4)

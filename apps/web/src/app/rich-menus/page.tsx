@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, type RichMenu, type RichMenuAction, type RichMenuArea } from '@/lib/api'
+import type { RichMenu, RichMenuAction, RichMenuArea } from '@line-harness/sdk'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
+import { createLineHarnessClient } from '@/lib/line-harness-client'
 
 type SizePreset = 'full' | 'half'
 type LayoutPreset = '3' | '6'
@@ -84,9 +85,8 @@ export default function RichMenusPage() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.richMenus.list({ accountId: selectedAccountId || undefined })
-      if (res.success) setMenus(res.data)
-      else setError(res.error || 'リッチメニュー一覧の取得に失敗しました')
+      const client = createLineHarnessClient(selectedAccountId)
+      setMenus(await client.richMenus.list())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'リッチメニュー一覧の取得に失敗しました')
     } finally {
@@ -127,15 +127,15 @@ export default function RichMenusPage() {
         bounds: boundsFor(index, form.layout, form.size),
         action: toAction(area),
       }))
-      const res = await api.richMenus.create({
+      const client = createLineHarnessClient(selectedAccountId)
+      const result = await client.richMenus.create({
         size: { width: size.width, height: size.height },
         selected: form.selected,
         name: form.name.trim(),
         chatBarText: form.chatBarText.trim(),
         areas,
-      }, { accountId: selectedAccountId || undefined })
-      if (!res.success) throw new Error(res.error || 'リッチメニュー作成に失敗しました')
-      setCreatedRichMenuId(res.data.richMenuId)
+      })
+      setCreatedRichMenuId(result.richMenuId)
       setNotice('リッチメニューを作成しました。続けて画像をアップロードしてください。')
       await load()
     } catch (err) {
@@ -160,12 +160,12 @@ export default function RichMenusPage() {
     setNotice('')
     try {
       const image = await fileToDataUrl(file)
-      const res = await api.richMenus.uploadImage(
+      const client = createLineHarnessClient(selectedAccountId)
+      await client.richMenus.uploadImage(
         richMenuId,
-        { image, contentType: file.type as 'image/png' | 'image/jpeg' },
-        { accountId: selectedAccountId || undefined },
+        image,
+        file.type as 'image/png' | 'image/jpeg',
       )
-      if (!res.success) throw new Error(res.error || '画像アップロードに失敗しました')
       setNotice('画像をアップロードしました。必要に応じてデフォルト設定してください。')
     } catch (err) {
       setError(err instanceof Error ? err.message : '画像アップロードに失敗しました')
@@ -180,8 +180,8 @@ export default function RichMenusPage() {
     setError('')
     setNotice('')
     try {
-      const res = await api.richMenus.setDefault(richMenuId, { accountId: selectedAccountId || undefined })
-      if (!res.success) throw new Error(res.error || 'デフォルト設定に失敗しました')
+      const client = createLineHarnessClient(selectedAccountId)
+      await client.richMenus.setDefault(richMenuId)
       setNotice('デフォルトリッチメニューを設定しました')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'デフォルト設定に失敗しました')
@@ -194,8 +194,8 @@ export default function RichMenusPage() {
     setError('')
     setNotice('')
     try {
-      const res = await api.richMenus.delete(richMenuId, { accountId: selectedAccountId || undefined })
-      if (!res.success) throw new Error(res.error || '削除に失敗しました')
+      const client = createLineHarnessClient(selectedAccountId)
+      await client.richMenus.delete(richMenuId)
       setNotice('リッチメニューを削除しました')
       await load()
     } catch (err) {

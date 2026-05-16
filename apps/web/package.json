@@ -8,6 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@line-harness/sdk": "workspace:*",
     "@line-crm/shared": "workspace:*",
     "next": "^15.1.0",
     "qrcode": "^1.5.4",

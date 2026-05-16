@@ -53,7 +53,18 @@ templates.post('/api/templates', async (c) => {
       return c.json({ success: false, error: 'name, messageType, messageContent are required' }, 400);
     }
     const item = await createTemplate(c.env.DB, body);
-    return c.json({ success: true, data: { id: item.id, name: item.name, category: item.category, messageType: item.message_type, createdAt: item.created_at } }, 201);
+    return c.json({
+      success: true,
+      data: {
+        id: item.id,
+        name: item.name,
+        category: item.category,
+        messageType: item.message_type,
+        messageContent: item.message_content,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at,
+      },
+    }, 201);
   } catch (err) {
     console.error('POST /api/templates error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -69,7 +80,15 @@ templates.put('/api/templates/:id', async (c) => {
     if (!updated) return c.json({ success: false, error: 'Not found' }, 404);
     return c.json({
       success: true,
-      data: { id: updated.id, name: updated.name, category: updated.category, messageType: updated.message_type, messageContent: updated.message_content },
+      data: {
+        id: updated.id,
+        name: updated.name,
+        category: updated.category,
+        messageType: updated.message_type,
+        messageContent: updated.message_content,
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at,
+      },
     });
   } catch (err) {
     console.error('PUT /api/templates/:id error:', err);

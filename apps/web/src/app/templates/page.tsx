@@ -1,19 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { api } from '@/lib/api'
+import type { ReactNode } from 'react'
+import type { Template } from '@line-harness/sdk'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
-
-interface Template {
-  id: string
-  name: string
-  category: string
-  messageType: string
-  messageContent: string
-  createdAt: string
-  updatedAt: string
-}
+import FlexPreviewComponent from '@/components/flex-preview'
+import { createLineHarnessClient } from '@/lib/line-harness-client'
 
 const messageTypeLabels: Record<string, string> = {
   text: 'テキスト',
@@ -28,6 +21,15 @@ interface CreateFormState {
   messageContent: string
 }
 
+interface ReservationCardForm {
+  title: string
+  body: string
+  buttonLabel: string
+  reservationUrl: string
+  imageUrl: string
+  footer: string
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('ja-JP', {
     year: 'numeric',
@@ -35,6 +37,15 @@ function formatDate(iso: string): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+  })
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
   })
 }
 
@@ -71,19 +82,23 @@ export default function TemplatesPage() {
   })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [showReservationCard, setShowReservationCard] = useState(false)
+  const [uploadingCardImage, setUploadingCardImage] = useState(false)
+  const [reservationCard, setReservationCard] = useState<ReservationCardForm>({
+    title: 'ブルーベリー予約はこちら',
+    body: '日付と時間を選んで、かんたんに予約できます。',
+    buttonLabel: '予約する',
+    reservationUrl: '',
+    imageUrl: '',
+    footer: 'アオニサイファーム',
+  })
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await api.templates.list(
-        selectedCategory !== 'all' ? selectedCategory : undefined
-      )
-      if (res.success) {
-        setTemplates(res.data)
-      } else {
-        setError(res.error)
-      }
+      const client = createLineHarnessClient()
+      setTemplates(await client.templates.list(selectedCategory !== 'all' ? selectedCategory : undefined))
     } catch {
       setError('テンプレートの読み込みに失敗しました。もう一度お試しください。')
     } finally {
@@ -115,19 +130,16 @@ export default function TemplatesPage() {
     setSaving(true)
     setFormError('')
     try {
-      const res = await api.templates.create({
+      const client = createLineHarnessClient()
+      await client.templates.create({
         name: form.name,
         category: form.category,
-        messageType: form.messageType,
+        messageType: form.messageType as 'text' | 'image' | 'flex',
         messageContent: form.messageContent,
       })
-      if (res.success) {
-        setShowCreate(false)
-        setForm({ name: '', category: '', messageType: 'text', messageContent: '' })
-        load()
-      } else {
-        setFormError(res.error)
-      }
+      setShowCreate(false)
+      setForm({ name: '', category: '', messageType: 'text', messageContent: '' })
+      await load()
     } catch {
       setFormError('作成に失敗しました')
     } finally {
@@ -138,10 +150,70 @@ export default function TemplatesPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('このテンプレートを削除してもよいですか？')) return
     try {
-      await api.templates.delete(id)
-      load()
+      const client = createLineHarnessClient()
+      await client.templates.delete(id)
+      await load()
     } catch {
       setError('削除に失敗しました')
+    }
+  }
+
+  const reservationCardJson = buildReservationFlexCard(reservationCard)
+  const canCreateReservationCard = Boolean(
+    reservationCard.title.trim() &&
+    reservationCard.body.trim() &&
+    reservationCard.buttonLabel.trim() &&
+    reservationCard.reservationUrl.trim().startsWith('https://')
+  )
+
+  const handleCreateReservationCard = async () => {
+    if (!canCreateReservationCard || saving) {
+      setFormError('タイトル、本文、ボタン名、https:// で始まる予約URLを入力してください')
+      return
+    }
+    setSaving(true)
+    setFormError('')
+    try {
+      const client = createLineHarnessClient()
+      await client.templates.create({
+        name: `予約導線カード - ${reservationCard.title.trim()}`,
+        category: '予約',
+        messageType: 'flex',
+        messageContent: reservationCardJson,
+      })
+      setShowReservationCard(false)
+      await load()
+    } catch {
+      setFormError('予約導線カードの作成に失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleReservationImageUpload = async (file: File | undefined) => {
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) {
+      setFormError('画像は PNG / JPEG / GIF / WebP を選択してください')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setFormError('画像は5MB以下にしてください')
+      return
+    }
+    setUploadingCardImage(true)
+    setFormError('')
+    try {
+      const client = createLineHarnessClient()
+      const uploaded = await client.images.upload({
+        data: await fileToDataUrl(file),
+        mimeType: file.type,
+        filename: file.name,
+      })
+      setReservationCard((prev) => ({ ...prev, imageUrl: uploaded.url }))
+    } catch {
+      setFormError('画像アップロードに失敗しました。R2 bindingとWorker URLを確認してください')
+    } finally {
+      setUploadingCardImage(false)
     }
   }
 
@@ -150,13 +222,21 @@ export default function TemplatesPage() {
       <Header
         title="テンプレート管理"
         action={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規テンプレート
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => { setShowReservationCard(true); setShowCreate(false) }}
+              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              予約導線カードを作成
+            </button>
+            <button
+              onClick={() => { setShowCreate(true); setShowReservationCard(false) }}
+              className="px-4 py-2 text-sm font-medium text-gray-700 rounded-lg bg-gray-100 hover:bg-gray-200"
+            >
+              + 新規テンプレート
+            </button>
+          </div>
         }
       />
 
@@ -164,6 +244,118 @@ export default function TemplatesPage() {
       {error && (
         <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
           {error}
+        </div>
+      )}
+
+      {showReservationCard && (
+        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800">予約導線カード設定</h2>
+              <p className="mt-1 text-xs text-gray-500">フォーム入力からLINE FlexカードJSONを作成し、テンプレートとして保存します。</p>
+            </div>
+            <button onClick={() => setShowReservationCard(false)} className="text-xs text-gray-500 hover:text-gray-700">閉じる</button>
+          </div>
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="space-y-4">
+              <Field label="カードタイトル">
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  value={reservationCard.title}
+                  onChange={(e) => setReservationCard({ ...reservationCard, title: e.target.value })}
+                />
+              </Field>
+              <Field label="説明文">
+                <textarea
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none"
+                  rows={3}
+                  value={reservationCard.body}
+                  onChange={(e) => setReservationCard({ ...reservationCard, body: e.target.value })}
+                />
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="ボタン表示">
+                  <input
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={reservationCard.buttonLabel}
+                    onChange={(e) => setReservationCard({ ...reservationCard, buttonLabel: e.target.value })}
+                  />
+                </Field>
+                <Field label="フッター">
+                  <input
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={reservationCard.footer}
+                    onChange={(e) => setReservationCard({ ...reservationCard, footer: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <Field label="予約URL">
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  placeholder="https://line-harness-reservation.../?page=book"
+                  value={reservationCard.reservationUrl}
+                  onChange={(e) => setReservationCard({ ...reservationCard, reservationUrl: e.target.value })}
+                />
+              </Field>
+              <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-blue-900">カード画像</p>
+                    <p className="mt-1 text-xs leading-5 text-blue-800">
+                      画像をR2に保存し、LINEが取得できる公開URLをカードに入れます。5MB以下のPNG/JPEG/GIF/WebPに対応します。
+                    </p>
+                  </div>
+                  {uploadingCardImage && <span className="shrink-0 text-xs text-blue-700">アップロード中...</span>}
+                </div>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  disabled={uploadingCardImage}
+                  onChange={(e) => void handleReservationImageUpload(e.target.files?.[0])}
+                  className="mt-3 block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-blue-700 disabled:opacity-50"
+                />
+                {reservationCard.imageUrl && (
+                  <div className="mt-3 rounded-lg border border-blue-100 bg-white p-3">
+                    <input readOnly value={reservationCard.imageUrl} className="w-full rounded border border-gray-200 px-2 py-1 font-mono text-xs text-gray-600" />
+                    <img src={reservationCard.imageUrl} alt="予約導線カード画像" className="mt-3 max-h-36 rounded-lg border border-gray-100 object-contain" />
+                  </div>
+                )}
+                <Field label="画像URLを直接指定する場合">
+                  <input
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    placeholder="https://..."
+                    value={reservationCard.imageUrl}
+                    onChange={(e) => setReservationCard({ ...reservationCard, imageUrl: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <details className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-gray-700">生成されるFlex JSONを確認</summary>
+                <textarea readOnly value={reservationCardJson} rows={10} className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-3 font-mono text-xs text-gray-700" />
+              </details>
+              {formError && <p className="text-xs text-red-600">{formError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCreateReservationCard}
+                  disabled={!canCreateReservationCard || saving}
+                  className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
+                  style={{ backgroundColor: '#06C755' }}
+                >
+                  {saving ? '作成中...' : 'テンプレート保存'}
+                </button>
+                <button
+                  onClick={() => setShowReservationCard(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium text-gray-600">プレビュー</p>
+              <FlexPreviewComponent content={reservationCardJson} maxWidth={320} />
+            </div>
+          </div>
         </div>
       )}
 
@@ -357,4 +549,62 @@ export default function TemplatesPage() {
       <CcPromptButton prompts={ccPrompts} />
     </div>
   )
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-medium text-gray-600 mb-1">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function buildReservationFlexCard(input: ReservationCardForm): string {
+  const title = input.title.trim() || '予約はこちら'
+  const body = input.body.trim() || '予約画面から日付と時間を選択してください。'
+  const buttonLabel = input.buttonLabel.trim() || '予約する'
+  const reservationUrl = input.reservationUrl.trim()
+  const footer = input.footer.trim()
+  const imageUrl = input.imageUrl.trim()
+
+  const bubble: Record<string, unknown> = {
+    type: 'bubble',
+    size: 'mega',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        { type: 'text', text: title, weight: 'bold', size: 'xl', wrap: true, color: '#1F4F7A' },
+        { type: 'text', text: body, size: 'sm', wrap: true, color: '#4B5563' },
+      ],
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          color: '#69A3D0',
+          action: { type: 'uri', label: buttonLabel, uri: reservationUrl || 'https://example.com' },
+        },
+        ...(footer ? [{ type: 'text', text: footer, size: 'xs', align: 'center', color: '#6B7280', wrap: true }] : []),
+      ],
+    },
+  }
+
+  if (imageUrl) {
+    bubble.hero = {
+      type: 'image',
+      url: imageUrl,
+      size: 'full',
+      aspectRatio: '20:13',
+      aspectMode: 'cover',
+    }
+  }
+
+  return JSON.stringify(bubble, null, 2)
 }

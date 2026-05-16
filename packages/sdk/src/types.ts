@@ -236,6 +236,31 @@ export interface CreateRichMenuInput {
   areas: RichMenuArea[]
 }
 
+// ─── Templates ──────────────────────────────────────────
+export interface Template {
+  id: string
+  name: string
+  category: string
+  messageType: MessageType
+  messageContent: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateTemplateInput {
+  name: string
+  category?: string
+  messageType: MessageType
+  messageContent: string
+}
+
+export interface UpdateTemplateInput {
+  name?: string
+  category?: string
+  messageType?: MessageType
+  messageContent?: string
+}
+
 // ─── Segment ─────────────────────────────────────────────
 export interface SegmentRule {
   type: 'tag_exists' | 'tag_not_exists' | 'metadata_equals' | 'metadata_not_equals' | 'ref_code' | 'is_following'
