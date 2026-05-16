@@ -32,7 +32,7 @@ async function shortFingerprint(value: SecretLike): Promise<string | null> {
 export async function authMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
   // Skip auth for the LINE webhook endpoint — it uses signature verification instead
   // Skip auth for OpenAPI docs — public documentation
-  const path = new URL(c.req.url).pathname;
+  const path = new URL(c.req.url).pathname.replace(/\/{2,}/g, '/');
   if (
     path === '/' ||
     path === '/book' ||

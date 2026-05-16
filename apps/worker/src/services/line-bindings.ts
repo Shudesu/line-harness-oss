@@ -30,5 +30,6 @@ export async function defaultLiffUrl(env: LineBindingEnv): Promise<string> {
 }
 
 export async function workerBaseUrl(env: LineBindingEnv, requestUrl?: string): Promise<string> {
-  return (await resolveBindingValue(env.WORKER_URL)) || (requestUrl ? new URL(requestUrl).origin : '');
+  const configured = (await resolveBindingValue(env.WORKER_URL)).replace(/\/+$/, '');
+  return configured || (requestUrl ? new URL(requestUrl).origin : '');
 }
