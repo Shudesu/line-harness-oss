@@ -7,8 +7,8 @@ import type { Menu, Slot } from './types.js';
 function availabilityMark(slots: Slot[] | undefined): { mark: string; className: string; label: string } {
   if (!slots || slots.length === 0) return { mark: '-', className: 'none', label: '未生成' };
   const best = Math.max(...slots.map((slot) => slot.available ? slot.lineRemainingCapacity : 0));
-  if (best >= 3) return { mark: '◎', className: 'many', label: `残り${best}` };
-  if (best >= 1) return { mark: '△', className: 'few', label: `残り${best}` };
+  if (best >= 3) return { mark: '◎', className: 'many', label: `残り${best}名` };
+  if (best >= 1) return { mark: '△', className: 'few', label: `残り${best}名` };
   return { mark: '×', className: 'full', label: '満席' };
 }
 
@@ -144,7 +144,7 @@ function renderBookingControls(): string {
       <div class="section-title-row">
         <div>
           <h2>予約内容</h2>
-          <p>${resource ? `${escapeHtml(resource.name)} / ` : ''}${menu ? `${escapeHtml(menu.name)} / ${menu.durationMinutes}分` : 'メニューを選択してください'}</p>
+          <p>${resource ? `${escapeHtml(resource.name)} / ` : ''}${menu ? escapeHtml(menu.name) : 'メニューを選択してください'}</p>
         </div>
       </div>
       ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
@@ -163,7 +163,7 @@ function renderBookingControls(): string {
         <select data-field="menuId">
           ${state.menus.length === 0 ? '<option value="">メニューがありません</option>' : state.menus.map((item) => `
             <option value="${escapeHtml(item.id)}" ${item.id === state.menuId ? 'selected' : ''}>
-              ${escapeHtml(item.name)}（${item.durationMinutes}分）
+              ${escapeHtml(item.name)}
             </option>
           `).join('')}
         </select>
@@ -317,6 +317,10 @@ function renderSelectedSlotSummary(): string {
       <div class="confirm-row">
         <span class="confirm-label">選択中</span>
         <span class="confirm-value">${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</span>
+      </div>
+      <div class="confirm-row">
+        <span class="confirm-label">LINE予約枠</span>
+        <span class="confirm-value">残り${slot.lineRemainingCapacity}名</span>
       </div>
     </section>
   `;
