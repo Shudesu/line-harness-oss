@@ -2,18 +2,16 @@ import { addDays, dateToString, formatDateJa, formatTime, isPastDate } from './d
 import { escapeHtml } from './html.js';
 import { selectedMenu, selectedResource, state } from './state.js';
 import { tokenForReservation } from './tokens.js';
-import type { Menu, Slot } from './types.js';
+import type { AvailabilitySummary, Menu, Slot } from './types.js';
 
-function lineRemaining(slot: Slot): number {
-  const value = Number(slot.lineRemainingCapacity);
-  return Number.isFinite(value) ? Math.max(0, value) : 0;
+function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; className: string; label: string } {
+  if (!summary || summary.slotCount === 0) return { mark: '-', className: 'none', label: '未生成' };
+  if (summary.available) return { mark: '◎', className: 'many', label: '予約可' };
+  return { mark: '×', className: 'full', label: '満席' };
 }
 
-function availabilityMark(slots: Slot[] | undefined): { mark: string; className: string; label: string } {
-  if (!slots || slots.length === 0) return { mark: '-', className: 'none', label: '未生成' };
-  const best = Math.max(...slots.map((slot) => slot.available ? lineRemaining(slot) : 0));
-  if (best >= 3) return { mark: '◎', className: 'many', label: `残り${best}名` };
-  if (best >= 1) return { mark: '△', className: 'few', label: `残り${best}名` };
+function slotMark(slot: Slot): { mark: string; className: string; label: string } {
+  if (slot.available) return { mark: '◎', className: 'many', label: '予約可' };
   return { mark: '×', className: 'full', label: '満席' };
 }
 
@@ -132,7 +130,7 @@ function renderBooking(): string {
   return `
     ${renderBookingControls()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
-    ${state.viewMode === 'month' ? renderSlots() : ''}
+    ${renderSlots()}
     ${renderSelectedSlotSummary()}
     ${renderInputForm()}
     <div class="booking-actions">
@@ -204,7 +202,6 @@ function renderPeopleStepper(field: 'adultCount' | 'childCount' | 'infantCount',
 
 function renderWeekAvailability(): string {
   const days = Array.from({ length: 7 }, (_, index) => addDays(state.weekStart, index));
-  const timeLabels = Array.from(new Set(days.flatMap((day) => (state.slotsByDate[dateToString(day)] ?? []).map((slot) => formatTime(slot.startAt))))).sort();
 
   return `
     <section class="booking-panel availability-panel">
@@ -217,19 +214,17 @@ function renderWeekAvailability(): string {
         <button type="button" class="cal-nav" data-action="next-week">&gt;</button>
       </div>
       ${state.loadingSlots ? '<div class="slots-loading"><div class="loading-spinner"></div><p>空き枠を確認中...</p></div>' : ''}
-      <div class="week-matrix">
-        <div class="week-cell week-head">時間</div>
-        ${days.map((day) => `<div class="week-cell week-day">${day.getMonth() + 1}/${day.getDate()}<small>${['日', '月', '火', '水', '木', '金', '土'][day.getDay()]}</small></div>`).join('')}
-        ${timeLabels.length === 0 ? '<div class="week-empty">表示できる予約枠がありません</div>' : timeLabels.map((time) => {
+      <div class="month-grid week-date-grid">
+        ${days.map((day) => {
+          const date = dateToString(day);
+          const mark = summaryMark(state.availabilityByDate[date]);
+          const disabled = isPastDate(date);
           return `
-            <div class="week-cell week-time">${time}</div>
-            ${days.map((day) => {
-              const date = dateToString(day);
-              const slot = (state.slotsByDate[date] ?? []).find((item) => formatTime(item.startAt) === time);
-              if (!slot) return '<div class="week-cell mark none">-</div>';
-              const mark = availabilityMark([slot]);
-              return `<button type="button" class="week-cell mark ${mark.className} ${state.selectedSlot?.slotId === slot.slotId ? 'selected' : ''}" ${slot.available ? `data-action="select-slot" data-slot-id="${escapeHtml(slot.slotId)}"` : 'disabled'}><span>${mark.mark}</span><small>${escapeHtml(mark.label)}</small></button>`;
-            }).join('')}
+            <button type="button" class="month-day ${mark.className} ${state.selectedDate === date ? 'selected' : ''}" ${disabled ? 'disabled' : `data-action="select-date" data-date="${date}"`}>
+              <strong>${day.getMonth() + 1}/${day.getDate()}</strong>
+              <span>${disabled ? '-' : mark.mark}</span>
+              <small>${disabled ? '終了' : escapeHtml(mark.label)}</small>
+            </button>
           `;
         }).join('')}
       </div>
@@ -261,7 +256,7 @@ function renderMonthAvailability(): string {
         ${Array.from({ length: daysInMonth }, (_, index) => {
           const day = index + 1;
           const date = dateToString(new Date(state.currentYear, state.currentMonth, day));
-          const mark = availabilityMark(state.slotsByDate[date]);
+          const mark = summaryMark(state.availabilityByDate[date]);
           const disabled = isPastDate(date);
           return `
             <button type="button" class="month-day ${mark.className} ${state.selectedDate === date ? 'selected' : ''}" ${disabled ? 'disabled' : `data-action="select-date" data-date="${date}"`}>
@@ -287,6 +282,14 @@ function renderSlots(): string {
   }
 
   const slots = state.slotsByDate[state.selectedDate] ?? [];
+  if (state.loadingSlots && slots.length === 0) {
+    return `
+      <section class="booking-panel">
+        <h2>${formatDateJa(state.selectedDate)}</h2>
+        <div class="slots-loading"><div class="loading-spinner"></div><p>時間枠を確認中...</p></div>
+      </section>
+    `;
+  }
   if (slots.length === 0) {
     return `
       <section class="booking-panel">
@@ -301,7 +304,7 @@ function renderSlots(): string {
       <h2>${formatDateJa(state.selectedDate)}</h2>
       <div class="slots-grid">
         ${slots.map((slot) => {
-          const mark = availabilityMark([slot]);
+          const mark = slotMark(slot);
           return `
             <button type="button" class="slot-btn ${slot.available ? 'available' : 'full'} ${state.selectedSlot?.slotId === slot.slotId ? 'selected' : ''}" ${slot.available ? `data-action="select-slot" data-slot-id="${escapeHtml(slot.slotId)}"` : 'disabled'}>
               <strong>${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</strong>
@@ -322,10 +325,6 @@ function renderSelectedSlotSummary(): string {
       <div class="confirm-row">
         <span class="confirm-label">選択中</span>
         <span class="confirm-value">${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</span>
-      </div>
-      <div class="confirm-row">
-        <span class="confirm-label">予約枠</span>
-        <span class="confirm-value">残り${lineRemaining(slot)}名</span>
       </div>
     </section>
   `;

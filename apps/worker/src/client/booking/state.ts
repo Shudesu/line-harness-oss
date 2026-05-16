@@ -21,6 +21,7 @@ export const state: BookingState = {
   selectedDate: null,
   selectedSlot: null,
   slotsByDate: {},
+  availabilityByDate: {},
   profile: null,
   friendId: null,
   userId: null,

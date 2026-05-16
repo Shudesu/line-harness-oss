@@ -78,6 +78,111 @@ publicReservations.get('/api/public/reservation-resources/:resourceId/menus', as
   }
 });
 
+function isDateString(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
+}
+
+function addDateString(date: string, amount: number): string {
+  const d = new Date(`${date}T00:00:00`);
+  d.setDate(d.getDate() + amount);
+  return d.toISOString().slice(0, 10);
+}
+
+function daysBetweenInclusive(dateFrom: string, dateTo: string): number {
+  const from = new Date(`${dateFrom}T00:00:00`).getTime();
+  const to = new Date(`${dateTo}T00:00:00`).getTime();
+  return Math.floor((to - from) / 86_400_000) + 1;
+}
+
+publicReservations.get('/api/public/reservation-resources/:resourceId/availability-summary', async (c) => {
+  try {
+    const resourceId = c.req.param('resourceId');
+    const dateFrom = queryRequired(c, 'dateFrom');
+    if (!dateFrom.ok) return jsonError(c, dateFrom.error.code, dateFrom.error.status, dateFrom.error.message);
+    const dateTo = queryRequired(c, 'dateTo');
+    if (!dateTo.ok) return jsonError(c, dateTo.error.code, dateTo.error.status, dateTo.error.message);
+    if (!isDateString(dateFrom.value) || !isDateString(dateTo.value) || dateFrom.value > dateTo.value) {
+      return jsonError(c, 'bad_request', 400, 'dateFrom/dateTo are invalid');
+    }
+    const dayCount = daysBetweenInclusive(dateFrom.value, dateTo.value);
+    if (dayCount > 45) return jsonError(c, 'bad_request', 400, 'date range is too large');
+
+    const resource = await getReservationResourceById(c.env.DB, resourceId);
+    if (!resource || resource.is_active !== 1) return jsonError(c, 'not_found', 404, 'Resource not found');
+
+    const menuId = c.req.query('menuId');
+    const menu = menuId ? await getReservationMenuById(c.env.DB, menuId) : null;
+    if (menuId && (!menu || menu.resource_id !== resourceId || menu.is_active !== 1)) {
+      return jsonError(c, 'not_found', 404, 'Menu not found');
+    }
+    const requestedPeople = menu
+      ? calculateReservationPeople(menu, {
+        adultCount: queryPositiveInt(c, 'adultCount', queryPositiveInt(c, 'people', 1)),
+        childCount: queryPositiveInt(c, 'childCount', 0),
+        infantCount: queryPositiveInt(c, 'infantCount', 0),
+      }).capacityPeople
+      : queryPositiveInt(c, 'people', 1);
+
+    const rows = (
+      await c.env.DB
+        .prepare(
+          `SELECT * FROM reservation_slots
+           WHERE resource_id = ?
+             AND date >= ?
+             AND date <= ?
+           ORDER BY start_at ASC`,
+        )
+        .bind(resourceId, dateFrom.value, dateTo.value)
+        .all()
+    ).results as Array<{
+      id: string;
+      resource_id: string;
+      date: string;
+      start_at: string;
+      end_at: string;
+      total_capacity: number;
+      line_capacity: number | null;
+      external_capacity: number | null;
+      buffer_capacity: number;
+      reserved_count: number;
+      line_reserved_count: number;
+      external_reserved_count: number;
+      status: string;
+      note: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+    const byDate = new Map<string, { slotCount: number; availableSlotCount: number }>();
+    for (const slot of rows) {
+      const current = byDate.get(slot.date) ?? { slotCount: 0, availableSlotCount: 0 };
+      current.slotCount += 1;
+      const availability = getReservationSlotAvailability({
+        ...slot,
+        line_capacity: slot.line_capacity ?? resource.default_line_capacity ?? null,
+        external_capacity: slot.external_capacity ?? resource.default_external_capacity ?? null,
+      }, requestedPeople);
+      if (availability.available) current.availableSlotCount += 1;
+      byDate.set(slot.date, current);
+    }
+
+    const data = Array.from({ length: dayCount }, (_, index) => {
+      const date = addDateString(dateFrom.value, index);
+      const summary = byDate.get(date) ?? { slotCount: 0, availableSlotCount: 0 };
+      return {
+        date,
+        available: summary.availableSlotCount > 0,
+        slotCount: summary.slotCount,
+        availableSlotCount: summary.availableSlotCount,
+      };
+    });
+    return jsonOk(c, data);
+  } catch (err) {
+    console.error('GET /api/public/reservation-resources/:resourceId/availability-summary error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
 publicReservations.get('/api/public/reservation-resources/:resourceId/slots', async (c) => {
   try {
     const resourceId = c.req.param('resourceId');

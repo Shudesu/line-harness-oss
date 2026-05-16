@@ -14,6 +14,13 @@ export interface Slot {
   available: boolean;
 }
 
+export interface AvailabilitySummary {
+  date: string;
+  available: boolean;
+  slotCount: number;
+  availableSlotCount: number;
+}
+
 export interface Resource {
   id: string;
   name: string;
@@ -95,6 +102,7 @@ export interface BookingState {
   selectedDate: string | null;
   selectedSlot: Slot | null;
   slotsByDate: Record<string, Slot[]>;
+  availabilityByDate: Record<string, AvailabilitySummary>;
   profile: { userId: string; displayName: string; pictureUrl?: string } | null;
   friendId: string | null;
   userId: string | null;

@@ -1,13 +1,24 @@
-import type { Menu, Reservation, ReservationAccessTokens, Resource, Slot } from './types.js';
+import type { AvailabilitySummary, Menu, Reservation, ReservationAccessTokens, Resource, Slot } from './types.js';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function apiJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+  let res: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
+    if (res.status !== 429) break;
+    const retryAfter = Number.parseInt(res.headers.get('Retry-After') ?? '', 10);
+    await sleep(Number.isFinite(retryAfter) ? retryAfter * 1000 : 500 * (attempt + 1));
+  }
+  if (!res) throw new Error('API request failed');
   const json = await res.json().catch(() => null) as { success?: boolean; data?: T; error?: string; code?: string } | null;
   if (!res.ok || !json?.success) {
     throw new Error(json?.error || json?.code || `API request failed: ${res.status}`);
@@ -48,6 +59,30 @@ export function listSlots(input: {
   if (input.childCount !== undefined) query.set('childCount', String(Math.max(0, input.childCount)));
   if (input.infantCount !== undefined) query.set('infantCount', String(Math.max(0, input.infantCount)));
   return apiJson<Slot[]>(`/api/public/reservation-resources/${encodeURIComponent(input.resourceId)}/slots?${query}`);
+}
+
+export function listAvailabilitySummary(input: {
+  resourceId: string;
+  menuId: string;
+  dateFrom: string;
+  dateTo: string;
+  people: number;
+  adultCount?: number;
+  childCount?: number;
+  infantCount?: number;
+}) {
+  const query = new URLSearchParams({
+    dateFrom: input.dateFrom,
+    dateTo: input.dateTo,
+    menuId: input.menuId,
+    people: String(Math.max(1, input.people)),
+  });
+  if (input.adultCount !== undefined) query.set('adultCount', String(Math.max(0, input.adultCount)));
+  if (input.childCount !== undefined) query.set('childCount', String(Math.max(0, input.childCount)));
+  if (input.infantCount !== undefined) query.set('infantCount', String(Math.max(0, input.infantCount)));
+  return apiJson<AvailabilitySummary[]>(
+    `/api/public/reservation-resources/${encodeURIComponent(input.resourceId)}/availability-summary?${query}`,
+  );
 }
 
 export function createReservation(input: {

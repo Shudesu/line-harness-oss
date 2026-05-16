@@ -10,6 +10,7 @@ import {
   createReservation,
   createReservationSession,
   issueReservationTokens,
+  listAvailabilitySummary,
   listMyReservations,
   listMenus,
   listResources,
@@ -20,7 +21,11 @@ import { getApp } from './booking/html.js';
 import { renderError, renderHeader, renderScreen } from './booking/render.js';
 import { selectedMenu, state, totalPeople, UUID_STORAGE_KEY } from './booking/state.js';
 import { storeReservationTokens, storeTokensForReservation, tokenForReservation } from './booking/tokens.js';
-import type { Slot } from './booking/types.js';
+import type { AvailabilitySummary, Slot } from './booking/types.js';
+
+const SLOT_CACHE_TTL_MS = 30_000;
+const slotCache = new Map<string, { slots: Slot[]; expiresAt: number }>();
+const summaryCache = new Map<string, { summaries: Record<string, AvailabilitySummary>; expiresAt: number }>();
 
 declare const liff: {
   getProfile(): Promise<{ userId: string; displayName: string; pictureUrl?: string }>;
@@ -156,6 +161,9 @@ function handleField(field: string, value: string): void {
     ensurePeopleWithinSelectedMenu();
     state.selectedDate = null;
     state.selectedSlot = null;
+    state.slotsByDate = {};
+    state.availabilityByDate = {};
+    summaryCache.clear();
     void loadVisibleAvailability();
     render();
     return;
@@ -164,6 +172,8 @@ function handleField(field: string, value: string): void {
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
     state.selectedSlot = null;
+    state.slotsByDate = {};
+    state.availabilityByDate = {};
     void loadVisibleAvailability();
     render();
     return;
@@ -301,6 +311,7 @@ function selectDate(date: string): void {
   state.selectedDate = date;
   state.selectedSlot = null;
   render();
+  void loadSlotsForSelectedDate();
 }
 
 function selectSlot(slotId: string): void {
@@ -360,6 +371,9 @@ async function changeResource(resourceId: string): Promise<void> {
   state.selectedDate = null;
   state.selectedSlot = null;
   state.slotsByDate = {};
+  state.availabilityByDate = {};
+  slotCache.clear();
+  summaryCache.clear();
   state.loadingSlots = true;
   render();
   try {
@@ -377,6 +391,19 @@ async function fetchSlots(date: string): Promise<Slot[]> {
   if (!state.resourceId || !state.menuId) return [];
   const resourceId = state.resourceId;
   const menuId = state.menuId;
+  const cacheKey = [
+    resourceId,
+    menuId,
+    date,
+    state.form.adultCount,
+    state.form.childCount,
+    state.form.infantCount,
+  ].join(':');
+  const cached = slotCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    state.slotsByDate[date] = cached.slots;
+    return cached.slots;
+  }
   const slots = await listSlots({
     resourceId,
     menuId,
@@ -388,8 +415,19 @@ async function fetchSlots(date: string): Promise<Slot[]> {
   });
   if (state.resourceId === resourceId && state.menuId === menuId) {
     state.slotsByDate[date] = slots;
+    slotCache.set(cacheKey, { slots, expiresAt: Date.now() + SLOT_CACHE_TTL_MS });
   }
   return slots;
+}
+
+function visibleDateRange(): { dateFrom: string; dateTo: string; dates: string[] } {
+  if (state.viewMode === 'week') {
+    const dates = Array.from({ length: 7 }, (_, index) => dateToString(addDays(state.weekStart, index)));
+    return { dateFrom: dates[0], dateTo: dates[dates.length - 1], dates };
+  }
+  const daysInMonth = new Date(state.currentYear, state.currentMonth + 1, 0).getDate();
+  const dates = Array.from({ length: daysInMonth }, (_, index) => dateToString(new Date(state.currentYear, state.currentMonth, index + 1)));
+  return { dateFrom: dates[0], dateTo: dates[dates.length - 1], dates };
 }
 
 async function loadVisibleAvailability(): Promise<void> {
@@ -398,20 +436,60 @@ async function loadVisibleAvailability(): Promise<void> {
   state.loadingSlots = true;
   render();
   try {
-    const dates = state.viewMode === 'week'
-      ? Array.from({ length: 7 }, (_, index) => dateToString(addDays(state.weekStart, index)))
-      : Array.from({ length: new Date(state.currentYear, state.currentMonth + 1, 0).getDate() }, (_, index) => dateToString(new Date(state.currentYear, state.currentMonth, index + 1)));
+    const { dateFrom, dateTo, dates } = visibleDateRange();
     if (state.selectedDate && !dates.includes(state.selectedDate)) {
       state.selectedDate = null;
       state.selectedSlot = null;
     }
-    await Promise.all(dates.filter((date) => !isPastDate(date)).map((date) => fetchSlots(date).catch(() => [])));
+    const cacheKey = [
+      state.resourceId,
+      state.menuId,
+      dateFrom,
+      dateTo,
+      state.form.adultCount,
+      state.form.childCount,
+      state.form.infantCount,
+    ].join(':');
+    const cachedSummary = summaryCache.get(cacheKey);
+    if (cachedSummary && cachedSummary.expiresAt > Date.now()) {
+      state.availabilityByDate = cachedSummary.summaries;
+    } else {
+      const summary = await listAvailabilitySummary({
+        resourceId: state.resourceId,
+        menuId: state.menuId,
+        dateFrom,
+        dateTo,
+        people: totalPeople(),
+        adultCount: state.form.adultCount,
+        childCount: state.form.childCount,
+        infantCount: state.form.infantCount,
+      });
+      if (requestId === state.availabilityRequestId) {
+        const summaries = Object.fromEntries(summary.map((item) => [item.date, item]));
+        state.availabilityByDate = summaries;
+        summaryCache.set(cacheKey, { summaries, expiresAt: Date.now() + SLOT_CACHE_TTL_MS });
+      }
+    }
     if (state.selectedSlot) {
       const updated = (state.slotsByDate[state.selectedSlot.date] ?? []).find((s) => s.slotId === state.selectedSlot!.slotId);
       if (!updated || !updated.available) {
         state.selectedSlot = null;
       }
     }
+  } finally {
+    if (requestId !== state.availabilityRequestId) return;
+    state.loadingSlots = false;
+    render();
+  }
+}
+
+async function loadSlotsForSelectedDate(): Promise<void> {
+  if (!state.selectedDate) return;
+  const requestId = ++state.availabilityRequestId;
+  state.loadingSlots = true;
+  render();
+  try {
+    await fetchSlots(state.selectedDate);
   } finally {
     if (requestId !== state.availabilityRequestId) return;
     state.loadingSlots = false;
@@ -454,6 +532,9 @@ async function submitBooking(): Promise<void> {
     state.selectedReservation = reservation;
     state.screen = 'success';
     state.slotsByDate = {};
+    state.availabilityByDate = {};
+    slotCache.clear();
+    summaryCache.clear();
     await loadVisibleAvailability();
   } catch (err) {
     state.submitting = false;
