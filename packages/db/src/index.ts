@@ -9,6 +9,7 @@ export * from './conversions';
 export * from './affiliates';
 export * from './webhooks';
 export * from './calendar';
+export * from './gmail-imports';
 export * from './reminders';
 export * from './scoring';
 export * from './templates';

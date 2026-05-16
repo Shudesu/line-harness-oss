@@ -102,7 +102,7 @@ function parseTime(text: string): string | null {
 }
 
 function parseEndTime(text: string): string | null {
-  const match = text.match(/利用日時\s*[:：]?.*?\d{1,2}:\d{2}\s*[~～-]\s*(\d{1,2}):(\d{2})/);
+  const match = text.match(/利用日時\s*[:：]?.*?\d{1,2}:\d{2}\s*[~～〜－-]\s*(\d{1,2}):(\d{2})/);
   if (!match) return null;
   return `${match[1].padStart(2, '0')}:${match[2].padStart(2, '0')}`;
 }
@@ -113,7 +113,7 @@ function parseTotalPeople(text: string): number | null {
 }
 
 function parseAdultCount(text: string): number | null {
-  return parsePeopleCount(text, ['大人\\(中学生～\\)', '大人', 'おとな', 'adult']);
+  return parsePeopleCount(text, ['大人\\(中学生[~～〜]\\)', '大人', 'おとな', 'adult']);
 }
 
 function parseChildCount(text: string): number | null {
@@ -131,7 +131,7 @@ function parseInfantCount(text: string): number | null {
   const details = firstMatch(text, [/人数\s*[:：]?.*?\((.+?)\)/]);
   const target = details ?? text;
   const counts = [
-    parsePeopleCount(target, ['幼児\\(4歳～\\)', '幼児']),
+    parsePeopleCount(target, ['幼児\\(4歳[~～〜]\\)', '幼児']),
     parsePeopleCount(target, ['3歳以下']),
   ];
   const found = counts.filter((count): count is number => count !== null);
@@ -140,7 +140,7 @@ function parseInfantCount(text: string): number | null {
 
 function parsePeopleCount(text: string, labels: string[]): number | null {
   for (const label of labels) {
-    const pattern = new RegExp(`${label}\\s*[:：]?\\s*(\\d+)\\s*(?:名|人)?`, 'i');
+    const pattern = new RegExp(`${label}(?:\\([^)]*\\))?\\s*[:：]?\\s*(\\d+)\\s*(?:名|人)?`, 'i');
     const match = text.match(pattern);
     if (match?.[1]) return Number.parseInt(match[1], 10);
   }

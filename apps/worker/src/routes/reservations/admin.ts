@@ -548,6 +548,80 @@ adminReservations.put('/api/reservations/:id/status', async (c) => {
   }
 });
 
+adminReservations.get('/api/reservations/maintenance/orphaned', async (c) => {
+  try {
+    const limit = queryPositiveInt(c, 'limit', 100);
+    const items = await listOrphanedActiveReservations(c.env.DB, limit);
+    return jsonOk(c, {
+      count: items.length,
+      reservations: items.map((item) => ({
+        reason: item.orphan_reason,
+        resourceId: item.orphan_resource_id,
+        resourceName: item.orphan_resource_name,
+        reservation: toReservationResponse(item),
+      })),
+    });
+  } catch (err) {
+    console.error('GET /api/reservations/maintenance/orphaned error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+adminReservations.post('/api/reservations/maintenance/orphaned/cancel', async (c) => {
+  try {
+    const json = await readOptionalJsonObjectForMaintenance(c);
+    if (!json.ok) return jsonError(c, 'bad_request', 400, json.error);
+    const limit = typeof json.value.limit === 'number' && Number.isFinite(json.value.limit)
+      ? Math.min(Math.max(Math.floor(json.value.limit), 1), 500)
+      : 100;
+    const dryRun = json.value.dryRun === true;
+    const items = await listOrphanedActiveReservations(c.env.DB, limit);
+    if (dryRun) {
+      return jsonOk(c, {
+        dryRun,
+        count: items.length,
+        cancelled: 0,
+        failed: 0,
+        reservations: items.map((item) => ({
+          reason: item.orphan_reason,
+          reservation: toReservationResponse(item),
+        })),
+      });
+    }
+
+    const cancelled: Array<{ id: string; changed: boolean }> = [];
+    const failed: Array<{ id: string; reason: string }> = [];
+    for (const item of items) {
+      const result = await updateReservationStatus(c.env.DB, item.id, {
+        status: 'cancelled',
+        reason: `maintenance_orphaned_${item.orphan_reason}`,
+        actorType: 'admin',
+        actorId: c.get('staff')?.id ?? null,
+      });
+      if (!result.ok) {
+        failed.push({ id: item.id, reason: result.reason });
+        continue;
+      }
+      cancelled.push({ id: item.id, changed: result.changed });
+      if (result.changed) {
+        c.executionCtx.waitUntil(syncReservationCancelledToGoogleCalendar(c.env.DB, result.reservation, c.env));
+      }
+    }
+
+    return jsonOk(c, {
+      dryRun,
+      scanned: items.length,
+      cancelled: cancelled.length,
+      failed: failed.length,
+      items: cancelled,
+      errors: failed,
+    });
+  } catch (err) {
+    console.error('POST /api/reservations/maintenance/orphaned/cancel error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
 adminReservations.get('/api/external-reservation-sources', async (c) => {
   try {
     const sources = await listExternalReservationSources(c.env.DB, {
@@ -624,7 +698,10 @@ adminReservations.get('/api/reservations/google-calendar/oauth-url', async (c) =
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', 'https://www.googleapis.com/auth/calendar.events');
+    url.searchParams.set('scope', [
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/gmail.modify',
+    ].join(' '));
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');
     url.searchParams.set('state', state);
@@ -634,5 +711,52 @@ adminReservations.get('/api/reservations/google-calendar/oauth-url', async (c) =
     return jsonError(c, 'internal_error', 500);
   }
 });
+
+type OrphanedReservationRow = Awaited<ReturnType<typeof listReservations>>[number] & {
+  orphan_reason: 'slot_missing' | 'resource_missing' | 'resource_inactive';
+  orphan_resource_id: string | null;
+  orphan_resource_name: string | null;
+};
+
+async function listOrphanedActiveReservations(db: D1Database, limit: number): Promise<OrphanedReservationRow[]> {
+  const capped = Math.min(Math.max(Math.floor(limit), 1), 500);
+  const result = await db
+    .prepare(
+      `SELECT r.*,
+              (SELECT SUM(amount) FROM reservation_items WHERE reservation_id = r.id) AS total_amount,
+              CASE
+                WHEN s.id IS NULL THEN 'slot_missing'
+                WHEN rr.id IS NULL THEN 'resource_missing'
+                ELSE 'resource_inactive'
+              END AS orphan_reason,
+              s.resource_id AS orphan_resource_id,
+              rr.name AS orphan_resource_name
+       FROM reservations r
+       LEFT JOIN reservation_slots s ON s.id = r.slot_id
+       LEFT JOIN reservation_resources rr ON rr.id = s.resource_id
+       WHERE r.status IN ('pending', 'confirmed')
+         AND (s.id IS NULL OR rr.id IS NULL OR rr.is_active = 0)
+       ORDER BY r.reservation_date ASC, r.start_at ASC, r.created_at ASC
+       LIMIT ?`,
+    )
+    .bind(capped)
+    .all<OrphanedReservationRow>();
+  return result.results;
+}
+
+async function readOptionalJsonObjectForMaintenance(
+  c: Parameters<typeof jsonOk>[0],
+): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; error: string }> {
+  try {
+    const body = await c.req.json<unknown>();
+    if (body === null || body === undefined) return { ok: true, value: {} };
+    if (typeof body !== 'object' || Array.isArray(body)) {
+      return { ok: false, error: 'Request body must be a JSON object' };
+    }
+    return { ok: true, value: body as Record<string, unknown> };
+  } catch {
+    return { ok: true, value: {} };
+  }
+}
 
 export { adminReservations };

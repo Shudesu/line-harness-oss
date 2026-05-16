@@ -1,14 +1,26 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import type {
   ApiResponse,
   ExternalReservationSourceResponse,
+  ReservationMenu,
   ReservationResource,
   ReservationResponse,
   ReservationSlotWithAvailability,
 } from '@line-crm/shared'
-import { api, fetchApi, type ApiBroadcast, type ApiCalendarConnection, type CalendarSyncResult } from '@/lib/api'
+import {
+  api,
+  fetchApi,
+  type ApiBroadcast,
+  type ApiCalendarConnection,
+  type ApiGmailImportRule,
+  type ApiGmailImportRun,
+  type ApiGmailImportRunResult,
+  type ApiGmailLabel,
+  type CalendarSyncResult,
+} from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 
 type Tab = 'reservations' | 'chats' | 'jalan' | 'broadcasts' | 'calendar'
@@ -36,6 +48,20 @@ type ExternalSource = ExternalReservationSourceResponse & {
   parsedPayload?: string | null
   externalReservationId?: string | null
   dedupeKey?: string | null
+}
+
+type GmailRuleDraft = {
+  connectionId: string
+  name: string
+  fromEmail: string
+  query: string
+  unprocessedLabelId: string
+  processedLabelId: string
+  reviewLabelId: string
+  failedLabelId: string
+  resourceId: string
+  menuId: string
+  maxResults: number
 }
 
 const tabs: Array<{ key: Tab; label: string; hint: string }> = [
@@ -143,6 +169,7 @@ export default function ReservationOpsPage() {
   const [tab, setTab] = useState<Tab>('reservations')
   const [date, setDate] = useState(toYmd(new Date()))
   const [resources, setResources] = useState<ReservationResource[]>([])
+  const [menusByResource, setMenusByResource] = useState<Record<string, ReservationMenu[]>>({})
   const [resourceId, setResourceId] = useState('')
   const [slots, setSlots] = useState<ReservationSlotWithAvailability[]>([])
   const [reservations, setReservations] = useState<ReservationResponse[]>([])
@@ -155,6 +182,23 @@ export default function ReservationOpsPage() {
   const [broadcasts, setBroadcasts] = useState<ApiBroadcast[]>([])
   const [calendarConnections, setCalendarConnections] = useState<ApiCalendarConnection[]>([])
   const [calendarId, setCalendarId] = useState('primary')
+  const [gmailLabels, setGmailLabels] = useState<ApiGmailLabel[]>([])
+  const [gmailImportRules, setGmailImportRules] = useState<ApiGmailImportRule[]>([])
+  const [gmailImportRuns, setGmailImportRuns] = useState<ApiGmailImportRun[]>([])
+  const [gmailLastRun, setGmailLastRun] = useState<ApiGmailImportRunResult | null>(null)
+  const [gmailRuleDraft, setGmailRuleDraft] = useState<GmailRuleDraft>({
+    connectionId: '',
+    name: 'じゃらん予約メール',
+    fromEmail: 'reservation@activityboard.jp',
+    query: 'newer_than:30d subject:予約',
+    unprocessedLabelId: '',
+    processedLabelId: '',
+    reviewLabelId: '',
+    failedLabelId: '',
+    resourceId: '',
+    menuId: '',
+    maxResults: 10,
+  })
   const [broadcastDraft, setBroadcastDraft] = useState({ title: '', messageContent: '' })
   const [imageUrl, setImageUrl] = useState('')
   const [uploadingImage, setUploadingImage] = useState(false)
@@ -168,6 +212,7 @@ export default function ReservationOpsPage() {
   const unreadChats = chats.filter((chat) => chat.status === 'unread')
   const draftBroadcasts = broadcasts.filter((broadcast) => broadcast.status === 'draft' || broadcast.status === 'scheduled')
   const activeCalendarConnections = calendarConnections.filter((connection) => connection.isActive)
+  const activeGmailImportRules = gmailImportRules.filter((rule) => rule.isActive)
 
   const reservationsBySlot = useMemo(() => {
     const grouped = new Map<string, ReservationResponse[]>()
@@ -183,6 +228,11 @@ export default function ReservationOpsPage() {
     const resolvedResourceId = nextResourceId || allResources.find((resource) => resource.isActive)?.id || allResources[0]?.id || ''
     setResources(allResources)
     setResourceId(resolvedResourceId)
+    const menuEntries = await Promise.all(allResources.map(async (resource) => {
+      const menus = await apiData<ReservationMenu[]>(`/api/reservation-resources/${encodeURIComponent(resource.id)}/menus`)
+      return [resource.id, menus] as const
+    }))
+    setMenusByResource(Object.fromEntries(menuEntries))
     const [nextReservations, nextSlots] = await Promise.all([
       apiData<ReservationResponse[]>(`/api/reservations?date=${encodeURIComponent(nextDate)}`),
       resolvedResourceId
@@ -222,17 +272,28 @@ export default function ReservationOpsPage() {
     else throw new Error(res.error)
   }, [])
 
+  const loadGmailImports = useCallback(async () => {
+    const [rules, runs] = await Promise.all([
+      api.gmailImports.listRules(),
+      api.gmailImports.listRuns({ limit: 10 }),
+    ])
+    if (!rules.success) throw new Error(rules.error)
+    if (!runs.success) throw new Error(runs.error)
+    setGmailImportRules(rules.data)
+    setGmailImportRuns(runs.data)
+  }, [])
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadCalendarConnections()])
+      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadCalendarConnections(), loadGmailImports()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '読み込みに失敗しました')
     } finally {
       setLoading(false)
     }
-  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadCalendarConnections])
+  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadCalendarConnections, loadGmailImports])
 
   useEffect(() => {
     loadAll()
@@ -283,6 +344,69 @@ export default function ReservationOpsPage() {
         body: JSON.stringify({ parseStatus: 'ignored', lastError: null }),
       })
     }, '外部取り込みを確認済みにしました')
+  }
+
+  const loadGmailLabels = async (connectionId = gmailRuleDraft.connectionId) => {
+    if (!connectionId) {
+      setError('先にGoogle接続を選択してください')
+      return
+    }
+    setSaving(true)
+    setNotice('')
+    setError('')
+    try {
+      const res = await api.gmailImports.labels(connectionId)
+      if (!res.success) throw new Error(res.error)
+      setGmailLabels(res.data)
+      setNotice('Gmailラベルを取得しました')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gmailラベルの取得に失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const createGmailImportRule = async () => {
+    await runAction(async () => {
+      if (!gmailRuleDraft.connectionId) throw new Error('Google接続を選択してください')
+      if (!gmailRuleDraft.unprocessedLabelId || !gmailRuleDraft.processedLabelId || !gmailRuleDraft.reviewLabelId || !gmailRuleDraft.failedLabelId) {
+        throw new Error('未処理/処理済み/要確認/失敗のGmailラベルを選択してください')
+      }
+      if (!gmailRuleDraft.resourceId || !gmailRuleDraft.menuId) {
+        throw new Error('取り込み先の予約対象とメニューを選択してください')
+      }
+      const res = await api.gmailImports.createRule({
+        connectionId: gmailRuleDraft.connectionId,
+        name: gmailRuleDraft.name.trim() || 'じゃらん予約メール',
+        fromEmail: gmailRuleDraft.fromEmail.trim() || null,
+        query: gmailRuleDraft.query.trim() || null,
+        unprocessedLabelId: gmailRuleDraft.unprocessedLabelId,
+        processedLabelId: gmailRuleDraft.processedLabelId,
+        reviewLabelId: gmailRuleDraft.reviewLabelId,
+        failedLabelId: gmailRuleDraft.failedLabelId,
+        resourceId: gmailRuleDraft.resourceId,
+        menuId: gmailRuleDraft.menuId,
+        maxResults: gmailRuleDraft.maxResults,
+        isActive: true,
+      })
+      if (!res.success) throw new Error(res.error)
+    }, 'Gmail取り込みルールを作成しました')
+  }
+
+  const deleteGmailImportRule = async (rule: ApiGmailImportRule) => {
+    if (!confirm(`「${rule.name}」を停止します。Cronで自動取り込みされなくなります。よいですか？`)) return
+    await runAction(async () => {
+      const res = await api.gmailImports.deleteRule(rule.id)
+      if (!res.success) throw new Error(res.error)
+    }, 'Gmail取り込みルールを停止しました')
+  }
+
+  const runGmailImport = async (rule: ApiGmailImportRule, dryRun: boolean) => {
+    await runAction(async () => {
+      const res = await api.gmailImports.runRule(rule.id, { dryRun, maxResults: Math.min(rule.maxResults, 10) })
+      if (!res.success) throw new Error(res.error)
+      setGmailLastRun(res.data)
+    }, dryRun ? 'Gmail取り込みのテスト解析を実行しました' : 'Gmail取り込みを実行しました')
   }
 
   const createBroadcastDraft = async () => {
@@ -413,6 +537,7 @@ export default function ReservationOpsPage() {
         <SummaryCard label="じゃらん要確認" value={`${externalSources.length}件`} tone="amber" />
         <SummaryCard label="配信下書き" value={`${draftBroadcasts.length}件`} tone="blue" />
         <SummaryCard label="Google連携" value={`${activeCalendarConnections.length}件`} tone="green" />
+        <SummaryCard label="Gmail取込" value={`${activeGmailImportRules.length}件`} tone="amber" />
         </div>
       </div>
 
@@ -480,7 +605,24 @@ export default function ReservationOpsPage() {
             />
           )}
           {tab === 'jalan' && (
-            <JalanPanel sources={externalSources} saving={saving} onIgnore={markExternalIgnored} />
+            <JalanPanel
+              sources={externalSources}
+              saving={saving}
+              connections={calendarConnections}
+              resources={resources}
+              menusByResource={menusByResource}
+              labels={gmailLabels}
+              rules={gmailImportRules}
+              runs={gmailImportRuns}
+              lastRun={gmailLastRun}
+              draft={gmailRuleDraft}
+              onDraftChange={setGmailRuleDraft}
+              onLoadLabels={loadGmailLabels}
+              onCreateRule={createGmailImportRule}
+              onDeleteRule={deleteGmailImportRule}
+              onRunRule={runGmailImport}
+              onIgnore={markExternalIgnored}
+            />
           )}
           {tab === 'broadcasts' && (
             <BroadcastPanel
@@ -951,34 +1093,229 @@ function ChatsPanel({
   )
 }
 
-function JalanPanel({ sources, saving, onIgnore }: { sources: ExternalSource[]; saving: boolean; onIgnore: (source: ExternalSource) => void }) {
+function JalanPanel({
+  sources,
+  saving,
+  connections,
+  resources,
+  menusByResource,
+  labels,
+  rules,
+  runs,
+  lastRun,
+  draft,
+  onDraftChange,
+  onLoadLabels,
+  onCreateRule,
+  onDeleteRule,
+  onRunRule,
+  onIgnore,
+}: {
+  sources: ExternalSource[]
+  saving: boolean
+  connections: ApiCalendarConnection[]
+  resources: ReservationResource[]
+  menusByResource: Record<string, ReservationMenu[]>
+  labels: ApiGmailLabel[]
+  rules: ApiGmailImportRule[]
+  runs: ApiGmailImportRun[]
+  lastRun: ApiGmailImportRunResult | null
+  draft: GmailRuleDraft
+  onDraftChange: (value: GmailRuleDraft) => void
+  onLoadLabels: (connectionId?: string) => void
+  onCreateRule: () => void
+  onDeleteRule: (rule: ApiGmailImportRule) => void
+  onRunRule: (rule: ApiGmailImportRule, dryRun: boolean) => void
+  onIgnore: (source: ExternalSource) => void
+}) {
+  const selectedMenus = draft.resourceId ? menusByResource[draft.resourceId] ?? [] : []
+  const activeRules = rules.filter((rule) => rule.isActive)
   return (
-    <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-      <h2 className="text-lg font-bold text-gray-900">じゃらんメール管理</h2>
-      <p className="mt-1 text-sm text-gray-500">自動反映しない `updated` や枠超過など、確認が必要なメールだけ表示します。</p>
-      <div className="mt-4 grid gap-3">
-        {sources.length === 0 ? <p className="rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-400">要確認メールはありません。</p> : sources.map((source) => (
-          <details key={source.id} className="rounded-xl border border-amber-100 bg-amber-50">
-            <summary className="cursor-pointer px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-bold text-amber-950">{source.eventType} / {source.parseStatus}</p>
-                  <p className="text-xs text-amber-800">{formatDateTime(source.receivedAt)} / {source.externalReservationId || source.dedupeKey || '外部IDなし'}</p>
-                </div>
-                <span className="rounded-full bg-white px-2 py-1 text-xs font-bold text-amber-700">要確認</span>
-              </div>
-            </summary>
-            <div className="border-t border-amber-100 bg-white p-4">
-              <p className="text-xs font-bold text-gray-500">エラー/メモ</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">{source.lastError || 'なし'}</p>
-              <p className="mt-3 text-xs font-bold text-gray-500">本文抜粋</p>
-              <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-600">{source.rawText || source.parsedPayload || '本文なし'}</p>
-              <button disabled={saving} onClick={() => onIgnore(source)} className="mt-3 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">確認済みにする</button>
+    <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-bold text-gray-900">じゃらんGmail取り込み設定</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Gmailで未処理ラベルを付けたじゃらんメールだけを読み、予約DBへ取り込みます。Google連携はGmail権限付きで再接続してください。
+        </p>
+
+        <div className="mt-4 grid gap-3">
+          <label className="text-xs font-bold text-gray-600">
+            Google接続
+            <div className="mt-1 flex gap-2">
+              <select
+                value={draft.connectionId}
+                onChange={(event) => onDraftChange({ ...draft, connectionId: event.target.value })}
+                className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              >
+                <option value="">選択してください</option>
+                {connections.map((connection) => (
+                  <option key={connection.id} value={connection.id}>{connection.calendarId}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={saving || !draft.connectionId}
+                onClick={() => onLoadLabels(draft.connectionId)}
+                className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700 disabled:opacity-50"
+              >
+                ラベル取得
+              </button>
             </div>
-          </details>
-        ))}
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FieldMini label="ルール名">
+              <input value={draft.name} onChange={(event) => onDraftChange({ ...draft, name: event.target.value })} className="input" />
+            </FieldMini>
+            <FieldMini label="差出人">
+              <input value={draft.fromEmail} onChange={(event) => onDraftChange({ ...draft, fromEmail: event.target.value })} className="input" />
+            </FieldMini>
+          </div>
+
+          <FieldMini label="Gmail検索条件">
+            <input value={draft.query} onChange={(event) => onDraftChange({ ...draft, query: event.target.value })} className="input" />
+          </FieldMini>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <LabelSelect label="未処理ラベル" value={draft.unprocessedLabelId} labels={labels} onChange={(value) => onDraftChange({ ...draft, unprocessedLabelId: value })} />
+            <LabelSelect label="処理済みラベル" value={draft.processedLabelId} labels={labels} onChange={(value) => onDraftChange({ ...draft, processedLabelId: value })} />
+            <LabelSelect label="要確認ラベル" value={draft.reviewLabelId} labels={labels} onChange={(value) => onDraftChange({ ...draft, reviewLabelId: value })} />
+            <LabelSelect label="失敗ラベル" value={draft.failedLabelId} labels={labels} onChange={(value) => onDraftChange({ ...draft, failedLabelId: value })} />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FieldMini label="取り込み先 Resource">
+              <select
+                value={draft.resourceId}
+                onChange={(event) => onDraftChange({ ...draft, resourceId: event.target.value, menuId: '' })}
+                className="input"
+              >
+                <option value="">選択してください</option>
+                {resources.map((resource) => (
+                  <option key={resource.id} value={resource.id}>{resource.name}</option>
+                ))}
+              </select>
+            </FieldMini>
+            <FieldMini label="取り込み先 Menu">
+              <select value={draft.menuId} onChange={(event) => onDraftChange({ ...draft, menuId: event.target.value })} className="input">
+                <option value="">選択してください</option>
+                {selectedMenus.map((menu) => (
+                  <option key={menu.id} value={menu.id}>{menu.name}</option>
+                ))}
+              </select>
+            </FieldMini>
+          </div>
+
+          <FieldMini label="1回の最大取得数">
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={draft.maxResults}
+              onChange={(event) => onDraftChange({ ...draft, maxResults: Number(event.target.value || 10) })}
+              className="input"
+            />
+          </FieldMini>
+
+          <button disabled={saving} onClick={onCreateRule} className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+            取り込みルールを作成
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <p className="text-sm font-bold text-gray-900">有効な取り込みルール</p>
+          {activeRules.length === 0 ? <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-400">まだルールがありません。</p> : activeRules.map((rule) => (
+            <div key={rule.id} className="rounded-xl border border-gray-200 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-gray-900">{rule.name}</p>
+                  <p className="mt-1 text-xs text-gray-500">from: {rule.fromEmail || '-'} / 最大{rule.maxResults}件 / 最終: {formatDateTime(rule.lastRunAt)}</p>
+                </div>
+                <button disabled={saving} onClick={() => onDeleteRule(rule)} className="shrink-0 rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-50">停止</button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button disabled={saving} onClick={() => onRunRule(rule, true)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700 disabled:opacity-50">テスト解析</button>
+                <button disabled={saving} onClick={() => onRunRule(rule, false)} className="rounded-lg bg-green-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">今すぐ取り込み</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {lastRun && (
+          <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-3">
+            <p className="text-sm font-bold text-blue-950">直近実行結果</p>
+            <p className="mt-1 text-xs text-blue-800">
+              取得 {lastRun.fetchedCount}件 / 取込 {lastRun.importedCount}件 / 要確認 {lastRun.reviewCount}件 / 失敗 {lastRun.failedCount}件
+            </p>
+            <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+              {lastRun.items.map((item) => (
+                <p key={item.gmailMessageId} className="rounded-lg bg-white px-2 py-1 text-xs text-gray-700">
+                  {item.parseStatus} / {item.eventType} / {item.externalId || item.gmailMessageId}{item.error ? ` / ${item.error}` : ''}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-5 space-y-2">
+          <p className="text-sm font-bold text-gray-900">実行履歴</p>
+          {runs.length === 0 ? <p className="text-sm text-gray-400">履歴はありません。</p> : runs.slice(0, 5).map((run) => (
+            <div key={run.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+              {formatDateTime(run.startedAt)} / {run.status} / 取得{run.fetchedCount} 取込{run.importedCount} 要確認{run.reviewCount} 失敗{run.failedCount}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-bold text-gray-900">じゃらん要確認メール</h2>
+        <p className="mt-1 text-sm text-gray-500">updated、枠超過、経路未設定など、自動反映しないメールだけ表示します。</p>
+        <div className="mt-4 grid gap-3">
+          {sources.length === 0 ? <p className="rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-400">要確認メールはありません。</p> : sources.map((source) => (
+            <details key={source.id} className="rounded-xl border border-amber-100 bg-amber-50">
+              <summary className="cursor-pointer px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-amber-950">{source.eventType} / {source.parseStatus}</p>
+                    <p className="text-xs text-amber-800">{formatDateTime(source.receivedAt)} / {source.externalReservationId || source.dedupeKey || '外部IDなし'}</p>
+                  </div>
+                  <span className="rounded-full bg-white px-2 py-1 text-xs font-bold text-amber-700">要確認</span>
+                </div>
+              </summary>
+              <div className="border-t border-amber-100 bg-white p-4">
+                <p className="text-xs font-bold text-gray-500">エラー/メモ</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">{source.lastError || 'なし'}</p>
+                <p className="mt-3 text-xs font-bold text-gray-500">本文抜粋</p>
+                <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-600">{source.rawText || source.parsedPayload || '本文なし'}</p>
+                <button disabled={saving} onClick={() => onIgnore(source)} className="mt-3 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">確認済みにする</button>
+              </div>
+            </details>
+          ))}
+        </div>
       </div>
     </section>
+  )
+}
+
+function FieldMini({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block text-xs font-bold text-gray-600">
+      {label}
+      <div className="mt-1">{children}</div>
+    </label>
+  )
+}
+
+function LabelSelect({ label, value, labels, onChange }: { label: string; value: string; labels: ApiGmailLabel[]; onChange: (value: string) => void }) {
+  return (
+    <FieldMini label={label}>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="input">
+        <option value="">選択してください</option>
+        {labels.map((item) => (
+          <option key={item.id} value={item.id}>{item.name}</option>
+        ))}
+      </select>
+    </FieldMini>
   )
 }
 

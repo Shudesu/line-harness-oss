@@ -57,6 +57,78 @@ export type CalendarSyncResult =
   | { status: 'skipped'; reservationId: string; reason: string }
   | { status: 'failed'; reservationId: string; reason: string }
 
+export type ApiGmailLabel = {
+  id: string
+  name: string
+  type?: string
+}
+
+export type ApiGmailImportRule = {
+  id: string
+  connectionId: string
+  sourceName: 'jalan'
+  name: string
+  fromEmail: string | null
+  query: string | null
+  unprocessedLabelId: string
+  processedLabelId: string
+  reviewLabelId: string
+  failedLabelId: string
+  resourceId: string | null
+  menuId: string | null
+  maxResults: number
+  isActive: boolean
+  lastRunAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type ApiGmailImportRun = {
+  id: string
+  ruleId: string
+  startedAt: string
+  finishedAt: string | null
+  status: 'running' | 'success' | 'partial_failed' | 'failed'
+  fetchedCount: number
+  importedCount: number
+  reviewCount: number
+  failedCount: number
+  lastError: string | null
+}
+
+export type ApiGmailImportRunResult = {
+  runId: string | null
+  ruleId: string
+  dryRun: boolean
+  fetchedCount: number
+  importedCount: number
+  reviewCount: number
+  failedCount: number
+  items: Array<{
+    gmailMessageId: string
+    eventType: string
+    parseStatus: 'imported' | 'duplicate' | 'cancelled' | 'needs_review' | 'failed' | 'dry_run'
+    reservationId?: string | null
+    externalId?: string | null
+    error?: string | null
+  }>
+}
+
+export type CreateGmailImportRuleInput = {
+  connectionId: string
+  name: string
+  fromEmail?: string | null
+  query?: string | null
+  unprocessedLabelId: string
+  processedLabelId: string
+  reviewLabelId: string
+  failedLabelId: string
+  resourceId?: string | null
+  menuId?: string | null
+  maxResults?: number
+  isActive?: boolean
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '')
 if (!API_URL) {
   throw new Error(
@@ -285,6 +357,39 @@ export const api = {
       fetchApi<ApiResponse<{ reservation: unknown; sync: CalendarSyncResult }>>(
         `/api/reservations/${encodeURIComponent(reservationId)}/google-calendar/sync`,
         { method: 'POST' },
+      ),
+  },
+
+  gmailImports: {
+    labels: (connectionId: string) =>
+      fetchApi<ApiResponse<ApiGmailLabel[]>>(
+        '/api/integrations/gmail/labels?' + new URLSearchParams({ connectionId }),
+      ),
+    listRules: () =>
+      fetchApi<ApiResponse<ApiGmailImportRule[]>>('/api/integrations/gmail/import-rules'),
+    createRule: (data: CreateGmailImportRuleInput) =>
+      fetchApi<ApiResponse<ApiGmailImportRule>>('/api/integrations/gmail/import-rules', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    deleteRule: (id: string) =>
+      fetchApi<ApiResponse<ApiGmailImportRule>>(`/api/integrations/gmail/import-rules/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    listRuns: (params?: { ruleId?: string; limit?: number }) => {
+      const query = new URLSearchParams()
+      if (params?.ruleId) query.set('ruleId', params.ruleId)
+      if (params?.limit) query.set('limit', String(params.limit))
+      const suffix = query.toString() ? `?${query}` : ''
+      return fetchApi<ApiResponse<ApiGmailImportRun[]>>(`/api/integrations/gmail/import-runs${suffix}`)
+    },
+    runRule: (id: string, data?: { dryRun?: boolean; maxResults?: number }) =>
+      fetchApi<ApiResponse<ApiGmailImportRunResult>>(
+        `/api/integrations/gmail/import-rules/${encodeURIComponent(id)}/run`,
+        {
+          method: 'POST',
+          body: JSON.stringify(data ?? {}),
+        },
       ),
   },
 

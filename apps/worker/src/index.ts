@@ -46,6 +46,7 @@ import { trafficPools } from './routes/traffic-pools.js';
 import { meetCallback } from './routes/meet-callback.js';
 import { messageTemplates } from './routes/message-templates.js';
 import { defaultLiffUrl, defaultLineAccessToken, workerBaseUrl } from './services/line-bindings.js';
+import { processActiveGmailImportRules } from './services/gmail-jalan-import.js';
 
 export type Env = {
   Bindings: {
@@ -412,6 +413,7 @@ async function scheduled(
   jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, baseWorkerUrl));
   jobs.push(checkAccountHealth(env.DB));
   jobs.push(refreshLineAccessTokens(env.DB));
+  jobs.push(processActiveGmailImportRules(env.DB, env));
 
   await Promise.allSettled(jobs);
 

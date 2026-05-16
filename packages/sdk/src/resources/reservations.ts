@@ -227,6 +227,92 @@ export interface StartGoogleCalendarOAuthInput {
   returnTo?: string
 }
 
+export interface GmailLabel {
+  id: string
+  name: string
+  type?: string
+}
+
+export interface GmailImportRule {
+  id: string
+  connectionId: string
+  sourceName: 'jalan'
+  name: string
+  fromEmail: string | null
+  query: string | null
+  unprocessedLabelId: string
+  processedLabelId: string
+  reviewLabelId: string
+  failedLabelId: string
+  resourceId: string | null
+  menuId: string | null
+  maxResults: number
+  isActive: boolean
+  lastRunAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateGmailImportRuleInput {
+  connectionId: string
+  name: string
+  fromEmail?: string | null
+  query?: string | null
+  unprocessedLabelId: string
+  processedLabelId: string
+  reviewLabelId: string
+  failedLabelId: string
+  resourceId?: string | null
+  menuId?: string | null
+  maxResults?: number
+  isActive?: boolean
+}
+
+export interface UpdateGmailImportRuleInput extends Partial<CreateGmailImportRuleInput> {}
+
+export interface GmailImportRun {
+  id: string
+  ruleId: string
+  startedAt: string
+  finishedAt: string | null
+  status: 'running' | 'success' | 'partial_failed' | 'failed'
+  fetchedCount: number
+  importedCount: number
+  reviewCount: number
+  failedCount: number
+  lastError: string | null
+}
+
+export interface ListGmailImportRunsParams {
+  ruleId?: string
+  limit?: number
+}
+
+export interface RunGmailImportRuleInput {
+  dryRun?: boolean
+  maxResults?: number
+}
+
+export interface GmailImportItemResult {
+  gmailMessageId: string
+  eventType: string
+  parseStatus: 'imported' | 'duplicate' | 'cancelled' | 'needs_review' | 'failed' | 'dry_run'
+  reservationId?: string | null
+  externalId?: string | null
+  error?: string | null
+}
+
+export interface GmailImportRunResult {
+  runId: string | null
+  ruleId: string
+  dryRun: boolean
+  fetchedCount: number
+  importedCount: number
+  reviewCount: number
+  failedCount: number
+  items: GmailImportItemResult[]
+}
+
 export interface ListExternalReservationSourcesParams {
   source?: 'jalan' | 'gmail' | 'phone' | 'manual'
   parseStatus?: ExternalReservationParseStatus
@@ -496,5 +582,56 @@ export class ReservationsResource {
     if (input.returnTo) query.set('returnTo', input.returnTo)
     const suffix = query.toString() ? `?${query}` : ''
     return this.http.url(`/api/integrations/google-calendar/oauth/start${suffix}`)
+  }
+
+  async listGmailLabels(connectionId: string): Promise<GmailLabel[]> {
+    const query = new URLSearchParams({ connectionId })
+    const res = await this.http.get<ApiResponse<GmailLabel[]>>(`/api/integrations/gmail/labels?${query}`)
+    return res.data
+  }
+
+  async listGmailImportRules(activeOnly?: boolean): Promise<GmailImportRule[]> {
+    const query = new URLSearchParams()
+    if (activeOnly !== undefined) query.set('activeOnly', String(activeOnly))
+    const suffix = query.toString() ? `?${query}` : ''
+    const res = await this.http.get<ApiResponse<GmailImportRule[]>>(`/api/integrations/gmail/import-rules${suffix}`)
+    return res.data
+  }
+
+  async createGmailImportRule(input: CreateGmailImportRuleInput): Promise<GmailImportRule> {
+    const res = await this.http.post<ApiResponse<GmailImportRule>>('/api/integrations/gmail/import-rules', input)
+    return res.data
+  }
+
+  async updateGmailImportRule(id: string, input: UpdateGmailImportRuleInput): Promise<GmailImportRule> {
+    const res = await this.http.put<ApiResponse<GmailImportRule>>(
+      `/api/integrations/gmail/import-rules/${encodeURIComponent(id)}`,
+      input,
+    )
+    return res.data
+  }
+
+  async deleteGmailImportRule(id: string): Promise<GmailImportRule> {
+    const res = await this.http.delete<ApiResponse<GmailImportRule>>(
+      `/api/integrations/gmail/import-rules/${encodeURIComponent(id)}`,
+    )
+    return res.data
+  }
+
+  async listGmailImportRuns(params: ListGmailImportRunsParams = {}): Promise<GmailImportRun[]> {
+    const query = new URLSearchParams()
+    if (params.ruleId) query.set('ruleId', params.ruleId)
+    if (params.limit !== undefined) query.set('limit', String(params.limit))
+    const suffix = query.toString() ? `?${query}` : ''
+    const res = await this.http.get<ApiResponse<GmailImportRun[]>>(`/api/integrations/gmail/import-runs${suffix}`)
+    return res.data
+  }
+
+  async runGmailImportRule(id: string, input: RunGmailImportRuleInput = {}): Promise<GmailImportRunResult> {
+    const res = await this.http.post<ApiResponse<GmailImportRunResult>>(
+      `/api/integrations/gmail/import-rules/${encodeURIComponent(id)}/run`,
+      input,
+    )
+    return res.data
   }
 }

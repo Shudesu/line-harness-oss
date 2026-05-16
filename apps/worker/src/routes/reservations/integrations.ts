@@ -1,14 +1,23 @@
 import { Hono } from 'hono';
 import {
+  createGmailImportRule,
   getReservationMenuById,
   getReservationResourceById,
   importExternalReservation,
+  listGmailImportRules,
+  listGmailImportRuns,
   listReservationMenus,
   listReservationResources,
   listReservationSlots,
+  softDeleteGmailImportRule,
+  updateGmailImportRule,
 } from '@line-crm/db';
 import type { Env } from '../../index.js';
 import { parseJalanMail } from '../../services/jalan-mail-parser.js';
+import {
+  listGmailLabelsForConnection,
+  runGmailImportRule,
+} from '../../services/gmail-jalan-import.js';
 import {
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
@@ -149,6 +158,98 @@ reservationIntegrations.post('/api/integrations/jalan/gmail/import', async (c) =
   }
 });
 
+reservationIntegrations.get('/api/integrations/gmail/labels', async (c) => {
+  try {
+    const connectionId = c.req.query('connectionId')?.trim();
+    if (!connectionId) return jsonError(c, 'bad_request', 400, 'connectionId is required');
+    const labels = await listGmailLabelsForConnection(c.env.DB, connectionId, c.env);
+    return jsonOk(c, labels);
+  } catch (err) {
+    console.error('GET /api/integrations/gmail/labels error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+reservationIntegrations.get('/api/integrations/gmail/import-rules', async (c) => {
+  try {
+    const activeOnly = c.req.query('activeOnly') === 'true';
+    const rules = await listGmailImportRules(c.env.DB, { activeOnly });
+    return jsonOk(c, rules.map(toGmailImportRuleResponse));
+  } catch (err) {
+    console.error('GET /api/integrations/gmail/import-rules error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+reservationIntegrations.post('/api/integrations/gmail/import-rules', async (c) => {
+  try {
+    const json = await readJsonObject(c);
+    if (!json.ok) return jsonError(c, json.error.code, json.error.status, json.error.message);
+    const input = parseGmailImportRuleBody(json.value, true);
+    if (!input.ok) return jsonError(c, 'bad_request', 400, input.error);
+    const rule = await createGmailImportRule(c.env.DB, input.value);
+    return jsonOk(c, toGmailImportRuleResponse(rule), 201);
+  } catch (err) {
+    console.error('POST /api/integrations/gmail/import-rules error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+reservationIntegrations.put('/api/integrations/gmail/import-rules/:id', async (c) => {
+  try {
+    const json = await readJsonObject(c);
+    if (!json.ok) return jsonError(c, json.error.code, json.error.status, json.error.message);
+    const input = parseGmailImportRuleBody(json.value, false);
+    if (!input.ok) return jsonError(c, 'bad_request', 400, input.error);
+    const rule = await updateGmailImportRule(c.env.DB, c.req.param('id'), input.value);
+    if (!rule) return jsonError(c, 'not_found', 404, 'Gmail import rule not found');
+    return jsonOk(c, toGmailImportRuleResponse(rule));
+  } catch (err) {
+    console.error('PUT /api/integrations/gmail/import-rules/:id error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+reservationIntegrations.delete('/api/integrations/gmail/import-rules/:id', async (c) => {
+  try {
+    const rule = await softDeleteGmailImportRule(c.env.DB, c.req.param('id'));
+    if (!rule) return jsonError(c, 'not_found', 404, 'Gmail import rule not found');
+    return jsonOk(c, toGmailImportRuleResponse(rule));
+  } catch (err) {
+    console.error('DELETE /api/integrations/gmail/import-rules/:id error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+reservationIntegrations.get('/api/integrations/gmail/import-runs', async (c) => {
+  try {
+    const runs = await listGmailImportRuns(
+      c.env.DB,
+      c.req.query('ruleId')?.trim() || undefined,
+      parsePositiveInt(c.req.query('limit'), 20),
+    );
+    return jsonOk(c, runs.map(toGmailImportRunResponse));
+  } catch (err) {
+    console.error('GET /api/integrations/gmail/import-runs error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+reservationIntegrations.post('/api/integrations/gmail/import-rules/:id/run', async (c) => {
+  try {
+    const json = await readOptionalObjectForRoute(c);
+    if (!json.ok) return jsonError(c, 'bad_request', 400, json.error);
+    const result = await runGmailImportRule(c.env.DB, c.req.param('id'), c.env, {
+      dryRun: json.value.dryRun === true,
+      maxResults: typeof json.value.maxResults === 'number' ? json.value.maxResults : undefined,
+    });
+    return jsonOk(c, result);
+  } catch (err) {
+    console.error('POST /api/integrations/gmail/import-rules/:id/run error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
 async function resolveSlotId(
   db: D1Database,
   params: { resourceId?: string; date: string | null; startTime: string | null },
@@ -238,6 +339,153 @@ function scheduleExternalCalendarSync(
   if (result.status === 'cancelled') {
     c.executionCtx.waitUntil(syncReservationCancelledToGoogleCalendar(c.env.DB, result.reservation, c.env));
   }
+}
+
+type GmailImportRuleBody = {
+  connectionId?: string;
+  name?: string;
+  fromEmail?: string | null;
+  query?: string | null;
+  unprocessedLabelId?: string;
+  processedLabelId?: string;
+  reviewLabelId?: string;
+  failedLabelId?: string;
+  resourceId?: string | null;
+  menuId?: string | null;
+  maxResults?: number;
+  isActive?: boolean;
+};
+
+function parseGmailImportRuleBody(
+  body: Record<string, unknown>,
+  creating: boolean,
+): { ok: true; value: GmailImportRuleBody & Record<string, unknown> } | { ok: false; error: string } {
+  const value: GmailImportRuleBody = {};
+  const stringFields = [
+    'connectionId',
+    'name',
+    'unprocessedLabelId',
+    'processedLabelId',
+    'reviewLabelId',
+    'failedLabelId',
+  ] as const;
+  for (const key of stringFields) {
+    if (body[key] !== undefined) {
+      if (typeof body[key] !== 'string' || !body[key].trim()) return { ok: false, error: `${key} is invalid` };
+      value[key] = body[key].trim();
+    }
+  }
+  for (const key of ['fromEmail', 'query', 'resourceId', 'menuId'] as const) {
+    if (body[key] !== undefined) {
+      if (body[key] === null) {
+        value[key] = null;
+      } else if (typeof body[key] === 'string') {
+        value[key] = body[key].trim() || null;
+      } else {
+        return { ok: false, error: `${key} is invalid` };
+      }
+    }
+  }
+  if (body.maxResults !== undefined) {
+    if (typeof body.maxResults !== 'number' || !Number.isFinite(body.maxResults)) {
+      return { ok: false, error: 'maxResults is invalid' };
+    }
+    value.maxResults = Math.floor(body.maxResults);
+  }
+  if (body.isActive !== undefined) {
+    if (typeof body.isActive !== 'boolean') return { ok: false, error: 'isActive is invalid' };
+    value.isActive = body.isActive;
+  }
+  if (creating) {
+    for (const key of stringFields) {
+      if (!value[key]) return { ok: false, error: `${key} is required` };
+    }
+  }
+  return { ok: true, value: value as GmailImportRuleBody & Record<string, unknown> };
+}
+
+async function readOptionalObjectForRoute(
+  c: Parameters<typeof jsonOk>[0],
+): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; error: string }> {
+  try {
+    const body = await c.req.json<unknown>();
+    if (body === null || body === undefined) return { ok: true, value: {} };
+    if (typeof body !== 'object' || Array.isArray(body)) return { ok: false, error: 'Request body must be a JSON object' };
+    return { ok: true, value: body as Record<string, unknown> };
+  } catch {
+    return { ok: true, value: {} };
+  }
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = Number.parseInt(value ?? `${fallback}`, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function toGmailImportRuleResponse(rule: {
+  id: string;
+  connection_id: string;
+  source_name: string;
+  name: string;
+  from_email: string | null;
+  query: string | null;
+  unprocessed_label_id: string;
+  processed_label_id: string;
+  review_label_id: string;
+  failed_label_id: string;
+  resource_id: string | null;
+  menu_id: string | null;
+  max_results: number;
+  is_active: number;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}) {
+  return {
+    id: rule.id,
+    connectionId: rule.connection_id,
+    sourceName: rule.source_name,
+    name: rule.name,
+    fromEmail: rule.from_email,
+    query: rule.query,
+    unprocessedLabelId: rule.unprocessed_label_id,
+    processedLabelId: rule.processed_label_id,
+    reviewLabelId: rule.review_label_id,
+    failedLabelId: rule.failed_label_id,
+    resourceId: rule.resource_id,
+    menuId: rule.menu_id,
+    maxResults: rule.max_results,
+    isActive: rule.is_active === 1,
+    lastRunAt: rule.last_run_at,
+    createdAt: rule.created_at,
+    updatedAt: rule.updated_at,
+  };
+}
+
+function toGmailImportRunResponse(run: {
+  id: string;
+  rule_id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  fetched_count: number;
+  imported_count: number;
+  review_count: number;
+  failed_count: number;
+  last_error: string | null;
+}) {
+  return {
+    id: run.id,
+    ruleId: run.rule_id,
+    startedAt: run.started_at,
+    finishedAt: run.finished_at,
+    status: run.status,
+    fetchedCount: run.fetched_count,
+    importedCount: run.imported_count,
+    reviewCount: run.review_count,
+    failedCount: run.failed_count,
+    lastError: run.last_error,
+  };
 }
 
 export { reservationIntegrations };
