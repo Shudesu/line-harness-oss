@@ -108,11 +108,10 @@ function menuForReservationTitle(title?: string | null): Menu | null {
 export function renderHeader(): string {
   return `
     <div class="booking-header">
-      <img class="booking-header-logo" src="/aonisai/aonisai_blue.jpg" alt="アオニサイファーム ブルーベリー">
+      <img class="booking-header-logo" src="/aonisai/aonisai1.jpg" alt="アオニサイファーム ブルーベリー">
       <div class="booking-header-copy">
         <p class="eyebrow">AONISAI FARM</p>
-        <h1>ブルーベリー予約</h1>
-        <p>日付と時間をえらんで、農園へあそびに行こう。</p>
+        <h1>ブルーベリー摘み取り体験</h1>
       </div>
     </div>
     <div class="booking-tabs">
