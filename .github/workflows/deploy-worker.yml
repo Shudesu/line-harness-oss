@@ -82,20 +82,28 @@ jobs:
           wrangler_d1() {
             pnpm exec wrangler d1 execute "$db" --remote --config .wrangler-d1-ci.json "$@"
           }
-          wrangler_d1_allow_duplicate() {
+          d1_column_exists() {
+            table="$1"
+            column="$2"
             set +e
-            output=$(pnpm exec wrangler d1 execute "$db" --remote --config .wrangler-d1-ci.json "$@" 2>&1)
+            output=$(wrangler_d1 --command "SELECT name FROM pragma_table_info('$table') WHERE name = '$column'" 2>&1)
             status=$?
             set -e
-            echo "$output"
-            if [ "$status" -eq 0 ]; then
+            if [ "$status" -ne 0 ]; then
+              echo "$output"
+              return 1
+            fi
+            echo "$output" | grep -q "$column"
+          }
+          d1_add_column_if_missing() {
+            table="$1"
+            column="$2"
+            definition="$3"
+            if d1_column_exists "$table" "$column"; then
+              echo "D1 patch skipped: $table.$column already exists."
               return 0
             fi
-            if echo "$output" | grep -qiE 'duplicate column name|already exists'; then
-              echo "Ignoring already-applied D1 patch."
-              return 0
-            fi
-            return "$status"
+            wrangler_d1 --command "ALTER TABLE $table ADD COLUMN $column $definition"
           }
 
           # Do not execute packages/db/schema.sql against an existing production DB.
@@ -117,36 +125,36 @@ jobs:
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_calendar_bookings_friend ON calendar_bookings (friend_id)"
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_calendar_bookings_start ON calendar_bookings (start_at)"
 
-          wrangler_d1_allow_duplicate --command "ALTER TABLE friends ADD COLUMN line_account_id TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE friends ADD COLUMN ref_code TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE chats ADD COLUMN line_account_id TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_resources ADD COLUMN google_calendar_connection_id TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_resources ADD COLUMN slot_interval_minutes INTEGER NOT NULL DEFAULT 60"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_resources ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo'"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN price_infant INTEGER"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN capacity_count_adult INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0, 1))"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN capacity_count_child INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0, 1))"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_menus ADD COLUMN capacity_count_infant INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0, 1))"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservations ADD COLUMN infant_count INTEGER NOT NULL DEFAULT 0"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservations ADD COLUMN capacity_people INTEGER NOT NULL DEFAULT 0"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_items ADD COLUMN infant_count INTEGER NOT NULL DEFAULT 0"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE reservation_items ADD COLUMN capacity_people INTEGER NOT NULL DEFAULT 0"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE tracked_links ADD COLUMN intro_template_id TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE tracked_links ADD COLUMN reward_template_id TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_message_type TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_message_content TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_webhook_url TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_webhook_headers TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE forms ADD COLUMN on_submit_webhook_fail_message TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN fbclid TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN gclid TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN twclid TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN ttclid TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN utm_source TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN utm_medium TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN utm_campaign TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN user_agent TEXT"
-          wrangler_d1_allow_duplicate --command "ALTER TABLE ref_tracking ADD COLUMN ip_address TEXT"
+          d1_add_column_if_missing friends line_account_id "TEXT"
+          d1_add_column_if_missing friends ref_code "TEXT"
+          d1_add_column_if_missing chats line_account_id "TEXT"
+          d1_add_column_if_missing reservation_resources google_calendar_connection_id "TEXT"
+          d1_add_column_if_missing reservation_resources slot_interval_minutes "INTEGER NOT NULL DEFAULT 60"
+          d1_add_column_if_missing reservation_resources timezone "TEXT NOT NULL DEFAULT 'Asia/Tokyo'"
+          d1_add_column_if_missing reservation_menus price_infant "INTEGER"
+          d1_add_column_if_missing reservation_menus capacity_count_adult "INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0, 1))"
+          d1_add_column_if_missing reservation_menus capacity_count_child "INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0, 1))"
+          d1_add_column_if_missing reservation_menus capacity_count_infant "INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0, 1))"
+          d1_add_column_if_missing reservations infant_count "INTEGER NOT NULL DEFAULT 0"
+          d1_add_column_if_missing reservations capacity_people "INTEGER NOT NULL DEFAULT 0"
+          d1_add_column_if_missing reservation_items infant_count "INTEGER NOT NULL DEFAULT 0"
+          d1_add_column_if_missing reservation_items capacity_people "INTEGER NOT NULL DEFAULT 0"
+          d1_add_column_if_missing tracked_links intro_template_id "TEXT"
+          d1_add_column_if_missing tracked_links reward_template_id "TEXT"
+          d1_add_column_if_missing forms on_submit_message_type "TEXT"
+          d1_add_column_if_missing forms on_submit_message_content "TEXT"
+          d1_add_column_if_missing forms on_submit_webhook_url "TEXT"
+          d1_add_column_if_missing forms on_submit_webhook_headers "TEXT"
+          d1_add_column_if_missing forms on_submit_webhook_fail_message "TEXT"
+          d1_add_column_if_missing ref_tracking fbclid "TEXT"
+          d1_add_column_if_missing ref_tracking gclid "TEXT"
+          d1_add_column_if_missing ref_tracking twclid "TEXT"
+          d1_add_column_if_missing ref_tracking ttclid "TEXT"
+          d1_add_column_if_missing ref_tracking utm_source "TEXT"
+          d1_add_column_if_missing ref_tracking utm_medium "TEXT"
+          d1_add_column_if_missing ref_tracking utm_campaign "TEXT"
+          d1_add_column_if_missing ref_tracking user_agent "TEXT"
+          d1_add_column_if_missing ref_tracking ip_address "TEXT"
 
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_friends_line_account_id ON friends (line_account_id)"
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_friends_ref_code ON friends (ref_code)"
