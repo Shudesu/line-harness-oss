@@ -4,6 +4,11 @@ import { selectedMenu, selectedResource, state } from './state.js';
 import { tokenForReservation } from './tokens.js';
 import type { AvailabilitySummary, Menu, Slot } from './types.js';
 
+function lineRemaining(slot: Slot): number {
+  const value = Number(slot.lineRemainingCapacity);
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
 function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; className: string; label: string } {
   if (!summary || summary.slotCount === 0) return { mark: '-', className: 'none', label: '未生成' };
   if (summary.available) return { mark: '◎', className: 'many', label: '予約可' };
@@ -11,7 +16,9 @@ function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; 
 }
 
 function slotMark(slot: Slot): { mark: string; className: string; label: string } {
-  if (slot.available) return { mark: '◎', className: 'many', label: '予約可' };
+  const remaining = lineRemaining(slot);
+  if (slot.available && remaining >= 3) return { mark: '◎', className: 'many', label: `残り${remaining}名` };
+  if (slot.available && remaining >= 1) return { mark: '△', className: 'few', label: `残り${remaining}名` };
   return { mark: '×', className: 'full', label: '満席' };
 }
 
@@ -325,6 +332,10 @@ function renderSelectedSlotSummary(): string {
       <div class="confirm-row">
         <span class="confirm-label">選択中</span>
         <span class="confirm-value">${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</span>
+      </div>
+      <div class="confirm-row">
+        <span class="confirm-label">予約枠</span>
+        <span class="confirm-value">残り${lineRemaining(slot)}名</span>
       </div>
     </section>
   `;
