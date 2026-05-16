@@ -646,7 +646,11 @@ export async function initBooking(): Promise<void> {
 
     state.loading = false;
     render();
-    await loadVisibleAvailability();
+    if (state.screen === 'mine') {
+      await loadMine();
+    } else {
+      await loadVisibleAvailability();
+    }
   } catch (err) {
     state.loading = false;
     state.error = err instanceof Error ? err.message : '予約画面の初期化に失敗しました。';
