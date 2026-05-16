@@ -342,7 +342,7 @@ export default function ReservationOpsPage() {
     await runAction(async () => {
       const res = await api.calendar.oauthUrl({ calendarId, returnTo: window.location.href })
       if (!res.success) throw new Error(res.error)
-      window.open(res.data.url, '_blank', 'noopener,noreferrer')
+      window.location.assign(res.data.url)
     }, 'Google Calendar接続を開始しました')
   }
 

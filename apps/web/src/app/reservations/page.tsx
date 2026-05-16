@@ -332,7 +332,7 @@ export default function ReservationsPage() {
     const result = await apiData<{ url: string }>(
       `/api/reservations/google-calendar/oauth-url?${new URLSearchParams({ calendarId, returnTo })}`,
     )
-    window.open(result.url, '_blank', 'noopener,noreferrer')
+    window.location.assign(result.url)
   }
 
   return (

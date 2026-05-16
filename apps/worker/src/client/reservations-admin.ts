@@ -482,7 +482,7 @@ async function startGoogleCalendarOAuth(): Promise<void> {
     const result = await api<{ url: string }>(
       `/api/reservations/google-calendar/oauth-url?${new URLSearchParams({ calendarId, returnTo })}`,
     );
-    window.open(result.url, '_blank', 'noopener,noreferrer');
+    window.location.assign(result.url);
     state.message = 'Google OAuth開始URLを開きました。接続後に表示されるconnection IDをresourceへ設定してください。';
   });
 }
