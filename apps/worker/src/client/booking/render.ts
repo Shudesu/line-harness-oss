@@ -513,7 +513,7 @@ function renderCancelConfirm(): string {
   return `
     <section class="booking-panel">
       <h2>キャンセル確認</h2>
-      <p class="policy-note">この予約をキャンセルします。キャンセル後、在庫は状態遷移表に従って1回だけ戻されます。</p>
+      <p class="policy-note">この予約をキャンセルします。</p>
       <div class="confirm-row"><span class="confirm-label">日付</span><span class="confirm-value">${formatDateJa(reservation.reservationDate)}</span></div>
       <div class="confirm-row"><span class="confirm-label">時間</span><span class="confirm-value">${formatTime(reservation.startAt)}-${formatTime(reservation.endAt)}</span></div>
       <div class="booking-actions split">
