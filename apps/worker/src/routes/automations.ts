@@ -8,40 +8,110 @@ import {
   getAutomationLogs,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
-import { hasColumn } from '../utils/db-compat.js';
+import { hasColumn, hasTable } from '../utils/db-compat.js';
 
 const automations = new Hono<Env>();
+
+type AutomationItem = Awaited<ReturnType<typeof getAutomations>>[number];
+type AutomationLogItem = Awaited<ReturnType<typeof getAutomationLogs>>[number];
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value?.trim()) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseJsonArray(value: string | null | undefined): unknown[] {
+  if (!value?.trim()) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function serializeAutomation(a: AutomationItem) {
+  return {
+    id: a.id,
+    name: a.name,
+    description: a.description,
+    eventType: a.event_type,
+    conditions: parseJsonObject(a.conditions),
+    actions: parseJsonArray(a.actions),
+    isActive: Boolean(a.is_active),
+    priority: a.priority,
+    createdAt: a.created_at,
+    updatedAt: a.updated_at,
+  };
+}
+
+function serializeAutomationLog(l: AutomationLogItem) {
+  return {
+    id: l.id,
+    automationId: l.automation_id,
+    friendId: l.friend_id,
+    eventData: parseJsonObject(l.event_data),
+    actionsResult: parseJsonObject(l.actions_result),
+    status: l.status,
+    createdAt: l.created_at,
+  };
+}
+
+function isMissingColumnError(err: unknown, columnName: string): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('no such column') && message.includes(columnName);
+}
+
+async function listAutomationsCompat(db: D1Database, lineAccountId?: string): Promise<AutomationItem[]> {
+  if (!lineAccountId) return getAutomations(db);
+
+  try {
+    const hasLineAccountId = await hasColumn(db, 'automations', 'line_account_id');
+    if (!hasLineAccountId) return getAutomations(db);
+
+    const result = await db
+      .prepare(`SELECT * FROM automations WHERE line_account_id = ? ORDER BY priority DESC, created_at DESC`)
+      .bind(lineAccountId)
+      .all();
+    return result.results as unknown as AutomationItem[];
+  } catch (err) {
+    if (isMissingColumnError(err, 'line_account_id')) {
+      return getAutomations(db);
+    }
+    throw err;
+  }
+}
+
+async function updateAutomationLineAccountCompat(db: D1Database, automationId: string, lineAccountId?: string | null): Promise<void> {
+  if (!lineAccountId) return;
+  try {
+    const hasLineAccountId = await hasColumn(db, 'automations', 'line_account_id');
+    if (!hasLineAccountId) return;
+    await db.prepare(`UPDATE automations SET line_account_id = ? WHERE id = ?`)
+      .bind(lineAccountId, automationId).run();
+  } catch (err) {
+    if (isMissingColumnError(err, 'line_account_id')) return;
+    throw err;
+  }
+}
 
 // ========== 自動化ルールCRUD ==========
 
 automations.get('/api/automations', async (c) => {
   try {
-    const lineAccountId = c.req.query('lineAccountId');
-    let items;
-    const hasLineAccountId = await hasColumn(c.env.DB, 'automations', 'line_account_id');
-    if (lineAccountId && hasLineAccountId) {
-      const result = await c.env.DB
-        .prepare(`SELECT * FROM automations WHERE line_account_id = ? ORDER BY priority DESC, created_at DESC`)
-        .bind(lineAccountId)
-        .all();
-      items = result.results as unknown as Awaited<ReturnType<typeof getAutomations>>;
-    } else {
-      items = await getAutomations(c.env.DB);
+    if (!await hasTable(c.env.DB, 'automations')) {
+      return c.json({ success: true, data: [] });
     }
+    const lineAccountId = c.req.query('lineAccountId');
+    const items = await listAutomationsCompat(c.env.DB, lineAccountId);
     return c.json({
       success: true,
-      data: items.map((a) => ({
-        id: a.id,
-        name: a.name,
-        description: a.description,
-        eventType: a.event_type,
-        conditions: JSON.parse(a.conditions),
-        actions: JSON.parse(a.actions),
-        isActive: Boolean(a.is_active),
-        priority: a.priority,
-        createdAt: a.created_at,
-        updatedAt: a.updated_at,
-      })),
+      data: items.map(serializeAutomation),
     });
   } catch (err) {
     console.error('GET /api/automations error:', err);
@@ -60,24 +130,8 @@ automations.get('/api/automations/:id', async (c) => {
     return c.json({
       success: true,
       data: {
-        id: item.id,
-        name: item.name,
-        description: item.description,
-        eventType: item.event_type,
-        conditions: JSON.parse(item.conditions),
-        actions: JSON.parse(item.actions),
-        isActive: Boolean(item.is_active),
-        priority: item.priority,
-        createdAt: item.created_at,
-        updatedAt: item.updated_at,
-        logs: logs.map((l) => ({
-          id: l.id,
-          friendId: l.friend_id,
-          eventData: l.event_data ? JSON.parse(l.event_data) : null,
-          actionsResult: l.actions_result ? JSON.parse(l.actions_result) : null,
-          status: l.status,
-          createdAt: l.created_at,
-        })),
+        ...serializeAutomation(item),
+        logs: logs.map(serializeAutomationLog),
       },
     });
   } catch (err) {
@@ -101,21 +155,11 @@ automations.post('/api/automations', async (c) => {
       return c.json({ success: false, error: 'name, eventType, actions are required' }, 400);
     }
     const item = await createAutomation(c.env.DB, body);
-    // Save line_account_id if provided
-    if (body.lineAccountId && await hasColumn(c.env.DB, 'automations', 'line_account_id')) {
-      await c.env.DB.prepare(`UPDATE automations SET line_account_id = ? WHERE id = ?`)
-        .bind(body.lineAccountId, item.id).run();
-    }
+    await updateAutomationLineAccountCompat(c.env.DB, item.id, body.lineAccountId);
     return c.json({
       success: true,
       data: {
-        id: item.id,
-        name: item.name,
-        eventType: item.event_type,
-        actions: JSON.parse(item.actions),
-        isActive: Boolean(item.is_active),
-        priority: item.priority,
-        createdAt: item.created_at,
+        ...serializeAutomation(item),
       },
     }, 201);
   } catch (err) {
@@ -133,15 +177,7 @@ automations.put('/api/automations/:id', async (c) => {
     if (!updated) return c.json({ success: false, error: 'Not found' }, 404);
     return c.json({
       success: true,
-      data: {
-        id: updated.id,
-        name: updated.name,
-        eventType: updated.event_type,
-        conditions: JSON.parse(updated.conditions),
-        actions: JSON.parse(updated.actions),
-        isActive: Boolean(updated.is_active),
-        priority: updated.priority,
-      },
+      data: serializeAutomation(updated),
     });
   } catch (err) {
     console.error('PUT /api/automations/:id error:', err);
@@ -168,15 +204,7 @@ automations.get('/api/automations/:id/logs', async (c) => {
     const logs = await getAutomationLogs(c.env.DB, automationId, limit);
     return c.json({
       success: true,
-      data: logs.map((l) => ({
-        id: l.id,
-        automationId: l.automation_id,
-        friendId: l.friend_id,
-        eventData: l.event_data ? JSON.parse(l.event_data) : null,
-        actionsResult: l.actions_result ? JSON.parse(l.actions_result) : null,
-        status: l.status,
-        createdAt: l.created_at,
-      })),
+      data: logs.map(serializeAutomationLog),
     });
   } catch (err) {
     console.error('GET /api/automations/:id/logs error:', err);
