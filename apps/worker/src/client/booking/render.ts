@@ -120,7 +120,7 @@ export function renderHeader(): string {
       <img class="booking-header-logo" src="/aonisai/aonisai1.jpg" alt="アオニサイファーム ブルーベリー">
       <div class="booking-header-copy">
         <p class="eyebrow">AONISAI FARM</p>
-        <h1>ブルーベリー摘み取り体験</h1>
+        <h1>体験予約</h1>
       </div>
     </div>
     <div class="booking-tabs">
