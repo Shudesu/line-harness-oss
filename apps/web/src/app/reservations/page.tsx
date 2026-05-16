@@ -23,6 +23,29 @@ type AdminExternalSource = ExternalReservationSourceResponse & {
   parsedPayload?: string | null
 }
 
+type OrphanedReservationItem = {
+  reason: 'slot_missing' | 'resource_missing' | 'resource_inactive'
+  resourceId?: string | null
+  resourceName?: string | null
+  reservation: ReservationResponse
+}
+
+type OrphanedReservationsResponse = {
+  count: number
+  reservations: OrphanedReservationItem[]
+}
+
+type OrphanedCancelResponse = {
+  dryRun: boolean
+  count?: number
+  scanned?: number
+  cancelled: number
+  failed: number
+  reservations?: OrphanedReservationItem[]
+  items?: Array<{ id: string; changed: boolean }>
+  errors?: Array<{ id: string; reason: string }>
+}
+
 const dayLabels = ['日', '月', '火', '水', '木', '金', '土']
 
 function toYmd(date: Date): string {
@@ -74,6 +97,13 @@ function sourceLabel(source: ReservationResponse['source']): string {
   if (source === 'line') return 'LINE'
   if (source === 'jalan') return 'じゃらん'
   return source
+}
+
+function orphanReasonLabel(reason: OrphanedReservationItem['reason']): string {
+  if (reason === 'slot_missing') return '予約枠が存在しません'
+  if (reason === 'resource_missing') return '予約対象が存在しません'
+  if (reason === 'resource_inactive') return '予約対象が削除/停止済みです'
+  return reason
 }
 
 function formatCurrency(value: number | null): string {
@@ -141,6 +171,8 @@ export default function ReservationsPage() {
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null)
   const [selectedReservation, setSelectedReservation] = useState<ReservationResponse | null>(null)
   const [externalSources, setExternalSources] = useState<AdminExternalSource[]>([])
+  const [orphanedReservations, setOrphanedReservations] = useState<OrphanedReservationItem[]>([])
+  const [orphanedMaintenanceResult, setOrphanedMaintenanceResult] = useState<OrphanedCancelResponse | null>(null)
   const [showExternalDetails, setShowExternalDetails] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [showResourceForm, setShowResourceForm] = useState(false)
@@ -326,6 +358,49 @@ export default function ReservationsPage() {
     }, '外部取り込みを確認済みにしました')
   }
 
+  const loadOrphanedReservations = async (limit = 100) => {
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await apiData<OrphanedReservationsResponse>(
+        `/api/reservations/maintenance/orphaned?${new URLSearchParams({ limit: String(limit) })}`,
+      )
+      setOrphanedReservations(result.reservations)
+      setOrphanedMaintenanceResult(null)
+      setMessage(`孤立予約を${result.count}件確認しました`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '孤立予約の確認に失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const cancelOrphanedReservations = async (dryRun: boolean, limit = 100) => {
+    if (!dryRun && !confirm('既存Resourceに紐づかない有効予約を一括キャンセルします。物理削除ではありません。実行しますか？')) return
+    setSaving(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await apiData<OrphanedCancelResponse>('/api/reservations/maintenance/orphaned/cancel', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun, limit }),
+      })
+      setOrphanedMaintenanceResult(result)
+      if (result.reservations) setOrphanedReservations(result.reservations)
+      setMessage(
+        dryRun
+          ? `dry run: 対象${result.count ?? result.scanned ?? 0}件を確認しました`
+          : `孤立予約を${result.cancelled}件キャンセルしました。失敗: ${result.failed}件`,
+      )
+      if (!dryRun) await load(resourceId, date)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '孤立予約の一括キャンセルに失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const startGoogleOAuth = async (formData: FormData) => {
     const calendarId = String(formData.get('calendarId') || 'primary')
     const returnTo = window.location.href
@@ -487,6 +562,10 @@ export default function ReservationsPage() {
           onGenerateSlots={(formData) => runSaving(() => generateSlots(formData), '予約枠を生成しました')}
           onDeleteSlots={(formData) => runSaving(() => deleteSlots(formData), '')}
           onGoogleOAuth={(formData) => runSaving(() => startGoogleOAuth(formData), 'Google Calendar接続を開始しました')}
+          orphanedReservations={orphanedReservations}
+          orphanedMaintenanceResult={orphanedMaintenanceResult}
+          onLoadOrphanedReservations={loadOrphanedReservations}
+          onCancelOrphanedReservations={cancelOrphanedReservations}
           showResourceForm={showResourceForm}
           showMenuForm={showMenuForm}
           showScheduleForm={showScheduleForm}
@@ -1009,6 +1088,10 @@ function SettingsPanel(props: {
   onGenerateSlots: (formData: FormData) => void
   onDeleteSlots: (formData: FormData) => void
   onGoogleOAuth: (formData: FormData) => void
+  orphanedReservations: OrphanedReservationItem[]
+  orphanedMaintenanceResult: OrphanedCancelResponse | null
+  onLoadOrphanedReservations: (limit?: number) => void | Promise<void>
+  onCancelOrphanedReservations: (dryRun: boolean, limit?: number) => void | Promise<void>
   showResourceForm: boolean
   showMenuForm: boolean
   showScheduleForm: boolean
@@ -1077,6 +1160,15 @@ function SettingsPanel(props: {
           </form>
         </div>
       </SettingsCard>
+
+      <OrphanedReservationsMaintenanceCard
+        loading={props.loading}
+        items={props.orphanedReservations}
+        result={props.orphanedMaintenanceResult}
+        onLoad={() => props.onLoadOrphanedReservations(100)}
+        onDryRun={() => props.onCancelOrphanedReservations(true, 100)}
+        onCancel={() => props.onCancelOrphanedReservations(false, 100)}
+      />
 
       <details>
         <summary className="cursor-pointer rounded-xl border border-gray-200 bg-white p-4 text-base font-bold text-gray-900 shadow-sm">Option: Resource、Menu、Scheduleの追加・削除</summary>
@@ -1369,6 +1461,96 @@ function ScheduleEditor({
         </div>
       </form>
     </details>
+  )
+}
+
+function OrphanedReservationsMaintenanceCard({
+  loading,
+  items,
+  result,
+  onLoad,
+  onDryRun,
+  onCancel,
+}: {
+  loading: boolean
+  items: OrphanedReservationItem[]
+  result: OrphanedCancelResponse | null
+  onLoad: () => void | Promise<void>
+  onDryRun: () => void | Promise<void>
+  onCancel: () => void | Promise<void>
+}) {
+  const previewItems = items.slice(0, 20)
+  const resultText = result
+    ? result.dryRun
+      ? `dry run: 対象 ${result.count ?? result.scanned ?? items.length} 件`
+      : `キャンセル ${result.cancelled} 件 / 失敗 ${result.failed} 件`
+    : null
+
+  return (
+    <SettingsCard title="メンテナンス: 孤立予約">
+      <div className="rounded-lg border border-amber-100 bg-amber-50 p-3 text-sm text-amber-900">
+        <p className="font-bold">既存Resourceに紐づかない有効予約を確認します。</p>
+        <p className="mt-1 text-xs">
+          Resource削除・停止後に残った予約を、DBから物理削除せずにキャンセル状態へ変更します。まず「対象確認」か「dry run」で件数を確認してください。
+        </p>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" disabled={loading} onClick={() => void onLoad()} className="btn-secondary">
+          対象確認
+        </button>
+        <button type="button" disabled={loading} onClick={() => void onDryRun()} className="btn-secondary">
+          dry run
+        </button>
+        <button
+          type="button"
+          disabled={loading || items.length === 0}
+          onClick={() => void onCancel()}
+          className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          一括キャンセル
+        </button>
+      </div>
+      {resultText && <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800">{resultText}</p>}
+      {result?.errors && result.errors.length > 0 && (
+        <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-xs text-red-800">
+          <p className="font-bold">失敗した予約</p>
+          <ul className="mt-2 space-y-1">
+            {result.errors.slice(0, 10).map((error) => (
+              <li key={error.id}>{error.id}: {error.reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="mt-4 overflow-hidden rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between bg-gray-50 px-3 py-2 text-xs font-bold text-gray-600">
+          <span>対象予約</span>
+          <span>{items.length}件</span>
+        </div>
+        {previewItems.length === 0 ? (
+          <p className="p-3 text-sm text-gray-400">まだ確認していない、または対象予約がありません。</p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {previewItems.map(({ reason, resourceName, reservation }) => (
+              <div key={reservation.id} className="p-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-gray-900">{reservation.customerName || reservation.title || reservation.id}</p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {reservation.reservationDate} {formatTime(reservation.startAt)} / {reservation.totalPeople}名 / {sourceLabel(reservation.source)}
+                    </p>
+                    <p className="mt-1 text-xs text-amber-800">{orphanReasonLabel(reason)}{resourceName ? `: ${resourceName}` : ''}</p>
+                  </div>
+                  <StatusBadge status={reservation.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {items.length > previewItems.length && (
+          <p className="border-t border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">表示は先頭20件までです。</p>
+        )}
+      </div>
+    </SettingsCard>
   )
 }
 
