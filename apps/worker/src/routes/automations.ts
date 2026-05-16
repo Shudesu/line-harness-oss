@@ -8,6 +8,7 @@ import {
   getAutomationLogs,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const automations = new Hono<Env>();
 
@@ -17,7 +18,8 @@ automations.get('/api/automations', async (c) => {
   try {
     const lineAccountId = c.req.query('lineAccountId');
     let items;
-    if (lineAccountId) {
+    const hasLineAccountId = await hasColumn(c.env.DB, 'automations', 'line_account_id');
+    if (lineAccountId && hasLineAccountId) {
       const result = await c.env.DB
         .prepare(`SELECT * FROM automations WHERE line_account_id = ? ORDER BY priority DESC, created_at DESC`)
         .bind(lineAccountId)
@@ -100,7 +102,7 @@ automations.post('/api/automations', async (c) => {
     }
     const item = await createAutomation(c.env.DB, body);
     // Save line_account_id if provided
-    if (body.lineAccountId) {
+    if (body.lineAccountId && await hasColumn(c.env.DB, 'automations', 'line_account_id')) {
       await c.env.DB.prepare(`UPDATE automations SET line_account_id = ? WHERE id = ?`)
         .bind(body.lineAccountId, item.id).run();
     }
