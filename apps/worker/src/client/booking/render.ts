@@ -12,8 +12,8 @@ function lineRemaining(slot: Slot): number {
 function availabilityMark(slots: Slot[] | undefined): { mark: string; className: string; label: string } {
   if (!slots || slots.length === 0) return { mark: '-', className: 'none', label: '未生成' };
   const best = Math.max(...slots.map((slot) => slot.available ? lineRemaining(slot) : 0));
-  if (best >= 3) return { mark: '◎', className: 'many', label: `LINE残り${best}名` };
-  if (best >= 1) return { mark: '△', className: 'few', label: `LINE残り${best}名` };
+  if (best >= 3) return { mark: '◎', className: 'many', label: `残り${best}名` };
+  if (best >= 1) return { mark: '△', className: 'few', label: `残り${best}名` };
   return { mark: '×', className: 'full', label: '満席' };
 }
 
@@ -324,8 +324,8 @@ function renderSelectedSlotSummary(): string {
         <span class="confirm-value">${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</span>
       </div>
       <div class="confirm-row">
-        <span class="confirm-label">LINE予約枠</span>
-        <span class="confirm-value">LINE残り${lineRemaining(slot)}名</span>
+        <span class="confirm-label">予約枠</span>
+        <span class="confirm-value">残り${lineRemaining(slot)}名</span>
       </div>
     </section>
   `;

@@ -1134,7 +1134,9 @@ function SettingsPanel(props: {
                         <p className="font-semibold text-gray-900">{dayLabels[schedule.dayOfWeek]} {schedule.startTime}-{schedule.endTime}</p>
                         {!schedule.isActive && <span className="rounded-md bg-gray-200 px-2 py-0.5 text-xs text-gray-600">停止中</span>}
                       </div>
-                      <p className="mt-1 text-xs text-gray-500">{schedule.slotIntervalMinutes}分間隔 / 総枠{schedule.defaultCapacity}</p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {schedule.slotIntervalMinutes}分間隔 / 総枠{schedule.defaultCapacity} / LINE {schedule.defaultLineCapacity ?? currentResource?.defaultLineCapacity ?? '-'} / 外部 {schedule.defaultExternalCapacity ?? currentResource?.defaultExternalCapacity ?? '-'}
+                    </p>
                     </div>
                   ))}
                 </div>
@@ -1204,19 +1206,21 @@ function SettingsPanel(props: {
                 {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
                 {props.showScheduleForm && (
                   <form action={props.onCreateSchedule} className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
-                    <div className="grid grid-cols-3 gap-3">
-                      <Field label="曜日">
-                        <select name="dayOfWeek" className="input">
-                          {dayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}
+                      <div className="grid grid-cols-3 gap-3">
+                        <Field label="曜日">
+                          <select name="dayOfWeek" className="input">
+                            {dayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}
                         </select>
                       </Field>
                       <Field label="開始"><input name="startTime" type="time" defaultValue="09:00" className="input" /></Field>
                       <Field label="終了"><input name="endTime" type="time" defaultValue="15:00" className="input" /></Field>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                      <Field label="間隔"><input name="slotIntervalMinutes" type="number" defaultValue={60} className="input" /></Field>
-                      <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
-                    </div>
+                        <Field label="間隔"><input name="slotIntervalMinutes" type="number" defaultValue={60} className="input" /></Field>
+                        <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={currentResource?.defaultCapacity ?? 20} className="input" /></Field>
+                        <Field label="LINE枠"><input name="defaultLineCapacity" type="number" defaultValue={currentResource?.defaultLineCapacity ?? ''} className="input" /></Field>
+                        <Field label="外部枠"><input name="defaultExternalCapacity" type="number" defaultValue={currentResource?.defaultExternalCapacity ?? ''} className="input" /></Field>
+                      </div>
                     <button disabled={props.loading || !props.resourceId} className="btn-primary">Schedule追加</button>
                   </form>
                 )}

@@ -5,6 +5,7 @@ import {
   getReservationById,
   getReservationSlotAvailability,
   getReservationMenuById,
+  getReservationResourceById,
   listReservationResources,
   listReservationMenus,
   listReservationSlots,
@@ -84,6 +85,7 @@ publicReservations.get('/api/public/reservation-resources/:resourceId/slots', as
     if (!date.ok) return jsonError(c, date.error.code, date.error.status, date.error.message);
 
     const slots = await listReservationSlots(c.env.DB, { resourceId, date: date.value });
+    const resource = await getReservationResourceById(c.env.DB, resourceId);
     const menuId = c.req.query('menuId');
     const menu = menuId ? await getReservationMenuById(c.env.DB, menuId) : null;
     const requestedPeople = menu
@@ -96,14 +98,19 @@ publicReservations.get('/api/public/reservation-resources/:resourceId/slots', as
     return jsonOk(
       c,
       slots.map((slot) => {
-        const availability = getReservationSlotAvailability(slot, requestedPeople);
+        const effectiveSlot = {
+          ...slot,
+          line_capacity: slot.line_capacity ?? resource?.default_line_capacity ?? null,
+          external_capacity: slot.external_capacity ?? resource?.default_external_capacity ?? null,
+        };
+        const availability = getReservationSlotAvailability(effectiveSlot, requestedPeople);
         return {
           slotId: slot.id,
           resourceId: slot.resource_id,
           date: slot.date,
           startAt: slot.start_at,
           endAt: slot.end_at,
-          lineCapacity: slot.line_capacity,
+          lineCapacity: effectiveSlot.line_capacity,
           remainingCapacity: availability.remaining_capacity,
           lineRemainingCapacity: availability.line_remaining_capacity,
           externalRemainingCapacity: availability.external_remaining_capacity,

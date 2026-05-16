@@ -8,6 +8,7 @@ import {
   generateReservationSlots,
   getReservationById,
   getReservationMenuById,
+  getReservationResourceById,
   getReservationSlotAvailability,
   listExternalReservationSources,
   listReservationMenus,
@@ -278,6 +279,7 @@ adminReservations.post('/api/reservation-resources/:resourceId/schedules', async
     if (!endTime.ok) return jsonError(c, endTime.error.code, endTime.error.status, endTime.error.message);
     const dayOfWeek = optionalNumber(json.value, 'dayOfWeek');
     if (dayOfWeek === undefined) return jsonError(c, 'bad_request', 400, 'dayOfWeek is required');
+    const resource = await getReservationResourceById(c.env.DB, c.req.param('resourceId'));
     const schedule = await createReservationSchedule(c.env.DB, {
       id: optionalString(json.value, 'id') ?? undefined,
       resourceId: c.req.param('resourceId'),
@@ -285,10 +287,10 @@ adminReservations.post('/api/reservation-resources/:resourceId/schedules', async
       startTime: startTime.value,
       endTime: endTime.value,
       slotIntervalMinutes: optionalNumber(json.value, 'slotIntervalMinutes'),
-      defaultCapacity: optionalNumber(json.value, 'defaultCapacity'),
-      defaultLineCapacity: optionalNumber(json.value, 'defaultLineCapacity') ?? null,
-      defaultExternalCapacity: optionalNumber(json.value, 'defaultExternalCapacity') ?? null,
-      defaultBufferCapacity: optionalNumber(json.value, 'defaultBufferCapacity'),
+      defaultCapacity: optionalNumber(json.value, 'defaultCapacity') ?? resource?.default_capacity,
+      defaultLineCapacity: optionalNullableNumber(json.value, 'defaultLineCapacity') ?? resource?.default_line_capacity ?? null,
+      defaultExternalCapacity: optionalNullableNumber(json.value, 'defaultExternalCapacity') ?? resource?.default_external_capacity ?? null,
+      defaultBufferCapacity: optionalNumber(json.value, 'defaultBufferCapacity') ?? resource?.default_buffer_capacity,
     });
     return jsonOk(c, toScheduleResponse(schedule), 201);
   } catch (err) {
@@ -334,12 +336,20 @@ adminReservations.get('/api/reservation-slots', async (c) => {
     if (!date.ok) return jsonError(c, date.error.code, date.error.status, date.error.message);
     const people = queryPositiveInt(c, 'people', 1);
     const slots = await listReservationSlots(c.env.DB, { resourceId: resourceId.value, date: date.value });
+    const resource = await getReservationResourceById(c.env.DB, resourceId.value);
     return jsonOk(
       c,
-      slots.map((slot) => ({
-        ...toSlotResponse(slot),
-        availability: toSlotAvailabilityResponse(getReservationSlotAvailability(slot, people)),
-      })),
+      slots.map((slot) => {
+        const effectiveSlot = {
+          ...slot,
+          line_capacity: slot.line_capacity ?? resource?.default_line_capacity ?? null,
+          external_capacity: slot.external_capacity ?? resource?.default_external_capacity ?? null,
+        };
+        return {
+          ...toSlotResponse(effectiveSlot),
+          availability: toSlotAvailabilityResponse(getReservationSlotAvailability(effectiveSlot, people)),
+        };
+      }),
     );
   } catch (err) {
     console.error('GET /api/reservation-slots error:', err);

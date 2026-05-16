@@ -1153,6 +1153,20 @@ export async function createReservationWithCapacityCheck(
   }
 
   const capacityChannel = input.capacityChannel ?? 'line';
+  if (capacityChannel === 'line' && slot.line_capacity === null && resource.default_line_capacity !== null) {
+    await db
+      .prepare(`UPDATE reservation_slots SET line_capacity = ?, updated_at = ? WHERE id = ? AND line_capacity IS NULL`)
+      .bind(resource.default_line_capacity, jstNow(), slot.id)
+      .run();
+    slot.line_capacity = resource.default_line_capacity;
+  }
+  if (capacityChannel === 'external' && slot.external_capacity === null && resource.default_external_capacity !== null) {
+    await db
+      .prepare(`UPDATE reservation_slots SET external_capacity = ?, updated_at = ? WHERE id = ? AND external_capacity IS NULL`)
+      .bind(resource.default_external_capacity, jstNow(), slot.id)
+      .run();
+    slot.external_capacity = resource.default_external_capacity;
+  }
   const reserved = await reserveSlotCapacity(db, slot.id, capacityPeople, capacityChannel);
   if (!reserved) return { ok: false, reason: 'slot_not_available' };
 
