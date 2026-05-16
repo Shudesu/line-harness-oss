@@ -328,6 +328,24 @@ adminReservations.put('/api/reservation-resources/:resourceId/schedules/:schedul
   }
 });
 
+adminReservations.delete('/api/reservation-resources/:resourceId/schedules/:scheduleId', async (c) => {
+  try {
+    const existing = await c.env.DB
+      .prepare(`SELECT resource_id FROM reservation_schedules WHERE id = ?`)
+      .bind(c.req.param('scheduleId'))
+      .first<{ resource_id: string }>();
+    if (!existing || existing.resource_id !== c.req.param('resourceId')) return jsonError(c, 'not_found', 404, 'Schedule not found');
+    const result = await updateReservationSchedule(c.env.DB, c.req.param('scheduleId'), {
+      isActive: false,
+    });
+    if (!result.ok) return updateMasterError(c, result.reason);
+    return jsonOk(c, toScheduleResponse(result.item));
+  } catch (err) {
+    console.error('DELETE /api/reservation-resources/:resourceId/schedules/:scheduleId error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
 adminReservations.get('/api/reservation-slots', async (c) => {
   try {
     const resourceId = queryRequired(c, 'resourceId');

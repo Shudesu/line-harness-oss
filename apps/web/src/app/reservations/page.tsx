@@ -478,6 +478,12 @@ export default function ReservationsPage() {
               body: JSON.stringify(schedulePayload(formData, true)),
             })
           }, '営業時間を保存しました')}
+          onDeleteSchedule={(schedule) => runSaving(async () => {
+            if (!confirm(`${dayLabels[schedule.dayOfWeek]} ${schedule.startTime}-${schedule.endTime} のScheduleを削除しますか？既に作成済みのSlotや予約は削除されません。`)) return
+            await apiData<ReservationSchedule>(`/api/reservation-resources/${encodeURIComponent(schedule.resourceId)}/schedules/${encodeURIComponent(schedule.id)}`, {
+              method: 'DELETE',
+            })
+          }, '営業時間を削除しました')}
           onGenerateSlots={(formData) => runSaving(() => generateSlots(formData), '予約枠を生成しました')}
           onDeleteSlots={(formData) => runSaving(() => deleteSlots(formData), '')}
           onGoogleOAuth={(formData) => runSaving(() => startGoogleOAuth(formData), 'Google Calendar接続を開始しました')}
@@ -999,6 +1005,7 @@ function SettingsPanel(props: {
   onDeleteMenu: (menu: ReservationMenu) => void
   onCreateSchedule: (formData: FormData) => void
   onUpdateSchedule: (schedule: ReservationSchedule, formData: FormData) => void
+  onDeleteSchedule: (schedule: ReservationSchedule) => void
   onGenerateSlots: (formData: FormData) => void
   onDeleteSlots: (formData: FormData) => void
   onGoogleOAuth: (formData: FormData) => void
@@ -1225,7 +1232,15 @@ function SettingsPanel(props: {
                   </form>
                 )}
                 <div className="mt-4 space-y-3">
-                  {props.schedules.map((schedule) => <ScheduleEditor key={schedule.id} schedule={schedule} loading={props.loading} onSubmit={props.onUpdateSchedule} />)}
+                  {props.schedules.map((schedule) => (
+                    <ScheduleEditor
+                      key={schedule.id}
+                      schedule={schedule}
+                      loading={props.loading}
+                      onSubmit={props.onUpdateSchedule}
+                      onDelete={props.onDeleteSchedule}
+                    />
+                  ))}
                 </div>
               </SettingsCard>
             </div>
@@ -1315,10 +1330,23 @@ function MenuEditor({
   )
 }
 
-function ScheduleEditor({ schedule, loading, onSubmit }: { schedule: ReservationSchedule; loading: boolean; onSubmit: (schedule: ReservationSchedule, formData: FormData) => void }) {
+function ScheduleEditor({
+  schedule,
+  loading,
+  onSubmit,
+  onDelete,
+}: {
+  schedule: ReservationSchedule
+  loading: boolean
+  onSubmit: (schedule: ReservationSchedule, formData: FormData) => void
+  onDelete: (schedule: ReservationSchedule) => void
+}) {
   return (
     <details className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-      <summary className="cursor-pointer text-sm font-bold text-gray-800">{dayLabels[schedule.dayOfWeek]} {schedule.startTime}-{schedule.endTime}</summary>
+      <summary className="cursor-pointer text-sm font-bold text-gray-800">
+        {dayLabels[schedule.dayOfWeek]} {schedule.startTime}-{schedule.endTime}
+        {!schedule.isActive && <span className="ml-2 rounded-md bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">削除済み</span>}
+      </summary>
       <form action={(formData) => onSubmit(schedule, formData)} className="mt-3 space-y-3">
         <div className="grid grid-cols-3 gap-3">
           <Field label="曜日"><select name="dayOfWeek" defaultValue={schedule.dayOfWeek} className="input">{dayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}</select></Field>
@@ -1331,7 +1359,14 @@ function ScheduleEditor({ schedule, loading, onSubmit }: { schedule: Reservation
           <Field label="LINE枠"><input name="defaultLineCapacity" type="number" defaultValue={schedule.defaultLineCapacity ?? ''} className="input" /></Field>
           <Field label="外部枠"><input name="defaultExternalCapacity" type="number" defaultValue={schedule.defaultExternalCapacity ?? ''} className="input" /></Field>
         </div>
-        <button disabled={loading} className="btn-secondary">schedule保存</button>
+        <div className="flex gap-2">
+          <button disabled={loading} className="btn-secondary">schedule保存</button>
+          {schedule.isActive && (
+            <button type="button" disabled={loading} onClick={() => onDelete(schedule)} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50">
+              削除
+            </button>
+          )}
+        </div>
       </form>
     </details>
   )

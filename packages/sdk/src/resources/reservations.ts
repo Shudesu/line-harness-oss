@@ -309,6 +309,13 @@ export class ReservationsResource {
     return res.data
   }
 
+  async deleteSchedule(resourceId: string, scheduleId: string): Promise<ReservationSchedule> {
+    const res = await this.http.delete<ApiResponse<ReservationSchedule>>(
+      `/api/reservation-resources/${encodeURIComponent(resourceId)}/schedules/${encodeURIComponent(scheduleId)}`,
+    )
+    return res.data
+  }
+
   async generateSlots(input: GenerateReservationSlotsInput): Promise<ReservationSlot[]> {
     const res = await this.http.post<ApiResponse<ReservationSlot[]>>('/api/reservation-slots/generate', input)
     return res.data
