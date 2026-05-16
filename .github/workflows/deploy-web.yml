@@ -18,6 +18,7 @@ on:
     paths:
       - 'apps/web/**'
       - 'packages/shared/**'
+      - 'packages/sdk/**'
       - 'pnpm-lock.yaml'
       - 'package.json'
       - 'pnpm-workspace.yaml'
@@ -41,6 +42,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @line-crm/shared build
+      - run: pnpm --filter @line-harness/sdk build
 
       - name: Validate deployment settings
         env:
