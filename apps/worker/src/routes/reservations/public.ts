@@ -103,6 +103,7 @@ publicReservations.get('/api/public/reservation-resources/:resourceId/slots', as
           date: slot.date,
           startAt: slot.start_at,
           endAt: slot.end_at,
+          lineCapacity: slot.line_capacity,
           remainingCapacity: availability.remaining_capacity,
           lineRemainingCapacity: availability.line_remaining_capacity,
           externalRemainingCapacity: availability.external_remaining_capacity,

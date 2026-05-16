@@ -7,6 +7,7 @@ export interface Slot {
   date: string;
   startAt: string;
   endAt: string;
+  lineCapacity?: number | null;
   remainingCapacity: number;
   lineRemainingCapacity: number;
   externalRemainingCapacity: number;

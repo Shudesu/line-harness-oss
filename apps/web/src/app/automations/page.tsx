@@ -13,6 +13,14 @@ interface AutomationAction {
   params: Record<string, unknown>
 }
 
+interface TemplateOption {
+  id: string
+  name: string
+  category: string
+  messageType: string
+  messageContent: string
+}
+
 interface Automation {
   id: string
   name: string
@@ -60,6 +68,7 @@ interface CreateFormState {
   actionsJson: string
   conditionsJson: string
   priority: number
+  selectedTemplateId: string
 }
 
 const initialForm: CreateFormState = {
@@ -69,6 +78,7 @@ const initialForm: CreateFormState = {
   actionsJson: '[\n  {\n    "type": "add_tag",\n    "params": {}\n  }\n]',
   conditionsJson: '{}',
   priority: 0,
+  selectedTemplateId: '',
 }
 
 const ccPrompts = [
@@ -99,6 +109,8 @@ export default function AutomationsPage() {
   const [form, setForm] = useState<CreateFormState>({ ...initialForm })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [templates, setTemplates] = useState<TemplateOption[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
 
   const loadAutomations = useCallback(async () => {
     setLoading(true)
@@ -120,6 +132,60 @@ export default function AutomationsPage() {
   useEffect(() => {
     loadAutomations()
   }, [loadAutomations])
+
+  const loadTemplates = useCallback(async () => {
+    setTemplatesLoading(true)
+    try {
+      const res = await api.templates.list()
+      if (res.success) {
+        setTemplates(res.data)
+      }
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (showCreate) {
+      loadTemplates()
+    }
+  }, [showCreate, loadTemplates])
+
+  const buildTemplateActionJson = (template: TemplateOption): string => {
+    const messageType = template.messageType === 'flex' ? 'flex' : 'text'
+    const content = template.messageType === 'text'
+      ? template.messageContent
+      : template.messageContent
+    return JSON.stringify([
+      {
+        type: 'send_message',
+        params: {
+          messageType,
+          ...(messageType === 'flex' ? { altText: template.name } : {}),
+          content,
+        },
+      },
+    ], null, 2)
+  }
+
+  const handleTemplateSelect = (templateId: string) => {
+    const template = templates.find((item) => item.id === templateId)
+    if (!template) {
+      setForm({ ...form, selectedTemplateId: templateId })
+      return
+    }
+    if (template.messageType !== 'text' && template.messageType !== 'flex') {
+      setFormError('現在オートメーションで使えるテンプレートは text / flex のみです')
+      setForm({ ...form, selectedTemplateId: templateId })
+      return
+    }
+    setFormError('')
+    setForm({
+      ...form,
+      selectedTemplateId: templateId,
+      actionsJson: buildTemplateActionJson(template),
+    })
+  }
 
   const handleCreate = async () => {
     if (!form.name.trim()) {
@@ -244,6 +310,25 @@ export default function AutomationsPage() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">返信テンプレート</label>
+              <select
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                value={form.selectedTemplateId}
+                onChange={(e) => handleTemplateSelect(e.target.value)}
+                disabled={templatesLoading}
+              >
+                <option value="">{templatesLoading ? 'テンプレートを読み込み中...' : 'テンプレートを使わない'}</option>
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name} / {template.category} / {template.messageType}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                選択すると、下のアクションJSONに送信用の設定を自動入力します。テンプレート更新を自動追従する形式ではなく、現在のテンプレート内容をコピーします。
+              </p>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">アクション (JSON)</label>
