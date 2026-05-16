@@ -107,6 +107,8 @@ export default function AutomationsPage() {
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState<CreateFormState>({ ...initialForm })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<CreateFormState>({ ...initialForm })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [templates, setTemplates] = useState<TemplateOption[]>([])
@@ -151,6 +153,12 @@ export default function AutomationsPage() {
     }
   }, [showCreate, loadTemplates])
 
+  useEffect(() => {
+    if (editingId) {
+      loadTemplates()
+    }
+  }, [editingId, loadTemplates])
+
   const buildTemplateActionJson = (template: TemplateOption): string => {
     const messageType = template.messageType === 'flex' ? 'flex' : 'text'
     const content = template.messageType === 'text'
@@ -182,6 +190,25 @@ export default function AutomationsPage() {
     setFormError('')
     setForm({
       ...form,
+      selectedTemplateId: templateId,
+      actionsJson: buildTemplateActionJson(template),
+    })
+  }
+
+  const handleEditTemplateSelect = (templateId: string) => {
+    const template = templates.find((item) => item.id === templateId)
+    if (!template) {
+      setEditForm({ ...editForm, selectedTemplateId: templateId })
+      return
+    }
+    if (template.messageType !== 'text' && template.messageType !== 'flex') {
+      setFormError('現在オートメーションで使えるテンプレートは text / flex のみです')
+      setEditForm({ ...editForm, selectedTemplateId: templateId })
+      return
+    }
+    setFormError('')
+    setEditForm({
+      ...editForm,
       selectedTemplateId: templateId,
       actionsJson: buildTemplateActionJson(template),
     })
@@ -228,6 +255,77 @@ export default function AutomationsPage() {
       }
     } catch {
       setFormError('作成に失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const startEdit = (automation: Automation) => {
+    setShowCreate(false)
+    setFormError('')
+    setEditingId(automation.id)
+    setEditForm({
+      name: automation.name,
+      description: automation.description ?? '',
+      eventType: automation.eventType,
+      actionsJson: JSON.stringify(automation.actions, null, 2),
+      conditionsJson: JSON.stringify(automation.conditions ?? {}, null, 2),
+      priority: automation.priority,
+      selectedTemplateId: '',
+    })
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setFormError('')
+    setEditForm({ ...initialForm })
+  }
+
+  const handleUpdate = async () => {
+    if (!editingId) return
+    if (!editForm.name.trim()) {
+      setFormError('ルール名を入力してください')
+      return
+    }
+
+    let parsedActions: AutomationAction[]
+    let parsedConditions: Record<string, unknown>
+    try {
+      parsedActions = JSON.parse(editForm.actionsJson)
+      if (!Array.isArray(parsedActions)) {
+        setFormError('アクションJSONは配列で入力してください')
+        return
+      }
+    } catch {
+      setFormError('アクションのJSON形式が正しくありません')
+      return
+    }
+    try {
+      parsedConditions = JSON.parse(editForm.conditionsJson)
+    } catch {
+      setFormError('条件のJSON形式が正しくありません')
+      return
+    }
+
+    setSaving(true)
+    setFormError('')
+    try {
+      const res = await api.automations.update(editingId, {
+        name: editForm.name,
+        description: editForm.description || null,
+        eventType: editForm.eventType,
+        actions: parsedActions,
+        conditions: parsedConditions,
+        priority: editForm.priority,
+      })
+      if (res.success) {
+        cancelEdit()
+        loadAutomations()
+      } else {
+        setFormError(res.error)
+      }
+    } catch {
+      setFormError('更新に失敗しました')
     } finally {
       setSaving(false)
     }
@@ -382,6 +480,111 @@ export default function AutomationsPage() {
         </div>
       )}
 
+      {editingId && (
+        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800">オートメーションを編集</h2>
+              <p className="mt-1 text-xs text-gray-500">条件とアクションを更新します。JSON形式が正しいか保存前に確認します。</p>
+            </div>
+            <button onClick={cancelEdit} className="text-xs text-gray-500 hover:text-gray-700">閉じる</button>
+          </div>
+          <div className="space-y-4 max-w-2xl">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">ルール名 <span className="text-red-500">*</span></label>
+              <input
+                type="text"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">説明</label>
+              <textarea
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                rows={2}
+                value={editForm.description}
+                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">イベントタイプ</label>
+              <select
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                value={editForm.eventType}
+                onChange={(e) => setEditForm({ ...editForm, eventType: e.target.value as AutomationEventType })}
+              >
+                {eventTypeOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">返信テンプレートでアクションを上書き</label>
+              <select
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                value={editForm.selectedTemplateId}
+                onChange={(e) => handleEditTemplateSelect(e.target.value)}
+                disabled={templatesLoading}
+              >
+                <option value="">{templatesLoading ? 'テンプレートを読み込み中...' : 'テンプレートを使わない'}</option>
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name} / {template.category} / {template.messageType}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">選択すると、下のアクションJSONをテンプレート送信用に置き換えます。</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">アクション (JSON)</label>
+              <textarea
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
+                rows={8}
+                value={editForm.actionsJson}
+                onChange={(e) => setEditForm({ ...editForm, actionsJson: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">条件 (JSON)</label>
+              <textarea
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
+                rows={4}
+                value={editForm.conditionsJson}
+                onChange={(e) => setEditForm({ ...editForm, conditionsJson: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">優先度</label>
+              <input
+                type="number"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                value={editForm.priority}
+                onChange={(e) => setEditForm({ ...editForm, priority: parseInt(e.target.value, 10) || 0 })}
+              />
+            </div>
+            {formError && <p className="text-xs text-red-600">{formError}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={handleUpdate}
+                disabled={saving}
+                className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
+                style={{ backgroundColor: '#06C755' }}
+              >
+                {saving ? '保存中...' : '保存'}
+              </button>
+              <button
+                onClick={cancelEdit}
+                className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Loading skeleton */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -450,6 +653,12 @@ export default function AutomationsPage() {
 
               {/* Actions */}
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+                <button
+                  onClick={() => startEdit(automation)}
+                  className="px-3 py-1 min-h-[44px] text-xs font-medium text-gray-700 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+                >
+                  編集
+                </button>
                 <button
                   onClick={() => handleDelete(automation.id)}
                   className="px-3 py-1 min-h-[44px] text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
