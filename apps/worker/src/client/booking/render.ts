@@ -9,6 +9,15 @@ function lineRemaining(slot: Slot): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
+function requiredBadge(): string {
+  return '<span class="required-badge">必須</span>';
+}
+
+function validationError(field: string): string {
+  const message = state.validationErrors[field];
+  return message ? `<p class="field-error">${escapeHtml(message)}</p>` : '';
+}
+
 function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; className: string; label: string } {
   if (!summary || summary.slotCount === 0) return { mark: '-', className: 'none', label: '未生成' };
   if (summary.available) return { mark: '◎', className: 'many', label: '予約可' };
@@ -167,7 +176,7 @@ function renderBookingControls(): string {
         </select>
       </label>
       <label class="field-label">
-        メニュー
+        メニュー ${requiredBadge()}
         <select data-field="menuId">
           ${state.menus.length === 0 ? '<option value="">メニューがありません</option>' : state.menus.map((item) => `
             <option value="${escapeHtml(item.id)}" ${item.id === state.menuId ? 'selected' : ''}>
@@ -175,6 +184,7 @@ function renderBookingControls(): string {
             </option>
           `).join('')}
         </select>
+        ${validationError('menuId')}
       </label>
       ${renderMenuPriceSummary(menu)}
       <div class="people-stepper-grid">
@@ -183,6 +193,7 @@ function renderBookingControls(): string {
         ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
       </div>
       <p class="people-total">合計 ${state.form.adultCount + state.form.childCount + state.form.infantCount}名</p>
+      ${validationError('people')}
       ${renderPriceEstimate(menu, state.form, true)}
       <div class="view-toggle">
         <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
@@ -280,8 +291,9 @@ function renderSlots(): string {
   if (!state.selectedDate) {
     return `
       <section class="booking-panel">
-        <h2>時間を選択</h2>
+        <h2>時間を選択 ${requiredBadge()}</h2>
         <p class="muted">上のカレンダーから日付を選んでください。</p>
+        ${validationError('slot')}
       </section>
     `;
   }
@@ -300,13 +312,15 @@ function renderSlots(): string {
       <section class="booking-panel">
         <h2>${formatDateJa(state.selectedDate)}</h2>
         <p class="muted">この日は予約枠がありません。</p>
+        ${validationError('slot')}
       </section>
     `;
   }
 
   return `
     <section class="booking-panel">
-      <h2>${formatDateJa(state.selectedDate)}</h2>
+      <h2>${formatDateJa(state.selectedDate)} ${requiredBadge()}</h2>
+      ${validationError('slot')}
       <div class="slots-grid">
         ${slots.map((slot) => {
           const mark = slotMark(slot);
@@ -344,16 +358,18 @@ function renderInputForm(): string {
     <section class="booking-panel">
       <h2>受付情報</h2>
       <label class="field-label">
-        氏名
-        <input type="text" data-field="customerName" value="${escapeHtml(state.form.customerName)}" placeholder="山田 太郎">
+        氏名 ${requiredBadge()}
+        <input type="text" data-field="customerName" value="${escapeHtml(state.form.customerName)}">
+        ${validationError('customerName')}
       </label>
       <label class="field-label">
-        電話番号
-        <input type="tel" inputmode="tel" data-field="customerPhone" value="${escapeHtml(state.form.customerPhone)}" placeholder="09012345678">
+        電話番号 ${requiredBadge()}
+        <input type="tel" inputmode="tel" data-field="customerPhone" value="${escapeHtml(state.form.customerPhone)}">
+        ${validationError('customerPhone')}
       </label>
       <label class="field-label">
         メールアドレス（任意）
-        <input type="email" data-field="customerEmail" value="${escapeHtml(state.form.customerEmail)}" placeholder="example@example.com">
+        <input type="email" data-field="customerEmail" value="${escapeHtml(state.form.customerEmail)}">
       </label>
       <label class="field-label">
         備考（任意）

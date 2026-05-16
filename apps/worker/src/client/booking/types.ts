@@ -117,5 +117,6 @@ export interface BookingState {
   submitting: boolean;
   error: string | null;
   notice: string | null;
+  validationErrors: Record<string, string>;
   availabilityRequestId: number;
 }

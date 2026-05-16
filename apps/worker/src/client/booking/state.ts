@@ -46,6 +46,7 @@ export const state: BookingState = {
   submitting: false,
   error: null,
   notice: null,
+  validationErrors: {},
   availabilityRequestId: 0,
 };
 

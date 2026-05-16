@@ -152,11 +152,17 @@ function bindEvents(): void {
 
 function handleField(field: string, value: string): void {
   state.notice = null;
+  if (state.validationErrors[field]) {
+    const nextErrors = { ...state.validationErrors };
+    delete nextErrors[field];
+    state.validationErrors = nextErrors;
+  }
   if (field === 'resourceId') {
     void changeResource(value);
     return;
   }
   if (field === 'menuId') {
+    delete state.validationErrors.menuId;
     state.menuId = value;
     ensurePeopleWithinSelectedMenu();
     state.selectedDate = null;
@@ -169,6 +175,7 @@ function handleField(field: string, value: string): void {
     return;
   }
   if (field === 'adultCount' || field === 'childCount' || field === 'infantCount') {
+    delete state.validationErrors.people;
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
     state.selectedSlot = null;
@@ -243,13 +250,15 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     return;
   }
   if (action === 'go-confirm') {
-    const error = validateBooking();
-    if (error) {
-      state.notice = error;
+    const errors = validateBooking();
+    if (Object.keys(errors).length > 0) {
+      state.validationErrors = errors;
+      state.notice = '未入力の項目があります。赤い注釈を確認してください。';
       state.screen = 'booking';
       render();
       return;
     }
+    state.validationErrors = {};
     state.notice = null;
     state.screen = 'confirm';
     render();
@@ -292,22 +301,27 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   }
 }
 
-function validateBooking(): string | null {
+function validateBooking(): Record<string, string> {
   const menu = selectedMenu();
   const people = totalPeople();
-  if (!menu) return 'メニューを選択してください。';
-  if (!state.selectedDate || !state.selectedSlot) return '日付と時間を選択してください。';
-  if (people < menu.minPeople) return `人数は${menu.minPeople}名以上で入力してください。`;
-  if (menu.maxPeople && people > menu.maxPeople) return `人数は${menu.maxPeople}名以下で入力してください。`;
-  if (!state.form.customerName.trim()) return '氏名を入力してください。';
-  if (!state.form.customerPhone.trim()) return '電話番号を入力してください。';
-  if (!/^[0-9+\-\s()]{8,20}$/.test(state.form.customerPhone.trim())) return '電話番号の形式を確認してください。';
-  return null;
+  const errors: Record<string, string> = {};
+  if (!menu) errors.menuId = 'メニューを選択してください。';
+  if (!state.selectedDate || !state.selectedSlot) errors.slot = '予約する日付と時間枠を選択してください。';
+  if (menu && people < menu.minPeople) errors.people = `人数は${menu.minPeople}名以上で入力してください。`;
+  if (menu?.maxPeople && people > menu.maxPeople) errors.people = `人数は${menu.maxPeople}名以下で入力してください。`;
+  if (!state.form.customerName.trim()) errors.customerName = '氏名を入力してください。';
+  if (!state.form.customerPhone.trim()) {
+    errors.customerPhone = '電話番号を入力してください。';
+  } else if (!/^[0-9+\-\s()]{8,20}$/.test(state.form.customerPhone.trim())) {
+    errors.customerPhone = '電話番号の形式を確認してください。';
+  }
+  return errors;
 }
 
 function selectDate(date: string): void {
   if (!date || isPastDate(date)) return;
   state.notice = null;
+  delete state.validationErrors.slot;
   state.selectedDate = date;
   state.selectedSlot = null;
   render();
@@ -318,6 +332,7 @@ function selectSlot(slotId: string): void {
   const slot = Object.values(state.slotsByDate).flat().find((item) => item.slotId === slotId);
   if (!slot || !slot.available) return;
   state.notice = null;
+  delete state.validationErrors.slot;
   state.selectedDate = slot.date;
   state.selectedSlot = slot;
   render();
@@ -498,13 +513,15 @@ async function loadSlotsForSelectedDate(): Promise<void> {
 }
 
 async function submitBooking(): Promise<void> {
-  const error = validateBooking();
-  if (error) {
-    state.notice = error;
+  const errors = validateBooking();
+  if (Object.keys(errors).length > 0) {
+    state.validationErrors = errors;
+    state.notice = '未入力の項目があります。赤い注釈を確認してください。';
     state.screen = 'booking';
     render();
     return;
   }
+  state.validationErrors = {};
   if (!state.selectedSlot || state.submitting) return;
   state.submitting = true;
   render();
@@ -631,7 +648,6 @@ export async function initBooking(): Promise<void> {
   try {
     const profile = await liff.getProfile();
     state.profile = profile;
-    state.form.customerName = profile.displayName;
 
     try {
       state.friendId = localStorage.getItem(UUID_STORAGE_KEY);
