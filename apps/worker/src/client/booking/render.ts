@@ -74,7 +74,7 @@ function renderMenuPriceSummary(menu: Menu | null | undefined): string {
   }
   const rows = [
     hasPrice(menu.priceAdult) ? `大人 ${formatYen(menu.priceAdult)}` : null,
-    hasPrice(menu.priceChild) ? `子ども ${formatYen(menu.priceChild)}` : null,
+    hasPrice(menu.priceChild) ? `小学生 ${formatYen(menu.priceChild)}` : null,
     hasPrice(menu.priceInfant) ? `幼児 ${formatYen(menu.priceInfant)}` : null,
   ].filter(Boolean);
   return `<div class="price-chips" aria-label="料金単価">${rows.map((row) => `<span>${escapeHtml(row ?? '')}</span>`).join('')}</div>`;
@@ -86,7 +86,7 @@ function renderPriceEstimate(menu: Menu | null | undefined, counts: { adultCount
   if (total === null) {
     return `
       <div class="price-estimate ${compact ? 'compact' : ''}">
-        <span>料金目安</span>
+        <span>合計金額</span>
         <strong>現地確認</strong>
         <small>未設定の料金区分があるため、合計は表示していません。</small>
       </div>
@@ -94,9 +94,8 @@ function renderPriceEstimate(menu: Menu | null | undefined, counts: { adultCount
   }
   return `
     <div class="price-estimate ${compact ? 'compact' : ''}">
-      <span>料金目安</span>
+      <span>合計金額</span>
       <strong>${formatYen(total)}</strong>
-      <small>実際の請求額はクーポン・現地精算で変わる場合があります。</small>
     </div>
   `;
 }
@@ -181,7 +180,7 @@ function renderBookingControls(): string {
       ${renderMenuPriceSummary(menu)}
       <div class="people-stepper-grid">
         ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
-        ${renderPeopleStepper('childCount', '子ども', state.form.childCount)}
+        ${renderPeopleStepper('childCount', '小学生', state.form.childCount)}
         ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
       </div>
       <p class="people-total">合計 ${state.form.adultCount + state.form.childCount + state.form.infantCount}名</p>
@@ -535,7 +534,7 @@ function renderReservationSummary(input: {
       <div class="confirm-row"><span class="confirm-label">メニュー</span><span class="confirm-value">${escapeHtml(input.menuName)}</span></div>
       <div class="confirm-row"><span class="confirm-label">日付</span><span class="confirm-value">${input.date ? formatDateJa(input.date) : '未選択'}</span></div>
       <div class="confirm-row"><span class="confirm-label">時間</span><span class="confirm-value">${input.startAt && input.endAt ? `${formatTime(input.startAt)}-${formatTime(input.endAt)}` : '未選択'}</span></div>
-      <div class="confirm-row"><span class="confirm-label">人数</span><span class="confirm-value">大人${input.adultCount}名 / 子ども${input.childCount}名 / 幼児${input.infantCount}名</span></div>
+      <div class="confirm-row"><span class="confirm-label">人数</span><span class="confirm-value">大人${input.adultCount}名 / 小学生${input.childCount}名 / 幼児${input.infantCount}名</span></div>
       <div class="confirm-row"><span class="confirm-label">氏名</span><span class="confirm-value">${escapeHtml(input.name)}</span></div>
       <div class="confirm-row"><span class="confirm-label">電話</span><span class="confirm-value">${escapeHtml(input.phone)}</span></div>
       ${input.email ? `<div class="confirm-row"><span class="confirm-label">メール</span><span class="confirm-value">${escapeHtml(input.email)}</span></div>` : ''}

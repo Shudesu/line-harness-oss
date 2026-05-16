@@ -80,6 +80,13 @@ export default function TemplatesPage() {
     messageType: 'text',
     messageContent: '',
   })
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<CreateFormState>({
+    name: '',
+    category: '',
+    messageType: 'text',
+    messageContent: '',
+  })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [showReservationCard, setShowReservationCard] = useState(false)
@@ -155,6 +162,58 @@ export default function TemplatesPage() {
       await load()
     } catch {
       setError('削除に失敗しました')
+    }
+  }
+
+  const startEdit = (template: Template) => {
+    setShowCreate(false)
+    setShowReservationCard(false)
+    setFormError('')
+    setEditingTemplateId(template.id)
+    setEditForm({
+      name: template.name,
+      category: template.category,
+      messageType: template.messageType,
+      messageContent: template.messageContent,
+    })
+  }
+
+  const cancelEdit = () => {
+    setEditingTemplateId(null)
+    setFormError('')
+    setEditForm({ name: '', category: '', messageType: 'text', messageContent: '' })
+  }
+
+  const handleUpdate = async () => {
+    if (!editingTemplateId) return
+    if (!editForm.name.trim()) {
+      setFormError('テンプレート名を入力してください')
+      return
+    }
+    if (!editForm.category.trim()) {
+      setFormError('カテゴリを入力してください')
+      return
+    }
+    if (!editForm.messageContent.trim()) {
+      setFormError('メッセージ内容を入力してください')
+      return
+    }
+    setSaving(true)
+    setFormError('')
+    try {
+      const client = createLineHarnessClient()
+      await client.templates.update(editingTemplateId, {
+        name: editForm.name,
+        category: editForm.category,
+        messageType: editForm.messageType as 'text' | 'image' | 'flex',
+        messageContent: editForm.messageContent,
+      })
+      cancelEdit()
+      await load()
+    } catch {
+      setFormError('更新に失敗しました')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -359,6 +418,88 @@ export default function TemplatesPage() {
         </div>
       )}
 
+      {editingTemplateId && (
+        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800">テンプレートを編集</h2>
+              <p className="mt-1 text-xs text-gray-500">
+                保存済みテンプレートを更新します。自動化で内容コピー済みのJSONは自動更新されません。
+              </p>
+            </div>
+            <button onClick={cancelEdit} className="text-xs text-gray-500 hover:text-gray-700">閉じる</button>
+          </div>
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="space-y-4">
+              <Field label="テンプレート名">
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                />
+              </Field>
+              <Field label="カテゴリ">
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  value={editForm.category}
+                  onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                />
+              </Field>
+              <Field label="メッセージタイプ">
+                <select
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                  value={editForm.messageType}
+                  onChange={(e) => setEditForm({ ...editForm, messageType: e.target.value })}
+                >
+                  <option value="text">テキスト</option>
+                  <option value="image">画像</option>
+                  <option value="flex">Flex</option>
+                </select>
+              </Field>
+              <Field label="メッセージ内容">
+                <textarea
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
+                  rows={editForm.messageType === 'flex' ? 12 : 5}
+                  value={editForm.messageContent}
+                  onChange={(e) => setEditForm({ ...editForm, messageContent: e.target.value })}
+                />
+              </Field>
+              {formError && <p className="text-xs text-red-600">{formError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleUpdate}
+                  disabled={saving}
+                  className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
+                  style={{ backgroundColor: '#06C755' }}
+                >
+                  {saving ? '保存中...' : '保存'}
+                </button>
+                <button
+                  onClick={cancelEdit}
+                  className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium text-gray-600">プレビュー</p>
+              {editForm.messageType === 'flex' ? (
+                <FlexPreviewComponent content={editForm.messageContent} maxWidth={320} />
+              ) : editForm.messageType === 'image' ? (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <img src={editForm.messageContent} alt="画像テンプレート" className="max-h-64 rounded-lg object-contain" />
+                </div>
+              ) : (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 whitespace-pre-wrap">
+                  {editForm.messageContent || 'テキストのプレビューがここに表示されます。'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Category filter */}
       {!loading && categories.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2">
@@ -532,12 +673,20 @@ export default function TemplatesPage() {
 
                   {/* Actions */}
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => handleDelete(template.id)}
-                      className="px-3 py-1 text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
-                    >
-                      削除
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => startEdit(template)}
+                        className="px-3 py-1 text-xs font-medium text-gray-700 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+                      >
+                        編集
+                      </button>
+                      <button
+                        onClick={() => handleDelete(template.id)}
+                        className="px-3 py-1 text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                      >
+                        削除
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
