@@ -19,7 +19,7 @@ function validationError(field: string): string {
 }
 
 function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; className: string; label: string } {
-  if (!summary || summary.slotCount === 0) return { mark: '-', className: 'none', label: '未生成' };
+  if (!summary || summary.slotCount === 0) return { mark: '-', className: 'none', label: '営業外' };
   if (summary.available) return { mark: '◎', className: 'many', label: '予約可' };
   return { mark: '×', className: 'full', label: '満席' };
 }

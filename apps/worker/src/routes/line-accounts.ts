@@ -181,7 +181,10 @@ lineAccounts.post('/api/line-accounts/:id/sync-followers', requireRole('owner'),
     const id = c.req.param('id')!;
     const account = await getLineAccountById(c.env.DB, id);
     if (!account) return c.json({ success: false, error: 'LINE account not found' }, 404);
-    if (!account.is_active) return c.json({ success: false, error: 'LINE account is not active' }, 400);
+    // NOTE: We intentionally do NOT gate on `is_active`. That flag controls
+    // webhook signature routing, not whether the LINE channel itself is alive.
+    // A manual sync click is explicit user intent — let it run, and surface any
+    // LINE API errors (bad token, etc.) through the catch below.
 
     const start = c.req.query('start') || undefined;
     const limitParam = Number(c.req.query('limit') ?? '300');
