@@ -111,6 +111,68 @@ function formatCurrency(value: number | null): string {
   return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(value)
 }
 
+type ReservationPriceDetails = {
+  totalAmount: number | null
+  pointAmount: number | null
+  couponAmount: number | null
+  customerChargeAmount: number | null
+}
+
+function parseReservationMetadata(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function readMoneyCandidate(metadata: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = metadata[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string') {
+      const normalized = value.replace(/[^\d.-]/g, '')
+      if (!normalized) continue
+      const numberValue = Number(normalized)
+      if (Number.isFinite(numberValue)) return numberValue
+    }
+  }
+  return null
+}
+
+function reservationPriceDetails(reservation: ReservationResponse): ReservationPriceDetails | null {
+  const metadata = parseReservationMetadata(reservation.metadata)
+  const details: ReservationPriceDetails = {
+    totalAmount: readMoneyCandidate(metadata, ['totalAmount', 'total_amount', 'totalAmountYen', 'totalPrice', 'total_price', 'amount']) ?? reservation.amount,
+    pointAmount: readMoneyCandidate(metadata, ['pointAmount', 'point_amount', 'pointsAmount', 'points_amount']),
+    couponAmount: readMoneyCandidate(metadata, ['couponAmount', 'coupon_amount']),
+    customerChargeAmount: readMoneyCandidate(metadata, ['customerChargeAmount', 'customer_charge_amount', 'chargeAmount', 'charge_amount']),
+  }
+  return Object.values(details).some((value) => value !== null) ? details : null
+}
+
+function formatPriceSummary(reservation: ReservationResponse): string {
+  const details = reservationPriceDetails(reservation)
+  if (!details) return '金額未登録'
+  if (details.customerChargeAmount !== null) return `請求 ${formatCurrency(details.customerChargeAmount)}`
+  if (details.totalAmount !== null) return `合計 ${formatCurrency(details.totalAmount)}`
+  return '金額未登録'
+}
+
+function formatPriceDetails(reservation: ReservationResponse): string {
+  const details = reservationPriceDetails(reservation)
+  if (!details) return '金額未登録'
+  const items = [
+    details.totalAmount !== null ? `合計 ${formatCurrency(details.totalAmount)}` : null,
+    details.pointAmount !== null ? `ポイント ${formatCurrency(details.pointAmount)}` : null,
+    details.couponAmount !== null ? `クーポン ${formatCurrency(details.couponAmount)}` : null,
+    details.customerChargeAmount !== null ? `請求 ${formatCurrency(details.customerChargeAmount)}` : null,
+  ].filter(Boolean)
+  return items.join(' / ') || '金額未登録'
+}
+
 function formatRangeLabel(viewMode: ViewMode, date: string, visibleDates: string[]): string {
   if (viewMode === 'month') {
     const d = parseYmd(date)
@@ -982,7 +1044,7 @@ function ReservationListPanel({
                           <p className="mt-1 text-xs text-gray-500">
                             {reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount}
                           </p>
-                          {reservation.source === 'jalan' && <p className="mt-1 text-xs font-semibold text-gray-700">{formatCurrency(reservation.amount)}</p>}
+                          {reservation.source === 'jalan' && <p className="mt-1 text-xs font-semibold text-gray-700">{formatPriceSummary(reservation)}</p>}
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1">
                           <span className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-600">{sourceLabel(reservation.source)}</span>
@@ -1037,7 +1099,7 @@ function ReservationDetailModal({
           <Info label="メール" value={reservation.customerEmail || '-'} />
           <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 子ども${reservation.childCount} / 幼児${reservation.infantCount}`} />
           <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
-          {reservation.source === 'jalan' && <Info label="予約金額" value={formatCurrency(reservation.amount)} />}
+          {reservation.source === 'jalan' && <Info label="料金" value={formatPriceDetails(reservation)} />}
           <Info label="状態" value={reservation.status} />
           <Info label="外部ID" value={reservation.externalReservationId || '-'} />
         </dl>
