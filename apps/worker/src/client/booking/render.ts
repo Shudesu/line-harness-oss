@@ -61,19 +61,21 @@ function hasPrice(value: number | null | undefined): value is number {
 }
 
 function hasAnyMenuPrice(menu: Menu | null | undefined): boolean {
-  return Boolean(menu && (hasPrice(menu.priceAdult) || hasPrice(menu.priceChild) || hasPrice(menu.priceInfant)));
+  return Boolean(menu && (hasPrice(menu.priceAdult) || hasPrice(menu.priceChild) || hasPrice(menu.priceInfant) || hasPrice(menu.priceUnderThree)));
 }
 
-function calculateEstimatedTotal(menu: Menu | null | undefined, counts: { adultCount: number; childCount: number; infantCount: number }): number | null {
+function calculateEstimatedTotal(menu: Menu | null | undefined, counts: { adultCount: number; childCount: number; infantCount: number; underThreeCount: number }): number | null {
   if (!hasAnyMenuPrice(menu)) return null;
   if (!menu) return null;
   if (counts.adultCount > 0 && !hasPrice(menu.priceAdult)) return null;
   if (counts.childCount > 0 && !hasPrice(menu.priceChild)) return null;
   if (counts.infantCount > 0 && !hasPrice(menu.priceInfant)) return null;
+  if (counts.underThreeCount > 0 && !hasPrice(menu.priceUnderThree)) return null;
   return (
     counts.adultCount * (menu.priceAdult ?? 0) +
     counts.childCount * (menu.priceChild ?? 0) +
-    counts.infantCount * (menu.priceInfant ?? 0)
+    counts.infantCount * (menu.priceInfant ?? 0) +
+    counts.underThreeCount * (menu.priceUnderThree ?? 0)
   );
 }
 
@@ -85,11 +87,12 @@ function renderMenuPriceSummary(menu: Menu | null | undefined): string {
     hasPrice(menu.priceAdult) ? `大人 ${formatYen(menu.priceAdult)}` : null,
     hasPrice(menu.priceChild) ? `小学生 ${formatYen(menu.priceChild)}` : null,
     hasPrice(menu.priceInfant) ? `幼児 ${formatYen(menu.priceInfant)}` : null,
+    hasPrice(menu.priceUnderThree) ? `3歳以下 ${formatYen(menu.priceUnderThree)}` : null,
   ].filter(Boolean);
   return `<div class="price-chips" aria-label="料金単価">${rows.map((row) => `<span>${escapeHtml(row ?? '')}</span>`).join('')}</div>`;
 }
 
-function renderPriceEstimate(menu: Menu | null | undefined, counts: { adultCount: number; childCount: number; infantCount: number }, compact = false): string {
+function renderPriceEstimate(menu: Menu | null | undefined, counts: { adultCount: number; childCount: number; infantCount: number; underThreeCount: number }, compact = false): string {
   if (!hasAnyMenuPrice(menu)) return '';
   const total = calculateEstimatedTotal(menu, counts);
   if (total === null) {
@@ -191,8 +194,9 @@ function renderBookingControls(): string {
         ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
         ${renderPeopleStepper('childCount', '小学生', state.form.childCount)}
         ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
+        ${renderPeopleStepper('underThreeCount', '3歳以下', state.form.underThreeCount)}
       </div>
-      <p class="people-total">合計 ${state.form.adultCount + state.form.childCount + state.form.infantCount}名</p>
+      <p class="people-total">合計 ${state.form.adultCount + state.form.childCount + state.form.infantCount + state.form.underThreeCount}名</p>
       ${validationError('people')}
       ${renderPriceEstimate(menu, state.form, true)}
       <div class="view-toggle">
@@ -203,7 +207,7 @@ function renderBookingControls(): string {
   `;
 }
 
-function renderPeopleStepper(field: 'adultCount' | 'childCount' | 'infantCount', label: string, value: number): string {
+function renderPeopleStepper(field: 'adultCount' | 'childCount' | 'infantCount' | 'underThreeCount', label: string, value: number): string {
   return `
     <div class="people-stepper">
       <span>${label}</span>
@@ -393,6 +397,7 @@ function renderConfirm(): string {
         adultCount: state.form.adultCount,
         childCount: state.form.childCount,
         infantCount: state.form.infantCount,
+        underThreeCount: state.form.underThreeCount,
         name: state.form.customerName,
         phone: state.form.customerPhone,
         email: state.form.customerEmail,
@@ -425,6 +430,7 @@ function renderSuccess(): string {
         adultCount: reservation.adultCount,
         childCount: reservation.childCount,
         infantCount: reservation.infantCount,
+        underThreeCount: reservation.underThreeCount,
         name: reservation.customerName ?? state.form.customerName,
         phone: reservation.customerPhone ?? state.form.customerPhone,
         email: reservation.customerEmail ?? state.form.customerEmail,
@@ -490,6 +496,7 @@ function renderReservationDetail(): string {
         adultCount: reservation.adultCount,
         childCount: reservation.childCount,
         infantCount: reservation.infantCount,
+        underThreeCount: reservation.underThreeCount,
         name: reservation.customerName ?? '',
         phone: reservation.customerPhone ?? '',
         email: reservation.customerEmail ?? '',
@@ -543,6 +550,7 @@ function renderReservationSummary(input: {
   adultCount: number;
   childCount: number;
   infantCount: number;
+  underThreeCount: number;
   name: string;
   phone: string;
   email?: string | null;
@@ -553,7 +561,7 @@ function renderReservationSummary(input: {
       <div class="confirm-row"><span class="confirm-label">メニュー</span><span class="confirm-value">${escapeHtml(input.menuName)}</span></div>
       <div class="confirm-row"><span class="confirm-label">日付</span><span class="confirm-value">${input.date ? formatDateJa(input.date) : '未選択'}</span></div>
       <div class="confirm-row"><span class="confirm-label">時間</span><span class="confirm-value">${input.startAt && input.endAt ? `${formatTime(input.startAt)}-${formatTime(input.endAt)}` : '未選択'}</span></div>
-      <div class="confirm-row"><span class="confirm-label">人数</span><span class="confirm-value">大人${input.adultCount}名 / 小学生${input.childCount}名 / 幼児${input.infantCount}名</span></div>
+      <div class="confirm-row"><span class="confirm-label">人数</span><span class="confirm-value">大人${input.adultCount}名 / 小学生${input.childCount}名 / 幼児${input.infantCount}名 / 3歳以下${input.underThreeCount}名</span></div>
       <div class="confirm-row"><span class="confirm-label">氏名</span><span class="confirm-value">${escapeHtml(input.name)}</span></div>
       <div class="confirm-row"><span class="confirm-label">電話</span><span class="confirm-value">${escapeHtml(input.phone)}</span></div>
       ${input.email ? `<div class="confirm-row"><span class="confirm-label">メール</span><span class="confirm-value">${escapeHtml(input.email)}</span></div>` : ''}

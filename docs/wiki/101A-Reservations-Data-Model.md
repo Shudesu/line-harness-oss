@@ -79,6 +79,78 @@ CREATE TABLE IF NOT EXISTS reservation_resources (
 
 予約フォームで選ぶメニュー/プラン。
 
+#### 年齢区分 Phase 1: 既存Resource互換
+
+既存Resourceは、従来の3区分に `3歳以下` を追加して扱う。
+
+```text
+adult_count        = 大人
+child_count        = 小学生
+infant_count       = 幼児
+under_three_count  = 3歳以下
+```
+
+Menuは `price_under_three` と `capacity_count_under_three` を持つ。`capacity_count_under_three=0` なら、3歳以下は人数には含めるが予約枠は消費しない。
+
+```text
+total_people =
+  adult_count + child_count + infant_count + under_three_count
+
+capacity_people =
+  adult_count * capacity_count_adult
++ child_count * capacity_count_child
++ infant_count * capacity_count_infant
++ under_three_count * capacity_count_under_three
+```
+
+キャンセル時の在庫戻しは、Menu設定を再計算せず、予約作成時に保存した `reservations.capacity_people` だけを戻す。これにより、Menuの枠消費設定を後から変更しても過去予約の戻し量は壊れない。
+
+#### 年齢区分 Phase 2: 新規Resource向けの柔軟カテゴリ
+
+今後作るResourceでは、固定カラム追加を避けるため、年齢区分を設定テーブル化する。
+
+```sql
+CREATE TABLE reservation_people_categories (
+  id TEXT PRIMARY KEY,
+  resource_id TEXT NOT NULL REFERENCES reservation_resources(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  default_price INTEGER,
+  counts_capacity INTEGER NOT NULL DEFAULT 1,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(resource_id, code)
+);
+
+CREATE TABLE reservation_menu_people_categories (
+  id TEXT PRIMARY KEY,
+  menu_id TEXT NOT NULL REFERENCES reservation_menus(id) ON DELETE CASCADE,
+  category_id TEXT NOT NULL REFERENCES reservation_people_categories(id) ON DELETE CASCADE,
+  price INTEGER,
+  counts_capacity INTEGER,
+  is_enabled INTEGER NOT NULL DEFAULT 1,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(menu_id, category_id)
+);
+
+CREATE TABLE reservation_people_breakdowns (
+  id TEXT PRIMARY KEY,
+  reservation_id TEXT NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+  category_code TEXT NOT NULL,
+  label_snapshot TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0 CHECK (count >= 0),
+  unit_price INTEGER,
+  amount INTEGER,
+  counts_capacity INTEGER NOT NULL DEFAULT 1,
+  capacity_people INTEGER NOT NULL DEFAULT 0,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(reservation_id, category_code)
+);
+```
+
+Phase 2でも旧4カラムは互換用に残す。新UI/APIは `reservation_people_breakdowns` を優先し、未作成の古い予約だけ旧カラムから表示する。
+
 ```sql
 CREATE TABLE IF NOT EXISTS reservation_menus (
   id TEXT PRIMARY KEY,

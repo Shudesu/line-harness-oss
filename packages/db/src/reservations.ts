@@ -40,16 +40,20 @@ async function ensureReservationPeopleCapacitySchema(db: D1Database): Promise<vo
   ]);
   await ensureColumns(db, 'reservation_menus', [
     ['price_infant', 'INTEGER'],
+    ['price_under_three', 'INTEGER'],
     ['capacity_count_adult', 'INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0, 1))'],
     ['capacity_count_child', 'INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0, 1))'],
     ['capacity_count_infant', 'INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0, 1))'],
+    ['capacity_count_under_three', 'INTEGER NOT NULL DEFAULT 0 CHECK (capacity_count_under_three IN (0, 1))'],
   ]);
   await ensureColumns(db, 'reservations', [
     ['infant_count', 'INTEGER NOT NULL DEFAULT 0'],
+    ['under_three_count', 'INTEGER NOT NULL DEFAULT 0'],
     ['capacity_people', 'INTEGER NOT NULL DEFAULT 0'],
   ]);
   await ensureColumns(db, 'reservation_items', [
     ['infant_count', 'INTEGER NOT NULL DEFAULT 0'],
+    ['under_three_count', 'INTEGER NOT NULL DEFAULT 0'],
     ['capacity_people', 'INTEGER NOT NULL DEFAULT 0'],
   ]);
   reservationPeopleCapacitySchemaReady = true;
@@ -97,9 +101,11 @@ export interface ReservationMenu {
   price_adult: number | null;
   price_child: number | null;
   price_infant: number | null;
+  price_under_three: number | null;
   capacity_count_adult: number;
   capacity_count_child: number;
   capacity_count_infant: number;
+  capacity_count_under_three: number;
   form_fields: string;
   is_active: number;
   display_order: number;
@@ -161,6 +167,7 @@ export interface Reservation {
   adult_count: number;
   child_count: number;
   infant_count: number;
+  under_three_count: number;
   total_people: number;
   capacity_people: number;
   customer_name_snapshot: string | null;
@@ -247,9 +254,11 @@ export interface CreateReservationMenuInput {
   priceAdult?: number | null;
   priceChild?: number | null;
   priceInfant?: number | null;
+  priceUnderThree?: number | null;
   capacityCountAdult?: boolean;
   capacityCountChild?: boolean;
   capacityCountInfant?: boolean;
+  capacityCountUnderThree?: boolean;
   formFields?: string;
   displayOrder?: number;
   metadata?: string;
@@ -265,9 +274,11 @@ export interface UpdateReservationMenuInput {
   priceAdult?: number | null;
   priceChild?: number | null;
   priceInfant?: number | null;
+  priceUnderThree?: number | null;
   capacityCountAdult?: boolean;
   capacityCountChild?: boolean;
   capacityCountInfant?: boolean;
+  capacityCountUnderThree?: boolean;
   formFields?: string;
   isActive?: boolean;
   displayOrder?: number;
@@ -349,6 +360,7 @@ export interface CreateReservationInput {
   adultCount?: number;
   childCount?: number;
   infantCount?: number;
+  underThreeCount?: number;
   customerName?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -389,6 +401,7 @@ export interface ImportExternalReservationInput {
   adultCount?: number;
   childCount?: number;
   infantCount?: number;
+  underThreeCount?: number;
   customerName?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -429,23 +442,26 @@ export function getReservationSlotAvailability(
 }
 
 export function calculateReservationPeople(
-  menu: Pick<ReservationMenu, 'capacity_count_adult' | 'capacity_count_child' | 'capacity_count_infant'>,
-  input: { adultCount?: number; childCount?: number; infantCount?: number },
-): { adultCount: number; childCount: number; infantCount: number; totalPeople: number; capacityPeople: number } {
+  menu: Pick<ReservationMenu, 'capacity_count_adult' | 'capacity_count_child' | 'capacity_count_infant' | 'capacity_count_under_three'>,
+  input: { adultCount?: number; childCount?: number; infantCount?: number; underThreeCount?: number },
+): { adultCount: number; childCount: number; infantCount: number; underThreeCount: number; totalPeople: number; capacityPeople: number } {
   const adultCount = Math.max(0, Math.floor(input.adultCount ?? 0));
   const childCount = Math.max(0, Math.floor(input.childCount ?? 0));
   const infantCount = Math.max(0, Math.floor(input.infantCount ?? 0));
+  const underThreeCount = Math.max(0, Math.floor(input.underThreeCount ?? 0));
   const capacityCountAdult = Number.isFinite(menu.capacity_count_adult) ? menu.capacity_count_adult : 1;
   const capacityCountChild = Number.isFinite(menu.capacity_count_child) ? menu.capacity_count_child : 1;
   const capacityCountInfant = Number.isFinite(menu.capacity_count_infant) ? menu.capacity_count_infant : 1;
-  const totalPeople = adultCount + childCount + infantCount;
+  const capacityCountUnderThree = Number.isFinite(menu.capacity_count_under_three) ? menu.capacity_count_under_three : 0;
+  const totalPeople = adultCount + childCount + infantCount + underThreeCount;
   const configuredCapacityPeople =
     adultCount * capacityCountAdult +
     childCount * capacityCountChild +
-    infantCount * capacityCountInfant;
+    infantCount * capacityCountInfant +
+    underThreeCount * capacityCountUnderThree;
   const capacityPeople = configuredCapacityPeople > 0 ? configuredCapacityPeople : totalPeople;
 
-  return { adultCount, childCount, infantCount, totalPeople, capacityPeople };
+  return { adultCount, childCount, infantCount, underThreeCount, totalPeople, capacityPeople };
 }
 
 export async function getReservationResourceById(
@@ -729,9 +745,10 @@ export async function createReservationMenu(
     .prepare(
       `INSERT INTO reservation_menus
          (id, resource_id, name, description, duration_minutes, unit_type, min_people, max_people,
-          price_adult, price_child, price_infant, capacity_count_adult, capacity_count_child, capacity_count_infant,
+          price_adult, price_child, price_infant, price_under_three,
+          capacity_count_adult, capacity_count_child, capacity_count_infant, capacity_count_under_three,
           form_fields, is_active, display_order, metadata, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -745,9 +762,11 @@ export async function createReservationMenu(
       input.priceAdult ?? null,
       input.priceChild ?? null,
       input.priceInfant ?? null,
+      input.priceUnderThree ?? 0,
       input.capacityCountAdult === undefined ? 1 : input.capacityCountAdult ? 1 : 0,
       input.capacityCountChild === undefined ? 1 : input.capacityCountChild ? 1 : 0,
       input.capacityCountInfant === undefined ? 1 : input.capacityCountInfant ? 1 : 0,
+      input.capacityCountUnderThree === undefined ? 0 : input.capacityCountUnderThree ? 1 : 0,
       input.formFields ?? '[]',
       input.displayOrder ?? 0,
       input.metadata ?? '{}',
@@ -784,9 +803,11 @@ export async function updateReservationMenu(
            price_adult = ?,
            price_child = ?,
            price_infant = ?,
+           price_under_three = ?,
            capacity_count_adult = ?,
            capacity_count_child = ?,
            capacity_count_infant = ?,
+           capacity_count_under_three = ?,
            form_fields = ?,
            is_active = ?,
            display_order = ?,
@@ -804,9 +825,11 @@ export async function updateReservationMenu(
       input.priceAdult === undefined ? menu.price_adult : input.priceAdult,
       input.priceChild === undefined ? menu.price_child : input.priceChild,
       input.priceInfant === undefined ? menu.price_infant : input.priceInfant,
+      input.priceUnderThree === undefined ? menu.price_under_three : input.priceUnderThree,
       input.capacityCountAdult === undefined ? menu.capacity_count_adult : input.capacityCountAdult ? 1 : 0,
       input.capacityCountChild === undefined ? menu.capacity_count_child : input.capacityCountChild ? 1 : 0,
       input.capacityCountInfant === undefined ? menu.capacity_count_infant : input.capacityCountInfant ? 1 : 0,
+      input.capacityCountUnderThree === undefined ? menu.capacity_count_under_three : input.capacityCountUnderThree ? 1 : 0,
       input.formFields ?? menu.form_fields,
       input.isActive === undefined ? menu.is_active : input.isActive ? 1 : 0,
       input.displayOrder ?? menu.display_order,
@@ -1142,7 +1165,7 @@ export async function createReservationWithCapacityCheck(
     return { ok: false, reason: 'invalid_slot' };
   }
 
-  const { adultCount, childCount, infantCount, totalPeople, capacityPeople } = calculateReservationPeople(menu, input);
+  const { adultCount, childCount, infantCount, underThreeCount, totalPeople, capacityPeople } = calculateReservationPeople(menu, input);
   if (
     totalPeople <= 0 ||
     capacityPeople <= 0 ||
@@ -1183,9 +1206,9 @@ export async function createReservationWithCapacityCheck(
         `INSERT INTO reservations
            (id, line_account_id, user_id, friend_id, slot_id, source, capacity_channel,
             external_reservation_id, dedupe_key, title, reservation_date, start_at, end_at, status,
-            adult_count, child_count, infant_count, total_people, capacity_people, customer_name_snapshot, customer_phone_snapshot,
+            adult_count, child_count, infant_count, under_three_count, total_people, capacity_people, customer_name_snapshot, customer_phone_snapshot,
             customer_email_snapshot, form_data, metadata, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -1205,6 +1228,7 @@ export async function createReservationWithCapacityCheck(
         adultCount,
         childCount,
         infantCount,
+        underThreeCount,
         totalPeople,
         capacityPeople,
         nullableText(input.customerName),
@@ -1220,9 +1244,9 @@ export async function createReservationWithCapacityCheck(
     await db
       .prepare(
         `INSERT INTO reservation_items
-           (id, reservation_id, menu_id, resource_id, name_snapshot, quantity, adult_count, child_count, infant_count,
+           (id, reservation_id, menu_id, resource_id, name_snapshot, quantity, adult_count, child_count, infant_count, under_three_count,
             capacity_people, unit_price, amount, metadata, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '{}', ?)`,
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, '{}', ?)`,
       )
       .bind(
         crypto.randomUUID(),
@@ -1233,9 +1257,10 @@ export async function createReservationWithCapacityCheck(
         adultCount,
         childCount,
         infantCount,
+        underThreeCount,
         capacityPeople,
         menu.price_adult,
-        calculateAmount(menu, adultCount, childCount, infantCount),
+        calculateAmount(menu, adultCount, childCount, infantCount, underThreeCount),
         now,
       )
       .run();
@@ -1464,6 +1489,7 @@ export async function importExternalReservation(
     adultCount: input.adultCount ?? 0,
     childCount: input.childCount ?? 0,
     infantCount: input.infantCount ?? 0,
+    underThreeCount: input.underThreeCount ?? 0,
     customerName: input.customerName,
     customerPhone: input.customerPhone,
     customerEmail: input.customerEmail,
@@ -1698,9 +1724,14 @@ async function saveExternalReservationSource(
     .first<ExternalReservationSourceRow>())!;
 }
 
-function calculateAmount(menu: ReservationMenu, adultCount: number, childCount: number, infantCount: number): number | null {
-  if (menu.price_adult === null && menu.price_child === null && menu.price_infant === null) return null;
-  return (menu.price_adult ?? 0) * adultCount + (menu.price_child ?? 0) * childCount + (menu.price_infant ?? 0) * infantCount;
+function calculateAmount(menu: ReservationMenu, adultCount: number, childCount: number, infantCount: number, underThreeCount: number): number | null {
+  if (menu.price_adult === null && menu.price_child === null && menu.price_infant === null && menu.price_under_three === null) return null;
+  return (
+    (menu.price_adult ?? 0) * adultCount +
+    (menu.price_child ?? 0) * childCount +
+    (menu.price_infant ?? 0) * infantCount +
+    (menu.price_under_three ?? 0) * underThreeCount
+  );
 }
 
 function slotDurationMinutes(slot: ReservationSlot): number {

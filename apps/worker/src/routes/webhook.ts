@@ -272,6 +272,15 @@ async function handleEvent(
           const expandedContent = expandVariables(rule.response_content, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], workerUrl);
           const replyMsg = buildMessage(rule.response_type, expandedContent);
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
+
+          // 送信ログ — チャット画面に表示するため messages_log に残す
+          await db
+            .prepare(
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'auto_reply', ?)`,
+            )
+            .bind(crypto.randomUUID(), friend.id, rule.response_type, expandedContent, jstNow())
+            .run();
         } catch (err) {
           console.error('Failed to send postback reply', err);
         }
@@ -352,19 +361,26 @@ async function handleEvent(
         try {
           const period = hour < 12 ? '午前' : '午後';
           const displayHour = hour <= 12 ? hour : hour - 12;
-          await lineClient.replyMessage(event.replyToken, [
-            buildMessage('flex', JSON.stringify({
-              type: 'bubble',
-              body: { type: 'box', layout: 'vertical', contents: [
-                { type: 'text', text: '配信時間を設定しました', size: 'lg', weight: 'bold', color: '#1e293b' },
-                { type: 'box', layout: 'vertical', contents: [
-                  { type: 'text', text: `${period} ${displayHour}:00`, size: 'xxl', weight: 'bold', color: '#f59e0b', align: 'center' },
-                  { type: 'text', text: `（${hour}:00〜）`, size: 'sm', color: '#64748b', align: 'center', margin: 'sm' },
-                ], backgroundColor: '#fffbeb', cornerRadius: 'md', paddingAll: '20px', margin: 'lg' },
-                { type: 'text', text: '今後のステップ配信はこの時間以降にお届けします。', size: 'xs', color: '#64748b', wrap: true, margin: 'lg' },
-              ], paddingAll: '20px' },
-            })),
-          ]);
+          const flexContent = JSON.stringify({
+            type: 'bubble',
+            body: { type: 'box', layout: 'vertical', contents: [
+              { type: 'text', text: '配信時間を設定しました', size: 'lg', weight: 'bold', color: '#1e293b' },
+              { type: 'box', layout: 'vertical', contents: [
+                { type: 'text', text: `${period} ${displayHour}:00`, size: 'xxl', weight: 'bold', color: '#f59e0b', align: 'center' },
+                { type: 'text', text: `（${hour}:00〜）`, size: 'sm', color: '#64748b', align: 'center', margin: 'sm' },
+              ], backgroundColor: '#fffbeb', cornerRadius: 'md', paddingAll: '20px', margin: 'lg' },
+              { type: 'text', text: '今後のステップ配信はこの時間以降にお届けします。', size: 'xs', color: '#64748b', wrap: true, margin: 'lg' },
+            ], paddingAll: '20px' },
+          });
+          await lineClient.replyMessage(event.replyToken, [buildMessage('flex', flexContent)]);
+
+          await db
+            .prepare(
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+               VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'reply', 'system', ?)`,
+            )
+            .bind(crypto.randomUUID(), friend.id, flexContent, jstNow())
+            .run();
         } catch (err) {
           console.error('Failed to reply for time setting', err);
         }
@@ -387,7 +403,7 @@ async function handleEvent(
           for (const other of otherFriends.results) {
             const otherClient = new LineClient(other.channel_access_token);
             const { buildMessage: bm } = await import('../services/step-delivery.js');
-            await otherClient.pushMessage(other.line_user_id, [bm('flex', JSON.stringify({
+            const otherFlex = JSON.stringify({
               type: 'bubble', size: 'giga',
               header: { type: 'box', layout: 'vertical', paddingAll: '20px', backgroundColor: '#fffbeb',
                 contents: [{ type: 'text', text: `${friend.display_name || ''}さんへ`, size: 'lg', weight: 'bold', color: '#1e293b' }],
@@ -406,11 +422,25 @@ async function handleEvent(
                   ...(liffUrl ? [{ type: 'button', action: { type: 'uri', label: 'フィードバックを送る', uri: `${liffUrl}?page=form` }, style: 'secondary', margin: 'sm' }] : []),
                 ],
               },
-            }))]);
+            });
+            await otherClient.pushMessage(other.line_user_id, [bm('flex', otherFlex)]);
+
+            // Log on the *other* friend's row so the cross-account message
+            // shows up in that account's chat history.
+            const otherFriendRow = await getFriendByLineUserId(db, other.line_user_id);
+            if (otherFriendRow) {
+              await db
+                .prepare(
+                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+                   VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'push', 'cross_account', ?)`,
+                )
+                .bind(crypto.randomUUID(), otherFriendRow.id, otherFlex, jstNow())
+                .run();
+            }
           }
 
           // Reply on Account ② confirming
-          await lineClient.replyMessage(event.replyToken, [buildMessage('flex', JSON.stringify({
+          const confirmFlex = JSON.stringify({
             type: 'bubble',
             body: { type: 'box', layout: 'vertical', paddingAll: '20px',
               contents: [
@@ -418,7 +448,16 @@ async function handleEvent(
                 { type: 'text', text: 'Account ① のトーク画面を確認してください', size: 'xs', color: '#64748b', align: 'center', margin: 'md' },
               ],
             },
-          }))]);
+          });
+          await lineClient.replyMessage(event.replyToken, [buildMessage('flex', confirmFlex)]);
+
+          await db
+            .prepare(
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+               VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'reply', 'cross_account', ?)`,
+            )
+            .bind(crypto.randomUUID(), friend.id, confirmFlex, jstNow())
+            .run();
           return;
         }
       } catch (err) {

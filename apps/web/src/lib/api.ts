@@ -456,6 +456,16 @@ export const api = {
       }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/line-accounts/${id}`, { method: 'DELETE' }),
+    syncFollowers: (id: string, params?: { start?: string; limit?: number }) => {
+      const query = new URLSearchParams()
+      if (params?.start) query.set('start', params.start)
+      if (params?.limit) query.set('limit', String(params.limit))
+      const qs = query.toString()
+      return fetchApi<ApiResponse<{ processed: number; created: number; updated: number; failed: number; next: string | null; done: boolean }>>(
+        `/api/line-accounts/${id}/sync-followers${qs ? `?${qs}` : ''}`,
+        { method: 'POST' },
+      )
+    },
   },
   conversions: {
     points: () =>

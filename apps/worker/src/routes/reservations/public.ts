@@ -120,6 +120,7 @@ publicReservations.get('/api/public/reservation-resources/:resourceId/availabili
         adultCount: queryPositiveInt(c, 'adultCount', queryPositiveInt(c, 'people', 1)),
         childCount: queryPositiveInt(c, 'childCount', 0),
         infantCount: queryPositiveInt(c, 'infantCount', 0),
+        underThreeCount: queryPositiveInt(c, 'underThreeCount', 0),
       }).capacityPeople
       : queryPositiveInt(c, 'people', 1);
 
@@ -198,6 +199,7 @@ publicReservations.get('/api/public/reservation-resources/:resourceId/slots', as
         adultCount: queryPositiveInt(c, 'adultCount', queryPositiveInt(c, 'people', 1)),
         childCount: queryPositiveInt(c, 'childCount', 0),
         infantCount: queryPositiveInt(c, 'infantCount', 0),
+        underThreeCount: queryPositiveInt(c, 'underThreeCount', 0),
       }).capacityPeople
       : queryPositiveInt(c, 'people', 1);
     return jsonOk(
@@ -252,6 +254,7 @@ publicReservations.post('/api/public/reservations', async (c) => {
       adultCount: body.adultCount ?? 0,
       childCount: body.childCount ?? 0,
       infantCount: body.infantCount ?? 0,
+      underThreeCount: body.underThreeCount ?? 0,
       customerName: body.customer?.name ?? null,
       customerPhone: body.customer?.phone ?? null,
       customerEmail: body.customer?.email ?? null,

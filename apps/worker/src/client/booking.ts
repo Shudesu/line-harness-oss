@@ -174,7 +174,7 @@ function handleField(field: string, value: string): void {
     render();
     return;
   }
-  if (field === 'adultCount' || field === 'childCount' || field === 'infantCount') {
+  if (field === 'adultCount' || field === 'childCount' || field === 'infantCount' || field === 'underThreeCount') {
     delete state.validationErrors.people;
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
@@ -194,7 +194,7 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   if (action === 'people-step') {
     const field = element.dataset.field;
     const delta = Number.parseInt(element.dataset.delta ?? '0', 10);
-    if (field === 'adultCount' || field === 'childCount' || field === 'infantCount') {
+    if (field === 'adultCount' || field === 'childCount' || field === 'infantCount' || field === 'underThreeCount') {
       handleField(field, String(Math.max(0, state.form[field] + (Number.isFinite(delta) ? delta : 0))));
     }
     return;
@@ -375,6 +375,7 @@ function ensurePeopleWithinSelectedMenu(): void {
     state.form.adultCount = menu.minPeople;
     state.form.childCount = 0;
     state.form.infantCount = 0;
+    state.form.underThreeCount = 0;
   }
 }
 
@@ -413,6 +414,7 @@ async function fetchSlots(date: string): Promise<Slot[]> {
     state.form.adultCount,
     state.form.childCount,
     state.form.infantCount,
+    state.form.underThreeCount,
   ].join(':');
   const cached = slotCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -427,6 +429,7 @@ async function fetchSlots(date: string): Promise<Slot[]> {
     adultCount: state.form.adultCount,
     childCount: state.form.childCount,
     infantCount: state.form.infantCount,
+    underThreeCount: state.form.underThreeCount,
   });
   if (state.resourceId === resourceId && state.menuId === menuId) {
     state.slotsByDate[date] = slots;
@@ -464,6 +467,7 @@ async function loadVisibleAvailability(): Promise<void> {
       state.form.adultCount,
       state.form.childCount,
       state.form.infantCount,
+      state.form.underThreeCount,
     ].join(':');
     const cachedSummary = summaryCache.get(cacheKey);
     if (cachedSummary && cachedSummary.expiresAt > Date.now()) {
@@ -478,6 +482,7 @@ async function loadVisibleAvailability(): Promise<void> {
         adultCount: state.form.adultCount,
         childCount: state.form.childCount,
         infantCount: state.form.infantCount,
+        underThreeCount: state.form.underThreeCount,
       });
       if (requestId === state.availabilityRequestId) {
         const summaries = Object.fromEntries(summary.map((item) => [item.date, item]));
@@ -535,6 +540,7 @@ async function submitBooking(): Promise<void> {
       adultCount: state.form.adultCount,
       childCount: state.form.childCount,
       infantCount: state.form.infantCount,
+      underThreeCount: state.form.underThreeCount,
       customer: {
         name: state.form.customerName.trim(),
         phone: state.form.customerPhone.trim(),

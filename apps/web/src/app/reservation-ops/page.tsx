@@ -1213,7 +1213,7 @@ function OpsReservationDetailModal({ reservation, onClose }: { reservation: Rese
           <Info label="時間" value={`${formatTime(reservation.startAt)} - ${formatTime(reservation.endAt)}`} />
           <Info label="電話" value={reservation.customerPhone || '-'} />
           <Info label="メール" value={reservation.customerEmail || '-'} />
-          <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 子ども${reservation.childCount} / 幼児${reservation.infantCount}`} />
+          <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 小学生${reservation.childCount} / 幼児${reservation.infantCount} / 3歳以下${reservation.underThreeCount}`} />
           <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
           {reservation.source === 'jalan' && <Info label="料金" value={formatPriceDetails(reservation)} />}
           <Info label="状態" value={reservation.status} />

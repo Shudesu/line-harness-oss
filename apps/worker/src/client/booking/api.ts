@@ -49,6 +49,7 @@ export function listSlots(input: {
   adultCount?: number;
   childCount?: number;
   infantCount?: number;
+  underThreeCount?: number;
 }) {
   const query = new URLSearchParams({
     date: input.date,
@@ -58,6 +59,7 @@ export function listSlots(input: {
   if (input.adultCount !== undefined) query.set('adultCount', String(Math.max(0, input.adultCount)));
   if (input.childCount !== undefined) query.set('childCount', String(Math.max(0, input.childCount)));
   if (input.infantCount !== undefined) query.set('infantCount', String(Math.max(0, input.infantCount)));
+  if (input.underThreeCount !== undefined) query.set('underThreeCount', String(Math.max(0, input.underThreeCount)));
   return apiJson<Slot[]>(`/api/public/reservation-resources/${encodeURIComponent(input.resourceId)}/slots?${query}`);
 }
 
@@ -70,6 +72,7 @@ export function listAvailabilitySummary(input: {
   adultCount?: number;
   childCount?: number;
   infantCount?: number;
+  underThreeCount?: number;
 }) {
   const query = new URLSearchParams({
     dateFrom: input.dateFrom,
@@ -80,6 +83,7 @@ export function listAvailabilitySummary(input: {
   if (input.adultCount !== undefined) query.set('adultCount', String(Math.max(0, input.adultCount)));
   if (input.childCount !== undefined) query.set('childCount', String(Math.max(0, input.childCount)));
   if (input.infantCount !== undefined) query.set('infantCount', String(Math.max(0, input.infantCount)));
+  if (input.underThreeCount !== undefined) query.set('underThreeCount', String(Math.max(0, input.underThreeCount)));
   return apiJson<AvailabilitySummary[]>(
     `/api/public/reservation-resources/${encodeURIComponent(input.resourceId)}/availability-summary?${query}`,
   );
@@ -93,6 +97,7 @@ export function createReservation(input: {
   adultCount: number;
   childCount: number;
   infantCount: number;
+  underThreeCount: number;
   customer: { name: string; phone: string; email: string | null };
   formData: { note: string | null };
 }) {
@@ -106,6 +111,7 @@ export function createReservation(input: {
       adultCount: input.adultCount,
       childCount: input.childCount,
       infantCount: input.infantCount,
+      underThreeCount: input.underThreeCount,
       customer: input.customer,
       formData: input.formData,
     }),

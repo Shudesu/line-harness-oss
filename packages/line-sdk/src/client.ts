@@ -66,6 +66,43 @@ export class LineClient {
     return data as UserProfile;
   }
 
+  // ─── Followers ────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch a single page of follower IDs.
+   * Cursor-based pagination — pass the previous response's `next` value to continue.
+   * Max 1000 IDs per page. Returns `next: undefined` when no more pages.
+   */
+  async getFollowerIds(
+    options: { start?: string; limit?: number } = {},
+  ): Promise<{ userIds: string[]; next?: string }> {
+    const params = new URLSearchParams();
+    if (options.start) params.set('start', options.start);
+    if (options.limit) params.set('limit', String(options.limit));
+    const qs = params.toString();
+    const { data } = await this.request(
+      'GET',
+      `/v2/bot/followers/ids${qs ? `?${qs}` : ''}`,
+    );
+    return data as { userIds: string[]; next?: string };
+  }
+
+  /**
+   * Convenience helper: paginate through all follower IDs.
+   * Concatenates every page — use the streaming `getFollowerIds()` directly if
+   * the follower count is very large and you want to process in chunks.
+   */
+  async getAllFollowerIds(limit = 1000): Promise<string[]> {
+    const ids: string[] = [];
+    let start: string | undefined;
+    do {
+      const page = await this.getFollowerIds({ start, limit });
+      ids.push(...page.userIds);
+      start = page.next;
+    } while (start);
+    return ids;
+  }
+
   // ─── Messaging ───────────────────────────────────────────────────────────
 
   async pushMessage(to: string, messages: Message[]): Promise<unknown> {

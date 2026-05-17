@@ -39,9 +39,11 @@ export interface Menu {
   priceAdult?: number | null;
   priceChild?: number | null;
   priceInfant?: number | null;
+  priceUnderThree?: number | null;
   capacityCountAdult?: boolean;
   capacityCountChild?: boolean;
   capacityCountInfant?: boolean;
+  capacityCountUnderThree?: boolean;
 }
 
 export interface Reservation {
@@ -55,6 +57,7 @@ export interface Reservation {
   adultCount: number;
   childCount: number;
   infantCount: number;
+  underThreeCount: number;
   totalPeople: number;
   capacityPeople: number;
   customerName?: string | null;
@@ -83,6 +86,7 @@ export interface BookingForm {
   adultCount: number;
   childCount: number;
   infantCount: number;
+  underThreeCount: number;
   customerName: string;
   customerPhone: string;
   customerEmail: string;

@@ -755,9 +755,11 @@ export interface ReservationMenu {
   priceAdult: number | null;
   priceChild: number | null;
   priceInfant: number | null;
+  priceUnderThree: number | null;
   capacityCountAdult: boolean;
   capacityCountChild: boolean;
   capacityCountInfant: boolean;
+  capacityCountUnderThree: boolean;
   formFields: string;
   isActive: boolean;
   displayOrder: number;
@@ -819,6 +821,7 @@ export interface Reservation {
   adultCount: number;
   childCount: number;
   infantCount: number;
+  underThreeCount: number;
   totalPeople: number;
   capacityPeople: number;
   customerNameSnapshot: string | null;
@@ -850,6 +853,7 @@ export interface ReservationResponse {
   adultCount: number;
   childCount: number;
   infantCount: number;
+  underThreeCount: number;
   totalPeople: number;
   capacityPeople: number;
   customerName: string | null;

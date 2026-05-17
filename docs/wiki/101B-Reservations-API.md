@@ -51,18 +51,28 @@ GET /api/public/reservation-resources/:resourceId/menus
       "priceAdult": 2000,
       "priceChild": 1000,
       "priceInfant": 0,
+      "priceUnderThree": 0,
       "capacityCountAdult": true,
       "capacityCountChild": true,
-      "capacityCountInfant": true
+      "capacityCountInfant": true,
+      "capacityCountUnderThree": false
     }
   ]
 }
 ```
 
+Phase 1では公開APIも管理APIも `underThreeCount` を受け付ける。`underThreeCount` は人数には含まれるが、枠を消費するかはMenuの `capacityCountUnderThree` で決まる。
+
 ### 空き枠取得
 
 ```http
 GET /api/public/reservation-resources/:resourceId/slots?date=2026-06-01&menuId=menu_picking_60&people=3
+```
+
+人数区分を使う場合:
+
+```http
+GET /api/public/reservation-resources/:resourceId/slots?date=2026-06-01&menuId=menu_picking_60&adultCount=2&childCount=0&infantCount=1&underThreeCount=1
 ```
 
 レスポンス:

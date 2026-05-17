@@ -30,6 +30,16 @@ const ccPrompts = [
 
 const PAGE_SIZE = 20
 
+interface SyncProgress {
+  pages: number
+  processed: number
+  created: number
+  updated: number
+  failed: number
+  done: boolean
+  error?: string
+}
+
 export default function FriendsPage() {
   const { selectedAccountId } = useAccount()
   const [friends, setFriends] = useState<FriendWithTags[]>([])
@@ -40,6 +50,8 @@ export default function FriendsPage() {
   const [selectedTagId, setSelectedTagId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null)
 
   const loadTags = useCallback(async () => {
     try {
@@ -92,6 +104,46 @@ export default function FriendsPage() {
     setSelectedTagId(tagId)
   }
 
+  const handleSyncFollowers = async () => {
+    if (!selectedAccountId || syncing) return
+    if (!window.confirm('LINE 公式アカウントから友だち一覧を取得し、DB に反映します。\n友だちが多い場合は数分かかります。実行しますか？')) {
+      return
+    }
+    setSyncing(true)
+    setError('')
+    const progress: SyncProgress = { pages: 0, processed: 0, created: 0, updated: 0, failed: 0, done: false }
+    setSyncProgress({ ...progress })
+    let cursor: string | undefined = undefined
+    try {
+      // Drive the LINE followers/ids cursor from the client so each request
+      // stays within the Worker's safe execution budget. The server pages 300
+      // IDs per call (capped at 1000), so a 10k-friend account is ~34 calls.
+      while (!progress.done) {
+        const res = await api.lineAccounts.syncFollowers(selectedAccountId, { start: cursor })
+        if (!res.success) throw new Error(res.error || 'sync failed')
+        const { processed, created, updated, failed, next, done } = res.data
+        progress.pages += 1
+        progress.processed += processed
+        progress.created += created
+        progress.updated += updated
+        progress.failed += failed
+        progress.done = done
+        setSyncProgress({ ...progress })
+        cursor = next ?? undefined
+        if (done) break
+      }
+      // Refresh list so newly imported friends show up
+      await loadFriends()
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'unknown'
+      progress.error = detail
+      setSyncProgress({ ...progress })
+      setError(`同期に失敗しました: ${detail}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div>
       <Header title="友だち管理" />
@@ -114,7 +166,49 @@ export default function FriendsPage() {
         <span className="text-sm text-gray-500">
           {loading ? '読み込み中...' : `${total.toLocaleString('ja-JP')} 件`}
         </span>
+        <div className="sm:ml-auto">
+          <button
+            onClick={handleSyncFollowers}
+            disabled={!selectedAccountId || syncing}
+            title={!selectedAccountId ? 'アカウントを選択してください' : 'LINE 公式アカウントから友だちを取得して DB に反映'}
+            className="px-3 py-2 min-h-[44px] text-sm font-medium rounded-lg text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            style={{ backgroundColor: '#06C755' }}
+          >
+            {syncing ? '同期中...' : 'LINE から友だち同期'}
+          </button>
+        </div>
       </div>
+
+      {/* Sync progress */}
+      {syncProgress && (
+        <div className={`mb-4 p-4 rounded-lg text-sm border ${
+          syncProgress.error
+            ? 'bg-red-50 border-red-200 text-red-700'
+            : syncProgress.done
+              ? 'bg-green-50 border-green-200 text-green-700'
+              : 'bg-blue-50 border-blue-200 text-blue-700'
+        }`}>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              {syncProgress.error
+                ? `同期エラー: ${syncProgress.error}`
+                : syncProgress.done
+                  ? '同期が完了しました'
+                  : `同期中... (ページ ${syncProgress.pages})`}
+            </div>
+            <button
+              onClick={() => setSyncProgress(null)}
+              className="text-xs underline opacity-70 hover:opacity-100"
+            >
+              閉じる
+            </button>
+          </div>
+          <div className="mt-1 text-xs">
+            処理: {syncProgress.processed} 件 / 新規: {syncProgress.created} / 更新: {syncProgress.updated}
+            {syncProgress.failed > 0 && ` / 失敗: ${syncProgress.failed}`}
+          </div>
+        </div>
+      )}
 
       {/* Error */}
       {error && (

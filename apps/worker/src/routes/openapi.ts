@@ -205,6 +205,7 @@ const spec = {
           adultCount: { type: 'integer' },
           childCount: { type: 'integer' },
           infantCount: { type: 'integer' },
+          underThreeCount: { type: 'integer' },
           totalPeople: { type: 'integer' },
           capacityPeople: { type: 'integer' },
           customerName: { type: 'string', nullable: true },
@@ -226,6 +227,7 @@ const spec = {
           adultCount: { type: 'integer', minimum: 0 },
           childCount: { type: 'integer', minimum: 0 },
           infantCount: { type: 'integer', minimum: 0 },
+          underThreeCount: { type: 'integer', minimum: 0 },
           customer: {
             type: 'object',
             properties: {
@@ -263,6 +265,7 @@ const spec = {
           adultCount: { type: 'integer', minimum: 0 },
           childCount: { type: 'integer', minimum: 0 },
           infantCount: { type: 'integer', minimum: 0 },
+          underThreeCount: { type: 'integer', minimum: 0 },
           customerName: { type: 'string', nullable: true },
           customerPhone: { type: 'string', nullable: true },
           customerEmail: { type: 'string', nullable: true },

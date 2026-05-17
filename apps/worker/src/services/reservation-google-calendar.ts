@@ -195,7 +195,7 @@ async function buildReservationDescription(
   const price = findReservationPriceDetails(reservation);
   return [
     `名前: ${reservation.customer_name_snapshot || reservation.title}`,
-    `人数: 合計${reservation.total_people}名 / 大人${reservation.adult_count}名 / 子ども${reservation.child_count}名 / 幼児${reservation.infant_count}名`,
+    `人数: 合計${reservation.total_people}名 / 大人${reservation.adult_count}名 / 小学生${reservation.child_count}名 / 幼児${reservation.infant_count}名 / 3歳以下${reservation.under_three_count}名`,
     price ? `料金: ${formatPriceDetails(price)}` : null,
     managementUrl ? `管理画面: ${managementUrl}` : null,
   ].filter(Boolean).join('\n');

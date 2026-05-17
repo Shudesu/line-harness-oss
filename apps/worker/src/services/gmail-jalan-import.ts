@@ -214,6 +214,7 @@ async function importMessage(
     adultCount: parsed.adultCount ?? undefined,
     childCount: parsed.childCount ?? undefined,
     infantCount: parsed.infantCount ?? undefined,
+    underThreeCount: parsed.underThreeCount ?? undefined,
     customerName: parsed.customerName,
     customerPhone: parsed.customerPhone,
     customerEmail: parsed.customerEmail,

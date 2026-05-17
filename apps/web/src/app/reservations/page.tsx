@@ -913,6 +913,7 @@ function SlotsCard({
 	          const adultCount = activeReservations.reduce((sum, reservation) => sum + reservation.adultCount, 0)
 	          const childCount = activeReservations.reduce((sum, reservation) => sum + reservation.childCount, 0)
 	          const infantCount = activeReservations.reduce((sum, reservation) => sum + reservation.infantCount, 0)
+	          const underThreeCount = activeReservations.reduce((sum, reservation) => sum + reservation.underThreeCount, 0)
 	          const open = selectedSlotId === slot.id
 	          return (
 	            <details key={slot.id} open={open} className="group">
@@ -930,7 +931,7 @@ function SlotsCard({
                     <SlotMetric label="人数" value={`${totalPeople}名`} />
                     <SlotMetric label="枠消費" value={`${capacityPeople}/${slot.totalCapacity}`} />
                   </div>
-                  <p className="mt-2 text-xs text-gray-500">内訳: 大人{adultCount} / 子ども{childCount} / 幼児{infantCount}</p>
+                  <p className="mt-2 text-xs text-gray-500">内訳: 大人{adultCount} / 小学生{childCount} / 幼児{infantCount} / 3歳以下{underThreeCount}</p>
                 </div>
               </summary>
               <div className="bg-white px-4 pb-4">
@@ -953,7 +954,7 @@ function SlotsCard({
                             <StatusBadge status={reservation.status} />
                           </div>
                           <p className="mt-1 text-xs text-gray-500">
-                            {reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount}
+                            {reservation.totalPeople}名 / 大人{reservation.adultCount}・小学生{reservation.childCount}・幼児{reservation.infantCount}・3歳以下{reservation.underThreeCount}
                           </p>
                         </div>
                       ))}
@@ -1042,7 +1043,7 @@ function ReservationListPanel({
                         <div className="min-w-0">
                           <p className="truncate font-semibold text-gray-900">{reservation.customerName || reservation.title}</p>
                           <p className="mt-1 text-xs text-gray-500">
-                            {reservation.totalPeople}名 / 大人{reservation.adultCount}・子ども{reservation.childCount}・幼児{reservation.infantCount}
+                            {reservation.totalPeople}名 / 大人{reservation.adultCount}・小学生{reservation.childCount}・幼児{reservation.infantCount}・3歳以下{reservation.underThreeCount}
                           </p>
                           {reservation.source === 'jalan' && <p className="mt-1 text-xs font-semibold text-gray-700">{formatPriceSummary(reservation)}</p>}
                         </div>
@@ -1097,7 +1098,7 @@ function ReservationDetailModal({
           <Info label="時間" value={`${formatTime(reservation.startAt)} - ${formatTime(reservation.endAt)}`} />
           <Info label="電話" value={reservation.customerPhone || '-'} />
           <Info label="メール" value={reservation.customerEmail || '-'} />
-          <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 子ども${reservation.childCount} / 幼児${reservation.infantCount}`} />
+          <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 小学生${reservation.childCount} / 幼児${reservation.infantCount} / 3歳以下${reservation.underThreeCount}`} />
           <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
           {reservation.source === 'jalan' && <Info label="料金" value={formatPriceDetails(reservation)} />}
           <Info label="状態" value={reservation.status} />
@@ -1276,7 +1277,7 @@ function SettingsPanel(props: {
                   <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
                     <p className="font-semibold text-gray-900">{currentMenu.name}</p>
                     <p className="mt-1">{currentMenu.durationMinutes}分 / {currentMenu.minPeople}-{currentMenu.maxPeople ?? '上限なし'}名</p>
-                    <p className="mt-1 text-xs text-gray-500">大人{currentMenu.priceAdult ?? '-'} / 子ども{currentMenu.priceChild ?? '-'} / 幼児{currentMenu.priceInfant ?? '-'}</p>
+                    <p className="mt-1 text-xs text-gray-500">大人{currentMenu.priceAdult ?? '-'} / 小学生{currentMenu.priceChild ?? '-'} / 幼児{currentMenu.priceInfant ?? '-'} / 3歳以下{currentMenu.priceUnderThree ?? '-'}</p>
                   </div>
                 ) : <p className="mt-3 text-sm text-gray-400">Menuがありません。</p>}
               </div>
@@ -1344,11 +1345,13 @@ function SettingsPanel(props: {
                       <Field label="大人料金"><input name="priceAdult" type="number" className="input" /></Field>
                       <Field label="子ども料金"><input name="priceChild" type="number" className="input" /></Field>
                       <Field label="幼児料金"><input name="priceInfant" type="number" className="input" /></Field>
+                      <Field label="3歳以下料金"><input name="priceUnderThree" type="number" defaultValue={0} className="input" /></Field>
                     </div>
                     <div className="grid gap-2 text-xs text-gray-600">
                       <label><input name="capacityCountAdult" type="checkbox" defaultChecked className="mr-2" />大人は枠を消費</label>
                       <label><input name="capacityCountChild" type="checkbox" defaultChecked className="mr-2" />子どもは枠を消費</label>
                       <label><input name="capacityCountInfant" type="checkbox" defaultChecked className="mr-2" />幼児は枠を消費</label>
+                      <label><input name="capacityCountUnderThree" type="checkbox" className="mr-2" />3歳以下は枠を消費</label>
                     </div>
                     <button disabled={props.loading || !props.resourceId} className="btn-primary">Menu追加</button>
                   </form>
@@ -1465,11 +1468,13 @@ function MenuEditor({
           <Field label="大人料金"><input name="priceAdult" type="number" defaultValue={menu.priceAdult ?? ''} className="input" /></Field>
           <Field label="子ども料金"><input name="priceChild" type="number" defaultValue={menu.priceChild ?? ''} className="input" /></Field>
           <Field label="幼児料金"><input name="priceInfant" type="number" defaultValue={menu.priceInfant ?? ''} className="input" /></Field>
+          <Field label="3歳以下料金"><input name="priceUnderThree" type="number" defaultValue={menu.priceUnderThree ?? 0} className="input" /></Field>
         </div>
         <div className="grid gap-2 text-xs text-gray-600">
           <label><input name="capacityCountAdult" type="checkbox" defaultChecked={menu.capacityCountAdult} className="mr-2" />大人は枠を消費</label>
           <label><input name="capacityCountChild" type="checkbox" defaultChecked={menu.capacityCountChild} className="mr-2" />子どもは枠を消費</label>
           <label><input name="capacityCountInfant" type="checkbox" defaultChecked={menu.capacityCountInfant} className="mr-2" />幼児は枠を消費</label>
+          <label><input name="capacityCountUnderThree" type="checkbox" defaultChecked={menu.capacityCountUnderThree} className="mr-2" />3歳以下は枠を消費</label>
         </div>
         <div className="flex gap-2">
           <button disabled={loading} className="btn-secondary">Menu保存</button>
@@ -1675,9 +1680,11 @@ function menuPayload(formData: FormData, update = false) {
     priceAdult: nullableNumber(formData.get('priceAdult')),
     priceChild: nullableNumber(formData.get('priceChild')),
     priceInfant: nullableNumber(formData.get('priceInfant')),
+    priceUnderThree: nullableNumber(formData.get('priceUnderThree')),
     capacityCountAdult: formData.get('capacityCountAdult') === 'on',
     capacityCountChild: formData.get('capacityCountChild') === 'on',
     capacityCountInfant: formData.get('capacityCountInfant') === 'on',
+    capacityCountUnderThree: formData.get('capacityCountUnderThree') === 'on',
     ...(update ? { isActive: true } : {}),
   }
 }
