@@ -23,7 +23,8 @@ import {
 } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 
-type Tab = 'reservations' | 'chats' | 'jalan' | 'broadcasts' | 'calendar'
+type Tab = 'reservations' | 'chats' | 'broadcasts'
+type SettingsModal = 'menu' | 'jalan' | 'calendar' | null
 type ReservationViewFilter = 'all' | 'line' | 'jalan' | 'time'
 
 type ChatItem = {
@@ -68,9 +69,7 @@ type GmailRuleDraft = {
 const tabs: Array<{ key: Tab; label: string; hint: string }> = [
   { key: 'reservations', label: '予約', hint: '今日の枠と予約客' },
   { key: 'chats', label: 'チャット', hint: '未読・対応中だけ' },
-  { key: 'jalan', label: 'じゃらん', hint: '要確認メール' },
   { key: 'broadcasts', label: '一斉配信', hint: '下書き確認と送信' },
-  { key: 'calendar', label: 'カレンダー', hint: 'Google連携状態' },
 ]
 
 function toYmd(date: Date): string {
@@ -187,6 +186,10 @@ function formatPriceDetails(reservation: ReservationResponse): string {
   return items.join(' / ') || '金額未登録'
 }
 
+function hasPriceDetails(reservation: ReservationResponse): boolean {
+  return reservationPriceDetails(reservation) !== null
+}
+
 async function apiData<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetchApi<ApiResponse<T>>(path, options)
   if (!res.success) throw new Error(res.error || 'API request failed')
@@ -247,6 +250,7 @@ function toChatDetail(raw: unknown, fallback?: ChatItem): ChatDetail {
 export default function ReservationOpsPage() {
   const { selectedAccountId } = useAccount()
   const [tab, setTab] = useState<Tab>('reservations')
+  const [settingsModal, setSettingsModal] = useState<SettingsModal>(null)
   const [date, setDate] = useState(toYmd(new Date()))
   const [resources, setResources] = useState<ReservationResource[]>([])
   const [menusByResource, setMenusByResource] = useState<Record<string, ReservationMenu[]>>({})
@@ -291,9 +295,6 @@ export default function ReservationOpsPage() {
 
   const activeReservations = reservations.filter(activeReservation)
   const unreadChats = chats.filter((chat) => chat.status === 'unread')
-  const draftBroadcasts = broadcasts.filter((broadcast) => broadcast.status === 'draft' || broadcast.status === 'scheduled')
-  const activeCalendarConnections = calendarConnections.filter((connection) => connection.isActive)
-  const activeGmailImportRules = gmailImportRules.filter((rule) => rule.isActive)
 
   const reservationsBySlot = useMemo(() => {
     const grouped = new Map<string, ReservationResponse[]>()
@@ -613,17 +614,13 @@ export default function ReservationOpsPage() {
     <div>
       <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
         <div className="flex min-w-max gap-2">
-        <SummaryCard label="本日の予約" value={`${activeReservations.length}件`} tone="green" />
+        <SummaryCard label={`${date}の予約`} value={`${activeReservations.length}件`} tone="green" />
         <SummaryCard label="未読チャット" value={`${unreadChats.length}件`} tone="red" />
-        <SummaryCard label="じゃらん要確認" value={`${externalSources.length}件`} tone="amber" />
-        <SummaryCard label="配信下書き" value={`${draftBroadcasts.length}件`} tone="blue" />
-        <SummaryCard label="Google連携" value={`${activeCalendarConnections.length}件`} tone="green" />
-        <SummaryCard label="Gmail取込" value={`${activeGmailImportRules.length}件`} tone="amber" />
         </div>
       </div>
 
       <div className="sticky top-0 z-20 -mx-4 mt-3 border-y border-gray-100 bg-white/95 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-2xl sm:border sm:shadow-sm">
-        <div className="flex gap-2 overflow-x-auto">
+        <div className="flex items-center gap-2 overflow-x-auto">
           {tabs.map((item) => (
             <button
               key={item.key}
@@ -633,9 +630,13 @@ export default function ReservationOpsPage() {
               {item.label}
             </button>
           ))}
-          <a href="/reservations" className="shrink-0 rounded-full border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50">
-            詳細設定
-          </a>
+          <button
+            type="button"
+            onClick={() => setSettingsModal('menu')}
+            className="shrink-0 rounded-full border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50"
+          >
+            設定
+          </button>
         </div>
       </div>
 
@@ -687,26 +688,6 @@ export default function ReservationOpsPage() {
               onSendReply={sendReply}
             />
           )}
-          {tab === 'jalan' && (
-            <JalanPanel
-              sources={externalSources}
-              saving={saving}
-              connections={calendarConnections}
-              resources={resources}
-              menusByResource={menusByResource}
-              labels={gmailLabels}
-              rules={gmailImportRules}
-              runs={gmailImportRuns}
-              lastRun={gmailLastRun}
-              draft={gmailRuleDraft}
-              onDraftChange={setGmailRuleDraft}
-              onLoadLabels={loadGmailLabels}
-              onCreateRule={createGmailImportRule}
-              onDeleteRule={deleteGmailImportRule}
-              onRunRule={runGmailImport}
-              onIgnore={markExternalIgnored}
-            />
-          )}
           {tab === 'broadcasts' && (
             <BroadcastPanel
               broadcasts={broadcasts}
@@ -720,25 +701,66 @@ export default function ReservationOpsPage() {
               onUploadImage={uploadImage}
             />
           )}
-          {tab === 'calendar' && (
-            <CalendarPanel
-              connections={calendarConnections}
-              resources={resources}
-              reservations={reservations}
-              selectedDate={date}
-              calendarId={calendarId}
-              saving={saving}
-              settingsOpen={calendarSettingsOpen}
-              onCalendarIdChange={setCalendarId}
-              onConnect={startGoogleOAuth}
-              onDelete={deleteCalendarConnection}
-              onAssignResource={assignCalendarConnection}
-              onSyncReservations={syncTodayReservationsToCalendar}
-              onOpenSettings={() => setCalendarSettingsOpen(true)}
-              onCloseSettings={() => setCalendarSettingsOpen(false)}
-            />
-          )}
         </div>
+      )}
+
+      {settingsModal === 'menu' && (
+        <SettingsModalShell title="設定" onClose={() => setSettingsModal(null)}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={() => setSettingsModal('jalan')} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left hover:bg-amber-100">
+              <p className="font-bold text-amber-950">じゃらん / Gmail設定</p>
+              <p className="mt-1 text-sm text-amber-800">Gmailラベル、取り込みルール、要確認メールを管理します。</p>
+            </button>
+            <button type="button" onClick={() => setSettingsModal('calendar')} className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-left hover:bg-blue-100">
+              <p className="font-bold text-blue-950">Google Calendar設定</p>
+              <p className="mt-1 text-sm text-blue-800">Google接続、予約対象への紐づけ、選択日の同期を管理します。</p>
+            </button>
+          </div>
+        </SettingsModalShell>
+      )}
+
+      {settingsModal === 'jalan' && (
+        <SettingsModalShell title="じゃらん / Gmail設定" onClose={() => setSettingsModal(null)}>
+          <JalanPanel
+            sources={externalSources}
+            saving={saving}
+            connections={calendarConnections}
+            resources={resources}
+            menusByResource={menusByResource}
+            labels={gmailLabels}
+            rules={gmailImportRules}
+            runs={gmailImportRuns}
+            lastRun={gmailLastRun}
+            draft={gmailRuleDraft}
+            onDraftChange={setGmailRuleDraft}
+            onLoadLabels={loadGmailLabels}
+            onCreateRule={createGmailImportRule}
+            onDeleteRule={deleteGmailImportRule}
+            onRunRule={runGmailImport}
+            onIgnore={markExternalIgnored}
+          />
+        </SettingsModalShell>
+      )}
+
+      {settingsModal === 'calendar' && (
+        <SettingsModalShell title="Google Calendar設定" onClose={() => setSettingsModal(null)}>
+          <CalendarPanel
+            connections={calendarConnections}
+            resources={resources}
+            reservations={reservations}
+            selectedDate={date}
+            calendarId={calendarId}
+            saving={saving}
+            settingsOpen={calendarSettingsOpen}
+            onCalendarIdChange={setCalendarId}
+            onConnect={startGoogleOAuth}
+            onDelete={deleteCalendarConnection}
+            onAssignResource={assignCalendarConnection}
+            onSyncReservations={syncTodayReservationsToCalendar}
+            onOpenSettings={() => setCalendarSettingsOpen(true)}
+            onCloseSettings={() => setCalendarSettingsOpen(false)}
+          />
+        </SettingsModalShell>
       )}
     </div>
   )
@@ -959,6 +981,22 @@ function SummaryCard({ label, value, tone }: { label: string; value: string; ton
   )
 }
 
+function SettingsModalShell({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+      <div className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl sm:mx-auto sm:max-w-5xl sm:rounded-2xl">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+          <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">
+            閉じる
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function ReservationsPanel({
   date,
   resources,
@@ -993,11 +1031,36 @@ function ReservationsPanel({
   onCloseCalendar: () => void
 }) {
   const [calendarMonth, setCalendarMonth] = useState(date.slice(0, 7))
+  const [slotDateMarks, setSlotDateMarks] = useState<Record<string, boolean>>({})
+  const [loadingSlotMarks, setLoadingSlotMarks] = useState(false)
   useEffect(() => {
     setCalendarMonth(date.slice(0, 7))
   }, [date])
   const calendarDates = monthDates(`${calendarMonth}-01`)
   const selectedMonth = parseYmd(`${calendarMonth}-01`)
+  useEffect(() => {
+    if (!calendarOpen || !resourceId) return
+    let cancelled = false
+    setLoadingSlotMarks(true)
+    const dates = monthDates(`${calendarMonth}-01`)
+    Promise.all(dates.map(async (targetDate) => {
+      try {
+        const daySlots = await apiData<ReservationSlotWithAvailability[]>(
+          `/api/reservation-slots?resourceId=${encodeURIComponent(resourceId)}&date=${encodeURIComponent(targetDate)}&people=1`,
+        )
+        return [targetDate, daySlots.length > 0] as const
+      } catch {
+        return [targetDate, false] as const
+      }
+    })).then((entries) => {
+      if (!cancelled) setSlotDateMarks(Object.fromEntries(entries))
+    }).finally(() => {
+      if (!cancelled) setLoadingSlotMarks(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [calendarOpen, calendarMonth, resourceId])
   const selectedResourceName = resources.find((resource) => resource.id === resourceId)?.name ?? '予約対象未選択'
   const activeReservations = reservations.filter(activeReservation)
   const filteredReservations = activeReservations.filter((reservation) => {
@@ -1030,7 +1093,6 @@ function ReservationsPanel({
           <button type="button" onClick={onOpenCalendar} className="shrink-0 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white">
             カレンダー
           </button>
-          <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm" />
           <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="min-w-48 shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm">
             {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
           </select>
@@ -1059,6 +1121,7 @@ function ReservationsPanel({
               </div>
               <button type="button" onClick={onCloseCalendar} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
             </div>
+            {loadingSlotMarks && <p className="mb-2 text-xs text-gray-400">予約枠のある日を確認中...</p>}
             <div className="flex items-center justify-between gap-2">
               <button type="button" onClick={() => moveCalendarMonth(-1)} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">前月</button>
               <input
@@ -1083,12 +1146,12 @@ function ReservationsPanel({
                     onClick={() => { onDateChange(d); onCloseCalendar() }}
                     className={`min-h-[42px] rounded-xl border text-sm font-bold transition ${d === date ? 'border-blue-500 bg-blue-600 text-white' : inMonth ? 'border-gray-200 bg-white text-gray-800 hover:bg-blue-50' : 'border-gray-100 bg-gray-50 text-gray-300'}`}
                   >
-                    {Number(d.slice(-2))}
+                    <span className="block leading-tight">{Number(d.slice(-2))}</span>
+                    {slotDateMarks[d] && <span className={`block text-[11px] leading-tight ${d === date ? 'text-white' : 'text-green-600'}`}>○</span>}
                   </button>
                 )
               })}
             </div>
-            <input type="date" value={date} onChange={(event) => { onDateChange(event.target.value); onCloseCalendar() }} className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
           </div>
         </div>
       )}
@@ -1101,11 +1164,14 @@ function ReservationsPanel({
               const slotReservations = (reservationsBySlot.get(slot.id) ?? []).filter(activeReservation)
               const availability = slotAvailabilityLabel(slot)
               return (
-                <section key={slot.id} className="rounded-xl border border-gray-200">
-                  <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2">
-                    <p className="font-bold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</p>
-                    <span className={`rounded-full px-2 py-1 text-xs font-bold ${availability.className}`}>{availability.mark} {availability.text}</span>
-                  </div>
+                <details key={slot.id} className="rounded-xl border border-gray-200" open={slotReservations.length > 0}>
+                  <summary className="flex cursor-pointer list-none items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2">
+                    <span className="font-bold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-gray-500">{slotReservations.length}組</span>
+                      <span className={`rounded-full px-2 py-1 text-xs font-bold ${availability.className}`}>{availability.mark} {availability.text}</span>
+                    </span>
+                  </summary>
                   {slotReservations.length === 0 ? (
                     <p className="px-3 py-2 text-sm text-gray-400">予約なし</p>
                   ) : (
@@ -1116,7 +1182,7 @@ function ReservationsPanel({
                             <div className="min-w-0">
                               <p className="truncate font-semibold text-gray-900">{reservationName(reservation)}</p>
                               <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / {reservation.customerPhone || '電話未登録'}</p>
-                              {reservation.source === 'jalan' && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
+                              {hasPriceDetails(reservation) && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
                             </div>
                             <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{sourceBadge(reservation.source)}</span>
                           </div>
@@ -1124,7 +1190,7 @@ function ReservationsPanel({
                       ))}
                     </div>
                   )}
-                </section>
+                </details>
               )
             })}
           </div>
@@ -1161,7 +1227,7 @@ function ReservationsPanel({
                         <div className="min-w-0">
                           <p className="truncate font-semibold text-gray-900">{reservationName(reservation)}</p>
                           <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / {reservation.customerPhone || '電話未登録'}</p>
-                          {reservation.source === 'jalan' && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
+                          {hasPriceDetails(reservation) && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
                         </div>
                         <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{sourceBadge(reservation.source)}</span>
                       </div>
@@ -1215,7 +1281,7 @@ function OpsReservationDetailModal({ reservation, onClose }: { reservation: Rese
           <Info label="メール" value={reservation.customerEmail || '-'} />
           <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 小学生${reservation.childCount} / 幼児${reservation.infantCount} / 3歳以下${reservation.underThreeCount}`} />
           <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
-          {reservation.source === 'jalan' && <Info label="料金" value={formatPriceDetails(reservation)} />}
+          {hasPriceDetails(reservation) && <Info label="料金" value={formatPriceDetails(reservation)} />}
           <Info label="状態" value={reservation.status} />
           <Info label="外部ID" value={reservation.externalReservationId || '-'} />
         </dl>
@@ -1242,38 +1308,56 @@ function ChatsPanel({
   onSendReply: () => void
 }) {
   return (
-    <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-gray-900">未対応チャット</h2>
-        <div className="mt-3 space-y-2">
+    <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 px-4 py-3">
+          <h2 className="text-base font-bold text-gray-900">未対応チャット</h2>
+          <p className="mt-1 text-xs text-gray-500">未読・対応中のみ表示します。</p>
+        </div>
+        <div className="max-h-[68vh] overflow-y-auto">
           {chats.length === 0 ? <p className="text-sm text-gray-400">未読・対応中のチャットはありません。</p> : chats.map((chat) => (
-            <button key={chat.id} onClick={() => onSelect(chat)} className="w-full rounded-xl border border-gray-200 p-3 text-left hover:bg-gray-50">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold text-gray-900">{chat.friendName}</p>
-                <span className={`rounded-full px-2 py-1 text-xs font-bold ${chat.status === 'unread' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{chat.status === 'unread' ? '未読' : '対応中'}</span>
+            <button key={chat.id} onClick={() => onSelect(chat)} className={`w-full border-b border-gray-100 p-3 text-left transition ${selectedChat?.id === chat.id ? 'bg-green-50' : 'hover:bg-gray-50'}`}>
+              <div className="flex items-center gap-3">
+                {chat.friendPictureUrl ? (
+                  <img src={chat.friendPictureUrl} alt="" className="h-10 w-10 shrink-0 rounded-full" />
+                ) : (
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-200 text-sm font-bold text-gray-500">
+                    {chat.friendName.slice(0, 1)}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate font-semibold text-gray-900">{chat.friendName}</p>
+                    <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-bold ${chat.status === 'unread' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{chat.status === 'unread' ? '未読' : '対応中'}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">最終: {formatDateTime(chat.lastMessageAt)}</p>
+                </div>
               </div>
-              <p className="mt-1 text-xs text-gray-400">最終: {formatDateTime(chat.lastMessageAt)}</p>
             </button>
           ))}
         </div>
       </div>
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-gray-900">返信</h2>
-        {!selectedChat ? <p className="mt-3 text-sm text-gray-400">左からチャットを選択してください。</p> : (
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        {!selectedChat ? <p className="p-6 text-sm text-gray-400">左からチャットを選択してください。</p> : (
           <>
-            <p className="mt-1 text-sm text-gray-500">{selectedChat.friendName} さんとの会話</p>
-            <div className="mt-4 max-h-80 space-y-2 overflow-y-auto rounded-xl bg-gray-50 p-3">
+            <div className="border-b border-gray-100 px-4 py-3">
+              <h2 className="text-base font-bold text-gray-900">{selectedChat.friendName} さんとの会話</h2>
+              <p className="mt-1 text-xs text-gray-500">Automationの返信も送信ログに残す設計です。</p>
+            </div>
+            <div className="max-h-[56vh] space-y-2 overflow-y-auto bg-[#7494C0] p-4">
               {(selectedChat.messages ?? []).length === 0 ? <p className="text-sm text-gray-400">履歴がありません。</p> : (selectedChat.messages ?? []).map((message) => (
                 <div key={message.id} className={`flex ${(message.direction === 'outgoing' || message.senderType === 'operator') ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${(message.direction === 'outgoing' || message.senderType === 'operator') ? 'bg-green-600 text-white' : 'bg-white text-gray-800'}`}>
+                  <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm shadow-sm ${(message.direction === 'outgoing' || message.senderType === 'operator') ? 'bg-green-500 text-white' : 'bg-white text-gray-800'}`}>
                     <p className="whitespace-pre-wrap break-words">{message.content}</p>
                     <p className="mt-1 text-[11px] opacity-70">{formatDateTime(message.createdAt)}</p>
                   </div>
                 </div>
               ))}
             </div>
-            <textarea value={reply} onChange={(event) => onReplyChange(event.target.value)} rows={4} className="mt-4 w-full rounded-xl border border-gray-300 p-3 text-sm" placeholder="返信内容を入力" />
-            <button disabled={saving || !reply.trim()} onClick={onSendReply} className="mt-3 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">送信前確認して返信</button>
+            <div className="border-t border-gray-100 p-4">
+              <textarea value={reply} onChange={(event) => onReplyChange(event.target.value)} rows={3} className="w-full rounded-xl border border-gray-300 p-3 text-sm" placeholder="返信内容を入力" />
+              <button disabled={saving || !reply.trim()} onClick={onSendReply} className="mt-3 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">送信前確認して返信</button>
+            </div>
           </>
         )}
       </div>

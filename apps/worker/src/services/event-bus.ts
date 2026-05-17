@@ -269,10 +269,12 @@ async function executeAction(
       } else {
         msg = { type: 'text', text: action.params.content };
       }
+      let deliveryType: 'reply' | 'push' = 'push';
       // Prefer replyMessage (free) when replyToken is available
       if (payload.replyToken) {
         try {
           await lineClient.replyMessage(payload.replyToken, [msg]);
+          deliveryType = 'reply';
           // replyToken is single-use, clear it so subsequent actions fall back to push
           payload.replyToken = undefined;
         } catch (err: unknown) {
@@ -282,13 +284,25 @@ async function executeAction(
           const isTokenError = errMsg.includes('400') || errMsg.includes('Invalid reply token');
           if (isTokenError) {
             await lineClient.pushMessage(friend.line_user_id, [msg]);
+            deliveryType = 'push';
           } else {
             throw err;
           }
         }
       } else {
         await lineClient.pushMessage(friend.line_user_id, [msg]);
+        deliveryType = 'push';
       }
+      const now = jstNow();
+      const content = msg.type === 'flex' ? JSON.stringify(msg.contents) : msg.text;
+      await db
+        .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, delivery_type, source, created_at) VALUES (?, ?, 'outgoing', ?, ?, ?, 'automation', ?)`)
+        .bind(crypto.randomUUID(), friendId, msg.type, content, deliveryType, now)
+        .run();
+      await db
+        .prepare(`UPDATE chats SET status = 'in_progress', last_message_at = ?, updated_at = ? WHERE friend_id = ?`)
+        .bind(now, now, friendId)
+        .run();
       break;
     }
 
