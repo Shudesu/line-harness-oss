@@ -153,12 +153,13 @@ async function gmailClientForConnection(
 
 async function dryRunMessage(rule: GmailImportRule, detail: GmailMessageText): Promise<GmailImportItemResult> {
   const parsed = parseJalanMail(detail.text);
+  const routeError = parsed.eventType === 'created' ? routeMissing(rule) : '';
   return {
     gmailMessageId: detail.id,
     eventType: parsed.eventType,
     parseStatus: 'dry_run',
     externalId: parsed.externalId,
-    error: routeMissing(rule) ? routeMissing(rule) : null,
+    error: routeError || null,
   };
 }
 

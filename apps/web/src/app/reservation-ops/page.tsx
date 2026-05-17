@@ -189,8 +189,8 @@ export default function ReservationOpsPage() {
   const [gmailRuleDraft, setGmailRuleDraft] = useState<GmailRuleDraft>({
     connectionId: '',
     name: 'じゃらん予約メール',
-    fromEmail: 'reservation@activityboard.jp',
-    query: 'newer_than:30d subject:予約',
+    fromEmail: '',
+    query: '{from:reservation@activityboard.jp from:reservation_cancel@activityboard.jp} newer_than:30d',
     unprocessedLabelId: '',
     processedLabelId: '',
     reviewLabelId: '',
