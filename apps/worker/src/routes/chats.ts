@@ -500,6 +500,11 @@ chats.post('/api/chats/:id/send', async (c) => {
       await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(parsed.flexContents), parsed.flexContents);
     }
 
+    // Mark the friend's prior incoming messages as read so the LINE app on the
+    // user side shows "既読". Fire-and-forget — markAsRead swallows its own
+    // errors so a failed read receipt never blocks the actual send.
+    void lineClient.markAsRead(friend.line_user_id);
+
     // メッセージログに記録
     const logId = crypto.randomUUID();
     await c.env.DB

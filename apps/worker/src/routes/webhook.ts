@@ -29,31 +29,47 @@ async function ensureWebhookFriend(
   lineAccountId: string | null,
 ) {
   let friend = await getFriendByLineUserId(db, lineUserId);
-  if (!friend) {
+
+  // Fetch profile when we have nothing OR when the existing row has gaps in
+  // the human-facing fields. Common cause: the friend was previously inserted
+  // by a path that couldn't reach getProfile (sync bulk import without profile,
+  // older webhook code path, manual insert), leaving display_name/picture_url
+  // NULL. Without this refill the chat UI shows "名前なし" forever.
+  const wasMissing = !friend;
+  const needsProfile = !friend || !friend.display_name || !friend.picture_url;
+
+  if (needsProfile) {
     let profile;
     try {
       profile = await lineClient.getProfile(lineUserId);
     } catch (err) {
       console.error('Failed to get profile for webhook message', lineUserId, err);
     }
-    friend = await upsertFriend(db, {
-      lineUserId,
-      displayName: profile?.displayName ?? null,
-      pictureUrl: profile?.pictureUrl ?? null,
-      statusMessage: profile?.statusMessage ?? null,
-    });
-    console.log(`[webhook] auto-created friend from message userId=${lineUserId} friendId=${friend.id}`);
+
+    if (profile || !friend) {
+      friend = await upsertFriend(db, {
+        lineUserId,
+        displayName: profile?.displayName ?? friend?.display_name ?? null,
+        pictureUrl: profile?.pictureUrl ?? friend?.picture_url ?? null,
+        statusMessage: profile?.statusMessage ?? friend?.status_message ?? null,
+      });
+      if (wasMissing) {
+        console.log(`[webhook] auto-created friend from message userId=${lineUserId} friendId=${friend.id}`);
+      } else {
+        console.log(`[webhook] backfilled profile for friend ${friend.id} (${profile?.displayName ?? 'no name'})`);
+      }
+    }
   }
 
-  if (lineAccountId && await hasColumn(db, 'friends', 'line_account_id') && friend.line_account_id !== lineAccountId) {
+  if (lineAccountId && await hasColumn(db, 'friends', 'line_account_id') && friend!.line_account_id !== lineAccountId) {
     await db
       .prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
-      .bind(lineAccountId, jstNow(), friend.id)
+      .bind(lineAccountId, jstNow(), friend!.id)
       .run();
     friend = (await getFriendByLineUserId(db, lineUserId)) ?? friend;
   }
 
-  return friend;
+  return friend!;
 }
 
 webhook.post('/webhook', async (c) => {
@@ -298,6 +314,11 @@ async function handleEvent(
     if (!userId) return;
     const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
 
+    // Mark the received message as read so the user's LINE app shows the
+    // standard "既読" indicator (Messaging API does not auto-mark on receipt).
+    // Failures are swallowed inside markAsRead — non-fatal.
+    void lineClient.markAsRead(userId);
+
     const msg = event.message as { type: string; fileName?: string; title?: string };
     const labels: Record<string, string> = {
       sticker: '[スタンプ]',
@@ -327,6 +348,9 @@ async function handleEvent(
     if (!userId) return;
 
     const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
+
+    // Mark as read — see comment above the non-text branch.
+    void lineClient.markAsRead(userId);
 
     const incomingText = textMessage.text;
     const now = jstNow();

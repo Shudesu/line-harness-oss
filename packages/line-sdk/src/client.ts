@@ -66,6 +66,29 @@ export class LineClient {
     return data as UserProfile;
   }
 
+  // ─── Read receipts ────────────────────────────────────────────────────────
+
+  /**
+   * Mark messages from a 1:1 chat as read. The chatId here is the LINE user ID.
+   * Without this call, messages received via Messaging API stay "unread" on the
+   * user's chat list — the LINE OA manager UI auto-marks them read on open,
+   * but Messaging API does not, so an external operator UI must do it manually.
+   *
+   * Returns `false` and logs (does not throw) if the LINE API rejects the call,
+   * since a missing read receipt is non-fatal.
+   */
+  async markAsRead(chatId: string): Promise<boolean> {
+    try {
+      await this.request('POST', '/v2/bot/message/markAsRead', {
+        chat: { chatId },
+      });
+      return true;
+    } catch (err) {
+      console.warn(`[markAsRead] failed chatId=${chatId}`, err);
+      return false;
+    }
+  }
+
   // ─── Followers ────────────────────────────────────────────────────────────
 
   /**

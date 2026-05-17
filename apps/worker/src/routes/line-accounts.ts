@@ -209,10 +209,14 @@ lineAccounts.post('/api/line-accounts/:id/sync-followers', requireRole('owner'),
         try {
           const existing = await getFriendByLineUserId(c.env.DB, lineUserId);
           let profile;
-          // Only fetch profile for new friends — re-syncs shouldn't refresh
-          // display_name/picture_url on every run (LINE rate limits and we
-          // already keep these fresh from webhook events).
-          if (!existing) {
+          // Fetch profile for new friends AND for existing rows that are
+          // missing display_name or picture_url. Without this backfill, friends
+          // that were inserted by other code paths without a profile (older
+          // webhooks, manual imports) stay anonymous in the chat UI forever.
+          // Existing rows with both fields populated are skipped to avoid
+          // refreshing 1000+ profiles on every re-sync.
+          const needsProfile = !existing || !existing.display_name || !existing.picture_url;
+          if (needsProfile) {
             try {
               profile = await client.getProfile(lineUserId);
             } catch (err) {
