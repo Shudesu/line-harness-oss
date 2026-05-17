@@ -192,19 +192,11 @@ async function buildReservationDescription(
   env: ReservationGoogleCalendarEnv,
 ): Promise<string> {
   const managementUrl = await buildManagementUrl(reservation, env);
-  const jalanAmount = reservation.source === 'jalan' ? findJalanTotalAmount(reservation) : null;
+  const price = findReservationPriceDetails(reservation);
   return [
-    `予約ID: ${reservation.id}`,
-    `予約元: ${sourceLabel(reservation.source)}`,
-    reservation.external_reservation_id ? `外部予約番号: ${reservation.external_reservation_id}` : null,
-    `状態: ${reservation.status}`,
-    `日時: ${reservation.start_at} - ${reservation.end_at}`,
+    `名前: ${reservation.customer_name_snapshot || reservation.title}`,
     `人数: 合計${reservation.total_people}名 / 大人${reservation.adult_count}名 / 子ども${reservation.child_count}名 / 幼児${reservation.infant_count}名`,
-    `枠消費人数: ${reservation.capacity_people}名`,
-    reservation.customer_name_snapshot ? `代表者: ${reservation.customer_name_snapshot}` : null,
-    reservation.customer_phone_snapshot ? `電話: ${reservation.customer_phone_snapshot}` : null,
-    reservation.customer_email_snapshot ? `メール: ${reservation.customer_email_snapshot}` : null,
-    jalanAmount !== null ? `じゃらん合計金額(税込): ${formatYen(jalanAmount)}` : null,
+    price ? `料金: ${formatPriceDetails(price)}` : null,
     managementUrl ? `管理画面: ${managementUrl}` : null,
   ].filter(Boolean).join('\n');
 }
@@ -227,24 +219,28 @@ async function buildManagementUrl(
 ): Promise<string | null> {
   const base = await resolveBindingValue(env.WEB_URL)
     || await resolveBindingValue(env.NEXT_PUBLIC_WEB_URL)
-    || await resolveBindingValue(env.WORKER_URL);
+    || 'https://line-harness-reservation-web.pages.dev';
   if (!base) return null;
 
   try {
     const url = new URL(base);
-    url.searchParams.set('page', 'admin-reservations');
-    url.searchParams.set('date', reservation.reservation_date);
-    url.searchParams.set('slotId', reservation.slot_id);
-    url.searchParams.set('reservationId', reservation.id);
+    url.pathname = '/reservation-ops';
     return url.toString();
   } catch {
     return null;
   }
 }
 
-function findJalanTotalAmount(reservation: Reservation): number | null {
+type ReservationPriceDetails = {
+  totalAmount: number | null;
+  pointAmount: number | null;
+  couponAmount: number | null;
+  customerChargeAmount: number | null;
+};
+
+function findReservationPriceDetails(reservation: Reservation): ReservationPriceDetails | null {
   const metadata = parseMetadata(reservation.metadata);
-  const parsed = readMoneyCandidate(metadata, [
+  const totalAmount = readMoneyCandidate(metadata, [
     'totalAmount',
     'total_amount',
     'totalAmountYen',
@@ -252,10 +248,25 @@ function findJalanTotalAmount(reservation: Reservation): number | null {
     'total_price',
     'amount',
   ]);
-  if (parsed !== null) return parsed;
-  return typeof reservation.total_amount === 'number' && Number.isFinite(reservation.total_amount)
+  const fallbackTotal = typeof reservation.total_amount === 'number' && Number.isFinite(reservation.total_amount)
     ? reservation.total_amount
     : null;
+  const price = {
+    totalAmount: totalAmount ?? fallbackTotal,
+    pointAmount: readMoneyCandidate(metadata, ['pointAmount', 'point_amount', 'pointsAmount', 'points_amount']),
+    couponAmount: readMoneyCandidate(metadata, ['couponAmount', 'coupon_amount']),
+    customerChargeAmount: readMoneyCandidate(metadata, ['customerChargeAmount', 'customer_charge_amount', 'chargeAmount', 'charge_amount']),
+  };
+  return Object.values(price).some((value) => value !== null) ? price : null;
+}
+
+function formatPriceDetails(price: ReservationPriceDetails): string {
+  return [
+    price.totalAmount !== null ? `合計 ${formatYen(price.totalAmount)}` : null,
+    price.pointAmount !== null ? `ポイント ${formatYen(price.pointAmount)}` : null,
+    price.couponAmount !== null ? `クーポン ${formatYen(price.couponAmount)}` : null,
+    price.customerChargeAmount !== null ? `請求 ${formatYen(price.customerChargeAmount)}` : null,
+  ].filter(Boolean).join(' / ');
 }
 
 function parseMetadata(value: string): Record<string, unknown> {

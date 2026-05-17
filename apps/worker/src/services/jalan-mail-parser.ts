@@ -15,6 +15,9 @@ export interface ParsedJalanMail {
   customerEmail: string | null;
   planName: string | null;
   totalAmount: number | null;
+  pointAmount: number | null;
+  couponAmount: number | null;
+  customerChargeAmount: number | null;
 }
 
 export function parseJalanMail(rawText: string): ParsedJalanMail {
@@ -51,6 +54,18 @@ export function parseJalanMail(rawText: string): ParsedJalanMail {
       /合計金額\s*\(税込\)\s*[:：]?\s*([0-9,]+)\s*円/,
       /合計料金\s*[:：]?\s*([0-9,]+)\s*円/,
       /合計金額\s*[:：]?\s*([0-9,]+)\s*円/,
+    ]),
+    pointAmount: parseMoney(text, [
+      /ポイント利用額\s*[:：]?\s*([0-9,]+)\s*ポイント/,
+      /ポイント利用額\s*[:：]?\s*([0-9,]+)\s*円/,
+    ]),
+    couponAmount: parseMoney(text, [
+      /クーポン利用額\s*[:：]?\s*([0-9,]+)\s*円/,
+    ]),
+    customerChargeAmount: parseMoney(text, [
+      /カスタマへの請求額\s*■?\s*[:：]?\s*([0-9,]+)\s*円/,
+      /■カスタマへの請求額■\s*([0-9,]+)\s*円/,
+      /請求額\s*[:：]?\s*([0-9,]+)\s*円/,
     ]),
   };
 }

@@ -48,6 +48,9 @@ To: <aonisaiaoki@gmail.com>
       customerEmail: 'zerotoall1998@gmail.com',
       planName: '☆2026年☆【ブルーベリー食べ放題・1パックお土産付】茨城県つくば市♪最大23種の中から食べ比べ！ワンちゃん連れOK！ファミリー・女性・カップルに◎！',
       totalAmount: 7400,
+      pointAmount: 0,
+      couponAmount: 0,
+      customerChargeAmount: 7400,
     });
   });
 });
