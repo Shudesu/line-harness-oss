@@ -15,6 +15,7 @@ import {
   listMenus,
   listResources,
   listSlots,
+  recordLiffEvent,
 } from './booking/api.js';
 import { addDays, dateToString, isPastDate } from './booking/date.js';
 import { getApp } from './booking/html.js';
@@ -37,6 +38,47 @@ declare const liff: {
 function currentLiffId(): string | null {
   const params = new URLSearchParams(window.location.search);
   return params.get('liffId') || import.meta.env?.VITE_LIFF_ID || null;
+}
+
+function liffEventMetadata(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    screen: state.screen,
+    resourceId: state.resourceId || null,
+    menuId: state.menuId || null,
+    selectedDate: state.selectedDate,
+    slotId: state.selectedSlot?.slotId ?? null,
+    viewMode: state.viewMode,
+    adultCount: state.form.adultCount,
+    childCount: state.form.childCount,
+    infantCount: state.form.infantCount,
+    underThreeCount: state.form.underThreeCount,
+    ...extra,
+  };
+}
+
+function trackLiffEvent(
+  eventType: string,
+  options: {
+    eventName?: string;
+    subjectType?: string | null;
+    subjectId?: string | null;
+    idempotencyKey?: string | null;
+    metadata?: Record<string, unknown>;
+  } = {},
+): void {
+  const token = state.sessionToken;
+  if (!token) return;
+  void recordLiffEvent({
+    token,
+    eventType,
+    eventName: options.eventName ?? null,
+    subjectType: options.subjectType ?? null,
+    subjectId: options.subjectId ?? null,
+    idempotencyKey: options.idempotencyKey ?? null,
+    metadata: liffEventMetadata(options.metadata),
+  }).catch((err) => {
+    console.warn('recordLiffEvent failed:', err);
+  });
 }
 
 async function refreshReservationSession(): Promise<void> {
@@ -158,6 +200,12 @@ function handleField(field: string, value: string): void {
     state.validationErrors = nextErrors;
   }
   if (field === 'resourceId') {
+    trackLiffEvent('liff.booking.resource_selected', {
+      eventName: '予約対象選択',
+      subjectType: 'reservation_resource',
+      subjectId: value,
+      metadata: { nextResourceId: value },
+    });
     void changeResource(value);
     return;
   }
@@ -170,6 +218,11 @@ function handleField(field: string, value: string): void {
     state.slotsByDate = {};
     state.availabilityByDate = {};
     summaryCache.clear();
+    trackLiffEvent('liff.booking.menu_selected', {
+      eventName: 'メニュー選択',
+      subjectType: 'reservation_menu',
+      subjectId: value,
+    });
     void loadVisibleAvailability();
     render();
     return;
@@ -220,6 +273,7 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   }
   if (action === 'show-mine' || action === 'reload-mine') {
     state.screen = 'mine';
+    trackLiffEvent('liff.mine.open', { eventName: '自分の予約一覧表示' });
     await loadMine();
     return;
   }
@@ -261,6 +315,11 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     state.validationErrors = {};
     state.notice = null;
     state.screen = 'confirm';
+    trackLiffEvent('liff.booking.confirm_open', {
+      eventName: '予約確認画面表示',
+      subjectType: 'reservation_slot',
+      subjectId: state.selectedSlot?.slotId ?? null,
+    });
     render();
     return;
   }
@@ -282,6 +341,11 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   }
   if (action === 'go-cancel') {
     state.screen = 'cancel-confirm';
+    trackLiffEvent('liff.cancel.open', {
+      eventName: 'キャンセル確認表示',
+      subjectType: 'reservation',
+      subjectId: state.selectedReservation?.id ?? null,
+    });
     render();
     return;
   }
@@ -324,6 +388,12 @@ function selectDate(date: string): void {
   delete state.validationErrors.slot;
   state.selectedDate = date;
   state.selectedSlot = null;
+  trackLiffEvent('liff.booking.date_selected', {
+    eventName: '日付選択',
+    subjectType: 'reservation_date',
+    subjectId: date,
+    metadata: { date },
+  });
   render();
   void loadSlotsForSelectedDate();
 }
@@ -335,6 +405,17 @@ function selectSlot(slotId: string): void {
   delete state.validationErrors.slot;
   state.selectedDate = slot.date;
   state.selectedSlot = slot;
+  trackLiffEvent('liff.booking.slot_selected', {
+    eventName: '時間枠選択',
+    subjectType: 'reservation_slot',
+    subjectId: slot.slotId,
+    metadata: {
+      date: slot.date,
+      startAt: slot.startAt,
+      endAt: slot.endAt,
+      available: slot.available,
+    },
+  });
   render();
 }
 
@@ -554,6 +635,19 @@ async function submitBooking(): Promise<void> {
     state.lastReservation = reservation;
     state.selectedReservation = reservation;
     state.screen = 'success';
+    trackLiffEvent('liff.booking.completed', {
+      eventName: '予約完了',
+      subjectType: 'reservation',
+      subjectId: reservation.id,
+      idempotencyKey: `liff.booking.completed:${reservation.id}`,
+      metadata: {
+        reservationId: reservation.id,
+        slotId: reservation.slotId,
+        startAt: reservation.startAt,
+        endAt: reservation.endAt,
+        status: reservation.status,
+      },
+    });
     state.slotsByDate = {};
     state.availabilityByDate = {};
     slotCache.clear();
@@ -662,6 +756,12 @@ export async function initBooking(): Promise<void> {
     }
 
     await refreshReservationSession();
+    trackLiffEvent('liff.booking.open', {
+      eventName: 'LIFF予約画面表示',
+      subjectType: 'liff_screen',
+      subjectId: state.screen,
+      idempotencyKey: `liff.open:${state.friendId ?? state.userId ?? 'anonymous'}:${Date.now().toString().slice(0, -4)}`,
+    });
 
     await loadResources();
     await loadMenusForSelectedResource();

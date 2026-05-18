@@ -9,6 +9,7 @@ import type {
   ReservationResource,
   ReservationResponse,
   ReservationSlotWithAvailability,
+  Tag,
   Template,
 } from '@line-crm/shared'
 import {
@@ -20,13 +21,16 @@ import {
   type ApiGmailImportRun,
   type ApiGmailImportRunResult,
   type ApiGmailLabel,
+  type ApiUserEvent,
+  type ApiEventDefinition,
+  type ApiEventTagRule,
   type CalendarSyncResult,
 } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import FlexPreviewComponent from '@/components/flex-preview'
 
 type Tab = 'reservations' | 'chats' | 'broadcasts'
-type SettingsModal = 'menu' | 'jalan' | 'calendar' | null
+type SettingsModal = 'menu' | 'jalan' | 'calendar' | 'events' | null
 type ReservationViewFilter = 'all' | 'line' | 'jalan' | 'time'
 
 type ChatItem = {
@@ -83,6 +87,16 @@ type BroadcastDraft = {
   cardBodySize: 'xs' | 'sm' | 'md'
 }
 
+type EventRuleDraft = {
+  name: string
+  eventType: string
+  action: 'add_tag' | 'remove_tag'
+  tagId: string
+  conditionKey: string
+  conditionValue: string
+  priority: number
+}
+
 const defaultBroadcastDraft: BroadcastDraft = {
   title: '',
   messageType: 'text',
@@ -96,6 +110,16 @@ const defaultBroadcastDraft: BroadcastDraft = {
   cardSize: 'mega',
   cardTitleSize: 'xl',
   cardBodySize: 'sm',
+}
+
+const defaultEventRuleDraft: EventRuleDraft = {
+  name: '',
+  eventType: 'rich_menu.tap',
+  action: 'add_tag',
+  tagId: '',
+  conditionKey: 'action',
+  conditionValue: 'booking',
+  priority: 0,
 }
 
 const tabs: Array<{ key: Tab; label: string; hint: string }> = [
@@ -304,6 +328,10 @@ export default function ReservationOpsPage() {
   const [gmailImportRuns, setGmailImportRuns] = useState<ApiGmailImportRun[]>([])
   const [gmailLastRun, setGmailLastRun] = useState<ApiGmailImportRunResult | null>(null)
   const [templates, setTemplates] = useState<Template[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
+  const [events, setEvents] = useState<ApiUserEvent[]>([])
+  const [eventDefinitions, setEventDefinitions] = useState<ApiEventDefinition[]>([])
+  const [eventTagRules, setEventTagRules] = useState<ApiEventTagRule[]>([])
   const [gmailRuleDraft, setGmailRuleDraft] = useState<GmailRuleDraft>({
     connectionId: '',
     name: 'じゃらん予約メール',
@@ -318,6 +346,7 @@ export default function ReservationOpsPage() {
     maxResults: 10,
   })
   const [broadcastDraft, setBroadcastDraft] = useState<BroadcastDraft>(defaultBroadcastDraft)
+  const [eventRuleDraft, setEventRuleDraft] = useState<EventRuleDraft>(defaultEventRuleDraft)
   const [imageUrl, setImageUrl] = useState('')
   const [uploadingImage, setUploadingImage] = useState(false)
   const [calendarSettingsOpen, setCalendarSettingsOpen] = useState(false)
@@ -387,6 +416,29 @@ export default function ReservationOpsPage() {
     else throw new Error(res.error)
   }, [])
 
+  const loadEventSettings = useCallback(async () => {
+    const [tagRes, eventRes, definitionRes, ruleRes] = await Promise.all([
+      api.tags.list(),
+      api.events.list({ lineAccountId: selectedAccountId || undefined, limit: 30 }),
+      api.events.definitions(),
+      api.events.rules(),
+    ])
+    if (!tagRes.success) throw new Error(tagRes.error)
+    if (!eventRes.success) throw new Error(eventRes.error)
+    if (!definitionRes.success) throw new Error(definitionRes.error)
+    if (!ruleRes.success) throw new Error(ruleRes.error)
+    setTags(tagRes.data)
+    setEvents(eventRes.data)
+    setEventDefinitions(definitionRes.data)
+    setEventTagRules(ruleRes.data)
+    if (tagRes.data.length > 0) {
+      setEventRuleDraft((current) => ({
+        ...current,
+        tagId: current.tagId || tagRes.data.find((tag) => (tag as Tag & { kind?: string }).kind === 'custom')?.id || tagRes.data[0].id,
+      }))
+    }
+  }, [selectedAccountId])
+
   const loadCalendarConnections = useCallback(async () => {
     const res = await api.calendar.listConnections()
     if (res.success) setCalendarConnections(res.data)
@@ -408,13 +460,13 @@ export default function ReservationOpsPage() {
     setLoading(true)
     setError('')
     try {
-      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadTemplates(), loadCalendarConnections(), loadGmailImports()])
+      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadTemplates(), loadCalendarConnections(), loadGmailImports(), loadEventSettings()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '読み込みに失敗しました')
     } finally {
       setLoading(false)
     }
-  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadTemplates, loadCalendarConnections, loadGmailImports])
+  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadTemplates, loadCalendarConnections, loadGmailImports, loadEventSettings])
 
   useEffect(() => {
     loadAll()
@@ -544,6 +596,41 @@ export default function ReservationOpsPage() {
       if (!res.success) throw new Error(res.error)
       setBroadcastDraft(defaultBroadcastDraft)
     }, '一斉配信の下書きを作成しました')
+  }
+
+  const createEventTagRule = async () => {
+    await runAction(async () => {
+      if (!eventRuleDraft.name.trim()) throw new Error('ルール名を入力してください')
+      if (!eventRuleDraft.eventType) throw new Error('イベントを選択してください')
+      if (!eventRuleDraft.tagId) throw new Error('付与/削除するタグを選択してください')
+      const conditions = eventRuleDraft.conditionKey.trim() && eventRuleDraft.conditionValue.trim()
+        ? { [eventRuleDraft.conditionKey.trim()]: eventRuleDraft.conditionValue.trim() }
+        : {}
+      const res = await api.events.createRule({
+        name: eventRuleDraft.name.trim(),
+        eventType: eventRuleDraft.eventType,
+        action: eventRuleDraft.action,
+        tagId: eventRuleDraft.tagId,
+        conditions,
+        priority: eventRuleDraft.priority,
+        isActive: true,
+      })
+      if (!res.success) throw new Error(res.error)
+      setEventRuleDraft((current) => ({
+        ...defaultEventRuleDraft,
+        eventType: current.eventType,
+        tagId: current.tagId,
+        conditionKey: current.conditionKey,
+      }))
+    }, 'イベントタグルールを作成しました')
+  }
+
+  const deleteEventTagRule = async (rule: ApiEventTagRule) => {
+    if (!confirm(`「${rule.name}」を削除します。今後この条件ではタグが自動変更されません。よいですか？`)) return
+    await runAction(async () => {
+      const res = await api.events.deleteRule(rule.id)
+      if (!res.success) throw new Error(res.error)
+    }, 'イベントタグルールを削除しました')
   }
 
   const uploadImage = async (file: File | null) => {
@@ -755,6 +842,10 @@ export default function ReservationOpsPage() {
               <p className="font-bold text-blue-950">Google Calendar設定</p>
               <p className="mt-1 text-sm text-blue-800">Google接続、予約対象への紐づけ、選択日の同期を管理します。</p>
             </button>
+            <button type="button" onClick={() => setSettingsModal('events')} className="rounded-2xl border border-purple-200 bg-purple-50 p-4 text-left hover:bg-purple-100">
+              <p className="font-bold text-purple-950">タグ / イベント設定</p>
+              <p className="mt-1 text-sm text-purple-800">予約導線・リッチメニュー反応からタグを自動付与します。</p>
+            </button>
           </div>
         </SettingsModalShell>
       )}
@@ -799,6 +890,22 @@ export default function ReservationOpsPage() {
             onSyncReservations={syncTodayReservationsToCalendar}
             onOpenSettings={() => setCalendarSettingsOpen(true)}
             onCloseSettings={() => setCalendarSettingsOpen(false)}
+          />
+        </SettingsModalShell>
+      )}
+
+      {settingsModal === 'events' && (
+        <SettingsModalShell title="タグ / イベント設定" onClose={() => setSettingsModal(null)}>
+          <EventsPanel
+            events={events}
+            definitions={eventDefinitions}
+            rules={eventTagRules}
+            tags={tags}
+            draft={eventRuleDraft}
+            saving={saving}
+            onDraftChange={setEventRuleDraft}
+            onCreateRule={createEventTagRule}
+            onDeleteRule={deleteEventTagRule}
           />
         </SettingsModalShell>
       )}
@@ -1033,6 +1140,186 @@ function SettingsModalShell({ title, children, onClose }: { title: string; child
         </div>
         {children}
       </div>
+    </div>
+  )
+}
+
+function EventsPanel({
+  events,
+  definitions,
+  rules,
+  tags,
+  draft,
+  saving,
+  onDraftChange,
+  onCreateRule,
+  onDeleteRule,
+}: {
+  events: ApiUserEvent[]
+  definitions: ApiEventDefinition[]
+  rules: ApiEventTagRule[]
+  tags: Tag[]
+  draft: EventRuleDraft
+  saving: boolean
+  onDraftChange: (draft: EventRuleDraft) => void
+  onCreateRule: () => void
+  onDeleteRule: (rule: ApiEventTagRule) => void
+}) {
+  const tagName = useCallback((tagId: string) => tags.find((tag) => tag.id === tagId)?.name ?? '削除済みタグ', [tags])
+  const definitionName = useCallback((eventType: string) => definitions.find((item) => item.eventType === eventType)?.name ?? eventType, [definitions])
+  const customTags = tags.filter((tag) => (tag as Tag & { kind?: string }).kind !== 'system')
+  const selectableTags = customTags.length > 0 ? customTags : tags
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+      <section className="rounded-2xl border border-gray-200 bg-white p-4">
+        <h3 className="text-base font-bold text-gray-900">イベントからタグを自動変更</h3>
+        <p className="mt-1 text-sm text-gray-500">
+          例: リッチメニューの予約ボタンを押した人に「予約興味あり」タグを付ける。
+        </p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-medium text-gray-600">
+            ルール名
+            <input
+              value={draft.name}
+              onChange={(event) => onDraftChange({ ...draft, name: event.target.value })}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="予約ボタン反応タグ"
+            />
+          </label>
+          <label className="text-xs font-medium text-gray-600">
+            対象イベント
+            <select
+              value={draft.eventType}
+              onChange={(event) => onDraftChange({ ...draft, eventType: event.target.value })}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              {definitions.map((definition) => (
+                <option key={definition.id} value={definition.eventType}>
+                  {definition.name} / {definition.eventType}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-medium text-gray-600">
+            条件キー
+            <input
+              value={draft.conditionKey}
+              onChange={(event) => onDraftChange({ ...draft, conditionKey: event.target.value })}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="action"
+            />
+          </label>
+          <label className="text-xs font-medium text-gray-600">
+            条件値
+            <input
+              value={draft.conditionValue}
+              onChange={(event) => onDraftChange({ ...draft, conditionValue: event.target.value })}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="booking"
+            />
+          </label>
+          <label className="text-xs font-medium text-gray-600">
+            アクション
+            <select
+              value={draft.action}
+              onChange={(event) => onDraftChange({ ...draft, action: event.target.value as EventRuleDraft['action'] })}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="add_tag">タグを付ける</option>
+              <option value="remove_tag">タグを外す</option>
+            </select>
+          </label>
+          <label className="text-xs font-medium text-gray-600">
+            対象タグ
+            <select
+              value={draft.tagId}
+              onChange={(event) => onDraftChange({ ...draft, tagId: event.target.value })}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">タグを選択</option>
+              {selectableTags.map((tag) => (
+                <option key={tag.id} value={tag.id}>
+                  {tag.name}{(tag as Tag & { kind?: string }).kind === 'system' ? '（system）' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-3 rounded-xl bg-purple-50 p-3 text-xs text-purple-900">
+          <p className="font-bold">条件の考え方</p>
+          <p className="mt-1">リッチメニューで `action=booking` を送る場合、条件キーは `action`、条件値は `booking` にします。条件を空にすると、そのイベント全てに反応します。</p>
+        </div>
+
+        <button
+          type="button"
+          disabled={saving || !draft.name.trim() || !draft.eventType || !draft.tagId}
+          onClick={onCreateRule}
+          className="mt-4 rounded-lg bg-purple-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+        >
+          ルールを作成
+        </button>
+
+        <div className="mt-5">
+          <h4 className="text-sm font-bold text-gray-900">設定済みルール</h4>
+          <div className="mt-2 space-y-2">
+            {rules.length === 0 ? (
+              <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-400">イベントタグルールはまだありません。</p>
+            ) : rules.map((rule) => (
+              <div key={rule.id} className="rounded-xl border border-gray-200 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900">{rule.name}</p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {definitionName(rule.eventType)} → {rule.action === 'add_tag' ? '付与' : '削除'}: {tagName(rule.tagId)}
+                    </p>
+                    <p className="mt-1 break-all text-xs text-gray-400">条件: {rule.conditions}</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => onDeleteRule(rule)}
+                    className="shrink-0 rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-50"
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-gray-200 bg-white p-4">
+        <h3 className="text-base font-bold text-gray-900">直近イベント</h3>
+        <p className="mt-1 text-sm text-gray-500">予約導線やリッチメニューの反応がここに残ります。</p>
+        <div className="mt-4 space-y-2">
+          {events.length === 0 ? (
+            <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-400">イベントはまだありません。</p>
+          ) : events.map((event) => (
+            <div key={event.id} className="rounded-xl border border-gray-200 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold text-gray-900">{event.eventName || definitionName(event.eventType)}</p>
+                  <p className="mt-1 text-xs text-gray-500">{event.eventType} / {event.eventSource}</p>
+                  <p className="mt-1 text-xs text-gray-400">{formatDateTime(event.occurredAt)}</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">
+                  {event.subjectType || 'event'}
+                </span>
+              </div>
+              {event.metadata && event.metadata !== '{}' && (
+                <details className="mt-2 text-xs text-gray-500">
+                  <summary className="cursor-pointer font-bold">metadata</summary>
+                  <pre className="mt-2 max-h-32 overflow-auto rounded-lg bg-gray-50 p-2">{event.metadata}</pre>
+                </details>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   )
 }

@@ -13,6 +13,7 @@ import {
   upsertChatOnMessage,
   getLineAccounts,
   jstNow,
+  recordUserEvent,
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
@@ -21,6 +22,18 @@ import { defaultLiffUrl, defaultLineAccessToken, defaultLineChannelSecret, worke
 import { hasColumn } from '../utils/db-compat.js';
 
 const webhook = new Hono<Env>();
+
+function parsePostbackData(data: string): Record<string, string> {
+  const output: Record<string, string> = {};
+  for (const part of data.split('&')) {
+    const [rawKey, ...rawValue] = part.split('=');
+    if (!rawKey) continue;
+    const key = decodeURIComponent(rawKey);
+    const value = decodeURIComponent(rawValue.join('=') || '');
+    output[key] = value;
+  }
+  return output;
+}
 
 async function ensureWebhookFriend(
   db: D1Database,
@@ -261,6 +274,24 @@ async function handleEvent(
     const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
+    const postbackParams = parsePostbackData(postbackData);
+    await recordUserEvent(db, {
+      lineAccountId,
+      friendId: friend.id,
+      lineUserId: userId,
+      eventType: 'rich_menu.tap',
+      eventName: postbackParams.label || postbackParams.action || 'リッチメニュータップ',
+      eventSource: 'line',
+      subjectType: 'rich_menu',
+      subjectId: postbackParams.richMenuId || postbackParams.menu || null,
+      idempotencyKey: event.webhookEventId ? `rich_menu.tap:${event.webhookEventId}` : null,
+      metadata: {
+        rawData: postbackData,
+        ...postbackParams,
+      },
+    }).catch((err) => {
+      console.warn('record rich_menu.tap event failed:', err);
+    });
 
     // Match postback data against auto_replies (exact match on keyword)
     const autoReplyQuery = lineAccountId

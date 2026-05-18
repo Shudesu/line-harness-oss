@@ -8,6 +8,7 @@ import {
   recordLinkClick,
   getLinkClicks,
   getFriendByLineUserId,
+  recordUserEvent,
 } from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { TrackedLink } from '@line-crm/db';
@@ -271,7 +272,25 @@ trackedLinks.get('/t/:linkId', async (c) => {
     (async () => {
       try {
         // Record the click
-        await recordLinkClick(c.env.DB, linkId, friendId);
+        const click = await recordLinkClick(c.env.DB, linkId, friendId);
+        await recordUserEvent(c.env.DB, {
+          friendId,
+          lineUserId,
+          eventType: 'tracked_link.click',
+          eventName: link.name,
+          eventSource: 'tracked_link',
+          subjectType: 'tracked_link',
+          subjectId: link.id,
+          idempotencyKey: `link_click:${click.id}`,
+          metadata: {
+            trackedLinkId: link.id,
+            originalUrl: link.original_url,
+            tagId: link.tag_id,
+            scenarioId: link.scenario_id,
+            userAgent: c.req.header('user-agent') ?? null,
+            referer: c.req.header('referer') ?? null,
+          },
+        });
 
         // Run automatic actions if a friend is identified
         if (friendId) {

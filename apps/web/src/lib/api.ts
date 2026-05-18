@@ -129,6 +129,50 @@ export type CreateGmailImportRuleInput = {
   isActive?: boolean
 }
 
+export type ApiUserEvent = {
+  id: string
+  lineAccountId: string | null
+  friendId: string | null
+  lineUserId: string | null
+  eventType: string
+  eventName: string | null
+  eventSource: string
+  subjectType: string | null
+  subjectId: string | null
+  occurredAt: string
+  receivedAt: string
+  sessionId: string | null
+  requestId: string | null
+  idempotencyKey: string | null
+  metadata: string
+  createdAt: string
+}
+
+export type ApiEventDefinition = {
+  id: string
+  eventType: string
+  name: string
+  category: string
+  description: string | null
+  isSystem: boolean
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type ApiEventTagRule = {
+  id: string
+  name: string
+  eventType: string
+  conditions: string
+  action: 'add_tag' | 'remove_tag'
+  tagId: string
+  priority: number
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '')
 if (!API_URL) {
   throw new Error(
@@ -238,13 +282,38 @@ export const api = {
   tags: {
     list: () =>
       fetchApi<ApiResponse<Tag[]>>('/api/tags'),
-    create: (data: { name: string; color: string }) =>
+    create: (data: { name: string; color: string; category?: string | null; description?: string | null }) =>
       fetchApi<ApiResponse<Tag>>('/api/tags', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/tags/${id}`, { method: 'DELETE' }),
+  },
+  events: {
+    list: (params?: { friendId?: string; lineAccountId?: string; eventType?: string; dateFrom?: string; dateTo?: string; limit?: number; offset?: number }) => {
+      const query = new URLSearchParams()
+      if (params?.friendId) query.set('friendId', params.friendId)
+      if (params?.lineAccountId) query.set('lineAccountId', params.lineAccountId)
+      if (params?.eventType) query.set('eventType', params.eventType)
+      if (params?.dateFrom) query.set('dateFrom', params.dateFrom)
+      if (params?.dateTo) query.set('dateTo', params.dateTo)
+      if (params?.limit) query.set('limit', String(params.limit))
+      if (params?.offset) query.set('offset', String(params.offset))
+      const suffix = query.toString() ? `?${query}` : ''
+      return fetchApi<ApiResponse<ApiUserEvent[]>>('/api/events' + suffix)
+    },
+    definitions: () =>
+      fetchApi<ApiResponse<ApiEventDefinition[]>>('/api/event-definitions'),
+    rules: () =>
+      fetchApi<ApiResponse<ApiEventTagRule[]>>('/api/event-tag-rules'),
+    createRule: (data: { name: string; eventType: string; conditions?: Record<string, unknown> | string | null; action: 'add_tag' | 'remove_tag'; tagId: string; priority?: number; isActive?: boolean }) =>
+      fetchApi<ApiResponse<ApiEventTagRule>>('/api/event-tag-rules', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    deleteRule: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/event-tag-rules/${id}`, { method: 'DELETE' }),
   },
   scenarios: {
     list: (params?: { accountId?: string }) => {

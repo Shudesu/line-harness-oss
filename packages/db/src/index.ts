@@ -20,6 +20,7 @@ export * from './health';
 export * from './automations';
 export * from './entry-routes';
 export * from './tracked-links';
+export * from './events';
 export * from './forms';
 export * from './reservations';
 export * from './ad-platforms';

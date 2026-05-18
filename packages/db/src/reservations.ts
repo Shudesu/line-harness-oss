@@ -1,4 +1,5 @@
 import { jstNow } from './utils.js';
+import { recordUserEvent } from './events.js';
 import { recomputeReservationSystemTagsForFriend, recomputeReservationSystemTagsForUser } from './tags.js';
 
 // =============================================================================
@@ -1270,6 +1271,10 @@ export async function createReservationWithCapacityCheck(
     await createReservationEvent(db, reservation.id, 'created', input.actorType ?? 'system', input.actorId ?? null, null, reservation);
     if (input.userId) await recomputeReservationCustomerProfileStatus(db, input.userId, input.source ?? 'line');
     await recomputeReservationSystemTagsForReservation(db, reservation);
+    await recordReservationUserEventBestEffort(db, reservation, 'reservation.created', '予約作成', {
+      resourceId: resource.id,
+      menuId: menu.id,
+    });
     return { ok: true, reservation };
   } catch (error) {
     await releaseSlotCapacity(db, slot.id, capacityPeople, capacityChannel);
@@ -1312,6 +1317,7 @@ export async function updateReservationStatus(
     await createRestoreCapacityTaskIfNeeded(db, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
     await recomputeReservationSystemTagsForReservation(db, updated);
+    await recordReservationUserEventBestEffort(db, updated, 'reservation.cancelled', '予約キャンセル', { reason: input.reason ?? null });
     return { ok: true, reservation: updated, changed: true };
   }
 
@@ -1321,6 +1327,7 @@ export async function updateReservationStatus(
     await createReservationEvent(db, id, 'confirmed', input.actorType ?? 'system', input.actorId ?? null, reservation, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
     await recomputeReservationSystemTagsForReservation(db, updated);
+    await recordReservationUserEventBestEffort(db, updated, 'reservation.confirmed', '予約確定');
     return { ok: true, reservation: updated, changed: true };
   }
 
@@ -1331,6 +1338,7 @@ export async function updateReservationStatus(
     await createReservationEvent(db, id, 'completed', input.actorType ?? 'system', input.actorId ?? null, reservation, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
     await recomputeReservationSystemTagsForReservation(db, updated);
+    await recordReservationUserEventBestEffort(db, updated, 'reservation.completed', '来園完了');
     return { ok: true, reservation: updated, changed: true };
   }
 
@@ -1340,10 +1348,51 @@ export async function updateReservationStatus(
     await createReservationEvent(db, id, 'no_show', input.actorType ?? 'system', input.actorId ?? null, reservation, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
     await recomputeReservationSystemTagsForReservation(db, updated);
+    await recordReservationUserEventBestEffort(db, updated, 'reservation.no_show', '無断キャンセル');
     return { ok: true, reservation: updated, changed: true };
   }
 
   return { ok: false, reason: 'invalid_state_transition' };
+}
+
+async function recordReservationUserEventBestEffort(
+  db: D1Database,
+  reservation: Reservation,
+  eventType: string,
+  eventName: string,
+  extraMetadata: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await recordUserEvent(db, {
+      lineAccountId: reservation.line_account_id,
+      friendId: reservation.friend_id,
+      eventType,
+      eventName,
+      eventSource: reservation.source === 'jalan' || reservation.source === 'gmail' ? reservation.source : 'reservation',
+      subjectType: 'reservation',
+      subjectId: reservation.id,
+      idempotencyKey: `${eventType}:${reservation.id}:${reservation.updated_at}`,
+      metadata: {
+        source: reservation.source,
+        capacityChannel: reservation.capacity_channel,
+        slotId: reservation.slot_id,
+        date: reservation.reservation_date,
+        startAt: reservation.start_at,
+        endAt: reservation.end_at,
+        adultCount: reservation.adult_count,
+        childCount: reservation.child_count,
+        infantCount: reservation.infant_count,
+        underThreeCount: reservation.under_three_count,
+        totalPeople: reservation.total_people,
+        capacityPeople: reservation.capacity_people,
+        amount: reservation.total_amount ?? null,
+        status: reservation.status,
+        ...extraMetadata,
+      },
+    });
+  } catch (err) {
+    console.warn('recordReservationUserEvent failed:', err);
+  }
 }
 
 async function recomputeReservationSystemTagsForReservation(db: D1Database, reservation: Reservation): Promise<void> {

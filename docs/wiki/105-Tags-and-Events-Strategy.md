@@ -13,12 +13,19 @@
 - 予約作成・予約状態更新時に、友だちへ予約系システムタグを自動再計算する。
 - システムタグは削除不可にし、管理者作成タグは `kind='custom'` として扱う。
 - D1統合テストで、予約作成時のタグ付与とキャンセル時のタグ更新を確認する。
+- `user_events`, `event_definitions`, `event_tag_rules` を追加した。
+- `recordUserEvent()` でイベントを冪等に保存し、条件に合う `event_tag_rules` からタグを付与/削除できる。
+- 予約作成・確定・キャンセル・来園完了・no_show と、トラッキングリンククリックを `user_events` に保存する。
+- `GET/POST /api/events`, `GET /api/event-definitions`, `GET/POST/DELETE /api/event-tag-rules` を追加した。
+- `POST /api/public/events` を追加し、LIFF短命予約セッショントークンでLIFF操作イベントを保存できるようにした。
+- LIFF予約画面から `liff.booking.open`, `resource_selected`, `menu_selected`, `date_selected`, `slot_selected`, `confirm_open`, `completed`, `liff.mine.open`, `liff.cancel.open` を送信する。
+- LINE Webhook の postback を `rich_menu.tap` として保存する。`action=booking` のようなpostback dataはmetadataに展開され、タグルール条件に使える。
+- `/reservation-ops` の設定モーダルに「タグ / イベント設定」を追加した。直近イベント確認、イベントタグルール作成、ルール削除ができる。
 
 未実装:
 
-- 汎用 `user_events`, `event_definitions`, `event_tag_rules`。
-- リッチメニュー、予約導線、キャンペーンタップの統一イベント保存。
-- 管理画面からのイベント定義・タグ自動付与ルール編集。
+- 管理画面からのイベント定義そのものの編集。
+- イベントタグルールの編集。現状は作成/削除で運用する。
 
 タグは「現在の分類」を表す。イベントは「いつ何が起きたか」を表す。
 

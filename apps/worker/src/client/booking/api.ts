@@ -144,3 +144,26 @@ export function cancelReservation(input: { reservationId: string; cancelToken: s
     },
   );
 }
+
+export function recordLiffEvent(input: {
+  token: string;
+  eventType: string;
+  eventName?: string | null;
+  subjectType?: string | null;
+  subjectId?: string | null;
+  idempotencyKey?: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  return apiJson<{ id: string }>('/api/public/events', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${input.token}` },
+    body: JSON.stringify({
+      eventType: input.eventType,
+      eventName: input.eventName ?? null,
+      subjectType: input.subjectType ?? null,
+      subjectId: input.subjectId ?? null,
+      idempotencyKey: input.idempotencyKey ?? null,
+      metadata: input.metadata ?? {},
+    }),
+  });
+}

@@ -378,6 +378,66 @@ export interface ConversionEvent {
 }
 
 // -----------------------------------------------------------------------------
+// ユーザーイベント (User Events)
+// -----------------------------------------------------------------------------
+
+export type UserEventSource =
+  | "line"
+  | "liff"
+  | "web"
+  | "reservation"
+  | "jalan"
+  | "gmail"
+  | "tracked_link"
+  | "broadcast"
+  | "automation"
+  | "system";
+
+export interface UserEvent {
+  id: string;
+  lineAccountId: string | null;
+  friendId: string | null;
+  lineUserId: string | null;
+  eventType: string;
+  eventName: string | null;
+  eventSource: UserEventSource;
+  subjectType: string | null;
+  subjectId: string | null;
+  occurredAt: string;
+  receivedAt: string;
+  sessionId: string | null;
+  requestId: string | null;
+  idempotencyKey: string | null;
+  metadata: string;
+  createdAt: string;
+}
+
+export interface EventDefinition {
+  id: string;
+  eventType: string;
+  name: string;
+  category: string;
+  description: string | null;
+  isSystem: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EventTagRule {
+  id: string;
+  name: string;
+  eventType: string;
+  conditions: string;
+  action: "add_tag" | "remove_tag";
+  tagId: string;
+  priority: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// -----------------------------------------------------------------------------
 // アフィリエイト (Affiliate) — アフィリエイト管理
 // -----------------------------------------------------------------------------
 
