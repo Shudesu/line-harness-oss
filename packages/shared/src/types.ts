@@ -35,6 +35,8 @@ export interface Friend {
 // -----------------------------------------------------------------------------
 // タグ (Tag)
 // -----------------------------------------------------------------------------
+export type TagKind = "system" | "custom";
+
 export interface Tag {
   /** 主キー (UUIDv4) */
   id: string;
@@ -42,13 +44,27 @@ export interface Tag {
   name: string;
   /** 表示色 (HEX: #RRGGBB) */
   color: string;
+  /** タグ種別 (system: 自動管理 / custom: 管理者設定) */
+  kind: TagKind;
+  /** 分類 (reservation, visit, campaign など) */
+  category: string | null;
+  /** 管理画面向け説明 */
+  description: string | null;
+  /** 有効/無効 */
+  isActive: boolean;
+  /** システム保護タグかどうか */
+  isLocked: boolean;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
+  /** 更新日時 (ISO 8601) */
+  updatedAt: string | null;
 }
 
 // -----------------------------------------------------------------------------
 // 友だち×タグ 中間テーブル (FriendTag)
 // -----------------------------------------------------------------------------
+export type FriendTagSource = "manual" | "system" | "automation" | "reservation" | "tracked_link" | "import";
+
 export interface FriendTag {
   /** 友だちID */
   friendId: string;
@@ -56,6 +72,14 @@ export interface FriendTag {
   tagId: string;
   /** 割り当て日時 (ISO 8601) */
   assignedAt: string;
+  /** 付与元 */
+  source: FriendTagSource | null;
+  /** 紐づくイベントID */
+  sourceEventId: string | null;
+  /** 期限付きタグの失効日時 */
+  expiresAt: string | null;
+  /** 付与時メタデータ (JSON文字列) */
+  metadata: string | null;
 }
 
 // -----------------------------------------------------------------------------

@@ -19,6 +19,7 @@ import {
   type ReservationSlot,
   type CreateReservationInput,
 } from './reservations.js';
+import { getFriendTags } from './tags.js';
 
 // ---------------------------------------------------------------------------
 // Miniflare singleton — one instance for all tests, reset DB between tests
@@ -36,6 +37,8 @@ const mf = new Miniflare({
 const SCHEMA_STATEMENTS: string[] = [
   `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT, phone TEXT, external_id TEXT, display_name TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS friends (id TEXT PRIMARY KEY, line_user_id TEXT UNIQUE NOT NULL, display_name TEXT, picture_url TEXT, status_message TEXT, is_following INTEGER NOT NULL DEFAULT 1, user_id TEXT, ig_igsid TEXT, score INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, color TEXT NOT NULL DEFAULT '#3B82F6', kind TEXT NOT NULL DEFAULT 'custom' CHECK (kind IN ('system','custom')), category TEXT, description TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS friend_tags (friend_id TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, assigned_at TEXT NOT NULL DEFAULT (datetime('now')), source TEXT DEFAULT 'manual' CHECK (source IN ('manual','system','automation','reservation','tracked_link','import')), source_event_id TEXT, expires_at TEXT, metadata TEXT, PRIMARY KEY (friend_id, tag_id))`,
   `CREATE TABLE IF NOT EXISTS reservation_customer_profiles (user_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'prospect' CHECK (status IN ('prospect','reserved','visited','cancelled','inactive')), source TEXT NOT NULL DEFAULT 'line' CHECK (source IN ('line','jalan','phone','gmail','admin','mcp','unknown')), memo TEXT, metadata TEXT NOT NULL DEFAULT '{}', first_reserved_at TEXT, last_reserved_at TEXT, first_visited_at TEXT, last_visited_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS reservation_resources (id TEXT PRIMARY KEY, line_account_id TEXT, name TEXT NOT NULL, description TEXT, default_duration_minutes INTEGER NOT NULL DEFAULT 60, default_capacity INTEGER NOT NULL DEFAULT 1, default_line_capacity INTEGER, default_external_capacity INTEGER, default_buffer_capacity INTEGER NOT NULL DEFAULT 0, google_calendar_connection_id TEXT, slot_interval_minutes INTEGER NOT NULL DEFAULT 60, timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo', is_active INTEGER NOT NULL DEFAULT 1, display_order INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
   `CREATE TABLE IF NOT EXISTS reservation_menus (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES reservation_resources (id) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT, duration_minutes INTEGER NOT NULL DEFAULT 60, unit_type TEXT NOT NULL DEFAULT 'person' CHECK (unit_type IN ('person','group','seat','table')), min_people INTEGER NOT NULL DEFAULT 1, max_people INTEGER, price_adult INTEGER, price_child INTEGER, price_infant INTEGER, price_under_three INTEGER, capacity_count_adult INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_adult IN (0,1)), capacity_count_child INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_child IN (0,1)), capacity_count_infant INTEGER NOT NULL DEFAULT 1 CHECK (capacity_count_infant IN (0,1)), capacity_count_under_three INTEGER NOT NULL DEFAULT 0 CHECK (capacity_count_under_three IN (0,1)), form_fields TEXT NOT NULL DEFAULT '[]', is_active INTEGER NOT NULL DEFAULT 1, display_order INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
@@ -57,7 +60,7 @@ const DROP_TABLES = [
   'external_sync_tasks', 'external_reservation_sources', 'visits',
   'reservation_events', 'reservation_items', 'reservations',
   'reservation_slots', 'reservation_schedules', 'reservation_menus',
-  'reservation_resources', 'reservation_customer_profiles', 'friends', 'users',
+  'reservation_resources', 'reservation_customer_profiles', 'friend_tags', 'tags', 'friends', 'users',
 ];
 
 // ---------------------------------------------------------------------------
@@ -69,6 +72,7 @@ const SLOT_DATE = '2026-06-01';
 const SLOT_START = `${SLOT_DATE}T09:00:00+09:00`;
 const SLOT_END = `${SLOT_DATE}T10:00:00+09:00`;
 const USER_ID = 'user_test_001';
+const FRIEND_ID = 'friend_test_001';
 
 let db: D1Database;
 
@@ -84,6 +88,10 @@ async function seedFixtures() {
   await db
     .prepare(`INSERT INTO users (id, display_name, phone) VALUES (?, ?, ?)`)
     .bind(USER_ID, 'Test User', '09012345678')
+    .run();
+  await db
+    .prepare(`INSERT INTO friends (id, line_user_id, display_name, user_id) VALUES (?, ?, ?, ?)`)
+    .bind(FRIEND_ID, 'Utest001', 'Test Friend', USER_ID)
     .run();
   await createReservationResource(db, {
     id: RES_ID,
@@ -845,6 +853,38 @@ describe('reservations — D1 integration', () => {
         .prepare(`SELECT status FROM reservation_customer_profiles WHERE user_id = ?`)
         .bind(USER_ID).first<{ status: string }>();
       expect(p?.status).toBe('reserved');
+    });
+  });
+
+  // =========================================================================
+  // 7. System tags for reservation state
+  // =========================================================================
+  describe('reservation system tags', () => {
+    it('assigns active reservation system tags after booking', async () => {
+      const slot = await insertSlot();
+      const result = await createReservationWithCapacityCheck(db, baseInput(slot.id, { friendId: FRIEND_ID }));
+      expect(result.ok).toBe(true);
+
+      const tags = await getFriendTags(db, FRIEND_ID);
+      const names = tags.map((tag) => tag.name);
+      expect(names).toContain('sys:予約あり');
+      expect(names).toContain('sys:予約確定');
+      expect(names).toContain('sys:今季予約あり');
+    });
+
+    it('removes active reservation tags once cancelled and keeps cancellation history', async () => {
+      const slot = await insertSlot();
+      const result = await createReservationWithCapacityCheck(db, baseInput(slot.id, { friendId: FRIEND_ID }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      await updateReservationStatus(db, result.reservation.id, { status: 'cancelled' });
+
+      const tags = await getFriendTags(db, FRIEND_ID);
+      const names = tags.map((tag) => tag.name);
+      expect(names).not.toContain('sys:予約あり');
+      expect(names).not.toContain('sys:予約確定');
+      expect(names).toContain('sys:キャンセル経験あり');
     });
   });
 });

@@ -33,7 +33,13 @@ CREATE TABLE IF NOT EXISTS tags (
   id         TEXT PRIMARY KEY,
   name       TEXT UNIQUE NOT NULL,
   color      TEXT NOT NULL DEFAULT '#3B82F6',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  kind       TEXT NOT NULL DEFAULT 'custom' CHECK (kind IN ('system', 'custom')),
+  category   TEXT,
+  description TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  is_locked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at TEXT
 );
 
 -- ============================================================
@@ -43,6 +49,10 @@ CREATE TABLE IF NOT EXISTS friend_tags (
   friend_id   TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   tag_id      TEXT NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
   assigned_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  source      TEXT DEFAULT 'manual' CHECK (source IN ('manual', 'system', 'automation', 'reservation', 'tracked_link', 'import')),
+  source_event_id TEXT,
+  expires_at TEXT,
+  metadata TEXT,
   PRIMARY KEY (friend_id, tag_id)
 );
 

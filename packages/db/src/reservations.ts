@@ -1,4 +1,5 @@
 import { jstNow } from './utils.js';
+import { recomputeReservationSystemTagsForFriend, recomputeReservationSystemTagsForUser } from './tags.js';
 
 // =============================================================================
 // Reservations — capacity-safe booking helpers
@@ -1268,6 +1269,7 @@ export async function createReservationWithCapacityCheck(
     const reservation = (await getReservationById(db, id))!;
     await createReservationEvent(db, reservation.id, 'created', input.actorType ?? 'system', input.actorId ?? null, null, reservation);
     if (input.userId) await recomputeReservationCustomerProfileStatus(db, input.userId, input.source ?? 'line');
+    await recomputeReservationSystemTagsForReservation(db, reservation);
     return { ok: true, reservation };
   } catch (error) {
     await releaseSlotCapacity(db, slot.id, capacityPeople, capacityChannel);
@@ -1309,6 +1311,7 @@ export async function updateReservationStatus(
     );
     await createRestoreCapacityTaskIfNeeded(db, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
+    await recomputeReservationSystemTagsForReservation(db, updated);
     return { ok: true, reservation: updated, changed: true };
   }
 
@@ -1317,6 +1320,7 @@ export async function updateReservationStatus(
     const updated = (await getReservationById(db, id))!;
     await createReservationEvent(db, id, 'confirmed', input.actorType ?? 'system', input.actorId ?? null, reservation, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
+    await recomputeReservationSystemTagsForReservation(db, updated);
     return { ok: true, reservation: updated, changed: true };
   }
 
@@ -1326,6 +1330,7 @@ export async function updateReservationStatus(
     const updated = (await getReservationById(db, id))!;
     await createReservationEvent(db, id, 'completed', input.actorType ?? 'system', input.actorId ?? null, reservation, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
+    await recomputeReservationSystemTagsForReservation(db, updated);
     return { ok: true, reservation: updated, changed: true };
   }
 
@@ -1334,10 +1339,21 @@ export async function updateReservationStatus(
     const updated = (await getReservationById(db, id))!;
     await createReservationEvent(db, id, 'no_show', input.actorType ?? 'system', input.actorId ?? null, reservation, updated);
     if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
+    await recomputeReservationSystemTagsForReservation(db, updated);
     return { ok: true, reservation: updated, changed: true };
   }
 
   return { ok: false, reason: 'invalid_state_transition' };
+}
+
+async function recomputeReservationSystemTagsForReservation(db: D1Database, reservation: Reservation): Promise<void> {
+  if (reservation.friend_id) {
+    await recomputeReservationSystemTagsForFriend(db, reservation.friend_id);
+    return;
+  }
+  if (reservation.user_id) {
+    await recomputeReservationSystemTagsForUser(db, reservation.user_id);
+  }
 }
 
 export async function recomputeReservationCustomerProfileStatus(

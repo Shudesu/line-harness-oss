@@ -10,7 +10,13 @@ function serializeTag(row: DbTag) {
     id: row.id,
     name: row.name,
     color: row.color,
+    kind: row.kind,
+    category: row.category,
+    description: row.description,
+    isActive: row.is_active === 1,
+    isLocked: row.is_locked === 1,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -28,7 +34,7 @@ tags.get('/api/tags', async (c) => {
 // POST /api/tags - create tag
 tags.post('/api/tags', async (c) => {
   try {
-    const body = await c.req.json<{ name: string; color?: string }>();
+    const body = await c.req.json<{ name: string; color?: string; category?: string | null; description?: string | null }>();
 
     if (!body.name) {
       return c.json({ success: false, error: 'name is required' }, 400);
@@ -37,6 +43,9 @@ tags.post('/api/tags', async (c) => {
     const tag = await createTag(c.env.DB, {
       name: body.name,
       color: body.color,
+      kind: 'custom',
+      category: body.category ?? null,
+      description: body.description ?? null,
     });
 
     return c.json({ success: true, data: serializeTag(tag) }, 201);
@@ -54,6 +63,9 @@ tags.delete('/api/tags/:id', async (c) => {
     return c.json({ success: true, data: null });
   } catch (err) {
     console.error('DELETE /api/tags/:id error:', err);
+    if (err instanceof Error && err.message.includes('system tag')) {
+      return c.json({ success: false, error: 'System tags cannot be deleted' }, 409);
+    }
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

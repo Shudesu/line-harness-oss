@@ -9,6 +9,7 @@ import type {
   ReservationResource,
   ReservationResponse,
   ReservationSlotWithAvailability,
+  Template,
 } from '@line-crm/shared'
 import {
   api,
@@ -22,6 +23,7 @@ import {
   type CalendarSyncResult,
 } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
+import FlexPreviewComponent from '@/components/flex-preview'
 
 type Tab = 'reservations' | 'chats' | 'broadcasts'
 type SettingsModal = 'menu' | 'jalan' | 'calendar' | null
@@ -64,6 +66,36 @@ type GmailRuleDraft = {
   resourceId: string
   menuId: string
   maxResults: number
+}
+
+type BroadcastDraft = {
+  title: string
+  messageType: ApiBroadcast['messageType']
+  messageContent: string
+  templateId: string
+  cardTitle: string
+  cardBody: string
+  cardButtonLabel: string
+  cardUrl: string
+  cardImageUrl: string
+  cardSize: 'kilo' | 'mega' | 'giga'
+  cardTitleSize: 'lg' | 'xl' | 'xxl'
+  cardBodySize: 'xs' | 'sm' | 'md'
+}
+
+const defaultBroadcastDraft: BroadcastDraft = {
+  title: '',
+  messageType: 'text',
+  messageContent: '',
+  templateId: '',
+  cardTitle: 'ブルーベリー予約はこちら',
+  cardBody: '日付と時間を選んで、かんたんに予約できます。',
+  cardButtonLabel: '予約する',
+  cardUrl: '',
+  cardImageUrl: '',
+  cardSize: 'mega',
+  cardTitleSize: 'xl',
+  cardBodySize: 'sm',
 }
 
 const tabs: Array<{ key: Tab; label: string; hint: string }> = [
@@ -271,6 +303,7 @@ export default function ReservationOpsPage() {
   const [gmailImportRules, setGmailImportRules] = useState<ApiGmailImportRule[]>([])
   const [gmailImportRuns, setGmailImportRuns] = useState<ApiGmailImportRun[]>([])
   const [gmailLastRun, setGmailLastRun] = useState<ApiGmailImportRunResult | null>(null)
+  const [templates, setTemplates] = useState<Template[]>([])
   const [gmailRuleDraft, setGmailRuleDraft] = useState<GmailRuleDraft>({
     connectionId: '',
     name: 'じゃらん予約メール',
@@ -284,7 +317,7 @@ export default function ReservationOpsPage() {
     menuId: '',
     maxResults: 10,
   })
-  const [broadcastDraft, setBroadcastDraft] = useState({ title: '', messageContent: '' })
+  const [broadcastDraft, setBroadcastDraft] = useState<BroadcastDraft>(defaultBroadcastDraft)
   const [imageUrl, setImageUrl] = useState('')
   const [uploadingImage, setUploadingImage] = useState(false)
   const [calendarSettingsOpen, setCalendarSettingsOpen] = useState(false)
@@ -348,6 +381,12 @@ export default function ReservationOpsPage() {
     else throw new Error(res.error)
   }, [selectedAccountId])
 
+  const loadTemplates = useCallback(async () => {
+    const res = await api.templates.list()
+    if (res.success) setTemplates(res.data)
+    else throw new Error(res.error)
+  }, [])
+
   const loadCalendarConnections = useCallback(async () => {
     const res = await api.calendar.listConnections()
     if (res.success) setCalendarConnections(res.data)
@@ -369,13 +408,13 @@ export default function ReservationOpsPage() {
     setLoading(true)
     setError('')
     try {
-      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadCalendarConnections(), loadGmailImports()])
+      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadTemplates(), loadCalendarConnections(), loadGmailImports()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '読み込みに失敗しました')
     } finally {
       setLoading(false)
     }
-  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadCalendarConnections, loadGmailImports])
+  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadTemplates, loadCalendarConnections, loadGmailImports])
 
   useEffect(() => {
     loadAll()
@@ -496,14 +535,14 @@ export default function ReservationOpsPage() {
     await runAction(async () => {
       const res = await api.broadcasts.create({
         title: broadcastDraft.title.trim(),
-        messageType: 'text',
+        messageType: broadcastDraft.messageType,
         messageContent: broadcastDraft.messageContent.trim(),
         targetType: 'all',
         status: 'draft',
         lineAccountId: selectedAccountId || null,
       })
       if (!res.success) throw new Error(res.error)
-      setBroadcastDraft({ title: '', messageContent: '' })
+      setBroadcastDraft(defaultBroadcastDraft)
     }, '一斉配信の下書きを作成しました')
   }
 
@@ -691,6 +730,7 @@ export default function ReservationOpsPage() {
           {tab === 'broadcasts' && (
             <BroadcastPanel
               broadcasts={broadcasts}
+              templates={templates}
               draft={broadcastDraft}
               imageUrl={imageUrl}
               saving={saving}
@@ -1593,6 +1633,7 @@ function LabelSelect({ label, value, labels, onChange }: { label: string; value:
 
 function BroadcastPanel({
   broadcasts,
+  templates,
   draft,
   imageUrl,
   saving,
@@ -1603,21 +1644,60 @@ function BroadcastPanel({
   onUploadImage,
 }: {
   broadcasts: ApiBroadcast[]
-  draft: { title: string; messageContent: string }
+  templates: Template[]
+  draft: BroadcastDraft
   imageUrl: string
   saving: boolean
   uploadingImage: boolean
-  onDraftChange: (value: { title: string; messageContent: string }) => void
+  onDraftChange: (value: BroadcastDraft) => void
   onCreateDraft: () => void
   onSend: (broadcast: ApiBroadcast) => void
   onUploadImage: (file: File | null) => void
 }) {
   const active = broadcasts.filter((broadcast) => broadcast.status === 'draft' || broadcast.status === 'scheduled')
+  const flexPreviewable = draft.messageType === 'flex' && draft.messageContent.trim().startsWith('{')
+  const applyTemplate = (templateId: string) => {
+    const template = templates.find((item) => item.id === templateId)
+    if (!template) {
+      onDraftChange({ ...draft, templateId })
+      return
+    }
+    onDraftChange({
+      ...draft,
+      templateId,
+      title: draft.title.trim() ? draft.title : template.name,
+      messageType: template.messageType as ApiBroadcast['messageType'],
+      messageContent: template.messageContent,
+    })
+  }
+  const applyCard = () => {
+    const nextDraft = { ...draft, cardImageUrl: draft.cardImageUrl || imageUrl }
+    onDraftChange({
+      ...nextDraft,
+      messageType: 'flex',
+      messageContent: buildBroadcastFlexCard(nextDraft),
+      title: nextDraft.title.trim() ? nextDraft.title : nextDraft.cardTitle,
+      templateId: '',
+    })
+  }
   return (
     <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <h2 className="text-lg font-bold text-gray-900">一斉配信下書き</h2>
-        <p className="mt-1 text-sm text-gray-500">この画面では安全のため、まず下書きを作成します。送信は確認ダイアログを通します。</p>
+        <p className="mt-1 text-sm text-gray-500">テンプレートを選んで内容をコピーし、下書きとして保存します。送信は確認ダイアログを通します。</p>
+        <label className="mt-4 block text-xs font-bold text-gray-600">
+          テンプレートを流用
+          <select
+            value={draft.templateId}
+            onChange={(event) => applyTemplate(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          >
+            <option value="">テンプレートを選択しない</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>{template.name} / {template.messageType}</option>
+            ))}
+          </select>
+        </label>
         <div className="mt-4 rounded-xl border border-dashed border-blue-200 bg-blue-50 p-3">
           <p className="text-sm font-bold text-blue-950">画像URL発行</p>
           <p className="mt-1 text-xs text-blue-800">画像をWorker/R2にアップロードし、公開URLを発行します。5MB以下の png / jpeg / gif / webp に対応します。</p>
@@ -1645,12 +1725,61 @@ function BroadcastPanel({
             </div>
           )}
         </div>
+        <details className="mt-4 rounded-xl border border-green-100 bg-green-50 p-3">
+          <summary className="cursor-pointer text-sm font-bold text-green-950">カードをフォームから作成</summary>
+          <div className="mt-3 grid gap-3">
+            <input value={draft.cardTitle} onChange={(event) => onDraftChange({ ...draft, cardTitle: event.target.value })} className="rounded-lg border border-green-200 px-3 py-2 text-sm" placeholder="カードタイトル" />
+            <textarea value={draft.cardBody} onChange={(event) => onDraftChange({ ...draft, cardBody: event.target.value })} rows={3} className="rounded-lg border border-green-200 p-3 text-sm" placeholder="説明文" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input value={draft.cardButtonLabel} onChange={(event) => onDraftChange({ ...draft, cardButtonLabel: event.target.value })} className="rounded-lg border border-green-200 px-3 py-2 text-sm" placeholder="ボタン名" />
+              <input value={draft.cardUrl} onChange={(event) => onDraftChange({ ...draft, cardUrl: event.target.value })} className="rounded-lg border border-green-200 px-3 py-2 text-sm" placeholder="リンクURL" />
+            </div>
+            <input value={draft.cardImageUrl || imageUrl} onChange={(event) => onDraftChange({ ...draft, cardImageUrl: event.target.value })} className="rounded-lg border border-green-200 px-3 py-2 text-sm" placeholder="画像URL" />
+            <div className="grid gap-2 sm:grid-cols-3">
+              <select value={draft.cardSize} onChange={(event) => onDraftChange({ ...draft, cardSize: event.target.value as BroadcastDraft['cardSize'] })} className="rounded-lg border border-green-200 px-3 py-2 text-sm">
+                <option value="kilo">カード小</option>
+                <option value="mega">カード標準</option>
+                <option value="giga">カード大</option>
+              </select>
+              <select value={draft.cardTitleSize} onChange={(event) => onDraftChange({ ...draft, cardTitleSize: event.target.value as BroadcastDraft['cardTitleSize'] })} className="rounded-lg border border-green-200 px-3 py-2 text-sm">
+                <option value="lg">タイトル小</option>
+                <option value="xl">タイトル標準</option>
+                <option value="xxl">タイトル大</option>
+              </select>
+              <select value={draft.cardBodySize} onChange={(event) => onDraftChange({ ...draft, cardBodySize: event.target.value as BroadcastDraft['cardBodySize'] })} className="rounded-lg border border-green-200 px-3 py-2 text-sm">
+                <option value="xs">本文小</option>
+                <option value="sm">本文標準</option>
+                <option value="md">本文大</option>
+              </select>
+            </div>
+            <button type="button" onClick={applyCard} className="w-fit rounded-lg bg-green-700 px-3 py-2 text-xs font-bold text-white">
+              カードを配信内容に反映
+            </button>
+          </div>
+        </details>
         <input value={draft.title} onChange={(event) => onDraftChange({ ...draft, title: event.target.value })} className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="配信タイトル" />
-        <textarea value={draft.messageContent} onChange={(event) => onDraftChange({ ...draft, messageContent: event.target.value })} rows={6} className="mt-3 w-full rounded-lg border border-gray-300 p-3 text-sm" placeholder="配信本文" />
+        <select value={draft.messageType} onChange={(event) => onDraftChange({ ...draft, messageType: event.target.value as ApiBroadcast['messageType'] })} className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+          <option value="text">テキスト</option>
+          <option value="image">画像</option>
+          <option value="flex">Flexカード</option>
+        </select>
+        <textarea value={draft.messageContent} onChange={(event) => onDraftChange({ ...draft, messageContent: event.target.value })} rows={8} className="mt-3 w-full rounded-lg border border-gray-300 p-3 font-mono text-xs" placeholder="配信本文またはFlex JSON" />
         <button disabled={saving || !draft.title.trim() || !draft.messageContent.trim()} onClick={onCreateDraft} className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">下書き作成</button>
       </div>
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-gray-900">送信待ち</h2>
+        <h2 className="text-lg font-bold text-gray-900">プレビュー / 送信待ち</h2>
+        <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <p className="text-xs font-bold text-gray-500">現在の配信イメージ</p>
+          <div className="mt-3">
+            {draft.messageType === 'flex' && flexPreviewable ? (
+              <FlexPreviewComponent content={draft.messageContent} maxWidth={draft.cardSize === 'giga' ? 340 : draft.cardSize === 'kilo' ? 260 : 300} />
+            ) : draft.messageType === 'image' && draft.messageContent.trim() ? (
+              <img src={draft.messageContent.trim()} alt="配信画像プレビュー" className="max-h-64 rounded-lg border border-gray-200 object-contain" />
+            ) : (
+              <div className="whitespace-pre-wrap rounded-lg bg-white p-3 text-sm text-gray-800">{draft.messageContent || '配信内容のプレビューがここに表示されます。'}</div>
+            )}
+          </div>
+        </div>
         <div className="mt-3 space-y-2">
           {active.length === 0 ? <p className="text-sm text-gray-400">送信待ちの配信はありません。</p> : active.map((broadcast) => (
             <div key={broadcast.id} className="rounded-xl border border-gray-200 p-3">
@@ -1667,4 +1796,48 @@ function BroadcastPanel({
       </div>
     </section>
   )
+}
+
+function buildBroadcastFlexCard(input: BroadcastDraft): string {
+  const title = input.cardTitle.trim() || 'お知らせ'
+  const body = input.cardBody.trim() || '詳細をご確認ください。'
+  const buttonLabel = input.cardButtonLabel.trim() || '詳しく見る'
+  const linkUrl = input.cardUrl.trim() || 'https://example.com'
+  const imageUrl = input.cardImageUrl.trim()
+  const bubble: Record<string, unknown> = {
+    type: 'bubble',
+    size: input.cardSize,
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        { type: 'text', text: title, weight: 'bold', size: input.cardTitleSize, wrap: true, color: '#1F4F7A' },
+        { type: 'text', text: body, size: input.cardBodySize, wrap: true, color: '#4B5563' },
+      ],
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          color: '#69A3D0',
+          action: { type: 'uri', label: buttonLabel, uri: linkUrl },
+        },
+      ],
+    },
+  }
+  if (imageUrl) {
+    bubble.hero = {
+      type: 'image',
+      url: imageUrl,
+      size: 'full',
+      aspectRatio: '20:13',
+      aspectMode: 'cover',
+    }
+  }
+  return JSON.stringify(bubble, null, 2)
 }
