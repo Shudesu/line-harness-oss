@@ -52,6 +52,7 @@ const statusFilters: { key: StatusFilter; label: string }[] = [
 const SHOW_LOADING_PREF_KEY = 'lh_chat_show_loading_indicator'
 const LOADING_SECONDS_PREF_KEY = 'lh_chat_loading_seconds'
 const LOADING_REFRESH_INTERVAL_MS = 4000
+const CHAT_RECENT_DAYS = 30
 
 function formatDatetime(iso: string | null): string {
   if (!iso) return '-'
@@ -308,7 +309,7 @@ export default function ChatsPage() {
     setLoading(true)
     setError('')
     try {
-      const params: { status?: string; accountId?: string } = {}
+      const params: { status?: string; accountId?: string; recentDays: number } = { recentDays: CHAT_RECENT_DAYS }
       if (statusFilter !== 'all') params.status = statusFilter
       if (selectedAccountId) params.accountId = selectedAccountId
       const chatRes = await api.chats.list(params)
@@ -326,7 +327,11 @@ export default function ChatsPage() {
   // Previously fetched 800 friends in parallel with chats, which blocked the initial render.
   const loadAllFriends = useCallback(async () => {
     try {
-      const friendRes = await api.friends.list({ accountId: selectedAccountId || undefined, limit: '800' })
+      const friendRes = await api.friends.list({
+        accountId: selectedAccountId || undefined,
+        limit: '200',
+        recentDays: CHAT_RECENT_DAYS,
+      })
       if (friendRes.success) {
         setAllFriends((friendRes.data as unknown as { items: FriendItem[] }).items)
       }
@@ -352,7 +357,7 @@ export default function ChatsPage() {
   const loadChatDetail = useCallback(async (chatId: string) => {
     setDetailLoading(true)
     try {
-      const res = await api.chats.get(chatId)
+      const res = await api.chats.get(chatId, { recentDays: CHAT_RECENT_DAYS })
       if (res.success) {
         setChatDetail(res.data as unknown as ChatDetail)
         setNotes((res.data as unknown as ChatDetail).notes || '')

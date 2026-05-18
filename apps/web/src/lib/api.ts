@@ -246,6 +246,8 @@ export type FriendListParams = {
   tagId?: string
   accountId?: string
   search?: string
+  recentDays?: string | number
+  activeSince?: string
 }
 
 export type FriendWithTags = Friend & { tags: Tag[] }
@@ -259,6 +261,8 @@ export const api = {
       if (params?.tagId) query.tagId = params.tagId
       if (params?.accountId) query.lineAccountId = params.accountId
       if (params?.search) query.search = params.search
+      if (params?.recentDays) query.recentDays = String(params.recentDays)
+      if (params?.activeSince) query.activeSince = params.activeSince
       return fetchApi<ApiResponse<PaginatedResponse<FriendWithTags>>>(
         '/api/friends?' + new URLSearchParams(query)
       )
@@ -632,19 +636,26 @@ export const api = {
       ),
   },
   chats: {
-    list: (params?: { status?: string; operatorId?: string; accountId?: string }) => {
+    list: (params?: { status?: string; operatorId?: string; accountId?: string; recentDays?: string | number; since?: string }) => {
       const query: Record<string, string> = {}
       if (params?.status) query.status = params.status
       if (params?.operatorId) query.operatorId = params.operatorId
       if (params?.accountId) query.lineAccountId = params.accountId
+      if (params?.recentDays) query.recentDays = String(params.recentDays)
+      if (params?.since) query.since = params.since
       return fetchApi<ApiResponse<Chat[]>>(
         '/api/chats?' + new URLSearchParams(query),
       )
     },
-    get: (id: string) =>
-      fetchApi<ApiResponse<Chat & { messages?: { id: string; content: string; senderType: string; createdAt: string }[] }>>(
-        `/api/chats/${id}`,
-      ),
+    get: (id: string, params?: { recentDays?: string | number; since?: string }) => {
+      const query = new URLSearchParams()
+      if (params?.recentDays) query.set('recentDays', String(params.recentDays))
+      if (params?.since) query.set('since', params.since)
+      const suffix = query.toString() ? `?${query}` : ''
+      return fetchApi<ApiResponse<Chat & { messages?: { id: string; content: string; senderType: string; createdAt: string }[] }>>(
+        `/api/chats/${id}${suffix}`,
+      )
+    },
     create: (data: { friendId: string; operatorId?: string | null }) =>
       fetchApi<ApiResponse<Chat>>('/api/chats', {
         method: 'POST',

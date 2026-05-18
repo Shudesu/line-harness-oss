@@ -9,6 +9,7 @@ import {
   getScenarios,
   enrollFriendInScenario,
   jstNow,
+  toJstString,
 } from '@line-crm/db';
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
@@ -18,6 +19,14 @@ import { defaultLineAccessToken, workerBaseUrl } from '../services/line-bindings
 import { hasColumn } from '../utils/db-compat.js';
 
 const friends = new Hono<Env>();
+
+function recentSinceFromQuery(value: string | undefined): string | null {
+  if (!value) return null;
+  const days = Number(value);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  const clampedDays = Math.min(Math.floor(days), 365);
+  return toJstString(new Date(Date.now() - clampedDays * 24 * 60 * 60_000));
+}
 
 /** Convert a D1 snake_case Friend row to the shared camelCase shape */
 function serializeFriend(row: DbFriend) {
@@ -46,6 +55,31 @@ function serializeTag(row: DbTag) {
   };
 }
 
+async function getTagsByFriendIds(db: D1Database, friendIds: string[]): Promise<Map<string, DbTag[]>> {
+  const tagsByFriendId = new Map<string, DbTag[]>();
+  if (friendIds.length === 0) return tagsByFriendId;
+
+  const placeholders = friendIds.map(() => '?').join(', ');
+  const result = await db
+    .prepare(
+      `SELECT ft.friend_id, t.*
+       FROM friend_tags ft
+       INNER JOIN tags t ON t.id = ft.tag_id
+       WHERE ft.friend_id IN (${placeholders})
+       ORDER BY t.name ASC`,
+    )
+    .bind(...friendIds)
+    .all<DbTag & { friend_id: string }>();
+
+  for (const row of result.results ?? []) {
+    const list = tagsByFriendId.get(row.friend_id) ?? [];
+    list.push(row);
+    tagsByFriendId.set(row.friend_id, list);
+  }
+
+  return tagsByFriendId;
+}
+
 // GET /api/friends - list with pagination
 friends.get('/api/friends', async (c) => {
   try {
@@ -54,6 +88,7 @@ friends.get('/api/friends', async (c) => {
     const tagId = c.req.query('tagId');
     const lineAccountId = c.req.query('lineAccountId');
     const search = c.req.query('search');
+    const activeSince = c.req.query('activeSince') ?? recentSinceFromQuery(c.req.query('recentDays'));
 
     const db = c.env.DB;
     const hasFriendLineAccountId = await hasColumn(db, 'friends', 'line_account_id');
@@ -85,6 +120,10 @@ friends.get('/api/friends', async (c) => {
       conditions.push('f.display_name LIKE ?');
       binds.push(`%${search}%`);
     }
+    if (activeSince) {
+      conditions.push('EXISTS (SELECT 1 FROM messages_log ml WHERE ml.friend_id = f.id AND ml.created_at >= ?)');
+      binds.push(activeSince);
+    }
     // Metadata filters: ?metadata.key=value (e.g. ?metadata.monthly_cost=〜100万円)
     const url = new URL(c.req.url);
     for (const [key, value] of url.searchParams.entries()) {
@@ -107,13 +146,13 @@ friends.get('/api/friends', async (c) => {
     const listResult = await listStmt.bind(...listBinds).all<DbFriend>();
     const items = listResult.results;
 
-    // Fetch tags for each friend in parallel so the list response includes tags
-    const itemsWithTags = await Promise.all(
-      items.map(async (friend) => {
-        const tags = await getFriendTags(db, friend.id);
-        return { ...serializeFriend(friend), tags: tags.map(serializeTag) };
-      }),
-    );
+    // Fetch tags in one query. The chat UI requests up to 800 friends, so
+    // per-friend tag queries can exceed Worker/D1 limits and cause 500s.
+    const tagsByFriendId = await getTagsByFriendIds(db, items.map((friend) => friend.id));
+    const itemsWithTags = items.map((friend) => ({
+      ...serializeFriend(friend),
+      tags: (tagsByFriendId.get(friend.id) ?? []).map(serializeTag),
+    }));
 
     return c.json({
       success: true,

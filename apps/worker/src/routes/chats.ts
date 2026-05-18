@@ -14,12 +14,21 @@ import {
   getLineAccountById,
   updateChat,
   jstNow,
+  toJstString,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { defaultLineAccessToken } from '../services/line-bindings.js';
 import { hasColumn } from '../utils/db-compat.js';
 
 const chats = new Hono<Env>();
+
+function recentSinceFromQuery(value: string | undefined): string | null {
+  if (!value) return null;
+  const days = Number(value);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  const clampedDays = Math.min(Math.floor(days), 365);
+  return toJstString(new Date(Date.now() - clampedDays * 24 * 60 * 60_000));
+}
 
 function clampLoadingSeconds(value: number | undefined): number {
   const n = Number.isFinite(value) ? Math.floor(value as number) : 5;
@@ -224,7 +233,13 @@ chats.get('/api/chats', async (c) => {
     const status = c.req.query('status') ?? undefined;
     const operatorId = c.req.query('operatorId') ?? undefined;
     const lineAccountId = c.req.query('lineAccountId') ?? undefined;
+    const since = c.req.query('since') ?? recentSinceFromQuery(c.req.query('recentDays'));
     const hasFriendLineAccountId = await hasColumn(c.env.DB, 'friends', 'line_account_id');
+    const activityBindings: unknown[] = [];
+    const messagesWhere = since ? 'WHERE created_at >= ?' : '';
+    if (since) activityBindings.push(since);
+    const chatsWhere = since ? 'WHERE last_message_at >= ?' : '';
+    if (since) activityBindings.push(since);
 
     // List everyone who has any message history (incoming or outgoing — push/broadcast/scenario included)
     // PLUS any chats row that exists even before any messages_log entry is written.
@@ -233,10 +248,12 @@ chats.get('/api/chats', async (c) => {
       WITH activity AS (
         SELECT friend_id, MAX(created_at) AS last_message_at
         FROM messages_log
+        ${messagesWhere}
         GROUP BY friend_id
         UNION ALL
         SELECT friend_id, last_message_at
         FROM chats
+        ${chatsWhere}
       ),
       deduped AS (
         SELECT friend_id, MAX(last_message_at) AS last_message_at
@@ -263,7 +280,7 @@ chats.get('/api/chats', async (c) => {
       )
     `;
     const conditions: string[] = [];
-    const bindings: unknown[] = [];
+    const bindings: unknown[] = [...activityBindings];
 
     if (status) {
       conditions.push(`COALESCE(c.status, 'resolved') = ?`);
@@ -315,6 +332,7 @@ chats.get('/api/chats', async (c) => {
 chats.get('/api/chats/:id', async (c) => {
   try {
     const rawId = c.req.param('id');
+    const since = c.req.query('since') ?? recentSinceFromQuery(c.req.query('recentDays'));
 
     // id は chats.id または friend.id のどちらでもOK。
     // 優先順: chats.id 一致 → friend.id のとき chats.friend_id 最新行 → 何も無ければ friend のみで synthetic
@@ -352,14 +370,20 @@ chats.get('/api/chats/:id', async (c) => {
     // 新しい1000件を取って昇順に戻す。LIMIT 200 ASC だと古い200件だけで broadcast/scenario 等の
     // 新しい push が欠落していた（Shu で 481件中 281件欠落のバグあり）。一覧側と同様に test 配信は除外。
     // 現状の最重量ユーザー(481件)の2倍バッファ。これ以上の履歴はページング未実装（Phase 2 TODO）。
+    const messageConditions = ['friend_id = ?'];
+    const messageBindings: unknown[] = [resolvedFriendId];
+    if (since) {
+      messageConditions.push('created_at >= ?');
+      messageBindings.push(since);
+    }
     const messages = await c.env.DB
       .prepare(
         `SELECT id, friend_id, direction, message_type, content, created_at
          FROM messages_log
-         WHERE friend_id = ?
+         WHERE ${messageConditions.join(' AND ')}
          ORDER BY created_at DESC LIMIT 1000`,
       )
-      .bind(resolvedFriendId)
+      .bind(...messageBindings)
       .all();
     messages.results = (messages.results as Record<string, unknown>[]).reverse();
 
