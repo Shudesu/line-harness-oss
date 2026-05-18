@@ -29,6 +29,7 @@ import {
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
 } from '../../services/reservation-google-calendar.js';
+import { notifyReservationToDiscord } from '../../services/discord-notifications.js';
 import { resolveBindingValue } from '../../services/bindings.js';
 import { signGoogleOAuthState } from '../../services/google-oauth.js';
 import {
@@ -515,6 +516,7 @@ adminReservations.post('/api/reservations', async (c) => {
       );
     }
     c.executionCtx.waitUntil(syncReservationCreatedToGoogleCalendar(c.env.DB, result.reservation, c.env));
+    c.executionCtx.waitUntil(notifyReservationToDiscord(c.env.DB, result.reservation, c.env, 'created'));
     return jsonOk(c, toReservationResponse(result.reservation), 201);
   } catch (err) {
     console.error('POST /api/reservations error:', err);
@@ -545,6 +547,14 @@ adminReservations.put('/api/reservations/:id/status', async (c) => {
     }
     if (body.status === 'cancelled' && result.changed) {
       c.executionCtx.waitUntil(syncReservationCancelledToGoogleCalendar(c.env.DB, result.reservation, c.env));
+    }
+    if (result.changed && (body.status === 'cancelled' || body.status === 'completed')) {
+      c.executionCtx.waitUntil(notifyReservationToDiscord(
+        c.env.DB,
+        result.reservation,
+        c.env,
+        body.status === 'completed' ? 'completed' : 'cancelled',
+      ));
     }
     return jsonOk(c, { reservation: toReservationResponse(result.reservation), changed: result.changed });
   } catch (err) {

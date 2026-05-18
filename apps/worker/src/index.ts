@@ -48,6 +48,11 @@ import { meetCallback } from './routes/meet-callback.js';
 import { messageTemplates } from './routes/message-templates.js';
 import { defaultLiffUrl, defaultLineAccessToken, workerBaseUrl } from './services/line-bindings.js';
 import { processActiveGmailImportRules } from './services/gmail-jalan-import.js';
+import {
+  notifyGmailImportRunToDiscord,
+  processDiscordDailyReservationSummary,
+} from './services/discord-notifications.js';
+import type { SecretLike } from './services/bindings.js';
 
 export type Env = {
   Bindings: {
@@ -68,6 +73,15 @@ export type Env = {
     GOOGLE_OAUTH_CLIENT_ID?: string;
     GOOGLE_OAUTH_CLIENT_SECRET?: string;
     GOOGLE_OAUTH_REDIRECT_URI?: string;
+    WEB_URL?: SecretLike;
+    NEXT_PUBLIC_WEB_URL?: SecretLike;
+    DISCORD_WEBHOOK_URL?: SecretLike;
+    DISCORD_RESERVATION_WEBHOOK_URL?: SecretLike;
+    DISCORD_DAILY_WEBHOOK_URL?: SecretLike;
+    DISCORD_REVIEW_WEBHOOK_URL?: SecretLike;
+    DISCORD_RESERVATION_THREAD_ID?: SecretLike;
+    DISCORD_DAILY_THREAD_ID?: SecretLike;
+    DISCORD_REVIEW_THREAD_ID?: SecretLike;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -415,9 +429,23 @@ async function scheduled(
   jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, baseWorkerUrl));
   jobs.push(checkAccountHealth(env.DB));
   jobs.push(refreshLineAccessTokens(env.DB));
-  jobs.push(processActiveGmailImportRules(env.DB, env));
+  const gmailImportJob = processActiveGmailImportRules(env.DB, env);
+  jobs.push(gmailImportJob);
 
   await Promise.allSettled(jobs);
+
+  try {
+    const gmailResults = await gmailImportJob;
+    await Promise.allSettled(gmailResults.map((result) => notifyGmailImportRunToDiscord(env, result)));
+  } catch (e) {
+    console.error('Discord Gmail import notification error:', e);
+  }
+
+  try {
+    await processDiscordDailyReservationSummary(env.DB, env);
+  } catch (e) {
+    console.error('Discord daily reservation summary error:', e);
+  }
 
   // Fetch broadcast insights (runs daily, self-throttled)
   try {

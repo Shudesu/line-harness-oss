@@ -23,6 +23,7 @@ import {
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
 } from '../../services/reservation-google-calendar.js';
+import { notifyReservationToDiscord } from '../../services/discord-notifications.js';
 import { issueReservationSession, requireReservationSession } from './auth.js';
 import {
   jsonError,
@@ -272,6 +273,7 @@ publicReservations.post('/api/public/reservations', async (c) => {
       );
     }
     c.executionCtx.waitUntil(syncReservationCreatedToGoogleCalendar(c.env.DB, result.reservation, c.env));
+    c.executionCtx.waitUntil(notifyReservationToDiscord(c.env.DB, result.reservation, c.env, 'created'));
 
     const secret = await reservationTokenSecret(c.env);
     const detailToken = await signReservationToken(
@@ -402,6 +404,7 @@ publicReservations.post('/api/public/reservations/:id/cancel', async (c) => {
     });
     if (!result.ok) return jsonError(c, result.reason === 'not_found' ? 'not_found' : 'invalid_state_transition', 409, result.reason);
     if (result.changed) c.executionCtx.waitUntil(syncReservationCancelledToGoogleCalendar(c.env.DB, result.reservation, c.env));
+    if (result.changed) c.executionCtx.waitUntil(notifyReservationToDiscord(c.env.DB, result.reservation, c.env, 'cancelled'));
     return jsonOk(c, { reservation: toReservationResponse(result.reservation), changed: result.changed });
   } catch (err) {
     console.error('POST /api/public/reservations/:id/cancel error:', err);

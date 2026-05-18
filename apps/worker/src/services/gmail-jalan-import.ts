@@ -19,6 +19,10 @@ import {
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
 } from './reservation-google-calendar.js';
+import {
+  notifyExternalReviewToDiscord,
+  notifyReservationToDiscord,
+} from './discord-notifications.js';
 
 export interface GmailJalanImportEnv extends GoogleOAuthEnv {
   WORKER_URL?: SecretLike;
@@ -221,6 +225,7 @@ async function importMessage(
   });
 
   await syncCalendarIfNeeded(db, imported, env);
+  await notifyDiscordIfNeeded(db, imported, env);
   return itemResult(detail.id, parsed.eventType, parsed.externalId, imported);
 }
 
@@ -340,6 +345,25 @@ async function syncCalendarIfNeeded(
   } else if (result.status === 'cancelled') {
     await syncReservationCancelledToGoogleCalendar(db, result.reservation, env);
   }
+}
+
+async function notifyDiscordIfNeeded(
+  db: D1Database,
+  result: ImportExternalReservationResult,
+  env: GmailJalanImportEnv,
+): Promise<void> {
+  if (!result.ok) return;
+  if (result.status === 'needs_review') {
+    await notifyExternalReviewToDiscord(env, result.source);
+    return;
+  }
+  if (result.status === 'duplicate') return;
+  await notifyReservationToDiscord(
+    db,
+    result.reservation,
+    env,
+    result.status === 'cancelled' ? 'cancelled' : 'created',
+  );
 }
 
 function receivedAtFromGmail(detail: GmailMessageText): string | null {

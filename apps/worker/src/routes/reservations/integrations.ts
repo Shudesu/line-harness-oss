@@ -22,6 +22,10 @@ import {
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
 } from '../../services/reservation-google-calendar.js';
+import {
+  notifyExternalReviewToDiscord,
+  notifyReservationToDiscord,
+} from '../../services/discord-notifications.js';
 import { jsonError, jsonOk } from './responses.js';
 import { parseJalanGmailImportBody, parseJalanImportBody, readJsonObject } from './requests.js';
 import { toExternalReservationSourceResponse, toReservationResponse } from './serializers.js';
@@ -89,9 +93,11 @@ reservationIntegrations.post('/api/integrations/jalan/reservations/import', asyn
       return jsonError(c, 'bad_request', 400, result.reason);
     }
     if (result.status === 'needs_review') {
+      c.executionCtx.waitUntil(notifyExternalReviewToDiscord(c.env, result.source));
       return jsonOk(c, { status: result.status, source: toExternalReservationSourceResponse(result.source) }, 202);
     }
     scheduleExternalCalendarSync(c, result);
+    scheduleExternalDiscordNotification(c, result);
     return jsonOk(c, { status: result.status, reservation: toReservationResponse(result.reservation) });
   } catch (err) {
     console.error('POST /api/integrations/jalan/reservations/import error:', err);
@@ -152,6 +158,10 @@ reservationIntegrations.post('/api/integrations/jalan/gmail/import', async (c) =
     });
 
     scheduleExternalCalendarSync(c, result);
+    scheduleExternalDiscordNotification(c, result);
+    if (result.ok && result.status === 'needs_review') {
+      c.executionCtx.waitUntil(notifyExternalReviewToDiscord(c.env, result.source));
+    }
     return importResponse(c, result, parsed, { slotUnavailableAsReview: true });
   } catch (err) {
     console.error('POST /api/integrations/jalan/gmail/import error:', err);
@@ -340,6 +350,19 @@ function scheduleExternalCalendarSync(
   if (result.status === 'cancelled') {
     c.executionCtx.waitUntil(syncReservationCancelledToGoogleCalendar(c.env.DB, result.reservation, c.env));
   }
+}
+
+function scheduleExternalDiscordNotification(
+  c: Parameters<typeof jsonOk>[0],
+  result: ImportResult,
+): void {
+  if (!result.ok || result.status === 'needs_review' || result.status === 'duplicate') return;
+  c.executionCtx.waitUntil(notifyReservationToDiscord(
+    c.env.DB,
+    result.reservation,
+    c.env,
+    result.status === 'cancelled' ? 'cancelled' : 'created',
+  ));
 }
 
 type GmailImportRuleBody = {
