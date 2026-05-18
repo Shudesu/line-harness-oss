@@ -43,16 +43,20 @@ GitHub Actions経由でデプロイする場合、以下はCloudflare Secrets St
 
 ```text
 WEB_URL=https://line-harness-reservation-web.pages.dev
-DISCORD_WEBHOOK_URL=
 DISCORD_RESERVATION_WEBHOOK_URL=
 DISCORD_DAILY_WEBHOOK_URL=
 DISCORD_REVIEW_WEBHOOK_URL=
-DISCORD_RESERVATION_THREAD_ID=
-DISCORD_DAILY_THREAD_ID=
-DISCORD_REVIEW_THREAD_ID=
 ```
 
 Secrets Storeに保存しただけではWorkerから読めない。Worker deploy時のbinding対象に含める必要がある。標準workflowでは上記のDiscord系secretをデフォルトbindingに含める。
+
+Thread IDは任意設定である。Secrets Storeに存在しないThread IDをbindingするとdeployが失敗するため、標準workflowのデフォルトbindingには含めない。1チャンネル内の複数スレッド運用をする場合だけ、GitHub Variablesの `CLOUDFLARE_SECRETS_STORE_BINDINGS` に明示追加する。
+
+```text
+CLOUDFLARE_SECRETS_STORE_BINDINGS=DISCORD_WEBHOOK_URL,DISCORD_RESERVATION_THREAD_ID,DISCORD_DAILY_THREAD_ID,DISCORD_REVIEW_THREAD_ID
+```
+
+`DISCORD_WEBHOOK_URL` は共通Webhook用の任意設定である。チャンネル分割で `DISCORD_RESERVATION_WEBHOOK_URL`, `DISCORD_DAILY_WEBHOOK_URL`, `DISCORD_REVIEW_WEBHOOK_URL` を使う場合は不要。
 
 運用は以下のどちらかにする。
 

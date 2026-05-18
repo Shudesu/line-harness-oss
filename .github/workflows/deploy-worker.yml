@@ -269,13 +269,9 @@ jobs:
               'GOOGLE_OAUTH_REDIRECT_URI',
               'WEB_URL',
               'NEXT_PUBLIC_WEB_URL',
-              'DISCORD_WEBHOOK_URL',
               'DISCORD_RESERVATION_WEBHOOK_URL',
               'DISCORD_DAILY_WEBHOOK_URL',
               'DISCORD_REVIEW_WEBHOOK_URL',
-              'DISCORD_RESERVATION_THREAD_ID',
-              'DISCORD_DAILY_THREAD_ID',
-              'DISCORD_REVIEW_THREAD_ID',
             ];
             const rawBindings = process.env.CF_SECRETS_STORE_BINDINGS?.trim();
             const bindingEntries = [
