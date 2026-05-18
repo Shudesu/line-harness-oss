@@ -39,6 +39,8 @@ DISCORD_REVIEW_THREAD_ID
 
 ## 必要な環境変数
 
+GitHub Actions経由でデプロイする場合、以下はCloudflare Secrets Storeに保存し、`deploy-worker.yml` がWorkerへ `secrets_store_secrets` としてbindingする。
+
 ```text
 WEB_URL=https://line-harness-reservation-web.pages.dev
 DISCORD_WEBHOOK_URL=
@@ -49,6 +51,8 @@ DISCORD_RESERVATION_THREAD_ID=
 DISCORD_DAILY_THREAD_ID=
 DISCORD_REVIEW_THREAD_ID=
 ```
+
+Secrets Storeに保存しただけではWorkerから読めない。Worker deploy時のbinding対象に含める必要がある。標準workflowでは上記のDiscord系secretをデフォルトbindingに含める。
 
 運用は以下のどちらかにする。
 
@@ -119,4 +123,3 @@ Discordのボタンから直接 `completed` にする処理はMVPでは実装し
 - 誤タップ時の取り消し導線が必要。
 
 まずはWebの `reservation-ops` に操作を寄せ、Discordは通知と入口に限定する。
-
