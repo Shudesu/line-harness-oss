@@ -9,8 +9,8 @@ type ManagedTag = Tag & {
   kind?: 'system' | 'custom'
   category?: string | null
   description?: string | null
-  isActive?: boolean | number
-  isLocked?: boolean | number
+  isActive?: boolean
+  isLocked?: boolean
   updatedAt?: string | null
 }
 
@@ -62,7 +62,7 @@ function unwrapApiData<T>(response: { success: true; data: T } | { success: fals
 }
 
 function isLockedTag(tag: ManagedTag) {
-  return tag.kind === 'system' || tag.isLocked === true || tag.isLocked === 1
+  return tag.kind === 'system' || Boolean(tag.isLocked)
 }
 
 function tagKindLabel(tag: ManagedTag) {
@@ -149,7 +149,7 @@ export default function TagsEventsPage() {
 
   const customTags = useMemo(() => tags.filter((tag) => tag.kind !== 'system'), [tags])
   const systemTags = useMemo(() => tags.filter((tag) => tag.kind === 'system'), [tags])
-  const activeTags = useMemo(() => tags.filter((tag) => tag.isActive !== false && tag.isActive !== 0), [tags])
+  const activeTags = useMemo(() => tags.filter((tag) => tag.isActive !== false), [tags])
   const tagById = useMemo(() => new Map(tags.map((tag) => [tag.id, tag])), [tags])
   const filteredEvents = useMemo(() => {
     if (!eventFilter) return events
