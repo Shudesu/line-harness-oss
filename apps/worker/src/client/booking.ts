@@ -540,6 +540,7 @@ async function loadVisibleAvailability(): Promise<void> {
       state.selectedDate = null;
       state.selectedSlot = null;
     }
+    
     const cacheKey = [
       state.resourceId,
       state.menuId,
