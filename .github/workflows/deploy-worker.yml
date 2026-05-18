@@ -278,19 +278,25 @@ jobs:
               'DISCORD_REVIEW_THREAD_ID',
             ];
             const rawBindings = process.env.CF_SECRETS_STORE_BINDINGS?.trim();
-            const bindings = (rawBindings ? rawBindings.split(',') : defaultBindings)
-              .map((entry) => entry.trim())
-              .filter(Boolean)
-              .map((entry) => {
-                const [binding, secretName] = entry.split('=').map((part) => part.trim());
-                return {
-                  binding,
-                  store_id: secretsStoreId,
-                  secret_name: secretName || binding,
-                };
+            const bindingEntries = [
+              ...defaultBindings,
+              ...(rawBindings ? rawBindings.split(',') : []),
+            ];
+            const bindingsByName = new Map();
+            for (const entry of bindingEntries) {
+              const trimmed = entry.trim();
+              if (!trimmed) continue;
+              const [binding, secretName] = trimmed.split('=').map((part) => part.trim());
+              bindingsByName.set(binding, {
+                binding,
+                store_id: secretsStoreId,
+                secret_name: secretName || binding,
               });
+            }
+            const bindings = Array.from(bindingsByName.values());
 
             config.secrets_store_secrets = bindings;
+            console.log('Secrets Store bindings:', bindings.map((item) => item.binding).join(', '));
           }
 
           const deployConfigPath = path.join(process.cwd(), '.wrangler-ci.json');
