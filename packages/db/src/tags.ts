@@ -22,7 +22,10 @@ export interface FriendTag {
   metadata: string | null;
 }
 
+const tagSchemaReady = new WeakSet<D1Database>();
+
 async function ensureTagSchema(db: D1Database): Promise<void> {
+  if (tagSchemaReady.has(db)) return;
   await ensureColumns(db, 'tags', [
     ['kind', "TEXT NOT NULL DEFAULT 'custom' CHECK (kind IN ('system', 'custom'))"],
     ['category', 'TEXT'],
@@ -37,6 +40,12 @@ async function ensureTagSchema(db: D1Database): Promise<void> {
     ['expires_at', 'TEXT'],
     ['metadata', 'TEXT'],
   ]);
+  tagSchemaReady.add(db);
+}
+
+export function resetTagSchemaCacheForTest(db?: D1Database): void {
+  if (!db) return;
+  tagSchemaReady.delete(db);
 }
 
 async function ensureColumns(db: D1Database, tableName: string, columns: Array<[string, string]>): Promise<void> {

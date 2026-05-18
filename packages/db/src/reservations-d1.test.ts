@@ -20,6 +20,8 @@ import {
   type CreateReservationInput,
 } from './reservations.js';
 import { getFriendTags } from './tags.js';
+import { resetEventSchemaCacheForTest } from './events.js';
+import { resetTagSchemaCacheForTest } from './tags.js';
 
 // ---------------------------------------------------------------------------
 // Miniflare singleton — one instance for all tests, reset DB between tests
@@ -78,6 +80,8 @@ let db: D1Database;
 
 async function resetDb() {
   db = await mf.getD1Database('DB');
+  resetEventSchemaCacheForTest(db);
+  resetTagSchemaCacheForTest(db);
   // Drop in reverse dependency order
   await db.batch(DROP_TABLES.map((t) => db.prepare(`DROP TABLE IF EXISTS ${t}`)));
   // Create tables

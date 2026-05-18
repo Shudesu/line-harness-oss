@@ -94,7 +94,10 @@ export interface CreateEventTagRuleInput {
   isActive?: boolean;
 }
 
+const eventSchemaReady = new WeakSet<D1Database>();
+
 async function ensureEventSchema(db: D1Database): Promise<void> {
+  if (eventSchemaReady.has(db)) return;
   await db.prepare(
     `CREATE TABLE IF NOT EXISTS user_events (
       id TEXT PRIMARY KEY,
@@ -156,6 +159,12 @@ async function ensureEventSchema(db: D1Database): Promise<void> {
   ).run();
   await db.prepare(`CREATE INDEX IF NOT EXISTS idx_event_tag_rules_event ON event_tag_rules (event_type, is_active, priority)`).run();
   await ensureSystemEventDefinitions(db);
+  eventSchemaReady.add(db);
+}
+
+export function resetEventSchemaCacheForTest(db?: D1Database): void {
+  if (!db) return;
+  eventSchemaReady.delete(db);
 }
 
 const SYSTEM_EVENT_DEFINITIONS = [

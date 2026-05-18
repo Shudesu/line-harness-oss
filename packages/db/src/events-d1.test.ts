@@ -7,6 +7,8 @@ import {
   getFriendTags,
   listUserEvents,
   recordUserEvent,
+  resetEventSchemaCacheForTest,
+  resetTagSchemaCacheForTest,
 } from './index.js';
 
 const mf = new Miniflare({
@@ -19,6 +21,8 @@ let db: D1Database;
 
 async function resetDb() {
   db = await mf.getD1Database('DB');
+  resetEventSchemaCacheForTest(db);
+  resetTagSchemaCacheForTest(db);
   await db.batch([
     db.prepare('DROP TABLE IF EXISTS event_tag_rules'),
     db.prepare('DROP TABLE IF EXISTS event_definitions'),
