@@ -21,6 +21,7 @@
 - LIFF予約画面から `liff.booking.open`, `resource_selected`, `menu_selected`, `date_selected`, `slot_selected`, `confirm_open`, `completed`, `liff.mine.open`, `liff.cancel.open` を送信する。
 - LINE Webhook の postback を `rich_menu.tap` として保存する。`action=booking` のようなpostback dataはmetadataに展開され、タグルール条件に使える。
 - `/reservation-ops` の設定モーダルに「タグ / イベント設定」を追加した。直近イベント確認、イベントタグルール作成、ルール削除ができる。
+- Web管理画面に `/tags-events` を追加した。サイドバーの「分析 > タグ・イベント」から、カスタムタグ作成、タグ一覧、イベントタグルール作成/削除、直近イベント、イベント定義を確認できる。
 
 未実装:
 
