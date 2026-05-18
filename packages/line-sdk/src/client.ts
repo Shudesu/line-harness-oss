@@ -89,6 +89,22 @@ export class LineClient {
     }
   }
 
+  /**
+   * Mark incoming messages as read using the markAsReadToken included in
+   * Messaging API webhook message events.
+   */
+  async markAsReadByToken(markAsReadToken: string): Promise<boolean> {
+    try {
+      await this.request('POST', '/v2/bot/chat/markAsRead', {
+        markAsReadToken,
+      });
+      return true;
+    } catch (err) {
+      console.warn('[markAsReadByToken] failed', err);
+      return false;
+    }
+  }
+
   // ─── Followers ────────────────────────────────────────────────────────────
 
   /**

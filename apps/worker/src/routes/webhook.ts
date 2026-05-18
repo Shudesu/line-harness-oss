@@ -85,6 +85,26 @@ async function ensureWebhookFriend(
   return friend!;
 }
 
+function markIncomingMessageAsRead(
+  lineClient: LineClient,
+  event: Extract<WebhookEvent, { type: 'message' }>,
+  fallbackUserId?: string,
+  executionCtx?: ExecutionContext,
+): void {
+  const markAsReadToken = event.message.markAsReadToken?.trim();
+  const task = markAsReadToken
+    ? lineClient.markAsReadByToken(markAsReadToken)
+    : fallbackUserId
+      ? lineClient.markAsRead(fallbackUserId)
+      : Promise.resolve(false);
+
+  if (executionCtx) {
+    executionCtx.waitUntil(task);
+    return;
+  }
+  void task;
+}
+
 webhook.post('/webhook', async (c) => {
   const rawBody = await c.req.text();
   const signature = c.req.header('X-Line-Signature') ?? '';
@@ -139,6 +159,7 @@ webhook.post('/webhook', async (c) => {
           matchedAccountId,
           await workerBaseUrl(c.env, c.req.url),
           await defaultLiffUrl(c.env),
+          c.executionCtx,
         );
       } catch (err) {
         console.error('Error handling webhook event:', err);
@@ -159,6 +180,7 @@ async function handleEvent(
   lineAccountId: string | null = null,
   workerUrl?: string,
   liffUrl?: string,
+  executionCtx?: ExecutionContext,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -265,6 +287,11 @@ async function handleEvent(
     return;
   }
 
+  if (event.type === 'message') {
+    const userId = event.source.type === 'user' ? event.source.userId : undefined;
+    markIncomingMessageAsRead(lineClient, event, userId, executionCtx);
+  }
+
   // Postback events — triggered by Flex buttons with action.type: "postback"
   // Uses the same auto_replies matching but without displaying text in chat
   if (event.type === 'postback') {
@@ -345,11 +372,6 @@ async function handleEvent(
     if (!userId) return;
     const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
 
-    // Mark the received message as read so the user's LINE app shows the
-    // standard "既読" indicator (Messaging API does not auto-mark on receipt).
-    // Failures are swallowed inside markAsRead — non-fatal.
-    void lineClient.markAsRead(userId);
-
     const msg = event.message as { type: string; fileName?: string; title?: string };
     const labels: Record<string, string> = {
       sticker: '[スタンプ]',
@@ -379,9 +401,6 @@ async function handleEvent(
     if (!userId) return;
 
     const friend = await ensureWebhookFriend(db, lineClient, userId, lineAccountId);
-
-    // Mark as read — see comment above the non-text branch.
-    void lineClient.markAsRead(userId);
 
     const incomingText = textMessage.text;
     const now = jstNow();

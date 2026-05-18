@@ -21,15 +21,18 @@ export type Source = UserSource | GroupSource | RoomSource;
 
 // ─── Message subtypes ────────────────────────────────────────────────────────
 
-export interface TextEventMessage {
-  type: 'text';
+export interface BaseEventMessage {
   id: string;
+  markAsReadToken?: string;
+}
+
+export interface TextEventMessage extends BaseEventMessage {
+  type: 'text';
   text: string;
 }
 
-export interface ImageEventMessage {
+export interface ImageEventMessage extends BaseEventMessage {
   type: 'image';
-  id: string;
   contentProvider: {
     type: 'line' | 'external';
     originalContentUrl?: string;
@@ -37,9 +40,8 @@ export interface ImageEventMessage {
   };
 }
 
-export interface VideoEventMessage {
+export interface VideoEventMessage extends BaseEventMessage {
   type: 'video';
-  id: string;
   duration: number;
   contentProvider: {
     type: 'line' | 'external';
@@ -48,9 +50,8 @@ export interface VideoEventMessage {
   };
 }
 
-export interface AudioEventMessage {
+export interface AudioEventMessage extends BaseEventMessage {
   type: 'audio';
-  id: string;
   duration: number;
   contentProvider: {
     type: 'line' | 'external';
@@ -58,25 +59,22 @@ export interface AudioEventMessage {
   };
 }
 
-export interface FileEventMessage {
+export interface FileEventMessage extends BaseEventMessage {
   type: 'file';
-  id: string;
   fileName: string;
   fileSize: number;
 }
 
-export interface LocationEventMessage {
+export interface LocationEventMessage extends BaseEventMessage {
   type: 'location';
-  id: string;
   title?: string;
   address?: string;
   latitude: number;
   longitude: number;
 }
 
-export interface StickerEventMessage {
+export interface StickerEventMessage extends BaseEventMessage {
   type: 'sticker';
-  id: string;
   packageId: string;
   stickerId: string;
   stickerResourceType: string;
