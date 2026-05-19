@@ -316,11 +316,13 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
       state.validationErrors = errors;
       state.notice = '未入力の項目があります。赤い注釈を確認してください。';
       state.screen = 'booking';
+      state.slotModalOpen = true;
       render();
       return;
     }
     state.validationErrors = {};
     state.notice = null;
+    state.slotModalOpen = false;
     state.screen = 'confirm';
     trackLiffEvent('liff.booking.confirm_open', {
       eventName: '予約確認画面表示',
@@ -438,7 +440,7 @@ function selectSlot(slotId: string): void {
   delete state.validationErrors.slot;
   state.selectedDate = slot.date;
   state.selectedSlot = slot;
-  state.slotModalOpen = false;
+  state.slotModalOpen = true;
   clampPeopleToSelectedSlot('adultCount');
   trackLiffEvent('liff.booking.slot_selected', {
     eventName: '時間枠選択',

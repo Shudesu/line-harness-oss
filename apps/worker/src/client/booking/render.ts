@@ -162,14 +162,7 @@ function renderBooking(): string {
     ${renderBookingControls()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
     ${renderSlotModal()}
-    ${renderSelectedSlotSummary()}
-    ${state.selectedSlot ? renderPeopleSection() : ''}
-    ${state.selectedSlot ? renderInputForm() : ''}
-    ${state.selectedSlot ? `
-      <div class="booking-actions">
-        <button type="button" class="book-btn" data-action="go-confirm">予約内容を確認する</button>
-      </div>
-    ` : ''}
+    ${state.selectedSlot && !state.slotModalOpen ? renderReopenSelectedSlot() : ''}
   `;
 }
 
@@ -337,6 +330,10 @@ function renderSlotModal(): string {
     ` : '';
   }
 
+  if (state.selectedSlot) {
+    return renderReservationInputModal(state.selectedSlot);
+  }
+
   const slots = state.slotsByDate[state.selectedDate] ?? [];
   if (state.loadingSlots && slots.length === 0) {
     return `
@@ -396,6 +393,47 @@ function renderSlotModal(): string {
       </div>
     </section>
     </div>
+  `;
+}
+
+function renderReservationInputModal(slot: Slot): string {
+  return `
+    <div class="booking-modal-backdrop" data-action="close-slot-modal">
+      <section class="booking-modal" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <div>
+            <h2>予約内容を入力</h2>
+            <p>${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</p>
+          </div>
+          <button type="button" class="modal-close" data-action="close-slot-modal">×</button>
+        </div>
+        <div class="modal-selected-slot">
+          <span>選択中の時間枠</span>
+          <strong>${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</strong>
+          <small>空き枠 ${lineRemaining(slot)}名 / 枠消費対象: ${escapeHtml(capacityCountLabels(selectedMenu()))}</small>
+        </div>
+        ${renderPeopleSection()}
+        ${renderInputForm()}
+        <div class="booking-actions">
+          <button type="button" class="book-btn" data-action="go-confirm">予約内容を確認する</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderReopenSelectedSlot(): string {
+  const slot = state.selectedSlot;
+  if (!slot) return '';
+  return `
+    <section class="booking-panel">
+      <h2>選択中の予約枠</h2>
+      <div class="confirm-row">
+        <span class="confirm-label">日時</span>
+        <span class="confirm-value">${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</span>
+      </div>
+      <button type="button" class="book-btn" data-action="select-slot" data-slot-id="${escapeHtml(slot.slotId)}">人数・受付情報を入力する</button>
+    </section>
   `;
 }
 
