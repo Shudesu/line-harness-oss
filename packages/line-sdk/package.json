@@ -35,7 +35,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/line-oss-crm",
+    "url": "https://github.com/Shudesu/line-harness-oss.git",
     "directory": "packages/line-sdk"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

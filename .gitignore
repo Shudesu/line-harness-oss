@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-mcp/
+*.tsbuildinfo
 .next/
 .wrangler/
 .vercel/
@@ -15,3 +17,5 @@ apps/web/out/
 apps/worker/dist/
 .worktrees/
 .claude/worktrees/
+.line-harness-setup.json
+.line-harness-config.json

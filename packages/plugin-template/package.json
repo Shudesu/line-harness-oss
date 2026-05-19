@@ -1,7 +1,9 @@
 {
   "name": "@line-harness/plugin-myservice",
   "version": "0.1.0",
-  "description": "LINE Harness plugin for MyService integration",
+  "private": true,
+  "description": "LINE Harness plugin template — copy this directory to start a new integration",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
