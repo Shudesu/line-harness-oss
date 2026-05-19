@@ -1,4 +1,4 @@
-export type Screen = 'booking' | 'confirm' | 'success' | 'mine' | 'detail' | 'cancel-confirm' | 'cancelled';
+export type Screen = 'booking' | 'cafe' | 'confirm' | 'success' | 'mine' | 'detail' | 'cancel-confirm' | 'cancelled';
 export type ViewMode = 'week' | 'month';
 
 export interface Slot {

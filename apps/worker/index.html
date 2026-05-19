@@ -185,6 +185,12 @@
       gap: 8px;
       margin-bottom: 14px;
     }
+    .booking-tabs.three-tabs {
+      grid-template-columns: repeat(3, 1fr);
+    }
+    .booking-tabs.two-tabs {
+      grid-template-columns: repeat(2, 1fr);
+    }
     .booking-tabs button,
     .view-toggle button,
     .mini-btn,
@@ -226,6 +232,111 @@
       color: var(--muted);
       font-size: 12px;
       line-height: 1.55;
+    }
+    .cafe-hero {
+      overflow: hidden;
+      border: 3px solid #fff;
+      border-radius: 28px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      margin-bottom: 14px;
+    }
+    .cafe-hero img {
+      display: block;
+      width: 100%;
+      height: 190px;
+      object-fit: cover;
+    }
+    .cafe-hero-copy {
+      padding: 16px;
+      text-align: left;
+    }
+    .cafe-hero-copy h2 {
+      color: var(--sky-700);
+      font-size: 22px;
+      line-height: 1.3;
+      margin-bottom: 8px;
+    }
+    .cafe-hero-copy p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+    .cafe-intro {
+      background: linear-gradient(0deg, #fff 0%, var(--sky-100) 100%);
+    }
+    .cafe-menu-grid {
+      display: grid;
+      gap: 12px;
+    }
+    .cafe-menu-card {
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+      padding: 10px;
+      text-align: left;
+    }
+    .cafe-menu-card img,
+    .cafe-seat-card img {
+      width: 100%;
+      object-fit: cover;
+      background: var(--sky-100);
+    }
+    .cafe-menu-card img {
+      height: 86px;
+      border-radius: 14px;
+    }
+    .cafe-menu-title {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .cafe-menu-title strong {
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .cafe-menu-title span {
+      color: var(--sky-700);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .cafe-menu-card p {
+      font-size: 11px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+    .cafe-seat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .cafe-seat-card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+      text-align: center;
+    }
+    .cafe-seat-card img {
+      height: 82px;
+      display: block;
+    }
+    .cafe-seat-card strong {
+      display: block;
+      padding: 8px 4px;
+      color: var(--sky-700);
+      font-size: 11px;
+    }
+    .cafe-cta {
+      text-align: center;
     }
     .section-title-row {
       display: flex;

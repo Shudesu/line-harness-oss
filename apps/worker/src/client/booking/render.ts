@@ -98,11 +98,17 @@ function menuForReservationTitle(title?: string | null): Menu | null {
 
 export function renderHeader(): string {
   const tabs = state.entryMode === 'web'
-    ? ''
+    ? `
+    <div class="booking-tabs two-tabs">
+      <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約</button>
+      <button type="button" class="${state.screen === 'cafe' ? 'active' : ''}" data-action="show-cafe">カフェ</button>
+    </div>
+  `
     : `
-    <div class="booking-tabs">
+    <div class="booking-tabs three-tabs">
       <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約する</button>
       <button type="button" class="${state.screen === 'mine' || state.screen === 'detail' || state.screen === 'cancel-confirm' || state.screen === 'cancelled' ? 'active' : ''}" data-action="show-mine">予約確認</button>
+      <button type="button" class="${state.screen === 'cafe' ? 'active' : ''}" data-action="show-cafe">カフェ</button>
     </div>
   `;
   return `
@@ -118,6 +124,7 @@ export function renderHeader(): string {
 }
 
 export function renderScreen(): string {
+  if (state.screen === 'cafe') return renderCafe();
   if (state.screen === 'confirm') return renderConfirm();
   if (state.screen === 'success') return renderSuccess();
   if (state.screen === 'mine') return renderMine();
@@ -125,6 +132,76 @@ export function renderScreen(): string {
   if (state.screen === 'cancel-confirm') return renderCancelConfirm();
   if (state.screen === 'cancelled') return renderCancelled();
   return renderBooking();
+}
+
+function renderCafe(): string {
+  const menuItems = [
+    { name: 'ブルーベリーピザ', price: '1,500円', image: '/aonisai/cafe/ブルーベリーピザ.jpg', text: '水牛モッツァレラチーズと無糖ブルーベリーソースの組み合わせ。はちみつをかけて楽しむ、アオニサイカフェらしいデザートピザです。' },
+    { name: 'マルゲリータ', price: '1,400円', image: '/aonisai/cafe/マルゲリータ.jpg', text: '水牛モッツァレラチーズとトマトの味を活かした、石窯焼きの定番ピザです。' },
+    { name: '近郊農家さんのサラダピザ', price: '1,600円', image: '/aonisai/cafe/サラダピザ.jpg', text: '近郊農家さんの野菜を使った、さっぱり食べられるこだわりピザです。' },
+    { name: 'ブルーベリーアイス', price: '700円', image: '/aonisai/cafe/アイス_72.jpg', text: 'オリジナル無糖ブルーベリーソースとバニラアイスを合わせた、摘み取り後にも食べやすいスイーツです。' },
+    { name: 'ブルーベリーフィズ', price: '750円', image: '/aonisai/cafe/フィズ_72.jpg', text: 'ブルーベリーづくしの炭酸ドリンク。アルコールは入っていません。' },
+    { name: 'ブルーベリースムージー', price: '800円', image: '/aonisai/cafe/ブルーベリースムージー.jpg', text: 'ブルーベリーとヨーグルトを使った、ひんやり濃厚なスムージーです。' },
+  ];
+  const seats = [
+    { name: '店内席', image: '/aonisai/cafe/カフェ内部.jpg' },
+    { name: 'テラス席', image: '/aonisai/cafe/カフェ外.jpg' },
+    { name: '屋外ソファー席', image: '/aonisai/cafe/ソファー席.jpg' },
+  ];
+  return `
+    <section class="cafe-hero">
+      <img src="/aonisai/cafe/カフェ外.jpg" alt="アオニサイカフェ外観">
+      <div class="cafe-hero-copy">
+        <p class="eyebrow">AONISAI CAFE</p>
+        <h2>ブルーベリーと石窯ピザのお店</h2>
+        <p>ブルーベリー狩りと一緒に、石窯ピザやブルーベリースイーツを楽しめる併設カフェです。</p>
+      </div>
+    </section>
+    <section class="booking-panel cafe-intro">
+      <h2>アオニサイカフェ</h2>
+      <p>石窯で焼いたブルーベリーピザや、ブルーベリーを使ったスイーツをご用意しています。隠れ家的な場所で、ゆったりした時間をお過ごしください。</p>
+      <p class="policy-note">※カフェはブルーベリーシーズンの6月より営業再開予定です。お越しの際はGoogle Mapで「アオニサイファーム」と検索してください。</p>
+    </section>
+    <section class="booking-panel">
+      <div class="section-title-row">
+        <div>
+          <h2>おすすめメニュー</h2>
+          <p>価格は税込です。内容は変更になる場合があります。</p>
+        </div>
+      </div>
+      <div class="cafe-menu-grid">
+        ${menuItems.map((item) => `
+          <article class="cafe-menu-card">
+            <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}">
+            <div>
+              <div class="cafe-menu-title">
+                <strong>${escapeHtml(item.name)}</strong>
+                <span>${escapeHtml(item.price)}</span>
+              </div>
+              <p>${escapeHtml(item.text)}</p>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+    <section class="booking-panel">
+      <h2>席のご案内</h2>
+      <p>店内席・テラス席・屋外ソファー席をご用意しています。ブルーベリー狩りの前後に、家族や友人とゆっくり過ごせます。</p>
+      <div class="cafe-seat-grid">
+        ${seats.map((seat) => `
+          <article class="cafe-seat-card">
+            <img src="${escapeHtml(seat.image)}" alt="${escapeHtml(seat.name)}">
+            <strong>${escapeHtml(seat.name)}</strong>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+    <section class="booking-panel cafe-cta">
+      <h2>ブルーベリー体験と一緒に</h2>
+      <p>体験予約を先に済ませておくと、当日の予定が立てやすくなります。</p>
+      <button type="button" class="book-btn" data-action="show-booking">予約画面へ戻る</button>
+    </section>
+  `;
 }
 
 function renderBooking(): string {

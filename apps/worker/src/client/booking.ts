@@ -303,6 +303,18 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     render();
     return;
   }
+  if (action === 'show-cafe') {
+    state.screen = 'cafe';
+    state.error = null;
+    state.notice = null;
+    trackLiffEvent('liff.cafe.open', {
+      eventName: 'カフェ紹介表示',
+      subjectType: 'liff_screen',
+      subjectId: 'cafe',
+    });
+    render();
+    return;
+  }
   if (action === 'show-mine' || action === 'reload-mine') {
     state.screen = 'mine';
     if (!isLineEntry()) {
