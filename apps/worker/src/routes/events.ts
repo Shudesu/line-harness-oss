@@ -912,6 +912,11 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   }
 
   async function runBookingFlow(): Promise<Response> {
+  // Hoisted function declarations lose narrowing of outer-scope `const`
+  // captures; re-assert here to keep `friend` / `callerLineUserId` non-null.
+  // The outer scope already returned on null, so these throws are unreachable.
+  if (friend == null) throw new Error('runBookingFlow: friend missing');
+  if (callerLineUserId == null) throw new Error('runBookingFlow: callerLineUserId missing');
 
   const event = await c.env.DB
     .prepare(

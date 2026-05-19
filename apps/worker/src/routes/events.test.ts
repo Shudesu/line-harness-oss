@@ -77,6 +77,7 @@ interface SlotRow {
   is_active: number;
   sort_order: number;
   deleted_at: string | null;
+  [k: string]: unknown;
 }
 
 interface BookingRow {
@@ -85,6 +86,7 @@ interface BookingRow {
   status: string;
   slot_id?: string;
   friend_id?: string;
+  [k: string]: unknown;
 }
 
 interface LineAccount {
