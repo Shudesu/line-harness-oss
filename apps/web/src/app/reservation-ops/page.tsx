@@ -282,6 +282,38 @@ function sourceBadge(source: ReservationResponse['source']): string {
   return source
 }
 
+function channelBadge(channel: string): string {
+  const labels: Record<string, string> = {
+    line: 'LINE',
+    web: 'Web',
+    google_map: 'Google Map',
+    instagram: 'Instagram',
+    website: '公式サイト',
+    qr: 'QR',
+    flyer: 'チラシ',
+  }
+  return labels[channel] ?? channel
+}
+
+function reservationEntryInfo(reservation: ReservationResponse): { label: string; detail: string } {
+  const metadata = parseReservationMetadata(reservation.metadata)
+  const entry = metadata.entry && typeof metadata.entry === 'object' && !Array.isArray(metadata.entry)
+    ? metadata.entry as Record<string, unknown>
+    : {}
+  const channel = typeof entry.channel === 'string' && entry.channel.trim() ? entry.channel.trim() : ''
+  const ref = typeof entry.ref === 'string' && entry.ref.trim() ? entry.ref.trim() : ''
+  const utmSource = typeof entry.utmSource === 'string' && entry.utmSource.trim() ? entry.utmSource.trim() : ''
+  const utmCampaign = typeof entry.utmCampaign === 'string' && entry.utmCampaign.trim() ? entry.utmCampaign.trim() : ''
+  return {
+    label: channel ? channelBadge(channel) : sourceBadge(reservation.source),
+    detail: [
+      ref ? `ref=${ref}` : null,
+      utmSource ? `utm_source=${utmSource}` : null,
+      utmCampaign ? `utm_campaign=${utmCampaign}` : null,
+    ].filter(Boolean).join(' / '),
+  }
+}
+
 function toChatItem(raw: unknown): ChatItem {
   const item = raw as Partial<ChatItem> & { friend?: { displayName?: string; pictureUrl?: string | null } }
   return {
@@ -1509,9 +1541,10 @@ function ReservationsPanel({
                             <div className="min-w-0">
                               <p className="truncate font-semibold text-gray-900">{reservationName(reservation)}</p>
                               <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / {reservation.customerPhone || '電話未登録'}</p>
+                              {reservationEntryInfo(reservation).detail && <p className="mt-1 text-xs text-blue-700">{reservationEntryInfo(reservation).detail}</p>}
                               {hasPriceDetails(reservation) && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
                             </div>
-                            <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{sourceBadge(reservation.source)}</span>
+                            <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{reservationEntryInfo(reservation).label}</span>
                           </div>
                         </button>
                       ))}
@@ -1554,9 +1587,10 @@ function ReservationsPanel({
                         <div className="min-w-0">
                           <p className="truncate font-semibold text-gray-900">{reservationName(reservation)}</p>
                           <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / {reservation.customerPhone || '電話未登録'}</p>
+                          {reservationEntryInfo(reservation).detail && <p className="mt-1 text-xs text-blue-700">{reservationEntryInfo(reservation).detail}</p>}
                           {hasPriceDetails(reservation) && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
                         </div>
-                        <span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{sourceBadge(reservation.source)}</span>
+                        <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{reservationEntryInfo(reservation).label}</span>
                       </div>
                     </button>
                   ))}
@@ -1598,11 +1632,13 @@ function OpsReservationDetailModal({ reservation, onClose }: { reservation: Rese
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold text-gray-900">{reservationName(reservation)}</h3>
-            <p className="mt-1 text-xs text-gray-500">{sourceBadge(reservation.source)} / {reservation.status}</p>
+            <p className="mt-1 text-xs text-gray-500">{reservationEntryInfo(reservation).label} / {reservation.status}</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
         </div>
         <dl className="mt-4 space-y-2 text-sm">
+          <Info label="媒体" value={reservationEntryInfo(reservation).label} />
+          <Info label="流入元" value={reservationEntryInfo(reservation).detail || '-'} />
           <Info label="時間" value={`${formatTime(reservation.startAt)} - ${formatTime(reservation.endAt)}`} />
           <Info label="電話" value={reservation.customerPhone || '-'} />
           <Info label="メール" value={reservation.customerEmail || '-'} />

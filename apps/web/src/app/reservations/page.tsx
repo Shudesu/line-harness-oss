@@ -99,6 +99,39 @@ function sourceLabel(source: ReservationResponse['source']): string {
   return source
 }
 
+function channelLabel(channel: string): string {
+  const labels: Record<string, string> = {
+    line: 'LINE',
+    web: 'Web',
+    google_map: 'Google Map',
+    instagram: 'Instagram',
+    website: '公式サイト',
+    qr: 'QR',
+    flyer: 'チラシ',
+  }
+  return labels[channel] ?? channel
+}
+
+function reservationEntryInfo(reservation: ReservationResponse): { label: string; detail: string } {
+  const metadata = parseReservationMetadata(reservation.metadata)
+  const entry = metadata.entry && typeof metadata.entry === 'object' && !Array.isArray(metadata.entry)
+    ? metadata.entry as Record<string, unknown>
+    : {}
+  const channel = typeof entry.channel === 'string' && entry.channel.trim() ? entry.channel.trim() : ''
+  const ref = typeof entry.ref === 'string' && entry.ref.trim() ? entry.ref.trim() : ''
+  const utmSource = typeof entry.utmSource === 'string' && entry.utmSource.trim() ? entry.utmSource.trim() : ''
+  const utmMedium = typeof entry.utmMedium === 'string' && entry.utmMedium.trim() ? entry.utmMedium.trim() : ''
+  const utmCampaign = typeof entry.utmCampaign === 'string' && entry.utmCampaign.trim() ? entry.utmCampaign.trim() : ''
+  const label = channel ? channelLabel(channel) : sourceLabel(reservation.source)
+  const detail = [
+    ref ? `ref=${ref}` : null,
+    utmSource ? `utm_source=${utmSource}` : null,
+    utmMedium ? `utm_medium=${utmMedium}` : null,
+    utmCampaign ? `utm_campaign=${utmCampaign}` : null,
+  ].filter(Boolean).join(' / ')
+  return { label, detail }
+}
+
 function orphanReasonLabel(reason: OrphanedReservationItem['reason']): string {
   if (reason === 'slot_missing') return '予約枠が存在しません'
   if (reason === 'resource_missing') return '予約対象が存在しません'
@@ -1049,10 +1082,11 @@ function ReservationListPanel({
                           <p className="mt-1 text-xs text-gray-500">
                             {reservation.totalPeople}名 / 大人{reservation.adultCount}・小学生{reservation.childCount}・幼児{reservation.infantCount}・3歳以下{reservation.underThreeCount}
                           </p>
+                          {reservationEntryInfo(reservation).detail && <p className="mt-1 text-xs text-blue-700">{reservationEntryInfo(reservation).detail}</p>}
                           {reservation.source === 'jalan' && <p className="mt-1 text-xs font-semibold text-gray-700">{formatPriceSummary(reservation)}</p>}
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1">
-                          <span className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-600">{sourceLabel(reservation.source)}</span>
+                          <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700">{reservationEntryInfo(reservation).label}</span>
                           <StatusBadge status={reservation.status} />
                         </div>
                       </div>
@@ -1093,12 +1127,13 @@ function ReservationDetailModal({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold text-gray-900">{reservation.customerName || reservation.title}</h3>
-            <p className="mt-1 text-xs text-gray-500">{sourceLabel(reservation.source)} / {reservation.status}</p>
+            <p className="mt-1 text-xs text-gray-500">{reservationEntryInfo(reservation).label} / {reservation.status}</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
         </div>
         <dl className="mt-4 space-y-2 text-sm">
-          <Info label="媒体" value={sourceLabel(reservation.source)} />
+          <Info label="媒体" value={reservationEntryInfo(reservation).label} />
+          <Info label="流入元" value={reservationEntryInfo(reservation).detail || '-'} />
           <Info label="時間" value={`${formatTime(reservation.startAt)} - ${formatTime(reservation.endAt)}`} />
           <Info label="電話" value={reservation.customerPhone || '-'} />
           <Info label="メール" value={reservation.customerEmail || '-'} />
