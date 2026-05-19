@@ -29,7 +29,7 @@ function requiredBadge(): string {
 
 function validationError(field: string): string {
   const message = state.validationErrors[field];
-  return message ? `<p class="field-error">${escapeHtml(message)}</p>` : '';
+  return message ? `<p class="field-error" data-validation="${escapeHtml(field)}">${escapeHtml(message)}</p>` : '';
 }
 
 function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; className: string; label: string } {
@@ -111,17 +111,17 @@ function renderPriceEstimate(menu: Menu | null | undefined, counts: { adultCount
   const total = calculateEstimatedTotal(menu, counts);
   if (total === null) {
     return `
-      <div class="price-estimate ${compact ? 'compact' : ''}">
+      <div class="price-estimate ${compact ? 'compact' : ''}" data-price-estimate>
         <span>合計金額</span>
-        <strong>現地確認</strong>
+        <strong data-price-total>現地確認</strong>
         <small>未設定の料金区分があるため、合計は表示していません。</small>
       </div>
     `;
   }
   return `
-    <div class="price-estimate ${compact ? 'compact' : ''}">
+    <div class="price-estimate ${compact ? 'compact' : ''}" data-price-estimate>
       <span>合計金額</span>
-      <strong>${formatYen(total)}</strong>
+      <strong data-price-total>${formatYen(total)}</strong>
     </div>
   `;
 }
@@ -243,7 +243,7 @@ function renderPeopleSection(): string {
         ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
         ${renderPeopleStepper('underThreeCount', '3歳以下', state.form.underThreeCount)}
       </div>
-      <p class="people-total">合計 ${totalPeople()}名 / 枠消費 ${capacityPeople()}名</p>
+      <p class="people-total" data-people-total>合計 ${totalPeople()}名 / 枠消費 ${capacityPeople()}名</p>
       ${validationError('people')}
       ${renderPriceEstimate(menu, state.form, true)}
     </section>

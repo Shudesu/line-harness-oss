@@ -236,11 +236,69 @@ function handleField(field: string, value: string): void {
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
     clampPeopleToSelectedSlot(field);
-    render();
+    updatePeopleDom();
     return;
   }
   if (field === 'customerName' || field === 'customerPhone' || field === 'customerEmail' || field === 'note') {
     state.form[field] = value;
+  }
+}
+
+function formatYen(value: number): string {
+  return `${Math.max(0, value).toLocaleString('ja-JP')}円`;
+}
+
+function menuPriceTotal(): number | null {
+  const menu = selectedMenu();
+  if (!menu) return null;
+  const hasAnyPrice = (
+    typeof menu.priceAdult === 'number' ||
+    typeof menu.priceChild === 'number' ||
+    typeof menu.priceInfant === 'number' ||
+    typeof menu.priceUnderThree === 'number'
+  );
+  if (!hasAnyPrice) return null;
+  if (state.form.adultCount > 0 && typeof menu.priceAdult !== 'number') return null;
+  if (state.form.childCount > 0 && typeof menu.priceChild !== 'number') return null;
+  if (state.form.infantCount > 0 && typeof menu.priceInfant !== 'number') return null;
+  if (state.form.underThreeCount > 0 && typeof menu.priceUnderThree !== 'number') return null;
+  return (
+    state.form.adultCount * (menu.priceAdult ?? 0) +
+    state.form.childCount * (menu.priceChild ?? 0) +
+    state.form.infantCount * (menu.priceInfant ?? 0) +
+    state.form.underThreeCount * (menu.priceUnderThree ?? 0)
+  );
+}
+
+function updatePeopleDom(): void {
+  const app = getApp();
+  for (const field of ['adultCount', 'childCount', 'infantCount', 'underThreeCount'] as const) {
+    const input = app.querySelector<HTMLInputElement>(`input[data-field="${field}"]`);
+    if (input && input.value !== String(state.form[field])) input.value = String(state.form[field]);
+  }
+
+  const total = app.querySelector<HTMLElement>('[data-people-total]');
+  if (total) total.textContent = `合計 ${totalPeople()}名 / 枠消費 ${capacityPeople()}名`;
+
+  app.querySelectorAll('[data-validation="people"]').forEach((element) => element.remove());
+
+  const price = app.querySelector<HTMLElement>('[data-price-total]');
+  if (price) {
+    const totalPrice = menuPriceTotal();
+    price.textContent = totalPrice === null ? '現地確認' : formatYen(totalPrice);
+  }
+
+  const menu = selectedMenu();
+  const remaining = state.selectedSlot ? Math.max(0, Number(state.selectedSlot.lineRemainingCapacity) || 0) : null;
+  const countsForCapacity = {
+    adultCount: menu?.capacityCountAdult ?? true,
+    childCount: menu?.capacityCountChild ?? true,
+    infantCount: menu?.capacityCountInfant ?? true,
+    underThreeCount: menu?.capacityCountUnderThree ?? false,
+  } as const;
+  for (const field of ['adultCount', 'childCount', 'infantCount', 'underThreeCount'] as const) {
+    const plus = app.querySelector<HTMLButtonElement>(`button[data-action="people-step"][data-field="${field}"][data-delta="1"]`);
+    if (plus && remaining !== null) plus.disabled = countsForCapacity[field] && capacityPeople() >= remaining;
   }
 }
 
