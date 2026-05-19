@@ -136,25 +136,26 @@ export function renderScreen(): string {
 
 function renderCafe(): string {
   const menuItems = [
-    { name: 'ブルーベリーピザ', price: '1,500円', image: '/aonisai/cafe/ブルーベリーピザ.jpg', text: '水牛モッツァレラチーズと無糖ブルーベリーソースの組み合わせ。はちみつをかけて楽しむ、アオニサイカフェらしいデザートピザです。' },
-    { name: 'マルゲリータ', price: '1,400円', image: '/aonisai/cafe/マルゲリータ.jpg', text: '水牛モッツァレラチーズとトマトの味を活かした、石窯焼きの定番ピザです。' },
-    { name: '近郊農家さんのサラダピザ', price: '1,600円', image: '/aonisai/cafe/サラダピザ.jpg', text: '近郊農家さんの野菜を使った、さっぱり食べられるこだわりピザです。' },
-    { name: 'ブルーベリーアイス', price: '700円', image: '/aonisai/cafe/アイス_72.jpg', text: 'オリジナル無糖ブルーベリーソースとバニラアイスを合わせた、摘み取り後にも食べやすいスイーツです。' },
-    { name: 'ブルーベリーフィズ', price: '750円', image: '/aonisai/cafe/フィズ_72.jpg', text: 'ブルーベリーづくしの炭酸ドリンク。アルコールは入っていません。' },
-    { name: 'ブルーベリースムージー', price: '800円', image: '/aonisai/cafe/ブルーベリースムージー.jpg', text: 'ブルーベリーとヨーグルトを使った、ひんやり濃厚なスムージーです。' },
+    { name: 'ブルーベリーピザ', price: '1,500円', image: '/aonisai/cafe/blueberry-pizza.webp', text: '水牛モッツァレラチーズと無糖ブルーベリーソースの組み合わせ。はちみつをかけて楽しむ、アオニサイカフェらしいデザートピザです。' },
+    { name: 'マルゲリータ', price: '1,400円', image: '/aonisai/cafe/margherita.webp', text: '水牛モッツァレラチーズとトマトの味を活かした、石窯焼きの定番ピザです。' },
+    { name: '近郊農家さんのサラダピザ', price: '1,600円', image: '/aonisai/cafe/salad-pizza.webp', text: '近郊農家さんの野菜を使った、さっぱり食べられるこだわりピザです。' },
+    { name: 'ブルーベリーアイス', price: '700円', image: '/aonisai/cafe/blueberry-ice.webp', text: 'オリジナル無糖ブルーベリーソースとバニラアイスを合わせた、摘み取り後にも食べやすいスイーツです。' },
+    { name: 'ブルーベリーフィズ', price: '750円', image: '/aonisai/cafe/blueberry-fizz.webp', text: 'ブルーベリーづくしの炭酸ドリンク。アルコールは入っていません。' },
+    { name: 'ブルーベリースムージー', price: '800円', image: '/aonisai/cafe/blueberry-smoothie.webp', text: 'ブルーベリーとヨーグルトを使った、ひんやり濃厚なスムージーです。' },
   ];
   const seats = [
-    { name: '店内席', image: '/aonisai/cafe/カフェ内部.jpg' },
-    { name: 'テラス席', image: '/aonisai/cafe/カフェ外.jpg' },
-    { name: '屋外ソファー席', image: '/aonisai/cafe/ソファー席.jpg' },
+    { name: '店内席', image: '/aonisai/cafe/cafe-interior.webp' },
+    { name: 'テラス席', image: '/aonisai/cafe/cafe-exterior.webp' },
+    { name: '屋外ソファー席', image: '/aonisai/cafe/cafe-sofa.webp' },
   ];
   return `
     <section class="cafe-hero">
-      <img src="/aonisai/cafe/カフェ外.jpg" alt="アオニサイカフェ外観">
+      <img src="/aonisai/cafe/cafe-hero.webp" alt="アオニサイカフェ" loading="lazy">
       <div class="cafe-hero-copy">
         <p class="eyebrow">AONISAI CAFE</p>
         <h2>ブルーベリーと石窯ピザのお店</h2>
         <p>ブルーベリー狩りと一緒に、石窯ピザやブルーベリースイーツを楽しめる併設カフェです。</p>
+        <button type="button" class="book-btn cafe-hero-btn" data-action="show-booking">ブルーベリー狩りを予約する</button>
       </div>
     </section>
     <section class="booking-panel cafe-intro">
@@ -172,7 +173,7 @@ function renderCafe(): string {
       <div class="cafe-menu-grid">
         ${menuItems.map((item) => `
           <article class="cafe-menu-card">
-            <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}">
+            <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}" loading="lazy">
             <div>
               <div class="cafe-menu-title">
                 <strong>${escapeHtml(item.name)}</strong>
@@ -190,7 +191,7 @@ function renderCafe(): string {
       <div class="cafe-seat-grid">
         ${seats.map((seat) => `
           <article class="cafe-seat-card">
-            <img src="${escapeHtml(seat.image)}" alt="${escapeHtml(seat.name)}">
+            <img src="${escapeHtml(seat.image)}" alt="${escapeHtml(seat.name)}" loading="lazy">
             <strong>${escapeHtml(seat.name)}</strong>
           </article>
         `).join('')}
@@ -206,10 +207,28 @@ function renderCafe(): string {
 
 function renderBooking(): string {
   return `
+    ${renderExperienceIntro()}
     ${renderBookingControls()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
     ${renderSlotModal()}
     ${state.selectedSlot && !state.slotModalOpen ? renderReopenSelectedSlot() : ''}
+  `;
+}
+
+function renderExperienceIntro(): string {
+  return `
+    <section class="experience-intro">
+      <div class="experience-copy">
+        <p class="eyebrow">BLUEBERRY PICKING</p>
+        <h2>つくばの農園で、旬のブルーベリーを楽しむ体験</h2>
+        <p>日付を選んで、空いている時間枠から予約できます。カフェでは石窯ピザやブルーベリースイーツも楽しめます。</p>
+      </div>
+      <div class="experience-points" aria-label="体験概要">
+        <span>6月より営業</span>
+        <span>家族で来園OK</span>
+        <span>ワンちゃん連れOK</span>
+      </div>
+    </section>
   `;
 }
 
