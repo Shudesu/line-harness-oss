@@ -124,26 +124,43 @@ webhook.post('/webhook', async (c) => {
   let channelAccessToken = await defaultLineAccessToken(c.env);
   let matchedAccountId: string | null = null;
 
-  if ((body as { destination?: string }).destination) {
+  const destination = (body as { destination?: string }).destination;
+  const eventSummary = body.events?.map((e) => `${e.type}${e.type === 'message' ? `/${(e as { message?: { type?: string } }).message?.type ?? '?'}` : ''}`).join(',') ?? '';
+  console.log(`[webhook] received destination=${destination ?? 'null'} events=[${eventSummary}]`);
+
+  if (destination) {
     const accounts = await getLineAccounts(db);
+    // is_active is intentionally NOT a hard gate here — Webhook intake should
+    // succeed for any account whose channel_secret can verify the payload.
+    // The flag still governs outbound delivery; mark inactive matches so we
+    // can warn but keep processing.
     for (const account of accounts) {
-      if (!account.is_active) continue;
       const isValid = await verifySignature(account.channel_secret, rawBody, signature);
       if (isValid) {
         channelSecret = account.channel_secret;
         channelAccessToken = account.channel_access_token;
         matchedAccountId = account.id;
+        if (!account.is_active) {
+          console.warn(`[webhook] matched inactive account ${account.id} (${account.name}) — processing anyway`);
+        }
         break;
       }
+    }
+    if (!matchedAccountId) {
+      // None of the registered accounts could verify this signature. The
+      // env-level LINE_CHANNEL_SECRET is tried below as a last resort.
+      console.warn(`[webhook] no line_account matched destination=${destination} (registered=${accounts.length}). Falling back to env secret.`);
     }
   }
 
   // Verify with resolved secret
   const valid = await verifySignature(channelSecret, rawBody, signature);
   if (!valid) {
-    console.error('Invalid LINE signature');
+    console.error(`[webhook] Invalid LINE signature — destination=${destination ?? 'null'} matchedAccountId=${matchedAccountId ?? 'null'}. Likely cause: channel_secret mismatch or unregistered LINE account.`);
     return c.json({ status: 'ok' }, 200);
   }
+
+  console.log(`[webhook] signature OK matchedAccountId=${matchedAccountId ?? 'env-default'} destination=${destination ?? 'null'}`);
 
   const lineClient = new LineClient(channelAccessToken);
 
