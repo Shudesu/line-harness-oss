@@ -104,6 +104,7 @@ export interface BookingState {
   weekStart: Date;
   viewMode: ViewMode;
   selectedDate: string | null;
+  slotModalOpen: boolean;
   selectedSlot: Slot | null;
   slotsByDate: Record<string, Slot[]>;
   availabilityByDate: Record<string, AvailabilitySummary>;

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LINE CRM</title>
+  <title>アオニサイファーム予約</title>
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -279,12 +279,12 @@
       font-weight: 800;
       margin-top: 2px;
     }
-    .people-grid,
-    .people-stepper-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-    }
+	    .people-grid,
+	    .people-stepper-grid {
+	      display: grid;
+	      grid-template-columns: repeat(2, minmax(0, 1fr));
+	      gap: 8px;
+	    }
     .people-stepper {
       border: 1px solid var(--line);
       background: #fff;
@@ -305,7 +305,7 @@
       align-items: center;
       gap: 4px;
     }
-    .stepper-control button {
+	    .stepper-control button {
       min-height: 38px;
       width: 34px;
       border: 0;
@@ -315,8 +315,14 @@
       font-size: 20px;
       font-weight: 900;
       cursor: pointer;
-      box-shadow: 0 3px 0 var(--sky-700);
-    }
+	      box-shadow: 0 3px 0 var(--sky-700);
+	    }
+	    .stepper-control button:disabled {
+	      background: #c7d6df;
+	      box-shadow: none;
+	      cursor: not-allowed;
+	      opacity: .75;
+	    }
     .stepper-control input {
       width: 100%;
       border: 1px solid var(--line);
@@ -384,19 +390,22 @@
       line-height: 1.2;
       font-weight: 900;
     }
-    .price-estimate small {
+	    .price-estimate small {
       display: block;
       margin-top: 4px;
       color: var(--muted);
       font-size: 11px;
-      line-height: 1.45;
-    }
+	      line-height: 1.45;
+	    }
+	    .compact-alert {
+	      padding: 10px 12px;
+	    }
     @media (max-width: 420px) {
-      .people-grid,
-      .people-stepper-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 6px;
-      }
+	      .people-grid,
+	      .people-stepper-grid {
+	        grid-template-columns: repeat(2, minmax(0, 1fr));
+	        gap: 6px;
+	      }
       .people-stepper { padding: 7px 5px; }
       .people-stepper > span { font-size: 12px; }
       .stepper-control { grid-template-columns: 30px minmax(24px, 1fr) 30px; gap: 3px; }
@@ -664,12 +673,70 @@
       text-align: center;
       padding: 16px 0;
     }
-    .slots-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 8px;
-    }
-    .slot-btn {
+	    .slots-grid {
+	      display: grid;
+	      grid-template-columns: repeat(2, 1fr);
+	      gap: 8px;
+	    }
+	    .booking-modal-backdrop {
+	      position: fixed;
+	      inset: 0;
+	      z-index: 1000;
+	      background: rgba(36, 66, 88, .36);
+	      display: flex;
+	      align-items: flex-end;
+	      justify-content: center;
+	      padding: 18px 10px;
+	      animation: fadeIn .16s ease;
+	    }
+	    .booking-modal {
+	      width: min(100%, 520px);
+	      max-height: 82vh;
+	      overflow-y: auto;
+	      background: #fff;
+	      border: 3px solid #fff;
+	      border-radius: 28px 28px 22px 22px;
+	      padding: 16px;
+	      box-shadow: 0 20px 52px rgba(36, 66, 88, .28);
+	    }
+	    .modal-header {
+	      display: flex;
+	      align-items: flex-start;
+	      justify-content: space-between;
+	      gap: 12px;
+	      margin-bottom: 12px;
+	    }
+	    .modal-header h2 {
+	      color: var(--sky-700);
+	      font-size: 18px;
+	      margin-bottom: 4px;
+	    }
+	    .modal-header p,
+	    .capacity-note {
+	      color: var(--muted);
+	      font-size: 12px;
+	      line-height: 1.6;
+	    }
+	    .capacity-note {
+	      border: 1px solid var(--sky-200);
+	      background: var(--sky-100);
+	      border-radius: 14px;
+	      padding: 10px;
+	      margin-bottom: 12px;
+	    }
+	    .modal-close {
+	      width: 36px;
+	      height: 36px;
+	      border: 0;
+	      border-radius: 50%;
+	      background: var(--sky-100);
+	      color: var(--sky-700);
+	      font: inherit;
+	      font-size: 20px;
+	      font-weight: 900;
+	      cursor: pointer;
+	    }
+	    .slot-btn {
       padding: 12px 8px;
       border: none;
       border-radius: 8px;

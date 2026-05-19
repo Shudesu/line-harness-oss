@@ -20,7 +20,7 @@ import {
 import { addDays, dateToString, isPastDate } from './booking/date.js';
 import { getApp } from './booking/html.js';
 import { renderError, renderHeader, renderScreen } from './booking/render.js';
-import { selectedMenu, state, totalPeople, UUID_STORAGE_KEY } from './booking/state.js';
+import { capacityPeople, selectedMenu, state, totalPeople, UUID_STORAGE_KEY } from './booking/state.js';
 import { storeReservationTokens, storeTokensForReservation, tokenForReservation } from './booking/tokens.js';
 import type { AvailabilitySummary, Slot } from './booking/types.js';
 
@@ -171,6 +171,9 @@ function bindEvents(): void {
 
     const actionEl = target.closest<HTMLElement>('[data-action]');
     if (actionEl && app.contains(actionEl)) {
+      if (actionEl.classList.contains('booking-modal-backdrop') && target !== actionEl) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       void handleAction(actionEl.dataset.action ?? '', actionEl);
@@ -214,6 +217,7 @@ function handleField(field: string, value: string): void {
     state.menuId = value;
     ensurePeopleWithinSelectedMenu();
     state.selectedDate = null;
+    state.slotModalOpen = false;
     state.selectedSlot = null;
     state.slotsByDate = {};
     state.availabilityByDate = {};
@@ -231,10 +235,7 @@ function handleField(field: string, value: string): void {
     delete state.validationErrors.people;
     const parsed = Math.max(0, Number.parseInt(value, 10) || 0);
     state.form[field] = parsed;
-    state.selectedSlot = null;
-    state.slotsByDate = {};
-    state.availabilityByDate = {};
-    void loadVisibleAvailability();
+    clampPeopleToSelectedSlot(field);
     render();
     return;
   }
@@ -260,6 +261,11 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     selectSlot(element.dataset.slotId ?? '');
     return;
   }
+  if (action === 'close-slot-modal') {
+    state.slotModalOpen = false;
+    render();
+    return;
+  }
   if (action === 'select-reservation') {
     selectReservation(element.dataset.reservationId ?? '');
     return;
@@ -281,6 +287,7 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     state.viewMode = action === 'view-week' ? 'week' : 'month';
     state.notice = null;
     state.selectedDate = null;
+    state.slotModalOpen = false;
     state.selectedSlot = null;
     await loadVisibleAvailability();
     return;
@@ -368,11 +375,16 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
 function validateBooking(): Record<string, string> {
   const menu = selectedMenu();
   const people = totalPeople();
+  const requiredCapacity = capacityPeople();
+  const remaining = state.selectedSlot ? Math.max(0, Number(state.selectedSlot.lineRemainingCapacity) || 0) : 0;
   const errors: Record<string, string> = {};
   if (!menu) errors.menuId = 'メニューを選択してください。';
   if (!state.selectedDate || !state.selectedSlot) errors.slot = '予約する日付と時間枠を選択してください。';
   if (menu && people < menu.minPeople) errors.people = `人数は${menu.minPeople}名以上で入力してください。`;
   if (menu?.maxPeople && people > menu.maxPeople) errors.people = `人数は${menu.maxPeople}名以下で入力してください。`;
+  if (state.selectedSlot && requiredCapacity > remaining) {
+    errors.people = `この時間枠で予約枠を消費する人数は${remaining}名までです。`;
+  }
   if (!state.form.customerName.trim()) errors.customerName = '氏名を入力してください。';
   if (!state.form.customerPhone.trim()) {
     errors.customerPhone = '電話番号を入力してください。';
@@ -382,12 +394,33 @@ function validateBooking(): Record<string, string> {
   return errors;
 }
 
+function clampPeopleToSelectedSlot(changedField: 'adultCount' | 'childCount' | 'infantCount' | 'underThreeCount'): void {
+  const slot = state.selectedSlot;
+  if (!slot) return;
+  const remaining = Math.max(0, Number(slot.lineRemainingCapacity) || 0);
+  if (capacityPeople() <= remaining) return;
+
+  const menu = selectedMenu();
+  const countsForCapacity: Record<typeof changedField, boolean> = {
+    adultCount: menu?.capacityCountAdult ?? true,
+    childCount: menu?.capacityCountChild ?? true,
+    infantCount: menu?.capacityCountInfant ?? true,
+    underThreeCount: menu?.capacityCountUnderThree ?? false,
+  };
+
+  if (countsForCapacity[changedField]) {
+    state.form[changedField] = Math.max(0, state.form[changedField] - (capacityPeople() - remaining));
+  }
+  state.notice = '選択した時間枠の空き人数を超えないように人数を調整しました。';
+}
+
 function selectDate(date: string): void {
   if (!date || isPastDate(date)) return;
   state.notice = null;
   delete state.validationErrors.slot;
   state.selectedDate = date;
   state.selectedSlot = null;
+  state.slotModalOpen = true;
   trackLiffEvent('liff.booking.date_selected', {
     eventName: '日付選択',
     subjectType: 'reservation_date',
@@ -405,6 +438,8 @@ function selectSlot(slotId: string): void {
   delete state.validationErrors.slot;
   state.selectedDate = slot.date;
   state.selectedSlot = slot;
+  state.slotModalOpen = false;
+  clampPeopleToSelectedSlot('adultCount');
   trackLiffEvent('liff.booking.slot_selected', {
     eventName: '時間枠選択',
     subjectType: 'reservation_slot',
@@ -466,6 +501,7 @@ async function changeResource(resourceId: string): Promise<void> {
   state.menuId = '';
   state.menus = [];
   state.selectedDate = null;
+  state.slotModalOpen = false;
   state.selectedSlot = null;
   state.slotsByDate = {};
   state.availabilityByDate = {};
@@ -492,10 +528,7 @@ async function fetchSlots(date: string): Promise<Slot[]> {
     resourceId,
     menuId,
     date,
-    state.form.adultCount,
-    state.form.childCount,
-    state.form.infantCount,
-    state.form.underThreeCount,
+    'slot-list',
   ].join(':');
   const cached = slotCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -506,11 +539,11 @@ async function fetchSlots(date: string): Promise<Slot[]> {
     resourceId,
     menuId,
     date,
-    people: totalPeople(),
-    adultCount: state.form.adultCount,
-    childCount: state.form.childCount,
-    infantCount: state.form.infantCount,
-    underThreeCount: state.form.underThreeCount,
+    people: 1,
+    adultCount: 1,
+    childCount: 0,
+    infantCount: 0,
+    underThreeCount: 0,
   });
   if (state.resourceId === resourceId && state.menuId === menuId) {
     state.slotsByDate[date] = slots;
@@ -538,6 +571,7 @@ async function loadVisibleAvailability(): Promise<void> {
     const { dateFrom, dateTo, dates } = visibleDateRange();
     if (state.selectedDate && !dates.includes(state.selectedDate)) {
       state.selectedDate = null;
+      state.slotModalOpen = false;
       state.selectedSlot = null;
     }
     
@@ -546,10 +580,7 @@ async function loadVisibleAvailability(): Promise<void> {
       state.menuId,
       dateFrom,
       dateTo,
-      state.form.adultCount,
-      state.form.childCount,
-      state.form.infantCount,
-      state.form.underThreeCount,
+      'availability',
     ].join(':');
     const cachedSummary = summaryCache.get(cacheKey);
     if (cachedSummary && cachedSummary.expiresAt > Date.now()) {
@@ -560,11 +591,11 @@ async function loadVisibleAvailability(): Promise<void> {
         menuId: state.menuId,
         dateFrom,
         dateTo,
-        people: totalPeople(),
-        adultCount: state.form.adultCount,
-        childCount: state.form.childCount,
-        infantCount: state.form.infantCount,
-        underThreeCount: state.form.underThreeCount,
+        people: 1,
+        adultCount: 1,
+        childCount: 0,
+        infantCount: 0,
+        underThreeCount: 0,
       });
       if (requestId === state.availabilityRequestId) {
         const summaries = Object.fromEntries(summary.map((item) => [item.date, item]));
@@ -575,6 +606,7 @@ async function loadVisibleAvailability(): Promise<void> {
     if (state.selectedSlot) {
       const updated = (state.slotsByDate[state.selectedSlot.date] ?? []).find((s) => s.slotId === state.selectedSlot!.slotId);
       if (!updated || !updated.available) {
+        state.slotModalOpen = false;
         state.selectedSlot = null;
       }
     }

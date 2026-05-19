@@ -21,6 +21,7 @@ export const state: BookingState = {
   weekStart: startOfWeek(today),
   viewMode: 'month',
   selectedDate: null,
+  slotModalOpen: false,
   selectedSlot: null,
   slotsByDate: {},
   availabilityByDate: {},
@@ -61,4 +62,18 @@ export function selectedResource() {
 
 export function totalPeople(): number {
   return state.form.adultCount + state.form.childCount + state.form.infantCount + state.form.underThreeCount;
+}
+
+export function capacityPeople(): number {
+  const menu = selectedMenu();
+  const countAdult = menu?.capacityCountAdult ?? true;
+  const countChild = menu?.capacityCountChild ?? true;
+  const countInfant = menu?.capacityCountInfant ?? true;
+  const countUnderThree = menu?.capacityCountUnderThree ?? false;
+  return (
+    (countAdult ? state.form.adultCount : 0) +
+    (countChild ? state.form.childCount : 0) +
+    (countInfant ? state.form.infantCount : 0) +
+    (countUnderThree ? state.form.underThreeCount : 0)
+  );
 }

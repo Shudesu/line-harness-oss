@@ -1,12 +1,26 @@
 import { addDays, dateToString, formatDateJa, formatTime, isPastDate } from './date.js';
 import { escapeHtml } from './html.js';
-import { selectedMenu, selectedResource, state } from './state.js';
+import { capacityPeople, selectedMenu, selectedResource, state, totalPeople } from './state.js';
 import { tokenForReservation } from './tokens.js';
 import type { AvailabilitySummary, Menu, Slot } from './types.js';
 
 function lineRemaining(slot: Slot): number {
   const value = Number(slot.lineRemainingCapacity);
   return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function selectedSlotRemaining(): number | null {
+  return state.selectedSlot ? lineRemaining(state.selectedSlot) : null;
+}
+
+function capacityCountLabels(menu: Menu | null | undefined): string {
+  const labels = [
+    (menu?.capacityCountAdult ?? true) ? '大人' : null,
+    (menu?.capacityCountChild ?? true) ? '小学生' : null,
+    (menu?.capacityCountInfant ?? true) ? '幼児' : null,
+    (menu?.capacityCountUnderThree ?? false) ? '3歳以下' : null,
+  ].filter(Boolean);
+  return labels.length > 0 ? labels.join('・') : 'なし';
 }
 
 function requiredBadge(): string {
@@ -147,12 +161,15 @@ function renderBooking(): string {
   return `
     ${renderBookingControls()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
-    ${renderSlots()}
+    ${renderSlotModal()}
     ${renderSelectedSlotSummary()}
-    ${renderInputForm()}
-    <div class="booking-actions">
-      <button type="button" class="book-btn" data-action="go-confirm">予約内容を確認する</button>
-    </div>
+    ${state.selectedSlot ? renderPeopleSection() : ''}
+    ${state.selectedSlot ? renderInputForm() : ''}
+    ${state.selectedSlot ? `
+      <div class="booking-actions">
+        <button type="button" class="book-btn" data-action="go-confirm">予約内容を確認する</button>
+      </div>
+    ` : ''}
   `;
 }
 
@@ -190,15 +207,6 @@ function renderBookingControls(): string {
         ${validationError('menuId')}
       </label>
       ${renderMenuPriceSummary(menu)}
-      <div class="people-stepper-grid">
-        ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
-        ${renderPeopleStepper('childCount', '小学生', state.form.childCount)}
-        ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
-        ${renderPeopleStepper('underThreeCount', '3歳以下', state.form.underThreeCount)}
-      </div>
-      <p class="people-total">合計 ${state.form.adultCount + state.form.childCount + state.form.infantCount + state.form.underThreeCount}名</p>
-      ${validationError('people')}
-      ${renderPriceEstimate(menu, state.form, true)}
       <div class="view-toggle">
         <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
         <button type="button" class="${state.viewMode === 'month' ? 'active' : ''}" data-action="view-month">1か月で見る</button>
@@ -208,15 +216,44 @@ function renderBookingControls(): string {
 }
 
 function renderPeopleStepper(field: 'adultCount' | 'childCount' | 'infantCount' | 'underThreeCount', label: string, value: number): string {
+  const menu = selectedMenu();
+  const remaining = selectedSlotRemaining();
+  const countsForCapacity: Record<typeof field, boolean> = {
+    adultCount: menu?.capacityCountAdult ?? true,
+    childCount: menu?.capacityCountChild ?? true,
+    infantCount: menu?.capacityCountInfant ?? true,
+    underThreeCount: menu?.capacityCountUnderThree ?? false,
+  };
+  const plusDisabled = remaining !== null && countsForCapacity[field] && capacityPeople() >= remaining;
   return `
     <div class="people-stepper">
       <span>${label}</span>
       <div class="stepper-control">
         <button type="button" data-action="people-step" data-field="${field}" data-delta="-1" aria-label="${label}を減らす">−</button>
         <input type="number" min="0" inputmode="numeric" data-field="${field}" value="${value}" aria-label="${label}の人数">
-        <button type="button" data-action="people-step" data-field="${field}" data-delta="1" aria-label="${label}を増やす">＋</button>
+        <button type="button" data-action="people-step" data-field="${field}" data-delta="1" aria-label="${label}を増やす" ${plusDisabled ? 'disabled' : ''}>＋</button>
       </div>
     </div>
+  `;
+}
+
+function renderPeopleSection(): string {
+  const menu = selectedMenu();
+  const remaining = selectedSlotRemaining();
+  return `
+    <section class="booking-panel">
+      <h2>人数を入力 ${requiredBadge()}</h2>
+      <p class="muted">予約枠を消費する人数: ${escapeHtml(capacityCountLabels(menu))}${remaining !== null ? ` / この時間の空き枠 ${remaining}名` : ''}</p>
+      <div class="people-stepper-grid">
+        ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
+        ${renderPeopleStepper('childCount', '小学生', state.form.childCount)}
+        ${renderPeopleStepper('infantCount', '幼児', state.form.infantCount)}
+        ${renderPeopleStepper('underThreeCount', '3歳以下', state.form.underThreeCount)}
+      </div>
+      <p class="people-total">合計 ${totalPeople()}名 / 枠消費 ${capacityPeople()}名</p>
+      ${validationError('people')}
+      ${renderPriceEstimate(menu, state.form, true)}
+    </section>
   `;
 }
 
@@ -291,39 +328,60 @@ function renderMonthAvailability(): string {
   `;
 }
 
-function renderSlots(): string {
-  if (!state.selectedDate) {
-    return `
-      <section class="booking-panel">
-        <h2>時間を選択 ${requiredBadge()}</h2>
-        <p class="muted">上のカレンダーから日付を選んでください。</p>
+function renderSlotModal(): string {
+  if (!state.slotModalOpen || !state.selectedDate) {
+    return validationError('slot') ? `
+      <section class="booking-panel compact-alert">
         ${validationError('slot')}
       </section>
-    `;
+    ` : '';
   }
 
   const slots = state.slotsByDate[state.selectedDate] ?? [];
   if (state.loadingSlots && slots.length === 0) {
     return `
-      <section class="booking-panel">
-        <h2>${formatDateJa(state.selectedDate)}</h2>
-        <div class="slots-loading"><div class="loading-spinner"></div><p>時間枠を確認中...</p></div>
-      </section>
+      <div class="booking-modal-backdrop" data-action="close-slot-modal">
+        <section class="booking-modal" role="dialog" aria-modal="true">
+          <div class="modal-header">
+            <div>
+              <h2>${formatDateJa(state.selectedDate)}</h2>
+              <p>時間枠を確認中...</p>
+            </div>
+            <button type="button" class="modal-close" data-action="close-slot-modal">×</button>
+          </div>
+          <div class="slots-loading"><div class="loading-spinner"></div><p>時間枠を確認中...</p></div>
+        </section>
+      </div>
     `;
   }
   if (slots.length === 0) {
     return `
-      <section class="booking-panel">
-        <h2>${formatDateJa(state.selectedDate)}</h2>
-        <p class="muted">この日は予約枠がありません。</p>
-        ${validationError('slot')}
-      </section>
+      <div class="booking-modal-backdrop" data-action="close-slot-modal">
+        <section class="booking-modal" role="dialog" aria-modal="true">
+          <div class="modal-header">
+            <div>
+              <h2>${formatDateJa(state.selectedDate)}</h2>
+              <p>この日は予約枠がありません。</p>
+            </div>
+            <button type="button" class="modal-close" data-action="close-slot-modal">×</button>
+          </div>
+          <button type="button" class="close-btn" data-action="close-slot-modal">日付を選び直す</button>
+        </section>
+      </div>
     `;
   }
 
   return `
-    <section class="booking-panel">
-      <h2>${formatDateJa(state.selectedDate)} ${requiredBadge()}</h2>
+    <div class="booking-modal-backdrop" data-action="close-slot-modal">
+    <section class="booking-modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div>
+          <h2>${formatDateJa(state.selectedDate)}の時間</h2>
+          <p>時間枠を選ぶと、人数と受付情報の入力に進みます。</p>
+        </div>
+        <button type="button" class="modal-close" data-action="close-slot-modal">×</button>
+      </div>
+      <p class="capacity-note">空き枠は「${escapeHtml(capacityCountLabels(selectedMenu()))}」をもとに計算します。3歳以下など枠を消費しない人数区分は、管理設定に従って予約枠から除外されます。</p>
       ${validationError('slot')}
       <div class="slots-grid">
         ${slots.map((slot) => {
@@ -337,6 +395,7 @@ function renderSlots(): string {
         }).join('')}
       </div>
     </section>
+    </div>
   `;
 }
 
