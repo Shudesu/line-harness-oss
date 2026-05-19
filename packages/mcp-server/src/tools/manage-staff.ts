@@ -37,7 +37,7 @@ export function registerManageStaff(server: McpServer): void {
         if (action === "create") {
           if (!name) throw new Error("name is required for create action");
           if (!role) throw new Error("role is required for create action");
-          const member = await client.staff.create({ name, email, role });
+          const member = await client.staff.create({ name, email: email ?? undefined, role });
           return {
             content: [{
               type: "text" as const,
