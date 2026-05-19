@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite dev",
     "test": "vitest run",
-    "build": "vite build",
+    "build:deps": "pnpm --filter @line-crm/shared --filter @line-crm/line-sdk run build",
+    "build": "pnpm run build:deps && vite build",
     "preview": "vite preview",
-    "deploy": "vite build && wrangler deploy",
+    "deploy": "pnpm run build:deps && vite build && wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
