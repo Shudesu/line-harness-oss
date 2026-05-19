@@ -1,4 +1,4 @@
--- Migration 041: Strict account scoping for friends and tags.
+-- Migration 046: Strict account scoping for friends and tags.
 -- Rebuilds friends/tags to remove legacy single-column UNIQUE constraints:
 --   friends.line_user_id UNIQUE  -> unique per (line_user_id, line_account_id)
 --   tags.name UNIQUE             -> unique per (line_account_id, name)
