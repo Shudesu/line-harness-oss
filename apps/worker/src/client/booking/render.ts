@@ -1,5 +1,7 @@
 import { addDays, dateToString, formatDateJa, formatTime, isPastDate } from './date.js';
 import { escapeHtml } from './html.js';
+import { capacityCountLabels } from './people.js';
+import { calculateEstimatedTotal, formatYen, hasAnyMenuPrice, hasPrice } from './pricing.js';
 import { capacityPeople, selectedMenu, selectedResource, state, totalPeople } from './state.js';
 import { tokenForReservation } from './tokens.js';
 import type { AvailabilitySummary, Menu, Slot } from './types.js';
@@ -11,16 +13,6 @@ function lineRemaining(slot: Slot): number {
 
 function selectedSlotRemaining(): number | null {
   return state.selectedSlot ? lineRemaining(state.selectedSlot) : null;
-}
-
-function capacityCountLabels(menu: Menu | null | undefined): string {
-  const labels = [
-    (menu?.capacityCountAdult ?? true) ? '大人' : null,
-    (menu?.capacityCountChild ?? true) ? '小学生' : null,
-    (menu?.capacityCountInfant ?? true) ? '幼児' : null,
-    (menu?.capacityCountUnderThree ?? false) ? '3歳以下' : null,
-  ].filter(Boolean);
-  return labels.length > 0 ? labels.join('・') : 'なし';
 }
 
 function requiredBadge(): string {
@@ -64,33 +56,6 @@ function parseNote(formData?: string | null): string {
   } catch {
     return '';
   }
-}
-
-function formatYen(value: number): string {
-  return `${Math.max(0, value).toLocaleString('ja-JP')}円`;
-}
-
-function hasPrice(value: number | null | undefined): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function hasAnyMenuPrice(menu: Menu | null | undefined): boolean {
-  return Boolean(menu && (hasPrice(menu.priceAdult) || hasPrice(menu.priceChild) || hasPrice(menu.priceInfant) || hasPrice(menu.priceUnderThree)));
-}
-
-function calculateEstimatedTotal(menu: Menu | null | undefined, counts: { adultCount: number; childCount: number; infantCount: number; underThreeCount: number }): number | null {
-  if (!hasAnyMenuPrice(menu)) return null;
-  if (!menu) return null;
-  if (counts.adultCount > 0 && !hasPrice(menu.priceAdult)) return null;
-  if (counts.childCount > 0 && !hasPrice(menu.priceChild)) return null;
-  if (counts.infantCount > 0 && !hasPrice(menu.priceInfant)) return null;
-  if (counts.underThreeCount > 0 && !hasPrice(menu.priceUnderThree)) return null;
-  return (
-    counts.adultCount * (menu.priceAdult ?? 0) +
-    counts.childCount * (menu.priceChild ?? 0) +
-    counts.infantCount * (menu.priceInfant ?? 0) +
-    counts.underThreeCount * (menu.priceUnderThree ?? 0)
-  );
 }
 
 function renderMenuPriceSummary(menu: Menu | null | undefined): string {
@@ -236,7 +201,7 @@ function renderPeopleSection(): string {
   return `
     <section class="booking-panel">
       <h2>人数を入力 ${requiredBadge()}</h2>
-      <p class="muted">予約枠を消費する人数: ${escapeHtml(capacityCountLabels(menu))}${remaining !== null ? ` / この時間の空き枠 ${remaining}名` : ''}</p>
+      <p class="muted">予約枠を消費する人数: ${escapeHtml(capacityCountLabels())}${remaining !== null ? ` / この時間の空き枠 ${remaining}名` : ''}</p>
       <div class="people-stepper-grid">
         ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
         ${renderPeopleStepper('childCount', '小学生', state.form.childCount)}
@@ -378,7 +343,7 @@ function renderSlotModal(): string {
         </div>
         <button type="button" class="modal-close" data-action="close-slot-modal">×</button>
       </div>
-      <p class="capacity-note">空き枠は「${escapeHtml(capacityCountLabels(selectedMenu()))}」をもとに計算します。3歳以下など枠を消費しない人数区分は、管理設定に従って予約枠から除外されます。</p>
+      <p class="capacity-note">空き枠は「${escapeHtml(capacityCountLabels())}」をもとに計算します。3歳以下など枠を消費しない人数区分は、管理設定に従って予約枠から除外されます。</p>
       ${validationError('slot')}
       <div class="slots-grid">
         ${slots.map((slot) => {
@@ -410,7 +375,7 @@ function renderReservationInputModal(slot: Slot): string {
         <div class="modal-selected-slot">
           <span>選択中の時間枠</span>
           <strong>${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</strong>
-          <small>空き枠 ${lineRemaining(slot)}名 / 枠消費対象: ${escapeHtml(capacityCountLabels(selectedMenu()))}</small>
+          <small>空き枠 ${lineRemaining(slot)}名 / 枠消費対象: ${escapeHtml(capacityCountLabels())}</small>
         </div>
         ${renderPeopleSection()}
         ${renderInputForm()}

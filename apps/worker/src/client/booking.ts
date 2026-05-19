@@ -19,6 +19,7 @@ import {
 } from './booking/api.js';
 import { addDays, dateToString, isPastDate } from './booking/date.js';
 import { getApp } from './booking/html.js';
+import { clampPeopleToSelectedSlot, updatePeopleDom } from './booking/people.js';
 import { renderError, renderHeader, renderScreen } from './booking/render.js';
 import { capacityPeople, selectedMenu, state, totalPeople, UUID_STORAGE_KEY } from './booking/state.js';
 import { storeReservationTokens, storeTokensForReservation, tokenForReservation } from './booking/tokens.js';
@@ -244,64 +245,6 @@ function handleField(field: string, value: string): void {
   }
 }
 
-function formatYen(value: number): string {
-  return `${Math.max(0, value).toLocaleString('ja-JP')}円`;
-}
-
-function menuPriceTotal(): number | null {
-  const menu = selectedMenu();
-  if (!menu) return null;
-  const hasAnyPrice = (
-    typeof menu.priceAdult === 'number' ||
-    typeof menu.priceChild === 'number' ||
-    typeof menu.priceInfant === 'number' ||
-    typeof menu.priceUnderThree === 'number'
-  );
-  if (!hasAnyPrice) return null;
-  if (state.form.adultCount > 0 && typeof menu.priceAdult !== 'number') return null;
-  if (state.form.childCount > 0 && typeof menu.priceChild !== 'number') return null;
-  if (state.form.infantCount > 0 && typeof menu.priceInfant !== 'number') return null;
-  if (state.form.underThreeCount > 0 && typeof menu.priceUnderThree !== 'number') return null;
-  return (
-    state.form.adultCount * (menu.priceAdult ?? 0) +
-    state.form.childCount * (menu.priceChild ?? 0) +
-    state.form.infantCount * (menu.priceInfant ?? 0) +
-    state.form.underThreeCount * (menu.priceUnderThree ?? 0)
-  );
-}
-
-function updatePeopleDom(): void {
-  const app = getApp();
-  for (const field of ['adultCount', 'childCount', 'infantCount', 'underThreeCount'] as const) {
-    const input = app.querySelector<HTMLInputElement>(`input[data-field="${field}"]`);
-    if (input && input.value !== String(state.form[field])) input.value = String(state.form[field]);
-  }
-
-  const total = app.querySelector<HTMLElement>('[data-people-total]');
-  if (total) total.textContent = `合計 ${totalPeople()}名 / 枠消費 ${capacityPeople()}名`;
-
-  app.querySelectorAll('[data-validation="people"]').forEach((element) => element.remove());
-
-  const price = app.querySelector<HTMLElement>('[data-price-total]');
-  if (price) {
-    const totalPrice = menuPriceTotal();
-    price.textContent = totalPrice === null ? '現地確認' : formatYen(totalPrice);
-  }
-
-  const menu = selectedMenu();
-  const remaining = state.selectedSlot ? Math.max(0, Number(state.selectedSlot.lineRemainingCapacity) || 0) : null;
-  const countsForCapacity = {
-    adultCount: menu?.capacityCountAdult ?? true,
-    childCount: menu?.capacityCountChild ?? true,
-    infantCount: menu?.capacityCountInfant ?? true,
-    underThreeCount: menu?.capacityCountUnderThree ?? false,
-  } as const;
-  for (const field of ['adultCount', 'childCount', 'infantCount', 'underThreeCount'] as const) {
-    const plus = app.querySelector<HTMLButtonElement>(`button[data-action="people-step"][data-field="${field}"][data-delta="1"]`);
-    if (plus && remaining !== null) plus.disabled = countsForCapacity[field] && capacityPeople() >= remaining;
-  }
-}
-
 async function handleAction(action: string, element: HTMLElement): Promise<void> {
   if (action === 'people-step') {
     const field = element.dataset.field;
@@ -452,26 +395,6 @@ function validateBooking(): Record<string, string> {
     errors.customerPhone = '電話番号の形式を確認してください。';
   }
   return errors;
-}
-
-function clampPeopleToSelectedSlot(changedField: 'adultCount' | 'childCount' | 'infantCount' | 'underThreeCount'): void {
-  const slot = state.selectedSlot;
-  if (!slot) return;
-  const remaining = Math.max(0, Number(slot.lineRemainingCapacity) || 0);
-  if (capacityPeople() <= remaining) return;
-
-  const menu = selectedMenu();
-  const countsForCapacity: Record<typeof changedField, boolean> = {
-    adultCount: menu?.capacityCountAdult ?? true,
-    childCount: menu?.capacityCountChild ?? true,
-    infantCount: menu?.capacityCountInfant ?? true,
-    underThreeCount: menu?.capacityCountUnderThree ?? false,
-  };
-
-  if (countsForCapacity[changedField]) {
-    state.form[changedField] = Math.max(0, state.form[changedField] - (capacityPeople() - remaining));
-  }
-  state.notice = '選択した時間枠の空き人数を超えないように人数を調整しました。';
 }
 
 function selectDate(date: string): void {

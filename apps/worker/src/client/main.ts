@@ -14,10 +14,6 @@
  *   ?page=book   — booking page (calendar slot picker)
  */
 
-import { initBooking } from './booking.js';
-import { initForm } from './form.js';
-import { initReservationsAdmin } from './reservations-admin.js';
-
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
   isLoggedIn(): boolean;
@@ -304,11 +300,6 @@ async function linkAndAddFlow() {
 async function main() {
   try {
     const page = getPage();
-    if (page === 'admin-reservations') {
-      initReservationsAdmin();
-      return;
-    }
-
     if (!LIFF_ID) {
       throw new Error('LIFF ID not found. Set ?liffId= in LIFF endpoint URL or VITE_LIFF_ID env.');
     }
@@ -332,10 +323,12 @@ async function main() {
     }
 
     if (page === 'book') {
+      const { initBooking } = await import('./booking.js');
       await initBooking();
     } else if (page === 'form') {
       const params = new URLSearchParams(window.location.search);
       const formId = params.get('id');
+      const { initForm } = await import('./form.js');
       await initForm(formId);
     } else if (!page) {
       await linkAndAddFlow();
