@@ -13,10 +13,27 @@ Google Map、公式Webサイト、Instagram、広告、QRコードなど、LINE�
 - LINE予約とWeb予約は同じ予約UIを使う。
 - Web予約は `guest session` で予約作成する。
 - Web予約では `氏名 / 電話番号 / メール` を必須にする。
-- 流入元は `source / channel / ref / utm_*` として予約に保存する。
+- 流入元はMVPでは `reservations.metadata.entry` の `channel / ref / utm_*` として保存する。
 - Web管理画面で、媒体別の予約URLを作成できるようにする。
 - 予約完了メールには `予約詳細URL / キャンセルURL / LINE連携URL` を入れる。
 - LINE連携は `claimToken` を使い、予約IDだけでは紐づけない。
+
+## 実装状況
+
+2026-05-19時点:
+
+- `?page=book&mode=web` または `?page=book&channel=...` で LIFF ログインなしのWeb予約画面を開ける。
+- `POST /api/public/reservation-session/guest` で guest session を発行する。
+- Web予約ではメールアドレスを必須にする。
+- 予約作成時に `metadata.entry` へ `mode/channel/ref/utm/url` を保存する。
+- `POST /api/public/reservations/lookup` で `reservationId + email` による予約確認・キャンセルトークン再発行ができる。
+- Resend未設定時は予約完了メール送信をスキップする。設定後はWeb予約完了時に受付メールを送る。
+
+未実装:
+
+- Web管理画面での予約導線URL作成UI。
+- 予約完了メール内の詳細URL・キャンセルURL・LINE連携URL。
+- `claimToken` によるLINE友だちへの後付け予約紐づけ。
 
 ## 用語
 
@@ -69,7 +86,7 @@ MVPでは既存の `entry_routes` を流用してよい。
 
 ## source と capacity_channel
 
-Web予約の基本方針:
+Web予約の理想方針:
 
 ```text
 source = URLのchannelに応じて web / google_map / instagram / website / qr
@@ -81,6 +98,9 @@ capacity_channel = line
 - Web予約は自社予約枠として扱う。
 - じゃらんやGmail取り込みは `capacity_channel=external`。
 - `source` と `capacity_channel` は別概念として維持する。
+
+MVP実装では既存D1の `reservations.source` CHECK制約を壊さないため、`source` の enum拡張は行わない。  
+実際の流入元は `reservations.metadata.entry.channel/ref/utm*` に保存する。将来、DBを安全に再構築できるタイミングで `source` enum または専用カラムに移す。
 
 ## 予約作成時に保存する情報
 
@@ -137,10 +157,14 @@ guest reservation session
 guest sessionは予約作成だけ許可する。
 
 ```text
-scope = reservation:create
+scope = reservations:read
+sessionType = guest
 channel = web/google_map/instagram/website
 exp = 1時間
 ```
+
+注: 現在のtoken実装は `reservations:read` をLINE予約一覧と予約作成セッションで共用している。  
+将来は `reservation:create` に分離する。
 
 ## 入力必須項目
 
@@ -531,4 +555,3 @@ utm_campaign
 - `source` で在庫カウンタを判断しない。
 - Web予約のメール送信失敗で在庫だけ確保され、予約が消える状態にしない。
 - 管理画面のAPI_KEYを顧客向け予約画面に埋め込まない。
-

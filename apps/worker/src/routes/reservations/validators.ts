@@ -15,6 +15,7 @@ export function canAccessReservation(
   reservation: Reservation,
 ): boolean {
   if (payload.reservationId && payload.reservationId !== reservation.id) return false;
+  if (payload.reservationId === reservation.id) return true;
   if (payload.userId && reservation.user_id === payload.userId) return true;
   if (payload.friendId && reservation.friend_id === payload.friendId) return true;
   return false;

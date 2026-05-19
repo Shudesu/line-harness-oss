@@ -5,11 +5,17 @@ export type ReservationTokenScope = 'reservations:read' | 'reservation:read' | '
 export interface ReservationTokenPayload {
   scope: ReservationTokenScope;
   exp: number;
+  sessionType?: 'line' | 'guest';
   lineUserId?: string;
   friendId?: string | null;
   userId?: string | null;
   lineAccountId?: string | null;
   reservationId?: string;
+  entryChannel?: string | null;
+  entryRef?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
 }
 
 export async function signReservationToken(

@@ -7,6 +7,7 @@
 
 import {
   cancelReservation,
+  createGuestReservationSession,
   createReservation,
   createReservationSession,
   issueReservationTokens,
@@ -15,6 +16,7 @@ import {
   listMenus,
   listResources,
   listSlots,
+  lookupWebReservation,
   recordLiffEvent,
 } from './booking/api.js';
 import { addDays, dateToString, isPastDate } from './booking/date.js';
@@ -39,6 +41,10 @@ declare const liff: {
 function currentLiffId(): string | null {
   const params = new URLSearchParams(window.location.search);
   return params.get('liffId') || import.meta.env?.VITE_LIFF_ID || null;
+}
+
+function isLineEntry(): boolean {
+  return state.entryMode === 'line';
 }
 
 function liffEventMetadata(extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -67,6 +73,7 @@ function trackLiffEvent(
     metadata?: Record<string, unknown>;
   } = {},
 ): void {
+  if (!isLineEntry()) return;
   const token = state.sessionToken;
   if (!token) return;
   void recordLiffEvent({
@@ -83,6 +90,18 @@ function trackLiffEvent(
 }
 
 async function refreshReservationSession(): Promise<void> {
+  if (!isLineEntry()) {
+    const session = await createGuestReservationSession({
+      channel: state.entryChannel || 'web',
+      ref: state.entryRef,
+      utmSource: state.utmSource,
+      utmMedium: state.utmMedium,
+      utmCampaign: state.utmCampaign,
+    });
+    state.sessionToken = session.token;
+    state.sessionExpiresAt = Date.now() + Math.max(60, (session.expiresIn ?? 3600) - 60) * 1000;
+    return;
+  }
   const idToken = liff.getIDToken();
   if (!idToken) throw new Error('LINEログイン情報を取得できませんでした。もう一度開き直してください。');
 
@@ -243,6 +262,12 @@ function handleField(field: string, value: string): void {
   if (field === 'customerName' || field === 'customerPhone' || field === 'customerEmail' || field === 'note') {
     state.form[field] = value;
   }
+  if (field === 'lookupReservationId') {
+    state.lookupReservationId = value;
+  }
+  if (field === 'lookupEmail') {
+    state.lookupEmail = value;
+  }
 }
 
 async function handleAction(action: string, element: HTMLElement): Promise<void> {
@@ -280,8 +305,16 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
   }
   if (action === 'show-mine' || action === 'reload-mine') {
     state.screen = 'mine';
+    if (!isLineEntry()) {
+      render();
+      return;
+    }
     trackLiffEvent('liff.mine.open', { eventName: '自分の予約一覧表示' });
     await loadMine();
+    return;
+  }
+  if (action === 'lookup-web-reservation') {
+    await lookupWebReservationByEmail();
     return;
   }
   if (action === 'view-week' || action === 'view-month') {
@@ -369,7 +402,7 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     return;
   }
   if (action === 'close') {
-    if (liff.isInClient()) liff.closeWindow();
+    if (typeof liff !== 'undefined' && liff.isInClient()) liff.closeWindow();
     else window.close();
     return;
   }
@@ -393,6 +426,11 @@ function validateBooking(): Record<string, string> {
     errors.customerPhone = '電話番号を入力してください。';
   } else if (!/^[0-9+\-\s()]{8,20}$/.test(state.form.customerPhone.trim())) {
     errors.customerPhone = '電話番号の形式を確認してください。';
+  }
+  if (!isLineEntry()) {
+    const email = state.form.customerEmail.trim();
+    if (!email) errors.customerEmail = 'Web予約ではメールアドレスを入力してください。';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.customerEmail = 'メールアドレスの形式を確認してください。';
   }
   return errors;
 }
@@ -646,6 +684,17 @@ async function submitBooking(): Promise<void> {
       formData: {
         note: state.form.note.trim() || null,
       },
+      metadata: {
+        entry: {
+          mode: state.entryMode,
+          channel: state.entryChannel,
+          ref: state.entryRef,
+          utmSource: state.utmSource,
+          utmMedium: state.utmMedium,
+          utmCampaign: state.utmCampaign,
+          url: window.location.href,
+        },
+      },
     });
     storeReservationTokens(reservation);
     state.lastReservation = reservation;
@@ -730,6 +779,34 @@ async function issueTokensForSelectedReservation(): Promise<void> {
   }
 }
 
+async function lookupWebReservationByEmail(): Promise<void> {
+  const reservationId = state.lookupReservationId.trim();
+  const email = state.lookupEmail.trim();
+  state.notice = null;
+  if (!reservationId || !email) {
+    state.notice = '予約IDとメールアドレスを入力してください。';
+    render();
+    return;
+  }
+  state.loadingSlots = true;
+  render();
+  try {
+    const result = await lookupWebReservation({ reservationId, email });
+    storeTokensForReservation(result.reservationId, {
+      detailToken: result.detailToken,
+      cancelToken: result.cancelToken,
+    });
+    state.selectedReservation = result.reservation;
+    state.reservations = [result.reservation];
+    state.screen = 'detail';
+  } catch (err) {
+    state.notice = err instanceof Error ? err.message : '予約を確認できませんでした。予約IDとメールアドレスを確認してください。';
+  } finally {
+    state.loadingSlots = false;
+    render();
+  }
+}
+
 async function submitCancel(): Promise<void> {
   const reservation = state.selectedReservation;
   if (!reservation || state.submitting) return;
@@ -762,13 +839,15 @@ async function submitCancel(): Promise<void> {
 
 export async function initBooking(): Promise<void> {
   try {
-    const profile = await liff.getProfile();
-    state.profile = profile;
+    if (isLineEntry()) {
+      const profile = await liff.getProfile();
+      state.profile = profile;
 
-    try {
-      state.friendId = localStorage.getItem(UUID_STORAGE_KEY);
-    } catch {
-      // optional only
+      try {
+        state.friendId = localStorage.getItem(UUID_STORAGE_KEY);
+      } catch {
+        // optional only
+      }
     }
 
     await refreshReservationSession();
@@ -785,7 +864,7 @@ export async function initBooking(): Promise<void> {
     state.loading = false;
     render();
     if (state.screen === 'mine') {
-      await loadMine();
+      if (isLineEntry()) await loadMine();
     } else {
       await loadVisibleAvailability();
     }

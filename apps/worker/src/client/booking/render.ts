@@ -97,6 +97,14 @@ function menuForReservationTitle(title?: string | null): Menu | null {
 }
 
 export function renderHeader(): string {
+  const tabs = state.entryMode === 'web'
+    ? ''
+    : `
+    <div class="booking-tabs">
+      <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約する</button>
+      <button type="button" class="${state.screen === 'mine' || state.screen === 'detail' || state.screen === 'cancel-confirm' || state.screen === 'cancelled' ? 'active' : ''}" data-action="show-mine">予約確認</button>
+    </div>
+  `;
   return `
     <div class="booking-header">
       <img class="booking-header-logo" src="/aonisai/aonisai1.jpg" alt="アオニサイファーム ブルーベリー">
@@ -105,10 +113,7 @@ export function renderHeader(): string {
         <h1>体験予約</h1>
       </div>
     </div>
-    <div class="booking-tabs">
-      <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約する</button>
-      <button type="button" class="${state.screen === 'mine' || state.screen === 'detail' || state.screen === 'cancel-confirm' || state.screen === 'cancelled' ? 'active' : ''}" data-action="show-mine">予約確認</button>
-    </div>
+    ${tabs}
   `;
 }
 
@@ -434,8 +439,9 @@ function renderInputForm(): string {
         ${validationError('customerPhone')}
       </label>
       <label class="field-label">
-        メールアドレス（任意）
+        メールアドレス${state.entryMode === 'web' ? ` ${requiredBadge()}` : '（任意）'}
         <input type="email" data-field="customerEmail" value="${escapeHtml(state.form.customerEmail)}">
+        ${validationError('customerEmail')}
       </label>
       <label class="field-label">
         備考（任意）
@@ -502,13 +508,38 @@ function renderSuccess(): string {
       <p class="policy-note">当日は予約時間に合わせてお越しください。予約確認画面から詳細確認とキャンセルができます。</p>
       <div class="booking-actions">
         <button type="button" class="book-btn" data-action="show-created-detail">予約詳細を見る</button>
-        <button type="button" class="close-btn" data-action="close">LINEに戻る</button>
+        <button type="button" class="close-btn" data-action="close">${state.entryMode === 'web' ? '閉じる' : 'LINEに戻る'}</button>
       </div>
     </section>
   `;
 }
 
 function renderMine(): string {
+  if (state.entryMode === 'web') {
+    return `
+      <section class="booking-panel">
+        <div class="section-title-row">
+          <div>
+            <h2>予約確認</h2>
+            <p>Web予約は、予約IDとメールアドレスで確認できます。</p>
+          </div>
+        </div>
+        ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
+        <label class="field-label">
+          予約ID ${requiredBadge()}
+          <input type="text" data-field="lookupReservationId" value="${escapeHtml(state.lookupReservationId)}">
+        </label>
+        <label class="field-label">
+          メールアドレス ${requiredBadge()}
+          <input type="email" data-field="lookupEmail" value="${escapeHtml(state.lookupEmail)}">
+        </label>
+        <button type="button" class="book-btn" data-action="lookup-web-reservation" ${state.loadingSlots ? 'disabled' : ''}>
+          ${state.loadingSlots ? '確認中...' : '予約を確認する'}
+        </button>
+        <button type="button" class="text-btn" data-action="show-booking">新しく予約する</button>
+      </section>
+    `;
+  }
   return `
     <section class="booking-panel">
       <div class="section-title-row">

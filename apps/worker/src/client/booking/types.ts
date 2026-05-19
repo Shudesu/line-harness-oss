@@ -94,6 +94,12 @@ export interface BookingForm {
 }
 
 export interface BookingState {
+  entryMode: 'line' | 'web';
+  entryChannel: string;
+  entryRef: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
   screen: Screen;
   resourceId: string;
   menuId: string;
@@ -113,6 +119,8 @@ export interface BookingState {
   userId: string | null;
   sessionToken: string | null;
   sessionExpiresAt: number | null;
+  lookupReservationId: string;
+  lookupEmail: string;
   form: BookingForm;
   reservations: Reservation[];
   selectedReservation: Reservation | null;

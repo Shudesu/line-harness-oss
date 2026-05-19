@@ -33,6 +33,19 @@ export function createReservationSession(input: { idToken: string; displayName: 
   });
 }
 
+export function createGuestReservationSession(input: {
+  channel: string;
+  ref?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+}) {
+  return apiJson<{ token: string; expiresIn?: number; sessionType: 'guest' }>('/api/public/reservation-session/guest', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export function listResources() {
   return apiJson<Resource[]>('/api/public/reservation-resources');
 }
@@ -100,6 +113,7 @@ export function createReservation(input: {
   underThreeCount: number;
   customer: { name: string; phone: string; email: string | null };
   formData: { note: string | null };
+  metadata?: Record<string, unknown>;
 }) {
   return apiJson<Reservation>('/api/public/reservations', {
     method: 'POST',
@@ -114,6 +128,7 @@ export function createReservation(input: {
       underThreeCount: input.underThreeCount,
       customer: input.customer,
       formData: input.formData,
+      metadata: input.metadata ?? {},
     }),
   });
 }
@@ -129,6 +144,16 @@ export function issueReservationTokens(input: { reservationId: string; token: st
     method: 'POST',
     headers: { Authorization: `Bearer ${input.token}` },
     body: JSON.stringify({}),
+  });
+}
+
+export function lookupWebReservation(input: { reservationId: string; email: string }) {
+  return apiJson<ReservationAccessTokens & { reservation: Reservation }>('/api/public/reservations/lookup', {
+    method: 'POST',
+    body: JSON.stringify({
+      reservationId: input.reservationId,
+      email: input.email,
+    }),
   });
 }
 

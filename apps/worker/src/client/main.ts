@@ -54,6 +54,12 @@ function getPage(): string | null {
   return params.get('page');
 }
 
+function isWebBookingEntry(): boolean {
+  if (getPage() !== 'book') return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('mode') === 'web' || Boolean(params.get('channel'));
+}
+
 function getRedirectUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
   return params.get('redirect');
@@ -300,6 +306,11 @@ async function linkAndAddFlow() {
 async function main() {
   try {
     const page = getPage();
+    if (isWebBookingEntry()) {
+      const { initBooking } = await import('./booking.js');
+      await initBooking();
+      return;
+    }
     if (!LIFF_ID) {
       throw new Error('LIFF ID not found. Set ?liffId= in LIFF endpoint URL or VITE_LIFF_ID env.');
     }

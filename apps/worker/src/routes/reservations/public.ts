@@ -23,8 +23,9 @@ import {
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
 } from '../../services/reservation-google-calendar.js';
+import { sendWebReservationConfirmationEmail } from '../../services/reservation-email.js';
 import { notifyReservationToDiscord } from '../../services/discord-notifications.js';
-import { issueReservationSession, requireReservationSession } from './auth.js';
+import { issueGuestReservationSession, issueReservationSession, requireReservationSession } from './auth.js';
 import {
   jsonError,
   jsonOk,
@@ -55,6 +56,23 @@ publicReservations.post('/api/public/reservation-session', async (c) => {
     return jsonOk(c, result.data);
   } catch (err) {
     console.error('POST /api/public/reservation-session error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+publicReservations.post('/api/public/reservation-session/guest', async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+    const result = await issueGuestReservationSession(c, {
+      channel: body.channel,
+      ref: body.ref,
+      utmSource: body.utmSource,
+      utmMedium: body.utmMedium,
+      utmCampaign: body.utmCampaign,
+    });
+    return jsonOk(c, result.data);
+  } catch (err) {
+    console.error('POST /api/public/reservation-session/guest error:', err);
     return jsonError(c, 'internal_error', 500);
   }
 });
@@ -242,6 +260,23 @@ publicReservations.post('/api/public/reservations', async (c) => {
     const parsed = parseReservationCreateBody(json.value);
     if (!parsed.ok) return jsonError(c, parsed.error.code, parsed.error.status, parsed.error.message);
     const body = parsed.value;
+    const isGuestSession = session.sessionType === 'guest';
+    const customerEmail = body.customer?.email ?? null;
+    if (isGuestSession && (!customerEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail))) {
+      return jsonError(c, 'bad_request', 400, 'Web予約ではメールアドレスを入力してください。');
+    }
+    const metadata = {
+      ...body.metadata,
+      entry: {
+        ...(typeof body.metadata.entry === 'object' && body.metadata.entry !== null ? body.metadata.entry : {}),
+        sessionType: session.sessionType ?? 'line',
+        channel: session.entryChannel ?? (session.sessionType === 'guest' ? 'web' : 'line'),
+        ref: session.entryRef ?? null,
+        utmSource: session.utmSource ?? null,
+        utmMedium: session.utmMedium ?? null,
+        utmCampaign: session.utmCampaign ?? null,
+      },
+    };
 
     const result = await createReservationWithCapacityCheck(c.env.DB, {
       resourceId: body.resourceId,
@@ -258,8 +293,9 @@ publicReservations.post('/api/public/reservations', async (c) => {
       underThreeCount: body.underThreeCount ?? 0,
       customerName: body.customer?.name ?? null,
       customerPhone: body.customer?.phone ?? null,
-      customerEmail: body.customer?.email ?? null,
+      customerEmail,
       formData: JSON.stringify(body.formData ?? {}),
+      metadata: JSON.stringify(metadata),
       actorType: 'customer',
       actorId: session.friendId ?? null,
     });
@@ -274,6 +310,9 @@ publicReservations.post('/api/public/reservations', async (c) => {
     }
     c.executionCtx.waitUntil(syncReservationCreatedToGoogleCalendar(c.env.DB, result.reservation, c.env));
     c.executionCtx.waitUntil(notifyReservationToDiscord(c.env.DB, result.reservation, c.env, 'created'));
+    if (isGuestSession) {
+      c.executionCtx.waitUntil(sendWebReservationConfirmationEmail(result.reservation, c.env));
+    }
 
     const secret = await reservationTokenSecret(c.env);
     const detailToken = await signReservationToken(
@@ -378,6 +417,44 @@ publicReservations.post('/api/public/reservations/:id/tokens', async (c) => {
     });
   } catch (err) {
     console.error('POST /api/public/reservations/:id/tokens error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+publicReservations.post('/api/public/reservations/lookup', async (c) => {
+  try {
+    const json = await readJsonObject(c);
+    if (!json.ok) return jsonError(c, json.error.code, json.error.status, json.error.message);
+    const reservationId = typeof json.value.reservationId === 'string' ? json.value.reservationId.trim() : '';
+    const email = typeof json.value.email === 'string' ? json.value.email.trim().toLowerCase() : '';
+    if (!reservationId || !email) return jsonError(c, 'bad_request', 400, 'reservationId and email are required');
+
+    const reservation = await getReservationById(c.env.DB, reservationId);
+    if (!reservation) return jsonError(c, 'not_found', 404, 'Reservation not found');
+    const reservationEmail = reservation.customer_email_snapshot?.trim().toLowerCase();
+    if (!reservationEmail || reservationEmail !== email) return jsonError(c, 'forbidden', 403);
+
+    const expiresIn = 60 * 60 * 24;
+    const secret = await reservationTokenSecret(c.env);
+    const commonPayload = {
+      reservationId: reservation.id,
+      sessionType: 'guest' as const,
+      exp: secondsFromNow(expiresIn),
+    };
+    const detailToken = await signReservationToken({ ...commonPayload, scope: 'reservation:read' }, secret);
+    const cancelToken = reservation.status === 'pending' || reservation.status === 'confirmed'
+      ? await signReservationToken({ ...commonPayload, scope: 'reservation:cancel' }, secret)
+      : undefined;
+
+    return jsonOk(c, {
+      reservation: toReservationResponse(reservation),
+      reservationId: reservation.id,
+      detailToken,
+      cancelToken,
+      expiresIn,
+    });
+  } catch (err) {
+    console.error('POST /api/public/reservations/lookup error:', err);
     return jsonError(c, 'internal_error', 500);
   }
 });

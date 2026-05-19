@@ -83,6 +83,7 @@ export async function issueReservationSession(
   const token = await signReservationToken(
     {
       scope: 'reservations:read',
+      sessionType: 'line',
       lineUserId: verified.sub,
       friendId: friend.id,
       userId,
@@ -101,6 +102,46 @@ export async function issueReservationSession(
       userId,
       lineAccountId: friend.line_account_id,
       lineUserId: verified.sub,
+    },
+  };
+}
+
+function normalizeEntryValue(value: unknown, fallback: string | null = null): string | null {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 100) : fallback;
+}
+
+export async function issueGuestReservationSession(
+  c: Context<Env>,
+  input: {
+    channel?: unknown;
+    ref?: unknown;
+    utmSource?: unknown;
+    utmMedium?: unknown;
+    utmCampaign?: unknown;
+  },
+) {
+  const token = await signReservationToken(
+    {
+      scope: 'reservations:read',
+      sessionType: 'guest',
+      entryChannel: normalizeEntryValue(input.channel, 'web'),
+      entryRef: normalizeEntryValue(input.ref),
+      utmSource: normalizeEntryValue(input.utmSource),
+      utmMedium: normalizeEntryValue(input.utmMedium),
+      utmCampaign: normalizeEntryValue(input.utmCampaign),
+      exp: secondsFromNow(60 * 60),
+    },
+    await reservationTokenSecret(c.env),
+  );
+
+  return {
+    ok: true as const,
+    data: {
+      token,
+      expiresIn: 60 * 60,
+      sessionType: 'guest',
     },
   };
 }

@@ -216,6 +216,10 @@ function nullableNumber(value: FormDataEntryValue | null): number | null {
   return numberOrUndefined(value) ?? null
 }
 
+function workerBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787').trim().replace(/\/+$/, '')
+}
+
 export default function ReservationsPage() {
   const [mode, setMode] = useState<Mode>('overview')
   const [viewMode, setViewMode] = useState<ViewMode>('week')
@@ -1198,6 +1202,13 @@ function SettingsPanel(props: {
         </div>
       </SettingsCard>
 
+      <ReservationEntryUrlCard
+        resources={activeResources}
+        menus={activeMenus}
+        resourceId={props.resourceId}
+        menuId={props.menuId}
+      />
+
       <SettingsCard title="Slotの追加・削除">
         {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
         {!props.menuId && props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にMenuを選択してください。</p>}
@@ -1405,6 +1416,101 @@ function SettingsPanel(props: {
         </div>
       </details>
     </div>
+  )
+}
+
+function ReservationEntryUrlCard({
+  resources,
+  menus,
+  resourceId,
+  menuId,
+}: {
+  resources: ReservationResource[]
+  menus: ReservationMenu[]
+  resourceId: string
+  menuId: string
+}) {
+  const [channel, setChannel] = useState('google_map')
+  const [ref, setRef] = useState('gmaps_2026')
+  const [utmSource, setUtmSource] = useState('')
+  const [utmMedium, setUtmMedium] = useState('')
+  const [utmCampaign, setUtmCampaign] = useState('')
+  const [copied, setCopied] = useState(false)
+  const selectedResource = resources.find((resource) => resource.id === resourceId)
+  const selectedMenu = menus.find((menu) => menu.id === menuId)
+  const params = new URLSearchParams({
+    page: 'book',
+    mode: 'web',
+    channel: channel || 'web',
+  })
+  if (resourceId) params.set('resourceId', resourceId)
+  if (menuId) params.set('menuId', menuId)
+  if (ref.trim()) params.set('ref', ref.trim())
+  if (utmSource.trim()) params.set('utm_source', utmSource.trim())
+  if (utmMedium.trim()) params.set('utm_medium', utmMedium.trim())
+  if (utmCampaign.trim()) params.set('utm_campaign', utmCampaign.trim())
+  const url = `${workerBaseUrl()}/?${params.toString()}`
+
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+      window.prompt('このURLをコピーしてください', url)
+    }
+  }
+
+  return (
+    <SettingsCard title="予約導線URL">
+      <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            Google Map、Instagram、公式サイト、QRコード用のWeb予約URLを作成します。予約時の流入元は予約metadataに保存されます。
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="媒体">
+              <select value={channel} onChange={(event) => setChannel(event.target.value)} className="input">
+                <option value="google_map">Google Map</option>
+                <option value="instagram">Instagram</option>
+                <option value="website">公式サイト</option>
+                <option value="qr">QRコード</option>
+                <option value="flyer">チラシ</option>
+                <option value="web">Web</option>
+              </select>
+            </Field>
+            <Field label="ref">
+              <input value={ref} onChange={(event) => setRef(event.target.value)} className="input" placeholder="gmaps_2026" />
+            </Field>
+            <Field label="utm_source">
+              <input value={utmSource} onChange={(event) => setUtmSource(event.target.value)} className="input" placeholder="google" />
+            </Field>
+            <Field label="utm_medium">
+              <input value={utmMedium} onChange={(event) => setUtmMedium(event.target.value)} className="input" placeholder="profile" />
+            </Field>
+            <Field label="utm_campaign">
+              <input value={utmCampaign} onChange={(event) => setUtmCampaign(event.target.value)} className="input" placeholder="blueberry_2026" />
+            </Field>
+          </div>
+        </div>
+        <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+          <p className="text-xs font-bold text-blue-700">選択中</p>
+          <p className="mt-1 text-sm font-bold text-blue-950">{selectedResource?.name ?? 'Resource未選択'} / {selectedMenu?.name ?? 'Menu未選択'}</p>
+          <div className="mt-3 rounded-lg bg-white p-3 text-xs leading-6 text-gray-700 break-all">{url}</div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={copyUrl} disabled={!resourceId} className="btn-primary disabled:opacity-50">
+              {copied ? 'コピーしました' : 'URLコピー'}
+            </button>
+            <a href={url} target="_blank" rel="noreferrer" className={`btn-secondary ${!resourceId ? 'pointer-events-none opacity-50' : ''}`}>
+              開く
+            </a>
+          </div>
+          {!resourceId && <p className="mt-2 text-xs text-amber-700">先にResourceを選択してください。</p>}
+          {!menuId && resourceId && <p className="mt-2 text-xs text-gray-500">Menu未指定でも開けます。ユーザーが画面上でMenuを選択します。</p>}
+        </div>
+      </div>
+    </SettingsCard>
   )
 }
 
