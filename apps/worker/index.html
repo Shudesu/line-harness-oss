@@ -272,114 +272,206 @@
       font-weight: 800;
       padding: 7px 10px;
     }
+    .cafe-screen {
+      --cafe-blue: #272f72;
+      --cafe-blue-2: #384799;
+      --cafe-ink: #1c2440;
+      --cafe-paper: #fbfaf6;
+      --cafe-line: rgba(39, 47, 114, .16);
+      color: var(--cafe-ink);
+    }
+    .cafe-screen .eyebrow {
+      color: var(--cafe-blue) !important;
+    }
     .cafe-hero {
+      position: relative;
       overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 20px;
-      background: var(--paper);
-      box-shadow: var(--shadow);
-      margin-bottom: 14px;
+      min-height: 520px;
+      margin: -2px -2px 20px;
+      background: var(--cafe-blue);
+    }
+    .cafe-hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(18, 22, 57, .06) 0%, rgba(18, 22, 57, .18) 42%, rgba(18, 22, 57, .82) 100%);
     }
     .cafe-hero img {
+      position: absolute;
+      inset: 0;
       display: block;
       width: 100%;
-      height: 220px;
+      height: 100%;
       object-fit: cover;
+      object-position: center 42%;
     }
     .cafe-hero-copy {
-      padding: 16px;
+      position: absolute;
+      z-index: 1;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 28px 18px 22px;
       text-align: left;
+      color: #fff;
     }
     .cafe-hero-copy h2 {
-      color: var(--sky-700);
-      font-size: 23px;
-      line-height: 1.3;
-      margin-bottom: 8px;
-      letter-spacing: .04em;
+      color: #fff;
+      font-size: 30px;
+      line-height: 1.24;
+      margin-bottom: 10px;
+      letter-spacing: .06em;
     }
     .cafe-hero-copy p {
-      color: var(--muted);
+      color: rgba(255, 255, 255, .9);
       font-size: 13px;
-      line-height: 1.65;
+      line-height: 1.8;
     }
     .cafe-hero-btn {
-      margin-top: 14px;
-    }
-    .cafe-intro {
-      background: var(--paper);
-    }
-    .cafe-menu-grid {
-      display: grid;
-      gap: 12px;
-    }
-    .cafe-menu-card {
-      display: grid;
-      grid-template-columns: 96px 1fr;
-      gap: 12px;
-      align-items: start;
-      border: 1px solid var(--line);
-      border-radius: 14px;
+      margin-top: 18px;
       background: #fff;
-      padding: 10px;
+      color: var(--cafe-blue);
+      box-shadow: none;
+    }
+    .cafe-section {
+      margin-bottom: 28px;
+      padding: 0 2px;
       text-align: left;
     }
-    .cafe-menu-card img,
-    .cafe-seat-card img {
-      width: 100%;
-      object-fit: cover;
-      background: var(--sky-100);
+    .cafe-section h2 {
+      color: var(--cafe-blue);
+      font-size: 20px;
+      letter-spacing: .08em;
+      margin-bottom: 8px;
+    }
+    .cafe-section p {
+      color: #5b6177;
+      font-size: 13px;
+      line-height: 1.85;
+    }
+    .cafe-menu-carousel {
+      display: flex;
+      gap: 14px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      padding: 6px 2px 16px;
+      margin-right: -16px;
+    }
+    .cafe-menu-card {
+      flex: 0 0 78%;
+      scroll-snap-align: start;
+      border: none;
+      background: transparent;
+      padding: 0;
+      text-align: left;
+      color: inherit;
+      font-family: inherit;
+      cursor: pointer;
     }
     .cafe-menu-card img {
-      height: 86px;
-      border-radius: 10px;
+      display: block;
+      width: 100%;
+      height: 230px;
+      object-fit: cover;
+      border-radius: 0;
+      background: var(--sky-100);
     }
-    .cafe-menu-title {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      gap: 6px;
-      margin-bottom: 4px;
-    }
-    .cafe-menu-title strong {
-      color: var(--ink);
-      font-size: 13px;
+    .cafe-menu-card strong {
+      display: block;
+      margin-top: 12px;
+      color: var(--cafe-blue);
+      font-size: 16px;
       line-height: 1.35;
+      letter-spacing: .04em;
     }
-    .cafe-menu-title span {
-      color: var(--sky-700);
-      font-size: 12px;
+    .cafe-menu-card span {
+      display: inline-block;
+      margin-top: 4px;
+      color: var(--cafe-blue-2);
+      font-size: 13px;
       font-weight: 900;
     }
     .cafe-menu-card p {
-      font-size: 11px;
-      line-height: 1.55;
-      color: var(--muted);
+      margin-top: 8px;
+      color: #5b6177;
+      font-size: 12px;
+      line-height: 1.65;
     }
     .cafe-seat-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      margin-top: 12px;
+      gap: 18px;
+      margin-top: 14px;
     }
     .cafe-seat-card {
-      overflow: hidden;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: #fff;
-      text-align: center;
+      display: block;
+      background: transparent;
+      text-align: left;
     }
     .cafe-seat-card img {
-      height: 82px;
       display: block;
+      width: 100%;
+      height: 260px;
+      object-fit: cover;
+      background: var(--sky-100);
     }
     .cafe-seat-card strong {
       display: block;
-      padding: 8px 4px;
-      color: var(--sky-700);
-      font-size: 11px;
+      padding: 10px 0 0;
+      color: var(--cafe-blue);
+      font-size: 14px;
+      letter-spacing: .04em;
     }
     .cafe-cta {
+      margin-top: 8px;
+      padding-bottom: 20px;
       text-align: center;
+    }
+    .cafe-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: flex-end;
+      background: rgba(10, 12, 32, .62);
+      backdrop-filter: blur(4px);
+    }
+    .cafe-modal {
+      width: 100%;
+      max-height: 88vh;
+      overflow: auto;
+      background: var(--cafe-paper);
+      color: var(--cafe-ink);
+    }
+    .cafe-modal img {
+      display: block;
+      width: 100%;
+      height: 260px;
+      object-fit: cover;
+    }
+    .cafe-modal-body {
+      padding: 18px;
+      text-align: left;
+    }
+    .cafe-modal-body h2 {
+      color: var(--cafe-blue);
+      font-size: 23px;
+      letter-spacing: .06em;
+      line-height: 1.3;
+    }
+    .cafe-modal-body p {
+      color: #5b6177;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+    .cafe-modal-price {
+      color: var(--cafe-blue) !important;
+      font-weight: 900;
+      margin: 8px 0 12px;
+    }
+    .cafe-modal-close {
+      margin-top: 18px;
+      background: var(--cafe-blue);
+      box-shadow: none;
     }
     .section-title-row {
       display: flex;

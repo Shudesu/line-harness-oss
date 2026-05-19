@@ -136,12 +136,12 @@ export function renderScreen(): string {
 
 function renderCafe(): string {
   const menuItems = [
-    { name: 'ブルーベリーピザ', price: '1,500円', image: '/aonisai/cafe/blueberry-pizza.webp', text: '水牛モッツァレラチーズと無糖ブルーベリーソースの組み合わせ。はちみつをかけて楽しむ、アオニサイカフェらしいデザートピザです。' },
-    { name: 'マルゲリータ', price: '1,400円', image: '/aonisai/cafe/margherita.webp', text: '水牛モッツァレラチーズとトマトの味を活かした、石窯焼きの定番ピザです。' },
-    { name: '近郊農家さんのサラダピザ', price: '1,600円', image: '/aonisai/cafe/salad-pizza.webp', text: '近郊農家さんの野菜を使った、さっぱり食べられるこだわりピザです。' },
-    { name: 'ブルーベリーアイス', price: '700円', image: '/aonisai/cafe/blueberry-ice.webp', text: 'オリジナル無糖ブルーベリーソースとバニラアイスを合わせた、摘み取り後にも食べやすいスイーツです。' },
-    { name: 'ブルーベリーフィズ', price: '750円', image: '/aonisai/cafe/blueberry-fizz.webp', text: 'ブルーベリーづくしの炭酸ドリンク。アルコールは入っていません。' },
-    { name: 'ブルーベリースムージー', price: '800円', image: '/aonisai/cafe/blueberry-smoothie.webp', text: 'ブルーベリーとヨーグルトを使った、ひんやり濃厚なスムージーです。' },
+    { id: 'blueberry-pizza', name: 'ブルーベリーピザ', price: '1,500円', image: '/aonisai/cafe/blueberry-pizza.webp', lead: '甘くないブルーベリーソースとチーズの看板ピザ。', text: '水牛モッツァレラチーズと無糖ブルーベリーソースの組み合わせ。はちみつをかけて楽しむ、アオニサイカフェらしいデザートピザです。' },
+    { id: 'margherita', name: 'マルゲリータ', price: '1,400円', image: '/aonisai/cafe/margherita.webp', lead: '石窯で焼く、王道の一枚。', text: '水牛モッツァレラチーズとトマトの味を活かした、石窯焼きの定番ピザです。' },
+    { id: 'salad-pizza', name: '近郊農家さんのサラダピザ', price: '1,600円', image: '/aonisai/cafe/salad-pizza.webp', lead: '野菜の香りまで楽しめる軽やかなピザ。', text: '近郊農家さんの野菜を使った、さっぱり食べられるこだわりピザです。' },
+    { id: 'blueberry-ice', name: 'ブルーベリーアイス', price: '700円', image: '/aonisai/cafe/blueberry-ice.webp', lead: '摘み取り後に食べたい冷たいスイーツ。', text: 'オリジナル無糖ブルーベリーソースとバニラアイスを合わせた、摘み取り後にも食べやすいスイーツです。' },
+    { id: 'blueberry-fizz', name: 'ブルーベリーフィズ', price: '750円', image: '/aonisai/cafe/blueberry-fizz.webp', lead: '爽やかなブルーベリー炭酸。', text: 'ブルーベリーづくしの炭酸ドリンク。アルコールは入っていません。' },
+    { id: 'blueberry-smoothie', name: 'ブルーベリースムージー', price: '800円', image: '/aonisai/cafe/blueberry-smoothie.webp', lead: 'ヨーグルトと合わせた濃厚スムージー。', text: 'ブルーベリーとヨーグルトを使った、ひんやり濃厚なスムージーです。' },
   ];
   const seats = [
     { name: '店内席', image: '/aonisai/cafe/cafe-interior.webp' },
@@ -149,43 +149,40 @@ function renderCafe(): string {
     { name: '屋外ソファー席', image: '/aonisai/cafe/cafe-sofa.webp' },
   ];
   return `
-    <section class="cafe-hero">
-      <img src="/aonisai/cafe/cafe-hero.webp" alt="アオニサイカフェ" loading="lazy">
-      <div class="cafe-hero-copy">
+    <section class="cafe-screen">
+      <section class="cafe-hero">
+        <img src="/aonisai/cafe/cafe-hero.webp" alt="アオニサイカフェ" loading="lazy">
+        <div class="cafe-hero-copy">
         <p class="eyebrow">AONISAI CAFE</p>
         <h2>ブルーベリーと石窯ピザのお店</h2>
         <p>ブルーベリー狩りと一緒に、石窯ピザやブルーベリースイーツを楽しめる併設カフェです。</p>
         <button type="button" class="book-btn cafe-hero-btn" data-action="show-booking">ブルーベリー狩りを予約する</button>
-      </div>
-    </section>
-    <section class="booking-panel cafe-intro">
+        </div>
+      </section>
+    <section class="cafe-section cafe-intro">
       <h2>アオニサイカフェ</h2>
       <p>石窯で焼いたブルーベリーピザや、ブルーベリーを使ったスイーツをご用意しています。隠れ家的な場所で、ゆったりした時間をお過ごしください。</p>
       <p class="policy-note">※カフェはブルーベリーシーズンの6月より営業再開予定です。お越しの際はGoogle Mapで「アオニサイファーム」と検索してください。</p>
     </section>
-    <section class="booking-panel">
+    <section class="cafe-section">
       <div class="section-title-row">
         <div>
           <h2>おすすめメニュー</h2>
-          <p>価格は税込です。内容は変更になる場合があります。</p>
+          <p>横にスライドして、気になるメニューをタップしてください。</p>
         </div>
       </div>
-      <div class="cafe-menu-grid">
+      <div class="cafe-menu-carousel">
         ${menuItems.map((item) => `
-          <article class="cafe-menu-card">
+          <button type="button" class="cafe-menu-card" data-action="select-cafe-menu" data-menu-id="${escapeHtml(item.id)}">
             <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}" loading="lazy">
-            <div>
-              <div class="cafe-menu-title">
-                <strong>${escapeHtml(item.name)}</strong>
-                <span>${escapeHtml(item.price)}</span>
-              </div>
-              <p>${escapeHtml(item.text)}</p>
-            </div>
-          </article>
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.price)}</span>
+            <p>${escapeHtml(item.lead)}</p>
+          </button>
         `).join('')}
       </div>
     </section>
-    <section class="booking-panel">
+    <section class="cafe-section">
       <h2>席のご案内</h2>
       <p>店内席・テラス席・屋外ソファー席をご用意しています。ブルーベリー狩りの前後に、家族や友人とゆっくり過ごせます。</p>
       <div class="cafe-seat-grid">
@@ -197,11 +194,32 @@ function renderCafe(): string {
         `).join('')}
       </div>
     </section>
-    <section class="booking-panel cafe-cta">
+    <section class="cafe-section cafe-cta">
       <h2>ブルーベリー体験と一緒に</h2>
       <p>体験予約を先に済ませておくと、当日の予定が立てやすくなります。</p>
       <button type="button" class="book-btn" data-action="show-booking">予約画面へ戻る</button>
     </section>
+    ${renderCafeMenuModal(menuItems)}
+    </section>
+  `;
+}
+
+function renderCafeMenuModal(menuItems: Array<{ id: string; name: string; price: string; image: string; lead: string; text: string }>): string {
+  const selected = menuItems.find((item) => item.id === state.selectedCafeMenu);
+  if (!selected) return '';
+  return `
+    <div class="cafe-modal-backdrop" data-action="close-cafe-menu">
+      <article class="cafe-modal" role="dialog" aria-modal="true">
+        <img src="${escapeHtml(selected.image)}" alt="${escapeHtml(selected.name)}">
+        <div class="cafe-modal-body">
+          <p class="eyebrow">AONISAI CAFE MENU</p>
+          <h2>${escapeHtml(selected.name)}</h2>
+          <p class="cafe-modal-price">${escapeHtml(selected.price)}</p>
+          <p>${escapeHtml(selected.text)}</p>
+          <button type="button" class="book-btn cafe-modal-close" data-action="close-cafe-menu">閉じる</button>
+        </div>
+      </article>
+    </div>
   `;
 }
 

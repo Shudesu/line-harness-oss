@@ -29,6 +29,7 @@ export const state: BookingState = {
   viewMode: 'month',
   selectedDate: null,
   slotModalOpen: false,
+  selectedCafeMenu: null,
   selectedSlot: null,
   slotsByDate: {},
   availabilityByDate: {},

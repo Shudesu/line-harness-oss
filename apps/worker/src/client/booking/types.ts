@@ -111,6 +111,7 @@ export interface BookingState {
   viewMode: ViewMode;
   selectedDate: string | null;
   slotModalOpen: boolean;
+  selectedCafeMenu: string | null;
   selectedSlot: Slot | null;
   slotsByDate: Record<string, Slot[]>;
   availabilityByDate: Record<string, AvailabilitySummary>;

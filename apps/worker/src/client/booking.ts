@@ -315,6 +315,16 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     render();
     return;
   }
+  if (action === 'select-cafe-menu') {
+    state.selectedCafeMenu = element.dataset.menuId ?? null;
+    render();
+    return;
+  }
+  if (action === 'close-cafe-menu') {
+    state.selectedCafeMenu = null;
+    render();
+    return;
+  }
   if (action === 'show-mine' || action === 'reload-mine') {
     state.screen = 'mine';
     if (!isLineEntry()) {
