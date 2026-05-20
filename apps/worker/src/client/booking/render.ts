@@ -15,6 +15,12 @@ function selectedSlotRemaining(): number | null {
   return state.selectedSlot ? lineRemaining(state.selectedSlot) : null;
 }
 
+function remainingLabel(slot: Slot): string {
+  const remaining = lineRemaining(slot);
+  if (!slot.available || remaining <= 0) return '満席';
+  return remaining <= 2 ? `残り${remaining}名` : '予約可';
+}
+
 function requiredBadge(): string {
   return '<span class="required-badge">必須</span>';
 }
@@ -32,7 +38,7 @@ function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; 
 
 function slotMark(slot: Slot): { mark: string; className: string; label: string } {
   const remaining = lineRemaining(slot);
-  if (slot.available && remaining >= 3) return { mark: '◎', className: 'many', label: `残り${remaining}名` };
+  if (slot.available && remaining >= 3) return { mark: '◎', className: 'many', label: '予約可' };
   if (slot.available && remaining >= 1) return { mark: '△', className: 'few', label: `残り${remaining}名` };
   return { mark: '×', className: 'full', label: '満席' };
 }
@@ -125,6 +131,7 @@ export function renderHeader(): string {
 
 export function renderScreen(): string {
   if (state.screen === 'cafe') return renderCafe();
+  if (state.screen === 'claim') return renderClaim();
   if (state.screen === 'confirm') return renderConfirm();
   if (state.screen === 'success') return renderSuccess();
   if (state.screen === 'mine') return renderMine();
@@ -132,6 +139,18 @@ export function renderScreen(): string {
   if (state.screen === 'cancel-confirm') return renderCancelConfirm();
   if (state.screen === 'cancelled') return renderCancelled();
   return renderBooking();
+}
+
+function renderClaim(): string {
+  return `
+    <section class="booking-panel">
+      <div class="slots-loading">
+        <div class="loading-spinner"></div>
+        <p>LINE連携を確認しています...</p>
+      </div>
+      ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
+    </section>
+  `;
 }
 
 function renderCafe(): string {
@@ -316,11 +335,10 @@ function renderPeopleStepper(field: 'adultCount' | 'childCount' | 'infantCount' 
 
 function renderPeopleSection(): string {
   const menu = selectedMenu();
-  const remaining = selectedSlotRemaining();
   return `
     <section class="booking-panel">
       <h2>人数を入力 ${requiredBadge()}</h2>
-      <p class="muted">予約枠を消費する人数: ${escapeHtml(capacityCountLabels())}${remaining !== null ? ` / この時間の空き枠 ${remaining}名` : ''}</p>
+      <p class="muted">予約枠を消費する人数: ${escapeHtml(capacityCountLabels())}${state.selectedSlot ? ` / ${escapeHtml(remainingLabel(state.selectedSlot))}` : ''}</p>
       <div class="people-stepper-grid">
         ${renderPeopleStepper('adultCount', '大人', state.form.adultCount)}
         ${renderPeopleStepper('childCount', '小学生', state.form.childCount)}
@@ -494,7 +512,7 @@ function renderReservationInputModal(slot: Slot): string {
         <div class="modal-selected-slot">
           <span>選択中の時間枠</span>
           <strong>${formatDateJa(slot.date)} ${formatTime(slot.startAt)}-${formatTime(slot.endAt)}</strong>
-          <small>空き枠 ${lineRemaining(slot)}名 / 枠消費対象: ${escapeHtml(capacityCountLabels())}</small>
+          <small>${escapeHtml(remainingLabel(slot))} / 枠消費対象: ${escapeHtml(capacityCountLabels())}</small>
         </div>
         ${renderPeopleSection()}
         ${renderInputForm()}
@@ -532,7 +550,7 @@ function renderSelectedSlotSummary(): string {
       </div>
       <div class="confirm-row">
         <span class="confirm-label">予約枠</span>
-        <span class="confirm-value">残り${lineRemaining(slot)}名</span>
+        <span class="confirm-value">${escapeHtml(remainingLabel(slot))}</span>
       </div>
     </section>
   `;

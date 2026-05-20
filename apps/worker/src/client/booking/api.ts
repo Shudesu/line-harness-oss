@@ -147,6 +147,22 @@ export function issueReservationTokens(input: { reservationId: string; token: st
   });
 }
 
+export function getReservationByDetailToken(input: { reservationId: string; detailToken: string }) {
+  const query = new URLSearchParams({ token: input.detailToken });
+  return apiJson<Reservation>(`/api/public/reservations/${encodeURIComponent(input.reservationId)}?${query}`);
+}
+
+export function claimReservation(input: { reservationId: string; claimToken: string; sessionToken: string }) {
+  return apiJson<{ reservation: Reservation; changed: boolean }>(
+    `/api/public/reservations/${encodeURIComponent(input.reservationId)}/claim`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${input.sessionToken}` },
+      body: JSON.stringify({ claimToken: input.claimToken }),
+    },
+  );
+}
+
 export function lookupWebReservation(input: { reservationId: string; email: string }) {
   return apiJson<ReservationAccessTokens & { reservation: Reservation }>('/api/public/reservations/lookup', {
     method: 'POST',

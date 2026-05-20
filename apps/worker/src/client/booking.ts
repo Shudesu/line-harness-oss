@@ -7,9 +7,11 @@
 
 import {
   cancelReservation,
+  claimReservation,
   createGuestReservationSession,
   createReservation,
   createReservationSession,
+  getReservationByDetailToken,
   issueReservationTokens,
   listAvailabilitySummary,
   listMyReservations,
@@ -829,6 +831,65 @@ async function lookupWebReservationByEmail(): Promise<void> {
   }
 }
 
+async function loadReservationFromUrlToken(): Promise<void> {
+  const reservationId = state.lookupReservationId.trim();
+  const detailToken = state.urlDetailToken || state.urlCancelToken;
+  if (!reservationId || !detailToken) {
+    state.notice = '予約確認URLが正しくありません。';
+    state.screen = 'mine';
+    render();
+    return;
+  }
+  state.loadingSlots = true;
+  render();
+  try {
+    const reservation = await getReservationByDetailToken({ reservationId, detailToken });
+    storeTokensForReservation(reservation.id, {
+      detailToken: state.urlDetailToken ?? reservation.detailToken,
+      cancelToken: state.urlCancelToken ?? reservation.cancelToken,
+    });
+    state.selectedReservation = reservation;
+    state.reservations = [reservation];
+    state.screen = state.urlCancelToken ? 'cancel-confirm' : 'detail';
+  } catch (err) {
+    state.notice = err instanceof Error ? err.message : '予約を確認できませんでした。';
+    state.screen = 'mine';
+  } finally {
+    state.loadingSlots = false;
+    render();
+  }
+}
+
+async function claimReservationFromUrl(): Promise<void> {
+  const reservationId = state.lookupReservationId.trim();
+  const claimToken = state.claimToken;
+  if (!reservationId || !claimToken) {
+    state.notice = 'LINE連携URLが正しくありません。';
+    state.screen = 'mine';
+    render();
+    return;
+  }
+  state.loadingSlots = true;
+  render();
+  try {
+    const result = await claimReservation({
+      reservationId,
+      claimToken,
+      sessionToken: await ensureReservationSession(),
+    });
+    state.selectedReservation = result.reservation;
+    state.reservations = [result.reservation];
+    state.notice = result.changed ? 'LINEでこの予約を確認できるようにしました。' : 'この予約はすでにLINE連携済みです。';
+    state.screen = 'detail';
+  } catch (err) {
+    state.notice = err instanceof Error ? err.message : 'LINE連携に失敗しました。';
+    state.screen = 'mine';
+  } finally {
+    state.loadingSlots = false;
+    render();
+  }
+}
+
 async function submitCancel(): Promise<void> {
   const reservation = state.selectedReservation;
   if (!reservation || state.submitting) return;
@@ -885,7 +946,11 @@ export async function initBooking(): Promise<void> {
 
     state.loading = false;
     render();
-    if (state.screen === 'mine') {
+    if (state.screen === 'claim') {
+      await claimReservationFromUrl();
+    } else if (state.urlDetailToken || state.urlCancelToken) {
+      await loadReservationFromUrlToken();
+    } else if (state.screen === 'mine') {
       if (isLineEntry()) await loadMine();
     } else {
       await loadVisibleAvailability();

@@ -1355,6 +1355,49 @@ export async function updateReservationStatus(
   return { ok: false, reason: 'invalid_state_transition' };
 }
 
+export type ClaimReservationResult =
+  | { ok: true; reservation: Reservation; changed: boolean }
+  | { ok: false; reason: 'not_found' | 'already_claimed' };
+
+export async function claimReservationForUser(
+  db: D1Database,
+  id: string,
+  input: { userId: string; friendId: string; lineAccountId?: string | null },
+): Promise<ClaimReservationResult> {
+  const reservation = await getReservationById(db, id);
+  if (!reservation) return { ok: false, reason: 'not_found' };
+
+  const alreadySameUser = reservation.user_id === input.userId || reservation.friend_id === input.friendId;
+  const alreadyOtherUser =
+    (reservation.user_id && reservation.user_id !== input.userId) ||
+    (reservation.friend_id && reservation.friend_id !== input.friendId);
+
+  if (alreadyOtherUser && !alreadySameUser) return { ok: false, reason: 'already_claimed' };
+  if (alreadySameUser && reservation.user_id === input.userId && reservation.friend_id === input.friendId) {
+    return { ok: true, reservation, changed: false };
+  }
+
+  await db
+    .prepare(
+      `UPDATE reservations
+       SET user_id = ?,
+           friend_id = ?,
+           line_account_id = COALESCE(line_account_id, ?),
+           updated_at = ?
+       WHERE id = ?`,
+    )
+    .bind(input.userId, input.friendId, input.lineAccountId ?? null, jstNow(), id)
+    .run();
+
+  const updated = (await getReservationById(db, id))!;
+  await recomputeReservationCustomerProfileStatus(db, input.userId, updated.source);
+  await recomputeReservationSystemTagsForReservation(db, updated);
+  await recordReservationUserEventBestEffort(db, updated, 'reservation.claimed', 'Web予約LINE連携', {
+    friendId: input.friendId,
+  });
+  return { ok: true, reservation: updated, changed: true };
+}
+
 async function recordReservationUserEventBestEffort(
   db: D1Database,
   reservation: Reservation,

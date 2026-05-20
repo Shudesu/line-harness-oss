@@ -1,4 +1,4 @@
-export type Screen = 'booking' | 'cafe' | 'confirm' | 'success' | 'mine' | 'detail' | 'cancel-confirm' | 'cancelled';
+export type Screen = 'booking' | 'cafe' | 'confirm' | 'success' | 'mine' | 'detail' | 'cancel-confirm' | 'cancelled' | 'claim';
 export type ViewMode = 'week' | 'month';
 
 export interface Slot {
@@ -122,6 +122,9 @@ export interface BookingState {
   sessionExpiresAt: number | null;
   lookupReservationId: string;
   lookupEmail: string;
+  urlDetailToken: string | null;
+  urlCancelToken: string | null;
+  claimToken: string | null;
   form: BookingForm;
   reservations: Reservation[];
   selectedReservation: Reservation | null;

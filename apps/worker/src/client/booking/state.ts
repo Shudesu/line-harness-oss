@@ -4,7 +4,16 @@ import type { BookingState } from './types.js';
 const params = new URLSearchParams(window.location.search);
 const INITIAL_RESOURCE_ID = params.get('resourceId') || import.meta.env?.VITE_RESERVATION_RESOURCE_ID || '';
 const INITIAL_MENU_ID = params.get('menuId') || import.meta.env?.VITE_RESERVATION_MENU_ID || '';
-const INITIAL_SCREEN = params.get('screen') === 'mine' || params.get('mode') === 'mine' ? 'mine' : 'booking';
+const screenParam = params.get('screen');
+const INITIAL_SCREEN = screenParam === 'mine' || params.get('mode') === 'mine'
+  ? 'mine'
+  : screenParam === 'detail'
+    ? 'detail'
+    : screenParam === 'cancel'
+      ? 'cancel-confirm'
+      : screenParam === 'claim'
+        ? 'claim'
+        : 'booking';
 const ENTRY_MODE = params.get('mode') === 'web' || Boolean(params.get('channel')) ? 'web' : 'line';
 const today = new Date();
 const initialCalendarMonth = today.getMonth() < 5 ? new Date(today.getFullYear(), 5, 1) : today;
@@ -40,6 +49,9 @@ export const state: BookingState = {
   sessionExpiresAt: null,
   lookupReservationId: params.get('reservationId') || '',
   lookupEmail: params.get('email') || '',
+  urlDetailToken: INITIAL_SCREEN === 'detail' ? params.get('token') : null,
+  urlCancelToken: INITIAL_SCREEN === 'cancel-confirm' ? params.get('token') : null,
+  claimToken: params.get('claimToken') || null,
   form: {
     adultCount: 1,
     childCount: 0,

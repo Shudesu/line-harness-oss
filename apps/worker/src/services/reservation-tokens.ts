@@ -1,6 +1,6 @@
 import { resolveBindingValue, type SecretLike } from './bindings.js';
 
-export type ReservationTokenScope = 'reservations:read' | 'reservation:read' | 'reservation:cancel';
+export type ReservationTokenScope = 'reservations:read' | 'reservation:read' | 'reservation:cancel' | 'reservation:claim';
 
 export interface ReservationTokenPayload {
   scope: ReservationTokenScope;

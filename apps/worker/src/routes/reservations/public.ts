@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import {
+  claimReservationForUser,
   createReservationWithCapacityCheck,
   calculateReservationPeople,
   getReservationById,
@@ -308,12 +309,6 @@ publicReservations.post('/api/public/reservations', async (c) => {
         result.reason,
       );
     }
-    c.executionCtx.waitUntil(syncReservationCreatedToGoogleCalendar(c.env.DB, result.reservation, c.env));
-    c.executionCtx.waitUntil(notifyReservationToDiscord(c.env.DB, result.reservation, c.env, 'created'));
-    if (isGuestSession) {
-      c.executionCtx.waitUntil(sendWebReservationConfirmationEmail(result.reservation, c.env));
-    }
-
     const secret = await reservationTokenSecret(c.env);
     const detailToken = await signReservationToken(
       {
@@ -337,6 +332,26 @@ publicReservations.post('/api/public/reservations', async (c) => {
       },
       secret,
     );
+    const claimToken = isGuestSession
+      ? await signReservationToken(
+        {
+          scope: 'reservation:claim',
+          reservationId: result.reservation.id,
+          exp: secondsFromNow(60 * 60 * 24 * 14),
+        },
+        secret,
+      )
+      : undefined;
+
+    c.executionCtx.waitUntil(syncReservationCreatedToGoogleCalendar(c.env.DB, result.reservation, c.env));
+    c.executionCtx.waitUntil(notifyReservationToDiscord(c.env.DB, result.reservation, c.env, 'created'));
+    if (isGuestSession) {
+      c.executionCtx.waitUntil(sendWebReservationConfirmationEmail(result.reservation, c.env, {
+        detailToken,
+        cancelToken,
+        claimToken,
+      }));
+    }
 
     return jsonOk(c, { ...toReservationResponse(result.reservation), detailToken, cancelToken }, 201);
   } catch (err) {
@@ -369,7 +384,9 @@ publicReservations.get('/api/public/reservations/:id', async (c) => {
   try {
     const token = c.req.query('token');
     if (!token) return jsonError(c, 'unauthorized', 401, 'token is required');
-    const payload = await verifyReservationToken(token, await reservationTokenSecret(c.env), 'reservation:read');
+    const secret = await reservationTokenSecret(c.env);
+    const payload = (await verifyReservationToken(token, secret, 'reservation:read'))
+      ?? (await verifyReservationToken(token, secret, 'reservation:cancel'));
     if (!payload || payload.reservationId !== c.req.param('id')) {
       return jsonError(c, 'unauthorized', 401);
     }
@@ -455,6 +472,41 @@ publicReservations.post('/api/public/reservations/lookup', async (c) => {
     });
   } catch (err) {
     console.error('POST /api/public/reservations/lookup error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+publicReservations.post('/api/public/reservations/:id/claim', async (c) => {
+  try {
+    const session = await requireReservationSession(c);
+    if (!session?.userId || !session.friendId) return jsonError(c, 'unauthorized', 401);
+
+    const json = await readJsonObject(c);
+    if (!json.ok) return jsonError(c, json.error.code, json.error.status, json.error.message);
+    const token = typeof json.value.claimToken === 'string' ? json.value.claimToken : '';
+    const payload = await verifyReservationToken(token, await reservationTokenSecret(c.env), 'reservation:claim');
+    const reservationId = c.req.param('id');
+    if (!payload || payload.reservationId !== reservationId) {
+      return jsonError(c, 'unauthorized', 401, 'Invalid claim token');
+    }
+
+    const result = await claimReservationForUser(c.env.DB, reservationId, {
+      userId: session.userId,
+      friendId: session.friendId,
+      lineAccountId: session.lineAccountId ?? null,
+    });
+    if (!result.ok) {
+      return jsonError(
+        c,
+        result.reason === 'not_found' ? 'not_found' : 'forbidden',
+        result.reason === 'not_found' ? 404 : 403,
+        result.reason,
+      );
+    }
+
+    return jsonOk(c, { reservation: toReservationResponse(result.reservation), changed: result.changed });
+  } catch (err) {
+    console.error('POST /api/public/reservations/:id/claim error:', err);
     return jsonError(c, 'internal_error', 500);
   }
 });
