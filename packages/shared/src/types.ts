@@ -759,7 +759,7 @@ export interface StaffProfile {
 // 予約 (Reservations)
 // -----------------------------------------------------------------------------
 
-export type ReservationSource = 'line' | 'jalan' | 'phone' | 'gmail' | 'admin' | 'mcp';
+export type ReservationSource = 'line' | 'web' | 'jalan' | 'phone' | 'gmail' | 'admin' | 'mcp';
 export type ReservationCustomerSource = ReservationSource | 'unknown';
 export type CapacityChannel = 'line' | 'external' | 'manual';
 export type ReservationStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';

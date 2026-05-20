@@ -43,8 +43,15 @@ export async function sendWebReservationConfirmationEmail(
   env: ReservationEmailEnv,
 ): Promise<void> {
   const apiKey = await resolveBindingValue(env.RESEND_API_KEY);
-  const to = reservation.customer_email?.trim();
-  if (!apiKey || !to) return;
+  const to = reservation.customer_email_snapshot?.trim();
+  if (!apiKey) {
+    console.warn('Web reservation email skipped: RESEND_API_KEY is not configured');
+    return;
+  }
+  if (!to) {
+    console.warn(`Web reservation email skipped: reservation ${reservation.id} has no customer_email_snapshot`);
+    return;
+  }
 
   const fromEmail = await resolveBindingValue(env.RESEND_FROM_EMAIL) || 'onboarding@resend.dev';
   const fromName = await resolveBindingValue(env.RESEND_FROM_NAME) || 'アオニサイファーム予約';
@@ -60,13 +67,13 @@ export async function sendWebReservationConfirmationEmail(
   const html = `
     <div style="font-family: sans-serif; line-height: 1.7; color: #1f2937;">
       <h1 style="font-size: 20px; color: #2563eb;">ご予約を受け付けました</h1>
-      <p>${escapeHtml(reservation.customer_name ?? 'お客様')} 様</p>
+      <p>${escapeHtml(reservation.customer_name_snapshot ?? 'お客様')} 様</p>
       <p>アオニサイファーム ブルーベリー観光農園のご予約ありがとうございます。</p>
       <table style="border-collapse: collapse; width: 100%; max-width: 560px;">
         <tr><th align="left">予約番号</th><td>${escapeHtml(reservation.id)}</td></tr>
         <tr><th align="left">日時</th><td>${escapeHtml(formatDate(reservation.reservation_date))} ${escapeHtml(formatTime(reservation.start_at))}〜${escapeHtml(formatTime(reservation.end_at))}</td></tr>
         <tr><th align="left">人数</th><td>${escapeHtml(people)}</td></tr>
-        <tr><th align="left">電話番号</th><td>${escapeHtml(reservation.customer_phone ?? '')}</td></tr>
+        <tr><th align="left">電話番号</th><td>${escapeHtml(reservation.customer_phone_snapshot ?? '')}</td></tr>
       </table>
       <p>変更やキャンセルが必要な場合は、この予約番号を添えてお問い合わせください。</p>
       ${adminUrl ? `<p style="font-size: 12px; color: #6b7280;">管理用URL: ${escapeHtml(adminUrl)}</p>` : ''}

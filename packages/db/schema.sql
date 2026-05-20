@@ -812,7 +812,7 @@ CREATE TABLE IF NOT EXISTS reservation_customer_profiles (
   status TEXT NOT NULL DEFAULT 'prospect'
     CHECK (status IN ('prospect', 'reserved', 'visited', 'cancelled', 'inactive')),
   source TEXT NOT NULL DEFAULT 'line'
-    CHECK (source IN ('line', 'jalan', 'phone', 'gmail', 'admin', 'mcp', 'unknown')),
+    CHECK (source IN ('line', 'web', 'jalan', 'phone', 'gmail', 'admin', 'mcp', 'unknown')),
   memo TEXT,
   metadata TEXT NOT NULL DEFAULT '{}',
   first_reserved_at TEXT,
@@ -922,7 +922,7 @@ CREATE TABLE IF NOT EXISTS reservations (
   friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL,
   slot_id TEXT NOT NULL REFERENCES reservation_slots (id) ON DELETE RESTRICT,
   source TEXT NOT NULL DEFAULT 'line'
-    CHECK (source IN ('line', 'jalan', 'phone', 'gmail', 'admin', 'mcp')),
+    CHECK (source IN ('line', 'web', 'jalan', 'phone', 'gmail', 'admin', 'mcp')),
   capacity_channel TEXT NOT NULL DEFAULT 'line'
     CHECK (capacity_channel IN ('line', 'external', 'manual')),
   external_reservation_id TEXT,

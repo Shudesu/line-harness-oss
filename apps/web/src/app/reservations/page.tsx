@@ -95,6 +95,7 @@ function isActiveReservation(reservation: ReservationResponse): boolean {
 
 function sourceLabel(source: ReservationResponse['source']): string {
   if (source === 'line') return 'LINE'
+  if (source === 'web') return 'Web'
   if (source === 'jalan') return 'じゃらん'
   return source
 }
@@ -1045,7 +1046,7 @@ function ReservationListPanel({
   const filtered = reservations
     .filter(isActiveReservation)
     .filter((reservation) => {
-      if (mode === 'all') return reservation.source === 'line' || reservation.source === 'jalan'
+      if (mode === 'all') return true
       return reservation.source === mode
     })
   const grouped = filtered.reduce<Record<string, ReservationResponse[]>>((acc, reservation) => {

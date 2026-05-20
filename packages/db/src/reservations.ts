@@ -6,7 +6,7 @@ import { recomputeReservationSystemTagsForFriend, recomputeReservationSystemTags
 // Reservations — capacity-safe booking helpers
 // =============================================================================
 
-export type ReservationSource = 'line' | 'jalan' | 'phone' | 'gmail' | 'admin' | 'mcp';
+export type ReservationSource = 'line' | 'web' | 'jalan' | 'phone' | 'gmail' | 'admin' | 'mcp';
 export type ExternalReservationSource = 'jalan' | 'gmail' | 'phone' | 'manual';
 export type CapacityChannel = 'line' | 'external' | 'manual';
 export type ReservationStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';

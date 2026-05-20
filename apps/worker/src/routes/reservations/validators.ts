@@ -6,7 +6,7 @@ export function parseReservationStatus(value?: string): ReservationStatus | unde
 }
 
 export function parseReservationSource(value?: string): ReservationSource | undefined {
-  const sources: ReservationSource[] = ['line', 'jalan', 'phone', 'gmail', 'admin', 'mcp'];
+  const sources: ReservationSource[] = ['line', 'web', 'jalan', 'phone', 'gmail', 'admin', 'mcp'];
   return sources.includes(value as ReservationSource) ? (value as ReservationSource) : undefined;
 }
 

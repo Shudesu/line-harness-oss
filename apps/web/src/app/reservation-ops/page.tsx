@@ -278,6 +278,7 @@ function googleSyncReasonLabel(reason: string): string {
 
 function sourceBadge(source: ReservationResponse['source']): string {
   if (source === 'line') return 'LINE'
+  if (source === 'web') return 'Web'
   if (source === 'jalan') return 'じゃらん'
   return source
 }

@@ -218,7 +218,7 @@ export function parseJalanGmailImportBody(body: JsonObject): ValidationResult<{
 }
 
 export function parseReservationSourceValue(value: unknown): ReservationSource | undefined {
-  const sources: ReservationSource[] = ['line', 'jalan', 'phone', 'gmail', 'admin', 'mcp'];
+  const sources: ReservationSource[] = ['line', 'web', 'jalan', 'phone', 'gmail', 'admin', 'mcp'];
   return sources.includes(value as ReservationSource) ? (value as ReservationSource) : undefined;
 }
 

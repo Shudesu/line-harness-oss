@@ -282,7 +282,7 @@ publicReservations.post('/api/public/reservations', async (c) => {
       resourceId: body.resourceId,
       menuId: body.menuId,
       slotId: body.slotId,
-      source: 'line',
+      source: isGuestSession ? 'web' : 'line',
       capacityChannel: 'line',
       lineAccountId: session.lineAccountId ?? null,
       userId: session.userId ?? null,
