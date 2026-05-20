@@ -98,6 +98,28 @@ jobs:
           fs.writeFileSync('.database-name', databaseName);
           NODE
 
+      - name: Export D1 backup before migration
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          db="$(cat .database-name)"
+          mkdir -p ../../backups/d1
+          timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
+          safe_db="$(printf '%s' "$db" | tr -cd '[:alnum:]_.-')"
+          backup_file="../../backups/d1/${safe_db}-${timestamp}.sql"
+          echo "Exporting remote D1 backup to ${backup_file}"
+          npx wrangler@4 d1 export "$db" --remote --config .wrangler-d1-ci.json --output "$backup_file"
+          echo "backup_file=${backup_file}" >> "$GITHUB_ENV"
+
+      - name: Upload D1 backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-backup-${{ inputs.database_name || vars.CLOUDFLARE_D1_DATABASE_NAME || 'line-crm' }}-${{ github.run_id }}
+          path: backups/d1/*.sql
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Apply migration
         working-directory: apps/worker
         env:
