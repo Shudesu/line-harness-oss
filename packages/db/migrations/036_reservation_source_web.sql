@@ -79,11 +79,57 @@ INSERT INTO reservations_source_web_migration (
   cancel_reason, form_data, metadata, created_at, updated_at
 )
 SELECT
-  id, line_account_id, user_id, friend_id, slot_id, source, capacity_channel,
-  external_reservation_id, dedupe_key, title, reservation_date, start_at, end_at,
-  status, adult_count, child_count, infant_count, under_three_count, total_people,
-  capacity_people, customer_name_snapshot, customer_phone_snapshot, customer_email_snapshot,
-  cancel_reason, form_data, metadata, created_at, updated_at
+  id, line_account_id, user_id, friend_id, slot_id,
+  CASE
+    WHEN source IN ('line', 'web', 'jalan', 'phone', 'gmail', 'admin', 'mcp') THEN source
+    ELSE 'line'
+  END,
+  CASE
+    WHEN capacity_channel IN ('line', 'external', 'manual') THEN capacity_channel
+    ELSE 'line'
+  END,
+  external_reservation_id, dedupe_key, COALESCE(title, '予約'), reservation_date, start_at, end_at,
+  CASE
+    WHEN status IN ('pending', 'confirmed', 'cancelled', 'completed', 'no_show') THEN status
+    ELSE 'confirmed'
+  END,
+  CASE WHEN adult_count >= 0 THEN adult_count ELSE 0 END,
+  CASE WHEN child_count >= 0 THEN child_count ELSE 0 END,
+  CASE WHEN infant_count >= 0 THEN infant_count ELSE 0 END,
+  CASE WHEN under_three_count >= 0 THEN under_three_count ELSE 0 END,
+  CASE
+    WHEN total_people > 0 THEN total_people
+    WHEN (
+      CASE WHEN adult_count >= 0 THEN adult_count ELSE 0 END +
+      CASE WHEN child_count >= 0 THEN child_count ELSE 0 END +
+      CASE WHEN infant_count >= 0 THEN infant_count ELSE 0 END +
+      CASE WHEN under_three_count >= 0 THEN under_three_count ELSE 0 END
+    ) > 0 THEN (
+      CASE WHEN adult_count >= 0 THEN adult_count ELSE 0 END +
+      CASE WHEN child_count >= 0 THEN child_count ELSE 0 END +
+      CASE WHEN infant_count >= 0 THEN infant_count ELSE 0 END +
+      CASE WHEN under_three_count >= 0 THEN under_three_count ELSE 0 END
+    )
+    ELSE 1
+  END,
+  CASE
+    WHEN capacity_people > 0 THEN capacity_people
+    WHEN total_people > 0 THEN total_people
+    WHEN (
+      CASE WHEN adult_count >= 0 THEN adult_count ELSE 0 END +
+      CASE WHEN child_count >= 0 THEN child_count ELSE 0 END +
+      CASE WHEN infant_count >= 0 THEN infant_count ELSE 0 END +
+      CASE WHEN under_three_count >= 0 THEN under_three_count ELSE 0 END
+    ) > 0 THEN (
+      CASE WHEN adult_count >= 0 THEN adult_count ELSE 0 END +
+      CASE WHEN child_count >= 0 THEN child_count ELSE 0 END +
+      CASE WHEN infant_count >= 0 THEN infant_count ELSE 0 END +
+      CASE WHEN under_three_count >= 0 THEN under_three_count ELSE 0 END
+    )
+    ELSE 1
+  END,
+  customer_name_snapshot, customer_phone_snapshot, customer_email_snapshot,
+  cancel_reason, COALESCE(form_data, '{}'), COALESCE(metadata, '{}'), created_at, updated_at
 FROM reservations;
 
 DROP TABLE reservations;
