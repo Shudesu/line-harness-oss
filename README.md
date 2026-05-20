@@ -136,10 +136,25 @@ CLI が以下を全部やる:
 ## ドキュメント
 
 - [セットアップガイド (動画)](https://youtu.be/DiRuGaeq1sM)
+- [Fork + Cloudflare 運用ガイド](docs/FORK_CLOUDFLARE_WORKFLOW.md)
 - [LINE で無料体験する](https://shudesu.github.io/line-harness-oss/)
 - [npm: @line-harness/sdk](https://www.npmjs.com/package/@line-harness/sdk)
 - [npm: @line-harness/mcp-server](https://www.npmjs.com/package/@line-harness/mcp-server)
 - [npm: create-line-harness](https://www.npmjs.com/package/create-line-harness)
+
+---
+
+## Fork して自分の Cloudflare で運用する
+
+LINE Harness は、fork した repo を自分の本番環境として育てる運用を推奨します。
+
+1. この repo を自分の GitHub アカウントへ fork
+2. fork の GitHub Actions に Cloudflare secrets / variables を設定
+3. `main` に merge された変更を Cloudflare Workers / Pages へ自動 deploy
+4. `Update from upstream` workflow で本流アップデートを PR として取り込む
+5. 自分専用の機能は fork の feature branch で開発
+
+ローカルPCは開発・確認用です。本番は GitHub Actions と Cloudflare に寄せると、本流機能と自分の改造を両方育てやすくなります。
 
 ---
 

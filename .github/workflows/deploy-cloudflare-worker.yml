@@ -1,0 +1,88 @@
+name: Deploy Cloudflare Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/worker/**'
+      - 'apps/liff/**'
+      - 'packages/db/**'
+      - 'packages/shared/**'
+      - 'packages/line-sdk/**'
+      - '.github/workflows/deploy-cloudflare-worker.yml'
+
+jobs:
+  deploy:
+    if: github.repository != 'Shudesu/line-harness-oss' && vars.LINE_HARNESS_CLOUDFLARE_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db build
+
+      - name: Run pending D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_NAME: ${{ secrets.D1_DATABASE_NAME }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$D1_DATABASE_NAME"
+
+          npx wrangler d1 execute "$D1_DATABASE_NAME" --remote --command \
+            "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+
+          for f in $(ls packages/db/migrations/*.sql | sort); do
+            name=$(basename "$f")
+            applied=$(npx wrangler d1 execute "$D1_DATABASE_NAME" --remote \
+              --command "SELECT name FROM _migrations WHERE name = '${name}'" --json \
+              | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d[0]?.results?.length||0)")
+            if [ "$applied" = "0" ]; then
+              echo "Applying: $name"
+              npx wrangler d1 execute "$D1_DATABASE_NAME" --remote --file="$f"
+              npx wrangler d1 execute "$D1_DATABASE_NAME" --remote --command \
+                "INSERT INTO _migrations (name, applied_at) VALUES ('${name}', datetime('now'))"
+            else
+              echo "Skipped: $name"
+            fi
+          done
+
+      - name: Build Worker and LIFF assets
+        run: pnpm --filter worker build
+        env:
+          VITE_LIFF_ID: ${{ vars.VITE_LIFF_ID }}
+          VITE_BOT_BASIC_ID: ${{ vars.VITE_BOT_BASIC_ID }}
+          VITE_CALENDAR_CONNECTION_ID: ${{ vars.VITE_CALENDAR_CONNECTION_ID }}
+
+      - name: Patch wrangler config
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_NAME: ${{ secrets.D1_DATABASE_NAME }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          WORKER_NAME: ${{ vars.WORKER_NAME || 'line-crm-worker' }}
+        run: |
+          test -n "$D1_DATABASE_ID"
+          cd apps/worker
+          sed -i \
+            -e "s|\"account_id\":\"[^\"]*\"|\"account_id\":\"${CLOUDFLARE_ACCOUNT_ID}\"|g" \
+            -e "s|\"database_name\":\"[^\"]*\"|\"database_name\":\"${D1_DATABASE_NAME}\"|g" \
+            -e "s|\"database_id\":\"[^\"]*\"|\"database_id\":\"${D1_DATABASE_ID}\"|g" \
+            dist/line_harness/wrangler.json
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/worker
+          command: deploy --config dist/line_harness/wrangler.json --name ${{ vars.WORKER_NAME || 'line-crm-worker' }}
