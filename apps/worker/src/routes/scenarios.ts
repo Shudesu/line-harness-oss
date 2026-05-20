@@ -13,6 +13,7 @@ import {
   computeNextDeliveryAt,
 } from '@line-crm/db';
 import { computeScenarioStats } from '../services/scenario-stats.js';
+import { SUPPORTED_CONDITION_TYPES, isSupportedConditionType } from '../services/step-delivery.js';
 import { resolveStepContent } from '@line-crm/db';
 import type {
   Scenario as DbScenario,
@@ -69,6 +70,48 @@ function serializeStep(row: DbScenarioStep) {
 
 const VALID_DELIVERY_MODES: readonly DeliveryMode[] = ['relative', 'elapsed', 'absolute_time'];
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Validate scenario step condition_type / condition_value pair.
+ * Rejects unknown condition_type values up-front (write-time) so users get an
+ * actionable error instead of the silent over-delivery seen in OSS issue #120.
+ */
+function validateStepCondition(
+  conditionType: unknown,
+  conditionValue: unknown,
+): { ok: true } | { ok: false; error: string } {
+  if (conditionType == null || conditionType === '') return { ok: true };
+  if (!isSupportedConditionType(conditionType)) {
+    return {
+      ok: false,
+      error: `Unsupported conditionType "${String(conditionType)}" (supported: ${SUPPORTED_CONDITION_TYPES.join(', ')})`,
+    };
+  }
+  // conditionType が「あり」のとき conditionValue は必ず非空文字列。
+  // body の TS 型は実行時には強制されないので、明示的に runtime check しないと
+  // 数値・オブジェクトが SQL バインドに乗って 0件マッチ → tag_not_exists が全友だちに当たる、
+  // のような OSS issue #120 と同じ over-delivery を再現してしまう。
+  if (typeof conditionValue !== 'string' || conditionValue === '') {
+    return { ok: false, error: 'conditionValue must be a non-empty string when conditionType is set' };
+  }
+  if (conditionType === 'metadata_equals' || conditionType === 'metadata_not_equals') {
+    try {
+      const parsed = JSON.parse(conditionValue) as unknown;
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed) ||
+        typeof (parsed as { key?: unknown }).key !== 'string' ||
+        !('value' in (parsed as Record<string, unknown>))
+      ) {
+        return { ok: false, error: 'conditionValue for metadata_* must be JSON {"key": "...", "value": ...}' };
+      }
+    } catch {
+      return { ok: false, error: 'conditionValue for metadata_* must be valid JSON' };
+    }
+  }
+  return { ok: true };
+}
 
 interface StepScheduleBody {
   delayMinutes?: number;
@@ -323,6 +366,9 @@ scenarios.post('/api/scenarios/:id/steps', async (c) => {
     const v = validateStepSchedule(scenarioRow.delivery_mode, body);
     if (!v.ok) return c.json({ success: false, error: v.error }, 400);
 
+    const cv = validateStepCondition(body.conditionType, body.conditionValue);
+    if (!cv.ok) return c.json({ success: false, error: cv.error }, 400);
+
     // templateId / onReachTagId 参照整合性チェック
     if (body.templateId != null) {
       const tpl = await c.env.DB
@@ -381,6 +427,25 @@ scenarios.put('/api/scenarios/:id/steps/:stepId', async (c) => {
       templateId?: string | null;
       onReachTagId?: string | null;
     }>();
+
+    // conditionType / conditionValue の partial-update 検証（OSS issue #120 回帰防止）。
+    // どちらかが touched なときだけ走らせる。effective 値は、body に来た値を優先しつつ
+    // 既存行で穴埋めして組み立て、validateStepCondition で pair を検証する。
+    // これにより「type だけ flipping、value は既存」のような partial 更新を壊さずに、
+    // 未知 type や JSON 異形を確実に弾ける。
+    if (body.conditionType !== undefined || body.conditionValue !== undefined) {
+      const existingCond = await c.env.DB
+        .prepare(`SELECT condition_type, condition_value FROM scenario_steps WHERE id = ? AND scenario_id = ?`)
+        .bind(stepId, scenarioId)
+        .first<{ condition_type: string | null; condition_value: string | null }>();
+      if (!existingCond) {
+        return c.json({ success: false, error: 'Step not found' }, 404);
+      }
+      const effectiveType = body.conditionType !== undefined ? body.conditionType : existingCond.condition_type;
+      const effectiveValue = body.conditionValue !== undefined ? body.conditionValue : existingCond.condition_value;
+      const cv = validateStepCondition(effectiveType, effectiveValue);
+      if (!cv.ok) return c.json({ success: false, error: cv.error }, 400);
+    }
 
     // templateId / onReachTagId 参照整合性チェック (null は解除を意図、bypass)
     // templateId が指定された場合は内容も取得して snapshot 更新に使う。
