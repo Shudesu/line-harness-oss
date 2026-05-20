@@ -1,14 +1,42 @@
 {
   "name": "@line-harness/mcp-server",
   "version": "0.15.0",
+  "description": "MCP server for LINE Harness — operate a LINE official account from AI agents over MCP",
   "type": "module",
   "bin": {
     "line-harness-mcp": "./dist/index.js"
   },
   "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "line",
+    "crm",
+    "mcp",
+    "model-context-protocol",
+    "ai-agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Shudesu/line-harness-oss.git",
+    "directory": "packages/mcp-server"
+  },
+  "homepage": "https://github.com/Shudesu/line-harness-oss#readme",
+  "bugs": {
+    "url": "https://github.com/Shudesu/line-harness-oss/issues"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "@line-harness/sdk": "workspace:*",
@@ -16,6 +44,7 @@
     "zod": "^3.24.4"
   },
   "devDependencies": {
+    "@types/node": "^25.5.0",
     "tsup": "^8.4.0",
     "typescript": "^5.9.3"
   }

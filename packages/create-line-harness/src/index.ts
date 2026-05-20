@@ -4,13 +4,38 @@ import { runUpdate } from "./commands/update.js";
 import { ensureRepo } from "./steps/clone-repo.js";
 
 const args = process.argv.slice(2);
+const VERSION = "0.1.19";
 
-function parseArgs(): { command: string; repoDir: string | null } {
+function printHelp(): void {
+  console.log(`LINE Harness setup CLI
+
+Usage:
+  create-line-harness [setup|update] [--repo-dir <path>]
+  create-line-harness --help
+  create-line-harness --version
+
+Commands:
+  setup   Set up LINE Harness locally and on Cloudflare (default)
+  update  Update an existing LINE Harness installation
+
+Options:
+  --repo-dir <path>  Use an existing repository directory
+  -h, --help         Show this help
+  -v, --version      Show the package version`);
+}
+
+function parseArgs(): { command: string; repoDir: string | null; help: boolean; version: boolean } {
   let command = "setup";
   let repoDir: string | null = null;
+  let help = false;
+  let version = false;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--repo-dir" && args[i + 1]) {
+    if (args[i] === "-h" || args[i] === "--help") {
+      help = true;
+    } else if (args[i] === "-v" || args[i] === "--version") {
+      version = true;
+    } else if (args[i] === "--repo-dir" && args[i + 1]) {
       repoDir = resolve(args[i + 1]);
       i++;
     } else if (!args[i].startsWith("-")) {
@@ -18,23 +43,35 @@ function parseArgs(): { command: string; repoDir: string | null } {
     }
   }
 
-  return { command, repoDir };
+  return { command, repoDir, help, version };
 }
 
 async function main(): Promise<void> {
-  const { command, repoDir: explicitRepoDir } = parseArgs();
+  const { command, repoDir: explicitRepoDir, help, version } = parseArgs();
+
+  if (help) {
+    printHelp();
+    return;
+  }
+
+  if (version) {
+    console.log(VERSION);
+    return;
+  }
+
+  if (command !== "setup" && command !== "update") {
+    console.error(`Unknown command: ${command}`);
+    console.error("Run `create-line-harness --help` for usage.");
+    process.exit(1);
+  }
 
   // Ensure repo is available (clone if needed)
   const repoDir = await ensureRepo(explicitRepoDir);
 
   if (command === "setup") {
     await runSetup(repoDir);
-  } else if (command === "update") {
-    await runUpdate(repoDir);
   } else {
-    console.error(`Unknown command: ${command}`);
-    console.error("Usage: create-line-harness [setup|update] [--repo-dir <path>]");
-    process.exit(1);
+    await runUpdate(repoDir);
   }
 }
 

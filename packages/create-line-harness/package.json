@@ -11,7 +11,8 @@
   ],
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "line",
@@ -24,8 +25,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Shudesu/line-harness.git",
+    "url": "https://github.com/Shudesu/line-harness-oss.git",
     "directory": "packages/create-line-harness"
+  },
+  "homepage": "https://github.com/Shudesu/line-harness-oss#readme",
+  "bugs": {
+    "url": "https://github.com/Shudesu/line-harness-oss/issues"
   },
   "license": "MIT",
   "dependencies": {

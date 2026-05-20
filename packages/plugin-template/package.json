@@ -1,7 +1,9 @@
 {
   "name": "@line-harness/plugin-myservice",
   "version": "0.1.0",
-  "description": "LINE Harness plugin for MyService integration",
+  "private": true,
+  "description": "LINE Harness plugin template — copy this directory to start a new integration",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240620.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "wrangler": "^3.60.0",
