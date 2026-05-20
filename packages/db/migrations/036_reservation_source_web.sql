@@ -5,8 +5,6 @@
 
 PRAGMA foreign_keys = OFF;
 
-BEGIN TRANSACTION;
-
 DROP TABLE IF EXISTS reservation_customer_profiles_source_web_migration;
 
 CREATE TABLE reservation_customer_profiles_source_web_migration (
@@ -103,7 +101,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_reservations_external_id
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_reservations_dedupe_key
   ON reservations (source, dedupe_key)
   WHERE dedupe_key IS NOT NULL;
-
-COMMIT;
 
 PRAGMA foreign_keys = ON;
