@@ -136,12 +136,14 @@ scenarios.get('/api/scenarios', async (c) => {
     const lineAccountId = c.req.query('lineAccountId');
     let items: DbScenarioWithStepCount[];
     if (lineAccountId) {
+      // NULL line_account_id = global scenario (webhook.ts:211 / liff.ts:878 fire it for every
+      // account). Include both account-bound and global rows so the list mirrors the engine.
       const result = await c.env.DB
         .prepare(
           `SELECT s.*, COUNT(ss.id) as step_count
            FROM scenarios s
            LEFT JOIN scenario_steps ss ON s.id = ss.scenario_id
-           WHERE s.line_account_id = ?
+           WHERE s.line_account_id IS NULL OR s.line_account_id = ?
            GROUP BY s.id
            ORDER BY s.created_at DESC`,
         )

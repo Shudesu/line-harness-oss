@@ -825,6 +825,10 @@ export interface Automation {
   actions: AutomationAction[];
   isActive: boolean;
   priority: number;
+  // null = global automation (fires for every account, per event-bus.ts:149).
+  // UUID = bound to that line_account_id. Surfaced so account-scoped UIs can
+  // distinguish a rule that affects every account from one they own.
+  lineAccountId: string | null;
   createdAt: string;
   updatedAt: string;
 }

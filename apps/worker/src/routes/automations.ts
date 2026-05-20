@@ -18,8 +18,10 @@ automations.get('/api/automations', async (c) => {
     const lineAccountId = c.req.query('lineAccountId');
     let items;
     if (lineAccountId) {
+      // NULL line_account_id = global automation (event-bus.ts:149 fires it for every account).
+      // Include both account-bound and global rows so the UI mirrors the engine's match semantic.
       const result = await c.env.DB
-        .prepare(`SELECT * FROM automations WHERE line_account_id = ? ORDER BY priority DESC, created_at DESC`)
+        .prepare(`SELECT * FROM automations WHERE line_account_id IS NULL OR line_account_id = ? ORDER BY priority DESC, created_at DESC`)
         .bind(lineAccountId)
         .all();
       items = result.results as unknown as Awaited<ReturnType<typeof getAutomations>>;
@@ -37,6 +39,10 @@ automations.get('/api/automations', async (c) => {
         actions: JSON.parse(a.actions),
         isActive: Boolean(a.is_active),
         priority: a.priority,
+        // null line_account_id = global automation. Surfacing this lets callers
+        // distinguish globals from account-bound rows in the mixed result and
+        // avoid unintentionally editing a rule that affects every account.
+        lineAccountId: a.line_account_id ?? null,
         createdAt: a.created_at,
         updatedAt: a.updated_at,
       })),
@@ -66,6 +72,7 @@ automations.get('/api/automations/:id', async (c) => {
         actions: JSON.parse(item.actions),
         isActive: Boolean(item.is_active),
         priority: item.priority,
+        lineAccountId: item.line_account_id ?? null,
         createdAt: item.created_at,
         updatedAt: item.updated_at,
         logs: logs.map((l) => ({
@@ -98,11 +105,15 @@ automations.post('/api/automations', async (c) => {
     if (!body.name || !body.eventType || !body.actions) {
       return c.json({ success: false, error: 'name, eventType, actions are required' }, 400);
     }
-    const item = await createAutomation(c.env.DB, body);
+    let item = await createAutomation(c.env.DB, body);
     // Save line_account_id if provided
     if (body.lineAccountId) {
       await c.env.DB.prepare(`UPDATE automations SET line_account_id = ? WHERE id = ?`)
         .bind(body.lineAccountId, item.id).run();
+      // Re-read so the response reports the persisted scope; the createAutomation
+      // helper does not accept line_account_id, so item still has the pre-UPDATE value.
+      const refreshed = await getAutomationById(c.env.DB, item.id);
+      if (refreshed) item = refreshed;
     }
     return c.json({
       success: true,
@@ -113,6 +124,7 @@ automations.post('/api/automations', async (c) => {
         actions: JSON.parse(item.actions),
         isActive: Boolean(item.is_active),
         priority: item.priority,
+        lineAccountId: item.line_account_id ?? null,
         createdAt: item.created_at,
       },
     }, 201);
@@ -139,6 +151,7 @@ automations.put('/api/automations/:id', async (c) => {
         actions: JSON.parse(updated.actions),
         isActive: Boolean(updated.is_active),
         priority: updated.priority,
+        lineAccountId: updated.line_account_id ?? null,
       },
     });
   } catch (err) {

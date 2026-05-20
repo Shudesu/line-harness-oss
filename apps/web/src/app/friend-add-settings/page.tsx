@@ -73,9 +73,14 @@ export default function FriendAddSettingsPage() {
           accountErrors.set(account.id, res.error)
           return
         }
+        // The API returns both account-bound and global (lineAccountId === null)
+        // rows for an account query (mirroring the engine match semantic in
+        // webhook.ts / liff.ts). Strip globals here so we can merge them once,
+        // labeled, after the per-account section — and so a failed per-account
+        // fetch still falls back to the independent allRes globals fetch.
         accountScopedByAccount.set(
           account.id,
-          res.data.filter(s => s.triggerType === 'friend_add'),
+          res.data.filter(s => s.triggerType === 'friend_add' && s.lineAccountId !== null),
         )
       })
 
