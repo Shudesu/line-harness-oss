@@ -714,7 +714,9 @@ async function buildOgForLiffPath(db: D1Database, url: URL): Promise<string> {
 }
 
 // 404 fallback — API paths return JSON 404, everything else serves from static assets (LIFF/admin)
-app.notFound(async (c) => {
+export async function notFoundHandler(
+  c: import('hono').Context<Env>,
+): Promise<Response> {
   const url = new URL(c.req.url);
   const path = url.pathname;
   if (path.startsWith('/api/') || path === '/webhook' || path === '/docs' || path === '/openapi.json') {
@@ -728,9 +730,17 @@ app.notFound(async (c) => {
     return c.html(html);
   }
 
-  // Serve static assets (admin dashboard, LIFF pages)
+  // Serve static assets (admin dashboard, LIFF pages).
+  // ASSETS binding is missing when wrangler runs without a built `dist/client`
+  // (fresh clone, vitest, or a deploy where the assets directive was stripped).
+  // Without this guard every GET / surfaces as
+  // "TypeError: Cannot read properties of undefined (reading 'fetch')".
+  if (!c.env.ASSETS || typeof c.env.ASSETS.fetch !== 'function') {
+    return c.json({ success: false, error: 'Not found' }, 404);
+  }
   return c.env.ASSETS.fetch(c.req.raw);
-});
+}
+app.notFound(notFoundHandler);
 
 // Scheduled handler for cron triggers — runs for all active LINE accounts
 async function scheduled(

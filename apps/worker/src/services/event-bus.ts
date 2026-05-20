@@ -213,7 +213,8 @@ function matchConditions(
 
   // keyword_exact（完全一致）
   if (conditions.keyword_exact) {
-    const text = (payload.eventData?.text || '').trim();
+    const rawText = payload.eventData?.text as string | undefined;
+    const text = (rawText || '').trim();
     if (text !== conditions.keyword_exact) {
       return false;
     }
@@ -383,8 +384,9 @@ async function executeAction(
           .replace(/\r/g, '\\r')
           .replace(/\t/g, '\\t')
           .replace(/[\u0000-\u001f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+      const messageText = (payload.eventData?.text as string | undefined) || '';
       const raw = (action.params.data || '{}')
-        .replace(/\{\{message\}\}/g, escapeForJsonString(payload.eventData?.text || ''));
+        .replace(/\{\{message\}\}/g, escapeForJsonString(messageText));
       const patch = JSON.parse(raw) as Record<string, unknown>;
       const merged = { ...current, ...patch };
       await db

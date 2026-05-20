@@ -40,7 +40,7 @@ describe('fetchAndStoreIncomingImage', () => {
     expect(r2.put).toHaveBeenCalled();
     const [key, , opts] = r2.put.mock.calls[0];
     expect(key).toBe('incoming-acc-1-msg-xyz.jpg');
-    expect(opts.httpMetadata.contentType).toBe('image/jpeg');
+    expect(opts.httpMetadata?.contentType).toBe('image/jpeg');
     expect(result?.originalContentUrl).toBe('https://worker.example.com/images/incoming-acc-1-msg-xyz.jpg');
     expect(result?.previewImageUrl).toBe(result?.originalContentUrl);
   });
