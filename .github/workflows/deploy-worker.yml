@@ -107,6 +107,19 @@ jobs:
             fi
             wrangler_d1 --command "ALTER TABLE $table ADD COLUMN $column $definition"
           }
+          d1_table_sql_contains() {
+            table="$1"
+            pattern="$2"
+            set +e
+            output=$(wrangler_d1 --command "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '$table'" 2>&1)
+            status=$?
+            set -e
+            if [ "$status" -ne 0 ]; then
+              echo "$output"
+              return 1
+            fi
+            echo "$output" | grep -q "$pattern"
+          }
 
           # Do not execute packages/db/schema.sql against an existing production DB.
           # CREATE TABLE IF NOT EXISTS does not add newly introduced columns, so
@@ -127,6 +140,12 @@ jobs:
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_calendar_bookings_friend ON calendar_bookings (friend_id)"
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_calendar_bookings_start ON calendar_bookings (start_at)"
           wrangler_d1 --file ../../packages/db/migrations/032_gmail_import_rules.sql
+
+          if d1_table_sql_contains reservations "'web'" && d1_table_sql_contains reservation_customer_profiles "'web'"; then
+            echo "D1 patch skipped: reservation source already accepts web."
+          else
+            wrangler_d1 --file ../../packages/db/migrations/036_reservation_source_web.sql
+          fi
 
           d1_add_column_if_missing friends line_account_id "TEXT"
           d1_add_column_if_missing friends ref_code "TEXT"
