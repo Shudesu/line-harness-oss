@@ -1,0 +1,28 @@
+name: Setup help
+description: Ask for help with install, deploy, Cloudflare, LINE, or LIFF setup
+title: "Setup: "
+labels: ["question", "needs-info"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or screen
+      description: What command did you run, or which setup step are you on?
+      render: shell
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message
+      description: Remove tokens, secrets, account IDs, and customer data.
+      render: shell
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "macOS, Node 22, pnpm 9, Wrangler 4"

@@ -1,8 +1,14 @@
-name: Deploy Worker
+name: Worker CI
 
-# Configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to enable auto-deploy
 on:
-  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/worker/**'
+      - 'packages/db/**'
+      - 'packages/shared/**'
+      - 'packages/line-sdk/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/worker-ci.yml'
   push:
     branches: [main]
     paths:
@@ -10,10 +16,15 @@ on:
       - 'packages/db/**'
       - 'packages/shared/**'
       - 'packages/line-sdk/**'
-      - '.github/workflows/deploy-worker.yml'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/worker-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  deploy:
+  worker-ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,16 +38,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db build
-
+      - run: pnpm --filter worker typecheck
+      - run: pnpm --filter worker test
       - run: pnpm --filter worker build
         env:
           VITE_LIFF_ID: ${{ vars.VITE_LIFF_ID }}
           VITE_BOT_BASIC_ID: ${{ vars.VITE_BOT_BASIC_ID }}
           VITE_CALENDAR_CONNECTION_ID: ${{ vars.VITE_CALENDAR_CONNECTION_ID }}
-
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apps/worker
-          command: deploy
