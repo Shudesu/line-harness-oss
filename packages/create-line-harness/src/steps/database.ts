@@ -3,6 +3,14 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { wrangler, WranglerError } from "../lib/wrangler.js";
 
+// Wrangler 4.x demotes piped invocations to "non-interactive" mode and demands
+// CLOUDFLARE_API_TOKEN even when the user is logged in via OAuth (OSS issue
+// #124). When we see one of these markers in stderr, the only recovery is to
+// retry the same command with full stdio inheritance so wrangler can refresh
+// its token and emit its "Ok to proceed?" prompt against a real TTY.
+const TTY_REQUIRED =
+  /non[- ]?interactive|cloudflare_api_token|consent denied|authentication error|expired/i;
+
 interface DatabaseResult {
   databaseId: string;
   databaseName: string;
@@ -78,43 +86,73 @@ export async function createDatabase(
     );
   };
 
-  // Base schema (CREATE IF NOT EXISTS for everything in schema.sql — failing
-  // here is fatal because subsequent steps assume the core tables exist).
-  try {
-    await wrangler([
-      "d1",
-      "execute",
-      databaseName,
-      "--remote",
-      "--file",
-      schemaFile,
-    ]);
-  } catch (err) {
-    if (!isBenignSchemaError(err)) {
-      s.stop("ベーススキーマ適用に失敗");
-      throw err;
+  // Apply a single .sql file via `wrangler d1 execute --remote --file`.
+  //
+  // We prefer pipe mode (captures stderr so isBenignSchemaError can flag
+  // already-applied schema as benign on resumed installs). But wrangler
+  // 4.x detects non-TTY stdout and refuses authenticated/destructive ops
+  // with "non-interactive" / "CLOUDFLARE_API_TOKEN" / "consent denied"
+  // errors even when the user has a valid cached OAuth token (OSS issue
+  // #124). Refreshing the token doesn't help — wrangler trips the same
+  // check on every subsequent pipe call — so the only recovery is to
+  // re-run the d1 execute itself with full stdio inheritance.
+  //
+  // Trade-off: TTY mode inherits stderr, so we can't classify its errors.
+  // Two implications:
+  //   1. Fresh install (file never applied): TTY retry succeeds first
+  //      time — this is the OSS-#124 happy path.
+  //   2. Resumed install with expired token (file partly/fully applied
+  //      already): TTY retry surfaces "already exists" as a fatal error
+  //      to the user instead of swallowing it. Recovery is manual:
+  //      `npx wrangler login` to refresh the token, then re-run setup so
+  //      pipe mode succeeds and isBenignSchemaError handles re-applies.
+  //   3. TTY mid-apply failure (rare): user sees wrangler's actual stderr
+  //      directly and can act on it. We deliberately do NOT retry in pipe
+  //      mode here — that could read "already exists" on an early
+  //      statement and mark the whole file as benignly applied while
+  //      later statements never ran (partial-schema corruption).
+  const applyD1File = async (
+    file: string,
+    failureLabel: string,
+  ): Promise<void> => {
+    const args = ["d1", "execute", databaseName, "--remote", "--file", file];
+    try {
+      await wrangler(args);
+      return;
+    } catch (err) {
+      if (isBenignSchemaError(err)) return;
+      const isTtyRequired =
+        err instanceof WranglerError && TTY_REQUIRED.test(err.stderr);
+      if (!isTtyRequired) {
+        s.stop(failureLabel);
+        throw err;
+      }
+      // Stop the spinner so wrangler's inherited output during the TTY
+      // retry below doesn't scramble it.
+      s.stop("wrangler 認証更新のため対話モードで再実行します（出力が表示されます）...");
     }
-  }
+
+    try {
+      await wrangler(args, { tty: true });
+    } catch (ttyErr) {
+      // TTY stderr was inherited — the user already saw wrangler's output.
+      // Re-throwing surfaces a clean failure label for the spinner output
+      // above; on resumed-install "already exists" edge case the user
+      // can recover by running `npx wrangler login` and re-running setup.
+      throw ttyErr;
+    }
+    // Resume the spinner for the next file in the loop.
+    s.start(`テーブル作成中（${totalFiles} files）...`);
+  };
+
+  // Base schema — fatal if it fails for any non-benign reason.
+  await applyD1File(schemaFile, "ベーススキーマ適用に失敗");
 
   // Migration files — duplicate-column / already-exists are expected on
   // re-runs and resumed installs, but any other error means the migration
   // never ran and we should bail rather than silently advance.
   for (const file of migrationFiles) {
-    try {
-      await wrangler([
-        "d1",
-        "execute",
-        databaseName,
-        "--remote",
-        "--file",
-        join(migrationsDir, file),
-      ]);
-    } catch (err) {
-      if (!isBenignSchemaError(err)) {
-        s.stop(`migration 失敗: ${file}`);
-        throw err;
-      }
-    }
+    await applyD1File(join(migrationsDir, file), `migration 失敗: ${file}`);
   }
 
   // Final guard: confirm the core table exists. Catches the silent-failure
