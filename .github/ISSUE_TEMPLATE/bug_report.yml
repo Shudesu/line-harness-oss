@@ -1,0 +1,43 @@
+name: Bug report
+description: Report something that is not working
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please remove secrets, tokens, account IDs, friend IDs, and customer data before submitting.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the smallest steps that reproduce the problem.
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LINE Harness version
+      placeholder: "v0.15.0"
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "Node 22, pnpm 9, Cloudflare Workers/D1"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste only sanitized logs. Do not include secrets or customer data.
+      render: shell

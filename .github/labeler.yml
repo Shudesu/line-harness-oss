@@ -1,0 +1,32 @@
+worker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - apps/worker/**
+          - packages/db/**
+          - packages/shared/**
+
+web:
+  - changed-files:
+      - any-glob-to-any-file:
+          - apps/web/**
+
+cli:
+  - changed-files:
+      - any-glob-to-any-file:
+          - packages/create-line-harness/**
+
+sdk:
+  - changed-files:
+      - any-glob-to-any-file:
+          - packages/sdk/**
+          - packages/mcp-server/**
+          - packages/plugin-template/**
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - README*
+          - CONTRIBUTING.md
+          - SECURITY.md
+          - SUPPORT.md

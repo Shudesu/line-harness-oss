@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement
+title: "Feature: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What workflow or user problem should this improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the expected behavior or interface.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional context, prior art, or workarounds.

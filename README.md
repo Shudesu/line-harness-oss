@@ -153,6 +153,11 @@ MIT License. 商用利用・改変・再配布自由。
 
 Issue / PR 歓迎。OSS リポへの PR は `Shudesu/line-harness-oss` (このリポ) に投げてください。
 
+- 貢献方法: [CONTRIBUTING.md](CONTRIBUTING.md)
+- セキュリティ報告: [SECURITY.md](SECURITY.md)
+- サポート・質問: [SUPPORT.md](SUPPORT.md)
+- Private ↔ OSS 同期方針: [docs/OSS-SYNC-CHARTER.md](docs/OSS-SYNC-CHARTER.md)
+
 ---
 
 > **LINE Harness** by [@Shudesu](https://github.com/Shudesu) — AI ネイティブ時代の OSS LINE CRM
