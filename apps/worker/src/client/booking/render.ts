@@ -105,8 +105,9 @@ function menuForReservationTitle(title?: string | null): Menu | null {
 export function renderHeader(): string {
   const tabs = state.entryMode === 'web'
     ? `
-    <div class="booking-tabs two-tabs">
+    <div class="booking-tabs three-tabs">
       <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約</button>
+      <button type="button" class="${state.screen === 'mine' || state.screen === 'detail' || state.screen === 'cancel-confirm' || state.screen === 'cancelled' ? 'active' : ''}" data-action="show-mine">予約確認</button>
       <button type="button" class="${state.screen === 'cafe' ? 'active' : ''}" data-action="show-cafe">カフェ</button>
     </div>
   `
@@ -708,11 +709,18 @@ function renderReservationDetail(): string {
   const menu = menuForReservationTitle(reservation.title);
   const tokens = tokenForReservation(reservation.id);
   const canCancel = reservation.status === 'pending' || reservation.status === 'confirmed';
+  const isCancelled = reservation.status === 'cancelled';
   return `
     <section class="booking-panel">
       <button type="button" class="text-btn" data-action="show-mine">← 予約一覧へ</button>
       <h2>予約詳細</h2>
       ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
+      ${isCancelled ? `
+        <div class="cancelled-notice" role="status">
+          <strong>この予約はキャンセルされています</strong>
+          <span>キャンセル済みの予約は、予約枠として確保されていません。</span>
+        </div>
+      ` : ''}
       ${renderReservationSummary({
         menuName: reservation.title,
         date: reservation.reservationDate,
@@ -742,6 +750,21 @@ function renderReservationDetail(): string {
 function renderCancelConfirm(): string {
   const reservation = state.selectedReservation;
   if (!reservation) return renderMine();
+  if (reservation.status === 'cancelled') {
+    return `
+      <section class="booking-panel">
+        <h2>キャンセル済みです</h2>
+        <div class="cancelled-notice" role="status">
+          <strong>この予約はすでにキャンセルされています</strong>
+          <span>再度キャンセル操作を行う必要はありません。</span>
+        </div>
+        <div class="confirm-row"><span class="confirm-label">日付</span><span class="confirm-value">${formatDateJa(reservation.reservationDate)}</span></div>
+        <div class="confirm-row"><span class="confirm-label">時間</span><span class="confirm-value">${formatTime(reservation.startAt)}-${formatTime(reservation.endAt)}</span></div>
+        <button type="button" class="book-btn" data-action="show-booking">新しく予約する</button>
+        <button type="button" class="text-btn" data-action="show-mine">予約確認へ</button>
+      </section>
+    `;
+  }
   return `
     <section class="booking-panel">
       <h2>キャンセル確認</h2>

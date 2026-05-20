@@ -66,6 +66,9 @@ function appendParams(base: string, params: Record<string, string | undefined>):
   return url.toString();
 }
 
+const AONISAI_CAFE_HERO_IMAGE =
+  'https://aonisai-blueberry.com/wp-content/themes/aonisai-blueberry/asset/img/features/features_01.jpg';
+
 export async function sendWebReservationConfirmationEmail(
   reservation: Reservation,
   env: ReservationEmailEnv,
@@ -113,26 +116,60 @@ export async function sendWebReservationConfirmationEmail(
     `幼児 ${reservation.infant_count}名`,
     `3歳以下 ${reservation.under_three_count ?? 0}名`,
   ].join(' / ');
+  const dateLabel = formatDate(reservation.reservation_date);
+  const timeLabel = `${formatTime(reservation.start_at)}〜${formatTime(reservation.end_at)}`;
 
-  const subject = `【予約受付】${formatDate(reservation.reservation_date)} ${formatTime(reservation.start_at)}`;
+  const subject = `【予約受付】${dateLabel} ${formatTime(reservation.start_at)}`;
   const html = `
-    <div style="font-family: sans-serif; line-height: 1.7; color: #1f2937;">
-      <h1 style="font-size: 20px; color: #2563eb;">ご予約を受け付けました</h1>
-      <p>${escapeHtml(reservation.customer_name_snapshot ?? 'お客様')} 様</p>
-      <p>アオニサイファーム ブルーベリー観光農園のご予約ありがとうございます。</p>
-      <table style="border-collapse: collapse; width: 100%; max-width: 560px;">
-        <tr><th align="left">予約番号</th><td>${escapeHtml(reservation.id)}</td></tr>
-        <tr><th align="left">日時</th><td>${escapeHtml(formatDate(reservation.reservation_date))} ${escapeHtml(formatTime(reservation.start_at))}〜${escapeHtml(formatTime(reservation.end_at))}</td></tr>
-        <tr><th align="left">人数</th><td>${escapeHtml(people)}</td></tr>
-        <tr><th align="left">電話番号</th><td>${escapeHtml(reservation.customer_phone_snapshot ?? '')}</td></tr>
-      </table>
-      <div style="margin: 20px 0;">
-        ${detailUrl ? `<p><a href="${escapeHtml(detailUrl)}" style="display:inline-block; padding:10px 14px; background:#2563eb; color:#fff; border-radius:8px; text-decoration:none;">予約内容を確認する</a></p>` : ''}
-        ${cancelUrl ? `<p><a href="${escapeHtml(cancelUrl)}" style="display:inline-block; padding:10px 14px; background:#fff; color:#b91c1c; border:1px solid #fecaca; border-radius:8px; text-decoration:none;">予約をキャンセルする</a></p>` : ''}
-        ${lineClaimUrl ? `<p><a href="${escapeHtml(lineClaimUrl)}" style="display:inline-block; padding:10px 14px; background:#06C755; color:#fff; border-radius:8px; text-decoration:none;">LINEで予約を確認できるようにする</a></p>` : ''}
+    <div style="margin:0; padding:0; background:#f4f1ea; font-family:'Hiragino Sans','Yu Gothic',Arial,sans-serif; color:#1f2340;">
+      <div style="max-width:640px; margin:0 auto; background:#fbfaf6;">
+        <img src="${escapeHtml(AONISAI_CAFE_HERO_IMAGE)}" alt="アオニサイカフェ" style="display:block; width:100%; max-width:640px; height:auto; border:0;">
+        <div style="padding:28px 22px 12px; background:#272f72; color:#ffffff;">
+          <p style="margin:0 0 8px; font-size:11px; letter-spacing:0.18em; font-weight:700;">AONISAI FARM BLUEBERRY</p>
+          <h1 style="margin:0; font-size:24px; line-height:1.35; font-weight:800;">ご予約を受け付けました</h1>
+          <p style="margin:12px 0 0; font-size:14px; line-height:1.8; color:#eef1ff;">
+            ${escapeHtml(reservation.customer_name_snapshot ?? 'お客様')} 様、アオニサイファーム ブルーベリー観光農園のご予約ありがとうございます。
+          </p>
+        </div>
+        <div style="padding:22px;">
+          <div style="border:1px solid #ded8c9; background:#ffffff; padding:18px; margin-bottom:18px;">
+            <p style="margin:0 0 12px; color:#272f72; font-size:13px; font-weight:800; letter-spacing:0.08em;">RESERVATION DETAIL</p>
+            <table style="border-collapse:collapse; width:100%; font-size:14px; line-height:1.7;">
+              <tr>
+                <th align="left" style="width:92px; padding:10px 0; color:#6a6f86; border-bottom:1px solid #eee9dd; font-weight:700;">予約番号</th>
+                <td style="padding:10px 0; border-bottom:1px solid #eee9dd; color:#1f2340; font-weight:700;">${escapeHtml(reservation.id)}</td>
+              </tr>
+              <tr>
+                <th align="left" style="padding:10px 0; color:#6a6f86; border-bottom:1px solid #eee9dd; font-weight:700;">日時</th>
+                <td style="padding:10px 0; border-bottom:1px solid #eee9dd; color:#1f2340; font-weight:700;">${escapeHtml(dateLabel)} ${escapeHtml(timeLabel)}</td>
+              </tr>
+              <tr>
+                <th align="left" style="padding:10px 0; color:#6a6f86; border-bottom:1px solid #eee9dd; font-weight:700;">人数</th>
+                <td style="padding:10px 0; border-bottom:1px solid #eee9dd; color:#1f2340;">${escapeHtml(people)}</td>
+              </tr>
+              <tr>
+                <th align="left" style="padding:10px 0; color:#6a6f86; font-weight:700;">電話番号</th>
+                <td style="padding:10px 0; color:#1f2340;">${escapeHtml(reservation.customer_phone_snapshot ?? '')}</td>
+              </tr>
+            </table>
+          </div>
+          <div style="margin:20px 0;">
+            ${detailUrl ? `<a href="${escapeHtml(detailUrl)}" style="display:block; margin:0 0 10px; padding:14px 16px; background:#272f72; color:#ffffff; text-align:center; text-decoration:none; font-size:15px; font-weight:800;">予約内容を確認する</a>` : ''}
+            ${cancelUrl ? `<a href="${escapeHtml(cancelUrl)}" style="display:block; margin:0 0 10px; padding:13px 16px; background:#ffffff; color:#9f2d20; border:1px solid #d9b2a7; text-align:center; text-decoration:none; font-size:14px; font-weight:800;">予約をキャンセルする</a>` : ''}
+            ${lineClaimUrl ? `<a href="${escapeHtml(lineClaimUrl)}" style="display:block; margin:0 0 10px; padding:13px 16px; background:#06C755; color:#ffffff; text-align:center; text-decoration:none; font-size:14px; font-weight:800;">LINEで予約を確認できるようにする</a>` : ''}
+          </div>
+          <div style="background:#f2efe7; border-left:4px solid #272f72; padding:14px; margin-top:18px;">
+            <p style="margin:0; color:#555b72; font-size:13px; line-height:1.8;">
+              変更やキャンセルが必要な場合は、上記リンクをご利用ください。すでにキャンセル済みの場合、リンク先で「キャンセルされています」と表示されます。
+            </p>
+          </div>
+          ${adminUrl ? `<p style="margin:18px 0 0; font-size:11px; color:#8a8f9d;">管理用URL: ${escapeHtml(adminUrl)}</p>` : ''}
+        </div>
+        <div style="padding:18px 22px; background:#272f72; color:#eef1ff; font-size:12px; line-height:1.7;">
+          アオニサイファーム ブルーベリー観光農園<br>
+          〒300-2645 茨城県つくば市上郷 2223-1
+        </div>
       </div>
-      <p>変更やキャンセルが必要な場合は、上記リンクまたは予約番号を使ってお問い合わせください。</p>
-      ${adminUrl ? `<p style="font-size: 12px; color: #6b7280;">管理用URL: ${escapeHtml(adminUrl)}</p>` : ''}
     </div>
   `;
 
