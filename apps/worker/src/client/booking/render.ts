@@ -246,10 +246,36 @@ function renderCafeMenuModal(menuItems: Array<{ id: string; name: string; price:
 function renderBooking(): string {
   return `
     ${renderExperienceIntro()}
+    ${renderLineLinkPanel()}
     ${renderBookingControls()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
     ${renderSlotModal()}
     ${state.selectedSlot && !state.slotModalOpen ? renderReopenSelectedSlot() : ''}
+  `;
+}
+
+function lineBookingUrl(): string {
+  const url = new URL(window.location.href);
+  url.searchParams.set('page', 'book');
+  url.searchParams.delete('mode');
+  url.searchParams.delete('channel');
+  url.searchParams.delete('screen');
+  url.searchParams.delete('reservationId');
+  url.searchParams.delete('token');
+  url.searchParams.delete('claimToken');
+  return url.toString();
+}
+
+function renderLineLinkPanel(): string {
+  if (state.entryMode !== 'web') return '';
+  return `
+    <section class="line-link-panel">
+      <div>
+        <strong>LINEで予約すると確認が簡単です</strong>
+        <p>LINE連携しておくと、予約確認・キャンセル・次回予約をLINE上で開けます。Web予約後もメール内のリンクからLINE連携できます。</p>
+      </div>
+      <a href="${escapeHtml(lineBookingUrl())}" class="line-link-btn">LINEで予約する</a>
+    </section>
   `;
 }
 
