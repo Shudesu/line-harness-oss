@@ -13,7 +13,7 @@ import type {
   ReservationSlotWithAvailability,
 } from '@line-crm/shared'
 import Header from '@/components/layout/header'
-import { fetchApi } from '@/lib/api'
+import { api, fetchApi, type ApiProviderConfig } from '@/lib/api'
 
 type Mode = 'overview' | 'settings'
 type ViewMode = 'week' | 'month'
@@ -278,6 +278,7 @@ export default function ReservationsPage() {
   const [showResourceForm, setShowResourceForm] = useState(false)
   const [showMenuForm, setShowMenuForm] = useState(false)
   const [showScheduleForm, setShowScheduleForm] = useState(false)
+  const [providerConfig, setProviderConfig] = useState<ApiProviderConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -347,9 +348,22 @@ export default function ReservationsPage() {
     }
   }, [date, resourceId, viewMode])
 
+  const loadProviderConfig = useCallback(async () => {
+    try {
+      const res = await api.providerConfig.get()
+      if (res.success) setProviderConfig(res.data)
+    } catch {
+      // Provider config is optional for this admin page. Keep existing labels if it fails.
+    }
+  }, [])
+
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    loadProviderConfig()
+  }, [loadProviderConfig])
 
   const runSaving = async (fn: () => Promise<{ resourceId?: string } | void>, success: string) => {
     setSaving(true)
@@ -584,6 +598,7 @@ export default function ReservationsPage() {
           resources={resources}
           resourceId={resourceId}
           menuId={menuId}
+          providerConfig={providerConfig}
           menus={menus}
           schedules={schedules}
           date={date}
@@ -1167,6 +1182,7 @@ function SettingsPanel(props: {
   resources: ReservationResource[]
   resourceId: string
   menuId: string
+  providerConfig: ApiProviderConfig | null
   menus: ReservationMenu[]
   schedules: ReservationSchedule[]
   date: string
@@ -1243,6 +1259,7 @@ function SettingsPanel(props: {
         menus={activeMenus}
         resourceId={props.resourceId}
         menuId={props.menuId}
+        providerConfig={props.providerConfig}
       />
 
       <SettingsCard title="Slotの追加・削除">
@@ -1460,11 +1477,13 @@ function ReservationEntryUrlCard({
   menus,
   resourceId,
   menuId,
+  providerConfig,
 }: {
   resources: ReservationResource[]
   menus: ReservationMenu[]
   resourceId: string
   menuId: string
+  providerConfig: ApiProviderConfig | null
 }) {
   const [channel, setChannel] = useState('google_map')
   const [ref, setRef] = useState('gmaps_2026')
@@ -1474,6 +1493,9 @@ function ReservationEntryUrlCard({
   const [copied, setCopied] = useState(false)
   const selectedResource = resources.find((resource) => resource.id === resourceId)
   const selectedMenu = menus.find((menu) => menu.id === menuId)
+  const providerName = providerConfig?.shortName || providerConfig?.displayName || '予約'
+  const bookingTitle = providerConfig?.reservation.title || '予約'
+  const accentColor = providerConfig?.colors.primary || '#2563eb'
   const params = new URLSearchParams({
     page: 'book',
     mode: 'web',
@@ -1499,11 +1521,11 @@ function ReservationEntryUrlCard({
   }
 
   return (
-    <SettingsCard title="予約導線URL">
+    <SettingsCard title={`${bookingTitle} 導線URL`}>
       <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
         <div className="space-y-3">
           <p className="text-sm text-gray-600">
-            Google Map、Instagram、公式サイト、QRコード用のWeb予約URLを作成します。予約時の流入元は予約metadataに保存されます。
+            Google Map、Instagram、公式サイト、QRコード用の{providerName}向け予約URLを作成します。予約時の流入元は予約metadataに保存されます。
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="媒体">
@@ -1531,7 +1553,7 @@ function ReservationEntryUrlCard({
           </div>
         </div>
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
-          <p className="text-xs font-bold text-blue-700">選択中</p>
+          <p className="text-xs font-bold" style={{ color: accentColor }}>選択中</p>
           <p className="mt-1 text-sm font-bold text-blue-950">{selectedResource?.name ?? 'Resource未選択'} / {selectedMenu?.name ?? 'Menu未選択'}</p>
           <div className="mt-3 rounded-lg bg-white p-3 text-xs leading-6 text-gray-700 break-all">{url}</div>
           <div className="mt-3 flex flex-wrap gap-2">

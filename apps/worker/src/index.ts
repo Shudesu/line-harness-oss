@@ -46,6 +46,7 @@ import { autoReplies } from './routes/auto-replies.js';
 import { trafficPools } from './routes/traffic-pools.js';
 import { meetCallback } from './routes/meet-callback.js';
 import { messageTemplates } from './routes/message-templates.js';
+import { providerConfig } from './routes/provider-config.js';
 import { defaultLiffUrl, defaultLineAccessToken, workerBaseUrl } from './services/line-bindings.js';
 import { processActiveGmailImportRules } from './services/gmail-jalan-import.js';
 import {
@@ -85,6 +86,36 @@ export type Env = {
     RESEND_API_KEY?: SecretLike;
     RESEND_FROM_EMAIL?: SecretLike;
     RESEND_FROM_NAME?: SecretLike;
+    PROVIDER_ID?: SecretLike;
+    PROVIDER_NAME?: SecretLike;
+    PROVIDER_DISPLAY_NAME?: SecretLike;
+    PROVIDER_SHORT_NAME?: SecretLike;
+    PROVIDER_DESCRIPTION?: SecretLike;
+    PROVIDER_ADDRESS?: SecretLike;
+    PROVIDER_PHONE?: SecretLike;
+    PROVIDER_SITE_URL?: SecretLike;
+    PROVIDER_PRIMARY_COLOR?: SecretLike;
+    PROVIDER_ACCENT_COLOR?: SecretLike;
+    PROVIDER_BACKGROUND_COLOR?: SecretLike;
+    PROVIDER_TEXT_COLOR?: SecretLike;
+    PROVIDER_LOGO_URL?: SecretLike;
+    PROVIDER_HERO_IMAGE_URL?: SecretLike;
+    PROVIDER_FAVICON_URL?: SecretLike;
+    BOOKING_TITLE?: SecretLike;
+    BOOKING_INTRO_TITLE?: SecretLike;
+    BOOKING_INTRO_BODY?: SecretLike;
+    BOOKING_LINE_LINK_TITLE?: SecretLike;
+    BOOKING_LINE_LINK_BODY?: SecretLike;
+    BOOKING_ENABLE_CAFE_TAB?: SecretLike;
+    BOOKING_ENABLE_LINE_LINK_PANEL?: SecretLike;
+    EMAIL_FROM_NAME?: SecretLike;
+    EMAIL_FOOTER_TEXT?: SecretLike;
+    EMAIL_HERO_IMAGE_URL?: SecretLike;
+    EXTERNAL_IMPORT_ENABLED?: SecretLike;
+    EXTERNAL_IMPORT_LABEL?: SecretLike;
+    EXTERNAL_IMPORT_PROVIDER?: SecretLike;
+    EXTERNAL_IMPORT_DEFAULT_FROM_EMAIL?: SecretLike;
+    EXTERNAL_IMPORT_DEFAULT_QUERY?: SecretLike;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -168,6 +199,7 @@ app.route('/', trafficPools);
 app.route('/', accountSettings);
 app.route('/', meetCallback);
 app.route('/', messageTemplates);
+app.route('/', providerConfig);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {

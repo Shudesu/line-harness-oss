@@ -12,6 +12,7 @@ import {
   createReservation,
   createReservationSession,
   getReservationByDetailToken,
+  getProviderConfig,
   issueReservationTokens,
   listAvailabilitySummary,
   listMyReservations,
@@ -148,6 +149,7 @@ function renderShell(): void {
         <div data-booking-content></div>
       </div>
     `;
+    applyProviderTheme();
     bindEvents();
     return;
   }
@@ -158,6 +160,31 @@ function renderShell(): void {
     ${renderHeader()}
     <div data-booking-content></div>
   `;
+  applyProviderTheme();
+}
+
+function applyProviderTheme(): void {
+  const shell = getApp().querySelector<HTMLElement>('[data-booking-shell]');
+  if (!shell) return;
+  const { colors } = state.provider;
+  if (colors.primary) {
+    shell.style.setProperty('--sky-700', colors.primary);
+    shell.style.setProperty('--leaf-600', colors.primary);
+    shell.style.setProperty('--cafe-blue', colors.primary);
+    shell.style.setProperty('--cafe-blue-2', colors.primary);
+  }
+  if (colors.accent) {
+    shell.style.setProperty('--sky-500', colors.accent);
+    shell.style.setProperty('--berry-500', colors.accent);
+  }
+  if (colors.background) {
+    shell.style.setProperty('--paper', colors.background);
+    shell.style.setProperty('--cafe-paper', colors.background);
+  }
+  if (colors.text) {
+    shell.style.setProperty('--ink', colors.text);
+    shell.style.setProperty('--cafe-ink', colors.text);
+  }
 }
 
 function render(): void {
@@ -306,6 +333,11 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     return;
   }
   if (action === 'show-cafe') {
+    if (!state.provider.reservation.enableCafeTab) {
+      state.screen = 'booking';
+      render();
+      return;
+    }
     state.screen = 'cafe';
     state.error = null;
     state.notice = null;
@@ -922,6 +954,13 @@ async function submitCancel(): Promise<void> {
 
 export async function initBooking(): Promise<void> {
   try {
+    try {
+      state.provider = await getProviderConfig();
+      document.title = state.provider.reservation.title || state.provider.displayName || document.title;
+    } catch (err) {
+      console.warn('Provider config fallback:', err);
+    }
+
     if (isLineEntry()) {
       const profile = await liff.getProfile();
       state.profile = profile;

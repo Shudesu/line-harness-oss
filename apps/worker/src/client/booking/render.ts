@@ -18,7 +18,7 @@ function selectedSlotRemaining(): number | null {
 function remainingLabel(slot: Slot): string {
   const remaining = lineRemaining(slot);
   if (!slot.available || remaining <= 0) return '満席';
-  return remaining <= 2 ? `残り${remaining}名` : '予約可';
+  return remaining <= 10 ? `残り${remaining}名` : '予約可';
 }
 
 function requiredBadge(): string {
@@ -103,27 +103,31 @@ function menuForReservationTitle(title?: string | null): Menu | null {
 }
 
 export function renderHeader(): string {
+  const provider = state.provider;
+  const cafeTab = provider.reservation.enableCafeTab
+    ? `<button type="button" class="${state.screen === 'cafe' ? 'active' : ''}" data-action="show-cafe">カフェ</button>`
+    : '';
   const tabs = state.entryMode === 'web'
     ? `
     <div class="booking-tabs three-tabs">
       <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約</button>
       <button type="button" class="${state.screen === 'mine' || state.screen === 'detail' || state.screen === 'cancel-confirm' || state.screen === 'cancelled' ? 'active' : ''}" data-action="show-mine">予約確認</button>
-      <button type="button" class="${state.screen === 'cafe' ? 'active' : ''}" data-action="show-cafe">カフェ</button>
+      ${cafeTab}
     </div>
   `
     : `
     <div class="booking-tabs three-tabs">
       <button type="button" class="${state.screen === 'booking' || state.screen === 'confirm' || state.screen === 'success' ? 'active' : ''}" data-action="show-booking">予約する</button>
       <button type="button" class="${state.screen === 'mine' || state.screen === 'detail' || state.screen === 'cancel-confirm' || state.screen === 'cancelled' ? 'active' : ''}" data-action="show-mine">予約確認</button>
-      <button type="button" class="${state.screen === 'cafe' ? 'active' : ''}" data-action="show-cafe">カフェ</button>
+      ${cafeTab}
     </div>
   `;
   return `
     <div class="booking-header">
-      <img class="booking-header-logo" src="/aonisai/aonisai1.jpg" alt="アオニサイファーム ブルーベリー">
+      ${provider.assets.logoUrl ? `<img class="booking-header-logo" src="${escapeHtml(provider.assets.logoUrl)}" alt="${escapeHtml(provider.displayName)}">` : ''}
       <div class="booking-header-copy">
-        <p class="eyebrow">AONISAI FARM</p>
-        <h1>体験予約</h1>
+        <p class="eyebrow">${escapeHtml(provider.name)}</p>
+        <h1>${escapeHtml(provider.reservation.title)}</h1>
       </div>
     </div>
     ${tabs}
@@ -131,7 +135,7 @@ export function renderHeader(): string {
 }
 
 export function renderScreen(): string {
-  if (state.screen === 'cafe') return renderCafe();
+  if (state.screen === 'cafe') return state.provider.reservation.enableCafeTab ? renderCafe() : renderBooking();
   if (state.screen === 'claim') return renderClaim();
   if (state.screen === 'confirm') return renderConfirm();
   if (state.screen === 'success') return renderSuccess();
@@ -155,6 +159,15 @@ function renderClaim(): string {
 }
 
 function renderCafe(): string {
+  if (state.provider.id !== 'aonisai') {
+    return `
+      <section class="booking-panel">
+        <h2>${escapeHtml(state.provider.shortName)}</h2>
+        <p>${escapeHtml(state.provider.description)}</p>
+        <button type="button" class="book-btn" data-action="show-booking">予約画面へ戻る</button>
+      </section>
+    `;
+  }
   const menuItems = [
     { id: 'blueberry-pizza', name: 'ブルーベリーピザ', price: '1,500円', image: '/aonisai/cafe/blueberry-pizza.webp', lead: '甘くないブルーベリーソースとチーズの看板ピザ。', text: '水牛モッツァレラチーズと無糖ブルーベリーソースの組み合わせ。はちみつをかけて楽しむ、アオニサイカフェらしいデザートピザです。' },
     { id: 'margherita', name: 'マルゲリータ', price: '1,400円', image: '/aonisai/cafe/margherita.webp', lead: '石窯で焼く、王道の一枚。', text: '水牛モッツァレラチーズとトマトの味を活かした、石窯焼きの定番ピザです。' },
@@ -267,12 +280,12 @@ function lineBookingUrl(): string {
 }
 
 function renderLineLinkPanel(): string {
-  if (state.entryMode !== 'web') return '';
+  if (state.entryMode !== 'web' || !state.provider.reservation.enableLineLinkPanel) return '';
   return `
     <section class="line-link-panel">
       <div>
-        <strong>LINEで予約すると確認が簡単です</strong>
-        <p>LINE連携しておくと、予約確認・キャンセル・次回予約をLINE上で開けます。Web予約後もメール内のリンクからLINE連携できます。</p>
+        <strong>${escapeHtml(state.provider.reservation.lineLinkTitle)}</strong>
+        <p>${escapeHtml(state.provider.reservation.lineLinkBody)}</p>
       </div>
       <a href="${escapeHtml(lineBookingUrl())}" class="line-link-btn">LINEで予約する</a>
     </section>
@@ -283,14 +296,14 @@ function renderExperienceIntro(): string {
   return `
     <section class="experience-intro">
       <div class="experience-copy">
-        <p class="eyebrow">BLUEBERRY PICKING</p>
-        <h2>つくばの農園で、旬のブルーベリーを楽しむ体験</h2>
-        <p>日付を選んで、空いている時間枠から予約できます。カフェでは石窯ピザやブルーベリースイーツも楽しめます。</p>
+        <p class="eyebrow">${escapeHtml(state.provider.shortName)}</p>
+        <h2>${escapeHtml(state.provider.reservation.introTitle)}</h2>
+        <p>${escapeHtml(state.provider.reservation.introBody)}</p>
       </div>
       <div class="experience-points" aria-label="体験概要">
-        <span>6月より営業</span>
-        <span>家族で来園OK</span>
-        <span>ワンちゃん連れOK</span>
+        <span>${escapeHtml(state.provider.shortName)}</span>
+        <span>かんたん予約</span>
+        <span>確認・キャンセル対応</span>
       </div>
     </section>
   `;

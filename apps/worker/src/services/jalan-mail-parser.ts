@@ -46,11 +46,12 @@ export function parseJalanMail(rawText: string): ParsedJalanMail {
       /(\d{2,4}-\d{2,4}-\d{3,4})/,
     ]),
     customerEmail: firstMatch(text, [
+      /メールアドレス\s*[:：]?\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i,
       /([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i,
     ]),
-    planName: firstMatch(text, [
-      /(?:プラン名|予約内容|メニュー)\s*[:：]?\s*([^\n\r]+)/,
-    ]),
+    planName: normalizePlanName(firstMatch(text, [
+      /(?:プラン名|メニュー)\s*[:：]?\s*([^\n\r]+)/,
+    ])),
     totalAmount: parseMoney(text, [
       /合計料金\s*\(税込\)\s*[:：]?\s*([0-9,]+)\s*円/,
       /合計金額\s*\(税込\)\s*[:：]?\s*([0-9,]+)\s*円/,
@@ -97,8 +98,16 @@ function firstMatch(text: string, patterns: RegExp[]): string | null {
   return null;
 }
 
+function normalizePlanName(value: string | null): string | null {
+  if (!value) return null;
+  // NFKC is useful for parsing numbers, but plan names are operator-facing text.
+  // Keep Japanese visual punctuation closer to the original mail.
+  return value.replace(/!/g, '！');
+}
+
 function parseDate(text: string): string | null {
-  const match = text.match(/(?:利用日時\s*[:：]?\s*)?(\d{4})[\/年.-](\d{1,2})[\/月.-](\d{1,2})日?/);
+  const usageDate = text.match(/利用日時\s*[:：]?\s*(\d{4})[\/年.-](\d{1,2})[\/月.-](\d{1,2})日?/);
+  const match = usageDate ?? text.match(/(\d{4})[\/年.-](\d{1,2})[\/月.-](\d{1,2})日?/);
   if (!match) return null;
   const [, year, month, day] = match;
   return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
