@@ -21,6 +21,7 @@ import {
   type ApiGmailImportRun,
   type ApiGmailImportRunResult,
   type ApiGmailLabel,
+  type ApiProviderConfig,
   type ApiUserEvent,
   type ApiEventDefinition,
   type ApiEventTagRule,
@@ -28,6 +29,14 @@ import {
 } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import FlexPreviewComponent from '@/components/flex-preview'
+import {
+  DEFAULT_EXTERNAL_IMPORT_NAME,
+  DEFAULT_EXTERNAL_IMPORT_QUERY,
+  applyProviderGmailRuleDefaults,
+  applyProviderBroadcastCardDefaults,
+  bookingUrlFromApiBase,
+  externalImportUi,
+} from '@/lib/provider-ui'
 
 type Tab = 'reservations' | 'chats' | 'broadcasts'
 type SettingsModal = 'menu' | 'jalan' | 'calendar' | 'events' | null
@@ -340,6 +349,7 @@ export default function ReservationOpsPage() {
   const { selectedAccountId } = useAccount()
   const [tab, setTab] = useState<Tab>('reservations')
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null)
+  const [providerConfig, setProviderConfig] = useState<ApiProviderConfig | null>(null)
   const [date, setDate] = useState(toYmd(new Date()))
   const [resources, setResources] = useState<ReservationResource[]>([])
   const [menusByResource, setMenusByResource] = useState<Record<string, ReservationMenu[]>>({})
@@ -367,9 +377,9 @@ export default function ReservationOpsPage() {
   const [eventTagRules, setEventTagRules] = useState<ApiEventTagRule[]>([])
   const [gmailRuleDraft, setGmailRuleDraft] = useState<GmailRuleDraft>({
     connectionId: '',
-    name: 'じゃらん予約メール',
+    name: DEFAULT_EXTERNAL_IMPORT_NAME,
     fromEmail: '',
-    query: '{from:reservation@activityboard.jp from:reservation_cancel@activityboard.jp} newer_than:30d',
+    query: DEFAULT_EXTERNAL_IMPORT_QUERY,
     unprocessedLabelId: '',
     processedLabelId: '',
     reviewLabelId: '',
@@ -390,6 +400,12 @@ export default function ReservationOpsPage() {
 
   const activeReservations = reservations.filter(activeReservation)
   const unreadChats = chats.filter((chat) => chat.status === 'unread')
+  const {
+    enabled: externalImportEnabled,
+    label: externalImportLabel,
+    sourceLabel: externalSourceLabel,
+    fallbackRuleName,
+  } = externalImportUi(providerConfig)
 
   const reservationsBySlot = useMemo(() => {
     const grouped = new Map<string, ReservationResponse[]>()
@@ -399,6 +415,15 @@ export default function ReservationOpsPage() {
     }
     return grouped
   }, [reservations])
+
+  const loadProviderConfig = useCallback(async () => {
+    try {
+      const res = await api.providerConfig.get()
+      if (res.success) setProviderConfig(res.data)
+    } catch {
+      // Provider config is optional in the admin UI. Keep legacy labels if it cannot be loaded.
+    }
+  }, [])
 
   const loadReservations = useCallback(async (nextResourceId = resourceId, nextDate = date) => {
     const allResources = await apiData<ReservationResource[]>('/api/reservation-resources')
@@ -493,17 +518,27 @@ export default function ReservationOpsPage() {
     setLoading(true)
     setError('')
     try {
-      await Promise.all([loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadTemplates(), loadCalendarConnections(), loadGmailImports(), loadEventSettings()])
+      await Promise.all([loadProviderConfig(), loadReservations(), loadChats(), loadExternalSources(), loadBroadcasts(), loadTemplates(), loadCalendarConnections(), loadGmailImports(), loadEventSettings()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '読み込みに失敗しました')
     } finally {
       setLoading(false)
     }
-  }, [loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadTemplates, loadCalendarConnections, loadGmailImports, loadEventSettings])
+  }, [loadProviderConfig, loadReservations, loadChats, loadExternalSources, loadBroadcasts, loadTemplates, loadCalendarConnections, loadGmailImports, loadEventSettings])
 
   useEffect(() => {
     loadAll()
   }, [loadAll])
+
+  useEffect(() => {
+    if (!providerConfig) return
+    setGmailRuleDraft((current) => applyProviderGmailRuleDefaults(current, providerConfig))
+    setBroadcastDraft((current) => applyProviderBroadcastCardDefaults(
+      current,
+      providerConfig,
+      bookingUrlFromApiBase(process.env.NEXT_PUBLIC_API_URL),
+    ))
+  }, [providerConfig])
 
   const runAction = async (action: () => Promise<void>, success: string) => {
     setSaving(true)
@@ -583,7 +618,7 @@ export default function ReservationOpsPage() {
       }
       const res = await api.gmailImports.createRule({
         connectionId: gmailRuleDraft.connectionId,
-        name: gmailRuleDraft.name.trim() || 'じゃらん予約メール',
+        name: gmailRuleDraft.name.trim() || fallbackRuleName,
         fromEmail: gmailRuleDraft.fromEmail.trim() || null,
         query: gmailRuleDraft.query.trim() || null,
         unprocessedLabelId: gmailRuleDraft.unprocessedLabelId,
@@ -627,7 +662,11 @@ export default function ReservationOpsPage() {
         lineAccountId: selectedAccountId || null,
       })
       if (!res.success) throw new Error(res.error)
-      setBroadcastDraft(defaultBroadcastDraft)
+      setBroadcastDraft(applyProviderBroadcastCardDefaults(
+        defaultBroadcastDraft,
+        providerConfig,
+        bookingUrlFromApiBase(process.env.NEXT_PUBLIC_API_URL),
+      ))
     }, '一斉配信の下書きを作成しました')
   }
 
@@ -820,6 +859,7 @@ export default function ReservationOpsPage() {
               selectedReservation={selectedReservation}
               calendarOpen={reservationCalendarOpen}
               viewFilter={reservationViewFilter}
+              externalSourceLabel={externalSourceLabel}
               onDateChange={(nextDate) => {
                 setDate(nextDate)
                 setSelectedReservation(null)
@@ -867,10 +907,12 @@ export default function ReservationOpsPage() {
       {settingsModal === 'menu' && (
         <SettingsModalShell title="設定" onClose={() => setSettingsModal(null)}>
           <div className="grid gap-3 sm:grid-cols-2">
-            <button type="button" onClick={() => setSettingsModal('jalan')} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left hover:bg-amber-100">
-              <p className="font-bold text-amber-950">じゃらん / Gmail設定</p>
-              <p className="mt-1 text-sm text-amber-800">Gmailラベル、取り込みルール、要確認メールを管理します。</p>
-            </button>
+            {externalImportEnabled && (
+              <button type="button" onClick={() => setSettingsModal('jalan')} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left hover:bg-amber-100">
+                <p className="font-bold text-amber-950">{externalImportLabel}</p>
+                <p className="mt-1 text-sm text-amber-800">Gmailラベル、取り込みルール、要確認メールを管理します。</p>
+              </button>
+            )}
             <button type="button" onClick={() => setSettingsModal('calendar')} className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-left hover:bg-blue-100">
               <p className="font-bold text-blue-950">Google Calendar設定</p>
               <p className="mt-1 text-sm text-blue-800">Google接続、予約対象への紐づけ、選択日の同期を管理します。</p>
@@ -884,8 +926,10 @@ export default function ReservationOpsPage() {
       )}
 
       {settingsModal === 'jalan' && (
-        <SettingsModalShell title="じゃらん / Gmail設定" onClose={() => setSettingsModal(null)}>
+        <SettingsModalShell title={externalImportLabel} onClose={() => setSettingsModal(null)}>
           <JalanPanel
+            importLabel={externalImportLabel}
+            sourceLabel={externalSourceLabel}
             sources={externalSources}
             saving={saving}
             connections={calendarConnections}
@@ -1367,6 +1411,7 @@ function ReservationsPanel({
   selectedReservation,
   calendarOpen,
   viewFilter,
+  externalSourceLabel,
   onDateChange,
   onResourceChange,
   onViewFilterChange,
@@ -1383,6 +1428,7 @@ function ReservationsPanel({
   selectedReservation: ReservationResponse | null
   calendarOpen: boolean
   viewFilter: ReservationViewFilter
+  externalSourceLabel: string
   onDateChange: (date: string) => void
   onResourceChange: (resourceId: string) => void
   onViewFilterChange: (filter: ReservationViewFilter) => void
@@ -1439,7 +1485,7 @@ function ReservationsPanel({
   const filterItems: Array<{ key: ReservationViewFilter; label: string }> = [
     { key: 'all', label: 'All' },
     { key: 'line', label: 'LINE' },
-    { key: 'jalan', label: 'じゃらん' },
+    { key: 'jalan', label: externalSourceLabel },
     { key: 'time', label: '時間別' },
   ]
   const moveCalendarMonth = (direction: -1 | 1) => {
@@ -1730,6 +1776,8 @@ function ChatsPanel({
 }
 
 function JalanPanel({
+  importLabel,
+  sourceLabel,
   sources,
   saving,
   connections,
@@ -1747,6 +1795,8 @@ function JalanPanel({
   onRunRule,
   onIgnore,
 }: {
+  importLabel: string
+  sourceLabel: string
   sources: ExternalSource[]
   saving: boolean
   connections: ApiCalendarConnection[]
@@ -1769,9 +1819,9 @@ function JalanPanel({
   return (
     <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-gray-900">じゃらんGmail取り込み設定</h2>
+        <h2 className="text-lg font-bold text-gray-900">{importLabel}</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Gmailで未処理ラベルを付けたじゃらんメールだけを読み、予約DBへ取り込みます。Google連携はGmail権限付きで再接続してください。
+          Gmailで未処理ラベルを付けた外部予約メールだけを読み、予約DBへ取り込みます。Google連携はGmail権限付きで再接続してください。
         </p>
 
         <div className="mt-4 grid gap-3">
@@ -1904,7 +1954,7 @@ function JalanPanel({
       </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-bold text-gray-900">じゃらん要確認メール</h2>
+        <h2 className="text-lg font-bold text-gray-900">{sourceLabel}要確認メール</h2>
         <p className="mt-1 text-sm text-gray-500">updated、枠超過、経路未設定など、自動反映しないメールだけ表示します。</p>
         <div className="mt-4 grid gap-3">
           {sources.length === 0 ? <p className="rounded-xl bg-gray-50 p-6 text-center text-sm text-gray-400">要確認メールはありません。</p> : sources.map((source) => (

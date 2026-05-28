@@ -12,6 +12,7 @@
  *   ?ref=xxx     — attribution tracking (which LP/campaign)
  *   ?redirect=x  — redirect after linking (for wrapped URLs)
  *   ?page=book   — booking page (calendar slot picker)
+ *   ?page=book-v2 — provider-configurable booking page
  */
 
 declare const liff: {
@@ -50,14 +51,26 @@ function apiCall(path: string, options?: RequestInit): Promise<Response> {
 function getPage(): string | null {
   const path = window.location.pathname.replace(/^\/+/, '');
   if (path === 'book') return 'book';
+  if (path === 'book-v2') return 'book-v2';
   const params = new URLSearchParams(window.location.search);
   return params.get('page');
 }
 
 function isWebBookingEntry(): boolean {
-  if (getPage() !== 'book') return false;
+  const page = getPage();
+  if (page !== 'book' && page !== 'book-v2') return false;
   const params = new URLSearchParams(window.location.search);
   return params.get('mode') === 'web' || Boolean(params.get('channel'));
+}
+
+async function initBookingPage(page: string | null) {
+  if (page === 'book-v2') {
+    const { initBooking } = await import('./booking-v2.js');
+    await initBooking();
+    return;
+  }
+  const { initBooking } = await import('./booking.js');
+  await initBooking();
 }
 
 function getRedirectUrl(): string | null {
@@ -307,8 +320,7 @@ async function main() {
   try {
     const page = getPage();
     if (isWebBookingEntry()) {
-      const { initBooking } = await import('./booking.js');
-      await initBooking();
+      await initBookingPage(page);
       return;
     }
     if (!LIFF_ID) {
@@ -333,9 +345,8 @@ async function main() {
       // fallback: BOT_BASIC_ID remains empty, friend-add URL won't auto-redirect
     }
 
-    if (page === 'book') {
-      const { initBooking } = await import('./booking.js');
-      await initBooking();
+    if (page === 'book' || page === 'book-v2') {
+      await initBookingPage(page);
     } else if (page === 'form') {
       const params = new URLSearchParams(window.location.search);
       const formId = params.get('id');

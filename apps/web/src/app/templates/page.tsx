@@ -6,7 +6,14 @@ import type { Template } from '@line-harness/sdk'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
+import { api, type ApiProviderConfig } from '@/lib/api'
 import { createLineHarnessClient } from '@/lib/line-harness-client'
+import {
+  DEFAULT_RESERVATION_CARD,
+  bookingUrlFromApiBase,
+  buildProviderReservationCard,
+  type ReservationCardForm,
+} from '@/lib/provider-ui'
 
 const messageTypeLabels: Record<string, string> = {
   text: 'テキスト',
@@ -19,15 +26,6 @@ interface CreateFormState {
   category: string
   messageType: string
   messageContent: string
-}
-
-interface ReservationCardForm {
-  title: string
-  body: string
-  buttonLabel: string
-  reservationUrl: string
-  imageUrl: string
-  footer: string
 }
 
 function formatDate(iso: string): string {
@@ -91,14 +89,8 @@ export default function TemplatesPage() {
   const [formError, setFormError] = useState('')
   const [showReservationCard, setShowReservationCard] = useState(false)
   const [uploadingCardImage, setUploadingCardImage] = useState(false)
-  const [reservationCard, setReservationCard] = useState<ReservationCardForm>({
-    title: 'ブルーベリー予約はこちら',
-    body: '日付と時間を選んで、かんたんに予約できます。',
-    buttonLabel: '予約する',
-    reservationUrl: '',
-    imageUrl: '',
-    footer: 'アオニサイファーム',
-  })
+  const [providerConfig, setProviderConfig] = useState<ApiProviderConfig | null>(null)
+  const [reservationCard, setReservationCard] = useState<ReservationCardForm>(DEFAULT_RESERVATION_CARD)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -113,9 +105,31 @@ export default function TemplatesPage() {
     }
   }, [selectedCategory])
 
+  const loadProviderConfig = useCallback(async () => {
+    try {
+      const res = await api.providerConfig.get()
+      if (res.success) setProviderConfig(res.data)
+    } catch {
+      // Keep legacy AONISAI defaults if provider config cannot be loaded.
+    }
+  }, [])
+
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    loadProviderConfig()
+  }, [loadProviderConfig])
+
+  useEffect(() => {
+    if (!providerConfig) return
+    setReservationCard((current) => buildProviderReservationCard(
+      current,
+      providerConfig,
+      bookingUrlFromApiBase(process.env.NEXT_PUBLIC_API_URL),
+    ))
+  }, [providerConfig])
 
   const categories = Array.from(
     new Set(templates.map((t) => t.category).filter(Boolean))
@@ -716,6 +730,7 @@ function buildReservationFlexCard(input: ReservationCardForm): string {
   const reservationUrl = input.reservationUrl.trim()
   const footer = input.footer.trim()
   const imageUrl = input.imageUrl.trim()
+  const primaryColor = input.primaryColor.trim() || '#69A3D0'
 
   const bubble: Record<string, unknown> = {
     type: 'bubble',
@@ -725,7 +740,7 @@ function buildReservationFlexCard(input: ReservationCardForm): string {
       layout: 'vertical',
       spacing: 'md',
       contents: [
-        { type: 'text', text: title, weight: 'bold', size: 'xl', wrap: true, color: '#1F4F7A' },
+        { type: 'text', text: title, weight: 'bold', size: 'xl', wrap: true, color: primaryColor },
         { type: 'text', text: body, size: 'sm', wrap: true, color: '#4B5563' },
       ],
     },
@@ -737,7 +752,7 @@ function buildReservationFlexCard(input: ReservationCardForm): string {
         {
           type: 'button',
           style: 'primary',
-          color: '#69A3D0',
+          color: primaryColor,
           action: { type: 'uri', label: buttonLabel, uri: reservationUrl || 'https://example.com' },
         },
         ...(footer ? [{ type: 'text', text: footer, size: 'xs', align: 'center', color: '#6B7280', wrap: true }] : []),
