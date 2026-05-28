@@ -33,26 +33,26 @@ describe('booking UI provider rendering', () => {
     installMinimalDom();
   });
 
-  it('uses generic fallback provider by default and does not render AONISAI specific header content', async () => {
+  it('uses AONISAI provider by default for current production compatibility', async () => {
     const [{ state }, { renderHeader }] = await Promise.all([
-      import('../client/booking/state.js'),
-      import('../client/booking/render.js'),
+      import('../client/booking-v2/state.js'),
+      import('../client/booking-v2/render.js'),
     ]);
 
     const html = renderHeader();
 
-    expect(state.provider.id).toBe('generic');
-    expect(html).toContain('Generic Reservation Provider');
-    expect(html).toContain('<h1>予約</h1>');
-    expect(html).not.toContain('アオニサイ');
-    expect(html).not.toContain('/aonisai/');
-    expect(html).not.toContain('data-action="show-cafe"');
+    expect(state.provider.id).toBe('aonisai');
+    expect(html).toContain('AONISAI FARM');
+    expect(html).toContain('<h1>ブルーベリー体験予約</h1>');
+    expect(html).toContain('アオニサイ');
+    expect(html).toContain('/aonisai/');
+    expect(html).toContain('data-action="show-cafe"');
   });
 
   it('renders provider header values and cafe tab only when enabled', async () => {
     const [{ state }, { renderHeader }] = await Promise.all([
-      import('../client/booking/state.js'),
-      import('../client/booking/render.js'),
+      import('../client/booking-v2/state.js'),
+      import('../client/booking-v2/render.js'),
     ]);
     state.provider = {
       ...state.provider,
@@ -82,8 +82,8 @@ describe('booking UI provider rendering', () => {
 
   it('does not render AONISAI cafe content for non-aonisai providers', async () => {
     const [{ state }, { renderScreen }] = await Promise.all([
-      import('../client/booking/state.js'),
-      import('../client/booking/render.js'),
+      import('../client/booking-v2/state.js'),
+      import('../client/booking-v2/render.js'),
     ]);
     state.screen = 'cafe';
     state.provider = {

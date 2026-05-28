@@ -9,7 +9,7 @@ const providers: Record<string, ProviderConfig> = {
 
 export function getProviderDefaults(providerId: string | null | undefined): ProviderConfig {
   const id = providerId?.trim().toLowerCase();
-  if (!id) return genericProviderConfig;
+  if (!id) return aonisaiProviderConfig;
   return providers[id] ?? genericProviderConfig;
 }
 

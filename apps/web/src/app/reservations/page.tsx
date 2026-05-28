@@ -14,6 +14,7 @@ import type {
 } from '@line-crm/shared'
 import Header from '@/components/layout/header'
 import { api, fetchApi, type ApiProviderConfig } from '@/lib/api'
+import { buildReservationEntryUrl, reservationEntryUi } from '@/lib/provider-ui'
 
 type Mode = 'overview' | 'settings'
 type ViewMode = 'week' | 'month'
@@ -248,10 +249,6 @@ function numberOrUndefined(value: FormDataEntryValue | null): number | undefined
 
 function nullableNumber(value: FormDataEntryValue | null): number | null {
   return numberOrUndefined(value) ?? null
-}
-
-function workerBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787').trim().replace(/\/+$/, '')
 }
 
 export default function ReservationsPage() {
@@ -1490,24 +1487,22 @@ function ReservationEntryUrlCard({
   const [utmSource, setUtmSource] = useState('')
   const [utmMedium, setUtmMedium] = useState('')
   const [utmCampaign, setUtmCampaign] = useState('')
+  const [bookingPage, setBookingPage] = useState<'book' | 'book-v2'>('book')
   const [copied, setCopied] = useState(false)
   const selectedResource = resources.find((resource) => resource.id === resourceId)
   const selectedMenu = menus.find((menu) => menu.id === menuId)
-  const providerName = providerConfig?.shortName || providerConfig?.displayName || '予約'
-  const bookingTitle = providerConfig?.reservation.title || '予約'
-  const accentColor = providerConfig?.colors.primary || '#2563eb'
-  const params = new URLSearchParams({
-    page: 'book',
-    mode: 'web',
-    channel: channel || 'web',
+  const { providerName, bookingTitle, accentColor } = reservationEntryUi(providerConfig)
+  const url = buildReservationEntryUrl({
+    workerBaseUrl: process.env.NEXT_PUBLIC_API_URL,
+    page: bookingPage,
+    channel,
+    resourceId,
+    menuId,
+    ref,
+    utmSource,
+    utmMedium,
+    utmCampaign,
   })
-  if (resourceId) params.set('resourceId', resourceId)
-  if (menuId) params.set('menuId', menuId)
-  if (ref.trim()) params.set('ref', ref.trim())
-  if (utmSource.trim()) params.set('utm_source', utmSource.trim())
-  if (utmMedium.trim()) params.set('utm_medium', utmMedium.trim())
-  if (utmCampaign.trim()) params.set('utm_campaign', utmCampaign.trim())
-  const url = `${workerBaseUrl()}/?${params.toString()}`
 
   const copyUrl = async () => {
     try {
@@ -1538,6 +1533,12 @@ function ReservationEntryUrlCard({
                 <option value="web">Web</option>
               </select>
             </Field>
+            <Field label="予約画面">
+              <select value={bookingPage} onChange={(event) => setBookingPage(event.target.value as 'book' | 'book-v2')} className="input">
+                <option value="book">通常版（既存LIFF）</option>
+                <option value="book-v2">v2検証版</option>
+              </select>
+            </Field>
             <Field label="ref">
               <input value={ref} onChange={(event) => setRef(event.target.value)} className="input" placeholder="gmaps_2026" />
             </Field>
@@ -1555,6 +1556,9 @@ function ReservationEntryUrlCard({
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
           <p className="text-xs font-bold" style={{ color: accentColor }}>選択中</p>
           <p className="mt-1 text-sm font-bold text-blue-950">{selectedResource?.name ?? 'Resource未選択'} / {selectedMenu?.name ?? 'Menu未選択'}</p>
+          <p className="mt-1 text-xs text-blue-800">
+            {bookingPage === 'book' ? '通常版: 既存の本番予約画面です。' : 'v2検証版: provider対応の新予約画面です。本番導線に使う前に実機確認してください。'}
+          </p>
           <div className="mt-3 rounded-lg bg-white p-3 text-xs leading-6 text-gray-700 break-all">{url}</div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" onClick={copyUrl} disabled={!resourceId} className="btn-primary disabled:opacity-50">

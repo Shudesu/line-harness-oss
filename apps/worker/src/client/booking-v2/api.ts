@@ -1,4 +1,4 @@
-import type { AvailabilitySummary, Menu, Reservation, ReservationAccessTokens, Resource, Slot } from './types.js';
+import type { AvailabilitySummary, Menu, ProviderConfig, Reservation, ReservationAccessTokens, Resource, Slot } from './types.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -44,6 +44,10 @@ export function createGuestReservationSession(input: {
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export function getProviderConfig() {
+  return apiJson<ProviderConfig>('/api/public/provider-config');
 }
 
 export function listResources() {

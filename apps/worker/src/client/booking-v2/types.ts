@@ -46,6 +46,55 @@ export interface Menu {
   capacityCountUnderThree?: boolean;
 }
 
+export interface ProviderConfig {
+  id: string;
+  name: string;
+  displayName: string;
+  shortName: string;
+  description: string;
+  address: string;
+  phone: string;
+  siteUrl: string;
+  colors: {
+    primary: string;
+    accent: string;
+    background: string;
+    text: string;
+  };
+  assets: {
+    logoUrl: string;
+    heroImageUrl: string;
+    faviconUrl: string;
+  };
+  reservation: {
+    title: string;
+    introTitle: string;
+    introBody: string;
+    lineLinkTitle: string;
+    lineLinkBody: string;
+    enableCafeTab: boolean;
+    enableLineLinkPanel: boolean;
+  };
+  email: {
+    fromName: string;
+    footerText: string;
+    heroImageUrl: string;
+  };
+  externalImport: {
+    enabled: boolean;
+    label: string;
+    provider: string;
+    defaultFromEmail: string;
+    defaultQuery: string;
+    defaultLabels: {
+      unprocessed: string;
+      processed: string;
+      review: string;
+      failed: string;
+    };
+  };
+}
+
 export interface Reservation {
   id: string;
   slotId: string;
@@ -94,6 +143,7 @@ export interface BookingForm {
 }
 
 export interface BookingState {
+  provider: ProviderConfig;
   entryMode: 'line' | 'web';
   entryChannel: string;
   entryRef: string | null;

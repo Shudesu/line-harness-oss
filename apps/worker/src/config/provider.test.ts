@@ -12,13 +12,13 @@ function secret(value: string) {
 }
 
 describe('resolveProviderConfig', () => {
-  it('falls back to the generic provider when PROVIDER_ID is not set', async () => {
+  it('falls back to the AONISAI provider when PROVIDER_ID is not set for current production compatibility', async () => {
     const provider = await resolveProviderConfig(env());
 
-    expect(provider.id).toBe('generic');
-    expect(provider.displayName).toBe('予約サービス');
-    expect(provider.reservation.enableCafeTab).toBe(false);
-    expect(provider.externalImport.enabled).toBe(false);
+    expect(provider.id).toBe('aonisai');
+    expect(provider.displayName).toContain('アオニサイファーム');
+    expect(provider.reservation.enableCafeTab).toBe(true);
+    expect(provider.externalImport.provider).toBe('jalan');
   });
 
   it('loads the aonisai provider defaults when PROVIDER_ID=aonisai', async () => {

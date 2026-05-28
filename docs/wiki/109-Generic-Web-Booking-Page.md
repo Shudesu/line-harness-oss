@@ -99,6 +99,29 @@ Web予約画面 = apps/web
 ただし、既存Worker LIFF画面は残す。  
 LINE内予約は引き続きWorker LIFF画面を使い、LINE外流入はWeb予約画面を使う。
 
+## 現在の実装状況
+
+2026-05時点では、顧客向けの `apps/web /book` 画面は未実装。  
+Web管理画面から、Worker側予約画面へ飛ばす導線URLを生成するところまで実装している。
+
+```text
+Web管理画面 /reservations
+  予約導線URLを生成
+  媒体 channel / ref / UTM を付与
+  通常版 book と v2検証版 book-v2 を選択可能
+
+Worker /?page=book
+  既存main相当の予約画面
+  本番の既存導線向け
+
+Worker /?page=book-v2
+  provider対応の新予約画面
+  実機検証・他事業者テンプレート検証向け
+```
+
+本格的なWeb予約画面を作るまでは、通常の予約導線は `/?page=book` を使う。  
+`/?page=book-v2` は検証用であり、本番導線に使う前にLIFF/ブラウザ両方で予約作成、確認、キャンセル、メール送信を確認する。
+
 ## 画面URL
 
 推奨URL:

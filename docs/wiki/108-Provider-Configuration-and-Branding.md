@@ -72,6 +72,23 @@ apps/worker/src/client/booking/*
 - カフェ用CSS `.cafe-screen`, `.cafe-hero`, `.cafe-menu-card`
 - 予約画面上の体験紹介、LINE連携文言
 
+### Worker予約画面のルーティング方針
+
+既存運用を壊さないため、Worker配信の予約画面は2系統に分ける。
+
+```text
+/?page=book
+  既存main相当のAONISAI予約画面
+  既存LIFF URL、既存リッチメニュー、既存予約導線はここを使う。
+
+/?page=book-v2
+  provider-configurableな新予約画面
+  他事業者展開や新UI検証用。明示的にURLを選んだ場合だけ使う。
+```
+
+`book-v2` は `/api/public/provider-config` を読み、色・文言・カフェタブ・外部取り込み初期値をProvider Configから反映する。  
+一方で `book` はmain相当の既存UIとして残し、provider設定の不備で本番予約画面が変わる事故を避ける。
+
 改善方針:
 
 - 予約画面のロジックは共通化する。

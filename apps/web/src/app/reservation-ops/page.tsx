@@ -29,6 +29,14 @@ import {
 } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import FlexPreviewComponent from '@/components/flex-preview'
+import {
+  DEFAULT_EXTERNAL_IMPORT_NAME,
+  DEFAULT_EXTERNAL_IMPORT_QUERY,
+  applyProviderGmailRuleDefaults,
+  applyProviderBroadcastCardDefaults,
+  bookingUrlFromApiBase,
+  externalImportUi,
+} from '@/lib/provider-ui'
 
 type Tab = 'reservations' | 'chats' | 'broadcasts'
 type SettingsModal = 'menu' | 'jalan' | 'calendar' | 'events' | null
@@ -122,9 +130,6 @@ const defaultEventRuleDraft: EventRuleDraft = {
   conditionValue: 'booking',
   priority: 0,
 }
-
-const DEFAULT_EXTERNAL_IMPORT_NAME = 'じゃらん予約メール'
-const DEFAULT_EXTERNAL_IMPORT_QUERY = '{from:reservation@activityboard.jp from:reservation_cancel@activityboard.jp} newer_than:30d'
 
 const tabs: Array<{ key: Tab; label: string; hint: string }> = [
   { key: 'reservations', label: '予約', hint: '今日の枠と予約客' },
@@ -395,12 +400,12 @@ export default function ReservationOpsPage() {
 
   const activeReservations = reservations.filter(activeReservation)
   const unreadChats = chats.filter((chat) => chat.status === 'unread')
-  const externalImportConfig = providerConfig?.externalImport
-  const externalImportEnabled = externalImportConfig?.enabled ?? true
-  const externalImportLabel = externalImportConfig?.label || 'じゃらん / Gmail設定'
-  const externalSourceLabel = externalImportConfig?.provider === 'jalan'
-    ? 'じゃらん'
-    : (externalImportLabel.replace(/\s*設定$/, '').replace(/\s*\/\s*Gmail$/, '') || '外部予約')
+  const {
+    enabled: externalImportEnabled,
+    label: externalImportLabel,
+    sourceLabel: externalSourceLabel,
+    fallbackRuleName,
+  } = externalImportUi(providerConfig)
 
   const reservationsBySlot = useMemo(() => {
     const grouped = new Map<string, ReservationResponse[]>()
@@ -527,17 +532,12 @@ export default function ReservationOpsPage() {
 
   useEffect(() => {
     if (!providerConfig) return
-    const external = providerConfig.externalImport
-    setGmailRuleDraft((current) => ({
-      ...current,
-      name: current.name && current.name !== DEFAULT_EXTERNAL_IMPORT_NAME
-        ? current.name
-        : `${external.label || '外部予約メール'} 取り込み`,
-      fromEmail: current.fromEmail || external.defaultFromEmail || '',
-      query: current.query && current.query !== DEFAULT_EXTERNAL_IMPORT_QUERY
-        ? current.query
-        : external.defaultQuery || current.query,
-    }))
+    setGmailRuleDraft((current) => applyProviderGmailRuleDefaults(current, providerConfig))
+    setBroadcastDraft((current) => applyProviderBroadcastCardDefaults(
+      current,
+      providerConfig,
+      bookingUrlFromApiBase(process.env.NEXT_PUBLIC_API_URL),
+    ))
   }, [providerConfig])
 
   const runAction = async (action: () => Promise<void>, success: string) => {
@@ -616,7 +616,6 @@ export default function ReservationOpsPage() {
       if (!gmailRuleDraft.resourceId || !gmailRuleDraft.menuId) {
         throw new Error('取り込み先の予約対象とメニューを選択してください')
       }
-      const fallbackRuleName = `${externalImportLabel.replace(/\s*設定$/, '') || '外部予約メール'} 取り込み`
       const res = await api.gmailImports.createRule({
         connectionId: gmailRuleDraft.connectionId,
         name: gmailRuleDraft.name.trim() || fallbackRuleName,
@@ -663,7 +662,11 @@ export default function ReservationOpsPage() {
         lineAccountId: selectedAccountId || null,
       })
       if (!res.success) throw new Error(res.error)
-      setBroadcastDraft(defaultBroadcastDraft)
+      setBroadcastDraft(applyProviderBroadcastCardDefaults(
+        defaultBroadcastDraft,
+        providerConfig,
+        bookingUrlFromApiBase(process.env.NEXT_PUBLIC_API_URL),
+      ))
     }, '一斉配信の下書きを作成しました')
   }
 

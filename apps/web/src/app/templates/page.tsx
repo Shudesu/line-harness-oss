@@ -8,6 +8,12 @@ import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import { api, type ApiProviderConfig } from '@/lib/api'
 import { createLineHarnessClient } from '@/lib/line-harness-client'
+import {
+  DEFAULT_RESERVATION_CARD,
+  bookingUrlFromApiBase,
+  buildProviderReservationCard,
+  type ReservationCardForm,
+} from '@/lib/provider-ui'
 
 const messageTypeLabels: Record<string, string> = {
   text: 'テキスト',
@@ -20,31 +26,6 @@ interface CreateFormState {
   category: string
   messageType: string
   messageContent: string
-}
-
-interface ReservationCardForm {
-  title: string
-  body: string
-  buttonLabel: string
-  reservationUrl: string
-  imageUrl: string
-  footer: string
-  primaryColor: string
-}
-
-const DEFAULT_RESERVATION_CARD: ReservationCardForm = {
-  title: 'ブルーベリー予約はこちら',
-  body: '日付と時間を選んで、かんたんに予約できます。',
-  buttonLabel: '予約する',
-  reservationUrl: '',
-  imageUrl: '',
-  footer: 'アオニサイファーム',
-  primaryColor: '#69A3D0',
-}
-
-function defaultBookingUrl(): string {
-  const base = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '') || ''
-  return base ? `${base}/?page=book` : ''
 }
 
 function formatDate(iso: string): string {
@@ -143,23 +124,11 @@ export default function TemplatesPage() {
 
   useEffect(() => {
     if (!providerConfig) return
-    setReservationCard((current) => ({
-      ...current,
-      title: current.title !== DEFAULT_RESERVATION_CARD.title
-        ? current.title
-        : `${providerConfig.shortName || providerConfig.displayName}予約はこちら`,
-      body: current.body !== DEFAULT_RESERVATION_CARD.body
-        ? current.body
-        : providerConfig.reservation.introBody || current.body,
-      reservationUrl: current.reservationUrl || defaultBookingUrl(),
-      imageUrl: current.imageUrl || providerConfig.assets.heroImageUrl || '',
-      footer: current.footer !== DEFAULT_RESERVATION_CARD.footer
-        ? current.footer
-        : providerConfig.shortName || providerConfig.displayName,
-      primaryColor: current.primaryColor !== DEFAULT_RESERVATION_CARD.primaryColor
-        ? current.primaryColor
-        : providerConfig.colors.primary || current.primaryColor,
-    }))
+    setReservationCard((current) => buildProviderReservationCard(
+      current,
+      providerConfig,
+      bookingUrlFromApiBase(process.env.NEXT_PUBLIC_API_URL),
+    ))
   }, [providerConfig])
 
   const categories = Array.from(
