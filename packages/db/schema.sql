@@ -467,6 +467,55 @@ CREATE INDEX IF NOT EXISTS idx_chats_status ON chats (status);
 CREATE INDEX IF NOT EXISTS idx_chats_line_account_id ON chats (line_account_id);
 
 -- ============================================================
+-- External customer profiles for generic console v2
+-- ============================================================
+CREATE TABLE IF NOT EXISTS external_customer_profiles (
+  id          TEXT PRIMARY KEY,
+  source      TEXT NOT NULL,
+  external_id TEXT,
+  name        TEXT,
+  phone       TEXT,
+  email       TEXT,
+  metadata    TEXT NOT NULL DEFAULT '{}',
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_customer_profiles_source_external
+ON external_customer_profiles (source, external_id)
+WHERE external_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_external_customer_profiles_phone ON external_customer_profiles (phone);
+CREATE INDEX IF NOT EXISTS idx_external_customer_profiles_email ON external_customer_profiles (email);
+CREATE INDEX IF NOT EXISTS idx_external_customer_profiles_name ON external_customer_profiles (name);
+
+CREATE TABLE IF NOT EXISTS friend_external_customer_links (
+  id                   TEXT PRIMARY KEY,
+  friend_id            TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
+  external_customer_id TEXT NOT NULL REFERENCES external_customer_profiles (id) ON DELETE CASCADE,
+  link_method          TEXT NOT NULL CHECK (link_method IN ('manual', 'phone', 'email', 'import')),
+  confidence           INTEGER NOT NULL DEFAULT 100,
+  created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE(friend_id, external_customer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_friend_external_customer_links_friend ON friend_external_customer_links (friend_id);
+CREATE INDEX IF NOT EXISTS idx_friend_external_customer_links_customer ON friend_external_customer_links (external_customer_id);
+
+CREATE TABLE IF NOT EXISTS customer_notes (
+  id                   TEXT PRIMARY KEY,
+  friend_id            TEXT REFERENCES friends (id) ON DELETE CASCADE,
+  external_customer_id TEXT REFERENCES external_customer_profiles (id) ON DELETE CASCADE,
+  note                 TEXT NOT NULL,
+  created_by           TEXT,
+  created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_notes_friend ON customer_notes (friend_id);
+CREATE INDEX IF NOT EXISTS idx_customer_notes_external_customer ON customer_notes (external_customer_id);
+
+-- ============================================================
 -- Round 3: 通知機能
 -- ============================================================
 CREATE TABLE IF NOT EXISTS notification_rules (

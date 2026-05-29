@@ -109,6 +109,7 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 25. **[Upstream Sync and Cloudflare Deploy](102-Upstream-Sync-and-Cloudflare-Deploy.md)** — upstream追従とCloudflare登録方針
 26. **[Reservation UX Flows](103-Reservation-UX-Flows.md)** — LIFF予約画面、予約管理画面、確認/完了/キャンセル導線
 27. **[Gmail Jalan Cron Import](104-Gmail-Jalan-Cron-Import.md)** — Gmail API + Worker Cronによるじゃらん予約メール取り込み設計
+28. **[Management Console v2](110-Management-Console-v2.md)** — 予約非依存の汎用Web管理画面、チャット、顧客検索、AI補助、配信、タグ/イベント設計
 
 ## D1テーブル一覧（42テーブル）
 
