@@ -47,6 +47,7 @@ import { trafficPools } from './routes/traffic-pools.js';
 import { meetCallback } from './routes/meet-callback.js';
 import { messageTemplates } from './routes/message-templates.js';
 import { providerConfig } from './routes/provider-config.js';
+import { externalCustomers } from './routes/external-customers.js';
 import { defaultLiffUrl, defaultLineAccessToken, workerBaseUrl } from './services/line-bindings.js';
 import { processActiveGmailImportRules } from './services/gmail-jalan-import.js';
 import {
@@ -200,6 +201,7 @@ app.route('/', accountSettings);
 app.route('/', meetCallback);
 app.route('/', messageTemplates);
 app.route('/', providerConfig);
+app.route('/', externalCustomers);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {

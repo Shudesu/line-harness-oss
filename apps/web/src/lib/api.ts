@@ -222,6 +222,28 @@ export type ApiProviderConfig = {
   }
 }
 
+export type ApiExternalCustomer = {
+  id: string
+  source: string
+  externalId: string | null
+  name: string | null
+  phone: string | null
+  email: string | null
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export type ApiExternalCustomerLink = {
+  id: string
+  friendId: string
+  externalCustomerId: string
+  linkMethod: 'manual' | 'phone' | 'email' | 'import'
+  confidence: number
+  createdAt: string
+  customer: ApiExternalCustomer
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '')
 if (!API_URL) {
   throw new Error(
@@ -304,6 +326,76 @@ export type FriendWithTags = Friend & { tags: Tag[] }
 export const api = {
   providerConfig: {
     get: () => fetchApi<ApiResponse<ApiProviderConfig>>('/api/public/provider-config'),
+  },
+  externalCustomers: {
+    search: (params?: { query?: string; source?: string; limit?: number }) => {
+      const query = new URLSearchParams()
+      if (params?.query) query.set('q', params.query)
+      if (params?.source) query.set('source', params.source)
+      if (params?.limit) query.set('limit', String(params.limit))
+      const suffix = query.toString() ? `?${query}` : ''
+      return fetchApi<ApiResponse<ApiExternalCustomer[]>>(`/api/external-customers${suffix}`)
+    },
+    create: (data: {
+      source: string
+      externalId?: string | null
+      name?: string | null
+      phone?: string | null
+      email?: string | null
+      metadata?: Record<string, unknown> | string | null
+    }) =>
+      fetchApi<ApiResponse<ApiExternalCustomer>>('/api/external-customers', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    links: (friendId: string) =>
+      fetchApi<ApiResponse<ApiExternalCustomerLink[]>>(`/api/friends/${friendId}/external-customers`),
+    link: (friendId: string, data: { externalCustomerId: string; linkMethod?: ApiExternalCustomerLink['linkMethod']; confidence?: number }) =>
+      fetchApi<ApiResponse<ApiExternalCustomerLink>>(`/api/friends/${friendId}/external-customers`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    unlink: (friendId: string, externalCustomerId: string) =>
+      fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/external-customers/${externalCustomerId}`, {
+        method: 'DELETE',
+      }),
+  },
+  forms: {
+    list: () =>
+      fetchApi<ApiResponse<Array<{
+        id: string
+        name: string
+        description: string | null
+        fields: unknown[]
+        onSubmitTagId: string | null
+        saveToMetadata: boolean
+        isActive: boolean
+        submitCount: number
+        createdAt: string
+        updatedAt: string
+      }>>>('/api/forms'),
+    create: (data: {
+      name: string
+      description?: string | null
+      fields?: unknown[]
+      onSubmitTagId?: string | null
+      saveToMetadata?: boolean
+    }) =>
+      fetchApi<ApiResponse<{
+        id: string
+        name: string
+        description: string | null
+        fields: unknown[]
+        onSubmitTagId: string | null
+        saveToMetadata: boolean
+        isActive: boolean
+        submitCount: number
+        createdAt: string
+        updatedAt: string
+      }>>('/api/forms', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   friends: {
     list: (params?: FriendListParams) => {
