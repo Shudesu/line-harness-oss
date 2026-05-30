@@ -7,8 +7,9 @@ import { api, fetchApi } from '@/lib/api'
 import { normalizeExternalCustomerCsvRow, parseExternalCustomerCsv } from '@/lib/external-customer-csv'
 import { AnalyticsTab } from './_components/analytics-tab'
 import { BroadcastTab } from './_components/broadcast-tab'
+import { FooterNav } from './_components/footer-nav'
 import { FormsTab } from './_components/forms-tab'
-import { SummaryCard } from './_components/shared'
+import { MainTab } from './_components/main-tab'
 import { SupportTab } from './_components/support-tab'
 import type {
   ApiBroadcast,
@@ -30,11 +31,11 @@ import type {
   LoadState,
   TabId,
 } from './types'
-import { buildFormPresetFields, tabs } from './utils'
+import { buildFormPresetFields } from './utils'
 
 export default function ConsoleV2Page() {
   const { selectedAccountId, selectedAccount } = useAccount()
-  const [activeTab, setActiveTab] = useState<TabId>('support')
+  const [activeTab, setActiveTab] = useState<TabId>('main')
   const [state, setState] = useState<LoadState>({ loading: true, error: '' })
   const [chats, setChats] = useState<ConsoleChat[]>([])
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
@@ -215,7 +216,7 @@ export default function ConsoleV2Page() {
   const handleOpenFriendChat = (friend: ConsoleFriend) => {
     setSelectedFriend(friend)
     setSelectedChatId(friend.id)
-    setActiveTab('support')
+    setActiveTab('messages')
   }
 
   const handleSendMessage = async () => {
@@ -437,23 +438,20 @@ export default function ConsoleV2Page() {
     }
   }
 
-  const unreadCount = chats.filter((chat) => chat.status === 'unread').length
-  const inProgressCount = chats.filter((chat) => chat.status === 'in_progress').length
   const totalClicks = trackedLinks.reduce((sum, link) => sum + (link.clickCount || 0), 0)
   const activeLinks = trackedLinks.filter((link) => link.isActive).length
   const latestTemplates = templates.slice(0, 5)
   const topLinks = [...trackedLinks].sort((a, b) => b.clickCount - a.clickCount).slice(0, 5)
 
   return (
-    <div className="space-y-5 p-4 sm:p-6">
+    <div className="space-y-5 p-4 pb-28 sm:p-6 sm:pb-28">
       <Header title="かんたん運用コンソール" />
 
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Operation Console</p>
-            <h2 className="mt-1 text-xl font-bold text-gray-950">{selectedAccount?.displayName || selectedAccount?.name || 'LINEアカウント未選択'}</h2>
-            <p className="mt-1 text-sm text-gray-500">既存の予約システムを変えずに、LINEでの顧客対応と配信改善から始めます。</p>
+            <h2 className="mt-1 text-lg font-bold text-gray-950">{selectedAccount?.displayName || selectedAccount?.name || 'LINEアカウント未選択'}</h2>
           </div>
           <button onClick={() => void loadDashboard()} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
             最新化
@@ -463,29 +461,19 @@ export default function ConsoleV2Page() {
 
       {state.error && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{state.error}</div>}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard label="未読チャット" value={state.loading ? '-' : unreadCount} tone="red" />
-        <SummaryCard label="対応中" value={state.loading ? '-' : inProgressCount} tone="amber" />
-        <SummaryCard label="友だち数" value={state.loading ? '-' : friendCount ?? '-'} tone="green" />
-        <SummaryCard label="流入クリック" value={state.loading ? '-' : totalClicks} tone="blue" />
-      </div>
+      {activeTab === 'main' && (
+        <MainTab
+          loading={state.loading}
+          chats={chats}
+          friendCount={friendCount}
+          trackedLinks={trackedLinks}
+          forms={forms}
+          recentEvents={recentEvents}
+          onOpenMessages={() => setActiveTab('messages')}
+        />
+      )}
 
-      <div className="rounded-2xl border border-gray-200 bg-white p-2 shadow-sm">
-        <div className="grid gap-2 md:grid-cols-4">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`rounded-xl px-4 py-3 text-left transition ${activeTab === tab.id ? 'bg-emerald-500 text-white shadow-sm' : 'hover:bg-gray-50'}`}
-            >
-              <p className="text-sm font-bold">{tab.label}</p>
-              <p className={`mt-1 text-xs ${activeTab === tab.id ? 'text-emerald-50' : 'text-gray-500'}`}>{tab.description}</p>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {activeTab === 'support' && (
+      {activeTab === 'messages' && (
         <SupportTab
           chats={chats}
           chatDetail={chatDetail}
@@ -539,6 +527,8 @@ export default function ConsoleV2Page() {
       {activeTab === 'analytics' && (
         <AnalyticsTab trackedLinks={topLinks} activeLinks={activeLinks} totalClicks={totalClicks} conversionReport={conversionReport} recentEvents={recentEvents} />
       )}
+
+      <FooterNav activeTab={activeTab} onChange={setActiveTab} />
     </div>
   )
 }

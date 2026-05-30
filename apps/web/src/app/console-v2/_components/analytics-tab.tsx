@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { useState } from 'react'
 import type { ApiUserEvent, ConsoleConversionReportItem, ConsoleTrackedLink } from '../types'
 import { formatDateTime } from '../utils'
 import { MiniList, MiniListItem, SummaryCard } from './shared'
@@ -16,6 +17,7 @@ export function AnalyticsTab({
   conversionReport: ConsoleConversionReportItem[]
   recentEvents: ApiUserEvent[]
 }) {
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const totalConversions = conversionReport.reduce((sum, item) => sum + item.totalCount, 0)
   const totalConversionValue = conversionReport.reduce((sum, item) => sum + item.totalValue, 0)
   const eventCounts = recentEvents.reduce<Record<string, number>>((acc, event) => {
@@ -30,11 +32,11 @@ export function AnalyticsTab({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold text-gray-950">流入とCVを見る</p>
-            <p className="mt-1 text-sm text-gray-500">Instagram、Google Map、HP、広告からのクリックをLINE施策に接続します。</p>
+            <p className="mt-1 text-sm text-gray-500">数字だけを見て、施策の反応を判断します。</p>
           </div>
-          <Link href="/tracked-links" className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
-            リンク管理
-          </Link>
+          <button onClick={() => setSettingsOpen(true)} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">
+            設定
+          </button>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <SummaryCard label="有効リンク" value={activeLinks} tone="green" />
@@ -46,7 +48,6 @@ export function AnalyticsTab({
           <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-bold text-gray-900">CVレポート</p>
-              <Link href="/conversions" className="text-xs font-bold text-emerald-600 hover:text-emerald-700">詳細</Link>
             </div>
             {conversionReport.length > 0 ? (
               <div className="mt-3 space-y-2">
@@ -68,7 +69,6 @@ export function AnalyticsTab({
           <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-bold text-gray-900">直近イベント</p>
-              <Link href="/tags-events" className="text-xs font-bold text-emerald-600 hover:text-emerald-700">詳細</Link>
             </div>
             {recentEvents.length > 0 ? (
               <div className="mt-3 space-y-2">
@@ -135,6 +135,34 @@ export function AnalyticsTab({
           )}
         </section>
       </aside>
+
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+          <section className="w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:mx-auto sm:max-w-lg sm:rounded-3xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-lg font-black text-gray-950">分析設定</p>
+                <p className="mt-1 text-sm text-gray-500">CVやイベントの細かい設定は既存の開発者向け画面で行います。</p>
+              </div>
+              <button onClick={() => setSettingsOpen(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-700">閉じる</button>
+            </div>
+            <div className="mt-4 grid gap-2">
+              <SettingsLink href="/tracked-links" title="トラッキングリンク" body="Instagram、Google Map、広告などの流入URLを管理します。" />
+              <SettingsLink href="/conversions" title="CVポイント" body="フォーム完了、予約導線クリックなどの成果地点を設定します。" />
+              <SettingsLink href="/tags-events" title="イベント・タグ" body="イベント発火、タグ付けルール、計測イベントを設定します。" />
+            </div>
+          </section>
+        </div>
+      )}
     </div>
+  )
+}
+
+function SettingsLink({ href, title, body }: { href: string; title: string; body: string }) {
+  return (
+    <Link href={href} className="rounded-2xl border border-gray-100 bg-gray-50 p-4 hover:bg-gray-100">
+      <p className="text-sm font-black text-gray-950">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-gray-500">{body}</p>
+    </Link>
   )
 }
