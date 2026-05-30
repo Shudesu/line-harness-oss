@@ -1,6 +1,6 @@
 import type { ApiBroadcast, ApiExternalCustomer, ApiExternalCustomerLink, ApiUserEvent } from '@/lib/api'
 
-export type TabId = 'support' | 'broadcast' | 'forms' | 'analytics'
+export type TabId = 'main' | 'messages' | 'broadcast' | 'forms' | 'analytics'
 
 export type ChatStatus = 'unread' | 'in_progress' | 'resolved'
 
