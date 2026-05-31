@@ -91,43 +91,68 @@ export async function runGmailImportRule(
 
   const dryRun = options.dryRun === true;
   const run = dryRun ? null : await createGmailImportRun(db, rule.id);
-  const client = await gmailClientForConnection(db, rule.connection_id, env);
-  const messages = await client.listMessages({
-    labelIds: [rule.unprocessed_label_id],
-    q: buildGmailQuery(rule),
-    maxResults: options.maxResults ?? rule.max_results,
-  });
   const items: GmailImportItemResult[] = [];
+  let messages: { id: string }[] = [];
 
-  for (const message of messages) {
-    let detail: GmailMessageText | null = null;
-    try {
-      detail = await client.getMessageText(message.id);
-      const result = dryRun
-        ? await dryRunMessage(rule, detail)
-        : await importMessage(db, rule, detail, env);
-      items.push(result);
-      if (!dryRun) {
-        await moveMessageLabel(client, rule, detail.id, labelForResult(result.parseStatus));
-      }
-    } catch (err) {
-      const messageId = detail?.id ?? message.id;
-      const error = err instanceof Error ? err.message : String(err);
-      items.push({
-        gmailMessageId: messageId,
-        eventType: 'unknown',
-        parseStatus: 'failed',
-        error,
-      });
-      if (!dryRun) {
-        await client.modifyLabels(messageId, {
-          removeLabelIds: [rule.unprocessed_label_id],
-          addLabelIds: [rule.failed_label_id],
-        }).catch((labelErr) => {
-          console.error('Failed to move Gmail message to failed label:', messageId, labelErr);
+  try {
+    const client = await gmailClientForConnection(db, rule.connection_id, env);
+    messages = await client.listMessages({
+      labelIds: [rule.unprocessed_label_id],
+      q: buildGmailQuery(rule),
+      maxResults: options.maxResults ?? rule.max_results,
+    });
+
+    for (const message of messages) {
+      let detail: GmailMessageText | null = null;
+      try {
+        detail = await client.getMessageText(message.id);
+        const result = dryRun
+          ? await dryRunMessage(rule, detail)
+          : await importMessage(db, rule, detail, env);
+        items.push(result);
+        if (!dryRun) {
+          await moveMessageLabel(client, rule, detail.id, labelForResult(result.parseStatus));
+        }
+      } catch (err) {
+        const messageId = detail?.id ?? message.id;
+        const error = err instanceof Error ? err.message : String(err);
+        items.push({
+          gmailMessageId: messageId,
+          eventType: 'unknown',
+          parseStatus: 'failed',
+          error,
         });
+        if (!dryRun) {
+          await client.modifyLabels(messageId, {
+            removeLabelIds: [rule.unprocessed_label_id],
+            addLabelIds: [rule.failed_label_id],
+          }).catch((labelErr) => {
+            console.error('Failed to move Gmail message to failed label:', messageId, labelErr);
+          });
+        }
       }
     }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    items.push({
+      gmailMessageId: 'rule',
+      eventType: 'unknown',
+      parseStatus: 'failed',
+      error,
+    });
+    const failedResult = summarize(rule.id, run?.id ?? null, dryRun, messages.length, items);
+    if (!dryRun && run) {
+      await finishGmailImportRun(db, run.id, {
+        status: 'failed',
+        fetchedCount: failedResult.fetchedCount,
+        importedCount: failedResult.importedCount,
+        reviewCount: failedResult.reviewCount,
+        failedCount: failedResult.failedCount,
+        lastError: error,
+      });
+      await markGmailImportRuleRunAt(db, rule.id);
+    }
+    return failedResult;
   }
 
   const result = summarize(rule.id, run?.id ?? null, dryRun, messages.length, items);
@@ -265,15 +290,24 @@ function routeMissing(params: { resourceId?: string | null; menuId?: string | nu
   return missing.length ? `created event is missing ${missing.join('/')}` : '';
 }
 
-function buildGmailQuery(rule: GmailImportRule): string {
+export function buildGmailQuery(rule: Pick<GmailImportRule, 'query' | 'from_email'>): string {
   const parts = [rule.query?.trim()].filter(Boolean) as string[];
   if (rule.from_email?.trim() && !parts.some((part) => /\bfrom:/.test(part))) {
-    parts.unshift(`from:${rule.from_email.trim()}`);
+    parts.unshift(buildFromQuery(rule.from_email));
   }
   if (!parts.some((part) => /\bnewer_than:|\bafter:/.test(part))) {
     parts.push('newer_than:30d');
   }
   return parts.join(' ');
+}
+
+function buildFromQuery(value: string): string {
+  const emails = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (emails.length <= 1) return `from:${emails[0] ?? value.trim()}`;
+  return `{${emails.map((email) => `from:${email}`).join(' ')}}`;
 }
 
 function labelForResult(status: GmailImportItemResult['parseStatus']): 'processed' | 'review' | 'failed' {
