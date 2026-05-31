@@ -393,6 +393,8 @@ export default function ReservationOpsPage() {
   const [imageUrl, setImageUrl] = useState('')
   const [uploadingImage, setUploadingImage] = useState(false)
   const [calendarSettingsOpen, setCalendarSettingsOpen] = useState(false)
+  const [calendarResyncFrom, setCalendarResyncFrom] = useState(`${new Date().getFullYear()}-01-01`)
+  const [calendarResyncTo, setCalendarResyncTo] = useState(`${new Date().getFullYear()}-12-31`)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
@@ -808,6 +810,46 @@ export default function ReservationOpsPage() {
     }
   }
 
+  const resyncCalendarReservations = async () => {
+    if (!calendarResyncFrom || !calendarResyncTo) {
+      setError('再同期する期間を指定してください')
+      return
+    }
+    if (calendarResyncFrom > calendarResyncTo) {
+      setError('開始日は終了日以前にしてください')
+      return
+    }
+    const targetResource = resources.find((item) => item.id === resourceId)
+    const targetLabel = targetResource ? `予約対象「${targetResource.name}」の` : ''
+    if (!confirm(
+      `${targetLabel}${calendarResyncFrom}〜${calendarResyncTo} のLINE/じゃらん/Web予約をGoogle Calendarへ再同期します。\n`
+      + 'DB予約は削除しません。DBが追跡している既存Google予定は削除扱いにしてから再作成します。よいですか？',
+    )) return
+    setSaving(true)
+    setNotice('')
+    setError('')
+    try {
+      const res = await api.calendar.resyncReservations({
+        dateFrom: calendarResyncFrom,
+        dateTo: calendarResyncTo,
+        resourceId: resourceId || null,
+        sources: ['line', 'jalan', 'web'],
+        limit: 1000,
+      })
+      if (!res.success) throw new Error(res.error)
+      setNotice(
+        `Google Calendar再同期: 対象 ${res.data.scannedCount}件 / 既存削除 ${res.data.deletedEventCount}件`
+        + ` / 作成 ${res.data.createdCount}件 / 同期済み ${res.data.alreadySyncedCount}件`
+        + ` / スキップ ${res.data.skippedCount}件 / 失敗 ${res.data.failedCount + res.data.deleteFailedCount}件`,
+      )
+      await loadAll()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google Calendar再同期に失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div>
       <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
@@ -960,11 +1002,16 @@ export default function ReservationOpsPage() {
             calendarId={calendarId}
             saving={saving}
             settingsOpen={calendarSettingsOpen}
+            resyncFrom={calendarResyncFrom}
+            resyncTo={calendarResyncTo}
             onCalendarIdChange={setCalendarId}
+            onResyncFromChange={setCalendarResyncFrom}
+            onResyncToChange={setCalendarResyncTo}
             onConnect={startGoogleOAuth}
             onDelete={deleteCalendarConnection}
             onAssignResource={assignCalendarConnection}
             onSyncReservations={syncTodayReservationsToCalendar}
+            onResyncReservations={resyncCalendarReservations}
             onOpenSettings={() => setCalendarSettingsOpen(true)}
             onCloseSettings={() => setCalendarSettingsOpen(false)}
           />
@@ -998,11 +1045,16 @@ function CalendarPanel({
   calendarId,
   saving,
   settingsOpen,
+  resyncFrom,
+  resyncTo,
   onCalendarIdChange,
+  onResyncFromChange,
+  onResyncToChange,
   onConnect,
   onDelete,
   onAssignResource,
   onSyncReservations,
+  onResyncReservations,
   onOpenSettings,
   onCloseSettings,
 }: {
@@ -1013,11 +1065,16 @@ function CalendarPanel({
   calendarId: string
   saving: boolean
   settingsOpen: boolean
+  resyncFrom: string
+  resyncTo: string
   onCalendarIdChange: (value: string) => void
+  onResyncFromChange: (value: string) => void
+  onResyncToChange: (value: string) => void
   onConnect: () => void
   onDelete: (connection: ApiCalendarConnection) => void
   onAssignResource: (resourceId: string, connectionId: string) => void
   onSyncReservations: () => void
+  onResyncReservations: () => void
   onOpenSettings: () => void
   onCloseSettings: () => void
 }) {
@@ -1173,6 +1230,40 @@ function CalendarPanel({
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-sm font-bold text-amber-900">予約の再同期</p>
+              <p className="mt-1 text-xs text-amber-800">
+                Google連携を再接続した後に使います。DB予約は消さず、追跡中の既存Google予定だけ削除扱いにして、LINE/じゃらん/Web予約を再登録します。
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <label className="text-xs font-medium text-amber-900">
+                  開始日
+                  <input
+                    type="date"
+                    value={resyncFrom}
+                    onChange={(event) => onResyncFromChange(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900"
+                  />
+                </label>
+                <label className="text-xs font-medium text-amber-900">
+                  終了日
+                  <input
+                    type="date"
+                    value={resyncTo}
+                    onChange={(event) => onResyncToChange(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-gray-900"
+                  />
+                </label>
+              </div>
+              <button
+                disabled={saving || !resyncFrom || !resyncTo}
+                onClick={onResyncReservations}
+                className="mt-3 rounded-lg bg-amber-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+              >
+                既存予定をリセットして再同期
+              </button>
             </div>
           </div>
         </div>

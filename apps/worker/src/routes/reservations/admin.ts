@@ -26,6 +26,8 @@ import {
 import type { ExternalReservationParseStatus, ExternalReservationSource, ReservationSlotStatus } from '@line-crm/db';
 import type { Env } from '../../index.js';
 import {
+  resetAndResyncReservationsToGoogleCalendar,
+  type ReservationGoogleCalendarResyncSource,
   syncReservationCancelledToGoogleCalendar,
   syncReservationCreatedToGoogleCalendar,
 } from '../../services/reservation-google-calendar.js';
@@ -686,6 +688,49 @@ adminReservations.post('/api/reservations/:id/google-calendar/sync', async (c) =
     return jsonError(c, 'internal_error', 500);
   }
 });
+
+adminReservations.post('/api/reservations/google-calendar/resync', async (c) => {
+  try {
+    const json = await readJsonObject(c);
+    if (!json.ok) return jsonError(c, json.error.code, json.error.status, json.error.message);
+    const dateFrom = requireString(json.value, 'dateFrom');
+    const dateTo = requireString(json.value, 'dateTo');
+    if (!dateFrom || !dateTo) return jsonError(c, 'bad_request', 400, 'dateFrom and dateTo are required');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      return jsonError(c, 'bad_request', 400, 'dateFrom and dateTo must be YYYY-MM-DD');
+    }
+    if (dateFrom > dateTo) return jsonError(c, 'bad_request', 400, 'dateFrom must be before dateTo');
+
+    const fromTime = new Date(`${dateFrom}T00:00:00Z`).getTime();
+    const toTime = new Date(`${dateTo}T00:00:00Z`).getTime();
+    const rangeDays = Math.floor((toTime - fromTime) / 86_400_000) + 1;
+    if (!Number.isFinite(rangeDays) || rangeDays < 1 || rangeDays > 370) {
+      return jsonError(c, 'bad_request', 400, 'Date range must be 1 to 370 days');
+    }
+
+    const sources = parseGoogleCalendarResyncSources(json.value.sources);
+    const result = await resetAndResyncReservationsToGoogleCalendar(c.env.DB, {
+      dateFrom,
+      dateTo,
+      resourceId: optionalString(json.value, 'resourceId') || null,
+      sources,
+      limit: optionalNumber(json.value, 'limit') ?? 1000,
+    }, c.env);
+    return jsonOk(c, result);
+  } catch (err) {
+    console.error('POST /api/reservations/google-calendar/resync error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+function parseGoogleCalendarResyncSources(value: unknown): ReservationGoogleCalendarResyncSource[] {
+  const allowed: ReservationGoogleCalendarResyncSource[] = ['line', 'jalan', 'web'];
+  if (!Array.isArray(value)) return allowed;
+  const sources = value.filter((item): item is ReservationGoogleCalendarResyncSource => (
+    typeof item === 'string' && allowed.includes(item as ReservationGoogleCalendarResyncSource)
+  ));
+  return sources.length ? Array.from(new Set(sources)) : allowed;
+}
 
 adminReservations.get('/api/reservations/google-calendar/oauth-url', async (c) => {
   try {

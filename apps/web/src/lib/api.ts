@@ -57,6 +57,17 @@ export type CalendarSyncResult =
   | { status: 'skipped'; reservationId: string; reason: string }
   | { status: 'failed'; reservationId: string; reason: string }
 
+export type CalendarBulkResyncResult = {
+  scannedCount: number
+  resetBookingCount: number
+  deletedEventCount: number
+  deleteFailedCount: number
+  createdCount: number
+  alreadySyncedCount: number
+  skippedCount: number
+  failedCount: number
+}
+
 export type ApiGmailLabel = {
   id: string
   name: string
@@ -575,6 +586,17 @@ export const api = {
         `/api/reservations/${encodeURIComponent(reservationId)}/google-calendar/sync`,
         { method: 'POST' },
       ),
+    resyncReservations: (data: {
+      dateFrom: string
+      dateTo: string
+      resourceId?: string | null
+      sources?: Array<'line' | 'jalan' | 'web'>
+      limit?: number
+    }) =>
+      fetchApi<ApiResponse<CalendarBulkResyncResult>>('/api/reservations/google-calendar/resync', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   gmailImports: {

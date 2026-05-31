@@ -19,6 +19,40 @@ export type ReservationGoogleCalendarSyncResult =
   | { status: 'skipped'; reservationId: string; reason: 'resource_not_found' | 'resource_not_connected' | 'connection_not_usable' }
   | { status: 'failed'; reservationId: string; reason: string };
 
+export type ReservationGoogleCalendarResyncSource = 'line' | 'jalan' | 'web';
+
+export interface ReservationGoogleCalendarBulkResyncInput {
+  dateFrom: string;
+  dateTo: string;
+  resourceId?: string | null;
+  sources?: ReservationGoogleCalendarResyncSource[];
+  limit?: number;
+}
+
+export interface ReservationGoogleCalendarBulkResyncResult {
+  scannedCount: number;
+  resetBookingCount: number;
+  deletedEventCount: number;
+  deleteFailedCount: number;
+  createdCount: number;
+  alreadySyncedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  items: Array<{
+    reservationId: string;
+    source: Reservation['source'];
+    title: string;
+    reservationDate: string;
+    reset: {
+      bookingCount: number;
+      deletedEventCount: number;
+      deleteFailedCount: number;
+      errors: string[];
+    };
+    sync: ReservationGoogleCalendarSyncResult;
+  }>;
+}
+
 export async function syncReservationCreatedToGoogleCalendar(
   db: D1Database,
   reservation: Reservation,
@@ -68,6 +102,137 @@ export async function syncReservationCreatedToGoogleCalendar(
     await insertGoogleCalendarSyncFailure(db, reservation, 'Google Calendar event creation failed', reason);
     return { status: 'failed', reservationId: reservation.id, reason };
   }
+}
+
+export async function resetAndResyncReservationsToGoogleCalendar(
+  db: D1Database,
+  input: ReservationGoogleCalendarBulkResyncInput,
+  env: ReservationGoogleCalendarEnv = {},
+): Promise<ReservationGoogleCalendarBulkResyncResult> {
+  const sources = input.sources?.length ? input.sources : ['line', 'jalan', 'web'];
+  const reservations = await listReservationsForCalendarResync(db, {
+    ...input,
+    sources,
+    limit: Math.min(Math.max(input.limit ?? 500, 1), 1000),
+  });
+  const items: ReservationGoogleCalendarBulkResyncResult['items'] = [];
+
+  for (const reservation of reservations) {
+    const reset = await resetCalendarBookingsForReservation(db, reservation, env);
+    const sync = await syncReservationCreatedToGoogleCalendar(db, reservation, env);
+    items.push({
+      reservationId: reservation.id,
+      source: reservation.source,
+      title: reservation.title,
+      reservationDate: reservation.reservation_date,
+      reset,
+      sync,
+    });
+  }
+
+  return {
+    scannedCount: reservations.length,
+    resetBookingCount: items.reduce((sum, item) => sum + item.reset.bookingCount, 0),
+    deletedEventCount: items.reduce((sum, item) => sum + item.reset.deletedEventCount, 0),
+    deleteFailedCount: items.reduce((sum, item) => sum + item.reset.deleteFailedCount, 0),
+    createdCount: items.filter((item) => item.sync.status === 'created').length,
+    alreadySyncedCount: items.filter((item) => item.sync.status === 'already_synced').length,
+    skippedCount: items.filter((item) => item.sync.status === 'skipped').length,
+    failedCount: items.filter((item) => item.sync.status === 'failed').length,
+    items,
+  };
+}
+
+async function listReservationsForCalendarResync(
+  db: D1Database,
+  input: Required<Pick<ReservationGoogleCalendarBulkResyncInput, 'dateFrom' | 'dateTo' | 'sources' | 'limit'>> & {
+    resourceId?: string | null;
+  },
+): Promise<Reservation[]> {
+  const sourcePlaceholders = input.sources.map(() => '?').join(', ');
+  const resourceFilter = input.resourceId ? 'AND s.resource_id = ?' : '';
+  const params: unknown[] = [
+    input.dateFrom,
+    input.dateTo,
+    ...input.sources,
+  ];
+  if (input.resourceId) params.push(input.resourceId);
+  params.push(input.limit);
+
+  const result = await db
+    .prepare(
+      `SELECT r.*,
+              COALESCE((SELECT SUM(amount) FROM reservation_items WHERE reservation_id = r.id), NULL) AS total_amount
+       FROM reservations r
+       JOIN reservation_slots s ON s.id = r.slot_id
+       WHERE r.status IN ('pending', 'confirmed')
+         AND r.reservation_date BETWEEN ? AND ?
+         AND r.source IN (${sourcePlaceholders})
+         ${resourceFilter}
+       ORDER BY r.start_at ASC, r.created_at ASC
+       LIMIT ?`,
+    )
+    .bind(...params)
+    .all<Reservation>();
+
+  return result.results ?? [];
+}
+
+async function resetCalendarBookingsForReservation(
+  db: D1Database,
+  reservation: Reservation,
+  env: ReservationGoogleCalendarEnv,
+): Promise<{
+  bookingCount: number;
+  deletedEventCount: number;
+  deleteFailedCount: number;
+  errors: string[];
+}> {
+  const bookings = await db
+    .prepare(
+      `SELECT id, connection_id, event_id
+       FROM calendar_bookings
+       WHERE json_extract(metadata, '$.reservationId') = ?
+         AND status != 'cancelled'
+       ORDER BY created_at DESC`,
+    )
+    .bind(reservation.id)
+    .all<{ id: string; connection_id: string; event_id: string | null }>();
+
+  let deletedEventCount = 0;
+  let deleteFailedCount = 0;
+  const errors: string[] = [];
+
+  for (const booking of bookings.results ?? []) {
+    if (!booking.event_id) continue;
+    try {
+      const conn = await getUsableGoogleCalendarConnection(db, booking.connection_id, env);
+      if (!conn?.access_token) throw new Error('Google Calendar connection is not usable');
+      const gcal = new GoogleCalendarClient({
+        calendarId: conn.calendar_id,
+        accessToken: conn.access_token,
+      });
+      await gcal.deleteEvent(booking.event_id);
+      deletedEventCount += 1;
+    } catch (err) {
+      deleteFailedCount += 1;
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  for (const booking of bookings.results ?? []) {
+    await db
+      .prepare(`UPDATE calendar_bookings SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`)
+      .bind(booking.id)
+      .run();
+  }
+
+  return {
+    bookingCount: bookings.results?.length ?? 0,
+    deletedEventCount,
+    deleteFailedCount,
+    errors,
+  };
 }
 
 async function insertGoogleCalendarSyncFailure(
@@ -204,6 +369,7 @@ async function buildReservationDescription(
 function sourceLabel(source: Reservation['source']): string {
   const labels: Record<Reservation['source'], string> = {
     line: 'LINE',
+    web: 'Web',
     jalan: 'じゃらん',
     phone: '電話',
     gmail: 'Gmail',
