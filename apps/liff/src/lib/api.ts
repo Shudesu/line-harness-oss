@@ -1,6 +1,7 @@
 import { getIdToken, getLiffId } from './liff-auth.js';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
+const DEV_MOCK = import.meta.env.DEV && new URL(window.location.href).searchParams.get('__mock') === '1';
 
 export interface MenuItem {
   id: string;
@@ -47,6 +48,8 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 }
 
 async function get<T>(path: string): Promise<T> {
+  const mocked = maybeMockGet<T>(path);
+  if (mocked) return mocked;
   const url = new URL(`${BASE}${path}`, window.location.origin);
   url.searchParams.set('liffId', getLiffId());
   const res = await fetch(url.toString(), { headers: authHeaders() });
@@ -55,6 +58,8 @@ async function get<T>(path: string): Promise<T> {
 }
 
 async function post<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
+  const mocked = maybeMockPost<T>(path);
+  if (mocked) return mocked;
   const url = new URL(`${BASE}${path}`, window.location.origin);
   url.searchParams.set('liffId', getLiffId());
   const res = await fetch(url.toString(), {
@@ -91,6 +96,12 @@ export interface EventDetail {
   cancel_deadline_hours_before: number | null;
 }
 
+export interface EventListItem extends EventDetail {
+  next_slot_starts_at: string;
+  next_slot_ends_at: string;
+  future_slot_count: number;
+}
+
 export interface EventSlot {
   id: string;
   event_id: string;
@@ -116,6 +127,70 @@ export interface EventBookingMine {
   slot_ends_at: string;
 }
 
+const mockEvents: EventListItem[] = [
+  {
+    id: 'kazama',
+    name: '風間佑太プロダーツ交流会',
+    venue_name: '茶はいダーツバー西新宿Luu',
+    venue_url: null,
+    image_url: null,
+    description: 'プロと一緒にダーツ交流を楽しめるイベントです。',
+    description_centered: 0,
+    max_bookings_per_friend: null,
+    requires_approval: 0,
+    cancel_deadline_hours_before: null,
+    next_slot_starts_at: '2026-06-22T10:00:00.000Z',
+    next_slot_ends_at: '2026-06-22T14:00:00.000Z',
+    future_slot_count: 1,
+  },
+  {
+    id: 'kumagai-morota',
+    name: '熊谷幸花プロ＆母良田桃香プロ交流会',
+    venue_name: '茶はいダーツバー西新宿Luu',
+    venue_url: null,
+    image_url: null,
+    description: '人数と同行者名を入力して予約できます。',
+    description_centered: 0,
+    max_bookings_per_friend: null,
+    requires_approval: 0,
+    cancel_deadline_hours_before: null,
+    next_slot_starts_at: '2026-06-29T09:00:00.000Z',
+    next_slot_ends_at: '2026-06-29T13:00:00.000Z',
+    future_slot_count: 1,
+  },
+];
+
+const mockSlots: EventSlot[] = [
+  {
+    id: 'slot-1',
+    event_id: 'kazama',
+    starts_at: '2026-06-22T10:00:00.000Z',
+    ends_at: '2026-06-22T14:00:00.000Z',
+    capacity: 20,
+    is_active: 1,
+    active_count: 4,
+    remaining: 16,
+  },
+];
+
+function maybeMockGet<T>(path: string): T | null {
+  if (!DEV_MOCK) return null;
+  const [pathname] = path.split('?');
+  if (pathname === '/api/liff/events') return { items: mockEvents } as T;
+  if (pathname === '/api/liff/events/kazama') return mockEvents[0] as T;
+  if (pathname === '/api/liff/events/kazama/slots') return { items: mockSlots } as T;
+  if (pathname === '/api/liff/events/me') return { items: [] } as T;
+  return null;
+}
+
+function maybeMockPost<T>(path: string): T | null {
+  if (!DEV_MOCK) return null;
+  if (path === '/api/liff/events/kazama/bookings') {
+    return { id: 'mock-booking', status: 'confirmed' } as T;
+  }
+  return null;
+}
+
 export const api = {
   menus: () => get<{ menus: MenuItem[] }>('/api/liff/booking/menus'),
   staffOf: (menuId: string) =>
@@ -138,6 +213,7 @@ export const api = {
   me: () => get<{ upcoming: BookingHistoryItem[]; past: BookingHistoryItem[] }>('/api/liff/booking/me'),
 
   // ===== Event booking =====
+  listEvents: () => get<{ items: EventListItem[] }>('/api/liff/events'),
   getEvent: (id: string) => get<EventDetail>(`/api/liff/events/${id}`),
   getEventSlots: (id: string) => get<{ items: EventSlot[] }>(`/api/liff/events/${id}/slots`),
   createEventBooking: (

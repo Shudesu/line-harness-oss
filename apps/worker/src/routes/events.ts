@@ -53,6 +53,13 @@ function getAccountId(c: Context<Env>): string | null {
   return c.req.query('account_id') ?? null;
 }
 
+function extractLiffId(value: string | undefined): string | null {
+  if (!value) return null;
+  const fromUrl = value.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/)?.[1];
+  if (fromUrl) return fromUrl;
+  return /^[0-9]+-[A-Za-z0-9]+$/.test(value) ? value : null;
+}
+
 async function resolveAccountIdFromLiff(c: Context<Env>): Promise<string | null> {
   const liffId = c.req.query('liffId');
   if (!liffId) return null;
@@ -60,7 +67,22 @@ async function resolveAccountIdFromLiff(c: Context<Env>): Promise<string | null>
     .prepare(`SELECT id FROM line_accounts WHERE liff_id = ? AND is_active = 1`)
     .bind(liffId)
     .first<{ id: string }>();
-  return acc?.id ?? null;
+  if (acc?.id) return acc.id;
+
+  const envLiffId = extractLiffId(c.env.LIFF_URL);
+  if (envLiffId !== liffId) return null;
+
+  if (c.env.LINE_CHANNEL_ACCESS_TOKEN) {
+    const envAcc = await c.env.DB
+      .prepare(`SELECT id FROM line_accounts WHERE channel_access_token = ? AND is_active = 1`)
+      .bind(c.env.LINE_CHANNEL_ACCESS_TOKEN)
+      .first<{ id: string }>();
+    if (envAcc?.id) return envAcc.id;
+  }
+  const fallback = await c.env.DB
+    .prepare(`SELECT id FROM line_accounts WHERE is_active = 1 ORDER BY display_order ASC, created_at ASC LIMIT 1`)
+    .first<{ id: string }>();
+  return fallback?.id ?? null;
 }
 
 interface EventInput {
@@ -687,6 +709,71 @@ events.post('/api/liff/events/me/:bookingId/cancel', async (c) => {
 // ============================================================
 // LIFF: read-only event/slots
 // ============================================================
+
+events.get('/api/liff/events', async (c) => {
+  const account_id = await resolveAccountIdFromLiff(c);
+  if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT
+         e.id,
+         e.name,
+         e.venue_name,
+         e.venue_url,
+         e.image_url,
+         e.description,
+         e.description_centered,
+         e.max_bookings_per_friend,
+         e.requires_approval,
+         e.cancel_deadline_hours_before,
+         e.sort_order,
+         (SELECT s.starts_at
+            FROM event_slots s
+           WHERE s.event_id = e.id
+             AND s.deleted_at IS NULL
+             AND s.is_active = 1
+             AND s.starts_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+           ORDER BY s.sort_order ASC, s.starts_at ASC
+           LIMIT 1
+         ) AS next_slot_starts_at,
+         (SELECT s.ends_at
+            FROM event_slots s
+           WHERE s.event_id = e.id
+             AND s.deleted_at IS NULL
+             AND s.is_active = 1
+             AND s.starts_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+           ORDER BY s.sort_order ASC, s.starts_at ASC
+           LIMIT 1
+         ) AS next_slot_ends_at,
+         (SELECT COUNT(*)
+            FROM event_slots s
+           WHERE s.event_id = e.id
+             AND s.deleted_at IS NULL
+             AND s.is_active = 1
+             AND s.starts_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         ) AS future_slot_count
+       FROM events e
+       WHERE e.deleted_at IS NULL
+         AND e.is_published = 1
+         AND (
+           (e.target_type = 'single' AND e.line_account_id = ?)
+           OR (e.target_type = 'multi-account-dedup'
+               AND EXISTS (SELECT 1 FROM json_each(e.account_ids) WHERE value = ?))
+         )
+         AND EXISTS (
+           SELECT 1
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         )
+       ORDER BY next_slot_starts_at ASC, e.sort_order ASC, e.created_at DESC`,
+    )
+    .bind(account_id, account_id)
+    .all();
+  return c.json({ items: results ?? [] });
+});
 
 events.get('/api/liff/events/:id', async (c) => {
   const account_id = await resolveAccountIdFromLiff(c);

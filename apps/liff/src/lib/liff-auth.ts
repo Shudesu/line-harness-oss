@@ -3,6 +3,7 @@ import liff from '@line/liff';
 let _liffId: string | null = null;
 let _lineUserId: string | null = null;
 let _idToken: string | null = null;
+const DEV_MOCK = import.meta.env.DEV && new URL(window.location.href).searchParams.get('__mock') === '1';
 
 export async function initLiff(): Promise<void> {
   const url = new URL(window.location.href);
@@ -11,6 +12,11 @@ export async function initLiff(): Promise<void> {
     throw new Error('liffId not provided. Append ?liffId=... to the URL.');
   }
   _liffId = liffId;
+  if (DEV_MOCK) {
+    _lineUserId = 'Umock';
+    _idToken = 'mock-id-token';
+    return;
+  }
   await liff.init({ liffId });
   if (!liff.isLoggedIn()) {
     liff.login();

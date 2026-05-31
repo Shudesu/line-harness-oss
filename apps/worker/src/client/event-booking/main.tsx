@@ -2,7 +2,7 @@
 // apps/worker/src/client/main.ts (?page=event&id=<eventId> or ?page=event-me).
 // Mirrors salon-booking design language (LINE 緑 + sb-card + fade animations).
 
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, type ReactNode, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import './styles.css';
 
@@ -44,6 +44,12 @@ interface EventSlot {
   is_active: number;
   active_count: number;
   remaining: number | null;
+}
+
+interface EventListItem extends EventDetail {
+  next_slot_starts_at: string;
+  next_slot_ends_at: string;
+  future_slot_count: number;
 }
 
 interface MyBooking {
@@ -127,6 +133,13 @@ function uid(): string {
   return crypto.randomUUID();
 }
 
+function firstDescriptionLine(value: string | null): string {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) || '';
+}
+
 // ─── Loading ──────────────────────────────────────────────
 
 function Spinner() {
@@ -139,15 +152,119 @@ function Spinner() {
 
 // ─── Screens ──────────────────────────────────────────────
 
+function EventListScreen({
+  ctx,
+  onSelectEvent,
+  onGoHistory,
+}: {
+  ctx: EventBookingContext;
+  onSelectEvent: (eventId: string) => void;
+  onGoHistory: () => void;
+}) {
+  const [events, setEvents] = useState<EventListItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await apiGet<{ items: EventListItem[] }>('/api/liff/events', ctx);
+        if (!cancelled) setEvents(res.items);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [ctx]);
+
+  if (loading) return <Spinner />;
+  if (error) {
+    return (
+      <div className="px-4 py-6 eb-fade-in">
+        <div className="eb-card text-center text-sm text-red-700">{error}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-4 pb-24 eb-fade-in">
+      <div className="mb-4">
+        <h1 className="text-lg font-bold text-gray-900">イベント予約</h1>
+        <p className="text-xs text-gray-500 mt-1">参加したいイベントを選択してください</p>
+      </div>
+
+      {events.length === 0 ? (
+        <div className="eb-card text-center text-sm text-gray-500">
+          現在予約可能なイベントはありません。
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {events.map((event) => {
+            const description = firstDescriptionLine(event.description);
+            return (
+              <button
+                key={event.id}
+                type="button"
+                onClick={() => onSelectEvent(event.id)}
+                className="eb-event-list-btn"
+              >
+                {event.image_url ? (
+                  <img src={event.image_url} alt="" className="w-full h-36 object-cover bg-gray-100" />
+                ) : (
+                  <div className="w-full h-2 eb-line-green" />
+                )}
+                <div className="p-4">
+                  <div className="text-xs font-semibold eb-line-green-text mb-1">
+                    {formatJpDateOnly(event.next_slot_starts_at)}
+                    {' '}
+                    {formatJpTimeOnly(event.next_slot_starts_at)}
+                    {' 〜 '}
+                    {formatJpTimeOnly(event.next_slot_ends_at)}
+                  </div>
+                  <div className="text-base font-bold text-gray-900 leading-snug">{event.name}</div>
+                  {event.venue_name && (
+                    <div className="mt-2 text-xs text-gray-600">会場: {event.venue_name}</div>
+                  )}
+                  {description && (
+                    <div className="mt-2 text-xs text-gray-500 line-clamp-2">{description}</div>
+                  )}
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-xs text-gray-500">
+                      {event.future_slot_count > 1 ? `${event.future_slot_count}枠` : '1枠'}
+                    </span>
+                    <span className="text-sm font-semibold eb-line-green-text">予約へ進む</span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="mt-6 text-center">
+        <button onClick={onGoHistory} className="text-sm eb-line-green-text underline">
+          予約履歴を見る
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function EventDetailScreen({
   ctx,
   eventId,
   onPickSlot,
+  onGoList,
   onGoHistory,
 }: {
   ctx: EventBookingContext;
   eventId: string;
   onPickSlot: (slot: EventSlot, event: EventDetail) => void;
+  onGoList: () => void;
   onGoHistory: () => void;
 }) {
   const [event, setEvent] = useState<EventDetail | null>(null);
@@ -249,7 +366,7 @@ function EventDetailScreen({
           <h1 className="text-lg font-bold text-gray-900 leading-snug">{event.name}</h1>
           {event.venue_name && (
             <div className="mt-2 text-sm text-gray-700 flex items-start gap-1.5">
-              <span>📍</span><span>{event.venue_name}</span>
+              <span>会場:</span><span>{event.venue_name}</span>
             </div>
           )}
           {event.venue_url && (
@@ -321,12 +438,80 @@ function EventDetailScreen({
         </div>
 
         <div className="mt-6 text-center">
+          <button onClick={onGoList} className="text-sm eb-line-green-text underline">
+            イベント一覧へ戻る
+          </button>
+        </div>
+
+        <div className="mt-3 text-center">
           <button onClick={onGoHistory} className="text-sm eb-line-green-text underline">
             予約履歴を見る
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+interface SignupForm {
+  name: string;
+  xAccount: string;
+  phone: string;
+  people: string;
+  companionCount: string;
+  companionNames: string;
+  memo: string;
+}
+
+const initialSignupForm: SignupForm = {
+  name: '',
+  xAccount: '',
+  phone: '',
+  people: '1',
+  companionCount: '0',
+  companionNames: '',
+  memo: '',
+};
+
+function toUnsignedInt(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+function validateSignupForm(form: SignupForm): string | null {
+  if (!form.name.trim()) return '名前を入力してください。';
+  if (!form.phone.trim()) return '電話番号を入力してください。';
+  const people = toUnsignedInt(form.people);
+  if (people == null || people < 1) return '人数は1以上の数字で入力してください。';
+  const companionCount = toUnsignedInt(form.companionCount);
+  if (companionCount == null) return '同行者人数は0以上の数字で入力してください。';
+  if (companionCount > people - 1) return '同行者人数は、本人を除いた人数で入力してください。';
+  if (companionCount > 0 && !form.companionNames.trim()) {
+    return '同行者がいる場合は、同行者名を入力してください。';
+  }
+  return null;
+}
+
+function buildCustomerNote(form: SignupForm): string {
+  return [
+    `名前: ${form.name.trim()}`,
+    `Xアカウント: ${form.xAccount.trim()}`,
+    `電話番号: ${form.phone.trim()}`,
+    `人数: ${form.people.trim()}`,
+    `同行者人数: ${form.companionCount.trim()}`,
+    `同行者名: ${form.companionNames.trim()}`,
+    `備考: ${form.memo.trim()}`,
+  ].join('\n');
+}
+
+function FieldLabel({ children, required = false }: { children: ReactNode; required?: boolean }) {
+  return (
+    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+      {children}
+      {required && <span className="eb-required-badge">必須</span>}
+    </label>
   );
 }
 
@@ -343,14 +528,24 @@ function ConfirmScreen({
   onBack: () => void;
   onDone: (status: string) => void;
 }) {
-  const [note, setNote] = useState('');
+  const [form, setForm] = useState<SignupForm>(initialSignupForm);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idemKey] = useState(uid);
 
+  function updateField<K extends keyof SignupForm>(key: K, value: SignupForm[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
   async function submit() {
-    if (note.length > 5000) {
-      setError('備考は 5000 字以内で入力してください');
+    const validation = validateSignupForm(form);
+    if (validation) {
+      setError(validation);
+      return;
+    }
+    const customerNote = buildCustomerNote(form);
+    if (customerNote.length > 5000) {
+      setError('入力内容は5000字以内で入力してください');
       return;
     }
     setSubmitting(true);
@@ -358,7 +553,7 @@ function ConfirmScreen({
     try {
       const res = await apiPost<{ id: string; status: string }>(
         `/api/liff/events/${event.id}/bookings`,
-        { slot_id: slot.id, customer_note: note || null },
+        { slot_id: slot.id, customer_note: customerNote },
         ctx,
         { 'Idempotency-Key': idemKey },
       );
@@ -417,19 +612,85 @@ function ConfirmScreen({
         </div>
       )}
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">
-          備考（任意）
-        </label>
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={4}
-          maxLength={5000}
-          placeholder="質問や伝えたいことがあれば..."
-          className="w-full border border-gray-300 rounded-xl p-3 text-sm bg-white"
-        />
-        <div className="text-xs text-gray-500 text-right mt-1">{note.length} / 5000</div>
+      <div className="space-y-3">
+        <div>
+          <FieldLabel required>名前</FieldLabel>
+          <input
+            value={form.name}
+            onChange={(e) => updateField('name', e.target.value)}
+            className="eb-input"
+            placeholder="例: 山田 太郎"
+            autoComplete="name"
+          />
+        </div>
+
+        <div>
+          <FieldLabel required>電話番号</FieldLabel>
+          <input
+            value={form.phone}
+            onChange={(e) => updateField('phone', e.target.value)}
+            className="eb-input"
+            placeholder="例: 09012345678"
+            inputMode="tel"
+            autoComplete="tel"
+          />
+        </div>
+
+        <div>
+          <FieldLabel>Xアカウント</FieldLabel>
+          <input
+            value={form.xAccount}
+            onChange={(e) => updateField('xAccount', e.target.value)}
+            className="eb-input"
+            placeholder="例: @example"
+            autoCapitalize="none"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <FieldLabel required>人数</FieldLabel>
+            <input
+              value={form.people}
+              onChange={(e) => updateField('people', e.target.value)}
+              className="eb-input"
+              inputMode="numeric"
+              pattern="[0-9]*"
+            />
+          </div>
+          <div>
+            <FieldLabel>同行者人数</FieldLabel>
+            <input
+              value={form.companionCount}
+              onChange={(e) => updateField('companionCount', e.target.value)}
+              className="eb-input"
+              inputMode="numeric"
+              pattern="[0-9]*"
+            />
+          </div>
+        </div>
+
+        <div>
+          <FieldLabel>同行者名</FieldLabel>
+          <textarea
+            value={form.companionNames}
+            onChange={(e) => updateField('companionNames', e.target.value)}
+            rows={2}
+            className="eb-input"
+            placeholder="同行者がいる場合は名前を入力"
+          />
+        </div>
+
+        <div>
+          <FieldLabel>備考</FieldLabel>
+          <textarea
+            value={form.memo}
+            onChange={(e) => updateField('memo', e.target.value)}
+            rows={3}
+            className="eb-input"
+            placeholder="遅れる、質問など"
+          />
+        </div>
       </div>
 
       {error && (
@@ -586,7 +847,7 @@ function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
                       <span className={`eb-badge ${s.cls} shrink-0`}>{s.text}</span>
                     </div>
                     <div className="text-xs text-gray-600 mt-1">{formatJp(b.slot_starts_at)}</div>
-                    {b.venue_name && <div className="text-xs text-gray-500 truncate">📍 {b.venue_name}</div>}
+                    {b.venue_name && <div className="text-xs text-gray-500 truncate">会場: {b.venue_name}</div>}
                   </div>
                 </div>
                 {canCancel(b) && (
@@ -612,6 +873,7 @@ function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
 // ─── App ──────────────────────────────────────────────────
 
 type Screen =
+  | { kind: 'list' }
   | { kind: 'detail'; eventId: string }
   | { kind: 'confirm'; event: EventDetail; slot: EventSlot }
   | { kind: 'done'; status: string }
@@ -622,6 +884,7 @@ function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
 
   const headerLabel = (() => {
     switch (screen.kind) {
+      case 'list': return 'イベント予約';
       case 'detail': return 'イベント予約';
       case 'confirm': return 'ご予約内容の確認';
       case 'done': return '完了';
@@ -638,11 +901,19 @@ function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
         {headerLabel}
       </header>
       <main className="max-w-md mx-auto">
+        {screen.kind === 'list' && (
+          <EventListScreen
+            ctx={ctx}
+            onSelectEvent={(eventId) => setScreen({ kind: 'detail', eventId })}
+            onGoHistory={() => setScreen({ kind: 'history' })}
+          />
+        )}
         {screen.kind === 'detail' && (
           <EventDetailScreen
             ctx={ctx}
             eventId={screen.eventId}
             onPickSlot={(slot, event) => setScreen({ kind: 'confirm', event, slot })}
+            onGoList={() => setScreen({ kind: 'list' })}
             onGoHistory={() => setScreen({ kind: 'history' })}
           />
         )}

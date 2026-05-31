@@ -13,6 +13,8 @@
  *   ?redirect=x       — redirect after linking (for wrapped URLs)
  *   ?page=book        — booking page (calendar slot picker, Google Calendar)
  *   ?page=salon-book  — salon booking flow (React, dynamic-imported)
+ *   ?page=events      — event booking list (React, dynamic-imported)
+ *   ?page=event&id=xx — event booking detail (React, dynamic-imported)
  */
 
 import { initBooking } from './booking.js';
@@ -57,6 +59,7 @@ function apiCall(path: string, options?: RequestInit): Promise<Response> {
 function getPage(): string | null {
   const path = window.location.pathname.replace(/^\/+/, '');
   if (path === 'book') return 'book';
+  if (path === 'events') return 'events';
   const params = new URLSearchParams(window.location.search);
   return params.get('page');
 }
@@ -383,7 +386,7 @@ async function initSalonBooking(): Promise<void> {
 
 // ─── Event Booking (React, dynamic-imported) ─────────────
 
-async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void> {
+async function initEventBooking(initialKind: 'list' | 'detail' | 'history'): Promise<void> {
   // salon-booking と同じ初期化シーケンス: profile/idToken/friendship 取得、
   // 未友達なら friend-add gate、友達なら React mount。
   const [profile, idToken, friendship] = await Promise.all([
@@ -437,7 +440,9 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
   }
   const { mountEventBooking } = await import('./event-booking/main.js');
   const ctx = { liffId: LIFF_ID, lineUserId: profile.userId, idToken };
-  const initial = initialKind === 'detail'
+  const initial = initialKind === 'list'
+    ? { kind: 'list' as const }
+    : initialKind === 'detail'
     ? { kind: 'detail' as const, eventId }
     : { kind: 'history' as const };
   mountEventBooking(container, ctx, initial);
@@ -470,6 +475,8 @@ async function main() {
       await initBooking();
     } else if (page === 'salon-book') {
       await initSalonBooking();
+    } else if (page === 'events') {
+      await initEventBooking('list');
     } else if (page === 'event') {
       await initEventBooking('detail');
     } else if (page === 'event-me') {

@@ -22,6 +22,7 @@ import {
 import type { EntryRoute } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { renderMessageContent } from '../services/render-message.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -31,6 +32,28 @@ const webhook = new Hono<Env>();
 // bursty batched deliveries (~100 events × ~5 KB) while still well below the
 // 128 MB Cloudflare Workers memory ceiling.
 const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
+
+function extractLiffId(value: string | undefined): string | null {
+  if (!value) return null;
+  const fromUrl = value.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/)?.[1];
+  if (fromUrl) return fromUrl;
+  return /^[0-9]+-[A-Za-z0-9]+$/.test(value) ? value : null;
+}
+
+async function resolveLiffIdForReply(
+  db: D1Database,
+  lineAccountId: string | null,
+  fallbackLiffUrl?: string,
+): Promise<string | null> {
+  if (lineAccountId) {
+    const row = await db
+      .prepare('SELECT liff_id FROM line_accounts WHERE id = ?')
+      .bind(lineAccountId)
+      .first<{ liff_id: string | null }>();
+    if (row?.liff_id) return row.liff_id;
+  }
+  return extractLiffId(fallbackLiffUrl);
+}
 
 webhook.post('/webhook', async (c) => {
   // Pre-read size guard: reject before reading the body if Content-Length is oversized.
@@ -389,7 +412,10 @@ async function handleEvent(
             response_type: rule.response_type,
             response_content: rule.response_content,
           });
-          const expandedContent = expandVariables(resolved.content, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], workerUrl);
+          const expandedContent = renderMessageContent(
+            expandVariables(resolved.content, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], workerUrl),
+            await resolveLiffIdForReply(db, lineAccountId, liffUrl),
+          );
           const replyMsg = buildMessage(resolved.messageType, expandedContent);
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
 
@@ -577,7 +603,10 @@ async function handleEvent(
             response_type: rule.response_type,
             response_content: rule.response_content,
           });
-          const expandedContent = expandVariables(resolved.content, { ...friend, metadata: resolvedMeta2 } as Parameters<typeof expandVariables>[1], workerUrl);
+          const expandedContent = renderMessageContent(
+            expandVariables(resolved.content, { ...friend, metadata: resolvedMeta2 } as Parameters<typeof expandVariables>[1], workerUrl),
+            await resolveLiffIdForReply(db, lineAccountId, liffUrl),
+          );
           const replyMsg = buildMessage(resolved.messageType, expandedContent);
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
           replyTokenConsumed = true;

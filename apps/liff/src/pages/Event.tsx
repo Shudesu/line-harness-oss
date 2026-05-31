@@ -78,16 +78,16 @@ export default function Event() {
   const overLimit = max != null && myCount >= max;
 
   return (
-    <div className="pb-16">
+    <div className="min-h-screen bg-white pb-16">
       {event.image_url ? (
         <img src={event.image_url} alt="" className="w-full h-48 object-cover bg-gray-100" />
       ) : (
         <div className="w-full h-48 bg-gradient-to-br from-blue-100 to-blue-200" />
       )}
-      <div className="p-4">
+      <div className="mx-auto max-w-xl p-4">
         <h1 className="text-xl font-bold mb-2">{event.name}</h1>
         {event.venue_name && (
-          <div className="text-sm text-gray-700 mb-1">📍 {event.venue_name}</div>
+          <div className="text-sm text-gray-700 mb-1">会場: {event.venue_name}</div>
         )}
         {event.venue_url && (
           <a
@@ -151,6 +151,15 @@ export default function Event() {
         )}
 
         <div className="mt-6 text-center">
+          <button
+            onClick={() => navigate('/events')}
+            className="text-sm text-blue-600 underline"
+          >
+            イベント一覧へ戻る
+          </button>
+        </div>
+
+        <div className="mt-3 text-center">
           <button
             onClick={() => navigate('/events/me')}
             className="text-sm text-blue-600 underline"

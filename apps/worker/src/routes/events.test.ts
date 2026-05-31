@@ -89,7 +89,7 @@ interface BookingRow {
 
 interface LineAccount {
   id: string;
-  liff_id: string;
+  liff_id: string | null;
   is_active: number;
   channel_access_token?: string;
 }
@@ -123,11 +123,24 @@ function makeEventDb(state: {
         },
         async first<T>() {
           // SELECT id FROM line_accounts WHERE liff_id = ? AND is_active = 1
-          if (sql.startsWith('SELECT id FROM line_accounts')) {
+          if (sql.startsWith('SELECT id FROM line_accounts WHERE liff_id')) {
             const [liff_id] = bound as [string];
             const acc = (state.accounts ?? []).find(
               (a) => a.liff_id === liff_id && a.is_active === 1,
             );
+            return (acc ? { id: acc.id } : null) as T | null;
+          }
+          // SELECT id FROM line_accounts WHERE channel_access_token = ? AND is_active = 1
+          if (sql.startsWith('SELECT id FROM line_accounts WHERE channel_access_token')) {
+            const [token] = bound as [string];
+            const acc = (state.accounts ?? []).find(
+              (a) => a.channel_access_token === token && a.is_active === 1,
+            );
+            return (acc ? { id: acc.id } : null) as T | null;
+          }
+          // SELECT id FROM line_accounts WHERE is_active = 1 ORDER BY ...
+          if (sql.startsWith('SELECT id FROM line_accounts WHERE is_active = 1')) {
+            const acc = (state.accounts ?? []).find((a) => a.is_active === 1);
             return (acc ? { id: acc.id } : null) as T | null;
           }
           // SELECT channel_access_token FROM line_accounts WHERE id = ?
@@ -402,6 +415,66 @@ function makeEventDb(state: {
           return null;
         },
         async all<T>() {
+          // LIFF public event list: SELECT e.id, ... future_slot_count FROM events e
+          if (sql.includes('FROM events e') && sql.includes('future_slot_count')) {
+            const [account, account2] = bound as [string, string?];
+            const acct = account2 ?? account;
+            const eventMatchesAccount = (e: EventRow): boolean => {
+              if (e.target_type === 'multi-account-dedup') {
+                const ids = e.account_ids
+                  ? (() => { try { return JSON.parse(e.account_ids as string) as string[]; } catch { return [] } })()
+                  : [];
+                return ids.includes(acct);
+              }
+              return e.line_account_id === acct;
+            };
+            const nowIso = new Date().toISOString();
+            const items = state.events
+              .filter((e) => e.deleted_at == null && e.is_published === 1 && eventMatchesAccount(e))
+              .map((e) => {
+                const futureSlots = (state.slots ?? [])
+                  .filter(
+                    (s) =>
+                      s.event_id === e.id &&
+                      s.deleted_at == null &&
+                      s.is_active === 1 &&
+                      s.starts_at > nowIso,
+                  )
+                  .sort((a, b) =>
+                    a.sort_order !== b.sort_order
+                      ? a.sort_order - b.sort_order
+                      : a.starts_at.localeCompare(b.starts_at),
+                  );
+                const next = futureSlots[0];
+                if (!next) return null;
+                return {
+                  id: e.id,
+                  name: e.name,
+                  venue_name: e.venue_name,
+                  venue_url: e.venue_url,
+                  image_url: e.image_url,
+                  description: e.description,
+                  description_centered: e.description_centered,
+                  max_bookings_per_friend: e.max_bookings_per_friend,
+                  requires_approval: e.requires_approval,
+                  cancel_deadline_hours_before: e.cancel_deadline_hours_before,
+                  sort_order: e.sort_order,
+                  next_slot_starts_at: next.starts_at,
+                  next_slot_ends_at: next.ends_at,
+                  future_slot_count: futureSlots.length,
+                  created_at: e.created_at,
+                };
+              })
+              .filter((e): e is NonNullable<typeof e> => e !== null)
+              .sort((a, b) =>
+                a.next_slot_starts_at !== b.next_slot_starts_at
+                  ? a.next_slot_starts_at.localeCompare(b.next_slot_starts_at)
+                  : a.sort_order !== b.sort_order
+                    ? a.sort_order - b.sort_order
+                    : b.created_at.localeCompare(a.created_at),
+              );
+            return { results: items as unknown as T[] };
+          }
           // admin events list (must come before event_slots branch since
           // its sub-queries also reference event_slots s)
           if (sql.startsWith('SELECT\n         e.*') || (sql.includes('FROM events e') && (sql.includes('e.line_account_id') || sql.includes('e.target_type')))) {
@@ -731,12 +804,15 @@ function makeEventDb(state: {
   return db;
 }
 
-function setupApp(state: { events: EventRow[]; slots?: SlotRow[]; bookings?: BookingRow[] }) {
+function setupApp(
+  state: { events: EventRow[]; slots?: SlotRow[]; bookings?: BookingRow[]; accounts?: LineAccount[]; friends?: FriendRow[] },
+  bindings: Partial<TestEnv['Bindings'] & { LIFF_URL: string; LINE_CHANNEL_ACCESS_TOKEN: string }> = {},
+) {
   const app = new Hono<TestEnv>();
   const db = makeEventDb(state);
   app.use('*', async (c, next) => {
     c.set('staff', { id: 'staff-1', role: 'owner' });
-    c.env = { DB: db } as TestEnv['Bindings'];
+    c.env = { DB: db, ...bindings } as TestEnv['Bindings'];
     await next();
   });
   app.route('/', events);
@@ -1228,6 +1304,77 @@ describe('event_slots admin', () => {
       method: 'DELETE',
     });
     expect(res.status).toBe(204);
+  });
+});
+
+describe('LIFF event list', () => {
+  test('GET returns published future events for the LIFF account in slot order', async () => {
+    const state = {
+      events: [
+        baseEvent({ id: 'later', line_account_id: 'la1', name: 'Later', is_published: 1 }),
+        baseEvent({ id: 'first', line_account_id: 'la1', name: 'First', is_published: 1 }),
+        baseEvent({ id: 'draft', line_account_id: 'la1', name: 'Draft', is_published: 0 }),
+        baseEvent({ id: 'past', line_account_id: 'la1', name: 'Past', is_published: 1 }),
+        baseEvent({ id: 'other', line_account_id: 'la2', name: 'Other', is_published: 1 }),
+        baseEvent({
+          id: 'shared',
+          line_account_id: 'la2',
+          name: 'Shared',
+          is_published: 1,
+          target_type: 'multi-account-dedup',
+          account_ids: JSON.stringify(['la2', 'la1']),
+        }),
+      ],
+      slots: [
+        { id: 's-later', event_id: 'later', starts_at: '2099-07-01T10:00:00Z', ends_at: '2099-07-01T12:00:00Z', capacity: 10, is_active: 1, sort_order: 0, deleted_at: null },
+        { id: 's-first-2', event_id: 'first', starts_at: '2099-06-01T12:00:00Z', ends_at: '2099-06-01T14:00:00Z', capacity: 10, is_active: 1, sort_order: 1, deleted_at: null },
+        { id: 's-first-1', event_id: 'first', starts_at: '2099-06-01T10:00:00Z', ends_at: '2099-06-01T12:00:00Z', capacity: 10, is_active: 1, sort_order: 0, deleted_at: null },
+        { id: 's-draft', event_id: 'draft', starts_at: '2099-05-01T10:00:00Z', ends_at: '2099-05-01T12:00:00Z', capacity: 10, is_active: 1, sort_order: 0, deleted_at: null },
+        { id: 's-past', event_id: 'past', starts_at: '2000-05-01T10:00:00Z', ends_at: '2000-05-01T12:00:00Z', capacity: 10, is_active: 1, sort_order: 0, deleted_at: null },
+        { id: 's-other', event_id: 'other', starts_at: '2099-04-01T10:00:00Z', ends_at: '2099-04-01T12:00:00Z', capacity: 10, is_active: 1, sort_order: 0, deleted_at: null },
+        { id: 's-shared', event_id: 'shared', starts_at: '2099-08-01T10:00:00Z', ends_at: '2099-08-01T12:00:00Z', capacity: 10, is_active: 1, sort_order: 0, deleted_at: null },
+      ],
+      accounts: [{ id: 'la1', liff_id: 'L1', is_active: 1 }],
+    };
+    const app = setupApp(state);
+    const res = await app.request('/api/liff/events?liffId=L1');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{
+        id: string;
+        next_slot_starts_at: string;
+        next_slot_ends_at: string;
+        future_slot_count: number;
+      }>;
+    };
+    expect(body.items.map((e) => e.id)).toEqual(['first', 'later', 'shared']);
+    expect(body.items[0].next_slot_starts_at).toBe('2099-06-01T10:00:00Z');
+    expect(body.items[0].next_slot_ends_at).toBe('2099-06-01T12:00:00Z');
+    expect(body.items[0].future_slot_count).toBe(2);
+  });
+
+  test('GET 400 when liffId missing', async () => {
+    const app = setupApp({ events: [] });
+    const res = await app.request('/api/liff/events');
+    expect(res.status).toBe(400);
+  });
+
+  test('GET resolves default account from LIFF_URL when account liff_id is not stored', async () => {
+    const state = {
+      events: [baseEvent({ id: 'e1', line_account_id: 'la1', name: 'Fallback', is_published: 1 })],
+      slots: [
+        { id: 's1', event_id: 'e1', starts_at: '2099-06-01T10:00:00Z', ends_at: '2099-06-01T12:00:00Z', capacity: 10, is_active: 1, sort_order: 0, deleted_at: null },
+      ],
+      accounts: [{ id: 'la1', liff_id: null, is_active: 1, channel_access_token: 'token-1' }],
+    };
+    const app = setupApp(state, {
+      LIFF_URL: '2000000000-default',
+      LINE_CHANNEL_ACCESS_TOKEN: 'token-1',
+    });
+    const res = await app.request('/api/liff/events?liffId=2000000000-default');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((e) => e.id)).toEqual(['e1']);
   });
 });
 

@@ -45,7 +45,27 @@ async function resolveAccountIdFromLiff(c: Context<Env>): Promise<string | null>
     .prepare(`SELECT id FROM line_accounts WHERE liff_id = ? AND is_active = 1`)
     .bind(liffId)
     .first<{ id: string }>();
-  return acc?.id ?? null;
+  if (acc?.id) return acc.id;
+
+  const envLiffId = (() => {
+    const value = c.env.LIFF_URL;
+    if (!value) return null;
+    return value.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/)?.[1]
+      ?? (/^[0-9]+-[A-Za-z0-9]+$/.test(value) ? value : null);
+  })();
+  if (envLiffId !== liffId) return null;
+
+  if (c.env.LINE_CHANNEL_ACCESS_TOKEN) {
+    const envAcc = await c.env.DB
+      .prepare(`SELECT id FROM line_accounts WHERE channel_access_token = ? AND is_active = 1`)
+      .bind(c.env.LINE_CHANNEL_ACCESS_TOKEN)
+      .first<{ id: string }>();
+    if (envAcc?.id) return envAcc.id;
+  }
+  const fallback = await c.env.DB
+    .prepare(`SELECT id FROM line_accounts WHERE is_active = 1 ORDER BY display_order ASC, created_at ASC LIMIT 1`)
+    .first<{ id: string }>();
+  return fallback?.id ?? null;
 }
 
 // LIFF が送る id_token を LINE Login API で verify し、認証済み LINE userId を返す。
