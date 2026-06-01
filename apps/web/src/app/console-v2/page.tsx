@@ -10,6 +10,7 @@ import { BroadcastTab } from './_components/broadcast-tab'
 import { FooterNav } from './_components/footer-nav'
 import { FormsTab } from './_components/forms-tab'
 import { MainTab } from './_components/main-tab'
+import { ReservationCalendarTab } from './_components/reservation-calendar-tab'
 import { SupportTab } from './_components/support-tab'
 import type {
   ApiBroadcast,
@@ -54,6 +55,7 @@ export default function ConsoleV2Page() {
   const [search, setSearch] = useState('')
   const [searching, setSearching] = useState(false)
   const [friendResults, setFriendResults] = useState<ConsoleFriend[]>([])
+  const [friendTagsById, setFriendTagsById] = useState<Record<string, ConsoleTag[]>>({})
   const [notesDraft, setNotesDraft] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
   const [updatingTagId, setUpdatingTagId] = useState<string | null>(null)
@@ -81,6 +83,7 @@ export default function ConsoleV2Page() {
       broadcastsResult,
       conversionReportResult,
       eventsResult,
+      friendsResult,
     ] = await Promise.allSettled([
       api.chats.list({ accountId, recentDays: 30 }),
       api.friends.count({ accountId }),
@@ -91,6 +94,7 @@ export default function ConsoleV2Page() {
       api.broadcasts.list({ accountId }),
       api.conversions.report(),
       api.events.list({ lineAccountId: accountId, limit: 20 }),
+      api.friends.list({ accountId, recentDays: 30, limit: 500 }),
     ])
 
     if (chatsResult.status === 'fulfilled' && chatsResult.value.success) {
@@ -122,6 +126,10 @@ export default function ConsoleV2Page() {
     if (eventsResult.status === 'fulfilled' && eventsResult.value.success) {
       setRecentEvents(eventsResult.value.data)
     }
+    if (friendsResult.status === 'fulfilled' && friendsResult.value.success) {
+      const items = friendsResult.value.data.items as unknown as ConsoleFriend[]
+      setFriendTagsById(Object.fromEntries(items.map((friend) => [friend.id, friend.tags || []])))
+    }
 
     const failed = [
       chatsResult,
@@ -133,6 +141,7 @@ export default function ConsoleV2Page() {
       broadcastsResult,
       conversionReportResult,
       eventsResult,
+      friendsResult,
     ].some((result) => result.status === 'rejected')
 
     setState({
@@ -513,7 +522,12 @@ export default function ConsoleV2Page() {
           friendResults={friendResults}
           onSearchFriends={handleSearchFriends}
           onOpenFriendChat={handleOpenFriendChat}
+          friendTagsById={friendTagsById}
         />
+      )}
+
+      {activeTab === 'calendar' && (
+        <ReservationCalendarTab />
       )}
 
       {activeTab === 'broadcast' && (

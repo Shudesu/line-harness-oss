@@ -3,6 +3,7 @@ import type { ChatStatus, ConsoleMessage, ConsoleTemplate, TabId } from './types
 export const tabs: { id: TabId; label: string; description: string }[] = [
   { id: 'main', label: 'メイン', description: '今日見るべき状況' },
   { id: 'messages', label: 'メッセージ', description: '顧客対応とチャット' },
+  { id: 'calendar', label: '予約', description: '予約カレンダー' },
   { id: 'broadcast', label: '配信', description: 'テンプレート配信' },
   { id: 'forms', label: 'フォーム', description: '受付と集計' },
   { id: 'analytics', label: '分析', description: '流入と成果' },

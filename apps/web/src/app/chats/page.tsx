@@ -5,7 +5,7 @@ import { api, fetchApi } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
-import FlexPreviewComponent from '@/components/flex-preview'
+import { LineMessageBubble } from '@/components/line-message-bubble'
 
 interface Chat {
   id: string
@@ -691,64 +691,17 @@ export default function ChatsPage() {
                     <p className="text-white/60 text-sm">メッセージはまだありません。</p>
                   </div>
                 ) : (
-                  (chatDetail.messages ?? []).map((msg) => {
-                    const isOutgoing = msg.direction === 'outgoing'
-
-                    // メッセージ表示の分岐
-                    let bubbleContent: React.ReactNode
-                    if (msg.messageType === 'flex') {
-                      bubbleContent = (
-                        <div className="max-w-[300px]">
-                          <FlexPreviewComponent content={msg.content} maxWidth={280} />
-                        </div>
-                      )
-                    } else if (msg.messageType === 'image') {
-                      try {
-                        const parsed = JSON.parse(msg.content)
-                        bubbleContent = (
-                          <img src={parsed.originalContentUrl || parsed.previewImageUrl} alt="" className="max-w-[200px] rounded" />
-                        )
-                      } catch {
-                        bubbleContent = <span>🖼️ [画像]</span>
-                      }
-                    } else {
-                      bubbleContent = <span>{msg.content}</span>
-                    }
-
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex items-end gap-2 ${isOutgoing ? 'justify-end' : 'justify-start'}`}
-                      >
-                        {/* 相手のアイコン（incoming のみ） */}
-                        {!isOutgoing && (
-                          chatDetail.friendPictureUrl ? (
-                            <img src={chatDetail.friendPictureUrl} alt="" className="w-8 h-8 rounded-full flex-shrink-0 mb-1" />
-                          ) : (
-                            <div className="w-8 h-8 rounded-full bg-gray-300 flex-shrink-0 mb-1" />
-                          )
-                        )}
-
-                        <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
-                          {/* メッセージバブル */}
-                          <div
-                            className={`max-w-[320px] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
-                              isOutgoing
-                                ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
-                                : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
-                            }`}
-                            style={isOutgoing ? { backgroundColor: '#06C755' } : undefined}
-                          >
-                            {bubbleContent}
-                          </div>
-                          {/* 時刻 */}
-                          <span className="text-xs text-white/50 mt-0.5 px-1">
-                            {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      </div>
-                    )
-                  })
+                  (chatDetail.messages ?? []).map((msg) => (
+                    <LineMessageBubble
+                      key={msg.id}
+                      content={msg.content}
+                      messageType={msg.messageType}
+                      outgoing={msg.direction === 'outgoing'}
+                      createdAt={msg.createdAt}
+                      avatarUrl={chatDetail.friendPictureUrl}
+                      maxWidth={msg.messageType === 'flex' ? 300 : 320}
+                    />
+                  ))
                 )}
               </div>
 

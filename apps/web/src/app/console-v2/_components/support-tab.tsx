@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import FlexPreviewComponent from '@/components/flex-preview'
+import { LineMessageBubble } from '@/components/line-message-bubble'
 import type {
   ApiExternalCustomer,
   ApiExternalCustomerLink,
@@ -11,7 +12,7 @@ import type {
   CsvImportState,
   ExternalCustomerForm,
 } from '../types'
-import { formatDateTime, normalizeTemplatePreview, renderMessageSender, shortText, statusClass, statusLabel } from '../utils'
+import { formatDateTime, normalizeTemplatePreview, statusClass, statusLabel } from '../utils'
 
 type ChatPanel = 'chat' | 'templates' | 'customer' | 'tags'
 
@@ -54,6 +55,7 @@ export function SupportTab(props: {
   friendResults: ConsoleFriend[]
   onSearchFriends: () => void
   onOpenFriendChat: (friend: ConsoleFriend) => void
+  friendTagsById: Record<string, ConsoleTag[]>
 }) {
   const [panel, setPanel] = useState<ChatPanel>('chat')
   const visibleChats = props.chats.filter((chat) => {
@@ -125,6 +127,7 @@ export function SupportTab(props: {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-bold text-gray-950">{chat.friendName}</p>
                     <p className="text-xs text-gray-400">{formatDateTime(chat.lastMessageAt)}</p>
+                    <ChatTagRow tags={props.friendTagsById[chat.friendId] || []} />
                   </div>
                   <span className={`rounded-full border px-2 py-0.5 text-xs font-bold ${statusClass[chat.status]}`}>{statusLabel[chat.status]}</span>
                 </div>
@@ -222,16 +225,36 @@ function ChatPanelContent(props: Parameters<typeof SupportTab>[0]) {
       {props.chatDetail.messages.map((msg) => {
         const outgoing = msg.direction === 'outgoing' || msg.senderType === 'operator'
         return (
-          <div key={msg.id} className={`flex ${outgoing ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[84%] rounded-2xl px-4 py-2 text-sm ${outgoing ? 'bg-emerald-500 text-white' : 'bg-white text-gray-800 shadow-sm'}`}>
-              <p className="whitespace-pre-wrap break-words">{shortText(msg.content, 700)}</p>
-              <p className={`mt-1 text-[11px] ${outgoing ? 'text-emerald-50' : 'text-gray-400'}`}>
-                {renderMessageSender(msg)} / {formatDateTime(msg.createdAt)}
-              </p>
-            </div>
-          </div>
+          <LineMessageBubble
+            key={msg.id}
+            content={msg.content}
+            messageType={msg.messageType}
+            outgoing={outgoing}
+            createdAt={msg.createdAt}
+            avatarUrl={props.chatDetail?.friendPictureUrl}
+            maxWidth={outgoing || msg.messageType !== 'flex' ? 320 : 300}
+          />
         )
       })}
+    </div>
+  )
+}
+
+function ChatTagRow({ tags }: { tags: ConsoleTag[] }) {
+  if (tags.length === 0) return null
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {tags.slice(0, 3).map((tag) => (
+        <span
+          key={tag.id}
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+            tag.kind === 'system' || tag.isLocked ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'
+          }`}
+        >
+          {tag.kind === 'system' || tag.isLocked ? 'SYS ' : ''}{tag.name}
+        </span>
+      ))}
+      {tags.length > 3 && <span className="text-[10px] font-bold text-gray-400">+{tags.length - 3}</span>}
     </div>
   )
 }

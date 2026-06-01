@@ -1,6 +1,6 @@
 import type { ApiBroadcast, ApiExternalCustomer, ApiExternalCustomerLink, ApiUserEvent } from '@/lib/api'
 
-export type TabId = 'main' | 'messages' | 'broadcast' | 'forms' | 'analytics'
+export type TabId = 'main' | 'messages' | 'calendar' | 'broadcast' | 'forms' | 'analytics'
 
 export type ChatStatus = 'unread' | 'in_progress' | 'resolved'
 
@@ -17,6 +17,7 @@ export type ConsoleChat = {
 export type ConsoleMessage = {
   id: string
   content: string
+  messageType?: string
   senderType?: string
   direction?: 'incoming' | 'outgoing'
   createdAt: string
@@ -38,7 +39,9 @@ export type ConsoleTag = {
   id: string
   name: string
   color?: string | null
+  kind?: 'system' | 'custom'
   category?: string | null
+  isLocked?: boolean
 }
 
 export type ConsoleFriend = {
