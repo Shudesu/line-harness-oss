@@ -10,7 +10,7 @@ import {
   listReservationResources,
   listReservationMenus,
   listReservationSlots,
-  listReservations,
+  type Reservation,
   updateReservationStatus,
 } from '@line-crm/db';
 import type { Env } from '../../index.js';
@@ -363,10 +363,11 @@ publicReservations.post('/api/public/reservations', async (c) => {
 publicReservations.get('/api/public/me/reservations', async (c) => {
   try {
     const session = await requireReservationSession(c);
-    if (!session?.userId) return jsonError(c, 'unauthorized', 401);
+    if (!session?.userId && !session?.friendId) return jsonError(c, 'unauthorized', 401);
     const statusParam = c.req.query('status');
-    const items = await listReservations(c.env.DB, {
-      userId: session.userId,
+    const items = await listReservationsForReservationSession(c.env.DB, {
+      userId: session.userId ?? null,
+      friendId: session.friendId ?? null,
       status: statusParam === 'active' ? undefined : parseReservationStatusValue(statusParam),
       limit: 100,
     });
@@ -379,6 +380,48 @@ publicReservations.get('/api/public/me/reservations', async (c) => {
     return jsonError(c, 'internal_error', 500);
   }
 });
+
+async function listReservationsForReservationSession(
+  db: D1Database,
+  params: {
+    userId?: string | null;
+    friendId?: string | null;
+    status?: Reservation['status'];
+    limit?: number;
+  },
+): Promise<Reservation[]> {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  const identityWhere: string[] = [];
+  if (params.userId) {
+    identityWhere.push('r.user_id = ?');
+    values.push(params.userId);
+  }
+  if (params.friendId) {
+    identityWhere.push('r.friend_id = ?');
+    values.push(params.friendId);
+  }
+  if (identityWhere.length === 0) return [];
+  where.push(`(${identityWhere.join(' OR ')})`);
+  if (params.status) {
+    where.push('r.status = ?');
+    values.push(params.status);
+  }
+  values.push(Math.min(params.limit ?? 100, 500));
+
+  const result = await db
+    .prepare(
+      `SELECT r.*,
+              (SELECT SUM(amount) FROM reservation_items WHERE reservation_id = r.id) AS total_amount
+       FROM reservations r
+       WHERE ${where.join(' AND ')}
+       ORDER BY r.start_at ASC, r.created_at DESC
+       LIMIT ?`,
+    )
+    .bind(...values)
+    .all<Reservation>();
+  return result.results ?? [];
+}
 
 publicReservations.get('/api/public/reservations/:id', async (c) => {
   try {
