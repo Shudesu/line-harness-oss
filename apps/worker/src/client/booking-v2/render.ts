@@ -1,4 +1,4 @@
-import { addDays, dateToString, formatDateJa, formatDateTimeJa, formatTime, isPastDate } from './date.js';
+import { addDays, dateToString, formatDateJa, formatTime, isPastDate } from './date.js';
 import { escapeHtml } from './html.js';
 import { capacityCountLabels } from './people.js';
 import { calculateEstimatedTotal, formatYen, hasAnyMenuPrice, hasPrice } from './pricing.js';
@@ -776,7 +776,6 @@ function renderReservationDetail(): string {
       })}
       ${menu ? renderPriceEstimate(menu, reservation, true) : ''}
       <div class="confirm-row"><span class="confirm-label">状態</span><span class="confirm-value">${statusLabel(reservation.status)}</span></div>
-      <div class="confirm-row"><span class="confirm-label">予約作成日</span><span class="confirm-value">${formatDateTimeJa(reservation.createdAt)}</span></div>
       <div class="confirm-row"><span class="confirm-label">予約ID</span><span class="confirm-value">${escapeHtml(reservation.id)}</span></div>
       ${canCancel ? `
         <button type="button" class="close-btn danger" data-action="${tokens.cancelToken || reservation.cancelToken ? 'go-cancel' : 'issue-tokens'}" ${state.submitting ? 'disabled' : ''}>

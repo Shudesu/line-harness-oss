@@ -1784,6 +1784,7 @@ function OpsReservationDetailModal({ reservation, onClose }: { reservation: Rese
           <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
           {hasPriceDetails(reservation) && <Info label="料金" value={formatPriceDetails(reservation)} />}
           <Info label="状態" value={reservation.status} />
+          <Info label="予約作成日" value={formatDateTime(reservation.createdAt)} />
           <Info label="外部ID" value={reservation.externalReservationId || '-'} />
         </dl>
       </div>

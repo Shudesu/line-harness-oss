@@ -90,6 +90,17 @@ function formatTime(value: string): string {
   return match?.[1] ?? value.slice(11, 16) ?? value
 }
 
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function isActiveReservation(reservation: ReservationResponse): boolean {
   return reservation.status !== 'cancelled' && reservation.status !== 'no_show'
 }
@@ -1154,6 +1165,7 @@ function ReservationDetailModal({
           <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
           {reservation.source === 'jalan' && <Info label="料金" value={formatPriceDetails(reservation)} />}
           <Info label="状態" value={reservation.status} />
+          <Info label="予約作成日" value={formatDateTime(reservation.createdAt)} />
           <Info label="外部ID" value={reservation.externalReservationId || '-'} />
         </dl>
         {(reservation.status === 'pending' || reservation.status === 'confirmed') && (

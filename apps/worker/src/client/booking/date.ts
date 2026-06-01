@@ -9,14 +9,6 @@ export function formatDateJa(dateStr: string): string {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${weekdays[d.getDay()]})`;
 }
 
-export function formatDateTimeJa(isoString?: string | null): string {
-  if (!isoString) return '-';
-  const d = new Date(isoString);
-  if (Number.isNaN(d.getTime())) return '-';
-  const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${weekdays[d.getDay()]}) ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
 export function dateToString(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
