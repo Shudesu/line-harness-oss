@@ -245,9 +245,9 @@ export async function recomputeReservationSystemTagsForFriend(db: D1Database, fr
     return row?.count ?? 0;
   }
 
-  const active = await count(`status IN ('pending', 'confirmed') AND start_at >= ?`, [now]);
-  const confirmed = await count(`status = 'confirmed' AND start_at >= ?`, [now]);
-  const pending = await count(`status = 'pending' AND start_at >= ?`, [now]);
+  const active = await count(`status IN ('pending', 'confirmed')`);
+  const confirmed = await count(`status = 'confirmed'`);
+  const pending = await count(`status = 'pending'`);
   const cancelled = await count(`status = 'cancelled'`);
   const noShow = await count(`status = 'no_show'`);
   const completed = await count(`status = 'completed'`);

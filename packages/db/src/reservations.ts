@@ -1459,10 +1459,9 @@ export async function recomputeReservationCustomerProfileStatus(
       `SELECT COUNT(*) AS count
        FROM reservations
        WHERE user_id = ?
-         AND status IN ('pending', 'confirmed')
-         AND start_at >= ?`,
+         AND status IN ('pending', 'confirmed')`,
     )
-    .bind(userId, now)
+    .bind(userId)
     .first<{ count: number }>();
   const visits = await db
     .prepare(`SELECT COUNT(*) AS count FROM visits WHERE user_id = ?`)
