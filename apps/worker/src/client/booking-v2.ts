@@ -925,7 +925,8 @@ async function claimReservationFromUrl(): Promise<void> {
 async function submitCancel(): Promise<void> {
   const reservation = state.selectedReservation;
   if (!reservation || state.submitting) return;
-  const cancelToken = tokenForReservation(reservation.id).cancelToken || reservation.cancelToken;
+  let cancelToken = await refreshCancelTokenForReservation(reservation);
+  cancelToken = cancelToken || tokenForReservation(reservation.id).cancelToken || reservation.cancelToken;
   if (!cancelToken) {
     await issueTokensForSelectedReservation();
     return;
@@ -949,6 +950,22 @@ async function submitCancel(): Promise<void> {
   } finally {
     state.submitting = false;
     render();
+  }
+}
+
+async function refreshCancelTokenForReservation(reservation: NonNullable<typeof state.selectedReservation>): Promise<string | undefined> {
+  try {
+    const tokens = await issueReservationTokens({
+      reservationId: reservation.id,
+      token: await ensureReservationSession(),
+    });
+    storeTokensForReservation(tokens.reservationId, {
+      detailToken: tokens.detailToken,
+      cancelToken: tokens.cancelToken,
+    });
+    return tokens.cancelToken;
+  } catch {
+    return undefined;
   }
 }
 
