@@ -16,6 +16,7 @@ import {
   updateReservationStatus,
   importExternalReservation,
   getReservationSlotById,
+  deleteReservationSlotsByDateRange,
   type ReservationSlot,
   type CreateReservationInput,
 } from './reservations.js';
@@ -841,7 +842,53 @@ describe('reservations — D1 integration', () => {
   });
 
   // =========================================================================
-  // 6. Customer profile recomputation
+  // 6. Slot deletion
+  // =========================================================================
+  describe('slot deletion', () => {
+    it('deletes slots blocked only by cancelled reservations', async () => {
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const cancelled = await updateReservationStatus(db, r.reservation.id, {
+        status: 'cancelled',
+        actorType: 'admin',
+      });
+      expect(cancelled.ok).toBe(true);
+
+      const result = await deleteReservationSlotsByDateRange(db, {
+        resourceId: RES_ID,
+        dateFrom: SLOT_DATE,
+        dateTo: SLOT_DATE,
+      });
+
+      expect(result.deletedCount).toBe(1);
+      expect(result.skippedCount).toBe(0);
+      await expect(getReservationSlotById(db, slot.id)).resolves.toBeNull();
+      const reservation = await db.prepare(`SELECT id FROM reservations WHERE id = ?`).bind(r.reservation.id).first();
+      expect(reservation).toBeNull();
+    });
+
+    it('keeps slots with active reservations', async () => {
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id));
+      expect(r.ok).toBe(true);
+
+      const result = await deleteReservationSlotsByDateRange(db, {
+        resourceId: RES_ID,
+        dateFrom: SLOT_DATE,
+        dateTo: SLOT_DATE,
+      });
+
+      expect(result.deletedCount).toBe(0);
+      expect(result.skippedCount).toBe(1);
+      await expect(getReservationSlotById(db, slot.id)).resolves.not.toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // 7. Customer profile recomputation
   // =========================================================================
   describe('customer profile recomputation', () => {
     it('sets profile to reserved after booking', async () => {

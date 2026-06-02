@@ -1006,6 +1006,86 @@ export async function deleteReservationSlotsByDateRange(
     .bind(input.resourceId, input.dateFrom, input.dateTo)
     .first<{ count: number }>();
 
+  // Cancelled reservations have already released capacity. They can block slot deletion
+  // because reservations.slot_id is NOT NULL + ON DELETE RESTRICT, so detach their
+  // dependent records before deleting empty slots.
+  await db
+    .prepare(
+      `UPDATE external_reservation_sources
+       SET reservation_id = NULL,
+           updated_at = ?
+       WHERE reservation_id IN (
+         SELECT reservations.id
+         FROM reservations
+         JOIN reservation_slots ON reservation_slots.id = reservations.slot_id
+         WHERE reservation_slots.resource_id = ?
+           AND reservation_slots.date BETWEEN ? AND ?
+           AND reservations.status = 'cancelled'
+       )`,
+    )
+    .bind(jstNow(), input.resourceId, input.dateFrom, input.dateTo)
+    .run();
+
+  await db
+    .prepare(
+      `DELETE FROM reservation_events
+       WHERE reservation_id IN (
+         SELECT reservations.id
+         FROM reservations
+         JOIN reservation_slots ON reservation_slots.id = reservations.slot_id
+         WHERE reservation_slots.resource_id = ?
+           AND reservation_slots.date BETWEEN ? AND ?
+           AND reservations.status = 'cancelled'
+       )`,
+    )
+    .bind(input.resourceId, input.dateFrom, input.dateTo)
+    .run();
+
+  await db
+    .prepare(
+      `DELETE FROM reservation_items
+       WHERE reservation_id IN (
+         SELECT reservations.id
+         FROM reservations
+         JOIN reservation_slots ON reservation_slots.id = reservations.slot_id
+         WHERE reservation_slots.resource_id = ?
+           AND reservation_slots.date BETWEEN ? AND ?
+           AND reservations.status = 'cancelled'
+       )`,
+    )
+    .bind(input.resourceId, input.dateFrom, input.dateTo)
+    .run();
+
+  await db
+    .prepare(
+      `UPDATE visits
+       SET reservation_id = NULL
+       WHERE reservation_id IN (
+         SELECT reservations.id
+         FROM reservations
+         JOIN reservation_slots ON reservation_slots.id = reservations.slot_id
+         WHERE reservation_slots.resource_id = ?
+           AND reservation_slots.date BETWEEN ? AND ?
+           AND reservations.status = 'cancelled'
+       )`,
+    )
+    .bind(input.resourceId, input.dateFrom, input.dateTo)
+    .run();
+
+  await db
+    .prepare(
+      `DELETE FROM reservations
+       WHERE status = 'cancelled'
+         AND slot_id IN (
+           SELECT id
+           FROM reservation_slots
+           WHERE resource_id = ?
+             AND date BETWEEN ? AND ?
+         )`,
+    )
+    .bind(input.resourceId, input.dateFrom, input.dateTo)
+    .run();
+
   await db
     .prepare(
       `DELETE FROM reservation_slots
