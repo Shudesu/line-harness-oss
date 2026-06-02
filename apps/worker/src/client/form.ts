@@ -10,6 +10,8 @@
  * URL format: https://liff.line.me/{LIFF_ID}?page=form&id={FORM_ID}
  */
 
+import { getEffectiveSearchParams } from './url-params.js';
+
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
   isLoggedIn(): boolean;
@@ -851,7 +853,7 @@ function attachXAutocomplete(): void {
 
   // Extract gateId from URL param (priority) or onSubmitWebhookUrl
   function getGateId(): string | null {
-    const urlParams = new URLSearchParams(window.location.search);
+    const urlParams = getEffectiveSearchParams();
     const gateParam = urlParams.get('gate');
     if (gateParam) return gateParam;
     const url = state.formDef?.onSubmitWebhookUrl ?? '';
@@ -1228,7 +1230,7 @@ export async function initForm(formId: string | null): Promise<void> {
     state.formDef = json.data;
 
     // Extract X Harness base URL: from URL param (priority) or webhook URL
-    const urlParams = new URLSearchParams(window.location.search);
+    const urlParams = getEffectiveSearchParams();
     const xhParam = urlParams.get('xh');
     if (xhParam) {
       state.xHarnessBaseUrl = xhParam.replace(/\/$/, '');

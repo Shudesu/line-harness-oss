@@ -17,6 +17,7 @@
 
 import { initBooking } from './booking.js';
 import { initForm } from './form.js';
+import { getEffectivePathname, getEffectiveQueryParam, getEffectiveSearchParams } from './url-params.js';
 
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
@@ -30,16 +31,13 @@ declare const liff: {
   closeWindow(): void;
 };
 
-// Resolve LIFF ID: ?liffId= param (from endpoint URL) > env var (fallback to ①)
+// Resolve LIFF ID: ?liffId= param (from endpoint URL) > LIFF `liff.state` wrapper > env var (fallback)
 function detectLiffId(): string {
-  const fromParam = new URLSearchParams(window.location.search).get('liffId');
+  const fromParam = getEffectiveQueryParam('liffId');
   if (fromParam) return fromParam;
   return import.meta.env?.VITE_LIFF_ID || '';
 }
 const LIFF_ID = detectLiffId();
-if (!LIFF_ID) {
-  throw new Error('LIFF ID not found. Set ?liffId= in LIFF endpoint URL or VITE_LIFF_ID env.');
-}
 const UUID_STORAGE_KEY = 'lh_uuid';
 // Bot basic ID — resolved dynamically from API after liff.init()
 let BOT_BASIC_ID = '';
@@ -55,19 +53,19 @@ function apiCall(path: string, options?: RequestInit): Promise<Response> {
 }
 
 function getPage(): string | null {
-  const path = window.location.pathname.replace(/^\/+/, '');
+  const path = getEffectivePathname().replace(/^\/+/, '');
   if (path === 'book') return 'book';
-  const params = new URLSearchParams(window.location.search);
+  const params = getEffectiveSearchParams();
   return params.get('page');
 }
 
 function getRedirectUrl(): string | null {
-  const params = new URLSearchParams(window.location.search);
+  const params = getEffectiveSearchParams();
   return params.get('redirect');
 }
 
 function getRef(): string | null {
-  const params = new URLSearchParams(window.location.search);
+  const params = getEffectiveSearchParams();
   return params.get('ref');
 }
 
@@ -126,13 +124,13 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
       if (!friendFlag) return;
 
       // Send form link if form param exists (was lost during friend-add flow)
-      const formParam = new URLSearchParams(window.location.search).get('form');
+      const formParam = getEffectiveQueryParam('form');
       if (formParam && !formLinkSent) {
         formLinkSent = true;
         try {
           const fp = await liff.getProfile();
           const idToken = liff.getIDToken();
-          const params = new URLSearchParams(window.location.search);
+          const params = getEffectiveSearchParams();
           await apiCall('/api/liff/send-form-link', {
             method: 'POST',
             body: JSON.stringify({
@@ -213,7 +211,7 @@ async function linkAndAddFlow() {
     ]);
 
     // 1. UUID linking (always, regardless of friendship)
-    const linkParams = new URLSearchParams(window.location.search);
+    const linkParams = getEffectiveSearchParams();
     const linkPromise = apiCall('/api/liff/link', {
       method: 'POST',
       body: JSON.stringify({
@@ -268,12 +266,12 @@ async function linkAndAddFlow() {
       showFriendAdd(profile);
     } else {
       // Already a friend — check for form param
-      const formParam = new URLSearchParams(window.location.search).get('form');
+      const formParam = getEffectiveQueryParam('form');
       if (formParam) {
         // Send form link via push message, then show completion
         try {
           const idToken = liff.getIDToken();
-          const params = new URLSearchParams(window.location.search);
+          const params = getEffectiveSearchParams();
           await apiCall('/api/liff/send-form-link', {
             method: 'POST',
             body: JSON.stringify({
@@ -325,7 +323,7 @@ async function initSalonBooking(): Promise<void> {
 
   const existingUuid = getSavedUuid();
   const ref = getRef();
-  const ig = new URLSearchParams(window.location.search).get('ig');
+  const ig = getEffectiveQueryParam('ig');
 
   // ② Silent UUID linking (fire-and-forget; booking API は id_token verify で
   //    認証するので待つ必要はない)。
@@ -429,7 +427,7 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
     showError('mount target #app が見つかりません');
     return;
   }
-  const params = new URLSearchParams(window.location.search);
+  const params = getEffectiveSearchParams();
   const eventId = params.get('id') ?? '';
   if (initialKind === 'detail' && !eventId) {
     showError('id クエリパラメータが必要です（?page=event&id=<eventId>）');
@@ -447,6 +445,11 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
 
 async function main() {
   try {
+    if (!LIFF_ID) {
+      showError('LIFF IDが見つかりません。LIFF Endpoint URL の liffId または liff.state を確認してください。');
+      return;
+    }
+
     await liff.init({ liffId: LIFF_ID });
 
     if (!liff.isLoggedIn()) {
@@ -475,7 +478,7 @@ async function main() {
     } else if (page === 'event-me') {
       await initEventBooking('history');
     } else if (page === 'form') {
-      const params = new URLSearchParams(window.location.search);
+      const params = getEffectiveSearchParams();
       const formId = params.get('id');
       await initForm(formId);
     } else if (!page) {
