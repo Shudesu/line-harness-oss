@@ -247,6 +247,10 @@ app.get('/r/:ref', async (c) => {
     }
   }
 
+  if (!liffUrl) {
+    return c.text('LIFF URL の設定が不足しています。LINE Login/LIFF 設定を確認してください。', 503);
+  }
+
   // Build LIFF URL with params (direct link for Universal Link)
   const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
   const liffParams = new URLSearchParams();

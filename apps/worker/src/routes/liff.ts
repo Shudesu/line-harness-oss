@@ -378,6 +378,11 @@ liffRoutes.get('/auth/line', async (c) => {
       }
     }
   }
+
+  if (!channelId || !liffUrl) {
+    return c.text('LINE Login / LIFF URL の設定が不足しています。LINE Developers の認証情報を設定してください。', 503);
+  }
+
   const callbackUrl = `${baseUrl}/auth/callback`;
 
   // xh: refs are X Harness one-time tokens — never forward to third-party URLs (liff.line.me / QR)
@@ -560,6 +565,10 @@ liffRoutes.get('/auth/oauth', async (c) => {
         }
       }
     }
+  }
+
+  if (!channelId) {
+    return c.text('LINE Login の設定が不足しています。LINE Developers の認証情報を設定してください。', 503);
   }
 
   // Build OAuth URL with full state
