@@ -283,6 +283,8 @@ export default function ReservationsPage() {
   const [orphanedMaintenanceResult, setOrphanedMaintenanceResult] = useState<OrphanedCancelResponse | null>(null)
   const [showExternalDetails, setShowExternalDetails] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [slotSettingsOpen, setSlotSettingsOpen] = useState(false)
+  const [editingSlot, setEditingSlot] = useState<ReservationSlotWithAvailability | null>(null)
   const [showResourceForm, setShowResourceForm] = useState(false)
   const [showMenuForm, setShowMenuForm] = useState(false)
   const [showScheduleForm, setShowScheduleForm] = useState(false)
@@ -567,6 +569,10 @@ export default function ReservationsPage() {
             onResourceChange={changeResource}
             onReload={() => load(resourceId, date)}
             onOpenCalendar={() => setCalendarOpen(true)}
+            onOpenSlotSettings={() => {
+              setEditingSlot(null)
+              setSlotSettingsOpen(true)
+            }}
             loading={loading}
           />
           <ReservationDaySummary
@@ -574,14 +580,6 @@ export default function ReservationsPage() {
             resource={resources.find((resource) => resource.id === resourceId)}
             slots={slots}
             reservations={reservations}
-          />
-          <SlotsCard
-            slots={slots}
-            reservations={reservations}
-            selectedSlotId={selectedSlotId}
-            onSelect={setSelectedSlotId}
-            onSaveSlot={(slot, formData) => runSaving(() => updateSlot(slot, formData), '予約枠を保存しました')}
-            saving={saving}
           />
           {calendarOpen && (
             <CalendarModal onClose={() => setCalendarOpen(false)}>
@@ -598,6 +596,26 @@ export default function ReservationsPage() {
                 onSetViewMode={setViewMode}
               />
             </CalendarModal>
+          )}
+          {slotSettingsOpen && (
+            <SlotSettingsModal
+              date={date}
+              slots={slots}
+              reservations={reservations}
+              editingSlot={editingSlot}
+              saving={saving}
+              onClose={() => {
+                setSlotSettingsOpen(false)
+                setEditingSlot(null)
+              }}
+              onBack={() => setEditingSlot(null)}
+              onEdit={setEditingSlot}
+              onSaveSlot={(slot, formData) => runSaving(async () => {
+                await updateSlot(slot, formData)
+                setEditingSlot(null)
+                setSlotSettingsOpen(false)
+              }, '予約枠を保存しました')}
+            />
           )}
           <ReservationListPanel
             date={date}
@@ -719,6 +737,7 @@ function ReservationOverviewToolbar({
   onResourceChange,
   onReload,
   onOpenCalendar,
+  onOpenSlotSettings,
   loading,
 }: {
   date: string
@@ -728,6 +747,7 @@ function ReservationOverviewToolbar({
   onResourceChange: (resourceId: string) => void
   onReload: () => void
   onOpenCalendar: () => void
+  onOpenSlotSettings: () => void
   loading: boolean
 }) {
   return (
@@ -735,6 +755,9 @@ function ReservationOverviewToolbar({
       <div className="flex gap-2 overflow-x-auto">
         <button onClick={onOpenCalendar} className="shrink-0 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white">
           カレンダー
+        </button>
+        <button onClick={onOpenSlotSettings} className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700">
+          枠設定
         </button>
         <input type="date" value={date} onChange={(event) => onDateChange(event.target.value)} className="shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm" />
         <select value={resourceId} onChange={(event) => onResourceChange(event.target.value)} className="min-w-48 shrink-0 rounded-full border border-gray-300 px-3 py-2 text-sm">
@@ -947,6 +970,131 @@ function ExternalSourcesCard({
         </div>
       )}
     </div>
+  )
+}
+
+function SlotSettingsModal({
+  date,
+  slots,
+  reservations,
+  editingSlot,
+  saving,
+  onClose,
+  onBack,
+  onEdit,
+  onSaveSlot,
+}: {
+  date: string
+  slots: ReservationSlotWithAvailability[]
+  reservations: ReservationResponse[]
+  editingSlot: ReservationSlotWithAvailability | null
+  saving: boolean
+  onClose: () => void
+  onBack: () => void
+  onEdit: (slot: ReservationSlotWithAvailability) => void
+  onSaveSlot: (slot: ReservationSlotWithAvailability, formData: FormData) => void | Promise<void>
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
+      <div className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-2xl sm:rounded-2xl">
+        <div className="sticky top-0 z-10 border-b border-gray-100 bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">枠設定</h3>
+              <p className="mt-1 text-xs text-gray-500">{date} の作成済み予約枠を変更します。</p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
+          </div>
+        </div>
+
+        {!editingSlot ? (
+          <div className="p-4">
+            <p className="mb-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">
+              変更したい時間枠を選んでください。予約済み人数より小さい枠数には変更できません。
+            </p>
+            <div className="grid gap-2">
+              {slots.length === 0 ? (
+                <p className="rounded-lg border border-gray-200 p-4 text-sm text-gray-400">この日の予約枠はありません。予約設計タブからSlotを生成してください。</p>
+              ) : slots.map((slot) => {
+                const slotReservations = reservations.filter((reservation) => reservation.slotId === slot.id)
+                const activeReservations = slotReservations.filter(isActiveReservation)
+                const capacityPeople = activeReservations.reduce((sum, reservation) => sum + reservation.capacityPeople, 0)
+                const label = slotLabel(slot)
+                return (
+                  <button
+                    key={slot.id}
+                    type="button"
+                    onClick={() => onEdit(slot)}
+                    className="rounded-xl border border-gray-200 bg-white p-3 text-left shadow-sm transition hover:border-blue-300 hover:bg-blue-50"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-gray-900">{formatTime(slot.startAt)} - {formatTime(slot.endAt)}</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          総枠 {capacityPeople}/{slot.totalCapacity} / LINE {slot.lineReservedCount}/{slot.lineCapacity ?? slot.totalCapacity} / 外部 {slot.externalReservedCount}/{slot.externalCapacity ?? slot.totalCapacity}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-bold ${label.className}`}>{label.mark} {label.text}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="p-4">
+            <button type="button" onClick={onBack} className="mb-3 rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700">← 枠リストに戻る</button>
+            <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+              <p className="text-sm font-bold text-blue-950">{formatTime(editingSlot.startAt)} - {formatTime(editingSlot.endAt)}</p>
+              <p className="mt-1 text-xs text-blue-800">
+                現在: 総枠{editingSlot.totalCapacity} / LINE{editingSlot.lineCapacity ?? editingSlot.totalCapacity} / 外部{editingSlot.externalCapacity ?? editingSlot.totalCapacity}
+              </p>
+            </div>
+            <SlotCapacityForm slot={editingSlot} saving={saving} onSaveSlot={onSaveSlot} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SlotCapacityForm({
+  slot,
+  saving,
+  onSaveSlot,
+}: {
+  slot: ReservationSlotWithAvailability
+  saving: boolean
+  onSaveSlot: (slot: ReservationSlotWithAvailability, formData: FormData) => void | Promise<void>
+}) {
+  return (
+    <form action={(formData) => onSaveSlot(slot, formData)} className="mt-4 grid gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-2">
+      <Field label="状態">
+        <select name="status" defaultValue={slot.status} className="input">
+          {(['open', 'closed', 'sold_out', 'hidden'] satisfies ReservationSlotStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}
+        </select>
+      </Field>
+      <Field label="総枠">
+        <input name="totalCapacity" type="number" min={Math.max(1, slot.reservedCount)} defaultValue={slot.totalCapacity} className="input" />
+      </Field>
+      <Field label="LINE枠">
+        <input name="lineCapacity" type="number" min={slot.lineReservedCount} defaultValue={slot.lineCapacity ?? ''} className="input" />
+      </Field>
+      <Field label="外部枠">
+        <input name="externalCapacity" type="number" min={slot.externalReservedCount} defaultValue={slot.externalCapacity ?? ''} className="input" />
+      </Field>
+      <Field label="バッファ">
+        <input name="bufferCapacity" type="number" min={0} defaultValue={slot.bufferCapacity} className="input" />
+      </Field>
+      <Field label="メモ">
+        <input name="note" defaultValue={slot.note ?? ''} className="input" />
+      </Field>
+      <div className="sm:col-span-2">
+        <button disabled={saving} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">
+          この枠を保存
+        </button>
+      </div>
+    </form>
   )
 }
 
