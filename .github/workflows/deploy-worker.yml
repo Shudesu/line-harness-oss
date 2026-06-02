@@ -258,6 +258,10 @@ jobs:
             binding: 'IMAGES',
             bucket_name: r2BucketName,
           }];
+          config.triggers = {
+            ...(config.triggers || {}),
+            crons: ['*/5 * * * *'],
+          };
 
           const plainVars = [
             'WORKER_URL',

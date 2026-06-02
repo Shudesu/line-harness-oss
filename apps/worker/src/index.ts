@@ -434,6 +434,22 @@ async function scheduled(
   env: Env['Bindings'],
   _ctx: ExecutionContext,
 ): Promise<void> {
+  // Gmail取り込みは外部予約の在庫に直結するため、配信・分析系ジョブとは分離して先に実行する。
+  // 以前は全Cronジョブを並列実行していたため、重いジョブやタイムアウト時に取り込み結果を追いにくかった。
+  try {
+    const gmailResults = await processActiveGmailImportRules(env.DB, env);
+    console.log('Gmail import cron results:', gmailResults.map((result) => ({
+      ruleId: result.ruleId,
+      fetchedCount: result.fetchedCount,
+      importedCount: result.importedCount,
+      reviewCount: result.reviewCount,
+      failedCount: result.failedCount,
+    })));
+    await Promise.allSettled(gmailResults.map((result) => notifyGmailImportRunToDiscord(env, result)));
+  } catch (e) {
+    console.error('Gmail import cron error:', e);
+  }
+
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);
 
@@ -464,17 +480,8 @@ async function scheduled(
   jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, baseWorkerUrl));
   jobs.push(checkAccountHealth(env.DB));
   jobs.push(refreshLineAccessTokens(env.DB));
-  const gmailImportJob = processActiveGmailImportRules(env.DB, env);
-  jobs.push(gmailImportJob);
 
   await Promise.allSettled(jobs);
-
-  try {
-    const gmailResults = await gmailImportJob;
-    await Promise.allSettled(gmailResults.map((result) => notifyGmailImportRunToDiscord(env, result)));
-  } catch (e) {
-    console.error('Discord Gmail import notification error:', e);
-  }
 
   try {
     await processDiscordDailyReservationSummary(env.DB, env);
