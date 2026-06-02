@@ -575,6 +575,14 @@ export default function ReservationsPage() {
             slots={slots}
             reservations={reservations}
           />
+          <SlotsCard
+            slots={slots}
+            reservations={reservations}
+            selectedSlotId={selectedSlotId}
+            onSelect={setSelectedSlotId}
+            onSaveSlot={(slot, formData) => runSaving(() => updateSlot(slot, formData), '予約枠を保存しました')}
+            saving={saving}
+          />
           {calendarOpen && (
             <CalendarModal onClose={() => setCalendarOpen(false)}>
               <CalendarCard
@@ -960,8 +968,8 @@ function SlotsCard({
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-100 p-4">
-        <h2 className="text-base font-bold text-gray-900">選択日の予約枠・予約客</h2>
-        <p className="mt-1 text-xs text-gray-500">枠を開くと、その枠の予約客を下に展開します。枠調整は各枠の一番下です。</p>
+        <h2 className="text-base font-bold text-gray-900">選択日の予約枠調整</h2>
+        <p className="mt-1 text-xs text-gray-500">既に作成済みの枠はここで変更します。総枠・LINE枠・外部枠は、予約済み人数より小さくできません。</p>
       </div>
       <div className="divide-y divide-gray-100">
 	        {slots.length === 0 ? <p className="p-6 text-sm text-gray-400">予約枠がありません。予約設計から生成してください。</p> : slots.map((slot) => {
@@ -996,6 +1004,27 @@ function SlotsCard({
                 </div>
               </summary>
               <div className="bg-white px-4 pb-4">
+                <form action={(formData) => onSaveSlot(slot, formData)} className="mb-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-blue-950">この時間枠の人数を変更</p>
+                      <p className="mt-1 text-xs text-blue-800">LINE予約画面にはLINE枠の残り、外部取り込みには外部枠が使われます。</p>
+                    </div>
+                    <button disabled={saving} className="shrink-0 rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">保存</button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-6">
+                    <Field label="状態">
+                      <select name="status" defaultValue={slot.status} className="input">
+                        {(['open', 'closed', 'sold_out', 'hidden'] satisfies ReservationSlotStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="総枠"><input name="totalCapacity" type="number" min={Math.max(1, slot.reservedCount)} defaultValue={slot.totalCapacity} className="input" /></Field>
+                    <Field label="LINE枠"><input name="lineCapacity" type="number" min={slot.lineReservedCount} defaultValue={slot.lineCapacity ?? ''} className="input" /></Field>
+                    <Field label="外部枠"><input name="externalCapacity" type="number" min={slot.externalReservedCount} defaultValue={slot.externalCapacity ?? ''} className="input" /></Field>
+                    <Field label="バッファ"><input name="bufferCapacity" type="number" min={0} defaultValue={slot.bufferCapacity} className="input" /></Field>
+                    <Field label="メモ"><input name="note" defaultValue={slot.note ?? ''} className="input" /></Field>
+                  </div>
+                </form>
                 <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-bold text-gray-900">予約客</p>
@@ -1022,24 +1051,6 @@ function SlotsCard({
                     </div>
                   )}
                 </div>
-                <details className="mt-3 rounded-lg border border-gray-200 bg-white">
-                  <summary className="cursor-pointer px-3 py-2 text-sm font-bold text-gray-700">枠調整</summary>
-                  <form action={(formData) => onSaveSlot(slot, formData)} className="grid gap-3 border-t border-gray-100 bg-gray-50 p-3 sm:grid-cols-6">
-                    <Field label="状態">
-                      <select name="status" defaultValue={slot.status} className="input">
-                        {(['open', 'closed', 'sold_out', 'hidden'] satisfies ReservationSlotStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}
-                      </select>
-                    </Field>
-                    <Field label="総枠"><input name="totalCapacity" type="number" defaultValue={slot.totalCapacity} className="input" /></Field>
-                    <Field label="LINE枠"><input name="lineCapacity" type="number" defaultValue={slot.lineCapacity ?? ''} className="input" /></Field>
-                    <Field label="外部枠"><input name="externalCapacity" type="number" defaultValue={slot.externalCapacity ?? ''} className="input" /></Field>
-                    <Field label="バッファ"><input name="bufferCapacity" type="number" defaultValue={slot.bufferCapacity} className="input" /></Field>
-                    <Field label="メモ"><input name="note" defaultValue={slot.note ?? ''} className="input" /></Field>
-                    <div className="sm:col-span-6">
-                      <button disabled={saving} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">slot保存</button>
-                    </div>
-                  </form>
-                </details>
               </div>
             </details>
           )
@@ -1236,17 +1247,39 @@ function SettingsPanel(props: {
   const nextMonth = addDays(today, 30)
   return (
     <div className="space-y-4">
-      <CalendarCard
-        date={props.date}
-        viewMode={props.viewMode}
-        visibleDates={props.visibleDates}
-        slotsByDate={props.slotsByDate}
-        onSelectDate={props.onSelectDate}
-        onMoveRange={props.onMoveRange}
-        onSetViewMode={props.onSetViewMode}
-      />
+      <SettingsCard title="予約設計の流れ">
+        <div className="grid gap-3 md:grid-cols-4">
+          <SetupStep
+            number="1"
+            title="Resource"
+            description="予約対象を決めます。例: ブルーベリー摘み取り、カフェ席。"
+            done={Boolean(currentResource)}
+          />
+          <SetupStep
+            number="2"
+            title="Menu"
+            description="料金、体験時間、人数の数え方を決めます。"
+            done={Boolean(currentMenu)}
+          />
+          <SetupStep
+            number="3"
+            title="Schedule"
+            description="曜日、営業時間、標準枠数を決めます。"
+            done={props.schedules.length > 0}
+          />
+          <SetupStep
+            number="4"
+            title="Slot生成"
+            description="日付範囲を指定して、実際の予約枠を作ります。"
+            done={Object.values(props.slotsByDate).some((items) => items.length > 0)}
+          />
+        </div>
+        <p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">
+          作成済みSlotの人数変更は「予約確認」タブで行います。ここでは、今後作る枠の設計と一括生成だけを扱います。
+        </p>
+      </SettingsCard>
 
-      <SettingsCard title="追加するResourceとMenu">
+      <SettingsCard title="現在選択中の予約対象とメニュー">
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="Resource">
             <select value={props.resourceId} onChange={(event) => props.onSelectResource(event.target.value)} className="input">
@@ -1271,9 +1304,12 @@ function SettingsPanel(props: {
         providerConfig={props.providerConfig}
       />
 
-      <SettingsCard title="Slotの追加・削除">
+      <SettingsCard title="Slot一括生成・削除">
         {!props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にResourceを選択してください。</p>}
         {!props.menuId && props.resourceId && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">先にMenuを選択してください。</p>}
+        <p className="mb-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-600">
+          Scheduleに登録した曜日・時間帯をもとに、指定期間のSlotを作ります。既存Slotは上書きせず、予約済みSlotは削除されません。
+        </p>
         <div className="grid gap-4 lg:grid-cols-2">
           <form action={props.onGenerateSlots} className="rounded-lg border border-green-100 bg-green-50 p-3">
             <p className="text-sm font-bold text-green-900">Slot一括追加</p>
@@ -1807,6 +1843,30 @@ function SettingsCard({ title, children }: { title: string; children: React.Reac
       <h2 className="mb-4 text-base font-bold text-gray-900">{title}</h2>
       {children}
     </section>
+  )
+}
+
+function SetupStep({
+  number,
+  title,
+  description,
+  done,
+}: {
+  number: string
+  title: string
+  description: string
+  done: boolean
+}) {
+  return (
+    <div className={`rounded-xl border p-3 ${done ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+      <div className="flex items-center gap-2">
+        <span className={`flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${done ? 'bg-green-600 text-white' : 'bg-white text-gray-700'}`}>
+          {done ? '✓' : number}
+        </span>
+        <p className="font-bold text-gray-900">{title}</p>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-gray-600">{description}</p>
+    </div>
   )
 }
 
