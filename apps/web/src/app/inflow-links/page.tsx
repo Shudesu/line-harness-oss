@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { api, fetchApi } from '@/lib/api'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
-import type { EntryRoute, TrafficPool, Scenario } from '@line-crm/shared'
+import type { EntryRoute, TrafficPool, Scenario, Tag } from '@line-crm/shared'
 import EditRouteModal from './_components/edit-route-modal'
 
 interface MessageTemplate {
@@ -52,6 +52,7 @@ export default function InflowLinksPage() {
   const [pools, setPools] = useState<TrafficPool[]>([])
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
   const [summary, setSummary] = useState<RefSummaryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -83,11 +84,12 @@ export default function InflowLinksPage() {
     // ref_code のみ」に絞れる。pool_id NULL のリンクが多い現状ではアカ別の
     // pool 紐付け判定よりも、こちらの実流入ベースの方が運用実態に合う。
     const summaryQuery = selectedAccountId ? `?lineAccountId=${selectedAccountId}` : ''
-    const [r, p, s, t, sum] = await Promise.all([
+    const [r, p, s, t, tagRes, sum] = await Promise.all([
       api.entryRoutes.list(),
       api.pools.list(),
       api.scenarios.list(),
       api.messageTemplates.list(),
+      api.tags.list().catch(() => ({ success: false, data: [] as Tag[] })),
       fetchApi<{ success: boolean; data: RefSummaryData }>(
         `/api/analytics/ref-summary${summaryQuery}`,
       ).catch(() => ({ success: false, data: null })),
@@ -97,6 +99,7 @@ export default function InflowLinksPage() {
     if (p.success) setPools(p.data)
     if (s.success) setScenarios(s.data)
     if (t.success) setTemplates(t.data)
+    if (tagRes.success) setTags(tagRes.data)
     if ('success' in sum && sum.success && sum.data) setSummary(sum.data)
 
     // Load pool→accounts mapping after we know the pool list. Done in a 2nd
@@ -189,6 +192,7 @@ export default function InflowLinksPage() {
     refCode: string
     name: string
     poolId: string | null
+    tagId: string | null
     scenarioId: string | null
     runAccountFriendAddScenarios: boolean
     stats: RefRouteStats | undefined
@@ -201,6 +205,7 @@ export default function InflowLinksPage() {
       refCode: r.refCode,
       name: r.name,
       poolId: r.poolId,
+      tagId: r.tagId,
       scenarioId: r.scenarioId,
       runAccountFriendAddScenarios: r.runAccountFriendAddScenarios,
       stats: statsByRef.get(r.refCode),
@@ -214,6 +219,7 @@ export default function InflowLinksPage() {
       refCode: s.refCode,
       name: s.name ?? '(未登録)',
       poolId: null,
+      tagId: null,
       scenarioId: null,
       runAccountFriendAddScenarios: true,
       stats: s,
@@ -329,7 +335,7 @@ export default function InflowLinksPage() {
         </div>
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[960px]">
+          <table className="w-full min-w-[1080px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
@@ -343,6 +349,9 @@ export default function InflowLinksPage() {
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   起動シナリオ
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  自動付与タグ
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   モード
@@ -366,6 +375,7 @@ export default function InflowLinksPage() {
               {sortedRows.map((r) => {
                 const pool = pools.find((p) => p.id === r.poolId)
                 const sc = scenarios.find((s) => s.id === r.scenarioId)
+                const tag = tags.find((t) => t.id === r.tagId)
                 const editTarget = r.registered
                   ? routes.find((e) => e.id === r.entryRouteId) ?? null
                   : null
@@ -416,6 +426,21 @@ export default function InflowLinksPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">{sc?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-sm text-gray-700">
+                      {tag ? (
+                        <span
+                          className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                          style={{
+                            backgroundColor: `${tag.color}22`,
+                            color: tag.color,
+                          }}
+                        >
+                          {tag.name}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-600">
                       {r.registered ? (r.runAccountFriendAddScenarios ? '並走' : '上書き') : '—'}
                     </td>
@@ -477,6 +502,7 @@ export default function InflowLinksPage() {
           pools={pools}
           scenarios={scenarios}
           templates={templates}
+          tags={tags}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
@@ -517,7 +543,7 @@ function FragmentRow({
       </tr>
       {isExpanded && (
         <tr>
-          <td colSpan={10} className="px-6 py-4 bg-gray-50 border-t border-gray-100">
+          <td colSpan={11} className="px-6 py-4 bg-gray-50 border-t border-gray-100">
             {refDetailLoading ? (
               <p className="text-sm text-gray-400">読み込み中…</p>
             ) : !friends ? (

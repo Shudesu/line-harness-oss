@@ -7,6 +7,7 @@ import type {
   CreateEntryRouteInput,
   TrafficPool,
   Scenario,
+  Tag,
 } from '@line-crm/shared'
 
 interface MessageTemplate {
@@ -21,6 +22,7 @@ interface Props {
   pools: TrafficPool[]
   scenarios: Scenario[]
   templates: MessageTemplate[]
+  tags: Tag[]
   /** Pre-filled ref_code for "register an unregistered inflow ref" flow. */
   initialRefCode?: string
   onClose: () => void
@@ -32,6 +34,7 @@ export default function EditRouteModal({
   pools,
   scenarios,
   templates,
+  tags,
   initialRefCode,
   onClose,
   onSaved,
@@ -64,6 +67,7 @@ export default function EditRouteModal({
   const [form, setForm] = useState<CreateEntryRouteInput>(() => ({
     refCode: route?.refCode ?? initialRefCode ?? '',
     name: route?.name ?? '',
+    tagId: route?.tagId ?? null,
     poolId: route?.poolId ?? mainPool?.id ?? null,
     scenarioId: route?.scenarioId ?? null,
     introTemplateId: route?.introTemplateId ?? null,
@@ -141,6 +145,24 @@ export default function EditRouteModal({
               既に流入があった ref を登録中のため、ref_code は変更できません。
             </p>
           )}
+        </Field>
+
+        <Field label="自動付与タグ（任意）">
+          <select
+            value={form.tagId ?? ''}
+            onChange={(e) => setForm({ ...form, tagId: e.target.value || null })}
+            className="w-full border border-gray-200 rounded px-3 py-2 text-sm"
+          >
+            <option value="">— 設定なし —</option>
+            {tags.map((tag) => (
+              <option key={tag.id} value={tag.id}>
+                {tag.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            友だち追加時にこのタグを自動付与します。タグ未作成の場合は先にタグを作成してください。
+          </p>
         </Field>
 
         <Field label="送り先 Pool">
