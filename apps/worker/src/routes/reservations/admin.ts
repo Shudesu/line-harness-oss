@@ -693,9 +693,12 @@ adminReservations.post('/api/reservations/google-calendar/resync', async (c) => 
   try {
     const json = await readJsonObject(c);
     if (!json.ok) return jsonError(c, json.error.code, json.error.status, json.error.message);
-    const dateFrom = requireString(json.value, 'dateFrom');
-    const dateTo = requireString(json.value, 'dateTo');
-    if (!dateFrom || !dateTo) return jsonError(c, 'bad_request', 400, 'dateFrom and dateTo are required');
+    const dateFromInput = requireString(json.value, 'dateFrom');
+    const dateToInput = requireString(json.value, 'dateTo');
+    if (!dateFromInput.ok) return jsonError(c, dateFromInput.error.code, dateFromInput.error.status, dateFromInput.error.message);
+    if (!dateToInput.ok) return jsonError(c, dateToInput.error.code, dateToInput.error.status, dateToInput.error.message);
+    const dateFrom = dateFromInput.value;
+    const dateTo = dateToInput.value;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
       return jsonError(c, 'bad_request', 400, 'dateFrom and dateTo must be YYYY-MM-DD');
     }

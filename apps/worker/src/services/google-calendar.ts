@@ -106,8 +106,8 @@ export class GoogleCalendarClient {
       },
     });
 
-    // 204 = success, 410 = already deleted — both are acceptable
-    if (!res.ok && res.status !== 410) {
+    // 204 = success, 404/410 = already deleted or no longer visible — all are acceptable for resync.
+    if (!res.ok && res.status !== 404 && res.status !== 410) {
       const text = await res.text().catch(() => '');
       throw new Error(`Google Calendar deleteEvent error ${res.status}: ${text}`);
     }
