@@ -581,10 +581,13 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/integrations/google-calendar/${encodeURIComponent(id)}`, {
         method: 'DELETE',
       }),
-    syncReservation: (reservationId: string) =>
+    syncReservation: (reservationId: string, options?: { force?: boolean }) =>
       fetchApi<ApiResponse<{ reservation: unknown; sync: CalendarSyncResult }>>(
         `/api/reservations/${encodeURIComponent(reservationId)}/google-calendar/sync`,
-        { method: 'POST' },
+        {
+          method: 'POST',
+          ...(options?.force ? { body: JSON.stringify({ force: true }) } : {}),
+        },
       ),
     resyncReservations: (data: {
       dateFrom: string

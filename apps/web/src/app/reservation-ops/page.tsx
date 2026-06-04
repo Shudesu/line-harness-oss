@@ -781,14 +781,14 @@ export default function ReservationOpsPage() {
       setNotice('同期対象の予約はありません')
       return
     }
-    if (!confirm(`${date} の有効予約 ${active.length}件をGoogle Calendarへ同期します。既に同期済みの予約は二重作成しません。よいですか？`)) return
+    if (!confirm(`${date} の有効予約 ${active.length}件をGoogle Calendarへ同期します。既に同期済みの予約もGoogle予定をリセットして再作成します。よいですか？`)) return
     setSaving(true)
     setNotice('')
     setError('')
     try {
       const results: CalendarSyncResult[] = []
       for (const reservation of active) {
-        const res = await api.calendar.syncReservation(reservation.id)
+        const res = await api.calendar.syncReservation(reservation.id, { force: true })
         if (!res.success) throw new Error(res.error)
         results.push(res.data.sync)
       }
@@ -829,18 +829,43 @@ export default function ReservationOpsPage() {
     setNotice('')
     setError('')
     try {
-      const res = await api.calendar.resyncReservations({
-        dateFrom: calendarResyncFrom,
-        dateTo: calendarResyncTo,
-        resourceId: resourceId || null,
-        sources: ['line', 'jalan', 'web'],
-        limit: 1000,
-      })
-      if (!res.success) throw new Error(res.error)
+      const totals = {
+        scannedCount: 0,
+        deletedEventCount: 0,
+        createdCount: 0,
+        alreadySyncedCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+        deleteFailedCount: 0,
+      }
+      let current = calendarResyncFrom
+      let processedDays = 0
+      const maxDays = 370
+      while (current <= calendarResyncTo) {
+        processedDays += 1
+        if (processedDays > maxDays) throw new Error('再同期できる期間は最大370日です')
+        setNotice(`Google Calendar再同期中: ${current} を処理しています`)
+        const res = await api.calendar.resyncReservations({
+          dateFrom: current,
+          dateTo: current,
+          resourceId: resourceId || null,
+          sources: ['line', 'jalan', 'web'],
+          limit: 100,
+        })
+        if (!res.success) throw new Error(`${current}: ${res.error}`)
+        totals.scannedCount += res.data.scannedCount
+        totals.deletedEventCount += res.data.deletedEventCount
+        totals.createdCount += res.data.createdCount
+        totals.alreadySyncedCount += res.data.alreadySyncedCount
+        totals.skippedCount += res.data.skippedCount
+        totals.failedCount += res.data.failedCount
+        totals.deleteFailedCount += res.data.deleteFailedCount
+        current = addDays(current, 1)
+      }
       setNotice(
-        `Google Calendar再同期: 対象 ${res.data.scannedCount}件 / 既存削除 ${res.data.deletedEventCount}件`
-        + ` / 作成 ${res.data.createdCount}件 / 同期済み ${res.data.alreadySyncedCount}件`
-        + ` / スキップ ${res.data.skippedCount}件 / 失敗 ${res.data.failedCount + res.data.deleteFailedCount}件`,
+        `Google Calendar再同期: ${processedDays}日処理 / 対象 ${totals.scannedCount}件 / 既存削除 ${totals.deletedEventCount}件`
+        + ` / 作成 ${totals.createdCount}件 / 同期済み ${totals.alreadySyncedCount}件`
+        + ` / スキップ ${totals.skippedCount}件 / 失敗 ${totals.failedCount + totals.deleteFailedCount}件`,
       )
       await loadAll()
     } catch (err) {

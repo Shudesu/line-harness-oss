@@ -57,11 +57,16 @@ export async function syncReservationCreatedToGoogleCalendar(
   db: D1Database,
   reservation: Reservation,
   env: ReservationGoogleCalendarEnv = {},
+  options: { force?: boolean } = {},
 ): Promise<ReservationGoogleCalendarSyncResult> {
   const resource = await getResourceForReservation(db, reservation);
   if (!resource) return { status: 'skipped', reservationId: reservation.id, reason: 'resource_not_found' };
   if (!resource.google_calendar_connection_id) {
     return { status: 'skipped', reservationId: reservation.id, reason: 'resource_not_connected' };
+  }
+
+  if (options.force) {
+    await resetCalendarBookingsForReservation(db, reservation, env);
   }
 
   const booking = await getOrCreateCalendarBooking(db, reservation, resource.google_calendar_connection_id);

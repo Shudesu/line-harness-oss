@@ -673,12 +673,16 @@ adminReservations.put('/api/external-reservation-sources/:id/parse-status', asyn
 
 adminReservations.post('/api/reservations/:id/google-calendar/sync', async (c) => {
   try {
+    const json = await readOptionalJsonObjectForMaintenance(c);
+    if (!json.ok) return jsonError(c, 'bad_request', 400, json.error);
     const reservation = await getReservationById(c.env.DB, c.req.param('id'));
     if (!reservation) return jsonError(c, 'not_found', 404, 'Reservation not found');
     if (reservation.status === 'cancelled' || reservation.status === 'no_show') {
       return jsonError(c, 'bad_request', 400, 'Only active reservations can be synced');
     }
-    const sync = await syncReservationCreatedToGoogleCalendar(c.env.DB, reservation, c.env);
+    const sync = await syncReservationCreatedToGoogleCalendar(c.env.DB, reservation, c.env, {
+      force: json.value.force === true,
+    });
     return jsonOk(c, {
       reservation: toReservationResponse(reservation),
       sync,
