@@ -56,6 +56,9 @@ import { richMenus } from './routes/rich-menus.js';
 import { trackedLinks } from './routes/tracked-links.js';
 import { lpTag } from './routes/lp-tag.js';
 import { friendsExport } from './routes/friends-export.js';
+import { externalEvents } from './routes/external-events.js';
+import { reports } from './routes/reports.js';
+import { friendAttribution } from './routes/friend-attribution.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
@@ -128,6 +131,12 @@ app.use('*', authMiddleware);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
+// L-TRACK 互換: friends-export は /api/friends/:id より先に登録する。
+// 後だと :id="export.csv" として friends-detail にマッチして 404 になる。
+app.route('/api', friendsExport);
+app.route('/', externalEvents);
+app.route('/', reports);
+app.route('/', friendAttribution);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
@@ -156,7 +165,6 @@ app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
 app.route('/', lpTag);
-app.route('/api', friendsExport);
 app.route('/', entryRoutes);
 app.route('/', forms);
 app.route('/', adPlatforms);
@@ -539,6 +547,18 @@ export const notFoundHandler = async (c: Parameters<typeof app.notFound>[0] exte
   }
   return c.json({ success: false, error: 'Not found' }, 404);
 };
+
+// L-TRACK 互換検証用: af_confirm cron 処理を手動発火する admin endpoint。
+// 認証は authMiddleware が Bearer トークンを検証するため、API_KEY または staff_members の api_key が必要。
+app.get('/admin/run-af-confirm', async (c) => {
+  try {
+    const { processAfConfirmDelayed } = await import('./services/af-confirm-processor.js');
+    const r = await processAfConfirmDelayed(c.env.DB);
+    return c.json({ success: true, data: r });
+  } catch (err) {
+    return c.json({ success: false, error: String(err) }, 500);
+  }
+});
 
 app.notFound(notFoundHandler);
 

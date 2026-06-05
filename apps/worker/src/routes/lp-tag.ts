@@ -18,6 +18,60 @@ import type { Env } from '../index.js';
 
 const lpTag = new Hono<Env>();
 
+/**
+ * 検証用 LP HTML（本番では不要だが、検証フェーズで LP用タグJSの動作確認に使う）。
+ * GET /lp/test?ltr_code=<linkId>&fbclid=...&utm_*=... のように開く想定。
+ */
+lpTag.get('/lp/test', async (c) => {
+  const workerOrigin = (c.env.WORKER_URL || `https://${new URL(c.req.url).host}`).replace(/\/+$/, '');
+  const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LP用タグ JS 検証ページ</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 2em auto; padding: 1em; line-height: 1.6; }
+    .cta { display: inline-block; padding: 1em 2em; background: #06c755; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; }
+    .debug { background: #f5f5f5; padding: 1em; margin-top: 2em; font-family: monospace; font-size: 12px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>LP用タグ JS 検証ページ</h1>
+  <p>このページを <code>?ltr_code=&lt;linkId&gt;&amp;fbclid=...&amp;ltp=...</code> 付きで開くと、下のボタン URL が自動的に書き換わります。</p>
+
+  <p style="text-align:center; margin: 2em 0;">
+    <!-- href のドメインが LP用タグJS の TRACK_BASE と一致していれば置換対象。
+         ltr_code は data 属性ではなく URL クエリから受け取る。 -->
+    <a class="cta" href="${workerOrigin}/t/PLACEHOLDER">📲 LINE で追加する</a>
+  </p>
+
+  <div class="debug">
+    <strong>クエリ:</strong> <span id="qs"></span><br>
+    <strong>書き換え後のリンク:</strong> <span id="href"></span><br>
+    <strong>lhm_lp_loaded:</strong> <span id="loaded"></span>
+  </div>
+
+  <script>
+    document.getElementById('qs').textContent = window.location.search || '(なし)';
+    // 書き換え後の href を遅延表示（LP用タグJS が実行された後）
+    setTimeout(function() {
+      var a = document.querySelector('a.cta');
+      document.getElementById('href').textContent = a ? a.href : '(取得不可)';
+      document.getElementById('loaded').textContent = String(!!window.lhm_lp_loaded);
+    }, 200);
+  </script>
+
+  <!-- L-TRACK 互換: LP用タグ JS。LP HTML head か body 最下部に置く。 -->
+  <script src="${workerOrigin}/lp/track.js"></script>
+</body>
+</html>`;
+  return new Response(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+});
+
 function buildLpTrackJs(workerOrigin: string): string {
   return `(function() {
   // 重複起動防止

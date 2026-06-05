@@ -222,7 +222,8 @@ async function handleEvent(
           if (result.capiPromoted && (result.afConfirmType ?? 'immediate') === 'immediate') {
             try {
               const { sendAdConversions } = await import('../services/ad-conversion.js');
-              await sendAdConversions(db, friend.id, 'AddFriend');
+              // L-TRACK 互換: af_amount をそのまま eventValue として渡す（円・JPY）
+              await sendAdConversions(db, friend.id, 'AddFriend', result.afAmount ?? undefined);
             } catch (err) {
               console.error('[follow] immediate CAPI send error:', err);
             }

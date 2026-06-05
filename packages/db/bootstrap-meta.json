@@ -59,7 +59,11 @@
     "051_link_clicks_attribution.sql",
     "052_tracked_links_account.sql",
     "053_af_confirm_queue.sql",
-    "054_ad_conversion_idempotency.sql"
+    "054_ad_conversion_idempotency.sql",
+    "055_link_clicks_country.sql",
+    "056_external_events.sql",
+    "057_external_events_hmac.sql",
+    "058_af_confirm_processing_status.sql"
   ],
-  "migrationCount": 60
+  "migrationCount": 64
 }

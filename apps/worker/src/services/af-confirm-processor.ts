@@ -15,6 +15,7 @@ import {
   failoverStuckAfConfirms,
   claimAfConfirm,
   getFriendById,
+  getTrackedLinkById,
 } from '@line-crm/db';
 import { sendAdConversions, sendAdConversionsByRefTrackingId } from './ad-conversion.js';
 
@@ -26,6 +27,17 @@ export interface AfConfirmProcessResult {
   sent: number;
   cancelled: number;
   failed: number;
+}
+
+async function countSent(db: D1Database, friendId: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM ad_conversion_logs
+        WHERE friend_id = ? AND event_name = 'AddFriend' AND status = 'sent'`,
+    )
+    .bind(friendId)
+    .first<{ cnt: number }>();
+  return row?.cnt ?? 0;
 }
 
 export async function processAfConfirmDelayed(
@@ -63,16 +75,34 @@ export async function processAfConfirmDelayed(
         continue;
       }
 
+      // L-TRACK 互換: af_amount を eventValue として渡す
+      let eventValue: number | undefined;
+      if (entry.tracked_link_id) {
+        const link = await getTrackedLinkById(db, entry.tracked_link_id);
+        if (link?.af_amount != null) eventValue = link.af_amount;
+      }
+
       // Codex指摘 High: 送信は enqueue 時の ref_tracking_id 直引きで。
       // friend の「最新」を見ると遅延中に踏まれた別広告に切り替わってしまう。
+      //
+      // Codex指摘 Medium: 送信対象クリックIDが無い (ref_tracking 削除等) ときに
+      // sent 扱いするのは誤計上。実際に送信が行われたかをログ件数で確認する。
+      const beforeCount = await countSent(db, entry.friend_id);
       if (entry.ref_tracking_id) {
-        await sendAdConversionsByRefTrackingId(db, entry.ref_tracking_id, 'AddFriend');
+        await sendAdConversionsByRefTrackingId(db, entry.ref_tracking_id, 'AddFriend', eventValue);
       } else {
         // 後方互換: ref_tracking_id が無い古い行は friend の最新を使う
-        await sendAdConversions(db, entry.friend_id, 'AddFriend');
+        await sendAdConversions(db, entry.friend_id, 'AddFriend', eventValue);
       }
-      await markAfConfirmProcessed(db, entry.id, 'sent');
-      result.sent++;
+      const afterCount = await countSent(db, entry.friend_id);
+      if (afterCount > beforeCount) {
+        await markAfConfirmProcessed(db, entry.id, 'sent');
+        result.sent++;
+      } else {
+        // 何も送られなかった = ref_tracking 不在 or click ID 無し or 全 platform 非アクティブ
+        await markAfConfirmProcessed(db, entry.id, 'cancelled', 'no_capi_target');
+        result.cancelled++;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await markAfConfirmProcessed(db, entry.id, 'failed', msg);

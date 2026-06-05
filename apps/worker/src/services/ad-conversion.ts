@@ -47,7 +47,13 @@ async function sendOneRef(
 ): Promise<void> {
   const platforms = await getActiveAdPlatforms(db);
   for (const platform of platforms) {
-    const config: AdPlatformConfig = JSON.parse(platform.config);
+    const config: AdPlatformConfig & { test_mode?: boolean | string } = JSON.parse(platform.config);
+    // test_mode: 実 API は叩かず、'sent' ログだけ残す（検証/疎通用）。
+    // config.test_mode が true / "true" / 1 / "1" のいずれかなら有効。
+    const testMode =
+      config.test_mode === true ||
+      config.test_mode === 'true' ||
+      String(config.test_mode) === '1';
     // クリックID 未保持なら何もしない。
     const clickIdAndType: Array<{ id: string; type: string; send: () => Promise<void> }> = [];
     switch (platform.name) {
@@ -89,6 +95,19 @@ async function sendOneRef(
       if (await alreadySent(db, platform.id, friendId, eventName, entry.id)) {
         continue;
       }
+      // test_mode: 実 API を叩かず 'sent' でログだけ残す。
+      if (testMode) {
+        await logAdConversion(db, {
+          platformId: platform.id,
+          friendId,
+          eventName,
+          clickId: entry.id,
+          clickIdType: entry.type,
+          status: 'sent',
+          responseBody: JSON.stringify({ test_mode: true, value: eventValue ?? null }),
+        });
+        continue;
+      }
       try {
         await entry.send();
         await logAdConversion(db, {
@@ -123,6 +142,70 @@ export async function sendAdConversions(
   const ref = await getRefTrackingWithClickIds(db, friendId);
   if (!ref) return;
   await sendOneRef(db, ref, friendId, eventName, eventValue);
+}
+
+/**
+ * L-TRACK 互換 外部イベント用: platform 名 + clickId を直接指定して送る。
+ * Codex指摘 High対応: 外部イベントが ad_conversion_logs に sent 表示するだけだった
+ * 問題を、ad-conversion.ts と同じ alreadySent / test_mode 経路で送るよう統一。
+ */
+export async function sendAdConversionsExplicit(
+  db: D1Database,
+  opts: {
+    platformName: 'meta' | 'google' | 'tiktok' | 'x';
+    friendId: string;
+    eventName: string;
+    clickIdType: string;
+    clickId: string;
+    eventValue?: number;
+  },
+): Promise<void> {
+  const platforms = await getActiveAdPlatforms(db);
+  const platform = platforms.find((p) => p.name === opts.platformName);
+  if (!platform) return;
+  if (await alreadySent(db, platform.id, opts.friendId, opts.eventName, opts.clickId)) {
+    return;
+  }
+  const config: AdPlatformConfig & { test_mode?: boolean | string } = JSON.parse(platform.config);
+  const testMode =
+    config.test_mode === true ||
+    config.test_mode === 'true' ||
+    String(config.test_mode) === '1';
+  if (testMode) {
+    await logAdConversion(db, {
+      platformId: platform.id,
+      friendId: opts.friendId,
+      eventName: opts.eventName,
+      clickId: opts.clickId,
+      clickIdType: opts.clickIdType,
+      status: 'sent',
+      responseBody: JSON.stringify({ test_mode: true, value: opts.eventValue ?? null }),
+    });
+    return;
+  }
+  // 実 API 送信は platform に応じた sender を呼ぶ必要があるが、
+  // 現状 ref_tracking ベースでしか実装していないため、外部イベント用は
+  // ref_tracking を組み立てて sendOneRef に流す。
+  const refLike: RefTracking = {
+    id: 'external-' + opts.clickId,
+    ref_code: 'external',
+    friend_id: opts.friendId,
+    entry_route_id: null,
+    source_url: null,
+    fbclid: opts.clickIdType === 'fbclid' ? opts.clickId : null,
+    gclid: opts.clickIdType === 'gclid' ? opts.clickId : null,
+    twclid: opts.clickIdType === 'twclid' ? opts.clickId : null,
+    ttclid: opts.clickIdType === 'ttclid' ? opts.clickId : null,
+    utm_source: null,
+    utm_medium: null,
+    utm_campaign: null,
+    user_agent: null,
+    ip_address: null,
+    ltp: null,
+    country: null,
+    created_at: '',
+  };
+  await sendOneRef(db, refLike, opts.friendId, opts.eventName, opts.eventValue);
 }
 
 /**

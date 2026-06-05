@@ -53,6 +53,8 @@ export interface LinkClick {
   matched_at: string | null;
   match_confidence: number | null;
   match_strategy: string | null;
+  /** 055_link_clicks_country.sql: Cloudflare cf.country (ISO 3166-1 alpha-2)。L-TRACK CSV互換 */
+  country: string | null;
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -247,6 +249,8 @@ export interface RecordLinkClickInput {
   userAgent?: string | null;
   ipAddress?: string | null;
   uaFingerprint?: string | null;
+  /** Cloudflare cf.country (ISO 3166-1 alpha-2) */
+  country?: string | null;
 }
 
 /**
@@ -279,15 +283,15 @@ export async function recordLinkClickExtended(
          id, tracked_link_id, friend_id, clicked_at,
          ltp, fbclid, gclid, ttclid, twclid,
          utm_source, utm_medium, utm_campaign, utm_content, utm_term,
-         user_agent, ip_address, ua_fingerprint
+         user_agent, ip_address, ua_fingerprint, country
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id, input.trackedLinkId, input.friendId ?? null, now,
       input.ltp ?? null, input.fbclid ?? null, input.gclid ?? null, input.ttclid ?? null, input.twclid ?? null,
       input.utmSource ?? null, input.utmMedium ?? null, input.utmCampaign ?? null, input.utmContent ?? null, input.utmTerm ?? null,
-      input.userAgent ?? null, input.ipAddress ?? null, input.uaFingerprint ?? null,
+      input.userAgent ?? null, input.ipAddress ?? null, input.uaFingerprint ?? null, input.country ?? null,
     )
     .run();
 

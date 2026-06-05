@@ -13,7 +13,7 @@ workers_dev = true
 # デフォルト = テスト環境 (noda@)
 # 使い方: npx wrangler deploy
 # ═══════════════════════════════════════════════════════════════
-account_id = "YOUR_DEV_ACCOUNT_ID"
+account_id = "2b10b71ddc0b0e3095ebdb354938bc96"
 
 [assets]
 directory = "dist/client"
@@ -21,12 +21,14 @@ binding = "ASSETS"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "line-harness"
-database_id = "YOUR_DEV_D1_DATABASE_ID"
+database_name = "line-harness-dev"
+database_id = "45d9486b-c517-4bfe-8549-10c28c27b5c3"
 
-[[r2_buckets]]
-binding = "IMAGES"
-bucket_name = "line-harness-images"
+# R2 は検証フェーズでは無効（画像系機能を使わないため）。
+# 本番移行時に Cloudflare Dashboard で R2 を「利用開始」してから有効化する。
+# [[r2_buckets]]
+# binding = "IMAGES"
+# bucket_name = "line-harness-images"
 
 [triggers]
 crons = ["*/5 * * * *", "0 */6 * * *"]
@@ -40,12 +42,13 @@ crons = ["*/5 * * * *", "0 */6 * * *"]
 WORKER_NAME = "line-harness"
 ADMIN_PAGES_PROJECT = "line-harness-admin"
 LIFF_PAGES_PROJECT = "line-harness-liff"
-D1_DATABASE_ID = "YOUR_DEV_D1_DATABASE_ID"
+D1_DATABASE_ID = "45d9486b-c517-4bfe-8549-10c28c27b5c3"
 MANIFEST_URL = "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json"
-WORKER_PUBLIC_URL = "https://line-harness.workers.dev"
+WORKER_PUBLIC_URL = "https://line-harness.maedayasao.workers.dev"
+WORKER_URL = "https://line-harness.maedayasao.workers.dev"
 ADMIN_PUBLIC_URL = "https://line-harness-admin.pages.dev"
 LIFF_PUBLIC_URL = "https://line-harness-liff.pages.dev"
-CF_ACCOUNT_ID = "YOUR_DEV_ACCOUNT_ID"
+CF_ACCOUNT_ID = "2b10b71ddc0b0e3095ebdb354938bc96"
 
 # ═══════════════════════════════════════════════════════════════
 # 本番環境

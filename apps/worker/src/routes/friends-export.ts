@@ -45,6 +45,7 @@ interface ExportRow {
   utm_term: string | null;
   user_agent: string | null;
   ip_address: string | null;
+  country: string | null;
   tag_names: string | null;
 }
 
@@ -83,6 +84,7 @@ const HEADERS = [
   'utm_term',
   'user_agent',
   'ip_address',
+  'country',
   // タグ "|" 区切り
   'tags',
 ];
@@ -146,6 +148,7 @@ app.get('/friends/export.csv', async (c) => {
       lc.utm_term AS utm_term,
       COALESCE(lc.user_agent, rt.user_agent) AS user_agent,
       COALESCE(lc.ip_address, rt.ip_address) AS ip_address,
+      COALESCE(lc.country, rt.country) AS country,
       (
         SELECT GROUP_CONCAT(t.name, '|')
           FROM friend_tags ft2
@@ -207,6 +210,7 @@ app.get('/friends/export.csv', async (c) => {
         r.utm_term,
         r.user_agent,
         r.ip_address,
+        r.country,
         r.tag_names,
       ]
         .map(csvEscape)

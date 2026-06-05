@@ -63,14 +63,14 @@ CREATE TABLE admin_users (
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE af_confirm_queue (
+CREATE TABLE "af_confirm_queue" (
   id TEXT PRIMARY KEY,
   friend_id TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   tracked_link_id TEXT REFERENCES tracked_links (id) ON DELETE SET NULL,
   ref_tracking_id TEXT REFERENCES ref_tracking (id) ON DELETE SET NULL,
   af_confirm_type TEXT NOT NULL CHECK (af_confirm_type IN ('1h', '3h', '24h')),
-  scheduled_at TEXT NOT NULL,          -- いつ確定処理するか (JST ISO)
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'cancelled')),
+  scheduled_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'sent', 'failed', 'cancelled')),
   attempts INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
   processed_at TEXT,
@@ -357,6 +357,41 @@ CREATE TABLE events (
   FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
 );
 
+CREATE TABLE external_event_receipts (
+  id TEXT PRIMARY KEY,
+  external_event_id TEXT NOT NULL REFERENCES external_events (id) ON DELETE CASCADE,
+  line_user_id TEXT NOT NULL,
+  friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL,
+  -- 受信時にクライアントから渡されたクリックID（友だち時点のものではなく受信時点）
+  fbclid TEXT,
+  gclid TEXT,
+  ttclid TEXT,
+  twclid TEXT,
+  event_value INTEGER,
+  raw_payload TEXT,
+  status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'capi_sent', 'capi_failed')),
+  error_message TEXT,
+  received_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE external_events (
+  id TEXT PRIMARY KEY,
+  event_key TEXT NOT NULL UNIQUE,    -- URL に埋め込む識別子 (例: cv_purchase)
+  name TEXT NOT NULL,
+  line_account_id TEXT REFERENCES line_accounts (id) ON DELETE SET NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  -- ポストバック設定
+  capi_platform TEXT,                -- 'meta' | 'google' | 'tiktok' | 'x' | null
+  capi_event_name TEXT,              -- 例: 'Purchase'
+  default_value INTEGER,             -- 円換算 (任意)
+  -- HMAC 共有秘密 (送信元の正当性検証)。NULL のときは検証スキップ（dev 用）。
+  hmac_secret TEXT,
+  -- メモ
+  memo TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE form_opens (
   id TEXT PRIMARY KEY,
   form_id TEXT NOT NULL,
@@ -487,7 +522,7 @@ CREATE TABLE link_clicks (
   tracked_link_id TEXT NOT NULL REFERENCES tracked_links (id) ON DELETE CASCADE,
   friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL,
   clicked_at TEXT NOT NULL DEFAULT (datetime('now'))
-, ltp TEXT, fbclid TEXT, gclid TEXT, ttclid TEXT, twclid TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, utm_content TEXT, utm_term TEXT, user_agent TEXT, ip_address TEXT, ua_fingerprint TEXT, matched_at TEXT, match_confidence REAL, match_strategy TEXT);
+, ltp TEXT, fbclid TEXT, gclid TEXT, ttclid TEXT, twclid TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, utm_content TEXT, utm_term TEXT, user_agent TEXT, ip_address TEXT, ua_fingerprint TEXT, matched_at TEXT, match_confidence REAL, match_strategy TEXT, country TEXT);
 
 CREATE TABLE menus (
   id                    TEXT PRIMARY KEY,
@@ -590,7 +625,7 @@ CREATE TABLE ref_tracking (
   entry_route_id  TEXT REFERENCES entry_routes (id) ON DELETE SET NULL,
   source_url      TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-, fbclid TEXT, gclid TEXT, twclid TEXT, ttclid TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, user_agent TEXT, ip_address TEXT, ltp TEXT);
+, fbclid TEXT, gclid TEXT, twclid TEXT, ttclid TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, user_agent TEXT, ip_address TEXT, ltp TEXT, country TEXT);
 
 CREATE TABLE reminder_steps (
   id              TEXT PRIMARY KEY,
@@ -891,6 +926,16 @@ CREATE INDEX idx_event_slots_event_starts ON event_slots (event_id, starts_at);
 
 CREATE INDEX idx_events_account_published_sort ON events (line_account_id, is_published, sort_order);
 
+CREATE INDEX idx_external_event_receipts_event ON external_event_receipts (external_event_id);
+
+CREATE INDEX idx_external_event_receipts_friend ON external_event_receipts (friend_id) WHERE friend_id IS NOT NULL;
+
+CREATE INDEX idx_external_event_receipts_status ON external_event_receipts (status);
+
+CREATE INDEX idx_external_events_account ON external_events (line_account_id) WHERE line_account_id IS NOT NULL;
+
+CREATE INDEX idx_external_events_key ON external_events (event_key);
+
 CREATE INDEX idx_form_opens_form ON form_opens (form_id, opened_at);
 
 CREATE INDEX idx_form_submissions_form ON form_submissions (form_id);
@@ -927,6 +972,8 @@ CREATE INDEX idx_idempotency_expires ON booking_idempotency_keys (expires_at);
 
 CREATE INDEX idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);
+
+CREATE INDEX idx_link_clicks_country ON link_clicks (country) WHERE country IS NOT NULL;
 
 CREATE INDEX idx_link_clicks_friend ON link_clicks (friend_id);
 

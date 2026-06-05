@@ -129,7 +129,7 @@ export default function TrackedLinksPage() {
                   <tr key={item.id} className={!item.isActive ? 'opacity-50' : ''}>
                     <td className="px-4 py-3">
                       <Link
-                        href={`/tracked-links/${item.id}`}
+                        href={`/tracked-links/detail?id=${item.id}`}
                         className="font-medium text-blue-700 hover:underline"
                       >
                         {item.name}

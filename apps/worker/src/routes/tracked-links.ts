@@ -370,6 +370,10 @@ trackedLinks.get('/t/:linkId', async (c) => {
   // L-TRACK 互換: アトリビューション情報取得
   const attr = extractAttribution(c);
   const ipAddress = c.req.header('cf-connecting-ip') ?? null;
+  // L-TRACK 互換: cf.country は Cloudflare がレイヤー1で付与する2文字国コード
+  // (IP geo lookup)。L-TRACK CSV の「国」カラム互換。値が無い/UN/T1 は null として保存。
+  const cfRaw = (c.req.raw as { cf?: { country?: string } }).cf?.country;
+  const country = cfRaw && cfRaw !== 'XX' && cfRaw !== 'T1' ? cfRaw : null;
 
   // Run side-effects async (click recording, tag/scenario actions)
   const ctx = c.executionCtx as ExecutionContext;
@@ -395,6 +399,7 @@ trackedLinks.get('/t/:linkId', async (c) => {
           userAgent: ua || null,
           ipAddress,
           uaFingerprint,
+          country,
         });
 
         // Run automatic actions if a friend is identified

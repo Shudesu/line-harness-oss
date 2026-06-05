@@ -33,6 +33,8 @@ export interface SkipLiffMatchResult {
   capiPromoted?: boolean;
   /** 紐付けた tracked_link の af_confirm_type。webhook 側で即時 CAPI 発火判定に使う。 */
   afConfirmType?: 'immediate' | '1h' | '3h' | '24h' | null;
+  /** 紐付けた tracked_link の af_amount (円)。CAPI の eventValue に渡す。 */
+  afAmount?: number | null;
 }
 
 /**
@@ -133,6 +135,7 @@ export async function trySkipLiffMatch(
           userAgent: click.user_agent,
           ipAddress: click.ip_address,
           ltp: click.ltp,
+          country: click.country,
         });
         capiPromoted = true;
         promotedRefTrackingId = ref.id;
@@ -171,5 +174,6 @@ export async function trySkipLiffMatch(
       | '3h'
       | '24h'
       | undefined) ?? null,
+    afAmount: link?.af_amount ?? null,
   };
 }

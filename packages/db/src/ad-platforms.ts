@@ -180,3 +180,58 @@ export async function getAdConversionLogs(
     .all<AdConversionLog>();
   return result.results;
 }
+
+/**
+ * L-TRACK 互換: 全プラットフォーム横断のポストバック履歴。
+ * UI のポストバック履歴ページで使う。フィルタ可能（status / platform / 期間）。
+ */
+export async function getAdConversionLogsAll(
+  db: D1Database,
+  opts: {
+    limit?: number;
+    status?: 'sent' | 'failed';
+    platformName?: string;
+    friendId?: string;
+    since?: string;
+    until?: string;
+  } = {},
+): Promise<Array<AdConversionLog & { platform_name: string | null; friend_display_name: string | null }>> {
+  const limit = Math.min(1000, opts.limit ?? 200);
+  const wheres: string[] = [];
+  const binds: unknown[] = [];
+  if (opts.status) {
+    wheres.push('l.status = ?');
+    binds.push(opts.status);
+  }
+  if (opts.platformName) {
+    wheres.push('p.name = ?');
+    binds.push(opts.platformName);
+  }
+  if (opts.friendId) {
+    wheres.push('l.friend_id = ?');
+    binds.push(opts.friendId);
+  }
+  if (opts.since) {
+    wheres.push('l.created_at >= ?');
+    binds.push(opts.since);
+  }
+  if (opts.until) {
+    wheres.push('l.created_at <= ?');
+    binds.push(opts.until);
+  }
+  const where = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+  binds.push(limit);
+  const result = await db
+    .prepare(
+      `SELECT l.*, p.name AS platform_name, f.display_name AS friend_display_name
+         FROM ad_conversion_logs l
+         LEFT JOIN ad_platforms p ON p.id = l.ad_platform_id
+         LEFT JOIN friends f ON f.id = l.friend_id
+        ${where}
+        ORDER BY l.created_at DESC
+        LIMIT ?`,
+    )
+    .bind(...binds)
+    .all<AdConversionLog & { platform_name: string | null; friend_display_name: string | null }>();
+  return result.results;
+}
