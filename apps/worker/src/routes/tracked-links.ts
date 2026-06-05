@@ -6,12 +6,14 @@ import {
   updateTrackedLink,
   deleteTrackedLink,
   recordLinkClick,
+  recordLinkClickExtended,
   getLinkClicks,
   getFriendByLineUserId,
 } from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { TrackedLink } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { generateUaFingerprint } from '../utils/fingerprint.js';
 
 const trackedLinks = new Hono<Env>();
 
@@ -28,6 +30,12 @@ function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
     rewardTemplateId: row.reward_template_id,
     isActive: Boolean(row.is_active),
     clickCount: row.click_count,
+    // L-TRACK 互換フィールド
+    skipLiff: Boolean(row.skip_liff),
+    mediaName: row.media_name,
+    afAmount: row.af_amount,
+    afConfirmType: row.af_confirm_type,
+    lineAccountId: row.line_account_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -88,10 +96,21 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId?: string | null;
       introTemplateId?: string | null;
       rewardTemplateId?: string | null;
+      // L-TRACK 互換
+      skipLiff?: boolean;
+      mediaName?: string | null;
+      afAmount?: number | null;
+      afConfirmType?: 'immediate' | '1h' | '3h' | '24h';
+      lineAccountId?: string | null;
     }>();
 
     if (!body.name || !body.originalUrl) {
       return c.json({ success: false, error: 'name and originalUrl are required' }, 400);
+    }
+
+    // Medium fix: af_confirm_type runtime validation
+    if (body.afConfirmType !== undefined && !['immediate', '1h', '3h', '24h'].includes(body.afConfirmType)) {
+      return c.json({ success: false, error: 'afConfirmType must be one of: immediate, 1h, 3h, 24h' }, 400);
     }
 
     const link = await createTrackedLink(c.env.DB, {
@@ -101,6 +120,11 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId: body.scenarioId ?? null,
       introTemplateId: body.introTemplateId ?? null,
       rewardTemplateId: body.rewardTemplateId ?? null,
+      skipLiff: body.skipLiff,
+      mediaName: body.mediaName,
+      afAmount: body.afAmount,
+      afConfirmType: body.afConfirmType,
+      lineAccountId: body.lineAccountId,
     });
 
     const base = getBaseUrl(c);
@@ -122,7 +146,18 @@ trackedLinks.patch('/api/tracked-links/:id', async (c) => {
       introTemplateId?: string | null;
       rewardTemplateId?: string | null;
       isActive?: boolean;
+      // L-TRACK 互換
+      skipLiff?: boolean;
+      mediaName?: string | null;
+      afAmount?: number | null;
+      afConfirmType?: 'immediate' | '1h' | '3h' | '24h';
+      lineAccountId?: string | null;
     }>();
+
+    // Medium fix: af_confirm_type runtime validation
+    if (body.afConfirmType !== undefined && !['immediate', '1h', '3h', '24h'].includes(body.afConfirmType)) {
+      return c.json({ success: false, error: 'afConfirmType must be one of: immediate, 1h, 3h, 24h' }, 400);
+    }
 
     const link = await updateTrackedLink(c.env.DB, id, body);
     if (!link) {
@@ -225,6 +260,51 @@ function buildAppRedirectHtml(destinationUrl: string): string {
 </body></html>`;
 }
 
+// Low fix: アトリビューション値の長さ制限。攻撃者がURL長上限まで詰めて
+// DB保存・リダイレクト引継ぎする攻撃を防ぐ。
+const LTP_MAX_LEN = 32; // L-TRACK 仕様は10文字。harness は柔軟性のため32文字まで許可。
+const CLICK_ID_MAX_LEN = 256; // fbclid/gclid 等の実値は通常50-150文字
+const UTM_MAX_LEN = 128;
+
+function truncate(value: string | undefined, max: number): string | null {
+  if (!value) return null;
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+// クエリパラメータからアトリビューション情報を抽出
+function extractAttribution(c: { req: { query: (key: string) => string | undefined } }) {
+  return {
+    ltp: truncate(c.req.query('ltp'), LTP_MAX_LEN),
+    fbclid: truncate(c.req.query('fbclid'), CLICK_ID_MAX_LEN),
+    gclid: truncate(c.req.query('gclid'), CLICK_ID_MAX_LEN),
+    ttclid: truncate(c.req.query('ttclid'), CLICK_ID_MAX_LEN),
+    twclid: truncate(c.req.query('twclid'), CLICK_ID_MAX_LEN),
+    utmSource: truncate(c.req.query('utm_source'), UTM_MAX_LEN),
+    utmMedium: truncate(c.req.query('utm_medium'), UTM_MAX_LEN),
+    utmCampaign: truncate(c.req.query('utm_campaign'), UTM_MAX_LEN),
+    utmContent: truncate(c.req.query('utm_content'), UTM_MAX_LEN),
+    utmTerm: truncate(c.req.query('utm_term'), UTM_MAX_LEN),
+  };
+}
+
+// アトリビューション情報を次URLのクエリに引継ぐ
+function appendAttributionToUrl(url: string, attr: ReturnType<typeof extractAttribution>): string {
+  try {
+    const u = new URL(url);
+    for (const [key, value] of Object.entries(attr)) {
+      if (!value) continue;
+      // utmCampaign → utm_campaign に戻す
+      const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      if (!u.searchParams.has(dbKey)) {
+        u.searchParams.set(dbKey, value);
+      }
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 // GET /t/:linkId — click tracking redirect (no auth, fast redirect)
 trackedLinks.get('/t/:linkId', async (c) => {
   const linkId = c.req.param('linkId');
@@ -240,11 +320,18 @@ trackedLinks.get('/t/:linkId', async (c) => {
 
   const useAppRedirect = isAppLinkDomain(link.original_url);
 
+  // L-TRACK 互換: 認証スキップモード
+  // skip_liff=1 のとき、LIFF経由を完全にスキップして、original_url（line.me/R/ti/p/@xxx 等）に
+  // 直接302リダイレクト。クエリパラメータ（ltp/fbclid/utm_*）は引継ぐ。
+  // friend 紐付けは webhook follow イベント受信時に時間窓+IP+UA で行う。
+  const skipLiff = Boolean(link.skip_liff);
+
   // If no user ID yet, check if this is LINE's in-app browser → redirect to LIFF for identification
   // Skip LIFF redirect for app-link domains (they'll come from Safari via externalBrowser)
+  // Skip LIFF redirect for L-TRACK compat (skip_liff=1)
   const ua = c.req.header('user-agent') || '';
   const isLineApp = /\bLine\b/i.test(ua);
-  if (!useAppRedirect && !lineUserId && !friendId && isLineApp && c.env.LIFF_URL) {
+  if (!skipLiff && !useAppRedirect && !lineUserId && !friendId && isLineApp && c.env.LIFF_URL) {
     const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
     const liffRedirect = `${c.env.LIFF_URL}?redirect=${encodeURIComponent(directUrl)}`;
     return c.redirect(liffRedirect, 302);
@@ -258,13 +345,35 @@ trackedLinks.get('/t/:linkId', async (c) => {
     }
   }
 
+  // L-TRACK 互換: アトリビューション情報取得
+  const attr = extractAttribution(c);
+  const ipAddress = c.req.header('cf-connecting-ip') ?? null;
+
   // Run side-effects async (click recording, tag/scenario actions)
   const ctx = c.executionCtx as ExecutionContext;
   ctx.waitUntil(
     (async () => {
       try {
-        // Record the click
-        await recordLinkClick(c.env.DB, linkId, friendId);
+        // L-TRACK 互換: UA fingerprint を生成して拡張版で記録
+        const uaFingerprint = ua ? await generateUaFingerprint(ua) : null;
+
+        await recordLinkClickExtended(c.env.DB, {
+          trackedLinkId: linkId,
+          friendId,
+          ltp: attr.ltp,
+          fbclid: attr.fbclid,
+          gclid: attr.gclid,
+          ttclid: attr.ttclid,
+          twclid: attr.twclid,
+          utmSource: attr.utmSource,
+          utmMedium: attr.utmMedium,
+          utmCampaign: attr.utmCampaign,
+          utmContent: attr.utmContent,
+          utmTerm: attr.utmTerm,
+          userAgent: ua || null,
+          ipAddress,
+          uaFingerprint,
+        });
 
         // Run automatic actions if a friend is identified
         if (friendId) {
@@ -288,12 +397,15 @@ trackedLinks.get('/t/:linkId', async (c) => {
     })(),
   );
 
+  // L-TRACK 互換: アトリビューション情報を次URLのクエリに引継ぐ
+  const redirectUrl = appendAttributionToUrl(link.original_url, attr);
+
   // App-link domains: return HTML with JS redirect for Universal Link support
   if (useAppRedirect) {
-    return c.html(buildAppRedirectHtml(link.original_url));
+    return c.html(buildAppRedirectHtml(redirectUrl));
   }
 
-  return c.redirect(link.original_url, 302);
+  return c.redirect(redirectUrl, 302);
 });
 
 export { trackedLinks };
