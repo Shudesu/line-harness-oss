@@ -50,7 +50,16 @@
     "042_tracked_links_og.sql",
     "043_events_og.sql",
     "044_forms_og.sql",
-    "045_menus_auto_tag.sql"
+    "045_menus_auto_tag.sql",
+    "046_ltp_tracking.sql",
+    "047_skip_liff.sql",
+    "048_media_name.sql",
+    "049_af_amount.sql",
+    "050_af_confirm_type.sql",
+    "051_link_clicks_attribution.sql",
+    "052_tracked_links_account.sql",
+    "053_af_confirm_queue.sql",
+    "054_ad_conversion_idempotency.sql"
   ],
-  "migrationCount": 51
+  "migrationCount": 60
 }

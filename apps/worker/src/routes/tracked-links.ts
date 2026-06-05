@@ -46,10 +46,22 @@ function getBaseUrl(c: { req: { url: string } }): string {
   return `${url.protocol}//${url.host}`;
 }
 
+// Codex指摘 High: multi-account 境界の判定ヘルパ。
+// tracked_link が「他アカ専属」のとき選択中アカからは触れないようガード。
+function inAccountScope(
+  link: { line_account_id: string | null },
+  lineAccountId: string | null,
+): boolean {
+  if (!lineAccountId) return true; // 未指定リクエストは従来挙動（管理ツール用）
+  return link.line_account_id === null || link.line_account_id === lineAccountId;
+}
+
 // GET /api/tracked-links — list all
+// Codex指摘 High: lineAccountId が来たらサーバ側で境界を絞る。
 trackedLinks.get('/api/tracked-links', async (c) => {
   try {
-    const items = await getTrackedLinks(c.env.DB);
+    const lineAccountId = c.req.query('lineAccountId') ?? null;
+    const items = await getTrackedLinks(c.env.DB, { lineAccountId });
     const base = getBaseUrl(c);
     return c.json({ success: true, data: items.map((item) => serializeTrackedLink(item, base)) });
   } catch (err) {
@@ -62,8 +74,9 @@ trackedLinks.get('/api/tracked-links', async (c) => {
 trackedLinks.get('/api/tracked-links/:id', async (c) => {
   try {
     const id = c.req.param('id');
+    const lineAccountId = c.req.query('lineAccountId') ?? null;
     const link = await getTrackedLinkById(c.env.DB, id);
-    if (!link) {
+    if (!link || !inAccountScope(link, lineAccountId)) {
       return c.json({ success: false, error: 'Tracked link not found' }, 404);
     }
     const clicks = await getLinkClicks(c.env.DB, id);
@@ -139,6 +152,7 @@ trackedLinks.post('/api/tracked-links', async (c) => {
 trackedLinks.patch('/api/tracked-links/:id', async (c) => {
   try {
     const id = c.req.param('id');
+    const lineAccountId = c.req.query('lineAccountId') ?? null;
     const body = await c.req.json<{
       name?: string;
       tagId?: string | null;
@@ -159,6 +173,12 @@ trackedLinks.patch('/api/tracked-links/:id', async (c) => {
       return c.json({ success: false, error: 'afConfirmType must be one of: immediate, 1h, 3h, 24h' }, 400);
     }
 
+    // Codex指摘 High: multi-account 境界。所有アカ外からは触れない。
+    const existing = await getTrackedLinkById(c.env.DB, id);
+    if (!existing || !inAccountScope(existing, lineAccountId)) {
+      return c.json({ success: false, error: 'Tracked link not found' }, 404);
+    }
+
     const link = await updateTrackedLink(c.env.DB, id, body);
     if (!link) {
       return c.json({ success: false, error: 'Tracked link not found' }, 404);
@@ -175,8 +195,10 @@ trackedLinks.patch('/api/tracked-links/:id', async (c) => {
 trackedLinks.delete('/api/tracked-links/:id', async (c) => {
   try {
     const id = c.req.param('id');
+    const lineAccountId = c.req.query('lineAccountId') ?? null;
     const link = await getTrackedLinkById(c.env.DB, id);
-    if (!link) {
+    // Codex指摘 High: 所有アカ外からは触れない。
+    if (!link || !inAccountScope(link, lineAccountId)) {
       return c.json({ success: false, error: 'Tracked link not found' }, 404);
     }
     await deleteTrackedLink(c.env.DB, id);

@@ -57,7 +57,26 @@ export interface LinkClick {
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
-export async function getTrackedLinks(db: D1Database): Promise<TrackedLink[]> {
+/**
+ * 一覧取得。
+ * lineAccountId を渡すと「そのアカウントのリンク」または「アカ未指定（=共通）」のみを返す。
+ * Codex指摘 High: multi-account 境界をサーバ側で守る。
+ */
+export async function getTrackedLinks(
+  db: D1Database,
+  opts: { lineAccountId?: string | null } = {},
+): Promise<TrackedLink[]> {
+  if (opts.lineAccountId) {
+    const result = await db
+      .prepare(
+        `SELECT * FROM tracked_links
+          WHERE line_account_id IS NULL OR line_account_id = ?
+          ORDER BY created_at DESC`,
+      )
+      .bind(opts.lineAccountId)
+      .all<TrackedLink>();
+    return result.results;
+  }
   const result = await db
     .prepare(`SELECT * FROM tracked_links ORDER BY created_at DESC`)
     .all<TrackedLink>();

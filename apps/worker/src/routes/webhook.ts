@@ -214,8 +214,19 @@ async function handleEvent(
         });
         if (result.matched) {
           console.log(
-            `[follow] skip-liff matched: clickId=${result.clickId} strategy=${result.strategy} confidence=${result.confidence}`,
+            `[follow] skip-liff matched: clickId=${result.clickId} strategy=${result.strategy} confidence=${result.confidence} capiPromoted=${result.capiPromoted} afConfirmType=${result.afConfirmType}`,
           );
+
+          // L-TRACK 互換: af_confirm_type='immediate' のとき、友だち追加自体を
+          // CV としてその場で CAPI に流す。1h/3h/24h は scheduled cron 側で処理する。
+          if (result.capiPromoted && (result.afConfirmType ?? 'immediate') === 'immediate') {
+            try {
+              const { sendAdConversions } = await import('../services/ad-conversion.js');
+              await sendAdConversions(db, friend.id, 'AddFriend');
+            } catch (err) {
+              console.error('[follow] immediate CAPI send error:', err);
+            }
+          }
         }
       } catch (err) {
         console.error('[follow] skip-liff match error:', err);

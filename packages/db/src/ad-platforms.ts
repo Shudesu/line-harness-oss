@@ -142,9 +142,12 @@ export async function logAdConversion(
   const id = crypto.randomUUID();
   const now = jstNow();
 
+  // Codex指摘 High 冪等性: 054 の partial UNIQUE が status='sent' で効くため、
+  // 既送信の (platform, friend, event, click_id) は INSERT OR IGNORE で握り潰す。
+  // この helper の直接利用箇所はあらかじめ alreadySent() を見ているが、二重防衛。
   await db
     .prepare(
-      `INSERT INTO ad_conversion_logs
+      `INSERT OR IGNORE INTO ad_conversion_logs
        (id, ad_platform_id, friend_id, event_name, click_id, click_id_type, status, request_body, response_body, error_message, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )

@@ -1117,6 +1117,99 @@ export const api = {
         updatedAt: string
       }>>>('/api/message-templates'),
   },
+  trackedLinks: {
+    list: (params?: { lineAccountId?: string | null }) => {
+      const qs = params?.lineAccountId
+        ? `?lineAccountId=${encodeURIComponent(params.lineAccountId)}`
+        : ''
+      return fetchApi<ApiResponse<Array<{
+        id: string
+        name: string
+        originalUrl: string
+        trackingUrl: string
+        tagId: string | null
+        scenarioId: string | null
+        introTemplateId: string | null
+        rewardTemplateId: string | null
+        isActive: boolean
+        clickCount: number
+        skipLiff: boolean
+        mediaName: string | null
+        afAmount: number | null
+        afConfirmType: 'immediate' | '1h' | '3h' | '24h'
+        lineAccountId: string | null
+        createdAt: string
+        updatedAt: string
+      }>>>(`/api/tracked-links${qs}`)
+    },
+    get: (id: string, params?: { lineAccountId?: string | null }) => {
+      const qs = params?.lineAccountId
+        ? `?lineAccountId=${encodeURIComponent(params.lineAccountId)}`
+        : ''
+      return fetchApi<ApiResponse<{
+        id: string
+        name: string
+        originalUrl: string
+        trackingUrl: string
+        tagId: string | null
+        scenarioId: string | null
+        isActive: boolean
+        clickCount: number
+        skipLiff: boolean
+        mediaName: string | null
+        afAmount: number | null
+        afConfirmType: 'immediate' | '1h' | '3h' | '24h'
+        lineAccountId: string | null
+        createdAt: string
+        updatedAt: string
+        clicks: Array<{ id: string; friendId: string | null; friendDisplayName: string | null; clickedAt: string }>
+      }>>(`/api/tracked-links/${id}${qs}`)
+    },
+    create: (data: {
+      name: string
+      originalUrl: string
+      tagId?: string | null
+      scenarioId?: string | null
+      skipLiff?: boolean
+      mediaName?: string | null
+      afAmount?: number | null
+      afConfirmType?: 'immediate' | '1h' | '3h' | '24h'
+      lineAccountId?: string | null
+    }) =>
+      fetchApi<ApiResponse<{ id: string; trackingUrl: string }>>('/api/tracked-links', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (
+      id: string,
+      data: Partial<{
+        name: string
+        tagId: string | null
+        scenarioId: string | null
+        isActive: boolean
+        skipLiff: boolean
+        mediaName: string | null
+        afAmount: number | null
+        afConfirmType: 'immediate' | '1h' | '3h' | '24h'
+        lineAccountId: string | null
+      }>,
+      params?: { lineAccountId?: string | null },
+    ) => {
+      const qs = params?.lineAccountId
+        ? `?lineAccountId=${encodeURIComponent(params.lineAccountId)}`
+        : ''
+      return fetchApi<ApiResponse<unknown>>(`/api/tracked-links/${id}${qs}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      })
+    },
+    delete: (id: string, params?: { lineAccountId?: string | null }) => {
+      const qs = params?.lineAccountId
+        ? `?lineAccountId=${encodeURIComponent(params.lineAccountId)}`
+        : ''
+      return fetchApi<ApiResponse<null>>(`/api/tracked-links/${id}${qs}`, { method: 'DELETE' })
+    },
+  },
   entryRoutes: {
     list: () => fetchApi<ApiResponse<EntryRoute[]>>('/api/entry-routes'),
     get: (id: string) => fetchApi<ApiResponse<EntryRoute>>(`/api/entry-routes/${id}`),

@@ -55,6 +55,7 @@ import { automations } from './routes/automations.js';
 import { richMenus } from './routes/rich-menus.js';
 import { trackedLinks } from './routes/tracked-links.js';
 import { lpTag } from './routes/lp-tag.js';
+import { friendsExport } from './routes/friends-export.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
@@ -155,6 +156,7 @@ app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
 app.route('/', lpTag);
+app.route('/api', friendsExport);
 app.route('/', entryRoutes);
 app.route('/', forms);
 app.route('/', adPlatforms);
@@ -583,6 +585,19 @@ async function scheduled(
     await processInsightFetch(env.DB, lineClients, defaultLineClient);
   } catch (e) {
     console.error('Insight fetch error:', e);
+  }
+
+  // L-TRACK 互換: AF確定キュー（1h/3h/24h 遅延 CV）の処理
+  try {
+    const { processAfConfirmDelayed } = await import('./services/af-confirm-processor.js');
+    const r = await processAfConfirmDelayed(env.DB);
+    if (r.considered > 0) {
+      console.log(
+        `[af-confirm] considered=${r.considered} sent=${r.sent} cancelled=${r.cancelled} failed=${r.failed}`,
+      );
+    }
+  } catch (e) {
+    console.error('af-confirm-processor error:', e);
   }
 
   // Booking reminders — every 5-minute tick scans due reminders.

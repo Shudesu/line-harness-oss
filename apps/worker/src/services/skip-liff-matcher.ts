@@ -20,6 +20,8 @@ import {
   getTrackedLinkById,
   addTagToFriend,
   enrollFriendInScenario,
+  recordRefTracking,
+  enqueueAfConfirm,
 } from '@line-crm/db';
 
 export interface SkipLiffMatchResult {
@@ -28,7 +30,16 @@ export interface SkipLiffMatchResult {
   trackedLinkId?: string;
   strategy?: string;
   confidence?: number;
+  capiPromoted?: boolean;
+  /** 紐付けた tracked_link の af_confirm_type。webhook 側で即時 CAPI 発火判定に使う。 */
+  afConfirmType?: 'immediate' | '1h' | '3h' | '24h' | null;
 }
+
+/**
+ * CAPI 送信を許可する confidence の下限。
+ * time_only (0.40) は偽CV を防ぐためここで足切りする。
+ */
+const CAPI_PROMOTION_MIN_CONFIDENCE = 0.70;
 
 /**
  * follow webhook 受信時に呼ぶ。
@@ -92,11 +103,73 @@ export async function trySkipLiffMatch(
       .run();
   }
 
+  // CAPI 昇格: link_clicks に保存された fbclid/gclid/twclid/ttclid を
+  // ref_tracking にコピーする。これで既存の sendAdConversions() が拾える。
+  //
+  // 重要: time_only マッチ (confidence=0.40) は偽CV になるので除外。
+  // 現状 webhook には IP/UA が来ないので、ip_ua / ua_only マッチは事実上来ない
+  // 想定だが、将来 LP用タグ等で先行 attach が可能になった時を見据えてガードする。
+  let capiPromoted = false;
+  let promotedRefTrackingId: string | null = null;
+  if (match.confidence >= CAPI_PROMOTION_MIN_CONFIDENCE) {
+    const click = match.click;
+    const hasClickId =
+      !!click.fbclid || !!click.gclid || !!click.twclid || !!click.ttclid;
+    if (hasClickId) {
+      try {
+        const ref = await recordRefTracking(db, {
+          // tracked_link は ref_code を持たないので合成キーで識別
+          refCode: `tl_${match.click.tracked_link_id}`,
+          friendId,
+          entryRouteId: null,
+          sourceUrl: null,
+          fbclid: click.fbclid,
+          gclid: click.gclid,
+          twclid: click.twclid,
+          ttclid: click.ttclid,
+          utmSource: click.utm_source,
+          utmMedium: click.utm_medium,
+          utmCampaign: click.utm_campaign,
+          userAgent: click.user_agent,
+          ipAddress: click.ip_address,
+          ltp: click.ltp,
+        });
+        capiPromoted = true;
+        promotedRefTrackingId = ref.id;
+      } catch (err) {
+        console.error('[skip-liff] CAPI promotion failed:', err);
+      }
+    }
+  }
+
+  // 遅延確定: af_confirm_type が 1h/3h/24h なら確定キューに enqueue。
+  // 即時は webhook 側で sendAdConversions を直接発火するためここでは何もしない。
+  const af = link?.af_confirm_type ?? 'immediate';
+  if (capiPromoted && (af === '1h' || af === '3h' || af === '24h')) {
+    try {
+      await enqueueAfConfirm(db, {
+        friendId,
+        trackedLinkId: link?.id ?? match.click.tracked_link_id,
+        refTrackingId: promotedRefTrackingId,
+        afConfirmType: af,
+      });
+    } catch (err) {
+      console.error('[skip-liff] enqueue af_confirm failed:', err);
+    }
+  }
+
   return {
     matched: true,
     clickId: match.click.id,
     trackedLinkId: match.click.tracked_link_id,
     strategy: match.strategy,
     confidence: match.confidence,
+    capiPromoted,
+    afConfirmType: (link?.af_confirm_type as
+      | 'immediate'
+      | '1h'
+      | '3h'
+      | '24h'
+      | undefined) ?? null,
   };
 }
