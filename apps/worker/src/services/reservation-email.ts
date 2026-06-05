@@ -3,8 +3,10 @@ import { resolveBindingValue, type SecretLike } from './bindings.js';
 import { resolveProviderConfig } from '../config/provider.js';
 import { getReservationEmailTemplate } from '../providers/email-templates.js';
 import type { ReservationEmailView } from '../providers/email-types.js';
+import { getAccountSetting } from './account-settings-store.js';
 
 export interface ReservationEmailEnv {
+  DB?: D1Database;
   RESEND_API_KEY?: SecretLike;
   RESEND_FROM_EMAIL?: SecretLike;
   RESEND_FROM_NAME?: SecretLike;
@@ -65,7 +67,9 @@ export async function sendWebReservationConfirmationEmail(
   env: ReservationEmailEnv,
   links: WebReservationEmailLinks = {},
 ): Promise<void> {
-  const apiKey = await resolveBindingValue(env.RESEND_API_KEY);
+  const db = env.DB;
+  const storedApiKey = db ? await getAccountSetting(db, env, 'email.resend_api_key').catch(() => '') : '';
+  const apiKey = storedApiKey || await resolveBindingValue(env.RESEND_API_KEY);
   const to = reservation.customer_email_snapshot?.trim();
   if (!apiKey) {
     console.warn('Web reservation email skipped: RESEND_API_KEY is not configured');
@@ -77,8 +81,11 @@ export async function sendWebReservationConfirmationEmail(
   }
 
   const provider = await resolveProviderConfig(env as Parameters<typeof resolveProviderConfig>[0]);
-  const fromEmail = await resolveBindingValue(env.RESEND_FROM_EMAIL) || 'onboarding@resend.dev';
-  const fromName = await resolveBindingValue(env.RESEND_FROM_NAME) || provider.email.fromName;
+  const storedFromEmail = db ? await getAccountSetting(db, env, 'email.from_email').catch(() => '') : '';
+  const storedFromName = db ? await getAccountSetting(db, env, 'email.from_name').catch(() => '') : '';
+  const replyTo = db ? await getAccountSetting(db, env, 'email.reply_to').catch(() => '') : '';
+  const fromEmail = storedFromEmail || await resolveBindingValue(env.RESEND_FROM_EMAIL) || 'onboarding@resend.dev';
+  const fromName = storedFromName || await resolveBindingValue(env.RESEND_FROM_NAME) || provider.email.fromName;
   const adminUrl = await managementUrl(env);
   const bookingUrl = await bookingBaseUrl(env);
   const liffUrl = await liffBaseUrl(env);
@@ -149,6 +156,7 @@ export async function sendWebReservationConfirmationEmail(
       subject: rendered.subject,
       html: rendered.html,
       text: rendered.text,
+      ...(replyTo ? { reply_to: replyTo } : {}),
     }),
   });
   if (!res.ok) {

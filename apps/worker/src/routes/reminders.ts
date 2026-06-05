@@ -13,6 +13,7 @@ import {
   cancelFriendReminder,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const reminders = new Hono<Env>();
 
@@ -22,7 +23,8 @@ reminders.get('/api/reminders', async (c) => {
   try {
     const lineAccountId = c.req.query('lineAccountId');
     let items: Awaited<ReturnType<typeof getReminders>>;
-    if (lineAccountId) {
+    const hasLineAccountId = await hasColumn(c.env.DB, 'reminders', 'line_account_id');
+    if (lineAccountId && hasLineAccountId) {
       const result = await c.env.DB
         .prepare(`SELECT * FROM reminders WHERE line_account_id = ? ORDER BY created_at DESC`)
         .bind(lineAccountId)
@@ -86,8 +88,8 @@ reminders.post('/api/reminders', async (c) => {
     const body = await c.req.json<{ name: string; description?: string; lineAccountId?: string | null }>();
     if (!body.name) return c.json({ success: false, error: 'name is required' }, 400);
     const item = await createReminder(c.env.DB, body);
-    // Save line_account_id if provided
-    if (body.lineAccountId) {
+    // Save line_account_id if the deployed DB has the multi-account column.
+    if (body.lineAccountId && await hasColumn(c.env.DB, 'reminders', 'line_account_id')) {
       await c.env.DB.prepare(`UPDATE reminders SET line_account_id = ? WHERE id = ?`)
         .bind(body.lineAccountId, item.id).run();
     }

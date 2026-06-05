@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
-import { api } from '@/lib/api'
+import { api, type ApiAccountSetting } from '@/lib/api'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { useAccount } from '@/contexts/account-context'
 
 interface IncomingWebhook {
   id: string
@@ -26,7 +27,7 @@ interface OutgoingWebhook {
   updatedAt: string
 }
 
-type Tab = 'incoming' | 'outgoing'
+type Tab = 'incoming' | 'outgoing' | 'discord'
 
 const ccPrompts = [
   {
@@ -48,12 +49,17 @@ const ccPrompts = [
 ]
 
 export default function WebhooksPage() {
+  const { selectedAccountId } = useAccount()
   const [tab, setTab] = useState<Tab>('incoming')
   const [incoming, setIncoming] = useState<IncomingWebhook[]>([])
   const [outgoing, setOutgoing] = useState<OutgoingWebhook[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [discordSettings, setDiscordSettings] = useState<ApiAccountSetting[]>([])
+  const [discordForm, setDiscordForm] = useState<Record<string, string>>({})
+  const [savingDiscord, setSavingDiscord] = useState(false)
+  const [discordNotice, setDiscordNotice] = useState('')
 
   const [inForm, setInForm] = useState({ name: '', sourceType: '' })
   const [outForm, setOutForm] = useState({ name: '', url: '', eventTypes: '', secret: '' })
@@ -78,6 +84,24 @@ export default function WebhooksPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const loadDiscordSettings = useCallback(async () => {
+    try {
+      const res = await api.accountSettings.getConfig({ accountId: selectedAccountId, category: 'discord' })
+      if (!res.success) {
+        setError(res.error)
+        return
+      }
+      setDiscordSettings(res.data)
+      setDiscordForm(Object.fromEntries(res.data.map((item) => [item.key, item.secret ? '' : item.value])))
+    } catch {
+      setError('Discord通知設定の読み込みに失敗しました。')
+    }
+  }, [selectedAccountId])
+
+  useEffect(() => {
+    if (tab === 'discord') loadDiscordSettings()
+  }, [tab, loadDiscordSettings])
 
   const handleToggleIncoming = async (id: string, currentActive: boolean) => {
     try {
@@ -158,6 +182,31 @@ export default function WebhooksPage() {
   const endpointUrl = (id: string) =>
     `${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/incoming/${id}`
 
+  const handleSaveDiscordSettings = async () => {
+    setSavingDiscord(true)
+    setDiscordNotice('')
+    setError('')
+    try {
+      const values: Record<string, string> = {}
+      for (const setting of discordSettings) {
+        const value = discordForm[setting.key] ?? ''
+        if (setting.secret && !value.trim()) continue
+        values[setting.key] = value
+      }
+      const res = await api.accountSettings.updateConfig({ accountId: selectedAccountId, values })
+      if (!res.success) {
+        setError(res.error)
+        return
+      }
+      setDiscordNotice('Discord通知設定を保存しました。')
+      await loadDiscordSettings()
+    } catch {
+      setError('Discord通知設定の保存に失敗しました。')
+    } finally {
+      setSavingDiscord(false)
+    }
+  }
+
   return (
     <div>
       <Header
@@ -201,6 +250,16 @@ export default function WebhooksPage() {
           }`}
         >
           送信 (Outgoing)
+        </button>
+        <button
+          onClick={() => { setTab('discord'); setShowCreate(false) }}
+          className={`px-4 py-2 min-h-[44px] text-sm font-medium rounded-md transition-colors ${
+            tab === 'discord'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Discord通知
         </button>
       </div>
 
@@ -305,6 +364,52 @@ export default function WebhooksPage() {
               <div className="h-3 bg-gray-100 rounded w-24" />
             </div>
           ))}
+        </div>
+      ) : tab === 'discord' ? (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="mb-5">
+            <h2 className="text-sm font-semibold text-gray-900">Discord通知設定</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              予約通知・当日予約・要確認通知の送信先を設定します。空欄の秘密値は既存値を維持します。
+            </p>
+          </div>
+          {discordNotice && (
+            <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              {discordNotice}
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {discordSettings.map((setting) => (
+              <div key={setting.key}>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {setting.label}
+                  {setting.configured && (
+                    <span className="ml-2 rounded-full bg-green-50 px-2 py-0.5 text-[11px] text-green-700">
+                      設定済み{setting.encrypted ? '・暗号化' : ''}
+                    </span>
+                  )}
+                </label>
+                <input
+                  value={discordForm[setting.key] ?? ''}
+                  onChange={(e) => setDiscordForm((current) => ({ ...current, [setting.key]: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  placeholder={setting.secret && setting.configured ? `${setting.value}（変更時だけ入力）` : ''}
+                  type={setting.secret ? 'password' : 'text'}
+                />
+                <p className="mt-1 text-xs text-gray-400">{setting.description}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-5 flex justify-end">
+            <button
+              onClick={handleSaveDiscordSettings}
+              disabled={savingDiscord}
+              className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              {savingDiscord ? '保存中...' : 'Discord設定を保存'}
+            </button>
+          </div>
         </div>
       ) : tab === 'incoming' ? (
         /* Incoming table */

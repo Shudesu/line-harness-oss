@@ -255,6 +255,20 @@ export type ApiExternalCustomerLink = {
   customer: ApiExternalCustomer
 }
 
+export type ApiAccountSettingDefinition = {
+  key: string
+  label: string
+  category: 'discord' | 'email' | 'provider' | 'system'
+  secret: boolean
+  description: string
+}
+
+export type ApiAccountSetting = ApiAccountSettingDefinition & {
+  value: string
+  configured: boolean
+  encrypted: boolean
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '')
 if (!API_URL) {
   throw new Error(
@@ -650,6 +664,20 @@ export const api = {
       fetchApi<{ success: boolean }>('/api/account-settings/test-recipients', {
         method: 'PUT',
         body: JSON.stringify({ accountId, friendIds }),
+      }),
+    definitions: () =>
+      fetchApi<ApiResponse<ApiAccountSettingDefinition[]>>('/api/account-settings/definitions'),
+    getConfig: (params?: { accountId?: string | null; category?: ApiAccountSettingDefinition['category'] }) => {
+      const query = new URLSearchParams()
+      if (params?.accountId) query.set('accountId', params.accountId)
+      if (params?.category) query.set('category', params.category)
+      const suffix = query.toString() ? `?${query}` : ''
+      return fetchApi<ApiResponse<ApiAccountSetting[]>>(`/api/account-settings/config${suffix}`)
+    },
+    updateConfig: (data: { accountId?: string | null; values: Record<string, string | null | undefined> }) =>
+      fetchApi<ApiResponse<{ accountId: string; updated: Array<{ key: string; configured: boolean; encrypted: boolean }> }>>('/api/account-settings/config', {
+        method: 'PUT',
+        body: JSON.stringify(data),
       }),
   },
 

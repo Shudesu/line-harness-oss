@@ -4,10 +4,12 @@ import type {
 } from '@line-crm/db';
 import { listExternalReservationSources, listReservations } from '@line-crm/db';
 import { resolveBindingValue, type SecretLike } from './bindings.js';
+import { getAccountSetting } from './account-settings-store.js';
 
 export type DiscordNotificationTopic = 'reservation' | 'daily' | 'review';
 
 export interface DiscordNotificationEnv {
+  DB?: D1Database;
   DISCORD_WEBHOOK_URL?: SecretLike;
   DISCORD_RESERVATION_WEBHOOK_URL?: SecretLike;
   DISCORD_DAILY_WEBHOOK_URL?: SecretLike;
@@ -200,6 +202,18 @@ async function sendDiscordNotification(
 }
 
 async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: DiscordNotificationTopic): Promise<string> {
+  const db = env.DB;
+  const settingTopicUrl = db
+    ? await getAccountSetting(
+      db,
+      env as DiscordNotificationEnv & { DB: D1Database },
+      topic === 'reservation'
+        ? 'discord.reservation_webhook_url'
+        : topic === 'daily'
+          ? 'discord.daily_webhook_url'
+          : 'discord.review_webhook_url',
+    ).catch(() => '')
+    : '';
   const topicUrl = await resolveBindingValue(
     topic === 'reservation'
       ? env.DISCORD_RESERVATION_WEBHOOK_URL
@@ -207,9 +221,23 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
         ? env.DISCORD_DAILY_WEBHOOK_URL
         : env.DISCORD_REVIEW_WEBHOOK_URL,
   );
-  const baseUrl = topicUrl || await resolveBindingValue(env.DISCORD_WEBHOOK_URL);
+  const settingBaseUrl = db
+    ? await getAccountSetting(db, env as DiscordNotificationEnv & { DB: D1Database }, 'discord.webhook_url').catch(() => '')
+    : '';
+  const baseUrl = settingTopicUrl || topicUrl || settingBaseUrl || await resolveBindingValue(env.DISCORD_WEBHOOK_URL);
   if (!baseUrl) return '';
 
+  const settingThreadId = db
+    ? await getAccountSetting(
+      db,
+      env as DiscordNotificationEnv & { DB: D1Database },
+      topic === 'reservation'
+        ? 'discord.reservation_thread_id'
+        : topic === 'daily'
+          ? 'discord.daily_thread_id'
+          : 'discord.review_thread_id',
+    ).catch(() => '')
+    : '';
   const threadId = await resolveBindingValue(
     topic === 'reservation'
       ? env.DISCORD_RESERVATION_THREAD_ID
@@ -217,10 +245,11 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
         ? env.DISCORD_DAILY_THREAD_ID
         : env.DISCORD_REVIEW_THREAD_ID,
   );
-  if (!threadId || baseUrl.includes('thread_id=')) return baseUrl;
+  const resolvedThreadId = settingThreadId || threadId;
+  if (!resolvedThreadId || baseUrl.includes('thread_id=')) return baseUrl;
 
   const url = new URL(baseUrl);
-  url.searchParams.set('thread_id', threadId);
+  url.searchParams.set('thread_id', resolvedThreadId);
   return url.toString();
 }
 

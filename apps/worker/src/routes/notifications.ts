@@ -8,6 +8,7 @@ import {
   getNotifications,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const notifications = new Hono<Env>();
 
@@ -17,7 +18,8 @@ notifications.get('/api/notifications/rules', async (c) => {
   try {
     const lineAccountId = c.req.query('lineAccountId');
     let items;
-    if (lineAccountId) {
+    const hasRuleLineAccountId = await hasColumn(c.env.DB, 'notification_rules', 'line_account_id');
+    if (lineAccountId && hasRuleLineAccountId) {
       const result = await c.env.DB
         .prepare(`SELECT * FROM notification_rules WHERE line_account_id = ? ORDER BY created_at DESC`)
         .bind(lineAccountId)
@@ -117,7 +119,8 @@ notifications.get('/api/notifications', async (c) => {
     const limit = Number(c.req.query('limit') ?? '100');
     const lineAccountId = c.req.query('lineAccountId') ?? undefined;
     let items;
-    if (lineAccountId) {
+    const hasNotificationLineAccountId = await hasColumn(c.env.DB, 'notifications', 'line_account_id');
+    if (lineAccountId && hasNotificationLineAccountId) {
       const conditions: string[] = ['line_account_id = ?'];
       const bindings: unknown[] = [lineAccountId];
       if (status) {

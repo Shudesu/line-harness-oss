@@ -77,6 +77,7 @@ export type Env = {
     GOOGLE_OAUTH_REDIRECT_URI?: string;
     WEB_URL?: SecretLike;
     NEXT_PUBLIC_WEB_URL?: SecretLike;
+    APP_ENCRYPTION_KEY?: SecretLike;
     DISCORD_WEBHOOK_URL?: SecretLike;
     DISCORD_RESERVATION_WEBHOOK_URL?: SecretLike;
     DISCORD_DAILY_WEBHOOK_URL?: SecretLike;

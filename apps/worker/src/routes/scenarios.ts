@@ -20,6 +20,7 @@ import type {
   MessageType,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { hasColumn } from '../utils/db-compat.js';
 
 const scenarios = new Hono<Env>();
 
@@ -72,7 +73,8 @@ scenarios.get('/api/scenarios', async (c) => {
   try {
     const lineAccountId = c.req.query('lineAccountId');
     let items: DbScenarioWithStepCount[];
-    if (lineAccountId) {
+    const hasLineAccountId = await hasColumn(c.env.DB, 'scenarios', 'line_account_id');
+    if (lineAccountId && hasLineAccountId) {
       const result = await c.env.DB
         .prepare(
           `SELECT s.*, COUNT(ss.id) as step_count
@@ -147,8 +149,8 @@ scenarios.post('/api/scenarios', async (c) => {
       triggerTagId: body.triggerTagId ?? null,
     });
 
-    // Save line_account_id if provided
-    if (body.lineAccountId) {
+    // Save line_account_id if the deployed DB has the multi-account column.
+    if (body.lineAccountId && await hasColumn(c.env.DB, 'scenarios', 'line_account_id')) {
       await c.env.DB.prepare(`UPDATE scenarios SET line_account_id = ? WHERE id = ?`)
         .bind(body.lineAccountId, scenario.id).run();
     }
