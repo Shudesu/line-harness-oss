@@ -200,6 +200,40 @@ async function handleEvent(
     const referralRoute: EntryRoute | null = friendRefCode
       ? await getEntryRouteByRefCode(db, friendRefCode)
       : null;
+
+    // L-TRACK 互換: skip_liff モードのマッチング
+    // referralRoute が無い（普通の友だち追加 or skip_liff 経由）場合のみ試みる。
+    // 時間窓内の friend_id=NULL の link_click を、IP+UA fingerprint で突合して
+    // friend_id を埋める。webhook には IP/UA が来ないため time_only マッチが主軸。
+    // High fix: lineAccountId を渡して multi-account 境界を保つ。
+    if (!referralRoute) {
+      try {
+        const { trySkipLiffMatch } = await import('../services/skip-liff-matcher.js');
+        const result = await trySkipLiffMatch(db, friend.id, {
+          lineAccountId: lineAccountId ?? null,
+        });
+        if (result.matched) {
+          console.log(
+            `[follow] skip-liff matched: clickId=${result.clickId} strategy=${result.strategy} confidence=${result.confidence} capiPromoted=${result.capiPromoted} afConfirmType=${result.afConfirmType}`,
+          );
+
+          // L-TRACK 互換: af_confirm_type='immediate' のとき、友だち追加自体を
+          // CV としてその場で CAPI に流す。1h/3h/24h は scheduled cron 側で処理する。
+          if (result.capiPromoted && (result.afConfirmType ?? 'immediate') === 'immediate') {
+            try {
+              const { sendAdConversions } = await import('../services/ad-conversion.js');
+              // L-TRACK 互換: af_amount をそのまま eventValue として渡す（円・JPY）
+              await sendAdConversions(db, friend.id, 'AddFriend', result.afAmount ?? undefined);
+            } catch (err) {
+              console.error('[follow] immediate CAPI send error:', err);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[follow] skip-liff match error:', err);
+      }
+    }
+
     const runAccountScenarios =
       !referralRoute || referralRoute.run_account_friend_add_scenarios !== 0;
 

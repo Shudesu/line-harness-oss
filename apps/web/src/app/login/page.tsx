@@ -60,7 +60,7 @@ export default function LoginPage() {
           <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg mx-auto mb-3" style={{ backgroundColor: '#06C755' }}>
             H
           </div>
-          <h1 className="text-xl font-bold text-gray-900">L Harness</h1>
+          <h1 className="text-xl font-bold text-gray-900">hyhome Harness</h1>
           <p className="text-sm text-gray-500 mt-1">管理画面にログイン</p>
         </div>
 

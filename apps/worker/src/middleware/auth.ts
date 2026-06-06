@@ -43,6 +43,8 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.startsWith('/auth/') ||
     path === '/setup' ||
     path === '/api/integrations/stripe/webhook' ||
+    // L-TRACK 互換: EC 等の外部システムから成果受信。内部で HMAC 署名検証 + replay 抑止。
+    path.match(/^\/api\/external-events\/[^/]+\/receive$/) ||
     path.match(/^\/api\/webhooks\/incoming\/[^/]+\/receive$/) ||
     path.match(/^\/api\/forms\/[^/]+\/submit$/) ||
     path.match(/^\/api\/forms\/[^/]+\/opened$/) ||

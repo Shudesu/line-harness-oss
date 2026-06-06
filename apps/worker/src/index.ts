@@ -54,6 +54,11 @@ import { health } from './routes/health.js';
 import { automations } from './routes/automations.js';
 import { richMenus } from './routes/rich-menus.js';
 import { trackedLinks } from './routes/tracked-links.js';
+import { lpTag } from './routes/lp-tag.js';
+import { friendsExport } from './routes/friends-export.js';
+import { externalEvents } from './routes/external-events.js';
+import { reports } from './routes/reports.js';
+import { friendAttribution } from './routes/friend-attribution.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
@@ -126,6 +131,12 @@ app.use('*', authMiddleware);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
+// L-TRACK 互換: friends-export は /api/friends/:id より先に登録する。
+// 後だと :id="export.csv" として friends-detail にマッチして 404 になる。
+app.route('/api', friendsExport);
+app.route('/', externalEvents);
+app.route('/', reports);
+app.route('/', friendAttribution);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
@@ -153,6 +164,7 @@ app.route('/', health);
 app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
+app.route('/', lpTag);
 app.route('/', entryRoutes);
 app.route('/', forms);
 app.route('/', adPlatforms);
@@ -536,6 +548,11 @@ export const notFoundHandler = async (c: Parameters<typeof app.notFound>[0] exte
   return c.json({ success: false, error: 'Not found' }, 404);
 };
 
+// 【C3 監査対応 2026-06-06】
+// 旧 /admin/run-af-confirm を完全削除。本番では認証バイパスで第三者が叩ける状態だったため。
+// af-confirm cron は scheduled handler 経由で5分tick自動実行される。
+// 検証が必要な場合は dev 環境（CLOUDFLARE_ACCOUNT_ID 切替）で行うこと。
+
 app.notFound(notFoundHandler);
 
 // Scheduled handler for cron triggers — runs for all active LINE accounts
@@ -581,6 +598,19 @@ async function scheduled(
     await processInsightFetch(env.DB, lineClients, defaultLineClient);
   } catch (e) {
     console.error('Insight fetch error:', e);
+  }
+
+  // L-TRACK 互換: AF確定キュー（1h/3h/24h 遅延 CV）の処理
+  try {
+    const { processAfConfirmDelayed } = await import('./services/af-confirm-processor.js');
+    const r = await processAfConfirmDelayed(env.DB);
+    if (r.considered > 0) {
+      console.log(
+        `[af-confirm] considered=${r.considered} sent=${r.sent} cancelled=${r.cancelled} failed=${r.failed}`,
+      );
+    }
+  } catch (e) {
+    console.error('af-confirm-processor error:', e);
   }
 
   // Booking reminders — every 5-minute tick scans due reminders.

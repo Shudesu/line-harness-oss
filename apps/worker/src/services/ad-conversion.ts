@@ -8,10 +8,130 @@
 import {
   getActiveAdPlatforms,
   getRefTrackingWithClickIds,
+  getRefTrackingById,
   logAdConversion,
   type AdPlatformConfig,
   type RefTracking,
 } from '@line-crm/db';
+
+/**
+ * 冪等チェック: 同 platform × 同 friend × 同 event × 同 click_id で status='sent'
+ * が既にあれば true。
+ * 054_ad_conversion_idempotency.sql の partial UNIQUE と組み合わせて二重送信を防ぐ。
+ */
+async function alreadySent(
+  db: D1Database,
+  platformId: string,
+  friendId: string,
+  eventName: string,
+  clickId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 FROM ad_conversion_logs
+        WHERE ad_platform_id = ? AND friend_id = ? AND event_name = ?
+          AND click_id = ? AND status = 'sent'
+        LIMIT 1`,
+    )
+    .bind(platformId, friendId, eventName, clickId)
+    .first();
+  return !!row;
+}
+
+async function sendOneRef(
+  db: D1Database,
+  ref: RefTracking,
+  friendId: string,
+  eventName: string,
+  eventValue?: number,
+): Promise<void> {
+  const platforms = await getActiveAdPlatforms(db);
+  for (const platform of platforms) {
+    const config: AdPlatformConfig & { test_mode?: boolean | string } = JSON.parse(platform.config);
+    // test_mode: 実 API は叩かず、'sent' ログだけ残す（検証/疎通用）。
+    // config.test_mode が true / "true" / 1 / "1" のいずれかなら有効。
+    const testMode =
+      config.test_mode === true ||
+      config.test_mode === 'true' ||
+      String(config.test_mode) === '1';
+    // クリックID 未保持なら何もしない。
+    const clickIdAndType: Array<{ id: string; type: string; send: () => Promise<void> }> = [];
+    switch (platform.name) {
+      case 'meta':
+        if (ref.fbclid)
+          clickIdAndType.push({
+            id: ref.fbclid,
+            type: 'fbclid',
+            send: () => sendMetaConversion(config, ref, eventName, eventValue),
+          });
+        break;
+      case 'x':
+        if (ref.twclid)
+          clickIdAndType.push({
+            id: ref.twclid,
+            type: 'twclid',
+            send: () => sendXConversion(config, ref, eventName, eventValue),
+          });
+        break;
+      case 'google':
+        if (ref.gclid)
+          clickIdAndType.push({
+            id: ref.gclid,
+            type: 'gclid',
+            send: () => sendGoogleConversion(config, ref, eventName, eventValue),
+          });
+        break;
+      case 'tiktok':
+        if (ref.ttclid)
+          clickIdAndType.push({
+            id: ref.ttclid,
+            type: 'ttclid',
+            send: () => sendTikTokConversion(config, ref, eventName, eventValue),
+          });
+        break;
+    }
+    for (const entry of clickIdAndType) {
+      // Codex指摘: 冪等性。同 platform × friend × event × click_id で sent 済みは送らない。
+      if (await alreadySent(db, platform.id, friendId, eventName, entry.id)) {
+        continue;
+      }
+      // test_mode: 実 API を叩かず 'sent' でログだけ残す。
+      if (testMode) {
+        await logAdConversion(db, {
+          platformId: platform.id,
+          friendId,
+          eventName,
+          clickId: entry.id,
+          clickIdType: entry.type,
+          status: 'sent',
+          responseBody: JSON.stringify({ test_mode: true, value: eventValue ?? null }),
+        });
+        continue;
+      }
+      try {
+        await entry.send();
+        await logAdConversion(db, {
+          platformId: platform.id,
+          friendId,
+          eventName,
+          clickId: entry.id,
+          clickIdType: entry.type,
+          status: 'sent',
+        });
+      } catch (error) {
+        await logAdConversion(db, {
+          platformId: platform.id,
+          friendId,
+          eventName,
+          clickId: entry.id,
+          clickIdType: entry.type,
+          status: 'failed',
+          errorMessage: String(error),
+        });
+      }
+    }
+  }
+}
 
 export async function sendAdConversions(
   db: D1Database,
@@ -21,63 +141,90 @@ export async function sendAdConversions(
 ): Promise<void> {
   const ref = await getRefTrackingWithClickIds(db, friendId);
   if (!ref) return;
+  await sendOneRef(db, ref, friendId, eventName, eventValue);
+}
 
+/**
+ * L-TRACK 互換 外部イベント用: platform 名 + clickId を直接指定して送る。
+ * Codex指摘 High対応: 外部イベントが ad_conversion_logs に sent 表示するだけだった
+ * 問題を、ad-conversion.ts と同じ alreadySent / test_mode 経路で送るよう統一。
+ */
+export async function sendAdConversionsExplicit(
+  db: D1Database,
+  opts: {
+    platformName: 'meta' | 'google' | 'tiktok' | 'x';
+    friendId: string;
+    eventName: string;
+    clickIdType: string;
+    clickId: string;
+    eventValue?: number;
+  },
+): Promise<void> {
   const platforms = await getActiveAdPlatforms(db);
-
-  for (const platform of platforms) {
-    const config: AdPlatformConfig = JSON.parse(platform.config);
-
-    try {
-      switch (platform.name) {
-        case 'meta':
-          if (ref.fbclid) {
-            await sendMetaConversion(config, ref, eventName, eventValue);
-            await logAdConversion(db, {
-              platformId: platform.id, friendId, eventName,
-              clickId: ref.fbclid, clickIdType: 'fbclid', status: 'sent',
-            });
-          }
-          break;
-        case 'x':
-          if (ref.twclid) {
-            await sendXConversion(config, ref, eventName, eventValue);
-            await logAdConversion(db, {
-              platformId: platform.id, friendId, eventName,
-              clickId: ref.twclid, clickIdType: 'twclid', status: 'sent',
-            });
-          }
-          break;
-        case 'google':
-          if (ref.gclid) {
-            await sendGoogleConversion(config, ref, eventName, eventValue);
-            await logAdConversion(db, {
-              platformId: platform.id, friendId, eventName,
-              clickId: ref.gclid, clickIdType: 'gclid', status: 'sent',
-            });
-          }
-          break;
-        case 'tiktok':
-          if (ref.ttclid) {
-            await sendTikTokConversion(config, ref, eventName, eventValue);
-            await logAdConversion(db, {
-              platformId: platform.id, friendId, eventName,
-              clickId: ref.ttclid, clickIdType: 'ttclid', status: 'sent',
-            });
-          }
-          break;
-      }
-    } catch (error) {
-      await logAdConversion(db, {
-        platformId: platform.id,
-        friendId,
-        eventName,
-        clickId: ref.fbclid || ref.twclid || ref.gclid || ref.ttclid || '',
-        clickIdType: platform.name,
-        status: 'failed',
-        errorMessage: String(error),
-      });
-    }
+  const platform = platforms.find((p) => p.name === opts.platformName);
+  if (!platform) return;
+  if (await alreadySent(db, platform.id, opts.friendId, opts.eventName, opts.clickId)) {
+    return;
   }
+  const config: AdPlatformConfig & { test_mode?: boolean | string } = JSON.parse(platform.config);
+  const testMode =
+    config.test_mode === true ||
+    config.test_mode === 'true' ||
+    String(config.test_mode) === '1';
+  if (testMode) {
+    await logAdConversion(db, {
+      platformId: platform.id,
+      friendId: opts.friendId,
+      eventName: opts.eventName,
+      clickId: opts.clickId,
+      clickIdType: opts.clickIdType,
+      status: 'sent',
+      responseBody: JSON.stringify({ test_mode: true, value: opts.eventValue ?? null }),
+    });
+    return;
+  }
+  // 実 API 送信は platform に応じた sender を呼ぶ必要があるが、
+  // 現状 ref_tracking ベースでしか実装していないため、外部イベント用は
+  // ref_tracking を組み立てて sendOneRef に流す。
+  const refLike: RefTracking = {
+    id: 'external-' + opts.clickId,
+    ref_code: 'external',
+    friend_id: opts.friendId,
+    entry_route_id: null,
+    source_url: null,
+    fbclid: opts.clickIdType === 'fbclid' ? opts.clickId : null,
+    gclid: opts.clickIdType === 'gclid' ? opts.clickId : null,
+    twclid: opts.clickIdType === 'twclid' ? opts.clickId : null,
+    ttclid: opts.clickIdType === 'ttclid' ? opts.clickId : null,
+    utm_source: null,
+    utm_medium: null,
+    utm_campaign: null,
+    user_agent: null,
+    ip_address: null,
+    ltp: null,
+    country: null,
+    created_at: '',
+  };
+  await sendOneRef(db, refLike, opts.friendId, opts.eventName, opts.eventValue);
+}
+
+/**
+ * 遅延 CAPI 用: ref_tracking_id を直接指定して送る。
+ * 友だちの「最新」を拾うのではなく、enqueue 時点の click ID を再現する。
+ *
+ * Codex指摘の High対応: 1h/3h/24h の間に同 friend が別広告を踏むと、
+ * sendAdConversions(friendId) では最新クリックに切り替わってしまうため、
+ * af_confirm_queue.ref_tracking_id を介してこちらを呼ぶ。
+ */
+export async function sendAdConversionsByRefTrackingId(
+  db: D1Database,
+  refTrackingId: string,
+  eventName: string,
+  eventValue?: number,
+): Promise<void> {
+  const ref = await getRefTrackingById(db, refTrackingId);
+  if (!ref || !ref.friend_id) return;
+  await sendOneRef(db, ref, ref.friend_id, eventName, eventValue);
 }
 
 async function sendMetaConversion(

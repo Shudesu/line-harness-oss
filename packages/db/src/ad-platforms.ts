@@ -142,9 +142,12 @@ export async function logAdConversion(
   const id = crypto.randomUUID();
   const now = jstNow();
 
+  // Codex指摘 High 冪等性: 054 の partial UNIQUE が status='sent' で効くため、
+  // 既送信の (platform, friend, event, click_id) は INSERT OR IGNORE で握り潰す。
+  // この helper の直接利用箇所はあらかじめ alreadySent() を見ているが、二重防衛。
   await db
     .prepare(
-      `INSERT INTO ad_conversion_logs
+      `INSERT OR IGNORE INTO ad_conversion_logs
        (id, ad_platform_id, friend_id, event_name, click_id, click_id_type, status, request_body, response_body, error_message, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
@@ -175,5 +178,60 @@ export async function getAdConversionLogs(
     )
     .bind(platformId, limit)
     .all<AdConversionLog>();
+  return result.results;
+}
+
+/**
+ * L-TRACK 互換: 全プラットフォーム横断のポストバック履歴。
+ * UI のポストバック履歴ページで使う。フィルタ可能（status / platform / 期間）。
+ */
+export async function getAdConversionLogsAll(
+  db: D1Database,
+  opts: {
+    limit?: number;
+    status?: 'sent' | 'failed';
+    platformName?: string;
+    friendId?: string;
+    since?: string;
+    until?: string;
+  } = {},
+): Promise<Array<AdConversionLog & { platform_name: string | null; friend_display_name: string | null }>> {
+  const limit = Math.min(1000, opts.limit ?? 200);
+  const wheres: string[] = [];
+  const binds: unknown[] = [];
+  if (opts.status) {
+    wheres.push('l.status = ?');
+    binds.push(opts.status);
+  }
+  if (opts.platformName) {
+    wheres.push('p.name = ?');
+    binds.push(opts.platformName);
+  }
+  if (opts.friendId) {
+    wheres.push('l.friend_id = ?');
+    binds.push(opts.friendId);
+  }
+  if (opts.since) {
+    wheres.push('l.created_at >= ?');
+    binds.push(opts.since);
+  }
+  if (opts.until) {
+    wheres.push('l.created_at <= ?');
+    binds.push(opts.until);
+  }
+  const where = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+  binds.push(limit);
+  const result = await db
+    .prepare(
+      `SELECT l.*, p.name AS platform_name, f.display_name AS friend_display_name
+         FROM ad_conversion_logs l
+         LEFT JOIN ad_platforms p ON p.id = l.ad_platform_id
+         LEFT JOIN friends f ON f.id = l.friend_id
+        ${where}
+        ORDER BY l.created_at DESC
+        LIMIT ?`,
+    )
+    .bind(...binds)
+    .all<AdConversionLog & { platform_name: string | null; friend_display_name: string | null }>();
   return result.results;
 }

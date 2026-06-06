@@ -29,6 +29,8 @@ export interface RefTracking {
   utm_campaign: string | null;
   user_agent: string | null;
   ip_address: string | null;
+  ltp: string | null;
+  country: string | null;
   created_at: string;
 }
 
@@ -233,6 +235,8 @@ export async function recordRefTracking(
     utmCampaign?: string | null;
     userAgent?: string | null;
     ipAddress?: string | null;
+    ltp?: string | null;
+    country?: string | null;
   },
 ): Promise<RefTracking> {
   const id = crypto.randomUUID();
@@ -243,8 +247,8 @@ export async function recordRefTracking(
       `INSERT INTO ref_tracking
        (id, ref_code, friend_id, entry_route_id, source_url,
         fbclid, gclid, twclid, ttclid, utm_source, utm_medium, utm_campaign,
-        user_agent, ip_address, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        user_agent, ip_address, ltp, country, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -261,6 +265,8 @@ export async function recordRefTracking(
       opts.utmCampaign ?? null,
       opts.userAgent ?? null,
       opts.ipAddress ?? null,
+      opts.ltp ?? null,
+      opts.country ?? null,
       now,
     )
     .run();
@@ -269,6 +275,20 @@ export async function recordRefTracking(
     .prepare(`SELECT * FROM ref_tracking WHERE id = ?`)
     .bind(id)
     .first<RefTracking>())!;
+}
+
+/**
+ * 特定の ref_tracking 行を ID 直引きで取得。
+ * 遅延 CAPI 送信時、"その時のクリックID" を確実に使うために用いる。
+ */
+export async function getRefTrackingById(
+  db: D1Database,
+  id: string,
+): Promise<RefTracking | null> {
+  return db
+    .prepare(`SELECT * FROM ref_tracking WHERE id = ?`)
+    .bind(id)
+    .first<RefTracking>();
 }
 
 export async function getRefTrackingWithClickIds(
