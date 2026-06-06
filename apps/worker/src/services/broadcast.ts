@@ -147,6 +147,8 @@ export async function processScheduledBroadcasts(
   db: D1Database,
   lineClient: LineClient,
   workerUrl?: string,
+  /** Phase 1-G: 暗号化 token を復号するためのキー (LINE_TOKEN_ENC_KEY) を含む env */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   const allBroadcasts = await getBroadcasts(db);
 
@@ -174,8 +176,11 @@ export async function processScheduledBroadcasts(
         const { getLineAccountById } = await import('@line-crm/db');
         const account = await getLineAccountById(db, accountId);
         if (account) {
+          // Phase 1-G: 透過復号
+          const { resolveAccessToken } = await import('../lib/account-token.js');
+          const token = env ? await resolveAccessToken(env, account.channel_access_token) : account.channel_access_token;
           const { LineClient: LC } = await import('@line-crm/line-sdk');
-          deliveryClient = new LC(account.channel_access_token);
+          deliveryClient = new LC(token);
         }
       }
 
@@ -201,6 +206,8 @@ export async function processQueuedBroadcasts(
   db: D1Database,
   lineClient: LineClient,
   workerUrl?: string,
+  /** Phase 1-G: 暗号化 token を復号するためのキー (LINE_TOKEN_ENC_KEY) を含む env */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   const queued = await getQueuedBroadcasts(db);
   for (const broadcast of queued) {
@@ -210,7 +217,12 @@ export async function processQueuedBroadcasts(
     if (accountId) {
       const { getLineAccountById } = await import('@line-crm/db');
       const account = await getLineAccountById(db, accountId);
-      if (account) client = new (await import('@line-crm/line-sdk')).LineClient(account.channel_access_token);
+      if (account) {
+        // Phase 1-G: 透過復号
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        const token = env ? await resolveAccessToken(env, account.channel_access_token) : account.channel_access_token;
+        client = new (await import('@line-crm/line-sdk')).LineClient(token);
+      }
     }
 
     try {

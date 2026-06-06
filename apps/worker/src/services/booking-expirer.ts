@@ -23,6 +23,8 @@ function startsAtJst(utcIso: string): string {
 export interface RunExpirerParams {
   now: Date;
   sender: BookingNotificationSender;
+  /** Phase 1-G: 暗号化 token 復号用 */
+  env?: { LINE_TOKEN_ENC_KEY?: string };
 }
 
 export async function runExpirer(
@@ -65,9 +67,14 @@ export async function runExpirer(
       )
       .bind(row.id)
       .run();
+    // Phase 1-G: 暗号化 token を復号
+    const { resolveAccessToken } = await import('../lib/account-token.js');
+    const token = params.env
+      ? await resolveAccessToken(params.env, row.channel_access_token)
+      : row.channel_access_token;
     try {
       await params.sender({
-        channelAccessToken: row.channel_access_token,
+        channelAccessToken: token,
         toLineUserId: row.line_user_id,
         kind: 'expired',
         ctx: {

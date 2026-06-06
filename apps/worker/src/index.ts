@@ -591,11 +591,15 @@ async function scheduled(
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);
 
+  // Phase 1-G: 各 account の channel_access_token を復号 (キー未設定/平文行は no-op)
+  const { resolveAccessToken } = await import('./lib/account-token.js');
+
   // Build LineClient map for insight fetching (keyed by account id)
   const lineClients = new Map<string, LineClient>();
   for (const account of dbAccounts) {
     if (account.is_active) {
-      lineClients.set(account.id, new LineClient(account.channel_access_token));
+      const token = await resolveAccessToken(env, account.channel_access_token);
+      lineClients.set(account.id, new LineClient(token));
     }
   }
   const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
@@ -606,7 +610,7 @@ async function scheduled(
   const jobs = [];
   jobs.push(
     processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL),
-    processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
+    processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env),
     processReminderDeliveries(env.DB, defaultLineClient),
   );
   // キュー処理は1回だけ実行（内部でアカウント別lineClientを解決する）
@@ -614,7 +618,7 @@ async function scheduled(
   const { recoverStalledBroadcasts, recoverStuckDeliveries } = await import('@line-crm/db');
   jobs.push(recoverStuckDeliveries(env.DB));
   jobs.push(recoverStalledBroadcasts(env.DB));
-  jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL));
+  jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env));
   jobs.push(checkAccountHealth(env.DB));
   jobs.push(refreshLineAccessTokens(env.DB));
 
@@ -646,6 +650,7 @@ async function scheduled(
       now: new Date(),
       sender: sendBookingNotification,
       reminderHoursBefore: DEFAULT_ACCOUNT_SETTINGS.reminder_hours_before,
+      env, // Phase 1-G: 暗号化 token を復号する用
     });
     if (result.sent + result.failed > 0) {
       console.log(`[booking-reminders] sent=${result.sent} failed=${result.failed}`);
@@ -660,6 +665,7 @@ async function scheduled(
       const result = await runExpirer(env.DB, {
         now: new Date(),
         sender: sendBookingNotification,
+        env, // Phase 1-G
       });
       console.log(
         `[booking-expirer] expired=${result.expired} idempotency_purged=${result.idempotencyPurged}`,

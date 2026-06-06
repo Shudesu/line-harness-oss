@@ -21,6 +21,8 @@ export interface ProcessRemindersParams {
   now: Date;
   sender: BookingNotificationSender;
   reminderHoursBefore: number;
+  /** Phase 1-G: 暗号化 token 復号用 (省略可、未設定ならスキップ) */
+  env?: { LINE_TOKEN_ENC_KEY?: string };
 }
 
 const JST_OFFSET_MS = 9 * 3600_000;
@@ -61,11 +63,16 @@ export async function processDueReminders(
 
   let sent = 0;
   let failed = 0;
+  // Phase 1-G: 暗号化 token を復号
+  const { resolveAccessToken } = await import('../lib/account-token.js');
   for (const row of due.results) {
     const kind: NotificationKind = row.kind;
+    const token = params.env
+      ? await resolveAccessToken(params.env, row.channel_access_token)
+      : row.channel_access_token;
     try {
       await params.sender({
-        channelAccessToken: row.channel_access_token,
+        channelAccessToken: token,
         toLineUserId: row.line_user_id,
         kind,
         ctx: {
