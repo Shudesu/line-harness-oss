@@ -225,6 +225,28 @@ function matchConditions(
     }
   }
 
+  if (conditions.postbackData !== undefined) {
+    const postbackData = String(payload.eventData?.postbackData ?? payload.eventData?.rawData ?? '');
+    if (postbackData !== String(conditions.postbackData)) return false;
+  }
+
+  if (conditions.postbackDataContains !== undefined) {
+    const postbackData = String(payload.eventData?.postbackData ?? payload.eventData?.rawData ?? '');
+    if (!postbackData.includes(String(conditions.postbackDataContains))) return false;
+  }
+
+  if (conditions.eventDataEquals && typeof conditions.eventDataEquals === 'object') {
+    for (const [key, expected] of Object.entries(conditions.eventDataEquals as Record<string, unknown>)) {
+      if (String(payload.eventData?.[key] ?? '') !== String(expected)) return false;
+    }
+  }
+
+  if (conditions.eventDataContains && typeof conditions.eventDataContains === 'object') {
+    for (const [key, expected] of Object.entries(conditions.eventDataContains as Record<string, unknown>)) {
+      if (!String(payload.eventData?.[key] ?? '').includes(String(expected))) return false;
+    }
+  }
+
   return true;
 }
 
@@ -270,8 +292,14 @@ async function executeAction(
         msg = { type: 'text', text: action.params.content };
       }
       let deliveryType: 'reply' | 'push' = 'push';
+      const delivery = action.params.delivery || 'reply_preferred';
+      if (delivery === 'reply_only' && !payload.replyToken) {
+        throw new Error('replyToken is required for delivery=reply_only');
+      }
+      const shouldUseReply = delivery !== 'push_only' && Boolean(payload.replyToken);
+      const allowPushFallback = delivery === 'reply_preferred' || delivery === 'push_only';
       // Prefer replyMessage (free) when replyToken is available
-      if (payload.replyToken) {
+      if (shouldUseReply && payload.replyToken) {
         try {
           await lineClient.replyMessage(payload.replyToken, [msg]);
           deliveryType = 'reply';
@@ -282,7 +310,7 @@ async function executeAction(
           // Fall back to push only for those; re-throw other errors (5xx, validation).
           const errMsg = err instanceof Error ? err.message : String(err);
           const isTokenError = errMsg.includes('400') || errMsg.includes('Invalid reply token');
-          if (isTokenError) {
+          if (isTokenError && allowPushFallback) {
             await lineClient.pushMessage(friend.line_user_id, [msg]);
             deliveryType = 'push';
           } else {
@@ -290,6 +318,9 @@ async function executeAction(
           }
         }
       } else {
+        if (!allowPushFallback) {
+          throw new Error(`delivery=${delivery} cannot send without a valid replyToken`);
+        }
         await lineClient.pushMessage(friend.line_user_id, [msg]);
         deliveryType = 'push';
       }

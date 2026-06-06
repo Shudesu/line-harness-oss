@@ -337,6 +337,24 @@ async function handleEvent(
       console.warn('record rich_menu.tap event failed:', err);
     });
 
+    await fireEvent(
+      db,
+      'rich_menu.tap',
+      {
+        friendId: friend.id,
+        replyToken: event.replyToken,
+        eventData: {
+          postbackData,
+          rawData: postbackData,
+          ...postbackParams,
+        },
+      },
+      accessToken,
+      lineAccountId,
+    ).catch((err) => {
+      console.warn('rich_menu.tap automation failed:', err);
+    });
+
     // Match postback data against auto_replies (exact match on keyword)
     const autoReplyQuery = lineAccountId
       ? `SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?) ORDER BY created_at ASC`

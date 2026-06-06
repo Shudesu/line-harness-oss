@@ -59,12 +59,13 @@ CREATE TABLE automation_logs (
 CREATE INDEX idx_automation_logs_automation ON automation_logs (automation_id);
 ```
 
-## イベントタイプ（7種）
+## イベントタイプ
 
 | event_type | 発生タイミング | payload に含まれるデータ |
 |---|---|---|
 | `friend_add` | 友だち追加 | `friendId`, `eventData.displayName` |
 | `message_received` | テキストメッセージ受信 | `friendId`, `eventData.text`, `eventData.matched` |
+| `rich_menu.tap` | リッチメニューpostbackタップ | `friendId`, `eventData.postbackData`, `replyToken` |
 | `tag_change` | タグ付与/削除 | `friendId`, `eventData.tagId` |
 | `score_threshold` | スコア閾値到達 | `friendId`, `eventData.currentScore` |
 | `cv_fire` | コンバージョン発生 | `friendId`, `eventData` |
@@ -78,7 +79,7 @@ CREATE INDEX idx_automation_logs_automation ON automation_logs (automation_id);
 | `add_tag` | `{ tagId: string }` | タグを付与 |
 | `remove_tag` | `{ tagId: string }` | タグを削除 |
 | `start_scenario` | `{ scenarioId: string }` | シナリオに登録 |
-| `send_message` | `{ content: string, messageType?: string, altText?: string }` | LINE メッセージ送信。`messageType` は `text`（デフォルト）または `flex` |
+| `send_message` | `{ content: string, messageType?: string, altText?: string, delivery?: string }` | LINE メッセージ送信。`delivery` は `reply_preferred` / `reply_only` / `push_only` |
 | `send_webhook` | `{ url: string }` | 外部URLにPOSTリクエスト |
 | `switch_rich_menu` | `{ richMenuId: string }` | リッチメニューを切替 |
 | `remove_rich_menu` | `{}` | リッチメニューのアサインを解除 |
@@ -111,6 +112,75 @@ CREATE INDEX idx_automation_logs_automation ON automation_logs (automation_id);
 ```
 
 `payload.eventData.tagId` が指定値と一致する場合にマッチ。`tag_change` イベントで使用。
+
+### postback 条件
+
+リッチメニューやFlexボタンのpostback dataに対してマッチさせる。
+
+```json
+{ "postbackData": "action=reserve" }
+```
+
+完全一致。
+
+```json
+{ "postbackDataContains": "action=reserve" }
+```
+
+部分一致。リッチメニューのタップ領域ごとに `action=reserve` / `action=price` のように分ける運用に向く。
+
+### eventData 条件
+
+任意の `eventData` keyを比較できる。
+
+```json
+{
+  "eventDataEquals": {
+    "action": "reserve"
+  }
+}
+```
+
+```json
+{
+  "eventDataContains": {
+    "rawData": "action=reserve"
+  }
+}
+```
+
+### Reply APIを明示するアクション
+
+`delivery: "reply_only"` を指定すると、`replyToken` がある場合だけ返信する。`replyToken` がない場合はPush APIへフォールバックしない。
+
+```json
+[
+  {
+    "type": "send_message",
+    "params": {
+      "delivery": "reply_only",
+      "messageType": "text",
+      "content": "予約はこちらからお願いします。"
+    }
+  }
+]
+```
+
+Flexメッセージを返す場合:
+
+```json
+[
+  {
+    "type": "send_message",
+    "params": {
+      "delivery": "reply_only",
+      "messageType": "flex",
+      "altText": "予約案内",
+      "content": "{\"type\":\"bubble\",\"body\":{\"type\":\"box\",\"layout\":\"vertical\",\"contents\":[]}}"
+    }
+  }
+]
+```
 
 ### 条件の組み合わせ
 

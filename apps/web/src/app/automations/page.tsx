@@ -6,7 +6,7 @@ import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 
-type AutomationEventType = "friend_add" | "tag_change" | "score_threshold" | "cv_fire" | "message_received" | "calendar_booked"
+type AutomationEventType = "friend_add" | "tag_change" | "score_threshold" | "cv_fire" | "message_received" | "calendar_booked" | "rich_menu.tap"
 
 interface AutomationAction {
   type: "add_tag" | "remove_tag" | "start_scenario" | "send_message" | "send_webhook" | "switch_rich_menu"
@@ -40,6 +40,7 @@ const eventTypeOptions: { value: AutomationEventType; label: string }[] = [
   { value: 'score_threshold', label: 'スコア閾値' },
   { value: 'cv_fire', label: 'CV発火' },
   { value: 'message_received', label: 'メッセージ受信' },
+  { value: 'rich_menu.tap', label: 'リッチメニュータップ' },
   { value: 'calendar_booked', label: 'カレンダー予約' },
 ]
 
@@ -49,6 +50,7 @@ const eventTypeLabelMap: Record<AutomationEventType, string> = {
   score_threshold: 'スコア閾値',
   cv_fire: 'CV発火',
   message_received: 'メッセージ受信',
+  'rich_menu.tap': 'リッチメニュータップ',
   calendar_booked: 'カレンダー予約',
 }
 
@@ -58,6 +60,7 @@ const eventTypeBadgeColor: Record<AutomationEventType, string> = {
   score_threshold: 'bg-yellow-100 text-yellow-700',
   cv_fire: 'bg-red-100 text-red-700',
   message_received: 'bg-purple-100 text-purple-700',
+  'rich_menu.tap': 'bg-emerald-100 text-emerald-700',
   calendar_booked: 'bg-indigo-100 text-indigo-700',
 }
 
@@ -169,6 +172,7 @@ export default function AutomationsPage() {
         type: 'send_message',
         params: {
           messageType,
+          delivery: 'reply_preferred',
           ...(messageType === 'flex' ? { altText: template.name } : {}),
           content,
         },
@@ -402,7 +406,19 @@ export default function AutomationsPage() {
               <select
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
                 value={form.eventType}
-                onChange={(e) => setForm({ ...form, eventType: e.target.value as AutomationEventType })}
+                onChange={(e) => {
+                  const eventType = e.target.value as AutomationEventType
+                  setForm({
+                    ...form,
+                    eventType,
+                    conditionsJson: eventType === 'rich_menu.tap'
+                      ? '{\n  "postbackDataContains": "action=reserve"\n}'
+                      : form.conditionsJson,
+                    actionsJson: eventType === 'rich_menu.tap'
+                      ? '[\n  {\n    "type": "send_message",\n    "params": {\n      "delivery": "reply_only",\n      "messageType": "text",\n      "content": "予約はこちらからお願いします。"\n    }\n  }\n]'
+                      : form.actionsJson,
+                  })
+                }}
               >
                 {eventTypeOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -425,7 +441,7 @@ export default function AutomationsPage() {
                 ))}
               </select>
               <p className="mt-1 text-xs text-gray-500">
-                選択すると、下のアクションJSONに送信用の設定を自動入力します。テンプレート更新を自動追従する形式ではなく、現在のテンプレート内容をコピーします。
+                選択すると、下のアクションJSONに送信用の設定を自動入力します。リッチメニュータップで通数消費を避けたい場合は `delivery: "reply_only"` にしてください。
               </p>
             </div>
             <div>
@@ -443,7 +459,7 @@ export default function AutomationsPage() {
               <textarea
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
                 rows={3}
-                placeholder='{"tagId": "...", "operator": "equals"}'
+                placeholder='{"postbackDataContains": "action=reserve"}'
                 value={form.conditionsJson}
                 onChange={(e) => setForm({ ...form, conditionsJson: e.target.value })}
               />

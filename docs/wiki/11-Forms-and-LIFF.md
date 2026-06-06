@@ -109,10 +109,14 @@ LIFF (LINE Front-end Framework) は、LINEアプリ内でWebアプリを開く�
 LIFFアプリ内のフォーム表示URLは以下の形式:
 
 ```
-https://liff.line.me/{LIFF_ID}?formId={FORM_UUID}
+https://liff.line.me/{LIFF_ID}?page=form&id={FORM_UUID}
 ```
 
 LIFF SDKがユーザーのプロフィール（`lineUserId`）を取得し、フォーム送信時に自動的に付与する。
+
+管理画面の `/form-submissions` では、LIFF Endpoint URL を入力するとこのクエリ形式で公開フォームURLを生成する。すでに `?liffId=...` などのクエリを含むURLでも、`&page=form&id=...` として連結する。
+
+フォーム内に画像を入れる場合は、管理画面から画像をアップロードする。画像は Worker の `/api/images` 経由で R2 に保存され、フォーム定義の `fields` に `type: "image"` の表示専用項目として保存される。画像項目は回答データ・必須チェック・集計列には含めない。
 
 ## フォーム送信フロー
 

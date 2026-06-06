@@ -26,11 +26,13 @@ const FORM_VERSION = '2.0.0'; // cache buster
 interface FormField {
   name: string;
   label: string;
-  type: 'text' | 'email' | 'tel' | 'number' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'date';
+  type: 'text' | 'email' | 'tel' | 'phone' | 'number' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'date' | 'image';
   required?: boolean;
   options?: string[];
   placeholder?: string;
   columns?: number;
+  imageUrl?: string;
+  imageAlt?: string;
 }
 
 interface FormDef {
@@ -106,6 +108,16 @@ function renderField(field: FormField): string {
   const required = field.required ? ' required' : '';
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
   const requiredMark = field.required ? '<span class="required-mark">*</span>' : '';
+
+  if (field.type === 'image') {
+    if (!field.imageUrl) return '';
+    return `
+      <div class="form-image-block">
+        <img src="${escapeHtml(field.imageUrl)}" alt="${escapeHtml(field.imageAlt || field.label || '')}" loading="lazy" />
+        ${field.label ? `<p>${escapeHtml(field.label)}</p>` : ''}
+      </div>
+    `;
+  }
 
   // If this is an x_username field, render a fuzzy-search autocomplete input
   if (field.name === 'x_username') {
@@ -187,8 +199,9 @@ function renderField(field: FormField): string {
     }
 
     default:
+      const inputType = field.type === 'phone' ? 'tel' : field.type;
       inputHtml = `<input
-        type="${escapeHtml(field.type)}"
+        type="${escapeHtml(inputType)}"
         name="${escapeHtml(field.name)}"
         id="field-${escapeHtml(field.name)}"
         class="form-input"
@@ -217,6 +230,9 @@ function injectStyles(): void {
     .form-header { text-align: center; margin-bottom: 24px; }
     .form-header h1 { font-size: 20px; color: #333; margin-bottom: 8px; }
     .form-description { font-size: 14px; color: #999; }
+    .form-image-block { margin: 16px 0 20px; overflow: hidden; border-radius: 14px; background: #f6f7f8; border: 1px solid #eee; }
+    .form-image-block img { display: block; width: 100%; height: auto; object-fit: cover; }
+    .form-image-block p { margin: 0; padding: 10px 12px; font-size: 13px; color: #666; background: #fff; }
     .form-profile { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; }
     .form-profile img { width: 36px; height: 36px; border-radius: 50%; }
     .form-profile span { font-size: 14px; font-weight: 600; }
@@ -362,8 +378,12 @@ function injectStyles(): void {
     .form-success .check { width: 64px; height: 64px; border-radius: 50%; background: #06C755; color: #fff; font-size: 32px; line-height: 64px; margin: 0 auto 16px; }
     .form-success h2 { font-size: 20px; color: #06C755; margin-bottom: 12px; }
     .form-success p { font-size: 14px; color: #666; line-height: 1.6; }
-  `;
+`;
   document.head.appendChild(style);
+}
+
+function isInputField(field: FormField): boolean {
+  return field.type !== 'image';
 }
 
 // ========== Main Render ==========
@@ -424,6 +444,7 @@ function render(): void {
 
       // Validate survey fields
       for (const field of surveyFields) {
+        if (!isInputField(field)) continue;
         if (!field.required) continue;
         if (field.type === 'checkbox') {
           const checked = document.querySelectorAll<HTMLInputElement>(`input[name="${field.name}"]:checked`);
@@ -453,6 +474,7 @@ function render(): void {
 
       const surveyData: Record<string, unknown> = {};
       for (const field of surveyFields) {
+        if (!isInputField(field)) continue;
         if (field.type === 'checkbox') {
           surveyData[field.name] = Array.from(document.querySelectorAll<HTMLInputElement>(`input[name="${field.name}"]:checked`)).map((el) => el.value);
         } else if (field.type === 'radio') {
@@ -662,6 +684,7 @@ function collectFormData(): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (const field of formDef.fields) {
+    if (!isInputField(field)) continue;
     if (field.type === 'checkbox') {
       const checked = Array.from(
         document.querySelectorAll<HTMLInputElement>(
@@ -690,6 +713,7 @@ function validateForm(): string | null {
   if (!formDef) return null;
 
   for (const field of formDef.fields) {
+    if (!isInputField(field)) continue;
     if (!field.required) continue;
 
     if (field.type === 'checkbox') {

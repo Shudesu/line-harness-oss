@@ -710,6 +710,7 @@ export type AutomationEventType =
   | "score_threshold"
   | "cv_fire"
   | "message_received"
+  | "rich_menu.tap"
   | "calendar_booked";
 
 export interface AutomationAction {

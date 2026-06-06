@@ -291,6 +291,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
     }>;
 
     for (const field of fields) {
+      if (field.type === 'image') continue;
       if (field.required) {
         const val = submissionData[field.name];
         if (val === undefined || val === null || val === '') {
