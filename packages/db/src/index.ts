@@ -24,6 +24,8 @@ export * from './tracked-links';
 export * from './af-confirm-queue';
 export * from './external-events';
 export * from './reports';
+export * from './crm-forwards';
+export * from './device-tokens';
 export * from './forms';
 export * from './ad-platforms';
 export * from './staff';

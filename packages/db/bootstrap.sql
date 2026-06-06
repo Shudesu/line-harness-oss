@@ -260,6 +260,47 @@ CREATE TABLE conversion_points (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE crm_forward_logs (
+  id                TEXT PRIMARY KEY,
+  crm_forward_id    TEXT NOT NULL REFERENCES crm_forwards(id) ON DELETE CASCADE,
+  status            TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'timeout')),
+  http_status       INTEGER,
+  duration_ms       INTEGER,
+  error_message     TEXT,
+  -- payload は保存しない (PII 漏洩防止、必要なら別途デバッグログで)
+  created_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
+CREATE TABLE crm_forwards (
+  id                TEXT PRIMARY KEY,
+  line_account_id   TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  name              TEXT NOT NULL,
+  webhook_url       TEXT NOT NULL,
+  is_enabled        INTEGER NOT NULL DEFAULT 1,
+  -- LINE 公式 webhook の channel_secret を使って X-Line-Signature を付与するか
+  -- (エルメ等の forward 先が LINE 公式 webhook 互換のとき必要)
+  attach_line_signature INTEGER NOT NULL DEFAULT 1,
+  -- 失敗時のリトライ上限
+  max_retries       INTEGER NOT NULL DEFAULT 0,
+  -- メモ
+  memo              TEXT,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
+CREATE TABLE device_tokens (
+  id            TEXT PRIMARY KEY,
+  staff_id      TEXT NOT NULL REFERENCES staff_members(id) ON DELETE CASCADE,
+  token         TEXT NOT NULL UNIQUE,
+  platform      TEXT NOT NULL CHECK (platform IN ('ios', 'android')),
+  bundle_id     TEXT NOT NULL,
+  environment   TEXT NOT NULL CHECK (environment IN ('production', 'sandbox')),
+  device_name   TEXT,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  last_seen_at  TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
 CREATE TABLE entry_routes (
   id          TEXT PRIMARY KEY,
   ref_code    TEXT UNIQUE NOT NULL,
@@ -904,6 +945,18 @@ CREATE INDEX idx_conversion_events_affiliate ON conversion_events (affiliate_cod
 CREATE INDEX idx_conversion_events_friend ON conversion_events (friend_id);
 
 CREATE INDEX idx_conversion_events_point ON conversion_events (conversion_point_id);
+
+CREATE INDEX idx_crm_forward_logs_forward
+  ON crm_forward_logs (crm_forward_id, created_at DESC);
+
+CREATE INDEX idx_crm_forwards_account
+  ON crm_forwards (line_account_id, is_enabled);
+
+CREATE INDEX idx_device_tokens_platform
+  ON device_tokens (platform, environment, is_active);
+
+CREATE INDEX idx_device_tokens_staff
+  ON device_tokens (staff_id, is_active);
 
 CREATE INDEX idx_entry_routes_pool ON entry_routes (pool_id);
 

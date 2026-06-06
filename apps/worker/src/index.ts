@@ -60,11 +60,13 @@ import { friendsExport } from './routes/friends-export.js';
 import { externalEvents } from './routes/external-events.js';
 import { reports } from './routes/reports.js';
 import { friendAttribution } from './routes/friend-attribution.js';
+import { crmForwards } from './routes/crm-forwards.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
 import { staff } from './routes/staff.js';
 import { capabilities } from './routes/capabilities.js';
+import { deviceTokens } from './routes/device-tokens.js';
 import { images } from './routes/images.js';
 import { accountSettings } from './routes/account-settings.js';
 import { setup } from './routes/setup.js';
@@ -113,6 +115,11 @@ export type Env = {
     WORKER_PUBLIC_URL?: string;
     ADMIN_PUBLIC_URL?: string;
     LIFF_PUBLIC_URL?: string;
+    // hyhome Harness iOS App 用 APNs 設定 (wrangler secret put で設定)
+    APNS_TEAM_ID?: string;
+    APNS_KEY_ID?: string;
+    APNS_AUTH_KEY?: string;  // .p8 ファイルの中身
+    APNS_BUNDLE_ID?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' | 'viewer' };
@@ -142,6 +149,7 @@ app.route('/api', friendsExport);
 app.route('/', externalEvents);
 app.route('/', reports);
 app.route('/', friendAttribution);
+app.route('/', crmForwards);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
@@ -175,6 +183,7 @@ app.route('/', forms);
 app.route('/', adPlatforms);
 app.route('/', staff);
 app.route('/', capabilities);
+app.route('/', deviceTokens);
 app.route('/', images);
 app.route('/', setup);
 app.route('/', autoReplies);

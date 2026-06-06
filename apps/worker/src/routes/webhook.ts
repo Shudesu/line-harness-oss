@@ -132,6 +132,28 @@ webhook.post('/webhook', async (c) => {
 
   c.executionCtx.waitUntil(processingPromise);
 
+  // 監査 H1 対応: CRM forward (エルメ等への並行転送)
+  // matchedAccountId が確定したアカウント宛の forward 設定があれば、同じ payload を転送。
+  // LINE 応答は既に返した後の非同期実行なので、転送に失敗しても LINE 側に影響なし。
+  if (matchedAccountId) {
+    const channelSecretForSig = matchedAccountId
+      ? (await db
+          .prepare(`SELECT channel_secret FROM line_accounts WHERE id = ?`)
+          .bind(matchedAccountId)
+          .first<{ channel_secret: string | null }>())?.channel_secret ?? null
+      : null;
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          const { forwardWebhookToCrms } = await import('../services/crm-forwarder.js');
+          await forwardWebhookToCrms(db, matchedAccountId, rawBody, channelSecretForSig);
+        } catch (err) {
+          console.error('[webhook] crm-forwarder error:', err);
+        }
+      })(),
+    );
+  }
+
   return c.json({ status: 'ok' }, 200);
 });
 

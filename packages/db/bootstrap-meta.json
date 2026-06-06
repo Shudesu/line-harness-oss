@@ -64,7 +64,9 @@
     "056_external_events.sql",
     "057_external_events_hmac.sql",
     "058_af_confirm_processing_status.sql",
-    "059_staff_members_viewer.sql"
+    "059_staff_members_viewer.sql",
+    "060_crm_forward.sql",
+    "061_device_tokens.sql"
   ],
-  "migrationCount": 65
+  "migrationCount": 67
 }
