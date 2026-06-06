@@ -7,29 +7,44 @@ import Header from '@/components/layout/header'
 import { createLineHarnessClient } from '@/lib/line-harness-client'
 
 type SizePreset = 'full' | 'half'
-type LayoutPreset = '3' | '6'
-type ActionType = 'uri' | 'message' | 'postback'
+type LayoutPreset = 'custom' | '3' | '6'
+type ActionType = 'uri' | 'message' | 'postback' | 'richmenuswitch'
 
 type AreaForm = {
+  id: string
   label: string
   type: ActionType
   value: string
+  displayText: string
+  x: number
+  y: number
+  width: number
+  height: number
 }
+
+const MAX_AREAS = 20
 
 const sizeOptions: Record<SizePreset, { label: string; width: number; height: number }> = {
   full: { label: 'フルサイズ 2500x1686', width: 2500, height: 1686 },
   half: { label: 'ハーフサイズ 2500x843', width: 2500, height: 843 },
 }
 
-function createAreaForms(count: number): AreaForm[] {
-  return Array.from({ length: count }, (_, index) => ({
+function newArea(index: number, size: SizePreset): AreaForm {
+  const preset = sizeOptions[size]
+  return {
+    id: crypto.randomUUID(),
     label: `エリア${index + 1}`,
     type: 'uri',
     value: '',
-  }))
+    displayText: '',
+    x: 0,
+    y: Math.min(index * 120, Math.max(0, preset.height - 120)),
+    width: 600,
+    height: 120,
+  }
 }
 
-function boundsFor(index: number, layout: LayoutPreset, size: SizePreset) {
+function presetBounds(index: number, layout: Exclude<LayoutPreset, 'custom'>, size: SizePreset) {
   if (layout === '3') {
     const width = index === 2 ? 834 : 833
     return { x: index * 833, y: 0, width, height: 843 }
@@ -41,12 +56,38 @@ function boundsFor(index: number, layout: LayoutPreset, size: SizePreset) {
   return { x: col * 833, y: row * 843, width, height: size === 'full' ? 843 : 421 }
 }
 
+function createPresetAreas(layout: Exclude<LayoutPreset, 'custom'>, size: SizePreset): AreaForm[] {
+  const count = layout === '3' ? 3 : 6
+  return Array.from({ length: count }, (_, index) => ({
+    ...newArea(index, size),
+    ...presetBounds(index, layout, size),
+  }))
+}
+
 function toAction(area: AreaForm): RichMenuAction {
   const label = area.label.trim() || undefined
   const value = area.value.trim()
   if (area.type === 'message') return { type: 'message', text: value, label }
-  if (area.type === 'postback') return { type: 'postback', data: value, displayText: area.label.trim() || value, label }
+  if (area.type === 'postback') {
+    const displayText = area.displayText.trim() || area.label.trim() || value
+    return { type: 'postback', data: value, displayText, label }
+  }
+  if (area.type === 'richmenuswitch') {
+    return {
+      type: 'richmenuswitch',
+      richMenuAliasId: value,
+      data: area.displayText.trim() || `switch:${value}`,
+      label,
+    }
+  }
   return { type: 'uri', uri: value, label }
+}
+
+function actionSummary(action: RichMenuAction) {
+  if (action.type === 'uri') return action.uri
+  if (action.type === 'message') return action.text
+  if (action.type === 'richmenuswitch') return `${action.richMenuAliasId} / ${action.data}`
+  return action.data
 }
 
 function formatSize(menu: RichMenu) {
@@ -62,6 +103,24 @@ async function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
+function validateAreas(areas: AreaForm[], size: { width: number; height: number }) {
+  if (areas.length < 1) return 'タップ領域を1つ以上設定してください'
+  if (areas.length > MAX_AREAS) return `タップ領域は最大${MAX_AREAS}個です`
+
+  for (const [index, area] of areas.entries()) {
+    const label = `領域${index + 1}`
+    if (!area.value.trim()) return `${label}のアクション値を入力してください`
+    if (area.width <= 0 || area.height <= 0) return `${label}の幅と高さは1以上にしてください`
+    if (area.x < 0 || area.y < 0) return `${label}のx/yは0以上にしてください`
+    if (area.x + area.width > size.width) return `${label}が画像の横幅を超えています`
+    if (area.y + area.height > size.height) return `${label}が画像の高さを超えています`
+    if (area.type === 'richmenuswitch' && !/^[A-Za-z0-9_-]{1,32}$/.test(area.value.trim())) {
+      return `${label}の切替先エイリアスIDは1-32文字の英数字・_・-で入力してください`
+    }
+  }
+  return ''
+}
+
 export default function RichMenusPage() {
   const { selectedAccountId, selectedAccount } = useAccount()
   const [menus, setMenus] = useState<RichMenu[]>([])
@@ -72,13 +131,14 @@ export default function RichMenusPage() {
   const [notice, setNotice] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [createdRichMenuId, setCreatedRichMenuId] = useState('')
+  const [aliasForm, setAliasForm] = useState({ richMenuAliasId: '', richMenuId: '' })
   const [form, setForm] = useState({
     name: 'メインメニュー',
     chatBarText: 'メニュー',
     selected: true,
     size: 'full' as SizePreset,
     layout: '6' as LayoutPreset,
-    areas: createAreaForms(6),
+    areas: createPresetAreas('6', 'full'),
   })
 
   const load = useCallback(async () => {
@@ -98,33 +158,71 @@ export default function RichMenusPage() {
     void load()
   }, [load])
 
-  const areaCount = form.layout === '3' ? 3 : 6
-  const canCreate = useMemo(() => {
-    return Boolean(form.name.trim() && form.chatBarText.trim() && form.areas.slice(0, areaCount).every((area) => area.value.trim()))
-  }, [areaCount, form])
+  const size = sizeOptions[form.size]
+  const validationError = useMemo(() => {
+    if (!form.name.trim()) return '管理名を入力してください'
+    if (!form.chatBarText.trim()) return 'チャットバー表示を入力してください'
+    return validateAreas(form.areas, size)
+  }, [form, size])
+  const canCreate = !validationError
 
-  function changeLayout(layout: LayoutPreset) {
-    const nextCount = layout === '3' ? 3 : 6
+  function applyLayout(layout: LayoutPreset) {
+    setForm((prev) => {
+      if (layout === 'custom') return { ...prev, layout }
+      const nextSize = layout === '6' ? 'full' : prev.size
+      return {
+        ...prev,
+        layout,
+        size: nextSize,
+        areas: createPresetAreas(layout, nextSize),
+      }
+    })
+  }
+
+  function updateArea(id: string, patch: Partial<AreaForm>) {
     setForm((prev) => ({
       ...prev,
-      layout,
-      size: layout === '6' ? 'full' : prev.size,
-      areas: prev.areas.length >= nextCount
-        ? prev.areas.slice(0, nextCount)
-        : [...prev.areas, ...createAreaForms(nextCount - prev.areas.length)],
+      layout: prev.layout === 'custom' ? prev.layout : 'custom',
+      areas: prev.areas.map((area) => area.id === id ? { ...area, ...patch } : area),
+    }))
+  }
+
+  function addArea() {
+    setForm((prev) => {
+      if (prev.areas.length >= MAX_AREAS) return prev
+      return {
+        ...prev,
+        layout: 'custom',
+        areas: [...prev.areas, newArea(prev.areas.length, prev.size)],
+      }
+    })
+  }
+
+  function removeArea(id: string) {
+    setForm((prev) => ({
+      ...prev,
+      layout: 'custom',
+      areas: prev.areas.filter((area) => area.id !== id),
     }))
   }
 
   async function handleCreate() {
-    if (!canCreate || saving) return
+    if (!canCreate || saving) {
+      if (validationError) setError(validationError)
+      return
+    }
     setSaving(true)
     setError('')
     setNotice('')
     setCreatedRichMenuId('')
     try {
-      const size = sizeOptions[form.size]
-      const areas: RichMenuArea[] = form.areas.slice(0, areaCount).map((area, index) => ({
-        bounds: boundsFor(index, form.layout, form.size),
+      const areas: RichMenuArea[] = form.areas.map((area) => ({
+        bounds: {
+          x: Math.round(area.x),
+          y: Math.round(area.y),
+          width: Math.round(area.width),
+          height: Math.round(area.height),
+        },
         action: toAction(area),
       }))
       const client = createLineHarnessClient(selectedAccountId)
@@ -136,7 +234,7 @@ export default function RichMenusPage() {
         areas,
       })
       setCreatedRichMenuId(result.richMenuId)
-      setNotice('リッチメニューを作成しました。続けて画像をアップロードしてください。')
+      setNotice('リッチメニューを作成しました。続けて画像アップロードと、必要ならエイリアス保存をしてください。')
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'リッチメニュー作成に失敗しました')
@@ -203,11 +301,48 @@ export default function RichMenusPage() {
     }
   }
 
+  async function handleSaveAlias() {
+    const richMenuAliasId = aliasForm.richMenuAliasId.trim()
+    const richMenuId = aliasForm.richMenuId.trim()
+    if (!richMenuAliasId || !richMenuId) {
+      setError('エイリアスIDとリッチメニューIDを入力してください')
+      return
+    }
+    setError('')
+    setNotice('')
+    try {
+      const client = createLineHarnessClient(selectedAccountId)
+      await client.richMenus.saveAlias(richMenuAliasId, richMenuId, { upsert: true })
+      setNotice(`エイリアス ${richMenuAliasId} を保存しました`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'エイリアス保存に失敗しました')
+    }
+  }
+
+  async function handleDeleteAlias() {
+    const richMenuAliasId = aliasForm.richMenuAliasId.trim()
+    if (!richMenuAliasId) {
+      setError('削除するエイリアスIDを入力してください')
+      return
+    }
+    const ok = confirm(`エイリアス ${richMenuAliasId} を削除します。richmenuswitchの切替先に使っている場合は切替できなくなります。削除しますか？`)
+    if (!ok) return
+    setError('')
+    setNotice('')
+    try {
+      const client = createLineHarnessClient(selectedAccountId)
+      await client.richMenus.deleteAlias(richMenuAliasId)
+      setNotice(`エイリアス ${richMenuAliasId} を削除しました`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'エイリアス削除に失敗しました')
+    }
+  }
+
   return (
     <div>
       <Header
         title="リッチメニュー管理"
-        description={`LINE Platform上のリッチメニューを管理します${selectedAccount ? ` / ${selectedAccount.displayName || selectedAccount.name}` : ''}`}
+        description={`自由なタップ領域とタブ切替を設定します${selectedAccount ? ` / ${selectedAccount.displayName || selectedAccount.name}` : ''}`}
         action={
           <button
             onClick={() => setShowCreate((value) => !value)}
@@ -223,13 +358,51 @@ export default function RichMenusPage() {
       {notice && <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">{notice}</div>}
 
       <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
-        安全制約: 作成だけでは友だちには表示されません。画像アップロード後、明示的に「デフォルト設定」を押した場合のみ全友だちに反映します。削除とデフォルト設定は確認ダイアログを挟みます。
+        安全制約: 作成だけでは友だちには表示されません。画像アップロード後、明示的に「デフォルト設定」を押した場合のみ反映します。タブ切替は2つ以上のリッチメニューを作り、エイリアスIDを `richmenuswitch` の切替先に指定します。
       </div>
+
+      <section className="mb-6 bg-white rounded-lg border border-gray-200 p-5">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">タブ切替エイリアス</h2>
+            <p className="mt-1 text-xs text-gray-500">例: `main-tab` をメニューAに、`reserve-tab` をメニューBに紐づけ、各領域のアクションで切り替えます。</p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_2fr_auto]">
+          <input
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            placeholder="richMenuAliasId 例: reserve-tab"
+            value={aliasForm.richMenuAliasId}
+            onChange={(e) => setAliasForm((prev) => ({ ...prev, richMenuAliasId: e.target.value }))}
+          />
+          <select
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+            value={aliasForm.richMenuId}
+            onChange={(e) => setAliasForm((prev) => ({ ...prev, richMenuId: e.target.value }))}
+          >
+            <option value="">紐づけるリッチメニューを選択</option>
+            {menus.map((menu) => (
+              <option key={menu.richMenuId} value={menu.richMenuId}>{menu.name} / {menu.richMenuId}</option>
+            ))}
+          </select>
+          <div className="flex gap-2">
+            <button onClick={() => void handleSaveAlias()} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white">保存</button>
+            <button onClick={() => void handleDeleteAlias()} className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">削除</button>
+          </div>
+        </div>
+      </section>
 
       {showCreate && (
         <section className="mb-6 bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">新規リッチメニュー</h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">新規リッチメニュー</h2>
+              <p className="mt-1 text-xs text-gray-500">最大20領域。座標はLINE画像サイズ上のpxで指定します。</p>
+            </div>
+            <span className="text-xs text-gray-500">{form.areas.length}/{MAX_AREAS} 領域</span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
             <label className="block">
               <span className="block text-xs font-medium text-gray-600 mb-1">管理名</span>
               <input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -240,57 +413,120 @@ export default function RichMenusPage() {
             </label>
             <label className="block">
               <span className="block text-xs font-medium text-gray-600 mb-1">サイズ</span>
-              <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" value={form.size} onChange={(e) => setForm({ ...form, size: e.target.value as SizePreset })} disabled={form.layout === '6'}>
+              <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" value={form.size} onChange={(e) => setForm((prev) => ({ ...prev, layout: 'custom', size: e.target.value as SizePreset }))}>
                 <option value="full">{sizeOptions.full.label}</option>
                 <option value="half">{sizeOptions.half.label}</option>
               </select>
             </label>
             <label className="block">
               <span className="block text-xs font-medium text-gray-600 mb-1">レイアウト</span>
-              <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" value={form.layout} onChange={(e) => changeLayout(e.target.value as LayoutPreset)}>
-                <option value="6">6分割</option>
-                <option value="3">3分割</option>
+              <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" value={form.layout} onChange={(e) => applyLayout(e.target.value as LayoutPreset)}>
+                <option value="6">6分割プリセット</option>
+                <option value="3">3分割プリセット</option>
+                <option value="custom">カスタム</option>
               </select>
             </label>
           </div>
+
           <label className="mt-4 inline-flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={form.selected} onChange={(e) => setForm({ ...form, selected: e.target.checked })} />
             初期表示でメニューを開く
           </label>
 
-          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-            {form.areas.slice(0, areaCount).map((area, index) => (
-              <div key={index} className="rounded-lg border border-gray-200 p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-gray-800">タップ領域 {index + 1}</p>
-                  <span className="text-xs text-gray-400">{area.type}</span>
-                </div>
-                <div className="space-y-3">
-                  <input
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    placeholder="ラベル"
-                    value={area.label}
-                    onChange={(e) => setForm((prev) => ({ ...prev, areas: prev.areas.map((item, i) => i === index ? { ...item, label: e.target.value } : item) }))}
-                  />
-                  <select
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
-                    value={area.type}
-                    onChange={(e) => setForm((prev) => ({ ...prev, areas: prev.areas.map((item, i) => i === index ? { ...item, type: e.target.value as ActionType, value: '' } : item) }))}
-                  >
-                    <option value="uri">URLを開く</option>
-                    <option value="message">メッセージ送信</option>
-                    <option value="postback">postback</option>
-                  </select>
-                  <input
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    placeholder={area.type === 'uri' ? 'https://...' : area.type === 'message' ? '送信するテキスト' : 'action=...'}
-                    value={area.value}
-                    onChange={(e) => setForm((prev) => ({ ...prev, areas: prev.areas.map((item, i) => i === index ? { ...item, value: e.target.value } : item) }))}
-                  />
-                </div>
+          <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(320px,420px)_1fr]">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="mb-3 flex items-center justify-between text-xs text-gray-500">
+                <span>配置プレビュー</span>
+                <span>{size.width} x {size.height}</span>
               </div>
-            ))}
+              <div className="relative overflow-hidden rounded-lg border border-gray-200 bg-white" style={{ aspectRatio: `${size.width} / ${size.height}` }}>
+                {form.areas.map((area, index) => (
+                  <div
+                    key={area.id}
+                    className="absolute flex items-center justify-center border-2 border-green-500/80 bg-green-100/60 text-[10px] font-semibold text-green-900"
+                    style={{
+                      left: `${(area.x / size.width) * 100}%`,
+                      top: `${(area.y / size.height) * 100}%`,
+                      width: `${(area.width / size.width) * 100}%`,
+                      height: `${(area.height / size.height) * 100}%`,
+                    }}
+                  >
+                    {index + 1}
+                  </div>
+                ))}
+              </div>
+              <button onClick={addArea} disabled={form.areas.length >= MAX_AREAS} className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 disabled:opacity-50">
+                + タップ領域を追加
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {form.areas.map((area, index) => (
+                <div key={area.id} className="rounded-lg border border-gray-200 p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-gray-800">タップ領域 {index + 1}</p>
+                    <button onClick={() => removeArea(area.id)} className="text-xs font-medium text-red-600 disabled:opacity-40" disabled={form.areas.length <= 1}>削除</button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {(['x', 'y', 'width', 'height'] as const).map((field) => (
+                      <label key={field} className="block">
+                        <span className="block text-[11px] font-medium text-gray-500 mb-1">{field}</span>
+                        <input
+                          type="number"
+                          min={field === 'x' || field === 'y' ? 0 : 1}
+                          className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+                          value={area[field]}
+                          onChange={(e) => updateArea(area.id, { [field]: Number(e.target.value) } as Partial<AreaForm>)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_180px]">
+                    <input
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder="ラベル"
+                      value={area.label}
+                      onChange={(e) => updateArea(area.id, { label: e.target.value })}
+                    />
+                    <select
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+                      value={area.type}
+                      onChange={(e) => updateArea(area.id, { type: e.target.value as ActionType, value: '', displayText: '' })}
+                    >
+                      <option value="uri">URLを開く</option>
+                      <option value="message">メッセージ送信</option>
+                      <option value="postback">postback</option>
+                      <option value="richmenuswitch">タブ切替</option>
+                    </select>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <input
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder={area.type === 'uri' ? 'https://...' : area.type === 'message' ? '送信するテキスト' : area.type === 'richmenuswitch' ? '切替先 aliasId 例: reserve-tab' : 'postback data 例: action=reserve'}
+                      value={area.value}
+                      onChange={(e) => updateArea(area.id, { value: e.target.value })}
+                    />
+                    <input
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                      placeholder={area.type === 'richmenuswitch' ? '切替data 例: switch-to-reserve' : area.type === 'postback' ? '表示テキスト 任意' : '任意補助値'}
+                      value={area.displayText}
+                      onChange={(e) => updateArea(area.id, { displayText: e.target.value })}
+                      disabled={area.type === 'uri' || area.type === 'message'}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
+
+          {validationError && (
+            <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+              {validationError}
+            </div>
+          )}
 
           {createdRichMenuId && (
             <div className="mt-4 rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-700">
@@ -300,7 +536,7 @@ export default function RichMenusPage() {
 
           <div className="mt-5 flex gap-2">
             <button
-              onClick={handleCreate}
+              onClick={() => void handleCreate()}
               disabled={!canCreate || saving}
               className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
               style={{ backgroundColor: '#06C755' }}
@@ -350,9 +586,8 @@ export default function RichMenusPage() {
                       <span className="font-semibold text-gray-800">領域 {index + 1}</span>
                       <span>{area.action.type}</span>
                     </div>
-                    <p className="mt-1 truncate">
-                      {'uri' in area.action ? area.action.uri : 'text' in area.action ? area.action.text : area.action.data}
-                    </p>
+                    <p className="mt-1 text-gray-400">x:{area.bounds.x} y:{area.bounds.y} w:{area.bounds.width} h:{area.bounds.height}</p>
+                    <p className="mt-1 truncate">{actionSummary(area.action)}</p>
                   </div>
                 ))}
               </div>
@@ -372,6 +607,9 @@ export default function RichMenusPage() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <button onClick={() => void handleSetDefault(menu.richMenuId)} className="px-3 py-2 text-xs font-medium text-white rounded-lg" style={{ backgroundColor: '#06C755' }}>
                   デフォルト設定
+                </button>
+                <button onClick={() => setAliasForm((prev) => ({ ...prev, richMenuId: menu.richMenuId }))} className="px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg">
+                  エイリアス対象にする
                 </button>
                 <button onClick={() => void handleDelete(menu.richMenuId)} className="px-3 py-2 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg">
                   削除

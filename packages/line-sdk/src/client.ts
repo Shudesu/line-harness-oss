@@ -243,6 +243,37 @@ export class LineClient {
     return data as { richMenuId: string };
   }
 
+  async createRichMenuAlias(
+    richMenuAliasId: string,
+    richMenuId: string,
+  ): Promise<unknown> {
+    const { data } = await this.request('POST', '/v2/bot/richmenu/alias', {
+      richMenuAliasId,
+      richMenuId,
+    });
+    return data;
+  }
+
+  async updateRichMenuAlias(
+    richMenuAliasId: string,
+    richMenuId: string,
+  ): Promise<unknown> {
+    const { data } = await this.request(
+      'POST',
+      `/v2/bot/richmenu/alias/${encodeURIComponent(richMenuAliasId)}`,
+      { richMenuId },
+    );
+    return data;
+  }
+
+  async deleteRichMenuAlias(richMenuAliasId: string): Promise<unknown> {
+    const { data } = await this.request(
+      'DELETE',
+      `/v2/bot/richmenu/alias/${encodeURIComponent(richMenuAliasId)}`,
+    );
+    return data;
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   async pushTextMessage(to: string, text: string): Promise<unknown> {

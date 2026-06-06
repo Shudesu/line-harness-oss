@@ -212,7 +212,7 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
         : topic === 'daily'
           ? 'discord.daily_webhook_url'
           : 'discord.review_webhook_url',
-    ).catch(() => '')
+    ).catch(() => '')　
     : '';
   const topicUrl = await resolveBindingValue(
     topic === 'reservation'

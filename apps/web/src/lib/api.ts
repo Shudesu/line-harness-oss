@@ -303,6 +303,7 @@ export type RichMenuAction =
   | { type: 'postback'; data: string; displayText?: string; label?: string }
   | { type: 'message'; text: string; label?: string }
   | { type: 'uri'; uri: string; label?: string }
+  | { type: 'richmenuswitch'; richMenuAliasId: string; data: string; label?: string }
 export type RichMenuArea = { bounds: RichMenuBounds; action: RichMenuAction }
 export type RichMenu = {
   richMenuId: string

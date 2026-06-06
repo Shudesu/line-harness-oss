@@ -96,6 +96,52 @@ richMenus.post('/api/rich-menus/:id/default', async (c) => {
   }
 });
 
+// POST /api/rich-menus/aliases — create or update a rich menu alias.
+// Required for richmenuswitch tab-style rich menus.
+richMenus.post('/api/rich-menus/aliases', async (c) => {
+  try {
+    const body = await c.req.json<{ richMenuAliasId?: string; richMenuId?: string; upsert?: boolean }>();
+    const richMenuAliasId = body.richMenuAliasId?.trim();
+    const richMenuId = body.richMenuId?.trim();
+    if (!richMenuAliasId || !richMenuId) {
+      return c.json({ success: false, error: 'richMenuAliasId and richMenuId are required' }, 400);
+    }
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(richMenuAliasId)) {
+      return c.json({ success: false, error: 'richMenuAliasId must be 1-32 chars: letters, numbers, _ or -' }, 400);
+    }
+
+    const lineClient = await resolveLineClient(c);
+    try {
+      await lineClient.createRichMenuAlias(richMenuAliasId, richMenuId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!body.upsert || !message.includes('400')) throw err;
+      await lineClient.updateRichMenuAlias(richMenuAliasId, richMenuId);
+    }
+    return c.json({ success: true, data: null });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('POST /api/rich-menus/aliases error:', message);
+    const mapped = richMenuError(message, 'Failed to save rich menu alias');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
+  }
+});
+
+// DELETE /api/rich-menus/aliases/:aliasId — delete a rich menu alias.
+richMenus.delete('/api/rich-menus/aliases/:aliasId', async (c) => {
+  try {
+    const aliasId = c.req.param('aliasId');
+    const lineClient = await resolveLineClient(c);
+    await lineClient.deleteRichMenuAlias(aliasId);
+    return c.json({ success: true, data: null });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('DELETE /api/rich-menus/aliases/:aliasId error:', message);
+    const mapped = richMenuError(message, 'Failed to delete rich menu alias');
+    return c.json({ success: false, error: mapped.error }, mapped.status as 401 | 500);
+  }
+});
+
 // POST /api/friends/:friendId/rich-menu — link rich menu to a specific friend
 richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
   try {

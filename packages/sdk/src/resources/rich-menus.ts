@@ -43,4 +43,20 @@ export class RichMenusResource {
       contentType,
     })
   }
+
+  async saveAlias(
+    richMenuAliasId: string,
+    richMenuId: string,
+    options?: RichMenuRequestOptions & { upsert?: boolean },
+  ): Promise<void> {
+    await this.http.post(`/api/rich-menus/aliases${accountQuery(this.options(options))}`, {
+      richMenuAliasId,
+      richMenuId,
+      upsert: options?.upsert ?? true,
+    })
+  }
+
+  async deleteAlias(richMenuAliasId: string, options?: RichMenuRequestOptions): Promise<void> {
+    await this.http.delete(`/api/rich-menus/aliases/${encodeURIComponent(richMenuAliasId)}${accountQuery(this.options(options))}`)
+  }
 }
