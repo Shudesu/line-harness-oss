@@ -97,9 +97,12 @@ export default function RemindersPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [expandedData, setExpandedData] = useState<ReminderWithSteps | null>(null)
   const [expandLoading, setExpandLoading] = useState(false)
+  const [editingReminderId, setEditingReminderId] = useState<string | null>(null)
+  const [editReminderForm, setEditReminderForm] = useState<CreateFormState>({ name: '', description: '' })
 
   // Step form state
   const [showStepForm, setShowStepForm] = useState(false)
+  const [editingStepId, setEditingStepId] = useState<string | null>(null)
   const [stepForm, setStepForm] = useState<StepFormState>({
     offsetMinutes: -60,
     messageType: 'text',
@@ -170,6 +173,7 @@ export default function RemindersPage() {
       const res = await api.reminders.create({
         name: form.name,
         description: form.description || undefined,
+        lineAccountId: selectedAccountId || undefined,
       })
       if (res.success) {
         setShowCreate(false)
@@ -197,6 +201,29 @@ export default function RemindersPage() {
     }
   }
 
+  const openEditReminder = (reminder: Reminder) => {
+    setEditingReminderId(reminder.id)
+    setEditReminderForm({ name: reminder.name, description: reminder.description ?? '' })
+  }
+
+  const handleSaveReminder = async (id: string) => {
+    if (!editReminderForm.name.trim()) {
+      setError('リマインダー名を入力してください')
+      return
+    }
+    try {
+      await api.reminders.update(id, {
+        name: editReminderForm.name,
+        description: editReminderForm.description || null,
+      })
+      setEditingReminderId(null)
+      loadReminders()
+      if (expandedId === id) loadDetail(id)
+    } catch {
+      setError('リマインダーの保存に失敗しました')
+    }
+  }
+
   const handleDelete = async (id: string) => {
     if (!confirm('このリマインダーを削除してもよいですか？')) return
     try {
@@ -211,7 +238,25 @@ export default function RemindersPage() {
     }
   }
 
-  const handleAddStep = async () => {
+  const openAddStep = () => {
+    setEditingStepId(null)
+    setStepForm({ offsetMinutes: -60, messageType: 'text', messageContent: '' })
+    setShowStepForm(true)
+    setStepFormError('')
+  }
+
+  const openEditStep = (step: ReminderStep) => {
+    setEditingStepId(step.id)
+    setStepForm({
+      offsetMinutes: step.offsetMinutes,
+      messageType: step.messageType,
+      messageContent: step.messageContent,
+    })
+    setShowStepForm(true)
+    setStepFormError('')
+  }
+
+  const handleSaveStep = async () => {
     if (!expandedId) return
     if (!stepForm.messageContent.trim()) {
       setStepFormError('メッセージ内容を入力してください')
@@ -220,20 +265,27 @@ export default function RemindersPage() {
     setStepSaving(true)
     setStepFormError('')
     try {
-      const res = await api.reminders.addStep(expandedId, {
-        offsetMinutes: stepForm.offsetMinutes,
-        messageType: stepForm.messageType,
-        messageContent: stepForm.messageContent,
-      })
+      const res = editingStepId
+        ? await api.reminders.updateStep(expandedId, editingStepId, {
+          offsetMinutes: stepForm.offsetMinutes,
+          messageType: stepForm.messageType,
+          messageContent: stepForm.messageContent,
+        })
+        : await api.reminders.addStep(expandedId, {
+          offsetMinutes: stepForm.offsetMinutes,
+          messageType: stepForm.messageType,
+          messageContent: stepForm.messageContent,
+        })
       if (res.success) {
         setShowStepForm(false)
+        setEditingStepId(null)
         setStepForm({ offsetMinutes: -60, messageType: 'text', messageContent: '' })
         loadDetail(expandedId)
       } else {
         setStepFormError(res.error)
       }
     } catch {
-      setStepFormError('ステップの追加に失敗しました')
+      setStepFormError('ステップの保存に失敗しました')
     } finally {
       setStepSaving(false)
     }
@@ -384,6 +436,12 @@ export default function RemindersPage() {
                     {/* Actions */}
                     <div className="flex flex-wrap items-center gap-2 mb-4">
                       <button
+                        onClick={(e) => { e.stopPropagation(); openEditReminder(reminder) }}
+                        className="px-3 py-1.5 min-h-[44px] text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
+                      >
+                        基本設定を編集
+                      </button>
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleToggleActive(reminder.id, reminder.isActive) }}
                         className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md transition-colors ${
                           reminder.isActive
@@ -402,6 +460,45 @@ export default function RemindersPage() {
                       </button>
                     </div>
 
+                    {editingReminderId === reminder.id && (
+                      <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                        <h4 className="mb-3 text-xs font-semibold text-gray-700">基本設定</h4>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">リマインダー名</label>
+                            <input
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                              value={editReminderForm.name}
+                              onChange={(e) => setEditReminderForm({ ...editReminderForm, name: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">説明</label>
+                            <input
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                              value={editReminderForm.description}
+                              onChange={(e) => setEditReminderForm({ ...editReminderForm, description: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          <button
+                            onClick={() => handleSaveReminder(reminder.id)}
+                            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg"
+                            style={{ backgroundColor: '#06C755' }}
+                          >
+                            保存
+                          </button>
+                          <button
+                            onClick={() => setEditingReminderId(null)}
+                            className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                          >
+                            キャンセル
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Steps */}
                     {expandLoading ? (
                       <div className="space-y-2 animate-pulse">
@@ -416,7 +513,7 @@ export default function RemindersPage() {
                             ステップ ({expandedData.steps.length}件)
                           </h4>
                           <button
-                            onClick={() => { setShowStepForm(true); setStepFormError('') }}
+                            onClick={openAddStep}
                             className="px-3 py-1 min-h-[44px] text-xs font-medium text-white rounded-md transition-opacity hover:opacity-90"
                             style={{ backgroundColor: '#06C755' }}
                           >
@@ -449,8 +546,14 @@ export default function RemindersPage() {
                                     </p>
                                   </div>
                                   <button
+                                    onClick={() => openEditStep(step)}
+                                    className="ml-2 shrink-0 min-h-[44px] px-2 text-xs text-green-600 hover:text-green-700 transition-colors"
+                                  >
+                                    編集
+                                  </button>
+                                  <button
                                     onClick={() => handleDeleteStep(step.id)}
-                                    className="ml-2 shrink-0 min-h-[44px] min-w-[44px] text-xs text-red-400 hover:text-red-600 transition-colors"
+                                    className="shrink-0 min-h-[44px] min-w-[44px] text-xs text-red-400 hover:text-red-600 transition-colors"
                                   >
                                     削除
                                   </button>
@@ -504,15 +607,15 @@ export default function RemindersPage() {
 
                               <div className="flex gap-2">
                                 <button
-                                  onClick={handleAddStep}
+                                  onClick={handleSaveStep}
                                   disabled={stepSaving}
                                   className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
                                   style={{ backgroundColor: '#06C755' }}
                                 >
-                                  {stepSaving ? '追加中...' : '追加'}
+                                  {stepSaving ? '保存中...' : editingStepId ? '更新' : '追加'}
                                 </button>
                                 <button
-                                  onClick={() => { setShowStepForm(false); setStepFormError('') }}
+                                  onClick={() => { setShowStepForm(false); setEditingStepId(null); setStepFormError('') }}
                                   className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                                 >
                                   キャンセル

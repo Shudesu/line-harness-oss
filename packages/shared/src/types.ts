@@ -128,6 +128,12 @@ export interface ScenarioStep {
   messageType: MessageType;
   /** メッセージ内容 (テキスト or JSONシリアライズ済みFlexメッセージ等) */
   messageContent: string;
+  /** 条件分岐の種類 */
+  conditionType: string | null;
+  /** 条件分岐の値 */
+  conditionValue: string | null;
+  /** 条件がfalseの場合に移動するステップ順序 */
+  nextStepOnFalse: number | null;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
 }

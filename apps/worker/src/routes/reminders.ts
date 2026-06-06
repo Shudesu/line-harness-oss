@@ -7,6 +7,7 @@ import {
   deleteReminder,
   getReminderSteps,
   createReminderStep,
+  updateReminderStep,
   deleteReminderStep,
   enrollFriendInReminder,
   getFriendReminders,
@@ -140,6 +141,33 @@ reminders.post('/api/reminders/:id/steps', async (c) => {
     }, 201);
   } catch (err) {
     console.error('POST /api/reminders/:id/steps error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+reminders.put('/api/reminders/:reminderId/steps/:stepId', async (c) => {
+  try {
+    const stepId = c.req.param('stepId');
+    const body = await c.req.json<{ offsetMinutes?: number; messageType?: string; messageContent?: string }>();
+    const updated = await updateReminderStep(c.env.DB, stepId, {
+      offsetMinutes: body.offsetMinutes,
+      messageType: body.messageType,
+      messageContent: body.messageContent,
+    });
+    if (!updated) return c.json({ success: false, error: 'Step not found' }, 404);
+    return c.json({
+      success: true,
+      data: {
+        id: updated.id,
+        reminderId: updated.reminder_id,
+        offsetMinutes: updated.offset_minutes,
+        messageType: updated.message_type,
+        messageContent: updated.message_content,
+        createdAt: updated.created_at,
+      },
+    });
+  } catch (err) {
+    console.error('PUT /api/reminders/:reminderId/steps/:stepId error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

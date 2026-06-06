@@ -269,6 +269,16 @@ export type ApiAccountSetting = ApiAccountSettingDefinition & {
   encrypted: boolean
 }
 
+export type ScenarioStepInput = {
+  stepOrder: number
+  delayMinutes?: number
+  messageType: ScenarioStep['messageType']
+  messageContent: string
+  conditionType?: string | null
+  conditionValue?: string | null
+  nextStepOnFalse?: number | null
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, '')
 if (!API_URL) {
   throw new Error(
@@ -507,7 +517,7 @@ export const api = {
       }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/scenarios/${id}`, { method: 'DELETE' }),
-    addStep: (id: string, data: Omit<ScenarioStep, 'id' | 'scenarioId' | 'createdAt'>) =>
+    addStep: (id: string, data: ScenarioStepInput) =>
       fetchApi<ApiResponse<ScenarioStep>>(`/api/scenarios/${id}/steps`, {
         method: 'POST',
         body: JSON.stringify(data),
@@ -515,7 +525,7 @@ export const api = {
     updateStep: (
       id: string,
       stepId: string,
-      data: Partial<Omit<ScenarioStep, 'id' | 'scenarioId' | 'createdAt'>>
+      data: Partial<ScenarioStepInput>
     ) =>
       fetchApi<ApiResponse<ScenarioStep>>(`/api/scenarios/${id}/steps/${stepId}`, {
         method: 'PUT',
@@ -904,7 +914,7 @@ export const api = {
     },
     get: (id: string) =>
       fetchApi<ApiResponse<Reminder & { steps: ReminderStep[] }>>(`/api/reminders/${id}`),
-    create: (data: { name: string; description?: string | null }) =>
+    create: (data: { name: string; description?: string | null; lineAccountId?: string | null }) =>
       fetchApi<ApiResponse<Reminder>>('/api/reminders', {
         method: 'POST',
         body: JSON.stringify(data),
@@ -919,6 +929,11 @@ export const api = {
     addStep: (id: string, data: { offsetMinutes: number; messageType: string; messageContent: string }) =>
       fetchApi<ApiResponse<ReminderStep>>(`/api/reminders/${id}/steps`, {
         method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateStep: (reminderId: string, stepId: string, data: Partial<{ offsetMinutes: number; messageType: string; messageContent: string }>) =>
+      fetchApi<ApiResponse<ReminderStep>>(`/api/reminders/${reminderId}/steps/${stepId}`, {
+        method: 'PUT',
         body: JSON.stringify(data),
       }),
     deleteStep: (reminderId: string, stepId: string) =>

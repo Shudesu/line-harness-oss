@@ -3,12 +3,18 @@
 import { useState, useEffect, useCallback } from 'react'
 
 import Link from 'next/link'
-import type { Scenario, ScenarioStep, ScenarioTriggerType, MessageType } from '@line-crm/shared'
+import type { Scenario, ScenarioStep, ScenarioTriggerType, MessageType, Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FlexPreviewComponent from '@/components/flex-preview'
 
-type ScenarioWithSteps = Scenario & { steps: ScenarioStep[] }
+type ScenarioStepWithSettings = ScenarioStep & {
+  conditionType?: string | null
+  conditionValue?: string | null
+  nextStepOnFalse?: number | null
+}
+
+type ScenarioWithSteps = Scenario & { steps: ScenarioStepWithSettings[] }
 
 const triggerOptions: { value: ScenarioTriggerType; label: string }[] = [
   { value: 'friend_add', label: '友だち追加時' },
@@ -42,6 +48,9 @@ interface StepFormState {
   delayMinutes: number
   messageType: MessageType
   messageContent: string
+  conditionType: string
+  conditionValue: string
+  nextStepOnFalse: string
 }
 
 const emptyStepForm: StepFormState = {
@@ -49,6 +58,9 @@ const emptyStepForm: StepFormState = {
   delayMinutes: 0,
   messageType: 'text',
   messageContent: '',
+  conditionType: '',
+  conditionValue: '',
+  nextStepOnFalse: '',
 }
 
 function FlexPreview({ content }: { content: string }) {
@@ -78,11 +90,18 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
   const id = scenarioId
 
   const [scenario, setScenario] = useState<ScenarioWithSteps | null>(null)
+  const [tags, setTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const [editing, setEditing] = useState(false)
-  const [editForm, setEditForm] = useState({ name: '', description: '', triggerType: 'friend_add' as ScenarioTriggerType, isActive: true })
+  const [editForm, setEditForm] = useState({
+    name: '',
+    description: '',
+    triggerType: 'friend_add' as ScenarioTriggerType,
+    triggerTagId: '',
+    isActive: true,
+  })
   const [saving, setSaving] = useState(false)
 
   const [showStepForm, setShowStepForm] = useState(false)
@@ -102,6 +121,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
           name: res.data.name,
           description: res.data.description ?? '',
           triggerType: res.data.triggerType,
+          triggerTagId: res.data.triggerTagId ?? '',
           isActive: res.data.isActive,
         })
       } else {
@@ -118,6 +138,12 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
     loadScenario()
   }, [loadScenario])
 
+  useEffect(() => {
+    api.tags.list()
+      .then((res) => { if (res.success) setTags(res.data) })
+      .catch(() => undefined)
+  }, [])
+
   const handleSaveScenario = async () => {
     if (!editForm.name.trim()) return
     setSaving(true)
@@ -126,6 +152,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
         name: editForm.name,
         description: editForm.description || null,
         triggerType: editForm.triggerType,
+        triggerTagId: editForm.triggerType === 'tag_added' ? (editForm.triggerTagId || null) : null,
         isActive: editForm.isActive,
       })
       if (res.success) {
@@ -149,12 +176,15 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
     setStepError('')
   }
 
-  const openEditStep = (step: ScenarioStep) => {
+  const openEditStep = (step: ScenarioStepWithSettings) => {
     setStepForm({
       stepOrder: step.stepOrder,
       delayMinutes: step.delayMinutes,
       messageType: step.messageType,
       messageContent: step.messageContent,
+      conditionType: step.conditionType ?? '',
+      conditionValue: step.conditionValue ?? '',
+      nextStepOnFalse: step.nextStepOnFalse ? String(step.nextStepOnFalse) : '',
     })
     setEditingStepId(step.id)
     setShowStepForm(true)
@@ -175,6 +205,9 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
           delayMinutes: stepForm.delayMinutes,
           messageType: stepForm.messageType,
           messageContent: stepForm.messageContent,
+          conditionType: stepForm.conditionType || null,
+          conditionValue: stepForm.conditionValue || null,
+          nextStepOnFalse: stepForm.nextStepOnFalse ? Number(stepForm.nextStepOnFalse) : null,
         })
         if (!res.success) {
           setStepError(res.error)
@@ -186,6 +219,9 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
           delayMinutes: stepForm.delayMinutes,
           messageType: stepForm.messageType,
           messageContent: stepForm.messageContent,
+          conditionType: stepForm.conditionType || null,
+          conditionValue: stepForm.conditionValue || null,
+          nextStepOnFalse: stepForm.nextStepOnFalse ? Number(stepForm.nextStepOnFalse) : null,
         })
         if (!res.success) {
           setStepError(res.error)
@@ -293,6 +329,22 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                 ))}
               </select>
             </div>
+            {editForm.triggerType === 'tag_added' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">開始条件タグ</label>
+                <select
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                  value={editForm.triggerTagId}
+                  onChange={(e) => setEditForm({ ...editForm, triggerTagId: e.target.value })}
+                >
+                  <option value="">タグを選択</option>
+                  {tags.map((tag) => (
+                    <option key={tag.id} value={tag.id}>{tag.name}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-400">このタグが付いた友だちにシナリオを開始します。</p>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -319,6 +371,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                     name: scenario.name,
                     description: scenario.description ?? '',
                     triggerType: scenario.triggerType,
+                    triggerTagId: scenario.triggerTagId ?? '',
                     isActive: scenario.isActive,
                   })
                 }}
@@ -353,6 +406,9 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
             )}
             <div className="flex items-center gap-4 text-xs text-gray-500">
               <span>トリガー: {triggerOptions.find(o => o.value === scenario.triggerType)?.label ?? scenario.triggerType}</span>
+              {scenario.triggerType === 'tag_added' && (
+                <span>開始タグ: {tags.find((tag) => tag.id === scenario.triggerTagId)?.name ?? scenario.triggerTagId ?? '-'}</span>
+              )}
               <span>ステップ数: {scenario.steps.length}</span>
               <span>作成日: {new Date(scenario.createdAt).toLocaleDateString('ja-JP')}</span>
             </div>
@@ -425,6 +481,57 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                   onChange={(e) => setStepForm({ ...stepForm, messageContent: e.target.value })}
                 />
               </div>
+              <div className="rounded-lg border border-gray-200 bg-white p-3">
+                <p className="mb-3 text-xs font-semibold text-gray-700">条件分岐（任意）</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">条件タイプ</label>
+                    <select
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                      value={stepForm.conditionType}
+                      onChange={(e) => setStepForm({ ...stepForm, conditionType: e.target.value })}
+                    >
+                      <option value="">条件なし</option>
+                      <option value="has_tag">タグを持つ</option>
+                      <option value="not_has_tag">タグを持たない</option>
+                      <option value="metadata_equals">顧客情報が一致</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">条件値</label>
+                    {stepForm.conditionType === 'has_tag' || stepForm.conditionType === 'not_has_tag' ? (
+                      <select
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                        value={stepForm.conditionValue}
+                        onChange={(e) => setStepForm({ ...stepForm, conditionValue: e.target.value })}
+                      >
+                        <option value="">タグを選択</option>
+                        {tags.map((tag) => (
+                          <option key={tag.id} value={tag.id}>{tag.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                        value={stepForm.conditionValue}
+                        onChange={(e) => setStepForm({ ...stepForm, conditionValue: e.target.value })}
+                        placeholder="例: status=reserved"
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">false時の移動先</label>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                      value={stepForm.nextStepOnFalse}
+                      onChange={(e) => setStepForm({ ...stepForm, nextStepOnFalse: e.target.value })}
+                      placeholder="例: 3"
+                    />
+                  </div>
+                </div>
+              </div>
 
               {stepError && <p className="text-xs text-red-600">{stepError}</p>}
 
@@ -479,6 +586,11 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                         }`}>
                           {messageTypeOptions.find(o => o.value === step.messageType)?.label ?? step.messageType}
                         </span>
+                        {step.conditionType && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700">
+                            条件: {step.conditionType}
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-gray-700 bg-gray-50 rounded-md px-3 py-2">
                         {step.messageType === 'text' ? (
@@ -491,6 +603,12 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                           <p className="whitespace-pre-wrap break-words">{step.messageContent}</p>
                         )}
                       </div>
+                      {step.conditionType && (
+                        <p className="mt-2 text-xs text-gray-500">
+                          条件値: {tags.find((tag) => tag.id === step.conditionValue)?.name ?? step.conditionValue ?? '-'}
+                          {step.nextStepOnFalse ? ` / false時: ステップ${step.nextStepOnFalse}` : ''}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button

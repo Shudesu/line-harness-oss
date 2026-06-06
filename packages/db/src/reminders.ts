@@ -91,6 +91,23 @@ export async function createReminderStep(
   return (await db.prepare(`SELECT * FROM reminder_steps WHERE id = ?`).bind(id).first<ReminderStepRow>())!;
 }
 
+export async function updateReminderStep(
+  db: D1Database,
+  id: string,
+  updates: Partial<{ offsetMinutes: number; messageType: string; messageContent: string }>,
+): Promise<ReminderStepRow | null> {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (updates.offsetMinutes !== undefined) { sets.push('offset_minutes = ?'); values.push(updates.offsetMinutes); }
+  if (updates.messageType !== undefined) { sets.push('message_type = ?'); values.push(updates.messageType); }
+  if (updates.messageContent !== undefined) { sets.push('message_content = ?'); values.push(updates.messageContent); }
+  if (sets.length > 0) {
+    values.push(id);
+    await db.prepare(`UPDATE reminder_steps SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
+  }
+  return db.prepare(`SELECT * FROM reminder_steps WHERE id = ?`).bind(id).first<ReminderStepRow>();
+}
+
 export async function deleteReminderStep(db: D1Database, id: string): Promise<void> {
   await db.prepare(`DELETE FROM reminder_steps WHERE id = ?`).bind(id).run();
 }

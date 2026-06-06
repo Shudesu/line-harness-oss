@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { Scenario, ScenarioTriggerType } from '@line-crm/shared'
+import type { Scenario, ScenarioTriggerType, Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
@@ -47,6 +47,7 @@ interface CreateFormState {
 export default function ScenariosPage() {
   const { selectedAccountId } = useAccount()
   const [scenarios, setScenarios] = useState<ScenarioWithCount[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -81,6 +82,12 @@ export default function ScenariosPage() {
     loadScenarios()
   }, [loadScenarios])
 
+  useEffect(() => {
+    api.tags.list()
+      .then((res) => { if (res.success) setTags(res.data) })
+      .catch(() => undefined)
+  }, [])
+
   const handleCreate = async () => {
     if (!form.name.trim()) {
       setFormError('シナリオ名を入力してください')
@@ -93,8 +100,9 @@ export default function ScenariosPage() {
         name: form.name,
         description: form.description || null,
         triggerType: form.triggerType,
-        triggerTagId: form.triggerTagId || null,
+        triggerTagId: form.triggerType === 'tag_added' ? (form.triggerTagId || null) : null,
         isActive: form.isActive,
+        lineAccountId: selectedAccountId || undefined,
       })
       if (res.success) {
         setShowCreate(false)
@@ -187,6 +195,22 @@ export default function ScenariosPage() {
                 ))}
               </select>
             </div>
+            {form.triggerType === 'tag_added' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">開始条件タグ</label>
+                <select
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                  value={form.triggerTagId}
+                  onChange={(e) => setForm({ ...form, triggerTagId: e.target.value })}
+                >
+                  <option value="">タグを選択</option>
+                  {tags.map((tag) => (
+                    <option key={tag.id} value={tag.id}>{tag.name}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-400">このタグが友だちに付いたときにシナリオを開始します。</p>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
