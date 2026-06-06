@@ -39,14 +39,15 @@ async function lookupFriendAndAccount(
     .bind(lineUserId, lineAccountId)
     .first<{ id: string; display_name: string | null }>();
   if (!friend) return null;
+  // Codex 指摘: line_accounts のカラム名は name (display_name ではない)
   const account = await db
-    .prepare('SELECT display_name FROM line_accounts WHERE id = ?')
+    .prepare('SELECT name FROM line_accounts WHERE id = ?')
     .bind(lineAccountId)
-    .first<{ display_name: string | null }>();
+    .first<{ name: string | null }>();
   return {
     friendId: friend.id,
     friendName: friend.display_name ?? '(名前未取得)',
-    accountName: account?.display_name ?? '(アカウント名なし)',
+    accountName: account?.name ?? '(アカウント名なし)',
   };
 }
 

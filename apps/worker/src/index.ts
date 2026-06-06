@@ -62,6 +62,8 @@ import { reports } from './routes/reports.js';
 import { friendAttribution } from './routes/friend-attribution.js';
 import { crmForwards } from './routes/crm-forwards.js';
 import { larkNotifications } from './routes/lark-notifications.js';
+import { fingerprintPolicy } from './routes/fingerprint-policy.js';
+import { tokenEncryption } from './routes/token-encryption.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
@@ -124,6 +126,10 @@ export type Env = {
     // Phase 3-F1 Lark 連携 (wrangler secret put で設定)
     LARK_APP_ID?: string;
     LARK_APP_SECRET?: string;
+    // Phase 1-G channel_access_token AES-GCM 暗号化 (wrangler secret put で設定)
+    // 32 byte / base64 (openssl rand -base64 32) のキー。
+    // 未設定なら暗号化機能はオフ (既存平文挙動と完全互換)。
+    LINE_TOKEN_ENC_KEY?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' | 'viewer' };
@@ -155,6 +161,8 @@ app.route('/', reports);
 app.route('/', friendAttribution);
 app.route('/', crmForwards);
 app.route('/', larkNotifications);
+app.route('/', fingerprintPolicy);
+app.route('/', tokenEncryption);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
@@ -683,6 +691,30 @@ async function scheduled(
       );
     } catch (e) {
       console.error('event-booking-expirer error:', e);
+    }
+  }
+
+  // Phase 1-H: fingerprint データの自動削除 — 6h cron tick で実行 (=1日4回)。
+  // account_settings から retention_days を読んで、それより古い link_clicks の
+  // user_agent / ip_address / ua_fingerprint を NULL クリアする。
+  if (event.cron === '0 */6 * * *') {
+    try {
+      const retentionRow = await env.DB
+        .prepare(`SELECT value FROM account_settings WHERE line_account_id = '__system__' AND key = 'fingerprint_retention_days'`)
+        .first<{ value: string }>();
+      const retentionDays = Number(retentionRow?.value ?? 90);
+      const { purgeOldFingerprints } = await import('./services/fingerprint-purger.js');
+      const r = await purgeOldFingerprints(env.DB, {
+        retentionDays: Number.isFinite(retentionDays) && retentionDays > 0 ? retentionDays : 90,
+        trigger: 'cron',
+      });
+      if (r.clearedRows > 0) {
+        console.log(
+          `[fingerprint-purger] retention=${retentionDays}d scanned=${r.scannedRows} cleared=${r.clearedRows}`,
+        );
+      }
+    } catch (e) {
+      console.error('fingerprint-purger error:', e);
     }
   }
 

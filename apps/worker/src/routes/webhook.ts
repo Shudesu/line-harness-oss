@@ -74,6 +74,9 @@ webhook.post('/webhook', async (c) => {
   let matchedAccountId: string | null = null;
   let valid = false;
 
+  // Phase 1-G: 暗号化 token を透過的に復号する
+  const { resolveAccessToken } = await import('../lib/account-token.js');
+
   const envSecret = c.env.LINE_CHANNEL_SECRET;
   if (envSecret) {
     valid = await verifySignature(envSecret, rawBody, signature);
@@ -83,7 +86,7 @@ webhook.post('/webhook', async (c) => {
         (a) => a.is_active && a.channel_secret === envSecret,
       );
       if (main) {
-        channelAccessToken = main.channel_access_token;
+        channelAccessToken = await resolveAccessToken(c.env, main.channel_access_token);
         matchedAccountId = main.id;
       }
     }
@@ -96,7 +99,7 @@ webhook.post('/webhook', async (c) => {
       if (envSecret && account.channel_secret === envSecret) continue; // already tried via fast path
       const isValid = await verifySignature(account.channel_secret, rawBody, signature);
       if (isValid) {
-        channelAccessToken = account.channel_access_token;
+        channelAccessToken = await resolveAccessToken(c.env, account.channel_access_token);
         matchedAccountId = account.id;
         valid = true;
         break;
@@ -385,6 +388,50 @@ async function handleEvent(
       }
     }
 
+    // Phase 1-A: あいさつメッセージ (L-TRACK 互換)
+    //
+    // referralRoute が無いケース、つまり「普通の友だち追加」では、
+    // account_settings.default_greeting_text に設定された文言を push する。
+    // 設定が無ければ何もしない (LINE 公式の「あいさつメッセージ」がそのまま使われる)。
+    //
+    // referralRoute がある場合は intro_template_id 側が主役なので、
+    // ここでは何もしない (二重 push を避ける)。
+    if (!referralRoute && lineAccountId) {
+      try {
+        const row = await db
+          .prepare(
+            `SELECT value FROM account_settings WHERE line_account_id = ? AND key = 'default_greeting_text'`,
+          )
+          .bind(lineAccountId)
+          .first<{ value: string }>();
+        const raw = row?.value?.trim();
+        if (raw) {
+          // Codex 指摘 (低): account_name プレースホルダは line_accounts.name を引く
+          const accRow = await db
+            .prepare(`SELECT name FROM line_accounts WHERE id = ?`)
+            .bind(lineAccountId)
+            .first<{ name: string | null }>();
+          const accountName = accRow?.name ?? '';
+
+          // プレースホルダ置換
+          const text = raw
+            .replaceAll('{{friend_name}}', friend.display_name ?? '')
+            .replaceAll('{{account_name}}', accountName);
+          await lineClient.pushMessage(userId, [{ type: 'text', text }]);
+          await db
+            .prepare(
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
+               VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'greeting', ?, ?)`,
+            )
+            .bind(crypto.randomUUID(), friend.id, text, lineAccountId, jstNow())
+            .run();
+          console.log(`[follow] default greeting sent friend=${friend.id}`);
+        }
+      } catch (err) {
+        console.error('[follow] default greeting failed', err);
+      }
+    }
+
     // イベントバス発火: friend_add（replyToken は Step 0 で使用済みの可能性あり）
     await fireEvent(db, 'friend_add', { friendId: friend.id, eventData: { displayName: friend.display_name } }, lineAccessToken, lineAccountId);
     return;
@@ -558,6 +605,11 @@ async function handleEvent(
           const otherFriends = await db.prepare(
             'SELECT f.line_user_id, la.channel_access_token FROM friends f INNER JOIN line_accounts la ON la.id = f.line_account_id WHERE f.user_id = ? AND f.line_account_id != ? AND f.is_following = 1'
           ).bind(friendRecord.user_id, lineAccountId).all<{ line_user_id: string; channel_access_token: string }>();
+          // Phase 1-G: 各行の channel_access_token を復号
+          const { resolveAccessToken } = await import('../lib/account-token.js');
+          for (const o of otherFriends.results) {
+            o.channel_access_token = await resolveAccessToken(c.env, o.channel_access_token);
+          }
 
           for (const other of otherFriends.results) {
             const otherClient = new LineClient(other.channel_access_token);

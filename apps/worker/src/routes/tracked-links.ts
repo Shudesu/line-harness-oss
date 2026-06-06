@@ -380,8 +380,17 @@ trackedLinks.get('/t/:linkId', async (c) => {
   ctx.waitUntil(
     (async () => {
       try {
+        // Phase 1-H: fingerprint 同意チェック
+        // account_settings (line_account_id='global', key='fingerprint_consent') が '0' なら
+        // user_agent / ip_address / ua_fingerprint を保存しない。
+        // クリック自体は記録するので、CV 集計や ltp/fbclid マッチングには影響しない。
+        const consentRow = await c.env.DB
+          .prepare(`SELECT value FROM account_settings WHERE line_account_id = '__system__' AND key = 'fingerprint_consent'`)
+          .first<{ value: string }>();
+        const fingerprintConsent = consentRow?.value !== '0'; // 未設定は同意あり扱い (デフォルト)
+
         // L-TRACK 互換: UA fingerprint を生成して拡張版で記録
-        const uaFingerprint = ua ? await generateUaFingerprint(ua) : null;
+        const uaFingerprint = fingerprintConsent && ua ? await generateUaFingerprint(ua) : null;
 
         await recordLinkClickExtended(c.env.DB, {
           trackedLinkId: linkId,
@@ -396,8 +405,8 @@ trackedLinks.get('/t/:linkId', async (c) => {
           utmCampaign: attr.utmCampaign,
           utmContent: attr.utmContent,
           utmTerm: attr.utmTerm,
-          userAgent: ua || null,
-          ipAddress,
+          userAgent: fingerprintConsent ? (ua || null) : null,
+          ipAddress: fingerprintConsent ? ipAddress : null,
           uaFingerprint,
           country,
         });
