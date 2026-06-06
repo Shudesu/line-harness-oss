@@ -23,6 +23,7 @@ import { sendEventBookingNotification } from './services/event-booking-notifier.
 import { sendBookingNotification } from './services/booking-notifier.js';
 import { DEFAULT_ACCOUNT_SETTINGS } from './services/booking-types.js';
 import { authMiddleware } from './middleware/auth.js';
+import { blockViewerWrites } from './middleware/role-guard.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { webhook } from './routes/webhook.js';
 import { friends } from './routes/friends.js';
@@ -114,7 +115,7 @@ export type Env = {
     LIFF_PUBLIC_URL?: string;
   };
   Variables: {
-    staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' | 'viewer' };
   };
 };
 
@@ -128,6 +129,10 @@ app.use('*', rateLimitMiddleware);
 
 // Auth middleware — skips /webhook and /docs automatically
 app.use('*', authMiddleware);
+
+// L-TRACK 互換: viewer ロールは GET/HEAD/OPTIONS 以外を全部 403。
+// 顧問先・代理店に閲覧専用アカウントを発行できるようにする。
+app.use('*', blockViewerWrites);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);

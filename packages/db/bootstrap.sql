@@ -741,11 +741,11 @@ CREATE TABLE staff (
   FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
 );
 
-CREATE TABLE staff_members (
+CREATE TABLE "staff_members" (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
   email      TEXT,
-  role       TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff')),
+  role       TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff', 'viewer')),
   api_key    TEXT UNIQUE NOT NULL,
   is_active  INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
@@ -1025,9 +1025,9 @@ CREATE INDEX idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
 
 CREATE INDEX idx_staff_account_sort ON staff (line_account_id, sort_order);
 
-CREATE UNIQUE INDEX idx_staff_members_api_key ON staff_members(api_key);
+CREATE UNIQUE INDEX idx_staff_members_api_key ON staff_members (api_key);
 
-CREATE INDEX idx_staff_members_role ON staff_members(role);
+CREATE INDEX idx_staff_members_role ON staff_members (role);
 
 CREATE INDEX idx_stripe_events_friend ON stripe_events (friend_id);
 
