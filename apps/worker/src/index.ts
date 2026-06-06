@@ -548,17 +548,10 @@ export const notFoundHandler = async (c: Parameters<typeof app.notFound>[0] exte
   return c.json({ success: false, error: 'Not found' }, 404);
 };
 
-// L-TRACK 互換検証用: af_confirm cron 処理を手動発火する admin endpoint。
-// 認証は authMiddleware が Bearer トークンを検証するため、API_KEY または staff_members の api_key が必要。
-app.get('/admin/run-af-confirm', async (c) => {
-  try {
-    const { processAfConfirmDelayed } = await import('./services/af-confirm-processor.js');
-    const r = await processAfConfirmDelayed(c.env.DB);
-    return c.json({ success: true, data: r });
-  } catch (err) {
-    return c.json({ success: false, error: String(err) }, 500);
-  }
-});
+// 【C3 監査対応 2026-06-06】
+// 旧 /admin/run-af-confirm を完全削除。本番では認証バイパスで第三者が叩ける状態だったため。
+// af-confirm cron は scheduled handler 経由で5分tick自動実行される。
+// 検証が必要な場合は dev 環境（CLOUDFLARE_ACCOUNT_ID 切替）で行うこと。
 
 app.notFound(notFoundHandler);
 

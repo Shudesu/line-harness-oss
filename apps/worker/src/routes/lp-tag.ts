@@ -19,10 +19,15 @@ import type { Env } from '../index.js';
 const lpTag = new Hono<Env>();
 
 /**
- * 検証用 LP HTML（本番では不要だが、検証フェーズで LP用タグJSの動作確認に使う）。
- * GET /lp/test?ltr_code=<linkId>&fbclid=...&utm_*=... のように開く想定。
+ * 検証用 LP HTML（本番では 404）。
+ * 【C3 監査対応 2026-06-06】公開状態を放置すると第三者から踏まれて広告ログ汚染するため、
+ * env.LP_TEST_ENABLED='true' のときだけ配信。default は配信しない。
  */
 lpTag.get('/lp/test', async (c) => {
+  const enabled = (c.env as unknown as { LP_TEST_ENABLED?: string }).LP_TEST_ENABLED === 'true';
+  if (!enabled) {
+    return c.notFound();
+  }
   const workerOrigin = (c.env.WORKER_URL || `https://${new URL(c.req.url).host}`).replace(/\/+$/, '');
   const html = `<!DOCTYPE html>
 <html lang="ja">

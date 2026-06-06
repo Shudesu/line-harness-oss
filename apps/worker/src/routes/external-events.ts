@@ -157,8 +157,19 @@ externalEvents.post('/api/external-events/:eventKey/receive', async (c) => {
   if (raw.length > MAX_BODY_BYTES) {
     return c.json({ success: false, error: 'body too large' }, 413);
   }
+
+  // 【C3 監査対応 2026-06-06】hmac_secret 未設定の event は受信を拒否。
+  // 以前は NULL で検証スキップ → 偽 CV を Meta/Google CAPI に流せる重大欠陥だった。
+  // event を作成する際に必ず hmac_secret を設定すること（管理画面で必須化要）。
+  if (!ev.hmac_secret) {
+    return c.json({
+      success: false,
+      error: 'external event has no hmac_secret configured — refusing receipt',
+    }, 400);
+  }
+
   const sig = c.req.header('x-signature');
-  const hmacCheck = await verifyHmac(raw, sig, ev.hmac_secret ?? null);
+  const hmacCheck = await verifyHmac(raw, sig, ev.hmac_secret);
   if (!hmacCheck.ok) {
     return c.json({ success: false, error: `unauthorized: ${hmacCheck.reason}` }, 401);
   }
