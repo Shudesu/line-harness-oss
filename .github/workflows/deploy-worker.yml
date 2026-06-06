@@ -13,9 +13,14 @@ name: Deploy Worker
 # - CLOUDFLARE_SECRETS_STORE_BINDINGS
 #     optional comma-separated map: BINDING_NAME=SECRET_NAME,OTHER_NAME
 #     when omitted, only required Worker secret binding names are used as secret names
-# - RUN_D1_MIGRATIONS             set true to apply production-safe D1 compatibility patches before deploy
 on:
   workflow_dispatch:
+    inputs:
+      run_d1_compatibility_patches:
+        description: 'Apply D1 compatibility patches before deploy. Prefer migrate-d1.yml for schema changes.'
+        required: false
+        type: boolean
+        default: false
   
   push:
     branches: [main]
@@ -51,7 +56,7 @@ jobs:
         run: rm -f apps/worker/.dev.vars
 
       - name: Apply D1 compatibility patches
-        if: ${{ vars.RUN_D1_MIGRATIONS == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_d1_compatibility_patches == true }}
         working-directory: apps/worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

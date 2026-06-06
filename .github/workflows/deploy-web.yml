@@ -11,6 +11,10 @@ name: Deploy Web
 # Required GitHub Variables:
 # - CLOUDFLARE_PAGES_PROJECT_NAME   optional, default: line-harness-reservation-web
 # - NEXT_PUBLIC_API_URL             example: https://line-harness-reservation.example.workers.dev
+#
+# Cloudflare Pages project must already exist.
+# This workflow only deploys the static export and does not create/update
+# project-level settings.
 on:
   workflow_dispatch:
   push:
@@ -67,13 +71,6 @@ jobs:
         run: pnpm --filter web build
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || vars.WORKER_URL }}
-
-      - name: Ensure Cloudflare Pages project
-        run: pnpm exec wrangler pages project create "$CLOUDFLARE_PAGES_PROJECT_NAME" --production-branch main || true
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME || 'line-harness-reservation-web' }}
 
       - name: Deploy to Cloudflare Pages
         run: pnpm exec wrangler pages deploy apps/web/out --project-name "$CLOUDFLARE_PAGES_PROJECT_NAME" --branch "$GITHUB_REF_NAME"
