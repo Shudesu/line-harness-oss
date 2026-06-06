@@ -226,6 +226,16 @@ export interface RichMenu {
   name: string
   chatBarText: string
   areas: RichMenuArea[]
+  imageAsset?: {
+    rich_menu_id: string
+    line_account_id: string | null
+    image_key: string
+    image_url: string
+    mime_type: string
+    size: number | null
+    created_at: string
+    updated_at: string
+  } | null
 }
 
 export interface CreateRichMenuInput {

@@ -1,6 +1,12 @@
 import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
-import { getFriendById, getLineAccountById } from '@line-crm/db';
+import {
+  deleteRichMenuAsset,
+  getFriendById,
+  getLineAccountById,
+  listRichMenuAssets,
+  upsertRichMenuAsset,
+} from '@line-crm/db';
 import type { Env } from '../index.js';
 import { defaultLineAccessToken } from '../services/line-bindings.js';
 
@@ -40,9 +46,16 @@ async function resolveLineClient(c: { env: Env['Bindings']; req: { query(key: st
 // GET /api/rich-menus — list all rich menus from LINE API
 richMenus.get('/api/rich-menus', async (c) => {
   try {
+    const accountId = c.req.query('accountId')?.trim() || null;
     const lineClient = await resolveLineClient(c);
     const result = await lineClient.getRichMenuList();
-    return c.json({ success: true, data: result.richmenus ?? [] });
+    const assets = await listRichMenuAssets(c.env.DB, accountId);
+    const assetsById = new Map(assets.map((asset) => [asset.rich_menu_id, asset]));
+    const menus = (result.richmenus ?? []).map((menu) => ({
+      ...menu,
+      imageAsset: assetsById.get(menu.richMenuId) ?? null,
+    }));
+    return c.json({ success: true, data: menus });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('GET /api/rich-menus error:', message);
@@ -72,6 +85,9 @@ richMenus.delete('/api/rich-menus/:id', async (c) => {
     const richMenuId = c.req.param('id');
     const lineClient = await resolveLineClient(c);
     await lineClient.deleteRichMenu(richMenuId);
+    await deleteRichMenuAsset(c.env.DB, richMenuId).catch((err) => {
+      console.warn('Failed to delete rich menu asset metadata:', err);
+    });
     return c.json({ success: true, data: null });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -218,7 +234,16 @@ richMenus.post('/api/rich-menus/:id/image', async (c) => {
 
     if (contentType.includes('application/json')) {
       // Accept base64 encoded image in JSON body
-      const body = await c.req.json<{ image: string; contentType?: string }>();
+      const body = await c.req.json<{
+        image: string;
+        contentType?: string;
+        asset?: {
+          key?: string;
+          url?: string;
+          mimeType?: string;
+          size?: number;
+        };
+      }>();
       if (!body.image) {
         return c.json({ success: false, error: 'image (base64) is required' }, 400);
       }
@@ -231,6 +256,16 @@ richMenus.post('/api/rich-menus/:id/image', async (c) => {
       }
       imageData = bytes.buffer;
       if (body.contentType === 'image/jpeg') imageContentType = 'image/jpeg';
+      if (body.asset?.key && body.asset.url) {
+        await upsertRichMenuAsset(c.env.DB, {
+          richMenuId,
+          lineAccountId: c.req.query('accountId')?.trim() || null,
+          imageKey: body.asset.key,
+          imageUrl: body.asset.url,
+          mimeType: body.asset.mimeType ?? body.contentType ?? imageContentType,
+          size: body.asset.size ?? imageData.byteLength,
+        });
+      }
     } else if (contentType.includes('image/')) {
       // Accept raw binary upload
       imageData = await c.req.arrayBuffer();

@@ -188,6 +188,7 @@ jobs:
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_chats_line_account_id ON chats (line_account_id)"
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_ref_tracking_entry_route ON ref_tracking (entry_route_id)"
           wrangler_d1 --command "CREATE INDEX IF NOT EXISTS idx_reservation_resources_account ON reservation_resources (line_account_id)"
+          wrangler_d1 --file ../../packages/db/migrations/037_rich_menu_assets.sql
 
       - run: pnpm --filter worker build
         env:

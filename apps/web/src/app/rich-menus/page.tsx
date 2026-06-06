@@ -131,6 +131,7 @@ export default function RichMenusPage() {
   const [notice, setNotice] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [createdRichMenuId, setCreatedRichMenuId] = useState('')
+  const [imagePreviews, setImagePreviews] = useState<Record<string, { url: string; key: string; mimeType: string }>>({})
   const [aliasForm, setAliasForm] = useState({ richMenuAliasId: '', richMenuId: '' })
   const [form, setForm] = useState({
     name: 'メインメニュー',
@@ -146,7 +147,19 @@ export default function RichMenusPage() {
     setError('')
     try {
       const client = createLineHarnessClient(selectedAccountId)
-      setMenus(await client.richMenus.list())
+      const loadedMenus = await client.richMenus.list()
+      setMenus(loadedMenus)
+      const previews = loadedMenus.reduce<Record<string, { url: string; key: string; mimeType: string }>>((acc, menu) => {
+        if (menu.imageAsset) {
+          acc[menu.richMenuId] = {
+            url: menu.imageAsset.image_url,
+            key: menu.imageAsset.image_key,
+            mimeType: menu.imageAsset.mime_type,
+          }
+        }
+        return acc
+      }, {})
+      setImagePreviews(previews)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'リッチメニュー一覧の取得に失敗しました')
     } finally {
@@ -259,14 +272,35 @@ export default function RichMenusPage() {
     try {
       const image = await fileToDataUrl(file)
       const client = createLineHarnessClient(selectedAccountId)
+      const uploaded = await client.images.upload({
+        data: image,
+        mimeType: file.type,
+        filename: file.name,
+      })
+      setImagePreviews((prev) => ({
+        ...prev,
+        [richMenuId]: {
+          url: uploaded.url,
+          key: uploaded.key,
+          mimeType: uploaded.mimeType,
+        },
+      }))
       await client.richMenus.uploadImage(
         richMenuId,
         image,
         file.type as 'image/png' | 'image/jpeg',
+        {
+          asset: {
+            key: uploaded.key,
+            url: uploaded.url,
+            mimeType: uploaded.mimeType,
+            size: uploaded.size,
+          },
+        },
       )
-      setNotice('画像をアップロードしました。必要に応じてデフォルト設定してください。')
+      setNotice('画像をR2に保存し、LINEリッチメニュー画像として登録しました。必要に応じてデフォルト設定してください。')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '画像アップロードに失敗しました')
+      setError(err instanceof Error ? err.message : '画像アップロードまたはLINE登録に失敗しました')
     } finally {
       setUploadingId(null)
     }
@@ -594,6 +628,18 @@ export default function RichMenusPage() {
 
               <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-3">
                 <label className="block text-xs font-medium text-gray-600 mb-2">画像アップロード PNG/JPEG 1MB以下</label>
+                {imagePreviews[menu.richMenuId] && (
+                  <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                    <img
+                      src={imagePreviews[menu.richMenuId].url}
+                      alt={`${menu.name} preview`}
+                      className="h-auto w-full object-contain"
+                    />
+                    <div className="border-t border-gray-200 px-3 py-2 text-[11px] text-gray-500">
+                      R2: <span className="font-mono">{imagePreviews[menu.richMenuId].key}</span>
+                    </div>
+                  </div>
+                )}
                 <input
                   type="file"
                   accept="image/png,image/jpeg"

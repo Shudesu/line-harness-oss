@@ -37,10 +37,23 @@ export class RichMenusResource {
     await this.http.post(`/api/rich-menus/${encodeURIComponent(richMenuId)}/default${accountQuery(this.options(options))}`)
   }
 
-  async uploadImage(richMenuId: string, image: string, contentType: 'image/png' | 'image/jpeg' = 'image/png', options?: RichMenuRequestOptions): Promise<void> {
+  async uploadImage(
+    richMenuId: string,
+    image: string,
+    contentType: 'image/png' | 'image/jpeg' = 'image/png',
+    options?: RichMenuRequestOptions & {
+      asset?: {
+        key: string
+        url: string
+        mimeType: string
+        size?: number
+      }
+    },
+  ): Promise<void> {
     await this.http.post(`/api/rich-menus/${encodeURIComponent(richMenuId)}/image${accountQuery(this.options(options))}`, {
       image,
       contentType,
+      asset: options?.asset,
     })
   }
 
