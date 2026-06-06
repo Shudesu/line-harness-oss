@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════════════════
+# hyhome-harness 本番環境設定 (Kashiyu.mina.iezukurisoudan@gmail.com's Account)
+# 使い方: pnpm exec wrangler deploy --config wrangler-prod.toml
+#         pnpm exec wrangler d1 execute hyhome-harness --remote --file=... (top-level)
+# このファイルは前田さんの本番用 hyhome-harness Worker / Pages / D1 に
+# 直接デプロイするための独立した wrangler 設定です。
+# dev 用は wrangler.toml (Maedayasao アカウント) を引き続き使う。
+# ═══════════════════════════════════════════════════════════════
+
+name = "hyhome-harness"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+account_id = "3048ba5bd6789dbf21204b466fbf4c8b"
+
+[assets]
+directory = "dist/client"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hyhome-harness"
+database_id = "02e337a1-5fd3-426b-ba6d-d2f9085c20da"
+
+# R2 は本番デプロイ時に Cloudflare Dashboard で「利用開始」してから有効化。
+# [[r2_buckets]]
+# binding = "IMAGES"
+# bucket_name = "hyhome-harness-images"
+
+[triggers]
+crons = ["*/5 * * * *", "0 */6 * * *"]
+
+[vars]
+WORKER_NAME = "hyhome-harness"
+ADMIN_PAGES_PROJECT = "hyhome-harness-admin-0cdf2440"
+LIFF_PAGES_PROJECT = "hyhome-harness-liff"
+D1_DATABASE_ID = "02e337a1-5fd3-426b-ba6d-d2f9085c20da"
+MANIFEST_URL = "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json"
+WORKER_PUBLIC_URL = "https://hyhome-harness.kashiyu-mina-iezukurisoudan.workers.dev"
+WORKER_URL = "https://hyhome-harness.kashiyu-mina-iezukurisoudan.workers.dev"
+ADMIN_PUBLIC_URL = "https://hyhome-harness-admin-0cdf2440.pages.dev"
+LIFF_PUBLIC_URL = "https://hyhome-harness-liff.pages.dev"
+CF_ACCOUNT_ID = "3048ba5bd6789dbf21204b466fbf4c8b"
