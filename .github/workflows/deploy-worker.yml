@@ -10,8 +10,6 @@ name: Deploy Worker
 # - CLOUDFLARE_D1_DATABASE_NAME   default: line-crm
 # - CLOUDFLARE_R2_BUCKET_NAME     default: line-harness-images
 # - CLOUDFLARE_SECRETS_STORE_ID   binds Cloudflare Secrets Store secrets when set
-# - CLOUDFLARE_ENABLE_SECRETS_STORE_BINDINGS
-#     set true to generate Secrets Store bindings during deploy
 # - CLOUDFLARE_SECRETS_STORE_BINDINGS
 #     optional comma-separated map: BINDING_NAME=SECRET_NAME,OTHER_NAME
 #     when omitted, only required Worker secret binding names are used as secret names
@@ -209,7 +207,6 @@ jobs:
           CF_R2_BUCKET_NAME: ${{ vars.CLOUDFLARE_R2_BUCKET_NAME }}
           CF_WORKER_NAME: ${{ vars.WORKER_NAME }}
           CF_SECRETS_STORE_ID: ${{ vars.CLOUDFLARE_SECRETS_STORE_ID }}
-          CF_ENABLE_SECRETS_STORE_BINDINGS: ${{ vars.CLOUDFLARE_ENABLE_SECRETS_STORE_BINDINGS }}
           CF_SECRETS_STORE_BINDINGS: ${{ vars.CLOUDFLARE_SECRETS_STORE_BINDINGS }}
           WORKER_URL: ${{ vars.WORKER_URL }}
           LIFF_URL: ${{ vars.LIFF_URL }}
@@ -246,7 +243,6 @@ jobs:
           const d1DatabaseName = process.env.CF_D1_DATABASE_NAME || 'line-crm';
           const r2BucketName = process.env.CF_R2_BUCKET_NAME || 'line-harness-images';
           const secretsStoreId = process.env.CF_SECRETS_STORE_ID?.trim();
-          const enableSecretsStoreBindings = process.env.CF_ENABLE_SECRETS_STORE_BINDINGS?.trim().toLowerCase() === 'true';
 
           config.name = workerName;
           config.topLevelName = workerName;
@@ -289,7 +285,7 @@ jobs:
             ...plainVars,
           };
 
-          if (secretsStoreId && enableSecretsStoreBindings) {
+          if (secretsStoreId) {
             const defaultBindings = [
               'API_KEY',
               'APP_ENCRYPTION_KEY',
@@ -328,8 +324,6 @@ jobs:
 
             config.secrets_store_secrets = bindings;
             console.log('Secrets Store bindings:', bindings.map((item) => item.binding).join(', '));
-          } else if (secretsStoreId) {
-            console.log('Secrets Store ID is configured, but bindings are disabled. Set CLOUDFLARE_ENABLE_SECRETS_STORE_BINDINGS=true to bind store secrets.');
           }
 
           const deployConfigPath = path.join(process.cwd(), '.wrangler-ci.json');
