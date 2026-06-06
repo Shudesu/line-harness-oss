@@ -124,6 +124,16 @@ webhook.post('/webhook', async (c) => {
     for (const event of body.events) {
       try {
         await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES);
+        // Phase 3-F1 (Lark連携): follow/unfollow を Lark に通知。
+        // handleEvent 完了後なので、friends テーブルには既に最新状態が入っている。
+        if (matchedAccountId && (event.type === 'follow' || event.type === 'unfollow')) {
+          try {
+            const { triggerLarkForFollowEvent } = await import('../services/lark-notifier-hooks.js');
+            await triggerLarkForFollowEvent(c.env, db, matchedAccountId, event);
+          } catch (err) {
+            console.error('[webhook] lark notify error:', err);
+          }
+        }
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }

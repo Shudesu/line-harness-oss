@@ -605,6 +605,31 @@ forms.post('/api/forms/:id/submit', async (c) => {
           if (r.status === 'rejected') console.error('Form side-effect failed:', r.reason);
         }
       }
+
+      // Phase 3-F1 (Lark連携): フォーム回答を Lark に通知。
+      // 友だち情報が解決できた時だけ通知 (匿名回答は通知しない)。
+      // 応答は既に返している想定だが、保険として waitUntil で非同期化。
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const { triggerLarkForFormSubmit } = await import('../services/lark-notifier-hooks.js');
+            const friend = await getFriendById(c.env.DB, friendId!);
+            if (!friend) return;
+            const friendLineAccountId =
+              ((friend as unknown as Record<string, unknown>).line_account_id as string | null | undefined) ?? null;
+            if (!friendLineAccountId) return;
+            await triggerLarkForFormSubmit(c.env, c.env.DB, {
+              lineAccountId: friendLineAccountId,
+              formId,
+              formName: form.name,
+              friendId: friend.id,
+              friendName: friend.display_name ?? '(名前未取得)',
+            });
+          } catch (err) {
+            console.error('[forms.submit] lark notify error:', err);
+          }
+        })(),
+      );
     }
 
     return c.json({ success: true, data: serializeSubmission(submission) }, 201);

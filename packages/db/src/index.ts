@@ -26,6 +26,7 @@ export * from './external-events';
 export * from './reports';
 export * from './crm-forwards';
 export * from './device-tokens';
+export * from './lark-notifications';
 export * from './forms';
 export * from './ad-platforms';
 export * from './staff';

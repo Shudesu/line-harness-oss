@@ -61,6 +61,7 @@ import { externalEvents } from './routes/external-events.js';
 import { reports } from './routes/reports.js';
 import { friendAttribution } from './routes/friend-attribution.js';
 import { crmForwards } from './routes/crm-forwards.js';
+import { larkNotifications } from './routes/lark-notifications.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
@@ -120,6 +121,9 @@ export type Env = {
     APNS_KEY_ID?: string;
     APNS_AUTH_KEY?: string;  // .p8 ファイルの中身
     APNS_BUNDLE_ID?: string;
+    // Phase 3-F1 Lark 連携 (wrangler secret put で設定)
+    LARK_APP_ID?: string;
+    LARK_APP_SECRET?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' | 'viewer' };
@@ -150,6 +154,7 @@ app.route('/', externalEvents);
 app.route('/', reports);
 app.route('/', friendAttribution);
 app.route('/', crmForwards);
+app.route('/', larkNotifications);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
