@@ -144,9 +144,118 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
         }
       }
 
+      // Phase 2-D/E (Codex P1 修正): 30秒タイムアウト回避のため side effects は waitUntil で非同期化。
+      // 注意: webhook 早期 ack 後にここが失敗しても、stripe_events は既に記録済みなので
+      // 再送時はスキップされる (Codex P1 #1 トレードオフ)。idempotency は
+      // stripe_purchases.stripe_event_id の UNIQUE (migration 065) で重複作成を防止。
+      // LINE push は冪等ではないので、失敗時の運用検知が必要。
+      const priceId = (obj.metadata?.price_id as string | undefined) ?? null;
+      const sessionId = (obj.metadata?.session_id as string | undefined) ?? null;
+      const amount = obj.amount ?? 0;
+      const eventCurrency = obj.currency ?? 'jpy';
+      const eventId = body.id;
+      const env = c.env;
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            if (!priceId) return;
+            const { getStripeProductByPriceId, createStripePurchase, enrollFriendInScenario, addTagToFriend } = await import('@line-crm/db');
+            const product = await getStripeProductByPriceId(db, priceId);
+            if (!product) return;
+            try {
+              await createStripePurchase(db, {
+                friendId,
+                stripeProductId: product.id,
+                stripeEventId: eventId,
+                stripeSessionId: sessionId,
+                amount,
+                currency: eventCurrency,
+              });
+            } catch (e) {
+              // UNIQUE 違反 = 既に処理済み、想定内
+              console.log('[stripe] purchase already recorded (or insert race)', e);
+            }
+            if (product.on_purchase_tag_id) {
+              try { await addTagToFriend(db, friendId, product.on_purchase_tag_id); }
+              catch (e) { console.error('[stripe] purchase tag attach failed', e); }
+            }
+            if (product.on_purchase_scenario_id) {
+              try { await enrollFriendInScenario(db, friendId, product.on_purchase_scenario_id); }
+              catch (e) { console.error('[stripe] purchase scenario enroll failed', e); }
+            }
+            if (product.on_purchase_message_template_id) {
+              try {
+                const { getMessageTemplateById, getFriendById, getLineAccountById } = await import('@line-crm/db');
+                const tmpl = await getMessageTemplateById(db, product.on_purchase_message_template_id);
+                const friend = await getFriendById(db, friendId);
+                if (tmpl && friend?.line_user_id && (friend as unknown as { line_account_id?: string }).line_account_id) {
+                  const acc = await getLineAccountById(db, (friend as unknown as { line_account_id: string }).line_account_id);
+                  if (acc) {
+                    const { resolveAccessToken } = await import('../lib/account-token.js');
+                    const token = await resolveAccessToken(env, acc.channel_access_token);
+                    const { LineClient } = await import('@line-crm/line-sdk');
+                    const { buildMessage } = await import('../services/step-delivery.js');
+                    const message = buildMessage(tmpl.message_type, tmpl.message_content);
+                    await new LineClient(token).pushMessage(friend.line_user_id, [message]);
+                  }
+                }
+              } catch (e) {
+                console.error('[stripe] purchase message push failed', e);
+              }
+            }
+          } catch (e) {
+            console.error('[stripe] async purchase actions failed', e);
+          }
+        })(),
+      );
+
       // イベントバスに発火（自動化ルール用）
       const { fireEvent } = await import('../services/event-bus.js');
       await fireEvent(db, 'cv_fire', { friendId, eventData: { type: 'purchase', amount: obj.amount, stripeEventId: body.id } });
+    }
+
+    // Phase 2-D: subscription 系イベントを stripe_subscriptions に同期
+    if (
+      friendId && (
+        body.type === 'customer.subscription.created' ||
+        body.type === 'customer.subscription.updated' ||
+        body.type === 'customer.subscription.deleted'
+      )
+    ) {
+      try {
+        const subObj = obj as unknown as {
+          id?: string;
+          customer?: string;
+          status?: string;
+          current_period_start?: number;
+          current_period_end?: number;
+          cancel_at?: number | null;
+          canceled_at?: number | null;
+          items?: { data?: Array<{ price?: { id?: string } }> };
+        };
+        const subId = subObj.id;
+        if (subId) {
+          const priceId = subObj.items?.data?.[0]?.price?.id ?? null;
+          const { getStripeProductByPriceId, upsertStripeSubscription } = await import('@line-crm/db');
+          const product = priceId ? await getStripeProductByPriceId(db, priceId) : null;
+          const toIso = (sec: number | null | undefined) =>
+            sec ? new Date(sec * 1000).toISOString() : null;
+          const status = (subObj.status ?? 'incomplete') as Parameters<typeof upsertStripeSubscription>[1]['status'];
+          await upsertStripeSubscription(db, {
+            friendId,
+            stripeSubscriptionId: subId,
+            stripeCustomerId: subObj.customer ?? null,
+            stripeProductId: product?.id ?? null,
+            status,
+            currentPeriodStart: toIso(subObj.current_period_start),
+            currentPeriodEnd: toIso(subObj.current_period_end),
+            cancelAt: toIso(subObj.cancel_at),
+            canceledAt: toIso(subObj.canceled_at),
+          });
+        }
+      } catch (e) {
+        console.error('[stripe] subscription sync failed', e);
+      }
     }
 
     // サブスクリプションイベント処理

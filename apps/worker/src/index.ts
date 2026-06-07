@@ -64,6 +64,8 @@ import { crmForwards } from './routes/crm-forwards.js';
 import { larkNotifications } from './routes/lark-notifications.js';
 import { fingerprintPolicy } from './routes/fingerprint-policy.js';
 import { tokenEncryption } from './routes/token-encryption.js';
+import { crossAnalysis } from './routes/cross-analysis.js';
+import { stripeProducts } from './routes/stripe-products.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
@@ -163,6 +165,8 @@ app.route('/', crmForwards);
 app.route('/', larkNotifications);
 app.route('/', fingerprintPolicy);
 app.route('/', tokenEncryption);
+app.route('/', crossAnalysis);
+app.route('/', stripeProducts); // Phase 2-D
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
