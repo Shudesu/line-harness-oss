@@ -63,14 +63,14 @@ export async function processDueReminders(
 
   let sent = 0;
   let failed = 0;
-  // Phase 1-G: 暗号化 token を復号
-  const { resolveAccessToken } = await import('../lib/account-token.js');
   for (const row of due.results) {
     const kind: NotificationKind = row.kind;
-    const token = params.env
-      ? await resolveAccessToken(params.env, row.channel_access_token)
-      : row.channel_access_token;
     try {
+      // Codex P2 修正: 復号失敗を try 内で扱う
+      const { resolveAccessToken } = await import('../lib/account-token.js');
+      const token = params.env
+        ? await resolveAccessToken(params.env, row.channel_access_token)
+        : row.channel_access_token;
       await params.sender({
         channelAccessToken: token,
         toLineUserId: row.line_user_id,

@@ -85,6 +85,38 @@ stripeProducts.post('/api/stripe-products', requireRole('owner', 'admin'), async
     return c.json({ success: false, error: 'currency は jpy または usd' }, 400);
   }
 
+  // Codex 指摘 (P2): 紐付けリソースの存在 & アカウント境界 厳格検証
+  const postAccountId = body.lineAccountId ?? null;
+  const validateBound = async (
+    table: string,
+    id: string | null | undefined,
+  ): Promise<string | null> => {
+    if (!id) return null;
+    const row = await c.env.DB
+      .prepare(`SELECT line_account_id FROM ${table} WHERE id = ?`)
+      .bind(id)
+      .first<{ line_account_id: string | null }>();
+    if (!row) return `${table}.${id} が見つかりません`;
+    // 商品が NULL (グローバル) → 紐付け先も NULL のみ許可 (Codex P2 厳格)
+    // 商品が account 固定 → 同じ account or NULL のみ許可
+    if (postAccountId === null) {
+      if (row.line_account_id !== null) {
+        return `グローバル商品には account 固定のリソース (${table}.${id}) を紐付けできません`;
+      }
+    } else if (row.line_account_id && row.line_account_id !== postAccountId) {
+      return `${table}.${id} は別の LINE アカウントに属しています`;
+    }
+    return null;
+  };
+  for (const [t, v] of [
+    ['tags', body.onPurchaseTagId],
+    ['scenarios', body.onPurchaseScenarioId],
+    ['message_templates', body.onPurchaseMessageTemplateId],
+  ] as const) {
+    const err = await validateBound(t, v ?? null);
+    if (err) return c.json({ success: false, error: err }, 400);
+  }
+
   try {
     const item = await createStripeProduct(c.env.DB, {
       lineAccountId: body.lineAccountId,
@@ -142,6 +174,40 @@ stripeProducts.patch('/api/stripe-products/:id', requireRole('owner', 'admin'), 
   }
   if (body.currency !== undefined && !['jpy', 'usd'].includes(body.currency.toLowerCase())) {
     return c.json({ success: false, error: 'currency は jpy または usd' }, 400);
+  }
+  // Codex P1 修正: PATCH でも cross-account 検証
+  const existing = await getStripeProduct(c.env.DB, id);
+  if (!existing) return c.json({ success: false, error: 'not found' }, 404);
+  const accountId = existing.line_account_id;
+  const validateBound = async (
+    table: string,
+    boundId: string | null | undefined,
+  ): Promise<string | null> => {
+    if (boundId === undefined) return null;
+    if (boundId === null) return null;
+    const row = await c.env.DB
+      .prepare(`SELECT line_account_id FROM ${table} WHERE id = ?`)
+      .bind(boundId)
+      .first<{ line_account_id: string | null }>();
+    if (!row) return `${table}.${boundId} が見つかりません`;
+    // 商品が account 固定なら、紐付け先も同じ account か NULL のみ許可
+    // 商品が NULL (グローバル) なら、紐付け先も NULL のみ許可 (Codex P2 修正)
+    if (accountId === null) {
+      if (row.line_account_id !== null) {
+        return `グローバル商品には account 固定のリソース (${table}.${boundId}) を紐付けできません`;
+      }
+    } else if (row.line_account_id && row.line_account_id !== accountId) {
+      return `${table}.${boundId} は別の LINE アカウントに属しています`;
+    }
+    return null;
+  };
+  for (const [t, v] of [
+    ['tags', body.onPurchaseTagId],
+    ['scenarios', body.onPurchaseScenarioId],
+    ['message_templates', body.onPurchaseMessageTemplateId],
+  ] as const) {
+    const err = await validateBound(t, v);
+    if (err) return c.json({ success: false, error: err }, 400);
   }
 
   const updated = await updateStripeProduct(c.env.DB, id, {

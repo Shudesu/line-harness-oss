@@ -14,6 +14,8 @@ export async function processInsightFetch(
   db: D1Database,
   lineClients: Map<string, LineClient>,
   defaultLineClient: LineClient,
+  /** Phase 1-G v3: 暗号化 token 復号用 */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   const now = Date.now()
   if (now - lastInsightRun < INSIGHT_INTERVAL_MS) {
@@ -65,8 +67,14 @@ export async function processInsightFetch(
           // is_active で skip すると、過去の配信メトリクスが欠損する。
           const account = await getLineAccountById(db, aid)
           if (!account) continue
-          const accClient = new LineClient(account.channel_access_token)
           try {
+            // Codex P2 修正: 復号失敗を per-account catch 内で扱う
+            let token = account.channel_access_token
+            if (env) {
+              const { resolveAccessToken } = await import('../lib/account-token.js')
+              token = await resolveAccessToken(env, token)
+            }
+            const accClient = new LineClient(token)
             const response = (await accClient.getUnitInsight(
               item.aggregationUnit,
               sentDate,

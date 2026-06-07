@@ -102,11 +102,9 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
       body = await c.req.json<StripeWebhookBody>();
     }
 
-    // 冪等性チェック
+    // Codex P1#1 修正: 早期スキップを廃止。重複 event は INSERT 段階で
+    // stripe_event_id UNIQUE 制約に頼り、side effects は別途冪等化する。
     const existing = await getStripeEventByStripeId(c.env.DB, body.id);
-    if (existing) {
-      return c.json({ success: true, data: { message: 'Already processed' } });
-    }
 
     const obj = body.data.object;
     const db = c.env.DB;
@@ -114,15 +112,39 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
     // メタデータからfriendIdを取得（Stripeのメタデータにline_friend_idを設定している想定）
     const friendId = obj.metadata?.line_friend_id ?? null;
 
-    // イベントを記録
-    const event = await createStripeEvent(db, {
-      stripeEventId: body.id,
-      eventType: body.type,
-      friendId: friendId ?? undefined,
-      amount: obj.amount,
-      currency: obj.currency,
-      metadata: JSON.stringify(obj.metadata ?? {}),
-    });
+    // イベントを記録 (重複時は INSERT 失敗を捕捉)
+    let event = existing;
+    if (!existing) {
+      try {
+        event = await createStripeEvent(db, {
+          stripeEventId: body.id,
+          eventType: body.type,
+          friendId: friendId ?? undefined,
+          amount: obj.amount,
+          currency: obj.currency,
+          metadata: JSON.stringify(obj.metadata ?? {}),
+        });
+      } catch (e) {
+        // UNIQUE 違反 = 並行受信、既に他のリクエストが処理中
+        const refetched = await getStripeEventByStripeId(db, body.id);
+        if (refetched) event = refetched;
+        else throw e;
+      }
+    }
+
+    // Codex P1#1 副作用冪等化: 購入アクションは stripe_purchases.stripe_event_id の
+    // 存在で既処理判定 (UNIQUE INDEX を migration 065 で追加済)。
+    // 既処理ならスキップ、未処理なら実行。これで再送時の永久ロストを防ぐ。
+    const alreadyHandled = await db
+      .prepare(`SELECT 1 FROM stripe_purchases WHERE stripe_event_id = ? LIMIT 1`)
+      .bind(body.id)
+      .first<{ '1': number }>();
+    if (alreadyHandled) {
+      return c.json({
+        success: true,
+        data: { id: event?.id, message: 'Already handled (side effects done)' },
+      });
+    }
 
     // 決済成功時の自動処理
     if (body.type === 'payment_intent.succeeded' && friendId) {
@@ -144,11 +166,10 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
         }
       }
 
-      // Phase 2-D/E (Codex P1 修正): 30秒タイムアウト回避のため side effects は waitUntil で非同期化。
-      // 注意: webhook 早期 ack 後にここが失敗しても、stripe_events は既に記録済みなので
-      // 再送時はスキップされる (Codex P1 #1 トレードオフ)。idempotency は
-      // stripe_purchases.stripe_event_id の UNIQUE (migration 065) で重複作成を防止。
-      // LINE push は冪等ではないので、失敗時の運用検知が必要。
+      // Codex P1 修正 v2: stripe_purchases INSERT 成功を「処理権の獲得」にする。
+      // 並行受信時、UNIQUE(stripe_event_id) 制約により INSERT に成功するリクエストは
+      // ちょうど1個。それだけが副作用を実行し、他はスキップ → race condition 解消。
+      // 30秒タイムアウト回避のため、副作用群は waitUntil で非同期化。
       const priceId = (obj.metadata?.price_id as string | undefined) ?? null;
       const sessionId = (obj.metadata?.session_id as string | undefined) ?? null;
       const amount = obj.amount ?? 0;
@@ -162,6 +183,8 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
             const { getStripeProductByPriceId, createStripePurchase, enrollFriendInScenario, addTagToFriend } = await import('@line-crm/db');
             const product = await getStripeProductByPriceId(db, priceId);
             if (!product) return;
+            // INSERT 成功 = この request が処理権を獲得
+            let claimed = false;
             try {
               await createStripePurchase(db, {
                 friendId,
@@ -171,10 +194,13 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
                 amount,
                 currency: eventCurrency,
               });
+              claimed = true;
             } catch (e) {
-              // UNIQUE 違反 = 既に処理済み、想定内
-              console.log('[stripe] purchase already recorded (or insert race)', e);
+              // UNIQUE 違反 = 他のリクエストが先に処理権を獲得済み、副作用スキップ
+              console.log('[stripe] purchase claim lost (race), skipping side effects', e);
+              return;
             }
+            if (!claimed) return;
             if (product.on_purchase_tag_id) {
               try { await addTagToFriend(db, friendId, product.on_purchase_tag_id); }
               catch (e) { console.error('[stripe] purchase tag attach failed', e); }
@@ -273,7 +299,9 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
 
     return c.json({
       success: true,
-      data: { id: event.id, stripeEventId: event.stripe_event_id, eventType: event.event_type, processedAt: event.processed_at },
+      data: event
+        ? { id: event.id, stripeEventId: event.stripe_event_id, eventType: event.event_type, processedAt: event.processed_at }
+        : { stripeEventId: body.id, eventType: body.type, processedAt: jstNow() },
     });
   } catch (err) {
     console.error('POST /api/integrations/stripe/webhook error:', err);

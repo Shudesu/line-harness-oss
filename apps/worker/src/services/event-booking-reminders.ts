@@ -120,6 +120,8 @@ function notificationKindFor(reminderKind: EventReminderKind): EventNotification
 export interface ProcessDueEventRemindersParams {
   now: Date;
   sender: EventBookingNotificationSender;
+  /** Phase 1-G v3: 暗号化 token 復号用 */
+  env?: { LINE_TOKEN_ENC_KEY?: string };
 }
 
 export async function processDueEventReminders(
@@ -171,8 +173,13 @@ export async function processDueEventReminders(
     const claimedRetry = row.retry_count + 1;
 
     try {
+      // Codex P2 修正: 復号失敗を retry/failed_permanent ロジック内で処理する
+      const { resolveAccessToken } = await import('../lib/account-token.js');
+      const token = params.env
+        ? await resolveAccessToken(params.env, row.channel_access_token)
+        : row.channel_access_token;
       await params.sender({
-        channelAccessToken: row.channel_access_token,
+        channelAccessToken: token,
         toLineUserId: row.line_user_id,
         kind: notificationKindFor(row.kind),
         ctx: {

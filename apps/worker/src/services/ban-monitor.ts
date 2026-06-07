@@ -12,6 +12,7 @@ import {
 
 export async function checkAccountHealth(
   db: D1Database,
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   const accounts = await getLineAccounts(db);
 
@@ -19,7 +20,13 @@ export async function checkAccountHealth(
     if (!account.is_active) continue;
 
     try {
-      await checkSingleAccount(db, account);
+      // Phase 1-G v3: 暗号化 token を復号
+      let token = account.channel_access_token;
+      if (env) {
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        token = await resolveAccessToken(env, token);
+      }
+      await checkSingleAccount(db, { id: account.id, channel_access_token: token });
     } catch (err) {
       console.error(`ヘルスチェックエラー (account ${account.id}):`, err);
     }

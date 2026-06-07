@@ -623,14 +623,14 @@ async function scheduled(
   jobs.push(recoverStuckDeliveries(env.DB));
   jobs.push(recoverStalledBroadcasts(env.DB));
   jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env));
-  jobs.push(checkAccountHealth(env.DB));
+  jobs.push(checkAccountHealth(env.DB, env)); // Phase 1-G v3
   jobs.push(refreshLineAccessTokens(env.DB));
 
   await Promise.allSettled(jobs);
 
   // Fetch broadcast insights (runs daily, self-throttled)
   try {
-    await processInsightFetch(env.DB, lineClients, defaultLineClient);
+    await processInsightFetch(env.DB, lineClients, defaultLineClient, env); // Phase 1-G v3
   } catch (e) {
     console.error('Insight fetch error:', e);
   }
@@ -684,6 +684,7 @@ async function scheduled(
     const result = await processDueEventReminders(env.DB, {
       now: new Date(),
       sender: sendEventBookingNotification,
+      env, // Phase 1-G v3: 暗号化 token 復号
     });
     if (result.sent + result.failed > 0) {
       console.log(`[event-booking-reminders] sent=${result.sent} failed=${result.failed}`);
