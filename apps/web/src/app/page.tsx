@@ -8,9 +8,12 @@ import { useAccount } from '@/contexts/account-context'
 import {
   Badge,
   Banner,
+  Button,
   Card,
   CardContent,
 } from '@/components/ui/primitives'
+import { TrendCard, BarChart, type SeriesPoint } from '@/components/ui/charts'
+import { fetchApi } from '@/lib/api'
 
 const ccPrompts = [
   {
@@ -123,6 +126,27 @@ function QuickLink({
   )
 }
 
+interface TrendSeries {
+  series: SeriesPoint[]
+  total: number
+  prevTotal: number
+}
+
+interface DashboardTrendsData {
+  days: number
+  friendAdds: TrendSeries
+  blocks: TrendSeries
+  forms: TrendSeries
+  outgoing: TrendSeries
+  incoming: TrendSeries
+}
+
+const RANGE_OPTIONS: Array<{ days: number; label: string }> = [
+  { days: 7, label: '7 日' },
+  { days: 30, label: '30 日' },
+  { days: 90, label: '90 日' },
+]
+
 export default function DashboardPage() {
   const { selectedAccountId, selectedAccount } = useAccount()
   const [stats, setStats] = useState<DashboardStats>({
@@ -133,6 +157,9 @@ export default function DashboardPage() {
     automationCount: null,
     scoringRuleCount: null,
   })
+  const [trends, setTrends] = useState<DashboardTrendsData | null>(null)
+  const [trendsLoading, setTrendsLoading] = useState(true)
+  const [days, setDays] = useState(30)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -186,6 +213,22 @@ export default function DashboardPage() {
     load()
   }, [selectedAccountId])
 
+  useEffect(() => {
+    const loadTrends = async () => {
+      setTrendsLoading(true)
+      const qs = new URLSearchParams()
+      qs.set('days', String(days))
+      if (selectedAccountId) qs.set('lineAccountId', selectedAccountId)
+      const r = await fetchApi<{ success: boolean; data: DashboardTrendsData; error?: string }>(
+        `/api/dashboard/stats?${qs.toString()}`,
+      )
+      if (r.success) setTrends(r.data)
+      else setTrends(null)
+      setTrendsLoading(false)
+    }
+    loadTrends()
+  }, [selectedAccountId, days])
+
   return (
     <div className="space-y-5">
       <div>
@@ -218,6 +261,94 @@ export default function DashboardPage() {
           </Badge>
         </div>
       </a>
+
+      {/* Trends (新): 過去 N 日の主要指標 */}
+      <Card>
+        <CardContent className="pt-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800">トレンド (直近 {days} 日)</h2>
+              <p className="mt-0.5 text-xs text-gray-500">前期比 + 日次グラフ</p>
+            </div>
+            <div className="flex gap-1">
+              {RANGE_OPTIONS.map((opt) => (
+                <Button
+                  key={opt.days}
+                  size="sm"
+                  variant={days === opt.days ? 'primary' : 'outline'}
+                  onClick={() => setDays(opt.days)}
+                >
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {trendsLoading ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-32 animate-pulse rounded-xl bg-gray-100" />
+              ))}
+            </div>
+          ) : trends ? (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <TrendCard
+                  label="友だち追加"
+                  current={trends.friendAdds.total}
+                  prev={trends.friendAdds.prevTotal}
+                  series={trends.friendAdds.series}
+                  href="/friends"
+                  accentColor="#06C755"
+                  fillColor="rgba(6, 199, 85, 0.15)"
+                />
+                <TrendCard
+                  label="ブロック"
+                  current={trends.blocks.total}
+                  prev={trends.blocks.prevTotal}
+                  series={trends.blocks.series}
+                  accentColor="#EF4444"
+                  fillColor="rgba(239, 68, 68, 0.12)"
+                  invertColor
+                />
+                <TrendCard
+                  label="フォーム回答"
+                  current={trends.forms.total}
+                  prev={trends.forms.prevTotal}
+                  series={trends.forms.series}
+                  href="/form-submissions"
+                  accentColor="#3B82F6"
+                  fillColor="rgba(59, 130, 246, 0.15)"
+                />
+                <TrendCard
+                  label="送信数"
+                  current={trends.outgoing.total}
+                  prev={trends.outgoing.prevTotal}
+                  series={trends.outgoing.series}
+                  accentColor="#8B5CF6"
+                  fillColor="rgba(139, 92, 246, 0.15)"
+                />
+              </div>
+
+              <div className="mt-5 border-t border-gray-100 pt-5">
+                <div className="mb-2 flex items-baseline justify-between">
+                  <span className="text-xs font-medium text-gray-500">受信メッセージ (日次)</span>
+                  <span className="text-xs text-gray-400 tabular-nums">
+                    合計: {trends.incoming.total.toLocaleString('ja-JP')}
+                  </span>
+                </div>
+                <BarChart
+                  data={trends.incoming.series}
+                  barColor="#0EA5E9"
+                  height={80}
+                />
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500">トレンドデータを取得できませんでした。</p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
