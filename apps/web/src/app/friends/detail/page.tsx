@@ -14,6 +14,7 @@ import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { fetchApi } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 
 interface FriendBasic {
@@ -45,6 +46,7 @@ export default function FriendDetailPage() {
 function Inner() {
   const sp = useSearchParams()
   const id = sp?.get('id') ?? null
+  const { selectedAccountId } = useAccount()
   const [friend, setFriend] = useState<FriendBasic | null>(null)
   const [attribution, setAttribution] = useState<Attribution | null>(null)
   const [loading, setLoading] = useState(true)
@@ -54,10 +56,18 @@ function Inner() {
     if (!id) return
     ;(async () => {
       setLoading(true)
+      // Server enforces account boundary when lineAccountId is provided.
+      // Falling back to undefined keeps the legacy compatibility path on the
+      // worker (account boundary disabled).
+      const accountQs = selectedAccountId
+        ? `?lineAccountId=${encodeURIComponent(selectedAccountId)}`
+        : ''
       const [fRes, aRes] = await Promise.all([
-        fetchApi<{ success: boolean; data: FriendBasic; error?: string }>(`/api/friends/${id}`),
+        fetchApi<{ success: boolean; data: FriendBasic; error?: string }>(
+          `/api/friends/${id}${accountQs}`,
+        ),
         fetchApi<{ success: boolean; data: Attribution; error?: string }>(
-          `/api/friends/${id}/attribution`,
+          `/api/friends/${id}/attribution${accountQs}`,
         ),
       ])
       if (fRes.success) setFriend(fRes.data)
@@ -65,7 +75,7 @@ function Inner() {
       if (aRes.success) setAttribution(aRes.data)
       setLoading(false)
     })()
-  }, [id])
+  }, [id, selectedAccountId])
 
   const click = (attribution?.latestClick ?? {}) as Record<string, unknown>
   const ref = (attribution?.latestRefTracking ?? {}) as Record<string, unknown>

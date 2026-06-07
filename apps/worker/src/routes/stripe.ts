@@ -142,26 +142,30 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
     }
 
     const stripeSecret = (c.env as unknown as Record<string, string | undefined>).STRIPE_WEBHOOK_SECRET;
-    let body: StripeWebhookBody;
 
-    if (stripeSecret) {
-      // 署名検証モード（本番環境）
-      const sigHeader = c.req.header('Stripe-Signature') ?? '';
-      const rawBody = await c.req.text();
-      // 二重チェック: content-length が空でも raw byte で 1MiB 超なら拒否
-      if (rawBody.length > 1_048_576) {
-        return c.json({ success: false, error: 'Payload too large' }, 413);
-      }
-
-      const valid = await verifyStripeSignature(stripeSecret, rawBody, sigHeader);
-      if (!valid) {
-        return c.json({ success: false, error: 'Stripe signature verification failed' }, 401);
-      }
-      body = JSON.parse(rawBody) as StripeWebhookBody;
-    } else {
-      // シークレット未設定（開発環境向け）
-      body = await c.req.json<StripeWebhookBody>();
+    // P1 緊急修正 (2026-06-07): fail-closed。
+    // 旧実装は secret 未設定だと検証なしで body を受け入れていた。
+    // 本番で STRIPE_WEBHOOK_SECRET が未設定の状態で公開されており、
+    // 攻撃者が偽 webhook を投げて CV 発火・タグ付与・スコア加算を任意発動できた。
+    // 503 で即拒否し、dev でも本番と同じ動作で確認させる
+    // (dev で動作確認したい場合は STRIPE_WEBHOOK_SECRET を手動設定して
+    //  Stripe CLI の `stripe listen --print-secret` の値を流すこと)。
+    if (!stripeSecret) {
+      return c.json({ success: false, error: 'STRIPE_WEBHOOK_SECRET not configured' }, 503);
     }
+
+    const sigHeader = c.req.header('Stripe-Signature') ?? '';
+    const rawBody = await c.req.text();
+    // 二重チェック: content-length が空でも raw byte で 1MiB 超なら拒否
+    if (rawBody.length > 1_048_576) {
+      return c.json({ success: false, error: 'Payload too large' }, 413);
+    }
+
+    const valid = await verifyStripeSignature(stripeSecret, rawBody, sigHeader);
+    if (!valid) {
+      return c.json({ success: false, error: 'Stripe signature verification failed' }, 401);
+    }
+    const body = JSON.parse(rawBody) as StripeWebhookBody;
 
     const obj = body.data.object;
     const db = c.env.DB;

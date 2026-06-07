@@ -138,6 +138,11 @@ export type Env = {
     // Meet Harness 側で `X-Hyhome-Signature: t=<unix秒>,v1=<hex>` を付与する。
     // 未設定なら meet-callback は 503 を返して安全側に倒す。
     MEET_CALLBACK_HMAC_SECRET?: string;
+    // P1 (2026-06-07): APNs マルチテナント PII 漏洩リスク対応 feature flag。
+    // getDeviceTokensForAccount が lineAccountId を無視して全テナント全 iOS
+    // token に fan-out するため、staff_members.line_account_id 設計が完了する
+    // までは明示的に 'true' をセットしない限り無効化する (GDPR 違反防止)。
+    APNS_ENABLED?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' | 'viewer' };

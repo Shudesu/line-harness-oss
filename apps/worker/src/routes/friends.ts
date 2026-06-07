@@ -393,17 +393,34 @@ friends.get('/api/friends/ref-stats', async (c) => {
 // GET /api/friends/:id - get single friend with tags
 // Codex P0 修正: account 境界。任意 UUID で他テナント friend の display_name /
 // metadata を覗けないよう、lineAccountId 必須化 + friend.line_account_id と突合。
+//
+// 緊急血止め (2026-06-07): UI 側 (apps/web/src/lib/api.ts) が lineAccountId を
+// 渡していないため全画面 400 で死んでいた。lineAccountId を optional に戻す:
+//   - 渡された → 従来通り厳密境界チェック
+//   - 渡されない → legacy 互換モード: friend.line_account_id IS NULL の row のみ通す
+// TODO: UI 側が lineAccountId を必ず渡すよう改修したら必須化に戻す。
 friends.get('/api/friends/:id', async (c) => {
   try {
     const id = c.req.param('id');
     const lineAccountId = c.req.query('lineAccountId');
-    if (!lineAccountId) {
-      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
-    }
     const db = c.env.DB;
-    const guard = await getFriendOrReject(db, id, lineAccountId);
-    if (!guard.ok) {
-      return c.json({ success: false, error: guard.error }, guard.status);
+    if (lineAccountId) {
+      const guard = await getFriendOrReject(db, id, lineAccountId);
+      if (!guard.ok) {
+        return c.json({ success: false, error: guard.error }, guard.status);
+      }
+    } else {
+      // legacy 互換: line_account_id IS NULL の friend のみ通す
+      const row = await db
+        .prepare('SELECT line_account_id FROM friends WHERE id = ?')
+        .bind(id)
+        .first<{ line_account_id: string | null }>();
+      if (!row) {
+        return c.json({ success: false, error: 'friend not found' }, 404);
+      }
+      if (row.line_account_id !== null) {
+        return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+      }
     }
 
     const [friend, tags] = await Promise.all([
@@ -431,6 +448,10 @@ friends.get('/api/friends/:id', async (c) => {
 // POST /api/friends/:id/tags - add tag
 // Codex P0 修正: account 境界。bulk と同じ方針 (friend のみ厳密 / tag は global)。
 // body に lineAccountId を必須化、friend.line_account_id と突合してから付与する。
+//
+// 緊急血止め (2026-06-07): UI 側未対応のため optional に戻す。渡された場合は厳密、
+// 渡されない場合は line_account_id IS NULL の legacy friend のみ通す。
+// TODO: UI 改修後に必須化に戻す。
 friends.post('/api/friends/:id/tags', async (c) => {
   try {
     const friendId = c.req.param('id');
@@ -439,14 +460,24 @@ friends.post('/api/friends/:id/tags', async (c) => {
     if (!body.tagId) {
       return c.json({ success: false, error: 'tagId is required' }, 400);
     }
-    if (!body.lineAccountId) {
-      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
-    }
 
     const db = c.env.DB;
-    const guard = await getFriendOrReject(db, friendId, body.lineAccountId);
-    if (!guard.ok) {
-      return c.json({ success: false, error: guard.error }, guard.status);
+    if (body.lineAccountId) {
+      const guard = await getFriendOrReject(db, friendId, body.lineAccountId);
+      if (!guard.ok) {
+        return c.json({ success: false, error: guard.error }, guard.status);
+      }
+    } else {
+      const row = await db
+        .prepare('SELECT line_account_id FROM friends WHERE id = ?')
+        .bind(friendId)
+        .first<{ line_account_id: string | null }>();
+      if (!row) {
+        return c.json({ success: false, error: 'friend not found' }, 404);
+      }
+      if (row.line_account_id !== null) {
+        return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+      }
     }
     await addTagToFriend(db, friendId, body.tagId);
 
@@ -511,9 +542,11 @@ friends.post('/api/friends/bulk/tags', async (c) => {
       .prepare(`SELECT id, line_account_id FROM friends WHERE id IN (${placeholders})`)
       .bind(...body.friendIds)
       .all<{ id: string; line_account_id: string | null }>();
+    // Codex P1 (2026-06-07): legacy NULL 救済を撤去。bulk は lineAccountId 必須なので
+    // 厳密境界で OK。NULL row を巻き込むと他テナント友だちに tag が付く。
     const valid = new Set<string>();
     for (const r of friendRows.results ?? []) {
-      if (r.line_account_id === null || r.line_account_id === body.lineAccountId) {
+      if (r.line_account_id === body.lineAccountId) {
         valid.add(r.id);
       }
     }
@@ -600,9 +633,11 @@ friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
       .prepare(`SELECT id, line_account_id FROM friends WHERE id IN (${placeholders})`)
       .bind(...body.friendIds)
       .all<{ id: string; line_account_id: string | null }>();
+    // Codex P1 (2026-06-07): legacy NULL 救済を撤去。bulk は lineAccountId 必須なので
+    // 厳密境界で OK。NULL row を巻き込むと他テナント friend の tag が落ちる。
     const valid = new Set<string>();
     for (const r of friendRows.results ?? []) {
-      if (r.line_account_id === null || r.line_account_id === body.lineAccountId) {
+      if (r.line_account_id === body.lineAccountId) {
         valid.add(r.id);
       }
     }
@@ -649,6 +684,10 @@ friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
 // Codex P0 修正: account 境界。bulk と同じ方針 (friend のみ厳密 / tag は global)。
 // DELETE は body を持たないことが多いので query から lineAccountId を受け取る。
 // (body も許容: 一部クライアントが fetch DELETE で body を送る)
+//
+// 緊急血止め (2026-06-07): UI 未対応のため optional に戻す。渡された場合は厳密、
+// 渡されない場合は line_account_id IS NULL の legacy friend のみ通す。
+// TODO: UI 改修後に必須化に戻す。
 friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
   try {
     const friendId = c.req.param('id');
@@ -660,15 +699,25 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
         const body = await c.req.json<{ lineAccountId?: string }>();
         lineAccountId = body?.lineAccountId;
       } catch {
-        // body 無し / JSON でない → そのまま下で 400
+        // body 無し / JSON でない → そのまま下で legacy 互換チェック
       }
     }
-    if (!lineAccountId) {
-      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
-    }
-    const guard = await getFriendOrReject(c.env.DB, friendId, lineAccountId);
-    if (!guard.ok) {
-      return c.json({ success: false, error: guard.error }, guard.status);
+    if (lineAccountId) {
+      const guard = await getFriendOrReject(c.env.DB, friendId, lineAccountId);
+      if (!guard.ok) {
+        return c.json({ success: false, error: guard.error }, guard.status);
+      }
+    } else {
+      const row = await c.env.DB
+        .prepare('SELECT line_account_id FROM friends WHERE id = ?')
+        .bind(friendId)
+        .first<{ line_account_id: string | null }>();
+      if (!row) {
+        return c.json({ success: false, error: 'friend not found' }, 404);
+      }
+      if (row.line_account_id !== null) {
+        return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+      }
     }
 
     await removeTagFromFriend(c.env.DB, friendId, tagId);
@@ -687,6 +736,10 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
 // Codex P0 修正: account 境界。任意 UUID で他テナント friend の metadata 上書きが
 // できないよう、body に lineAccountId を必須化して境界突合してから merge する。
 // merge 対象 metadata 自体は残りの body フィールドを使う。
+//
+// 緊急血止め (2026-06-07): UI 未対応のため optional に戻す。渡された場合は厳密、
+// 渡されない場合は line_account_id IS NULL の legacy friend のみ通す。
+// TODO: UI 改修後に必須化に戻す。
 friends.put('/api/friends/:id/metadata', async (c) => {
   try {
     const friendId = c.req.param('id');
@@ -694,12 +747,22 @@ friends.put('/api/friends/:id/metadata', async (c) => {
 
     const body = await c.req.json<Record<string, unknown>>();
     const lineAccountId = typeof body.lineAccountId === 'string' ? body.lineAccountId : undefined;
-    if (!lineAccountId) {
-      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
-    }
-    const guard = await getFriendOrReject(db, friendId, lineAccountId);
-    if (!guard.ok) {
-      return c.json({ success: false, error: guard.error }, guard.status);
+    if (lineAccountId) {
+      const guard = await getFriendOrReject(db, friendId, lineAccountId);
+      if (!guard.ok) {
+        return c.json({ success: false, error: guard.error }, guard.status);
+      }
+    } else {
+      const row = await db
+        .prepare('SELECT line_account_id FROM friends WHERE id = ?')
+        .bind(friendId)
+        .first<{ line_account_id: string | null }>();
+      if (!row) {
+        return c.json({ success: false, error: 'friend not found' }, 404);
+      }
+      if (row.line_account_id !== null) {
+        return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+      }
     }
 
     const friend = await getFriendById(db, friendId);

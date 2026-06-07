@@ -129,7 +129,7 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES, c.env);
         // Phase 3-F1 (Lark連携): follow/unfollow を Lark に通知。
         // handleEvent 完了後なので、friends テーブルには既に最新状態が入っている。
         if (matchedAccountId && (event.type === 'follow' || event.type === 'unfollow')) {
@@ -181,6 +181,10 @@ async function handleEvent(
   workerUrl?: string,
   liffUrl?: string,
   r2?: R2Bucket,
+  // P1 緊急修正 (2026-06-07): cross-account デモ経路 ("体験を完了する") で
+  // resolveAccessToken(c.env, ...) を呼ぶが、handleEvent は handler 外なので
+  // `c` が存在しない → ReferenceError で webhook 全死。env だけを optional で渡す。
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -606,7 +610,7 @@ async function handleEvent(
           ).bind(friendRecord.user_id, lineAccountId).all<{ line_user_id: string; channel_access_token: string }>();
           // Phase 1-G: 各行の channel_access_token を復号 (static import 化)
           for (const o of otherFriends.results) {
-            o.channel_access_token = await resolveAccessToken(c.env, o.channel_access_token);
+            o.channel_access_token = await resolveAccessToken(env ?? {}, o.channel_access_token);
           }
 
           for (const other of otherFriends.results) {

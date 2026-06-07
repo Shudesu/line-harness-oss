@@ -135,21 +135,29 @@ export const api = {
         '/api/friends?' + new URLSearchParams(query)
       )
     },
-    get: (id: string) =>
-      fetchApi<ApiResponse<FriendWithTags>>(`/api/friends/${id}`),
+    get: (id: string, lineAccountId?: string | null) => {
+      const query = lineAccountId ? '?lineAccountId=' + encodeURIComponent(lineAccountId) : ''
+      return fetchApi<ApiResponse<FriendWithTags>>(`/api/friends/${id}${query}`)
+    },
     count: (params?: { accountId?: string }) => {
       const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
       return fetchApi<ApiResponse<{ count: number }>>('/api/friends/count' + query)
     },
-    addTag: (friendId: string, tagId: string) =>
+    addTag: (friendId: string, tagId: string, lineAccountId?: string | null) =>
       fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/tags`, {
         method: 'POST',
-        body: JSON.stringify({ tagId }),
+        body: JSON.stringify(
+          lineAccountId ? { tagId, lineAccountId } : { tagId },
+        ),
       }),
-    removeTag: (friendId: string, tagId: string) =>
-      fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/tags/${tagId}`, {
+    removeTag: (friendId: string, tagId: string, lineAccountId?: string | null) => {
+      // DELETE bodies are not portable across fetch implementations / workers,
+      // so the account boundary is passed via query string.
+      const query = lineAccountId ? '?lineAccountId=' + encodeURIComponent(lineAccountId) : ''
+      return fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/tags/${tagId}${query}`, {
         method: 'DELETE',
-      }),
+      })
+    },
     richMenu: (id: string) =>
       fetchApi<ApiResponse<{ id: string | null; name: string | null; isDefault: boolean }>>(
         `/api/friends/${id}/rich-menu`,
@@ -719,10 +727,12 @@ export const api = {
       }),
     deleteRule: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/scoring-rules/${id}`, { method: 'DELETE' }),
-    friendScore: (friendId: string) =>
-      fetchApi<ApiResponse<{ totalScore: number; history: { id: string; scoreChange: number; reason: string | null; createdAt: string }[] }>>(
-        `/api/friends/${friendId}/score`,
-      ),
+    friendScore: (friendId: string, lineAccountId?: string | null) => {
+      const query = lineAccountId ? '?lineAccountId=' + encodeURIComponent(lineAccountId) : ''
+      return fetchApi<ApiResponse<{ totalScore: number; history: { id: string; scoreChange: number; reason: string | null; createdAt: string }[] }>>(
+        `/api/friends/${friendId}/score${query}`,
+      )
+    },
   },
   webhooks: {
     incoming: {
@@ -867,19 +877,19 @@ export const api = {
   },
   inbox: {
     unanswered: {
-      list: (opts?: {
+      list: (opts: {
+        account: string;
         q?: string;
-        account?: string;
         minWaitMinutes?: number;
         page?: number;
         pageSize?: number;
       }) => {
         const p = new URLSearchParams();
-        if (opts?.q) p.set('q', opts.q);
-        if (opts?.account) p.set('account', opts.account);
-        if (opts?.minWaitMinutes) p.set('minWaitMinutes', String(opts.minWaitMinutes));
-        if (opts?.page) p.set('page', String(opts.page));
-        if (opts?.pageSize) p.set('pageSize', String(opts.pageSize));
+        if (opts.q) p.set('q', opts.q);
+        p.set('account', opts.account);
+        if (opts.minWaitMinutes) p.set('minWaitMinutes', String(opts.minWaitMinutes));
+        if (opts.page) p.set('page', String(opts.page));
+        if (opts.pageSize) p.set('pageSize', String(opts.pageSize));
         const qs = p.toString();
         return fetchApi<ApiResponse<{
           total: number;

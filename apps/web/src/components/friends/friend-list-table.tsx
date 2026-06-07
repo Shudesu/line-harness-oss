@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Tag } from '@line-crm/shared'
 import type { FriendListItem } from '@/lib/api'
 import { api } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import FriendListRow from './friend-list-row'
 import TagBadge from './tag-badge'
 
@@ -27,6 +28,7 @@ export default function FriendListTable({
   onToggleSelect,
   onToggleSelectAll,
 }: Props) {
+  const { selectedAccountId } = useAccount()
   // Inline tag-management expander. The row's primary click navigates to
   // /chats; tag editing stays available here as a secondary action because
   // the chats page's FriendInfoSidebar currently only displays tags (no
@@ -68,7 +70,7 @@ export default function FriendListTable({
     setLoading(true)
     setError('')
     try {
-      await api.friends.addTag(friendId, selectedTagId)
+      await api.friends.addTag(friendId, selectedTagId, selectedAccountId)
       setAddingTagForFriend(null)
       setSelectedTagId('')
       onRefresh()
@@ -83,7 +85,7 @@ export default function FriendListTable({
     setLoading(true)
     setError('')
     try {
-      await api.friends.removeTag(friendId, tagId)
+      await api.friends.removeTag(friendId, tagId, selectedAccountId)
       onRefresh()
     } catch {
       setError('タグの削除に失敗しました')

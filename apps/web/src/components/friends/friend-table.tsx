@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { Tag } from '@line-crm/shared'
 import type { FriendWithTags } from '@/lib/api'
 import { api } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import TagBadge from './tag-badge'
 
 interface FriendTableProps {
@@ -13,6 +14,7 @@ interface FriendTableProps {
 }
 
 export default function FriendTable({ friends, allTags, onRefresh }: FriendTableProps) {
+  const { selectedAccountId } = useAccount()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [addingTagForFriend, setAddingTagForFriend] = useState<string | null>(null)
   const [selectedTagId, setSelectedTagId] = useState('')
@@ -31,7 +33,7 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
     setLoading(true)
     setError('')
     try {
-      await api.friends.addTag(friendId, selectedTagId)
+      await api.friends.addTag(friendId, selectedTagId, selectedAccountId)
       setAddingTagForFriend(null)
       setSelectedTagId('')
       onRefresh()
@@ -46,7 +48,7 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
     setLoading(true)
     setError('')
     try {
-      await api.friends.removeTag(friendId, tagId)
+      await api.friends.removeTag(friendId, tagId, selectedAccountId)
       onRefresh()
     } catch {
       setError('タグの削除に失敗しました')

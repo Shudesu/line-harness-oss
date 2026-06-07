@@ -248,9 +248,12 @@ richMenuGroups.get('/api/rich-menu-groups/external/:richMenuId/image', async (c)
   if (!accountId) return c.json({ success: false, error: 'accountId query param required' }, 400);
   const account = await getLineAccountById(c.env.DB, accountId);
   if (!account) return c.json({ success: false, error: 'line account not found' }, 404);
+  // Phase 1-G: 暗号化 token を透過復号する。
+  const { resolveAccessToken } = await import('../lib/account-token.js');
+  const externalToken = await resolveAccessToken(c.env, account.channel_access_token);
   const res = await fetch(
     `https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`,
-    { headers: { Authorization: `Bearer ${account.channel_access_token}` } },
+    { headers: { Authorization: `Bearer ${externalToken}` } },
   );
   if (!res.ok) {
     return c.json(
@@ -295,7 +298,10 @@ richMenuGroups.post('/api/rich-menu-groups/import', requireRole('owner', 'admin'
     );
   }
 
-  const auth = `Bearer ${account.channel_access_token}`;
+  // Phase 1-G: 暗号化 token を透過復号する。
+  const { resolveAccessToken } = await import('../lib/account-token.js');
+  const importToken = await resolveAccessToken(c.env, account.channel_access_token);
+  const auth = `Bearer ${importToken}`;
 
   // 1. LINE から rich menu 詳細を取得
   const detailRes = await fetch(`https://api.line.me/v2/bot/richmenu/${richMenuId}`, {
@@ -455,7 +461,10 @@ richMenuGroups.get('/api/rich-menu-groups/external', async (c) => {
   if (!accountId) return c.json({ success: false, error: 'accountId query param required' }, 400);
   const account = await getLineAccountById(c.env.DB, accountId);
   if (!account) return c.json({ success: false, error: 'line account not found' }, 404);
-  const auth = `Bearer ${account.channel_access_token}`;
+  // Phase 1-G: 暗号化 token を透過復号する。
+  const { resolveAccessToken } = await import('../lib/account-token.js');
+  const externalListToken = await resolveAccessToken(c.env, account.channel_access_token);
+  const auth = `Bearer ${externalListToken}`;
 
   type LineMenu = {
     richMenuId: string;
@@ -565,7 +574,10 @@ richMenuGroups.delete('/api/rich-menu-groups/external/:richMenuId', requireRole(
     );
   }
 
-  const auth = `Bearer ${account.channel_access_token}`;
+  // Phase 1-G: 暗号化 token を透過復号する。
+  const { resolveAccessToken } = await import('../lib/account-token.js');
+  const deleteToken = await resolveAccessToken(c.env, account.channel_access_token);
+  const auth = `Bearer ${deleteToken}`;
   const res = await fetch(`https://api.line.me/v2/bot/richmenu/${richMenuId}`, {
     method: 'DELETE',
     headers: { Authorization: auth },
@@ -850,7 +862,10 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/publish', requireRole('owner
   if (!locked) return c.json({ success: false, error: 'failed to acquire publish lock' }, 409);
 
   try {
-    const line = createLineClient(account.channel_access_token);
+    // Phase 1-G: 暗号化 token を透過復号する。
+    const { resolveAccessToken } = await import('../lib/account-token.js');
+    const publishToken = await resolveAccessToken(c.env, account.channel_access_token);
+    const line = createLineClient(publishToken);
     const r2Adapter: R2Like = {
       async get(key) {
         const obj = await c.env.IMAGES.get(key);
@@ -903,7 +918,10 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/unpublish', requireRole('own
   const account = await getLineAccountById(c.env.DB, group.account_id);
   if (!account) return c.json({ success: false, error: 'line account not found' }, 500);
 
-  const line = createLineClient(account.channel_access_token);
+  // Phase 1-G: 暗号化 token を透過復号する。
+  const { resolveAccessToken: resolveUnpublishToken } = await import('../lib/account-token.js');
+  const unpublishToken = await resolveUnpublishToken(c.env, account.channel_access_token);
+  const line = createLineClient(unpublishToken);
   const groupInput: GroupInput = {
     id: group.id,
     size: group.size,
@@ -987,7 +1005,10 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/apply-to-tag', requireRole('
   // ---- mode: set-default (LINE 全員のデフォルトに設定) ----
   if (mode === 'set-default') {
     try {
-      const line = createLineClient(account.channel_access_token);
+      // Phase 1-G: 暗号化 token を透過復号する。
+      const { resolveAccessToken } = await import('../lib/account-token.js');
+      const setDefaultToken = await resolveAccessToken(c.env, account.channel_access_token);
+      const line = createLineClient(setDefaultToken);
       await line.setDefaultRichMenu(targetPage.line_richmenu_id);
       // 同 account 内の他 group の is_default_for_all をリセットして、自分だけ true に。
       const now = new Date().toISOString();
@@ -1028,7 +1049,10 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/apply-to-tag', requireRole('
   }
 
   try {
-    const line = createLineClient(account.channel_access_token);
+    // Phase 1-G: 暗号化 token を透過復号する。
+    const { resolveAccessToken } = await import('../lib/account-token.js');
+    const bulkLinkToken = await resolveAccessToken(c.env, account.channel_access_token);
+    const line = createLineClient(bulkLinkToken);
     const result = await linkRichMenuBulkChunked(
       line,
       targetPage.line_richmenu_id,

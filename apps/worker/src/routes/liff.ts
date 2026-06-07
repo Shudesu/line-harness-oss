@@ -188,13 +188,16 @@ async function applyRefAttribution(
 
       // Resolve push token. Prefer caller-supplied account channel (OAuth
       // context), then friend.line_account_id, then the env default.
+      // Phase 1-G: line_accounts.channel_access_token は暗号化されている可能性が
+      // あるので resolveAccessToken で透過復号する。
+      const { resolveAccessToken } = await import('../lib/account-token.js');
       let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
       if (options?.accountChannelId) {
         const acct = await getLineAccountByChannelId(db, options.accountChannelId);
-        if (acct?.channel_access_token) accessToken = acct.channel_access_token;
+        if (acct?.channel_access_token) accessToken = await resolveAccessToken(c.env, acct.channel_access_token);
       } else if (friend.line_account_id) {
         const acct = await getLineAccountById(db, friend.line_account_id);
-        if (acct?.channel_access_token) accessToken = acct.channel_access_token;
+        if (acct?.channel_access_token) accessToken = await resolveAccessToken(c.env, acct.channel_access_token);
       }
       const lineClient = new LineClient(accessToken);
 
@@ -863,10 +866,12 @@ liffRoutes.get('/auth/callback', async (c) => {
         : null;
 
       // Get access token for this account
+      // Phase 1-G: 暗号化 token を透過復号する。
+      const { resolveAccessToken } = await import('../lib/account-token.js');
       let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
       if (accountParam) {
         const acct = await getLineAccountByChannelId(db, accountParam);
-        if (acct) accessToken = acct.channel_access_token;
+        if (acct) accessToken = await resolveAccessToken(c.env, acct.channel_access_token);
       }
       const lineClient = new LineClient(accessToken);
 
@@ -968,10 +973,12 @@ liffRoutes.get('/auth/callback', async (c) => {
         let formLiffUrl = `${new URL(c.req.url).origin}?${formQuery.toString()}`;
         const { LineClient } = await import('@line-crm/line-sdk');
         const { getLineAccountById: getAcctById } = await import('@line-crm/db');
+        // Phase 1-G: 暗号化 token を透過復号する。
+        const { resolveAccessToken } = await import('../lib/account-token.js');
         let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
         if (friend.line_account_id) {
           const account = await getAcctById(db, friend.line_account_id);
-          if (account?.channel_access_token) accessToken = account.channel_access_token;
+          if (account?.channel_access_token) accessToken = await resolveAccessToken(c.env, account.channel_access_token);
           if (account?.liff_id) {
             formLiffUrl = `https://liff.line.me/${account.liff_id}?${formQuery.toString()}`;
           }
@@ -1034,8 +1041,11 @@ liffRoutes.get('/auth/callback', async (c) => {
     }
     if (redirectAccount?.channel_access_token) {
       try {
+        // Phase 1-G: 暗号化 token を透過復号する。
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        const redirectToken = await resolveAccessToken(c.env, redirectAccount.channel_access_token);
         const botInfo = await fetch('https://api.line.me/v2/bot/info', {
-          headers: { Authorization: `Bearer ${redirectAccount.channel_access_token}` },
+          headers: { Authorization: `Bearer ${redirectToken}` },
         });
         if (botInfo.ok) {
           const bot = await botInfo.json() as { basicId?: string };
@@ -1072,7 +1082,11 @@ liffRoutes.get('/api/liff/config', async (c) => {
       .first<{ id: string; name: string; channel_access_token: string }>();
 
     // Fallback to default env account if liff_id not found in DB
-    const accessToken = account?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN;
+    // Phase 1-G: 暗号化 token を透過復号する。
+    const { resolveAccessToken } = await import('../lib/account-token.js');
+    const accessToken = account?.channel_access_token
+      ? await resolveAccessToken(c.env, account.channel_access_token)
+      : c.env.LINE_CHANNEL_ACCESS_TOKEN;
     const accountName = account?.name || 'Default';
     const accountId = account?.id || 'default';
 
@@ -1773,10 +1787,12 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
     if (xh) formQuery.set('xh', xh);
     let formLiffUrl = `${new URL(c.req.url).origin}?${formQuery.toString()}`;
     const { LineClient } = await import('@line-crm/line-sdk');
+    // Phase 1-G: 暗号化 token を透過復号する。
+    const { resolveAccessToken } = await import('../lib/account-token.js');
     let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
     if ((friend as any).line_account_id) {
       const account = await getLineAccountById(db, (friend as any).line_account_id);
-      if (account?.channel_access_token) accessToken = account.channel_access_token;
+      if (account?.channel_access_token) accessToken = await resolveAccessToken(c.env, account.channel_access_token);
       if (account?.liff_id) {
         formLiffUrl = `https://liff.line.me/${account.liff_id}?${formQuery.toString()}`;
       }

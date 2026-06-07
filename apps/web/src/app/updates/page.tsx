@@ -1,9 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL!
-const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY!
+// SECURITY (緊急血止め 2026-06-07):
+// 旧実装は `NEXT_PUBLIC_ADMIN_API_KEY` をクライアントバンドルに埋め込んで
+// 本番 JS に admin shared secret を露出していた。hyhome フォークでは
+// self-update を運用しないため、この履歴ページも一時的に無効化する。
+// 将来復活させる場合は staff Bearer (lh_api_key) ベースの認証 +
+// requireRole('owner') guard に張り替えること。
 
 interface Row {
   id: string
@@ -16,24 +20,11 @@ interface Row {
   rollback_expires_at: number | null
 }
 
-async function fetchHistory(): Promise<Row[]> {
-  const r = await fetch(`${API_URL}/admin/update/history`, {
-    headers: { 'x-admin-api-key': ADMIN_KEY },
-  })
-  if (!r.ok) throw new Error(`history fetch ${r.status}`)
-  const j = (await r.json()) as { history: Row[] }
-  return j.history
-}
-
 export default function UpdatesPage() {
-  const [rows, setRows] = useState<Row[]>([])
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    fetchHistory()
-      .then(setRows)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-  }, [])
+  const [rows] = useState<Row[]>([])
+  const [error] = useState<string | null>(
+    'self-update is disabled in this fork (admin api key leak fix)',
+  )
 
   return (
     <div className="max-w-3xl mx-auto p-6">

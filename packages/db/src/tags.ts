@@ -97,10 +97,31 @@ export async function getFriendTags(
 
 import type { Friend } from './friends';
 
+// Codex P1 修正 (2026-06-07):
+//   tag broadcast の account 絞り込み漏れ対応。lineAccountId を渡すと
+//   `AND f.line_account_id = ?` を SQL に加え、選択中のアカウントの token で
+//   別アカウントの同タグ friend に誤って送るのを防ぐ。
+//   lineAccountId を渡さない呼び出し元は従来通り全 account 横断で返す
+//   (後方互換)。新規呼び出しは原則渡すこと。
 export async function getFriendsByTag(
   db: D1Database,
   tagId: string,
+  lineAccountId?: string | null,
 ): Promise<Friend[]> {
+  if (lineAccountId) {
+    const result = await db
+      .prepare(
+        `SELECT f.*
+         FROM friends f
+         INNER JOIN friend_tags ft ON ft.friend_id = f.id
+         WHERE ft.tag_id = ?
+           AND f.line_account_id = ?
+         ORDER BY f.created_at DESC`,
+      )
+      .bind(tagId, lineAccountId)
+      .all<Friend>();
+    return result.results;
+  }
   const result = await db
     .prepare(
       `SELECT f.*

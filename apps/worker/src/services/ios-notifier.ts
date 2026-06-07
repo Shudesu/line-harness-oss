@@ -26,27 +26,36 @@ interface ApnsEnv {
   APNS_KEY_ID?: string;
   APNS_AUTH_KEY?: string;
   APNS_BUNDLE_ID?: string;
+  // P1 緊急修正 (2026-06-07): マルチテナント PII 漏洩リスクのため、
+  // staff_members.line_account_id 設計完了まで明示的に有効化禁止。
+  // 'true' 以外は全 trigger 関数で早期 return する。
+  APNS_ENABLED?: string;
 }
 
 /**
- * line_account_id に紐付く active staff 全員の active iOS device token を取得。
- * staff_members テーブルに line_account_id が無いプロジェクトもあるので、
- * 「全 staff」を fallback として用意する。
+ * line_account_id に紐付く active staff の active iOS device token を取得。
+ *
+ * Round2 セキュリティ agent 指摘: 旧実装は lineAccountId を void して全テナント
+ * fan-out しており、顧問先間で PII (友だち名/メッセージ) 漏洩経路だった。
+ * 069_staff_members_line_account.sql で line_account_id 列を追加し、
+ * NULL = 全アカウント受信 (owner)、値あり = その line_account_id のイベントのみ
+ * の規則で絞り込む。
  */
 async function getDeviceTokensForAccount(
   db: D1Database,
   lineAccountId: string,
 ): Promise<DeviceToken[]> {
-  // staff_members に line_account_id 列がある実装と、staff_account_access JOIN テーブル
-  // 経由の実装が混在しうるので、両方を試みる。
-  // 単純化のため、ここでは全 active iOS token を返す (multi-account 切り分けは
-  // 将来の notification_preferences で実装)。一旦は通知が「来ない」を「来る」に
-  // するのが最優先。
-  void lineAccountId;
   const r = await db
     .prepare(
-      `SELECT * FROM device_tokens WHERE is_active = 1 AND platform = 'ios'`,
+      `SELECT dt.*
+         FROM device_tokens dt
+         JOIN staff_members sm ON sm.id = dt.staff_id
+        WHERE dt.is_active = 1
+          AND dt.platform = 'ios'
+          AND (sm.line_account_id IS NULL OR sm.line_account_id = ?)
+          AND sm.is_active = 1`,
     )
+    .bind(lineAccountId)
     .all<DeviceToken>();
   return r.results;
 }
@@ -56,6 +65,15 @@ async function getDeviceTokensForAccount(
  */
 function isApnsConfigured(env: ApnsEnv): boolean {
   return !!(env.APNS_TEAM_ID && env.APNS_KEY_ID && env.APNS_AUTH_KEY && env.APNS_BUNDLE_ID);
+}
+
+/**
+ * Round2 修正 (2026-06-07): マルチテナント PII 漏洩リスクは
+ * 069_staff_members_line_account.sql + getDeviceTokensForAccount の JOIN で解消済。
+ * `APNS_ENABLED='true'` で安全に有効化可能になった。
+ */
+function isApnsEnabled(env: ApnsEnv): boolean {
+  return env.APNS_ENABLED === 'true';
 }
 
 export async function triggerApnsForFollowEvent(
@@ -69,6 +87,7 @@ export async function triggerApnsForFollowEvent(
     eventType: 'follow' | 'unfollow';
   },
 ): Promise<void> {
+  if (!isApnsEnabled(env)) return;
   if (!isApnsConfigured(env)) return;
   try {
     const devices = await getDeviceTokensForAccount(db, args.lineAccountId);
@@ -122,6 +141,7 @@ export async function triggerApnsForFormSubmit(
     friendName: string;
   },
 ): Promise<void> {
+  if (!isApnsEnabled(env)) return;
   if (!isApnsConfigured(env)) return;
   try {
     const devices = await getDeviceTokensForAccount(db, args.lineAccountId);
@@ -155,6 +175,7 @@ export async function triggerApnsForUnreadTimeout(
     minutes: number;
   },
 ): Promise<void> {
+  if (!isApnsEnabled(env)) return;
   if (!isApnsConfigured(env)) return;
   try {
     const devices = await getDeviceTokensForAccount(db, args.lineAccountId);

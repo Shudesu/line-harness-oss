@@ -56,16 +56,47 @@ pnpm exec wrangler d1 execute hyhome-harness --remote \
 
 ## Worker secrets 管理
 
+> 2026-06-07 更新: P1 修正で fail-closed 化した Stripe webhook 検証や
+> 設計凍結中の APNs Push 用 secret も列挙する。値を貼るときは必ず
+> `wrangler secret put` のプロンプトに直接入力し、チャット/ログに残さない。
+
+### Webhook / 認証系
+
 | Secret 名 | 用途 | 設定方法 |
 |---|---|---|
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Messaging API push (フォールバック) | `wrangler secret put` |
 | `LINE_CHANNEL_SECRET` | LINE webhook 署名検証 | 同上 |
+| `LINE_CHANNEL_ID` | LINE Messaging API チャネル識別 | 同上 |
 | `API_KEY` | admin から worker への認証 | 同上 |
-| `LARK_APP_ID` | Phase 3-F1 Lark 通知 (任意) | 同上 |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook 署名検証 (P1 修正で **fail-closed 化、必須**) | 同上 |
+| `MEET_CALLBACK_HMAC_SECRET` | Google Meet 完了コールバック HMAC 検証 | 同上 |
+
+### LINE Login (LIFF / 友だち追加導線)
+
+| Secret 名 | 用途 | 設定方法 |
+|---|---|---|
+| `LINE_LOGIN_CHANNEL_ID` | LINE Login チャネル ID (LIFF / OAuth) | `wrangler secret put` |
+| `LINE_LOGIN_CHANNEL_SECRET` | LINE Login チャネル secret | 同上 |
+
+### Lark / Meta CAPI / トークン暗号化
+
+| Secret 名 | 用途 | 設定方法 |
+|---|---|---|
+| `LARK_APP_ID` | Phase 3-F1 Lark 通知 (任意) | `wrangler secret put` |
 | `LARK_APP_SECRET` | 同上 | 同上 |
-| `LINE_TOKEN_ENC_KEY` | Phase 1-G トークン暗号化 (任意・ベータ) | `openssl rand -base64 32` で生成 |
-| `META_*` | Meta CAPI 連携 | 同上 |
-| `CF_API_TOKEN` | Phase 5 self-update (現在使ってない) | 同上 |
+| `LINE_TOKEN_ENC_KEY` | Phase 1-G トークン暗号化 (任意・ベータ) | `openssl rand -base64 32` で生成して put |
+| `META_*` | Meta CAPI 連携 | `wrangler secret put` |
+| `CF_API_TOKEN` | Phase 5 self-update (hyhome フォークでは未使用) | 同上 |
+
+### APNs Push (設計完了まで無効化中)
+
+| Secret / Var 名 | 用途 | 設定方法 |
+|---|---|---|
+| `APNS_ENABLED` | feature flag。`true` で送信、未設定/`false` で完全 no-op (現在の既定) | `wrangler secret put` |
+| `APNS_TEAM_ID` | Apple Developer Team ID | 同上 |
+| `APNS_KEY_ID` | APNs auth key の Key ID | 同上 |
+| `APNS_AUTH_KEY` | APNs auth key (.p8 ファイルの中身) | 同上 |
+| `APNS_BUNDLE_ID` | iOS アプリの bundle id | 同上 |
 
 例:
 
@@ -73,6 +104,19 @@ pnpm exec wrangler d1 execute hyhome-harness --remote \
 cd ~/hyhome/ads/line/harness/fork/apps/worker
 pnpm exec wrangler secret put LARK_APP_ID --config wrangler-prod.toml
 # プロンプトに値を入力 (チャットに貼り付けない)
+
+# 例: Stripe webhook (P1 修正で必須化)
+pnpm exec wrangler secret put STRIPE_WEBHOOK_SECRET --config wrangler-prod.toml
+
+# 例: APNs (設計完了まで APNS_ENABLED を未設定のまま放置 = no-op)
+pnpm exec wrangler secret put APNS_ENABLED --config wrangler-prod.toml
+pnpm exec wrangler secret put APNS_AUTH_KEY --config wrangler-prod.toml
+```
+
+設定済みの secret 一覧を確認するには:
+
+```bash
+pnpm exec wrangler secret list --config wrangler-prod.toml
 ```
 
 ## トラブルシュート

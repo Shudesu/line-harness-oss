@@ -1,4 +1,4 @@
-name = "hyhome-harness"
+name = "hyhome-harness-dev"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 # nodejs_compat is required by @line-harness/update-engine which pulls in
@@ -52,42 +52,12 @@ LIFF_PUBLIC_URL = "https://hyhome-harness-liff.pages.dev"
 CF_ACCOUNT_ID = "3048ba5bd6789dbf21204b466fbf4c8b"
 
 # ═══════════════════════════════════════════════════════════════
-# 本番環境
-# 使い方: npx wrangler deploy --env production --name your-worker-name
-# D1:     npx wrangler d1 execute line-crm --env production --remote --file ...
+# 本番環境は wrangler-prod.toml に分離 (2026-06-07)。
+#
+# 旧構成は dev 用 wrangler.toml に [env.production] を併設して
+# 同一ファイルから本番アカウント (3048ba5b…) と本番 D1 を直接指していた。
+# `wrangler deploy --env production` を誤爆すると dev 設定からそのまま
+# 本番に書き込めてしまい事故になるため、本番設定は wrangler-prod.toml へ分離。
+# あわせて worker 名を `hyhome-harness-dev` に変更し、本番と同名衝突を物理的に
+# 不可能にした。本番デプロイは必ず `--config wrangler-prod.toml` を使うこと。
 # ═══════════════════════════════════════════════════════════════
-[env.production]
-# Kashiyu.mina.iezukurisoudan@gmail.com's Account (前田さんの hyhome 業務用 Cloudflare)
-account_id = "3048ba5bd6789dbf21204b466fbf4c8b"
-name = "hyhome-harness"
-
-[env.production.assets]
-directory = "dist/client"
-binding = "ASSETS"
-
-[[env.production.d1_databases]]
-binding = "DB"
-database_name = "hyhome-harness"
-database_id = "02e337a1-5fd3-426b-ba6d-d2f9085c20da"
-
-# R2 は本番デプロイ時に有効化。Cloudflare Dashboard で R2 を「利用開始」してから ON にする。
-# [[env.production.r2_buckets]]
-# binding = "IMAGES"
-# bucket_name = "hyhome-harness-images"
-
-[env.production.triggers]
-crons = ["*/5 * * * *", "0 */6 * * *"]
-
-# Phase 5 self-update vars for production。Pages プロジェクト名は既存に合わせる。
-[env.production.vars]
-WORKER_NAME = "hyhome-harness"
-ADMIN_PAGES_PROJECT = "hyhome-harness-admin-0cdf2440"
-LIFF_PAGES_PROJECT = "hyhome-harness-liff"
-D1_DATABASE_ID = "02e337a1-5fd3-426b-ba6d-d2f9085c20da"
-MANIFEST_URL = "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json"
-# Worker URL / Pages URL はデプロイ後に確定するため、まずプレースホルダ。
-WORKER_PUBLIC_URL = "https://hyhome-harness.workers.dev"
-WORKER_URL = "https://hyhome-harness.workers.dev"
-ADMIN_PUBLIC_URL = "https://hyhome-harness-admin-0cdf2440.pages.dev"
-LIFF_PUBLIC_URL = "https://hyhome-harness-liff.pages.dev"
-CF_ACCOUNT_ID = "3048ba5bd6789dbf21204b466fbf4c8b"

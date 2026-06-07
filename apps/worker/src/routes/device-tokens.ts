@@ -61,7 +61,20 @@ deviceTokens.post('/api/device-tokens', async (c) => {
 });
 
 deviceTokens.delete('/api/device-tokens/:token', async (c) => {
+  // Round2 セキュリティ agent 指摘: 認証なし削除は DoS (他 staff の通知止め攻撃) 経路。
+  // 認証必須 + 自分の token のみ削除可とする。
+  const staff = c.get('staff');
+  if (!staff) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
   const token = c.req.param('token');
+  // staff 所有の token か検証
+  const ownedTokens = await getDeviceTokensForStaff(c.env.DB, staff.id);
+  const owned = ownedTokens.some((t) => t.token === token);
+  if (!owned) {
+    // 「ある/ない」を漏らさないため 404
+    return c.json({ success: false, error: 'Not found' }, 404);
+  }
   await deleteDeviceToken(c.env.DB, token);
   return c.json({ success: true });
 });

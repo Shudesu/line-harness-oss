@@ -347,3 +347,25 @@ export async function bumpCrmForwardQueueItem(
     .run();
   return 'requeued';
 }
+
+/**
+ * P1 (2026-06-07 修正): 「is_enabled=0 で skip する」ような attempt を増やしたく
+ * ない遅延ケース用。next_retry_at だけを deferSeconds 後に伸ばし、attempt は
+ * 据え置く (バックオフ bucket を退行させない / DLQ 判定に影響を与えない)。
+ */
+export async function deferCrmForwardQueueItem(
+  db: D1Database,
+  id: string,
+  deferSeconds: number,
+  reason: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE crm_forward_queue
+          SET next_retry_at = datetime('now', '+' || ? || ' seconds'),
+              last_error = ?
+        WHERE id = ?`,
+    )
+    .bind(deferSeconds, reason.slice(0, 500), id)
+    .run();
+}

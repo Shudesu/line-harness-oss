@@ -93,16 +93,30 @@ scoring.delete('/api/scoring-rules/:id', async (c) => {
 
 // Codex P0 修正: account 境界。任意 friendId で他テナント friend のスコア閲覧/加算
 // ができないよう、lineAccountId 必須化 + friend.line_account_id と突合。
+//
+// 緊急血止め (2026-06-07): UI 未対応のため optional に戻す。渡された場合は厳密、
+// 渡されない場合は line_account_id IS NULL の legacy friend のみ通す。
+// TODO: UI 改修後に必須化に戻す。
 scoring.get('/api/friends/:id/score', async (c) => {
   try {
     const friendId = c.req.param('id');
     const lineAccountId = c.req.query('lineAccountId');
-    if (!lineAccountId) {
-      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
-    }
-    const guard = await getFriendOrReject(c.env.DB, friendId, lineAccountId);
-    if (!guard.ok) {
-      return c.json({ success: false, error: guard.error }, guard.status);
+    if (lineAccountId) {
+      const guard = await getFriendOrReject(c.env.DB, friendId, lineAccountId);
+      if (!guard.ok) {
+        return c.json({ success: false, error: guard.error }, guard.status);
+      }
+    } else {
+      const row = await c.env.DB
+        .prepare('SELECT line_account_id FROM friends WHERE id = ?')
+        .bind(friendId)
+        .first<{ line_account_id: string | null }>();
+      if (!row) {
+        return c.json({ success: false, error: 'friend not found' }, 404);
+      }
+      if (row.line_account_id !== null) {
+        return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+      }
     }
     const [score, history] = await Promise.all([
       getFriendScore(c.env.DB, friendId),
@@ -130,17 +144,31 @@ scoring.get('/api/friends/:id/score', async (c) => {
 
 // 手動スコア加算
 // Codex P0 修正: body に lineAccountId を必須化、境界突合してから加算。
+//
+// 緊急血止め (2026-06-07): UI 未対応のため optional に戻す。渡された場合は厳密、
+// 渡されない場合は line_account_id IS NULL の legacy friend のみ通す。
+// TODO: UI 改修後に必須化に戻す。
 scoring.post('/api/friends/:id/score', async (c) => {
   try {
     const friendId = c.req.param('id');
     const body = await c.req.json<{ scoreChange: number; reason?: string; lineAccountId?: string }>();
     if (body.scoreChange === undefined) return c.json({ success: false, error: 'scoreChange is required' }, 400);
-    if (!body.lineAccountId) {
-      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
-    }
-    const guard = await getFriendOrReject(c.env.DB, friendId, body.lineAccountId);
-    if (!guard.ok) {
-      return c.json({ success: false, error: guard.error }, guard.status);
+    if (body.lineAccountId) {
+      const guard = await getFriendOrReject(c.env.DB, friendId, body.lineAccountId);
+      if (!guard.ok) {
+        return c.json({ success: false, error: guard.error }, guard.status);
+      }
+    } else {
+      const row = await c.env.DB
+        .prepare('SELECT line_account_id FROM friends WHERE id = ?')
+        .bind(friendId)
+        .first<{ line_account_id: string | null }>();
+      if (!row) {
+        return c.json({ success: false, error: 'friend not found' }, 404);
+      }
+      if (row.line_account_id !== null) {
+        return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+      }
     }
     await addScore(c.env.DB, { friendId, scoreChange: body.scoreChange, reason: body.reason });
     const newScore = await getFriendScore(c.env.DB, friendId);

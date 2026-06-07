@@ -30,11 +30,17 @@ if (!API_URL) {
 const MANIFEST_URL =
   process.env.NEXT_PUBLIC_MANIFEST_URL ?? `${API_URL}/admin/manifest`
 
-function adminKey(): string {
-  const v = process.env.NEXT_PUBLIC_ADMIN_API_KEY
-  if (!v) throw new Error('NEXT_PUBLIC_ADMIN_API_KEY not set')
-  return v
-}
+// SECURITY (緊急血止め 2026-06-07):
+// 旧実装は `NEXT_PUBLIC_ADMIN_API_KEY` をクライアントバンドルに埋め込んで
+// 本番 JS に admin shared secret を露出していた (DevTools で取得可能)。
+// hyhome フォークでは self-update 機能 (UpdateBanner / UpdateButton) を
+// そもそも運用していない (update-banner.tsx は既に return null) ため、
+// 認証が必要な mutate 系 API (start / status / stream) を完全に無効化し、
+// `NEXT_PUBLIC_ADMIN_API_KEY` への参照も削除した。
+// 将来 self-update を復活させる場合は、staff Bearer (lh_api_key) ベースの
+// role guard (requireRole('owner') 等) に張り替えること。
+const SELF_UPDATE_DISABLED_MSG =
+  'self-update is disabled in this fork (admin api key leak fix)'
 
 export async function getCurrentVersion(): Promise<CurrentVersion> {
   const r = await fetch(`${API_URL}/admin/version`)
@@ -60,54 +66,25 @@ export async function getManifest(): Promise<Manifest> {
 }
 
 export async function startUpdate(): Promise<{ updateId: string }> {
-  const r = await fetch(`${API_URL}/admin/update/start`, {
-    method: 'POST',
-    headers: { 'x-admin-api-key': adminKey() },
-  })
-  if (!r.ok) {
-    const body = await r.text()
-    throw new Error(`start failed ${r.status}: ${body}`)
-  }
-  return r.json() as Promise<{ updateId: string }>
+  throw new Error(SELF_UPDATE_DISABLED_MSG)
 }
 
-export async function getUpdateStatus(id: string): Promise<{
+export async function getUpdateStatus(_id: string): Promise<{
   id: string
   status: string
   events: unknown[]
   error: string | null
 }> {
-  const r = await fetch(`${API_URL}/admin/update/status/${id}`, {
-    headers: { 'x-admin-api-key': adminKey() },
-  })
-  if (!r.ok) throw new Error(`status ${r.status}`)
-  return r.json() as Promise<{
-    id: string
-    status: string
-    events: unknown[]
-    error: string | null
-  }>
+  throw new Error(SELF_UPDATE_DISABLED_MSG)
 }
 
 export function openUpdateStream(
-  id: string,
-  onEvent: (e: unknown) => void,
-  onComplete: (final: unknown) => void,
+  _id: string,
+  _onEvent: (e: unknown) => void,
+  _onComplete: (final: unknown) => void,
 ): EventSource {
-  // KNOWN LIMITATION (Phase 6): EventSource cannot send custom request headers,
-  // but the worker's `/admin/update/stream/:id` requires `x-admin-api-key`.
-  // For Phase 6 we ship the structure and accept that the SSE connection will
-  // fail authentication at runtime — `startUpdate` and `getUpdateStatus` still
-  // work via fetch and the dashboard can poll status as a fallback.
-  // Phase 9 polish task: switch the gate to a cookie set at login OR add a
-  // signed query-param token. See task plan for `feat/upgrade-flow`.
-  const es = new EventSource(`${API_URL}/admin/update/stream/${id}`)
-  es.addEventListener('progress', (m) =>
-    onEvent(JSON.parse((m as MessageEvent).data)),
-  )
-  es.addEventListener('complete', (m) => {
-    onComplete(JSON.parse((m as MessageEvent).data))
-    es.close()
-  })
-  return es
+  // self-update は無効化済。呼び出し元 (progress-modal) が UI から
+  // 到達しない設計 (UpdateBanner / UpdateButton は未マウント) のため、
+  // ここに来る = バグ。明示的に投げて気付けるようにする。
+  throw new Error(SELF_UPDATE_DISABLED_MSG)
 }

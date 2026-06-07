@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { getFriendByLineUserId } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
+import { resolveAccessToken } from '../lib/account-token.js';
 
 const app = new Hono<Env>();
 
@@ -128,7 +129,8 @@ app.post('/api/meet-callback', async (c) => {
   if ((friend as unknown as Record<string, unknown>).line_account_id) {
     const { getLineAccountById } = await import('@line-crm/db');
     const account = await getLineAccountById(c.env.DB, (friend as unknown as Record<string, unknown>).line_account_id as string);
-    if (account) accessToken = account.channel_access_token;
+    // Phase 1-G: 暗号化 token を透過的に復号 (緊急血止め 2026-06-07)
+    if (account) accessToken = await resolveAccessToken(c.env, account.channel_access_token);
   }
   const lineClient = new LineClient(accessToken);
 

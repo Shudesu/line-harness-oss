@@ -479,7 +479,7 @@ broadcasts.post('/api/broadcasts/:id/send', requireRole('owner', 'admin'), async
         const ctx = c.executionCtx as ExecutionContext;
         const defaultClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
         ctx.waitUntil(
-          processQueuedBroadcasts(c.env.DB, defaultClient, c.env.WORKER_URL).catch((err) => {
+          processQueuedBroadcasts(c.env.DB, defaultClient, c.env.WORKER_URL, c.env).catch((err) => {
             console.error('[multi-account-dedup] background queue processing failed:', err);
           }),
         );
@@ -499,7 +499,12 @@ broadcasts.post('/api/broadcasts/:id/send', requireRole('owner', 'admin'), async
     // target_type='tag' で対象が多い場合はキュー方式
     if (existing.target_type === 'tag' && existing.target_tag_id) {
       const { getFriendsByTag } = await import('@line-crm/db');
-      const friends = await getFriendsByTag(c.env.DB, existing.target_tag_id);
+      // Codex P1 (2026-06-07): キュー判定に使う followingCount も送信元 account で絞る。
+      // 他アカウントの同タグ friend を含めて閾値計算すると queue/inline の振り分けが
+      // ずれる。
+      const existingAccountId =
+        ((existing as unknown as Record<string, unknown>).line_account_id as string | null) ?? null;
+      const friends = await getFriendsByTag(c.env.DB, existing.target_tag_id, existingAccountId);
       const followingCount = friends.filter(f => f.is_following).length;
 
       if (followingCount > 500) {
@@ -557,7 +562,7 @@ broadcasts.post('/api/broadcasts/:id/send', requireRole('owner', 'admin'), async
     // 冒頭 (updateBroadcastStatus / getBroadcastById / autoTrackContent / buildMessage) で
     // 失敗した場合は内部 catch の対象外。lock を外側で必ず rollback する。
     try {
-      await processBroadcastSend(c.env.DB, lineClient, id, c.env.WORKER_URL);
+      await processBroadcastSend(c.env.DB, lineClient, id, c.env.WORKER_URL, c.env);
     } catch (err) {
       await c.env.DB.prepare(
         `UPDATE broadcasts SET status = ? WHERE id = ? AND status = 'sending'`

@@ -14,13 +14,17 @@ inbox.get('/api/inbox/unanswered', async (c) => {
     // Codex P0 修正: account (= lineAccountId) を必須化。
     // 省略すると全アカ横断で未回答 inbox を返すため、テナント境界がない。
     // 単一アカ運用のクライアントも明示的に accountId を渡す方針に変える。
+    //
+    // 緊急血止め (2026-06-07): UI 未対応のため optional に戻す。渡された場合は
+    // 厳密にその account のみ、渡されない場合は legacy 互換 (account 絞り込みなし)
+    // で動作させる。
+    // TODO: UI 改修後に必須化に戻す。
     const account = c.req.query('account');
-    if (!account) {
-      return c.json({ success: false, error: 'account (lineAccountId) is required' }, 400);
-    }
-    const idPattern = /^[a-f0-9-]{32,36}$/i;
-    if (!idPattern.test(account)) {
-      return c.json({ success: false, error: 'account の形式が不正です' }, 400);
+    if (account) {
+      const idPattern = /^[a-f0-9-]{32,36}$/i;
+      if (!idPattern.test(account)) {
+        return c.json({ success: false, error: 'account の形式が不正です' }, 400);
+      }
     }
     const minWaitMinutesStr = c.req.query('minWaitMinutes');
     const pageStr = c.req.query('page');
@@ -28,7 +32,7 @@ inbox.get('/api/inbox/unanswered', async (c) => {
 
     const opts: UnansweredInboxOptions = {
       q: q || undefined,
-      account,
+      account: account || undefined,
       minWaitMinutes: minWaitMinutesStr ? Number.parseInt(minWaitMinutesStr, 10) : undefined,
       page: pageStr ? Number.parseInt(pageStr, 10) : undefined,
       pageSize: pageSizeStr ? Number.parseInt(pageSizeStr, 10) : undefined,

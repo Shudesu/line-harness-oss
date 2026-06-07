@@ -5,8 +5,14 @@
  * できる経路があったため、各ルートで以下を強制する:
  *   1. friendId / lineAccountId の形式チェック (UUID/シンプル hex)
  *   2. friend 行の存在チェック
- *   3. friend.line_account_id が呼び出し側の lineAccountId と一致するか
- *      (line_account_id IS NULL の legacy friend は素通し)
+ *   3. friend.line_account_id が呼び出し側の lineAccountId と厳密一致する
+ *
+ * Codex P1 修正 (2026-06-07): UI 側が lineAccountId を渡すよう改修済のため、
+ * legacy NULL 救済 (line_account_id IS NULL の friend を素通し) は撤去した。
+ * NULL row を残すと他テナント経由で読まれるリスクがあるため、本関数が呼ばれた
+ * 時点 (= UI から lineAccountId が来た時点) では legacy 救済はしない。
+ * UI が lineAccountId を渡さない場合の互換性は、各ルート側で関数を呼ばずに
+ * legacy 互換分岐を残して担保する。
  *
  * 形式: friends.bulk と同じ idPattern を使う。
  */
@@ -27,8 +33,9 @@ export type GetFriendOrRejectResult<F extends FriendBoundaryRow> =
  * 1 ステップで実行する。呼び出し側はマッチした friend 行 (line_account_id 込) を
  * そのまま使える。
  *
- * legacy friend (line_account_id IS NULL) は境界エラー扱いにせず素通す。
- * これは既存の bulk tag 系と同じ運用ポリシー。
+ * Codex P1 修正 (2026-06-07): legacy NULL 救済を撤去。lineAccountId が指定された
+ * 呼び出し (= 厳密境界モード) では、friend.line_account_id が一致しない限り 403。
+ * NULL row も含めて他テナント経由で読まれないように扱う。
  */
 export async function getFriendOrReject(
   db: D1Database,
@@ -45,10 +52,7 @@ export async function getFriendOrReject(
   if (!friend) {
     return { ok: false, status: 404, error: 'friend not found' };
   }
-  if (
-    friend.line_account_id !== null &&
-    friend.line_account_id !== lineAccountId
-  ) {
+  if (friend.line_account_id !== lineAccountId) {
     return {
       ok: false,
       status: 403,

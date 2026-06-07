@@ -69,6 +69,17 @@ export async function getLarkTenantAccessToken(
 
 export type LarkReceiveIdType = 'open_id' | 'chat_id' | 'email' | 'user_id' | 'union_id';
 
+// Lark `/im/v1/messages` のレスポンス形 (成功時 code=0)。
+// 旧実装は `let parsed: T | null = null; parsed = JSON.parse(...) as typeof parsed`
+// と書いていたが、`typeof parsed` がリテラル `null` に narrow され、
+// 後続の `parsed.code` 等が TS2339 (never) で読めなくなる罠だった。
+// 名前付き型に切り出して `as LarkSendResponse` で明示する。
+interface LarkSendResponse {
+  code: number;
+  msg?: string;
+  data?: { message_id?: string };
+}
+
 export interface SendLarkTextResult {
   ok: boolean;
   httpStatus: number;
@@ -120,10 +131,10 @@ export async function sendLarkTextMessage(args: {
     };
   }
 
-  let parsed: { code: number; msg?: string; data?: { message_id?: string } } | null = null;
+  let parsed: LarkSendResponse | null = null;
   const responseText = await res.text().catch(() => '');
   try {
-    parsed = JSON.parse(responseText) as typeof parsed;
+    parsed = JSON.parse(responseText) as LarkSendResponse;
   } catch {
     // not json
   }

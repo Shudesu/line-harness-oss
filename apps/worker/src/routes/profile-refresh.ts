@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
 import { requireRole } from '../middleware/role-guard.js';
+import { resolveAccessToken } from '../lib/account-token.js';
 import type { Env } from '../index.js';
 
 const profileRefresh = new Hono<Env>();
@@ -70,7 +71,10 @@ profileRefresh.post('/api/admin/refresh-profiles', requireRole('owner'), async (
   for (let i = 0; i < rows.length; i += CONCURRENCY) {
     const chunk = rows.slice(i, i + CONCURRENCY);
     await Promise.all(chunk.map(async (row) => {
-      const token = row.channel_access_token ?? defaultToken;
+      // Phase 1-G: 暗号化 token を透過的に復号 (緊急血止め 2026-06-07)
+      const token = row.channel_access_token
+        ? await resolveAccessToken(c.env, row.channel_access_token)
+        : defaultToken;
       const client = new LineClient(token);
       try {
         const profile = await client.getProfile(row.line_user_id);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { api } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 
 interface FriendDetail {
   id: string
@@ -52,6 +53,10 @@ function renderValue(value: unknown): string {
 }
 
 export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }: Props) {
+  // useAccount() may not be available in every render tree (e.g. tests),
+  // but in the chats UI this component is always rendered under the
+  // AccountProvider so a direct call is safe.
+  const { selectedAccountId } = useAccount()
   const [friend, setFriend] = useState<FriendDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -64,7 +69,7 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
     let cancelled = false
     setLoading(true)
     setError(null)
-    api.friends.get(friendId).then((res) => {
+    api.friends.get(friendId, selectedAccountId).then((res) => {
       if (cancelled) return
       if (res.success && res.data) {
         setFriend(res.data as unknown as FriendDetail)
@@ -78,7 +83,7 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
       if (!cancelled) setLoading(false)
     })
     return () => { cancelled = true }
-  }, [friendId])
+  }, [friendId, selectedAccountId])
 
   // リッチメニュー — loading / error / data を区別して、null=未設定 を取得失敗と
   // 混同しないようにする。Codex review (P3) の指摘で導入。

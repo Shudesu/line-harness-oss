@@ -97,6 +97,15 @@ async function pushToOneDevice(
   payload: ApnsPayload,
   secrets: Required<ApnsSecrets>,
 ): Promise<{ ok: boolean; status: number; reason?: string }> {
+  // Round2 セキュリティ agent 指摘 #9: bundle_id mismatch を APNs に送ると BadTopic だが
+  // Worker は silent fail。事前ガードで bundle_id 不一致 token を弾く。
+  if (device.bundle_id !== secrets.APNS_BUNDLE_ID) {
+    return { ok: false, status: 0, reason: 'bundle_id_mismatch' };
+  }
+  // environment 列の値も "production"/"sandbox" 以外なら弾く（iOS が誤送信した場合）
+  if (device.environment !== 'production' && device.environment !== 'sandbox') {
+    return { ok: false, status: 0, reason: 'invalid_environment' };
+  }
   const host = device.environment === 'production' ? PROD_HOST : SANDBOX_HOST;
   const url = `${host}/3/device/${device.token}`;
   const jwt = await generateApnsJwt(secrets);

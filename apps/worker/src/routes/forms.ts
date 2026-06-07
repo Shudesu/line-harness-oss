@@ -19,6 +19,7 @@ import type {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { requireRole } from '../middleware/role-guard.js';
+import { resolveAccessToken } from '../lib/account-token.js';
 
 const forms = new Hono<Env>();
 
@@ -350,7 +351,8 @@ forms.post('/api/forms/:id/submit', async (c) => {
               if ((friend as unknown as Record<string, unknown>).line_account_id) {
                 const { getLineAccountById } = await import('@line-crm/db');
                 const account = await getLineAccountById(c.env.DB, (friend as unknown as Record<string, unknown>).line_account_id as string);
-                if (account) accessToken = account.channel_access_token;
+                // Phase 1-G: 暗号化 token を透過的に復号 (緊急血止め 2026-06-07)
+                if (account) accessToken = await resolveAccessToken(c.env, account.channel_access_token);
               }
               const lineClient = new LineClient(accessToken);
               await lineClient.pushMessage(friend.line_user_id, [{ type: 'text', text: form.on_submit_webhook_fail_message }]);
@@ -459,7 +461,8 @@ forms.post('/api/forms/:id/submit', async (c) => {
             if ((friend as unknown as Record<string, unknown>).line_account_id) {
               const { getLineAccountById } = await import('@line-crm/db');
               const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-              if (account) accessToken = account.channel_access_token;
+              // Phase 1-G: 暗号化 token を透過的に復号 (緊急血止め 2026-06-07)
+              if (account) accessToken = await resolveAccessToken(c.env, account.channel_access_token);
             }
             const lineClient = new LineClient(accessToken);
             const joinUrl = String(webhookData!.join_url);
@@ -517,7 +520,8 @@ forms.post('/api/forms/:id/submit', async (c) => {
           if ((friend as unknown as Record<string, unknown>).line_account_id) {
             const { getLineAccountById } = await import('@line-crm/db');
             const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-            if (account) accessToken = account.channel_access_token;
+            // Phase 1-G: 暗号化 token を透過的に復号 (緊急血止め 2026-06-07)
+            if (account) accessToken = await resolveAccessToken(c.env, account.channel_access_token);
           }
           const lineClient = new LineClient(accessToken);
           const { buildMessage, expandVariables } = await import('../services/step-delivery.js');

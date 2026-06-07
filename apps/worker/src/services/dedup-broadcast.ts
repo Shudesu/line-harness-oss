@@ -273,6 +273,9 @@ export async function processMultiAccountDedupBroadcast(
     aggregation_unit?: string | null;
   },
   lineClientFactory: (token: string) => LineClient = (t) => new LineClient(t),
+  /** Phase 1-G: 暗号化 token を透過復号するための env (LINE_TOKEN_ENC_KEY を含む)。
+   *  未指定の場合は token を平文として扱う (テスト用フォールバック)。 */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<ProcessMultiAccountDedupResult> {
   const accountIds = (broadcast.account_ids ? JSON.parse(broadcast.account_ids) : []) as string[];
   const dedupPriority = (broadcast.dedup_priority ? JSON.parse(broadcast.dedup_priority) : []) as string[];
@@ -329,7 +332,14 @@ export async function processMultiAccountDedupBroadcast(
     const remaining = recipients.filter((r) => !sentSet.has(r.identKey));
     if (remaining.length === 0) continue; // このアカに残作業なし
 
-    const client = lineClientFactory(account.channel_access_token);
+    // Phase 1-G: 暗号化 token を透過復号してから factory に渡す。env 未指定時
+    // (テスト経路) は平文として扱う。
+    let resolvedToken = account.channel_access_token;
+    if (env) {
+      const { resolveAccessToken } = await import('../lib/account-token.js');
+      resolvedToken = await resolveAccessToken(env, account.channel_access_token);
+    }
+    const client = lineClientFactory(resolvedToken);
     const totalBatches = Math.ceil(remaining.length / MULTICAST_BATCH_SIZE);
 
     // Per-account の liff_id でテンプレ変数 ({{liff_id}}) を置換してから

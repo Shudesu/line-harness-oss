@@ -21,6 +21,7 @@ import {
 import { getSlotsWithRemaining } from '../services/event-availability.js';
 import { verifyCallerLineUserId } from '../services/liff-auth.js';
 import { computeIdentityKey } from '../lib/identity-key.js';
+import { resolveAccessToken } from '../lib/account-token.js';
 import {
   reserveEventIdempotency,
   finalizeEventIdempotencyResponse,
@@ -1055,8 +1056,10 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
     if (acc?.channel_access_token) {
       const kind: EventNotificationKind =
         status === 'requested' ? 'received_pending' : 'received_confirmed';
+      // Phase 1-G: 暗号化 token を復号してから LINE API に渡す
+      const accessToken = await resolveAccessToken(c.env, acc.channel_access_token);
       await sendEventBookingNotification({
-        channelAccessToken: acc.channel_access_token,
+        channelAccessToken: accessToken,
         toLineUserId: bookingLineUserId,
         kind,
         ctx: {
@@ -1185,6 +1188,7 @@ async function loadBookingForAction(
 
 async function notifyBookingFriend(
   db: D1Database,
+  env: { LINE_TOKEN_ENC_KEY?: string },
   booking_id: string,
   kind: EventNotificationKind,
 ): Promise<void> {
@@ -1212,8 +1216,10 @@ async function notifyBookingFriend(
         line_user_id: string;
       }>();
     if (!row || !row.channel_access_token) return;
+    // Phase 1-G: 暗号化 token を復号してから LINE API に渡す
+    const accessToken = await resolveAccessToken(env, row.channel_access_token);
     await sendEventBookingNotification({
-      channelAccessToken: row.channel_access_token,
+      channelAccessToken: accessToken,
       toLineUserId: row.line_user_id,
       kind,
       ctx: {
@@ -1293,7 +1299,7 @@ events.post('/api/events/admin/events/:id/bookings/:bookingId/decide', async (c)
     }
   }
 
-  await notifyBookingFriend(c.env.DB, booking.id, action === 'confirm' ? 'confirmed' : 'rejected');
+  await notifyBookingFriend(c.env.DB, c.env, booking.id, action === 'confirm' ? 'confirmed' : 'rejected');
   const updated = await c.env.DB
     .prepare(`SELECT * FROM event_bookings WHERE id = ?`)
     .bind(booking.id)
@@ -1323,7 +1329,7 @@ events.post('/api/events/admin/events/:id/bookings/:bookingId/cancel', async (c)
     .run();
   if ((upd.meta?.changes ?? 0) === 0) return bad(c, 'invalid_state', 409);
   await cancelPendingRemindersFor(c.env.DB, booking.id);
-  await notifyBookingFriend(c.env.DB, booking.id, 'cancelled_by_admin');
+  await notifyBookingFriend(c.env.DB, c.env, booking.id, 'cancelled_by_admin');
   return c.json({ ok: true });
 });
 

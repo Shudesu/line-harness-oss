@@ -15,6 +15,7 @@ import {
   getDueCrmForwardQueueItems,
   deleteCrmForwardQueueItem,
   bumpCrmForwardQueueItem,
+  deferCrmForwardQueueItem,
   logCrmForwardResult,
 } from '@line-crm/db';
 
@@ -59,16 +60,16 @@ export async function processCrmForwardRetries(
       }
       if (!fwd.is_enabled) {
         // 一時無効化されている間は retry を止めるのが運用的に正しい。
-        // queue には残し、次回 cron で is_enabled になったら再試行する。
-        // ただし next_retry_at を 24h 後にずらして無駄打ちを防ぐ。
-        await bumpCrmForwardQueueItem(
+        // queue には残し、24h 後に再評価する。bumpCrmForwardQueueItem は
+        // exponential backoff の bucket を引数の attempt から再計算するため、
+        // 「attempt-1 を渡して increment 後元に戻す」テクは backoff を 1 段
+        // 巻き戻し → 1〜5 分で再 retry されてしまうバグだった。代わりに
+        // attempt を据え置き next_retry_at だけ 24h 後に伸ばす専用関数を使う。
+        await deferCrmForwardQueueItem(
           db,
           item.id,
-          // attempt は増やさず、次回 due だけずらすため引数調整。
-          // 簡略化のため bumpCrmForwardQueueItem の attempt-1 を渡して
-          // increment 後に元の値になるようにする (DLQ 判定に影響しない)。
-          Math.max(0, item.attempt - 1),
-          'forward disabled, retry deferred',
+          24 * 60 * 60,
+          'forward disabled, retry deferred 24h',
         );
         return 'requeued' as const;
       }

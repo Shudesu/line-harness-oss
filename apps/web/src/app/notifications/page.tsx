@@ -7,6 +7,7 @@ import InboxList from '@/components/inbox/inbox-list'
 import InboxSummaryBar from '@/components/inbox/inbox-summary-bar'
 import { Banner } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import type { InboxRowData } from '@/components/inbox/inbox-row'
 
 const PAGE_SIZE = 50
@@ -22,6 +23,7 @@ interface AccountOption {
 }
 
 export default function InboxPage() {
+  const { selectedAccountId } = useAccount()
   const [allRows, setAllRows] = useState<InboxRowData[]>([])
   // サーバが返す真の総件数 (2000件超のとき allRows は capped されるので別途保持)。
   // Codex Round 2 指摘: summary.total を allRows.length から取ると under-report。
@@ -59,11 +61,18 @@ export default function InboxPage() {
   }, [])
 
   const loadAll = useCallback(async () => {
+    if (!selectedAccountId) {
+      // Server now enforces account boundary on /api/inbox/unanswered.
+      // Without a selected account we can't fetch meaningful data — hold
+      // the loading state so the empty list isn't mistaken for "no rows".
+      return
+    }
     const seq = ++requestSeqRef.current
     setLoading(true)
     setError('')
     try {
       const res = await api.inbox.unanswered.list({
+        account: selectedAccountId,
         page: 1,
         pageSize: FETCH_PAGE_SIZE,
       })
@@ -84,7 +93,7 @@ export default function InboxPage() {
     } finally {
       if (seq === requestSeqRef.current) setLoading(false)
     }
-  }, [])
+  }, [selectedAccountId])
 
   useEffect(() => {
     loadAll()
@@ -158,6 +167,12 @@ export default function InboxPage() {
           if (next.overdueOnly !== undefined) setOverdueOnly(next.overdueOnly)
         }}
       />
+
+      {!selectedAccountId && (
+        <Banner tone="warning">
+          アカウントを選択してください。サーバ側で account 境界を要求するようになったため、未選択時は取得を保留します。
+        </Banner>
+      )}
 
       {error && <Banner tone="warning">{error}</Banner>}
 

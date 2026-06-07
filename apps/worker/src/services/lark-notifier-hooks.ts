@@ -47,9 +47,12 @@ async function lookupFriendAndAccount(
   friendName: string;
   accountName: string;
 } | null> {
+  // Codex P1 (2026-06-07): legacy NULL 救済を撤去。lineAccountId は呼び出し元から
+  // 必ず渡されるので厳密境界で OK。NULL row を巻き込むと別アカウントの follow event
+  // が他アカウントの友だちに紐づいてしまう。
   const friend = await db
     .prepare(
-      'SELECT id, display_name FROM friends WHERE line_user_id = ? AND (line_account_id = ? OR line_account_id IS NULL) LIMIT 1',
+      'SELECT id, display_name FROM friends WHERE line_user_id = ? AND line_account_id = ? LIMIT 1',
     )
     .bind(lineUserId, lineAccountId)
     .first<{ id: string; display_name: string | null }>();

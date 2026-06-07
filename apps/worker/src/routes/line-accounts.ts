@@ -10,6 +10,7 @@ import {
 } from '@line-crm/db';
 import type { LineAccount as DbLineAccount } from '@line-crm/db';
 import { requireRole } from '../middleware/role-guard.js';
+import { resolveAccessToken } from '../lib/account-token.js';
 import type { Env } from '../index.js';
 
 const lineAccounts = new Hono<Env>();
@@ -68,8 +69,11 @@ lineAccounts.get('/api/line-accounts', async (c) => {
     // Get stats for all accounts in parallel
     const results = await Promise.all(
       items.map(async (item) => {
+        // Phase 1-G: channel_access_token は AES-GCM 暗号化されている可能性が
+        // あるので、LINE API に渡す前に必ず復号する。
+        const accessToken = await resolveAccessToken(c.env, item.channel_access_token);
         const [profile, friendCount, scenarioCount, msgCount] = await Promise.all([
-          fetchBotProfile(item.channel_access_token),
+          fetchBotProfile(accessToken),
           db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?`).bind(item.id).first<{ count: number }>(),
           db.prepare(
             `SELECT COUNT(*) as count FROM friend_scenarios fs

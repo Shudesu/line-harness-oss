@@ -23,6 +23,8 @@ export async function processBroadcastSend(
   lineClient: LineClient,
   broadcastId: string,
   workerUrl?: string,
+  /** Phase 1-G: 暗号化 token を復号するためのキー (LINE_TOKEN_ENC_KEY) を含む env */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<Broadcast> {
   // Mark as sending
   await updateBroadcastStatus(db, broadcastId, 'sending');
@@ -74,7 +76,12 @@ export async function processBroadcastSend(
         throw new Error('target_tag_id is required for tag-targeted broadcasts');
       }
 
-      const friends = await getFriendsByTag(db, broadcast.target_tag_id);
+      // Codex P1 (2026-06-07): 送信元 broadcast.line_account_id で friends を絞る。
+      // 旧実装は tagId のみで取得し、選択アカウントの token で他アカウントの
+      // 同タグ friend に送ろうとする状態だった。
+      const broadcastLineAccountId =
+        ((broadcast as unknown as Record<string, unknown>).line_account_id as string | null) ?? null;
+      const friends = await getFriendsByTag(db, broadcast.target_tag_id, broadcastLineAccountId);
       const followingFriends = friends.filter((f) => f.is_following);
       totalCount = followingFriends.length;
 
@@ -132,7 +139,7 @@ export async function processBroadcastSend(
       // tracked Flex 変換が落ちる。
       const { processMultiAccountDedupBroadcast } = await import('./dedup-broadcast.js');
       const broadcastForDedup = { ...broadcast, message_type: finalType, message_content: finalContent };
-      const result = await processMultiAccountDedupBroadcast(db, broadcastForDedup);
+      const result = await processMultiAccountDedupBroadcast(db, broadcastForDedup, undefined, env);
       totalCount = result.totalCount;
       successCount = result.successCount;
     }
@@ -189,7 +196,7 @@ export async function processScheduledBroadcasts(
         }
       }
 
-      await processBroadcastSend(db, deliveryClient, broadcast.id, workerUrl);
+      await processBroadcastSend(db, deliveryClient, broadcast.id, workerUrl, env);
     } catch (err) {
       console.error(`Failed to send scheduled broadcast ${broadcast.id}:`, err);
       // Reset to scheduled so it can be retried next cron
@@ -231,7 +238,7 @@ export async function processQueuedBroadcasts(
     }
 
     try {
-      await processQueuedBroadcastBatches(db, client, broadcast, workerUrl);
+      await processQueuedBroadcastBatches(db, client, broadcast, workerUrl, env);
     } catch (err) {
       console.error(`Failed to process queued broadcast ${broadcast.id}:`, err);
     }
@@ -243,6 +250,8 @@ async function processQueuedBroadcastBatches(
   lineClient: LineClient,
   broadcast: import('@line-crm/db').Broadcast,
   workerUrl?: string,
+  /** Phase 1-G: 暗号化 token を復号するためのキー (LINE_TOKEN_ENC_KEY) を含む env */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   const raw = broadcast as unknown as Record<string, unknown>;
   const segmentConditionsStr = raw.segment_conditions as string | null;
@@ -300,7 +309,7 @@ async function processQueuedBroadcastBatches(
   if (broadcast.target_type === 'multi-account-dedup') {
     const { processMultiAccountDedupBroadcast } = await import('./dedup-broadcast.js');
     const broadcastForDedup = { ...broadcast, message_type: finalType, message_content: finalContent };
-    const result = await processMultiAccountDedupBroadcast(db, broadcastForDedup);
+    const result = await processMultiAccountDedupBroadcast(db, broadcastForDedup, undefined, env);
     await createBroadcastInsight(db, broadcast.id);
     await updateBroadcastStatus(db, broadcast.id, 'sent', {
       totalCount: result.totalCount,
@@ -327,7 +336,10 @@ async function processQueuedBroadcastBatches(
     friends = result.results ?? [];
   } else if (broadcast.target_tag_id) {
     const { getFriendsByTag } = await import('@line-crm/db');
-    const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id);
+    // Codex P1 (2026-06-07): queue path も送信元 broadcast.line_account_id で friends を絞る。
+    // 旧実装は tagId のみで取得し、選択アカウント token で他アカウントの同タグ friend に
+    // 送ろうとする状態だった。
+    const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id, accountId);
     friends = tagFriends.filter(f => f.is_following).map(f => ({ id: f.id, line_user_id: f.line_user_id }));
   } else {
     // target_type='all' でキューに入ることはないが、念のため
