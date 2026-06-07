@@ -2,21 +2,21 @@
 
 /**
  * Phase 1-H: fingerprint 同意 / 保存期限ポリシー管理画面
- *
- * 認証スキップモード (skip_liff) で広告クリック→友だち追加突合に使う user_agent / ip_address /
- * ua_fingerprint は個人特定可能情報 (PII)。
- *
- * このページで:
- * - 同意 ON/OFF 切替 (OFF にすると即時全削除 + 新規記録停止)
- * - 保存日数 (デフォルト 90 日)
- * - 在庫統計
- * - 「いますぐ削除」ボタン
- * - 削除履歴 (過去20件)
  */
 
 import { useEffect, useState } from 'react'
 import { fetchApi } from '@/lib/api'
 import Header from '@/components/layout/header'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Input,
+} from '@/components/ui/primitives'
 
 interface FingerprintPolicyData {
   consent: boolean
@@ -82,10 +82,14 @@ export default function FingerprintPolicyPage() {
     }
     setSaving(true)
     setError('')
-    const r = await fetchApi<{ success: boolean; error?: string; purged?: { clearedRows: number } }>(
-      '/api/fingerprint-policy',
-      { method: 'PUT', body: JSON.stringify({ consent: !data.consent }) },
-    )
+    const r = await fetchApi<{
+      success: boolean
+      error?: string
+      purged?: { clearedRows: number }
+    }>('/api/fingerprint-policy', {
+      method: 'PUT',
+      body: JSON.stringify({ consent: !data.consent }),
+    })
     setSaving(false)
     if (r.success) {
       if (r.purged) {
@@ -143,9 +147,8 @@ export default function FingerprintPolicyPage() {
           description="認証スキップモードで使う user_agent / IP / fingerprint の保存と削除を管理します。"
         />
 
-        <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          <p className="font-medium mb-1">⚠️ プライバシー情報</p>
-          <ul className="list-disc pl-5 space-y-1">
+        <Banner tone="warning" title="⚠️ プライバシー情報" className="mb-5">
+          <ul className="list-disc space-y-1 pl-5">
             <li>
               認証スキップモード (skip_liff) のトラックリンクでは、広告クリック→友だち追加の突合のために
               user_agent / IP / fingerprint を一時的に保存しています。
@@ -156,154 +159,149 @@ export default function FingerprintPolicyPage() {
               (=skip_liff の attribution 精度は下がります)。
             </li>
           </ul>
-        </div>
+        </Banner>
 
         {error && (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          <Banner tone="danger" className="mb-4">
             {error}
-          </div>
+          </Banner>
         )}
 
         {loading || !data ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">読み込み中…</div>
+          <Card className="p-6 text-sm text-gray-500">読み込み中…</Card>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {/* 同意状態 */}
-            <div className="rounded-lg border bg-white p-6">
-              <h2 className="text-base font-semibold mb-3">同意状態</h2>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm">
+            <Card>
+              <CardHeader>
+                <CardTitle>同意状態</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm">
                     現在:{' '}
                     {data.consent ? (
-                      <span className="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                        ✅ 同意あり (記録中)
-                      </span>
+                      <Badge tone="success">✅ 同意あり (記録中)</Badge>
                     ) : (
-                      <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
-                        ⛔ 撤回中 (新規記録停止)
-                      </span>
+                      <Badge tone="neutral">⛔ 撤回中 (新規記録停止)</Badge>
                     )}
-                  </p>
+                  </div>
+                  <Button
+                    onClick={onToggleConsent}
+                    disabled={saving}
+                    variant={data.consent ? 'danger' : 'primary'}
+                  >
+                    {saving ? '更新中…' : data.consent ? '同意を撤回' : '同意して再開'}
+                  </Button>
                 </div>
-                <button
-                  type="button"
-                  onClick={onToggleConsent}
-                  disabled={saving}
-                  className={`rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
-                    data.consent ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'
-                  }`}
-                >
-                  {saving ? '更新中…' : data.consent ? '同意を撤回' : '同意して再開'}
-                </button>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* 保存日数 */}
-            <div className="rounded-lg border bg-white p-6">
-              <h2 className="text-base font-semibold mb-3">保存期限</h2>
-              <div className="flex items-end gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">保存日数</label>
-                  <div className="mt-1 flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={1}
-                      max={730}
-                      value={retentionInput}
-                      onChange={(e) => setRetentionInput(Number(e.target.value))}
-                      className="w-32 rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    />
-                    <span className="text-sm text-gray-600">日</span>
+            <Card>
+              <CardHeader>
+                <CardTitle>保存期限</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-end gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">保存日数</label>
+                    <div className="mt-1 flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={730}
+                        value={retentionInput}
+                        onChange={(e) => setRetentionInput(Number(e.target.value))}
+                        className="w-32"
+                      />
+                      <span className="text-sm text-gray-600">日</span>
+                    </div>
                   </div>
+                  <Button
+                    onClick={onSaveRetention}
+                    disabled={saving || retentionInput === data.retentionDays}
+                  >
+                    保存
+                  </Button>
                 </div>
-                <button
-                  type="button"
-                  onClick={onSaveRetention}
-                  disabled={saving || retentionInput === data.retentionDays}
-                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  保存
-                </button>
-              </div>
-              <p className="mt-2 text-xs text-gray-500">
-                推奨: 90 日 (skip_liff 経由のCV突合は通常24h以内に完結するため、ほぼ全データはこれ以上前のもの)
-              </p>
-            </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  推奨: 90 日 (skip_liff 経由のCV突合は通常24h以内に完結するため、ほぼ全データはこれ以上前のもの)
+                </p>
+              </CardContent>
+            </Card>
 
             {/* 在庫 */}
-            <div className="rounded-lg border bg-white p-6">
-              <h2 className="text-base font-semibold mb-3">保存状況</h2>
-              <dl className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <dt className="text-gray-500">保存中の件数</dt>
-                  <dd className="mt-1 text-2xl font-bold">
-                    {data.stats.totalWithFingerprint.toLocaleString()}
-                  </dd>
+            <Card>
+              <CardHeader>
+                <CardTitle>保存状況</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <dl className="grid grid-cols-2 gap-6 text-sm">
+                  <div>
+                    <dt className="text-gray-500">保存中の件数</dt>
+                    <dd className="mt-1 text-3xl font-bold tabular-nums">
+                      {data.stats.totalWithFingerprint.toLocaleString()}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-gray-500">最古のクリック</dt>
+                    <dd className="mt-1 font-mono text-sm text-gray-700">
+                      {data.stats.oldestClickedAt ?? '—'}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="mt-4 flex justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={onManualPurge}
+                    disabled={purging}
+                    className="border-orange-300 text-orange-700 hover:bg-orange-50"
+                  >
+                    {purging ? '削除中…' : 'いますぐ古いデータを削除'}
+                  </Button>
                 </div>
-                <div>
-                  <dt className="text-gray-500">最古のクリック</dt>
-                  <dd className="mt-1 text-sm font-mono">
-                    {data.stats.oldestClickedAt ?? '—'}
-                  </dd>
-                </div>
-              </dl>
-              <div className="mt-4 flex justify-end">
-                <button
-                  type="button"
-                  onClick={onManualPurge}
-                  disabled={purging}
-                  className="rounded-md border border-orange-300 px-4 py-2 text-sm text-orange-700 hover:bg-orange-50 disabled:opacity-50"
-                >
-                  {purging ? '削除中…' : 'いますぐ古いデータを削除'}
-                </button>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* 削除履歴 */}
-            <div className="rounded-lg border bg-white p-6">
-              <h2 className="text-base font-semibold mb-3">削除履歴 (最近20件)</h2>
-              {data.audit.length === 0 ? (
-                <p className="text-sm text-gray-500">まだ実行履歴はありません。</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">
-                          実行日時
-                        </th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">
-                          実行種別
-                        </th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
-                          対象件数
-                        </th>
-                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">
-                          削除件数
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {data.audit.map((a) => (
-                        <tr key={a.id}>
-                          <td className="px-3 py-2 font-mono text-xs">{a.ran_at}</td>
-                          <td className="px-3 py-2 text-xs">
-                            {TRIGGER_LABEL[a.trigger] ?? a.trigger}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono">
-                            {a.scanned_rows.toLocaleString()}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono font-medium">
-                            {a.cleared_rows.toLocaleString()}
-                          </td>
+            <Card>
+              <CardHeader>
+                <CardTitle>削除履歴 (最近 20 件)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.audit.length === 0 ? (
+                  <p className="text-sm text-gray-500">まだ実行履歴はありません。</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">実行日時</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">実行種別</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">対象件数</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">削除件数</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {data.audit.map((a) => (
+                          <tr key={a.id}>
+                            <td className="px-3 py-2 font-mono text-xs">{a.ran_at}</td>
+                            <td className="px-3 py-2 text-xs">{TRIGGER_LABEL[a.trigger] ?? a.trigger}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {a.scanned_rows.toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium tabular-nums">
+                              {a.cleared_rows.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
       </main>

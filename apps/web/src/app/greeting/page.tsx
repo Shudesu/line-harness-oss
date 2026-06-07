@@ -12,6 +12,15 @@ import { useEffect, useState } from 'react'
 import { fetchApi } from '@/lib/api'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
+import {
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  CardFooter,
+  Label,
+  Textarea,
+} from '@/components/ui/primitives'
 
 export default function GreetingPage() {
   const { selectedAccountId } = useAccount()
@@ -28,9 +37,11 @@ export default function GreetingPage() {
       return
     }
     setLoading(true)
-    const r = await fetchApi<{ success: boolean; data?: { text: string | null }; error?: string }>(
-      `/api/account-settings/greeting?accountId=${encodeURIComponent(selectedAccountId)}`,
-    )
+    const r = await fetchApi<{
+      success: boolean
+      data?: { text: string | null }
+      error?: string
+    }>(`/api/account-settings/greeting?accountId=${encodeURIComponent(selectedAccountId)}`)
     if (r.success && r.data) {
       const v = r.data.text ?? ''
       setText(v)
@@ -52,10 +63,7 @@ export default function GreetingPage() {
     setError('')
     const r = await fetchApi<{ success: boolean; error?: string }>(
       `/api/account-settings/greeting`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({ accountId: selectedAccountId, text }),
-      },
+      { method: 'PUT', body: JSON.stringify({ accountId: selectedAccountId, text }) },
     )
     setSaving(false)
     if (r.success) {
@@ -67,16 +75,18 @@ export default function GreetingPage() {
   }
 
   const onClear = async () => {
-    if (!confirm('あいさつメッセージを削除しますか?\n(LINE 公式の標準あいさつメッセージに戻ります)')) return
+    if (
+      !confirm(
+        'あいさつメッセージを削除しますか?\n(LINE 公式の標準あいさつメッセージに戻ります)',
+      )
+    )
+      return
     if (!selectedAccountId) return
     setSaving(true)
     setError('')
     const r = await fetchApi<{ success: boolean; error?: string }>(
       `/api/account-settings/greeting`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({ accountId: selectedAccountId, text: '' }),
-      },
+      { method: 'PUT', body: JSON.stringify({ accountId: selectedAccountId, text: '' }) },
     )
     setSaving(false)
     if (r.success) {
@@ -100,94 +110,90 @@ export default function GreetingPage() {
           description="友だち追加直後に自動送信されるメッセージ。LINE 公式のあいさつ機能を上書きします。"
         />
 
-        <div className="mb-4 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          <p className="font-medium mb-1">📌 動作仕様</p>
-          <ul className="list-disc pl-5 space-y-1">
+        <Banner tone="info" title="📌 動作仕様" className="mb-5">
+          <ul className="list-disc space-y-1 pl-5">
             <li>友だち追加された瞬間に push 送信されます</li>
             <li>流入経路 (referral) で別の intro が設定されている場合は、そちらが優先されます</li>
             <li>
-              プレースホルダ <code className="bg-white px-1 rounded">{'{{friend_name}}'}</code>{' '}
-              <code className="bg-white px-1 rounded">{'{{account_name}}'}</code> が使えます
+              プレースホルダ <code className="rounded bg-white px-1">{'{{friend_name}}'}</code>{' '}
+              <code className="rounded bg-white px-1">{'{{account_name}}'}</code> が使えます
             </li>
             <li>空欄で保存すると LINE 公式の標準あいさつメッセージに戻ります</li>
           </ul>
-        </div>
+        </Banner>
 
         {!selectedAccountId && (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">
+          <Card className="p-6 text-sm text-gray-500">
             上部のアカウント選択から LINE アカウントを選んでください。
-          </div>
+          </Card>
         )}
 
         {selectedAccountId && (
           <>
             {error && (
-              <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+              <Banner tone="danger" className="mb-4">
                 {error}
-              </div>
+              </Banner>
             )}
 
             {loading ? (
-              <div className="rounded border bg-white p-6 text-sm text-gray-500">
-                読み込み中…
-              </div>
+              <Card className="p-6 text-sm text-gray-500">読み込み中…</Card>
             ) : (
-              <div className="rounded-lg border bg-white p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    メッセージ本文
-                  </label>
-                  <textarea
+              <Card>
+                <CardContent>
+                  <Label htmlFor="greeting-text">メッセージ本文</Label>
+                  <Textarea
+                    id="greeting-text"
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     rows={10}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
+                    className="font-mono"
                     placeholder={
                       'はじめまして、{{friend_name}}さん!\n\nhyhome 公式 LINE にご登録ありがとうございます。\n家づくりのご相談、お気軽にメッセージください。'
                     }
                   />
-                  <div className="mt-1 flex items-center justify-between text-xs">
+                  <div className="mt-2 flex items-center justify-between text-xs">
                     <span className={isOverLimit ? 'text-red-600' : 'text-gray-500'}>
                       {charCount} / 5000 文字
                     </span>
                     {savedAt && (
-                      <span className="text-emerald-700">✅ 保存しました ({savedAt})</span>
+                      <span className="text-emerald-700">
+                        ✅ 保存しました ({savedAt})
+                      </span>
                     )}
                   </div>
-                </div>
 
-                <div>
-                  <p className="text-xs text-gray-500 mb-2">プレビュー:</p>
-                  <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm whitespace-pre-wrap">
-                    {text
-                      ? text
-                          .replaceAll('{{friend_name}}', '山田 太郎')
-                          .replaceAll('{{account_name}}', 'みな｜家づくり相談')
-                      : '(未設定 — LINE 公式の標準あいさつメッセージが使われます)'}
+                  <div className="mt-5">
+                    <p className="mb-2 text-xs text-gray-500">プレビュー:</p>
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm whitespace-pre-wrap">
+                      {text
+                        ? text
+                            .replaceAll('{{friend_name}}', '山田 太郎')
+                            .replaceAll('{{account_name}}', 'みな｜家づくり相談')
+                        : '(未設定 — LINE 公式の標準あいさつメッセージが使われます)'}
+                    </div>
                   </div>
-                </div>
+                </CardContent>
 
-                <div className="flex items-center justify-end gap-2 border-t pt-4">
+                <CardFooter>
                   {originalText && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="outline"
                       onClick={onClear}
                       disabled={saving}
-                      className="rounded-md border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      className="border-red-300 text-red-700 hover:bg-red-50"
                     >
                       削除して標準に戻す
-                    </button>
+                    </Button>
                   )}
-                  <button
-                    type="button"
+                  <Button
                     onClick={onSave}
                     disabled={saving || !hasChanges || isOverLimit}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                   >
                     {saving ? '保存中…' : '保存'}
-                  </button>
-                </div>
-              </div>
+                  </Button>
+                </CardFooter>
+              </Card>
             )}
           </>
         )}
