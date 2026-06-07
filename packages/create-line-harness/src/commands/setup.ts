@@ -11,6 +11,7 @@ import { createDatabase } from "../steps/database.js";
 import { deployWorker, syncInstalledWorkerConfig } from "../steps/deploy-worker.js";
 import { deployAdmin } from "../steps/deploy-admin.js";
 import { setSecrets } from "../steps/secrets.js";
+import { configureAdminAuth } from "../steps/admin-auth.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
 import { generateApiKey } from "../lib/crypto.js";
 import {
@@ -57,6 +58,7 @@ const ACCOUNT_DEPENDENT_STEPS = [
   "lineAccount",
   "admin",
   "workerConfig",
+  "adminAuth",
 ];
 
 function getStatePath(repoDir: string): string {
@@ -704,6 +706,20 @@ ON CONFLICT(channel_id) DO UPDATE SET
     saveState(repoDir, state);
   } else {
     p.log.success(`Admin UI: デプロイ済み（${state.adminUrl}）`);
+  }
+
+  // Step 13b: Configure cookie-based admin auth for the cross-site
+  // Pages↔Workers topology (SameSite=None cookie + CORS allowlist).
+  if (!isDone(state, "adminAuth")) {
+    await configureAdminAuth({
+      workerName: state.workerName,
+      workerUrl: state.workerUrl!,
+      adminUrl: state.adminUrl!,
+    });
+    markDone(state, "adminAuth");
+    saveState(repoDir, state);
+  } else {
+    p.log.success("管理画面の認証設定: 設定済み");
   }
 
   if (!isDone(state, "workerConfig")) {

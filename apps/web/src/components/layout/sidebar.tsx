@@ -311,8 +311,20 @@ export default function Sidebar() {
         <div className="px-6 py-4 space-y-3">
         <p className="text-xs text-gray-400">L Harness v{process.env.APP_VERSION || '0.0.0'}</p>
         <button
-          onClick={() => {
+          onClick={async () => {
+            try {
+              const apiUrl = process.env.NEXT_PUBLIC_API_URL
+              if (apiUrl) {
+                await fetch(`${apiUrl}/api/auth/logout`, {
+                  method: 'POST',
+                  credentials: 'include',
+                })
+              }
+            } catch {
+              // Local cleanup still logs the browser out if the network call fails.
+            }
             localStorage.removeItem('lh_api_key')
+            localStorage.removeItem('lh_csrf')
             localStorage.removeItem('lh_staff_name')
             localStorage.removeItem('lh_staff_role')
             window.location.href = '/login'

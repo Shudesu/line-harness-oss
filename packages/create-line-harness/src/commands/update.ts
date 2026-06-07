@@ -17,6 +17,7 @@ import {
   deployPagesProject,
   type CurrentVersion,
 } from "@line-harness/update-engine";
+import { configureAdminAuth } from "../steps/admin-auth.js";
 
 /**
  * Shape of `.line-harness-config.json` written by `setup.ts` after
@@ -610,7 +611,16 @@ export async function runUpdate(repoDir: string): Promise<void> {
     process.exit(1);
   }
 
-  // 12) Health check (non-fatal)
+  // 12) Ensure cookie-based admin auth is configured. Installs created before
+  // this version never set ADMIN_ORIGIN / ADMIN_ALLOW_CROSS_SITE, so the new
+  // cross-site cookie auth would otherwise break their admin login on upgrade.
+  await configureAdminAuth({
+    workerName: cfg.workerName,
+    workerUrl: cfg.workerPublicUrl,
+    adminUrl: cfg.adminPublicUrl,
+  });
+
+  // 13) Health check (non-fatal)
   s.start("Health チェック中");
   try {
     const hRes = await fetch(

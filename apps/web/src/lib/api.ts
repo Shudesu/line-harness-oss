@@ -63,22 +63,41 @@ if (!API_URL) {
 }
 
 /**
- * Read the API key from localStorage (set during login).
- * Never embed secrets in the client bundle via NEXT_PUBLIC_* env vars.
+ * Read the CSRF token issued at login. The session credential itself lives in
+ * an HttpOnly cookie (never exposed to JS); only the CSRF token is held
+ * client-side and echoed back via the X-CSRF-Token header on mutating
+ * requests. In a cross-site topology the SPA cannot read the API's CSRF cookie
+ * directly, so the token is delivered in the login/session response body and
+ * cached here.
  */
-function getApiKey(): string {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('lh_api_key') || ''
-  }
-  return ''
+export const CSRF_STORAGE_KEY = 'lh_csrf'
+
+export function getCsrfToken(): string {
+  if (typeof window === 'undefined') return ''
+  return localStorage.getItem(CSRF_STORAGE_KEY) || ''
 }
 
+export function setCsrfToken(token: string | undefined | null): void {
+  if (typeof window === 'undefined' || !token) return
+  localStorage.setItem(CSRF_STORAGE_KEY, token)
+}
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method ?? 'GET').toUpperCase()
+  const csrfHeaders: Record<string, string> = {}
+  if (MUTATING_METHODS.has(method)) {
+    const token = getCsrfToken()
+    if (token) csrfHeaders['X-CSRF-Token'] = token
+  }
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
+    // Send the HttpOnly session cookie with every request.
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${getApiKey()}`,
+      ...csrfHeaders,
       ...options?.headers,
     },
   })
@@ -1076,13 +1095,15 @@ export const api = {
 
     // 画像 upload は Content-Type を image/* で送るので fetchApi を使わず直接 fetch。
     uploadImage: async (groupId: string, pageId: string, file: File) => {
+      const csrf = getCsrfToken();
       const res = await fetch(
         `${API_URL}/api/rich-menu-groups/${groupId}/pages/${pageId}/image`,
         {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': file.type,
-            Authorization: `Bearer ${getApiKey()}`,
+            ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
           },
           body: file,
         },

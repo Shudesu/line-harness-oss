@@ -14,37 +14,49 @@ export default function LoginPage() {
     setError('')
 
     try {
-      // Validate by calling a simple endpoint
       const apiUrl = process.env.NEXT_PUBLIC_API_URL
       if (!apiUrl) {
         setError('NEXT_PUBLIC_API_URL is not set in build env')
         setLoading(false)
         return
       }
-      const res = await fetch(`${apiUrl}/api/friends/count`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      // Exchange the API key for an HttpOnly session cookie. The key is never
+      // stored in localStorage (removes the XSS-exposed credential).
+      const res = await fetch(`${apiUrl}/api/auth/login`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
       })
 
       if (res.ok) {
-        localStorage.setItem('lh_api_key', apiKey)
-        // Fetch staff profile for name/role display
+        localStorage.removeItem('lh_api_key')
         try {
-          const profileRes = await fetch(`${apiUrl}/api/staff/me`, {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (profileRes.ok) {
-            const profileData = await profileRes.json()
-            if (profileData.success && profileData.data) {
-              localStorage.setItem('lh_staff_name', profileData.data.name)
-              localStorage.setItem('lh_staff_role', profileData.data.role)
-            }
+          const loginData = await res.json()
+          if (loginData.success && loginData.data) {
+            localStorage.setItem('lh_staff_name', loginData.data.name)
+            localStorage.setItem('lh_staff_role', loginData.data.role)
+          }
+          // Cache the CSRF token for mutating requests (double-submit).
+          if (loginData.csrfToken) {
+            localStorage.setItem('lh_csrf', loginData.csrfToken)
           }
         } catch {
-          // Profile fetch is best-effort
+          // Profile / CSRF caching is best-effort.
         }
         router.push('/')
-      } else {
+      } else if (res.status === 401) {
         setError('APIキーが正しくありません')
+      } else {
+        // Surface topology / configuration errors (e.g. cross-site cookie guard).
+        let message = 'ログインに失敗しました'
+        try {
+          const data = await res.json()
+          if (data?.error) message = data.error
+        } catch {
+          // keep default message
+        }
+        setError(message)
       }
     } catch {
       setError('接続に失敗しました')

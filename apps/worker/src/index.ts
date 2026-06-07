@@ -63,6 +63,8 @@ import { images } from './routes/images.js';
 import { accountSettings } from './routes/account-settings.js';
 import { setup } from './routes/setup.js';
 import { autoReplies } from './routes/auto-replies.js';
+import { adminAuth } from './routes/admin-auth.js';
+import { resolveCorsOrigin } from './middleware/admin-auth-config.js';
 import booking from './routes/booking.js';
 import events from './routes/events.js';
 import { trafficPools } from './routes/traffic-pools.js';
@@ -88,6 +90,10 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
+    // Admin auth topology (see middleware/admin-auth-config.ts):
+    ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
+    ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
+    ADMIN_ALLOW_CROSS_SITE?: string; // 'true' opts into SameSite=None cross-site cookies
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
@@ -115,8 +121,17 @@ export type Env = {
 
 const app = new Hono<Env>();
 
-// CORS — allow all origins for MVP
-app.use('*', cors({ origin: '*' }));
+// CORS — credentialed cookie auth cannot use a wildcard origin. Reflect only
+// same-origin requests and origins on the ADMIN_ORIGIN allowlist; everything
+// else gets no Access-Control-Allow-Origin header (browser blocks it). Bearer
+// SDK/MCP callers send no Origin header and are unaffected.
+app.use('*', cors({
+  origin: (origin, c) => resolveCorsOrigin(c.env, origin, c.req.url),
+  credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+  maxAge: 600,
+}));
 
 // Rate limiting — runs before auth to block abuse early
 app.use('*', rateLimitMiddleware);
@@ -161,6 +176,7 @@ app.route('/', capabilities);
 app.route('/', images);
 app.route('/', setup);
 app.route('/', autoReplies);
+app.route('/', adminAuth);
 app.route('/', trafficPools);
 app.route('/', booking);
 app.route('/', events);
