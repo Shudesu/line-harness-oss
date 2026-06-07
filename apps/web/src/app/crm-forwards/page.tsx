@@ -11,6 +11,18 @@ import { useEffect, useState } from 'react'
 import { fetchApi } from '@/lib/api'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
+} from '@/components/ui/primitives'
 
 interface CrmForward {
   id: string
@@ -110,41 +122,38 @@ export default function CrmForwardsPage() {
           title="外部 CRM 転送設定"
           description="harness が受けた LINE webhook を、エルメ等の外部 CRM にも転送する設定。エルメ移行中の並行運用に使う。"
           action={
-            <button
-              type="button"
-              onClick={() => setShowForm(true)}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
+            <Button type="button" onClick={() => setShowForm(true)}>
               ＋ 新規追加
-            </button>
+            </Button>
           }
         />
 
-        <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          <p className="font-medium mb-1">⚠️ 並行運用について</p>
-          <p>
+        <div className="mb-4">
+          <Banner tone="warning" title="⚠️ 並行運用について">
             ここに登録した URL に LINE webhook が転送されます。エルメに移行データを保ちつつ、
             harness で機能拡充できます。**移行完了したら必ず無効化してください**
             (2つの CRM が同じ友だち情報を持つと整合性が崩れます)。
-          </p>
+          </Banner>
         </div>
 
         {error && (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-            {error}
+          <div className="mb-4">
+            <Banner tone="danger">{error}</Banner>
           </div>
         )}
 
         {loading ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">
-            読み込み中…
-          </div>
+          <Card>
+            <CardContent className="p-6 text-sm text-gray-500">読み込み中…</CardContent>
+          </Card>
         ) : items.length === 0 ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">
-            転送設定はまだありません。「新規追加」でエルメ等の webhook URL を登録してください。
-          </div>
+          <Card>
+            <CardContent className="p-6 text-sm text-gray-500">
+              転送設定はまだありません。「新規追加」でエルメ等の webhook URL を登録してください。
+            </CardContent>
+          </Card>
         ) : (
-          <div className="overflow-x-auto rounded-lg border bg-white">
+          <Card className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50">
                 <tr>
@@ -163,74 +172,71 @@ export default function CrmForwardsPage() {
                     <td className="px-4 py-3 text-center">{it.attach_line_signature ? '✓' : '—'}</td>
                     <td className="px-4 py-3 text-center">
                       {it.is_enabled ? (
-                        <span className="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                          有効
-                        </span>
+                        <Badge tone="success">有効</Badge>
                       ) : (
-                        <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
-                          無効
-                        </span>
+                        <Badge tone="neutral">無効</Badge>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 text-xs">
-                        <button
+                      <div className="flex items-center gap-2">
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => onToggle(it)}
-                          className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50"
                         >
                           {it.is_enabled ? '無効化' : '有効化'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="danger"
+                          size="sm"
                           onClick={() => onDelete(it)}
-                          className="rounded border border-red-300 px-2 py-1 text-red-700 hover:bg-red-50"
                         >
                           削除
-                        </button>
+                        </Button>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
         )}
 
         {showForm && (
           <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
-            <div className="mt-12 w-full max-w-2xl rounded-lg bg-white p-6 shadow-xl">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">転送先を追加</h2>
-                <button
+            <Card className="mt-12 w-full max-w-2xl shadow-xl">
+              <CardHeader className="flex items-center justify-between">
+                <CardTitle>転送先を追加</CardTitle>
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setShowForm(false)}
-                  className="text-gray-400 hover:text-gray-600"
+                  aria-label="閉じる"
                 >
                   ×
-                </button>
-              </div>
+                </Button>
+              </CardHeader>
 
-              <div className="space-y-4">
+              <CardContent className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">名前</label>
-                  <input
+                  <Label>名前</Label>
+                  <Input
                     type="text"
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                     placeholder="例: エルメ転送"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Webhook URL (https のみ)
-                  </label>
-                  <input
+                  <Label>Webhook URL (https のみ)</Label>
+                  <Input
                     type="url"
                     value={formUrl}
                     onChange={(e) => setFormUrl(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono text-xs"
+                    className="font-mono text-xs"
                     placeholder="https://elme.example.com/webhook/..."
                   />
                   <p className="mt-1 text-xs text-gray-500">
@@ -254,35 +260,29 @@ export default function CrmForwardsPage() {
                   </label>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">メモ</label>
-                  <input
+                  <Label>メモ</Label>
+                  <Input
                     type="text"
                     value={formMemo}
                     onChange={(e) => setFormMemo(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                   />
                 </div>
-              </div>
+              </CardContent>
 
-              <div className="mt-6 flex justify-end gap-2">
-                <button
+              <CardFooter>
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => setShowForm(false)}
                   disabled={saving}
-                  className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                 >
                   キャンセル
-                </button>
-                <button
-                  type="button"
-                  onClick={onCreate}
-                  disabled={saving}
-                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
+                </Button>
+                <Button type="button" onClick={onCreate} disabled={saving}>
                   {saving ? '作成中…' : '追加'}
-                </button>
-              </div>
-            </div>
+                </Button>
+              </CardFooter>
+            </Card>
           </div>
         )}
       </main>

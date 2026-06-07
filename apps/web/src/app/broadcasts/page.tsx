@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import type { Tag } from '@line-crm/shared'
 import { api, type ApiBroadcast, type BroadcastInsight } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
@@ -9,6 +9,13 @@ import Header from '@/components/layout/header'
 import BroadcastForm from '@/components/broadcasts/broadcast-form'
 import BroadcastDetail from '@/components/broadcasts/broadcast-detail'
 import CcPromptButton from '@/components/cc-prompt-button'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  EmptyState,
+} from '@/components/ui/primitives'
 
 const ccPrompts = [
   {
@@ -29,14 +36,16 @@ const ccPrompts = [
   },
 ]
 
+type BadgeTone = 'default' | 'success' | 'warning' | 'danger' | 'info' | 'neutral'
+
 const statusConfig: Record<
   ApiBroadcast['status'],
-  { label: string; className: string }
+  { label: string; tone: BadgeTone }
 > = {
-  draft: { label: '下書き', className: 'bg-gray-100 text-gray-600' },
-  scheduled: { label: '予約済み', className: 'bg-blue-100 text-blue-700' },
-  sending: { label: '送信中', className: 'bg-yellow-100 text-yellow-700' },
-  sent: { label: '送信完了', className: 'bg-green-100 text-green-700' },
+  draft: { label: '下書き', tone: 'neutral' },
+  scheduled: { label: '予約済み', tone: 'info' },
+  sending: { label: '送信中', tone: 'warning' },
+  sent: { label: '送信完了', tone: 'success' },
 }
 
 function formatDatetime(iso: string | null): string {
@@ -153,21 +162,20 @@ function BroadcastList() {
       <Header
         title="一斉配信"
         action={
-          <button
+          <Button
             onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
+            className="bg-[#06C755] hover:bg-[#06C755]/90 focus-visible:ring-[#06C755] disabled:bg-[#06C755]/60"
           >
             + 新規配信
-          </button>
+          </Button>
         }
       />
 
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <Banner tone="danger" className="mb-4">
           {error}
-        </div>
+        </Banner>
       )}
 
       {/* Create form */}
@@ -208,7 +216,7 @@ function BroadcastList() {
 
       {/* Loading */}
       {loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <Card className="overflow-hidden">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="px-4 py-4 border-b border-gray-100 flex items-center gap-4 animate-pulse">
               <div className="flex-1 space-y-2">
@@ -219,19 +227,22 @@ function BroadcastList() {
               <div className="h-3 bg-gray-100 rounded w-24" />
             </div>
           ))}
-        </div>
+        </Card>
       ) : broadcasts.length === 0 && !showCreate ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">配信がありません。「新規配信」から作成してください。</p>
-        </div>
+        <EmptyState
+          title="配信がありません"
+          description="「新規配信」から作成してください。"
+        />
       ) : visibleBroadcasts.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">
-            {activeTab === 'dedup' ? '複数アカ重複除外配信はまだありません。' : 'このタブに該当する配信はありません。'}
-          </p>
-        </div>
+        <EmptyState
+          title={
+            activeTab === 'dedup'
+              ? '複数アカ重複除外配信はまだありません'
+              : 'このタブに該当する配信はありません'
+          }
+        />
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <Card className="overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full min-w-[640px]">
             <thead>
@@ -273,9 +284,9 @@ function BroadcastList() {
                             {broadcast.title}
                           </a>
                           {isDedup && (
-                            <span className="inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium bg-purple-100 text-purple-700">
+                            <Badge tone="default" className="bg-purple-100 text-purple-700 ring-purple-200">
                               複アカ
-                            </span>
+                            </Badge>
                           )}
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">
@@ -286,9 +297,9 @@ function BroadcastList() {
 
                     {/* Status */}
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusInfo.className}`}>
+                      <Badge tone={statusInfo.tone}>
                         {statusInfo.label}
-                      </span>
+                      </Badge>
                     </td>
 
                     {/* Target */}
@@ -342,13 +353,15 @@ function BroadcastList() {
                               )}
                             </div>
                           ) : (
-                            <button
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => handleFetchInsight(broadcast.id)}
                               disabled={fetchingInsight === broadcast.id}
-                              className="mt-1 text-xs text-blue-500 hover:text-blue-700 disabled:opacity-50"
+                              className="mt-1 px-1.5 py-0.5 text-xs text-blue-500 hover:bg-transparent hover:text-blue-700"
                             >
                               {fetchingInsight === broadcast.id ? '取得中...' : 'インサイトを取得'}
-                            </button>
+                            </Button>
                           )}
                         </div>
                       ) : (
@@ -360,12 +373,14 @@ function BroadcastList() {
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         {(broadcast.status === 'draft' || broadcast.status === 'scheduled') && (
-                          <button
+                          <Button
+                            variant="danger"
+                            size="sm"
                             onClick={() => handleDelete(broadcast.id)}
-                            className="px-3 py-1 min-h-[44px] text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                            className="min-h-[44px] bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700 focus-visible:ring-red-400 disabled:bg-red-50"
                           >
                             削除
-                          </button>
+                          </Button>
                         )}
                       </div>
                     </td>
@@ -375,7 +390,7 @@ function BroadcastList() {
             </tbody>
           </table>
           </div>
-        </div>
+        </Card>
       )}
 
       <CcPromptButton prompts={ccPrompts} />

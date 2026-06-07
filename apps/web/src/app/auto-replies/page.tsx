@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import EditDialog, { type AutoReplyDraft } from '@/components/auto-replies/edit-dialog'
+import { Badge, Banner, Button, Card } from '@/components/ui/primitives'
 
 interface EffectiveAccount {
   accountId: string
@@ -84,35 +85,36 @@ export default function AutoRepliesPage() {
           const label = acc?.displayName ?? acc?.name ?? ea.accountName
           if (ea.status === 'not_applicable') {
             return (
-              <span
+              <Badge
                 key={ea.accountId}
-                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-gray-50 text-gray-300 line-through"
+                tone="neutral"
+                className="line-through opacity-60"
                 title={`${label}: 適用外 (line_account_id 別アカ固定)`}
               >
                 {label}
-              </span>
+              </Badge>
             )
           }
           if (ea.status === 'reply') {
             return (
-              <span
+              <Badge
                 key={ea.accountId}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-green-100 text-green-700 font-medium"
+                tone="success"
                 title={`${label}: 返信あり (${ea.via === 'automation' ? 'automation 経由' : 'inline'})`}
               >
-                ✓ {label}{ea.via === 'automation' && <span className="text-green-500">⚙</span>}
-              </span>
+                ✓ {label}{ea.via === 'automation' && <span className="text-emerald-500">⚙</span>}
+              </Badge>
             )
           }
           // silent
           return (
-            <span
+            <Badge
               key={ea.accountId}
-              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-700"
+              tone="warning"
               title={`${label}: silent (match するが返信なし — automation rule 未登録)`}
             >
               ⚠ {label}
-            </span>
+            </Badge>
           )
         })}
       </div>
@@ -121,9 +123,9 @@ export default function AutoRepliesPage() {
 
   const renderResponseCell = (r: AutoReply) => {
     if (r.responseType === 'silent') return <span className="text-gray-400 text-xs">silent</span>
-    if (r.responseType === 'flex') return <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[10px] font-medium">📋 flex</span>
-    if (r.responseType === 'image') return <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-medium">🖼️ image</span>
-    return <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px] font-medium">📝 text</span>
+    if (r.responseType === 'flex') return <Badge tone="info">📋 flex</Badge>
+    if (r.responseType === 'image') return <Badge tone="default">🖼️ image</Badge>
+    return <Badge tone="neutral">📝 text</Badge>
   }
 
   const renderTemplateCell = (r: AutoReply) => {
@@ -151,7 +153,7 @@ export default function AutoRepliesPage() {
       <Header
         title="自動返信ルール"
         action={
-          <button
+          <Button
             onClick={() => setEditing({
               keyword: '',
               matchType: 'exact',
@@ -161,27 +163,26 @@ export default function AutoRepliesPage() {
               lineAccountId: selectedAccountId,
               isActive: true,
             })}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
+            className="bg-[#06C755] hover:bg-[#05b34c] focus-visible:ring-[#06C755]"
           >
             + 新規ルール
-          </button>
+          </Button>
         }
       />
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <Banner tone="danger" className="mb-4">
           {error}
-        </div>
+        </Banner>
       )}
 
-      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 space-y-1">
-        <p><span className="inline-flex items-center px-1.5 py-0.5 rounded bg-green-100 text-green-700">✓ アカ名</span> 返信あり (inline) / <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-green-100 text-green-700">✓ アカ名 ⚙</span> automation 経由</p>
-        <p><span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">⚠ アカ名</span> silent rule のみ — match するが返信しない (同 keyword の automation rule 未登録)</p>
-        <p><span className="inline-flex items-center px-1.5 py-0.5 rounded bg-gray-50 text-gray-300 line-through">アカ名</span> 適用外 (line_account_id が別アカに固定)</p>
-      </div>
+      <Banner tone="info" className="mb-4 space-y-1 text-xs">
+        <p><Badge tone="success">✓ アカ名</Badge> 返信あり (inline) / <Badge tone="success">✓ アカ名 ⚙</Badge> automation 経由</p>
+        <p><Badge tone="warning">⚠ アカ名</Badge> silent rule のみ — match するが返信しない (同 keyword の automation rule 未登録)</p>
+        <p><Badge tone="neutral" className="line-through opacity-60">アカ名</Badge> 適用外 (line_account_id が別アカに固定)</p>
+      </Banner>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px]">
             <thead>
@@ -204,17 +205,21 @@ export default function AutoRepliesPage() {
                 items.map((r) => (
                   <tr key={r.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">{r.keyword}</td>
-                    <td className="px-4 py-3 text-xs text-gray-600">{matchTypeLabel[r.matchType]}</td>
+                    <td className="px-4 py-3">
+                      <Badge tone="info">{matchTypeLabel[r.matchType]}</Badge>
+                    </td>
                     <td className="px-4 py-3">{renderResponseCell(r)}</td>
                     <td className="px-4 py-3">{renderTemplateCell(r)}</td>
                     <td className="px-4 py-3">{renderEffectiveCell(r)}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${r.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      <Badge tone={r.isActive ? 'success' : 'neutral'}>
                         {r.isActive ? '有効' : '無効'}
-                      </span>
+                      </Badge>
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => setEditing({
                           id: r.id,
                           keyword: r.keyword,
@@ -225,16 +230,18 @@ export default function AutoRepliesPage() {
                           lineAccountId: r.lineAccountId,
                           isActive: r.isActive,
                         })}
-                        className="px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-md"
+                        className="text-blue-600 hover:bg-blue-50"
                       >
                         編集
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => handleDelete(r.id)}
-                        className="ml-1 px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 rounded-md"
+                        className="ml-1 text-red-500 hover:bg-red-50"
                       >
                         削除
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))
@@ -242,7 +249,7 @@ export default function AutoRepliesPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
 
       {editing && (
         <EditDialog

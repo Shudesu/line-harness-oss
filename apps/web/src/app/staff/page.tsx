@@ -4,18 +4,28 @@ import Header from '@/components/layout/header'
 import { fetchApi } from '@/lib/api'
 import type { ApiResponse } from '@line-crm/shared'
 import type { StaffMember } from '@line-crm/shared'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  Input,
+  Label,
+  Select,
+} from '@/components/ui/primitives'
 
 type NewApiKey = { apiKey: string; staffId: string }
 
 function RoleBadge({ role }: { role: string }) {
-  const styles =
+  const tone =
     role === 'owner'
-      ? 'bg-yellow-100 text-yellow-800'
+      ? 'default'
       : role === 'admin'
-        ? 'bg-blue-100 text-blue-800'
+        ? 'info'
         : role === 'viewer'
-          ? 'bg-emerald-100 text-emerald-800'
-          : 'bg-gray-100 text-gray-600'
+          ? 'success'
+          : 'neutral'
   const label =
     role === 'owner'
       ? 'オーナー'
@@ -24,11 +34,7 @@ function RoleBadge({ role }: { role: string }) {
         : role === 'viewer'
           ? '閲覧専用'
           : 'スタッフ'
-  return (
-    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${styles}`}>
-      {label}
-    </span>
-  )
+  return <Badge tone={tone}>{label}</Badge>
 }
 
 function maskKey(key: string): string {
@@ -170,104 +176,108 @@ export default function StaffPage() {
 
       {/* New API key banner */}
       {newKey && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-          <p className="text-sm font-medium text-green-800 mb-2">
-            APIキーが発行されました。このキーは一度しか表示されません。
-          </p>
+        <Banner
+          tone="success"
+          title="APIキーが発行されました。このキーは一度しか表示されません。"
+          className="mb-6"
+        >
           <div className="flex items-center gap-2">
-            <code className="flex-1 text-xs bg-white border border-green-200 rounded px-3 py-2 font-mono break-all">
+            <code className="flex-1 text-xs bg-white border border-emerald-200 rounded px-3 py-2 font-mono break-all">
               {newKey.apiKey}
             </code>
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleCopy}
-              className="shrink-0 px-3 py-2 text-xs font-medium text-green-700 bg-white border border-green-300 rounded-lg hover:bg-green-50 transition-colors"
+              className="shrink-0"
             >
               {copied ? 'コピー済み' : 'コピー'}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setNewKey(null)}
-              className="shrink-0 px-3 py-2 text-xs font-medium text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              className="shrink-0"
             >
               閉じる
-            </button>
+            </Button>
           </div>
-        </div>
+        </Banner>
       )}
 
       {/* Create form */}
       {showForm && (
-        <div className="mb-6 p-5 bg-white border border-gray-200 rounded-lg shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">新しいスタッフを追加</h2>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">名前 *</label>
-                <input
-                  type="text"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  required
-                  placeholder="田中 太郎"
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
+        <Card className="mb-6">
+          <CardContent className="pt-5">
+            <h2 className="text-sm font-semibold text-gray-900 mb-4">新しいスタッフを追加</h2>
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                  <Label className="text-xs">名前 *</Label>
+                  <Input
+                    type="text"
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                    required
+                    placeholder="田中 太郎"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">メールアドレス</Label>
+                  <Input
+                    type="email"
+                    value={formEmail}
+                    onChange={(e) => setFormEmail(e.target.value)}
+                    placeholder="taro@example.com"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">ロール *</Label>
+                  <Select
+                    value={formRole}
+                    onChange={(e) => setFormRole(e.target.value as 'admin' | 'staff' | 'viewer')}
+                  >
+                    <option value="staff">スタッフ</option>
+                    <option value="admin">管理者</option>
+                    <option value="viewer">閲覧専用 (顧問先・代理店向け)</option>
+                  </Select>
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">メールアドレス</label>
-                <input
-                  type="email"
-                  value={formEmail}
-                  onChange={(e) => setFormEmail(e.target.value)}
-                  placeholder="taro@example.com"
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">ロール *</label>
-                <select
-                  value={formRole}
-                  onChange={(e) => setFormRole(e.target.value as 'admin' | 'staff' | 'viewer')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              {formError && (
+                <p className="text-sm text-red-600">{formError}</p>
+              )}
+              <div className="flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={formLoading || !formName}
+                  className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity hover:opacity-90"
+                  style={{ backgroundColor: '#06C755' }}
                 >
-                  <option value="staff">スタッフ</option>
-                  <option value="admin">管理者</option>
-                  <option value="viewer">閲覧専用 (顧問先・代理店向け)</option>
-                </select>
+                  {formLoading ? '作成中...' : '作成'}
+                </button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => { setShowForm(false); setFormError('') }}
+                >
+                  キャンセル
+                </Button>
               </div>
-            </div>
-            {formError && (
-              <p className="text-sm text-red-600">{formError}</p>
-            )}
-            <div className="flex items-center gap-3">
-              <button
-                type="submit"
-                disabled={formLoading || !formName}
-                className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity hover:opacity-90"
-                style={{ backgroundColor: '#06C755' }}
-              >
-                {formLoading ? '作成中...' : '作成'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowForm(false); setFormError('') }}
-                className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                キャンセル
-              </button>
-            </div>
-          </form>
-        </div>
+            </form>
+          </CardContent>
+        </Card>
       )}
 
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <Banner tone="danger" className="mb-4">
           {error}
-        </div>
+        </Banner>
       )}
 
       {/* Staff list */}
       {loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <Card className="overflow-hidden">
           {[...Array(3)].map((_, i) => (
             <div key={i} className="px-4 py-4 border-b border-gray-100 flex items-center gap-4 animate-pulse">
               <div className="flex-1 space-y-2">
@@ -279,13 +289,15 @@ export default function StaffPage() {
               <div className="h-8 bg-gray-100 rounded w-20" />
             </div>
           ))}
-        </div>
+        </Card>
       ) : members.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500 text-sm">スタッフがいません。「+ スタッフを追加」から追加してください。</p>
-        </div>
+        <Card>
+          <CardContent className="p-12 text-center">
+            <p className="text-gray-500 text-sm">スタッフがいません。「+ スタッフを追加」から追加してください。</p>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <Card className="overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
@@ -318,24 +330,29 @@ export default function StaffPage() {
                     <div className="flex items-center justify-end gap-2">
                       {member.role !== 'owner' && (
                         <>
-                          <button
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleToggleActive(member)}
-                            className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
                           >
                             {member.isActive ? '無効化' : '有効化'}
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleRegenerateKey(member)}
-                            className="px-2.5 py-1 text-xs font-medium text-blue-600 bg-white border border-blue-200 rounded hover:bg-blue-50 transition-colors"
+                            className="text-blue-600 border-blue-200 hover:bg-blue-50"
                           >
                             キー再生成
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleDelete(member)}
-                            className="px-2.5 py-1 text-xs font-medium text-red-600 bg-white border border-red-200 rounded hover:bg-red-50 transition-colors"
+                            className="text-red-600 border-red-200 hover:bg-red-50"
                           >
                             削除
-                          </button>
+                          </Button>
                         </>
                       )}
                     </div>
@@ -344,7 +361,7 @@ export default function StaffPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
     </div>
   )

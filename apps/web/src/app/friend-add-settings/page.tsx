@@ -7,6 +7,16 @@ import type { Scenario, LineAccount } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+} from '@/components/ui/primitives'
 
 type ScenarioWithCount = Scenario & {
   stepCount?: number
@@ -185,22 +195,25 @@ export default function FriendAddSettingsPage() {
 
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-4">
         {error && (
-          <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>
+          <Banner tone="danger">{error}</Banner>
         )}
 
         {loading ? (
           <div className="text-gray-500 text-center py-12">読み込み中…</div>
         ) : rows.length === 0 && orphanScenarios.length === 0 ? (
-          <div className="text-gray-500 text-center py-12">LINE アカウントが登録されていません</div>
+          <EmptyState
+            title="LINE アカウントが登録されていません"
+            description="先に LINE アカウントを登録してから友だち追加時シナリオを設定してください。"
+          />
         ) : (
           <>
             {rows.length === 0 ? (
-              <div className="text-gray-500 text-center py-6 text-sm">
+              <Banner tone="warning">
                 LINE アカウントは登録されていませんが、孤児シナリオが残っています。下の一覧からクリーンアップしてください。
-              </div>
+              </Banner>
             ) : (
               rows.map(row => (
-                <AccountSection
+                <AccountCard
                   key={row.account.id}
                   row={row}
                   togglingId={togglingId}
@@ -210,7 +223,7 @@ export default function FriendAddSettingsPage() {
               ))
             )}
             {orphanScenarios.length > 0 && (
-              <OrphanSection
+              <OrphanCard
                 scenarios={orphanScenarios}
                 togglingId={togglingId}
                 onToggle={toggleActive}
@@ -223,7 +236,7 @@ export default function FriendAddSettingsPage() {
   )
 }
 
-function OrphanSection({
+function OrphanCard({
   scenarios,
   togglingId,
   onToggle,
@@ -233,37 +246,39 @@ function OrphanSection({
   onToggle: (id: string, current: boolean) => void
 }) {
   return (
-    <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
-      <div className="px-4 py-3 border-b border-amber-200 bg-amber-50">
-        <h2 className="font-semibold text-amber-900">⚠ 孤児シナリオ (削除済みアカウント所属)</h2>
-        <p className="text-xs text-amber-700 mt-1">
+    <Card className="border-amber-200">
+      <CardHeader className="border-b border-amber-200 bg-amber-50 rounded-t-xl">
+        <CardTitle className="text-amber-900">⚠ 孤児シナリオ (削除済みアカウント所属)</CardTitle>
+        <p className="mt-1 text-xs text-amber-700">
           所属していた LINE アカウントが削除されたシナリオです。webhook は元の line_account_id でしか発火しないため実質配信されません。残しておく理由がなければ削除推奨。
         </p>
-      </div>
-      <ul className="divide-y divide-gray-100">
-        {scenarios.map(scenario => (
-          <li key={scenario.id} className="px-4 py-3 flex items-center justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <Link href={`/scenarios/detail?id=${scenario.id}`} className="block">
-                <div className="font-medium text-gray-900 truncate">{scenario.name}</div>
-                <div className="text-xs text-gray-400 mt-1">
-                  元 line_account_id: {scenario.lineAccountId} ・ 更新 {scenario.updatedAt.slice(0, 10)}
-                </div>
-              </Link>
-            </div>
-            <Toggle
-              value={scenario.isActive}
-              disabled={togglingId === scenario.id}
-              onClick={() => onToggle(scenario.id, scenario.isActive)}
-            />
-          </li>
-        ))}
-      </ul>
-    </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ul className="divide-y divide-gray-100">
+          {scenarios.map(scenario => (
+            <li key={scenario.id} className="px-5 py-3 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <Link href={`/scenarios/detail?id=${scenario.id}`} className="block">
+                  <div className="font-medium text-gray-900 truncate">{scenario.name}</div>
+                  <div className="text-xs text-gray-400 mt-1">
+                    元 line_account_id: {scenario.lineAccountId} ・ 更新 {scenario.updatedAt.slice(0, 10)}
+                  </div>
+                </Link>
+              </div>
+              <ToggleButton
+                value={scenario.isActive}
+                disabled={togglingId === scenario.id}
+                onClick={() => onToggle(scenario.id, scenario.isActive)}
+              />
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   )
 }
 
-function AccountSection({
+function AccountCard({
   row,
   togglingId,
   onToggle,
@@ -277,77 +292,83 @@ function AccountSection({
   const activeCount = row.scenarios.filter(s => s.isActive).length
   const isHealthy = activeCount > 0
   return (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-      <div className={`px-4 py-3 flex items-center justify-between border-b ${isHealthy ? 'border-gray-200' : 'border-red-200 bg-red-50'}`}>
-        <div className="flex items-center gap-3">
-          <h2 className="font-semibold text-gray-900">{row.account.name}</h2>
-          <span className="text-xs text-gray-400">{row.account.channelId}</span>
+    <Card className={isHealthy ? undefined : 'border-red-200'}>
+      <CardHeader
+        className={`flex items-center justify-between gap-3 border-b ${
+          isHealthy ? 'border-gray-100' : 'border-red-200 bg-red-50 rounded-t-xl'
+        }`}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <CardTitle className="truncate">{row.account.name}</CardTitle>
+          <span className="text-xs text-gray-400 shrink-0">{row.account.channelId}</span>
         </div>
         {isHealthy ? (
-          <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-medium">
-            アクティブ {activeCount} 件
-          </span>
+          <Badge tone="success">アクティブ {activeCount} 件</Badge>
         ) : (
-          <span className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700 font-medium">
-            ⚠ アクティブ 0 件 — 新規友だちに何も届きません
-          </span>
+          <Badge tone="danger">⚠ アクティブ 0 件 — 新規友だちに何も届きません</Badge>
         )}
-      </div>
+      </CardHeader>
 
       {row.loadError && (
-        <div className="px-4 py-3 text-sm text-red-600">読み込みエラー: {row.loadError}</div>
+        <CardContent className="py-3 text-sm text-red-600">
+          読み込みエラー: {row.loadError}
+        </CardContent>
       )}
 
       {row.scenarios.length === 0 && !row.loadError ? (
-        <div className="px-4 py-6 text-center text-sm text-gray-500">
+        <CardContent className="py-6 text-center text-sm text-gray-500">
           このアカウントには friend_add トリガーのシナリオがありません。
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onCreate}
-            className="ml-2 text-green-700 underline hover:text-green-800"
+            className="ml-2 text-green-700 hover:text-green-800 hover:bg-green-50"
           >
             このアカウントでシナリオを作成
-          </button>
-        </div>
+          </Button>
+        </CardContent>
       ) : (
-        <ul className="divide-y divide-gray-100">
-          {row.scenarios.map(scenario => (
-            <li key={scenario.id} className="px-4 py-3 flex items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <Link href={`/scenarios/detail?id=${scenario.id}`} className="block">
-                  <div className="font-medium text-gray-900 truncate flex items-center gap-2">
-                    {scenario.name}
-                    {scenario.isGlobal && (
-                      <span
-                        title="このシナリオは line_account_id=NULL のため全アカウント共通で発火します"
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium"
-                      >
-                        全アカ共通
-                      </span>
+        <CardContent className="p-0">
+          <ul className="divide-y divide-gray-100">
+            {row.scenarios.map(scenario => (
+              <li key={scenario.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <Link href={`/scenarios/detail?id=${scenario.id}`} className="block">
+                    <div className="font-medium text-gray-900 truncate flex items-center gap-2">
+                      {scenario.name}
+                      {scenario.isGlobal && (
+                        <Badge
+                          tone="info"
+                          title="このシナリオは line_account_id=NULL のため全アカウント共通で発火します"
+                        >
+                          全アカ共通
+                        </Badge>
+                      )}
+                    </div>
+                    {scenario.description && (
+                      <div className="text-xs text-gray-500 truncate">{scenario.description}</div>
                     )}
-                  </div>
-                  {scenario.description && (
-                    <div className="text-xs text-gray-500 truncate">{scenario.description}</div>
-                  )}
-                  <div className="text-xs text-gray-400 mt-1">
-                    {(scenario.stepCount ?? 0)} ステップ ・ 更新 {scenario.updatedAt.slice(0, 10)}
-                  </div>
-                </Link>
-              </div>
-              <Toggle
-                value={scenario.isActive}
-                disabled={togglingId === scenario.id}
-                onClick={() => onToggle(scenario.id, scenario.isActive)}
-              />
-            </li>
-          ))}
-        </ul>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {(scenario.stepCount ?? 0)} ステップ ・ 更新 {scenario.updatedAt.slice(0, 10)}
+                    </div>
+                  </Link>
+                </div>
+                <ToggleButton
+                  value={scenario.isActive}
+                  disabled={togglingId === scenario.id}
+                  onClick={() => onToggle(scenario.id, scenario.isActive)}
+                />
+              </li>
+            ))}
+          </ul>
+        </CardContent>
       )}
-    </div>
+    </Card>
   )
 }
 
-function Toggle({
+function ToggleButton({
   value,
   disabled,
   onClick,
@@ -357,20 +378,21 @@ function Toggle({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
+      size="sm"
       onClick={onClick}
       disabled={disabled}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-        value ? 'bg-green-500' : 'bg-gray-300'
-      } ${disabled ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
       aria-label={value ? '無効化' : '有効化'}
+      aria-pressed={value}
+      className={
+        value
+          ? 'border-green-300 bg-green-50 text-green-700 hover:bg-green-100'
+          : 'text-gray-500'
+      }
     >
-      <span
-        className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
-          value ? 'translate-x-5' : 'translate-x-0.5'
-        }`}
-      />
-    </button>
+      {value ? '● ON' : '○ OFF'}
+    </Button>
   )
 }

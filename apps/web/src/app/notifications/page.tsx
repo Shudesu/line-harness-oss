@@ -5,6 +5,7 @@ import Header from '@/components/layout/header'
 import InboxFilters from '@/components/inbox/inbox-filters'
 import InboxList from '@/components/inbox/inbox-list'
 import InboxSummaryBar from '@/components/inbox/inbox-summary-bar'
+import { Banner } from '@/components/ui/primitives'
 import { api } from '@/lib/api'
 import type { InboxRowData } from '@/components/inbox/inbox-row'
 
@@ -158,16 +159,12 @@ export default function InboxPage() {
         }}
       />
 
-      {error && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          {error}
-        </div>
-      )}
+      {error && <Banner tone="warning">{error}</Banner>}
 
       {truncated && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+        <Banner tone="danger">
           未対応が {FETCH_PAGE_SIZE} 件の表示上限に到達しました。古いデータが見えていない可能性があります。サーバ側ページネーション復帰を検討してください。
-        </div>
+        </Banner>
       )}
 
       <InboxList

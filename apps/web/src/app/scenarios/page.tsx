@@ -9,6 +9,7 @@ import Header from '@/components/layout/header'
 import ScenarioList from '@/components/scenarios/scenario-list'
 import ScenarioModePicker from '@/components/scenarios/scenario-mode-picker'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { Banner } from '@/components/ui/primitives'
 
 const ccPrompts = [
   {
@@ -126,12 +127,15 @@ export default function ScenariosPage() {
 
   return (
     <div>
+      {/* LINE ブランドカラー (#06C755) は primitives.tsx の Button variant に無いため、
+          色衝突を避けるべく生 button を使う。primitives に brand variant が増えたら差し替え。 */}
       <Header
         title="シナリオ配信"
         action={
           <button
+            type="button"
             onClick={() => setPickerOpen(true)}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
             style={{ backgroundColor: '#06C755' }}
           >
             + 新規シナリオ
@@ -140,8 +144,8 @@ export default function ScenariosPage() {
       />
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
+        <div className="mb-4">
+          <Banner tone="danger">{error}</Banner>
         </div>
       )}
 

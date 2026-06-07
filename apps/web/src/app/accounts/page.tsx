@@ -14,6 +14,16 @@ import {
 } from '@/components/accounts/account-form-fields'
 import AccountSetupUrls from '@/components/accounts/account-setup-urls'
 import AccountEditModal from '@/components/accounts/account-edit-modal'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  EmptyState,
+  Input,
+  Label,
+} from '@/components/ui/primitives'
 
 interface LineAccountListItem {
   id: string
@@ -137,13 +147,10 @@ export default function AccountsPage() {
         description="マルチアカウント設定"
         action={
           <div className="flex gap-2">
-            <button
-              onClick={() => setShowReorder(true)}
-              className="px-3 py-2 rounded-lg text-xs font-medium border border-gray-300 hover:bg-gray-50"
-            >
+            <Button variant="outline" size="sm" onClick={() => setShowReorder(true)}>
               並び替えモード
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => {
                 const next = !showCreate
                 setShowCreate(next)
@@ -152,187 +159,175 @@ export default function AccountsPage() {
                   setCreateError('')
                 }
               }}
-              className="px-4 py-2 rounded-lg text-white text-sm font-medium"
+              className="text-white"
               style={{ backgroundColor: '#06C755' }}
             >
               {showCreate ? 'キャンセル' : '+ アカウント追加'}
-            </button>
+            </Button>
           </div>
         }
       />
 
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <Banner tone="danger" className="mb-6">
           {error}
-        </div>
+        </Banner>
       )}
 
       {justCreated && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-          <p className="text-sm font-semibold text-green-800 mb-2">
-            ✓ アカウントを登録しました
-          </p>
-          <p className="text-xs text-green-700 mb-3">
+        <Banner tone="success" title="✓ アカウントを登録しました" className="mb-6">
+          <p className="text-xs mb-3">
             次に LINE Developers Console で以下の URL を貼り付けてください。
           </p>
           <AccountSetupUrls liffId={justCreated.liffId} heading="登録すべき URL" />
           <button
             onClick={() => setJustCreated(null)}
-            className="mt-3 text-xs text-green-700 underline"
+            className="mt-3 text-xs underline"
           >
             閉じる
           </button>
-        </div>
+        </Banner>
       )}
 
       {showCreate && (
-        <form onSubmit={handleCreate} className="bg-white rounded-lg border border-gray-200 p-6 mb-6 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              アカウント名 <span className="text-red-500">*</span>
-            </label>
-            <input
-              value={form.name}
-              onChange={(e) => updateForm({ name: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              placeholder="メインアカウント"
-              required
-            />
-          </div>
+        <Card className="mb-6">
+          <CardContent className="pt-5">
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div>
+                <Label>
+                  アカウント名 <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  value={form.name}
+                  onChange={(e) => updateForm({ name: e.target.value })}
+                  placeholder="メインアカウント"
+                  required
+                />
+              </div>
 
-          <AccountFormSections
-            state={form}
-            update={updateForm}
-            showMessagingRequired={true}
-          />
+              <AccountFormSections
+                state={form}
+                update={updateForm}
+                showMessagingRequired={true}
+              />
 
-          <AccountSetupUrls liffId={form.liffId.trim() || null} />
+              <AccountSetupUrls liffId={form.liffId.trim() || null} />
 
-          {createError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-xs">
-              {createError}
-            </div>
-          )}
+              {createError && (
+                <Banner tone="danger">{createError}</Banner>
+              )}
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            {submitting ? '登録中...' : '登録'}
-          </button>
-        </form>
+              <Button
+                type="submit"
+                disabled={submitting}
+                className="text-white"
+                style={{ backgroundColor: '#06C755' }}
+              >
+                {submitting ? '登録中...' : '登録'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       )}
 
       {loading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">読み込み中...</div>
+        <Card>
+          <CardContent className="pt-8 pb-8 text-center text-gray-400">
+            読み込み中...
+          </CardContent>
+        </Card>
       ) : accounts.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          <p className="mb-2">LINEアカウントが登録されていません</p>
-          <p className="text-xs text-gray-300">LINE Developers Console からChannel情報を取得して登録してください</p>
-        </div>
+        <EmptyState
+          title="LINEアカウントが登録されていません"
+          description="LINE Developers Console からChannel情報を取得して登録してください"
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {accounts.map((account) => (
-            <div key={account.id} className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  {account.pictureUrl ? (
-                    <img
-                      src={account.pictureUrl}
-                      alt={account.displayName}
-                      className="w-10 h-10 rounded-lg object-cover"
-                    />
-                  ) : (
-                    <div
-                      className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-                      style={{ backgroundColor: account.isActive ? '#06C755' : '#9CA3AF' }}
-                    >
-                      {account.displayName?.charAt(0) || 'L'}
+            <Card key={account.id}>
+              <CardContent className="pt-6">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    {account.pictureUrl ? (
+                      <img
+                        src={account.pictureUrl}
+                        alt={account.displayName}
+                        className="w-10 h-10 rounded-lg object-cover"
+                      />
+                    ) : (
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm"
+                        style={{ backgroundColor: account.isActive ? '#06C755' : '#9CA3AF' }}
+                      >
+                        {account.displayName?.charAt(0) || 'L'}
+                      </div>
+                    )}
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-900">{account.displayName}</h3>
+                      <p className="text-xs text-gray-400 font-mono">
+                        {account.basicId ? `${account.basicId} · ` : ''}Channel: {account.channelId}
+                      </p>
                     </div>
-                  )}
-                  <div>
-                    <h3 className="text-sm font-bold text-gray-900">{account.displayName}</h3>
-                    <p className="text-xs text-gray-400 font-mono">
-                      {account.basicId ? `${account.basicId} · ` : ''}Channel: {account.channelId}
-                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleToggle(account.id, account.isActive)}
+                    className="focus:outline-none"
+                  >
+                    <Badge tone={account.isActive ? 'success' : 'neutral'}>
+                      {account.isActive ? '有効' : '無効'}
+                    </Badge>
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-3 mb-4 py-3 border-t border-b border-gray-100">
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-gray-900">{account.stats.friendCount}</p>
+                    <p className="text-xs text-gray-400">友だち</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-blue-600">{account.stats.activeScenarios}</p>
+                    <p className="text-xs text-gray-400">配信中</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-green-600">{account.stats.messagesThisMonth}</p>
+                    <p className="text-xs text-gray-400">今月送信</p>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleToggle(account.id, account.isActive)}
-                  className={`text-xs px-2 py-0.5 rounded-full ${account.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
-                >
-                  {account.isActive ? '有効' : '無効'}
-                </button>
-              </div>
-              <div className="grid grid-cols-3 gap-3 mb-4 py-3 border-t border-b border-gray-100">
-                <div className="text-center">
-                  <p className="text-lg font-bold text-gray-900">{account.stats.friendCount}</p>
-                  <p className="text-xs text-gray-400">友だち</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-lg font-bold text-blue-600">{account.stats.activeScenarios}</p>
-                  <p className="text-xs text-gray-400">配信中</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-lg font-bold text-green-600">{account.stats.messagesThisMonth}</p>
-                  <p className="text-xs text-gray-400">今月送信</p>
-                </div>
-              </div>
 
-              {/* Login/LIFF status badges — at-a-glance signal that an account
-                  is fully wired. Important because SQL-only setup historically
-                  left rows half-configured (Login/LIFF blank). */}
-              <div className="flex gap-2 mb-3 text-[11px]">
-                <span
-                  className={`px-2 py-0.5 rounded-full ${
-                    account.loginChannelId
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'bg-gray-100 text-gray-400'
-                  }`}
-                >
-                  Login: {account.loginChannelId ? '設定済' : '未設定'}
-                </span>
-                <span
-                  className={`px-2 py-0.5 rounded-full ${
-                    account.liffId
-                      ? 'bg-purple-50 text-purple-700'
-                      : 'bg-gray-100 text-gray-400'
-                  }`}
-                >
-                  LIFF: {account.liffId ? '設定済' : '未設定'}
-                </span>
-              </div>
-
-              <AccountSettingsSection
-                accountId={account.id}
-                initialCountry={(account as { country?: string | null }).country ?? null}
-                initialRole={(account as { role?: string | null }).role ?? null}
-                onUpdated={load}
-              />
-              <TestRecipientsSetting accountId={account.id} />
-
-              <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-                <p className="text-xs text-gray-400">
-                  登録: {new Date(account.createdAt).toLocaleDateString('ja-JP')}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setEditing(account)}
-                    className="text-xs text-blue-600 hover:text-blue-800"
-                  >
-                    編集
-                  </button>
-                  <button
-                    onClick={() => handleDelete(account.id)}
-                    className="text-red-500 hover:text-red-700 text-xs"
-                  >
-                    削除
-                  </button>
+                {/* Login/LIFF status badges — at-a-glance signal that an account
+                    is fully wired. Important because SQL-only setup historically
+                    left rows half-configured (Login/LIFF blank). */}
+                <div className="flex gap-2 mb-3">
+                  <Badge tone={account.loginChannelId ? 'info' : 'neutral'}>
+                    Login: {account.loginChannelId ? '設定済' : '未設定'}
+                  </Badge>
+                  <Badge tone={account.liffId ? 'default' : 'neutral'}>
+                    LIFF: {account.liffId ? '設定済' : '未設定'}
+                  </Badge>
                 </div>
-              </div>
-            </div>
+
+                <AccountSettingsSection
+                  accountId={account.id}
+                  initialCountry={(account as { country?: string | null }).country ?? null}
+                  initialRole={(account as { role?: string | null }).role ?? null}
+                  onUpdated={load}
+                />
+                <TestRecipientsSetting accountId={account.id} />
+
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                  <p className="text-xs text-gray-400">
+                    登録: {new Date(account.createdAt).toLocaleDateString('ja-JP')}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="primary" size="sm" onClick={() => setEditing(account)}>
+                      編集
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => handleDelete(account.id)}>
+                      削除
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

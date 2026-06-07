@@ -6,6 +6,27 @@ import Header from '@/components/layout/header'
 import FlexPreviewComponent from '@/components/flex-preview'
 import CcPromptButton from '@/components/cc-prompt-button'
 import ImageUploader from '@/components/shared/image-uploader'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Input,
+  Label,
+  Select,
+  Textarea,
+} from '@/components/ui/primitives'
+
+const messageTypeBadgeTones: Record<string, 'neutral' | 'default' | 'info' | 'warning'> = {
+  text: 'neutral',
+  flex: 'default',
+  image: 'info',
+  carousel: 'warning',
+}
 
 interface Template {
   id: string
@@ -39,13 +60,6 @@ const messageTypeLabels: Record<string, string> = {
   image: '画像',
   flex: 'Flex',
   carousel: 'Carousel',
-}
-
-const typeBadgeColor: Record<string, string> = {
-  text: 'bg-gray-100 text-gray-700',
-  flex: 'bg-purple-100 text-purple-700',
-  image: 'bg-blue-100 text-blue-700',
-  carousel: 'bg-amber-100 text-amber-700',
 }
 
 function formatDate(iso: string): string {
@@ -220,20 +234,20 @@ export default function TemplatesPage() {
       <Header
         title="テンプレート管理"
         action={
-          <button
+          <Button
             onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+            className="text-white hover:opacity-90"
             style={{ backgroundColor: '#06C755' }}
           >
             + 新規テンプレート
-          </button>
+          </Button>
         }
       />
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <Banner tone="danger" className="mb-4">
           {error}
-        </div>
+        </Banner>
       )}
 
       {/* Type filter */}
@@ -260,102 +274,103 @@ export default function TemplatesPage() {
 
       {/* Create form */}
       {showCreate && (
-        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">新規テンプレートを作成</h2>
-          <div className="space-y-4 max-w-lg">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">名前 <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                placeholder="例: コスト比較 flex"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">カテゴリ</label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                placeholder="例: general, 挨拶, 返信"
-                value={form.category}
-                onChange={(e) => setForm({ ...form, category: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">タイプ</label>
-              <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-                value={form.messageType}
-                onChange={(e) => setForm({ ...form, messageType: e.target.value })}
-              >
-                <option value="text">テキスト</option>
-                <option value="flex">Flex</option>
-                <option value="image">画像</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">内容 / JSON <span className="text-red-500">*</span></label>
-              {form.messageType === 'image' ? (
-                <ImageUploader
-                  mode="line-image"
-                  value={(() => {
-                    try {
-                      const parsed = JSON.parse(form.messageContent) as { originalContentUrl?: string; previewImageUrl?: string }
-                      if (parsed.originalContentUrl) {
-                        return {
-                          mode: 'line-image' as const,
-                          originalContentUrl: parsed.originalContentUrl,
-                          previewImageUrl: parsed.previewImageUrl ?? parsed.originalContentUrl,
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-sm">新規テンプレートを作成</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4 max-w-lg">
+              <div>
+                <Label className="text-xs">名前 <span className="text-red-500">*</span></Label>
+                <Input
+                  type="text"
+                  placeholder="例: コスト比較 flex"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">カテゴリ</Label>
+                <Input
+                  type="text"
+                  placeholder="例: general, 挨拶, 返信"
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">タイプ</Label>
+                <Select
+                  value={form.messageType}
+                  onChange={(e) => setForm({ ...form, messageType: e.target.value })}
+                >
+                  <option value="text">テキスト</option>
+                  <option value="flex">Flex</option>
+                  <option value="image">画像</option>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">内容 / JSON <span className="text-red-500">*</span></Label>
+                {form.messageType === 'image' ? (
+                  <ImageUploader
+                    mode="line-image"
+                    value={(() => {
+                      try {
+                        const parsed = JSON.parse(form.messageContent) as { originalContentUrl?: string; previewImageUrl?: string }
+                        if (parsed.originalContentUrl) {
+                          return {
+                            mode: 'line-image' as const,
+                            originalContentUrl: parsed.originalContentUrl,
+                            previewImageUrl: parsed.previewImageUrl ?? parsed.originalContentUrl,
+                          }
                         }
+                      } catch { /* ignore */ }
+                      return null
+                    })()}
+                    onChange={(v) => {
+                      if (v?.mode === 'line-image') {
+                        setForm((prev) => ({ ...prev, messageContent: JSON.stringify({
+                          originalContentUrl: v.originalContentUrl,
+                          previewImageUrl: v.previewImageUrl,
+                        }) }))
+                      } else {
+                        setForm((prev) => ({ ...prev, messageContent: '' }))
                       }
-                    } catch { /* ignore */ }
-                    return null
-                  })()}
-                  onChange={(v) => {
-                    if (v?.mode === 'line-image') {
-                      setForm((prev) => ({ ...prev, messageContent: JSON.stringify({
-                        originalContentUrl: v.originalContentUrl,
-                        previewImageUrl: v.previewImageUrl,
-                      }) }))
-                    } else {
-                      setForm((prev) => ({ ...prev, messageContent: '' }))
-                    }
-                  }}
-                  label="テンプレート画像"
-                />
-              ) : (
-                <textarea
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-                  rows={form.messageType === 'flex' ? 10 : 4}
-                  placeholder={form.messageType === 'flex' ? '{"type":"bubble","body":...}' : 'メッセージ内容'}
-                  value={form.messageContent}
-                  onChange={(e) => setForm({ ...form, messageContent: e.target.value })}
-                />
-              )}
-            </div>
+                    }}
+                    label="テンプレート画像"
+                  />
+                ) : (
+                  <Textarea
+                    className="text-xs font-mono resize-y"
+                    rows={form.messageType === 'flex' ? 10 : 4}
+                    placeholder={form.messageType === 'flex' ? '{"type":"bubble","body":...}' : 'メッセージ内容'}
+                    value={form.messageContent}
+                    onChange={(e) => setForm({ ...form, messageContent: e.target.value })}
+                  />
+                )}
+              </div>
 
-            {formError && <p className="text-xs text-red-600">{formError}</p>}
+              {formError && <p className="text-xs text-red-600">{formError}</p>}
 
-            <div className="flex gap-2">
-              <button
-                onClick={handleCreate}
-                disabled={saving}
-                className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
-                style={{ backgroundColor: '#06C755' }}
-              >
-                {saving ? '作成中...' : '作成'}
-              </button>
-              <button
-                onClick={() => { setShowCreate(false); setFormError('') }}
-                className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
-              >
-                キャンセル
-              </button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleCreate}
+                  disabled={saving}
+                  className="text-white"
+                  style={{ backgroundColor: '#06C755' }}
+                >
+                  {saving ? '作成中...' : '作成'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowCreate(false); setFormError('') }}
+                >
+                  キャンセル
+                </Button>
+              </div>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Table */}
@@ -374,9 +389,7 @@ export default function TemplatesPage() {
           ))}
         </div>
       ) : filteredTemplates.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">該当するテンプレートがありません</p>
-        </div>
+        <EmptyState title="該当するテンプレートがありません" />
       ) : (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
@@ -399,9 +412,9 @@ export default function TemplatesPage() {
                     className={`hover:bg-gray-50 cursor-pointer transition-colors ${drawerId === t.id ? 'bg-green-50' : ''}`}
                   >
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${typeBadgeColor[t.messageType] ?? 'bg-gray-100 text-gray-700'}`}>
+                      <Badge tone={messageTypeBadgeTones[t.messageType] ?? 'neutral'}>
                         {messageTypeLabels[t.messageType] ?? t.messageType}
-                      </span>
+                      </Badge>
                     </td>
                     <td className="px-4 py-3">
                       <p className="text-sm font-medium text-gray-900">{t.name}</p>
@@ -410,9 +423,9 @@ export default function TemplatesPage() {
                       </p>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700">
+                      <Badge tone="info" className="rounded-full">
                         {t.category}
-                      </span>
+                      </Badge>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className={`text-sm ${t.usageCount === 0 ? 'text-gray-400' : 'text-gray-900 font-medium'}`}>
@@ -421,12 +434,14 @@ export default function TemplatesPage() {
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-500">{formatDate(t.updatedAt)}</td>
                     <td className="px-4 py-3 text-right">
-                      <button
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         onClick={(e) => { e.stopPropagation(); handleDelete(t.id, t.usageCount) }}
-                        className="px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 rounded-md"
+                        className="text-red-500 hover:bg-red-50"
                       >
                         削除
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -447,12 +462,12 @@ export default function TemplatesPage() {
             <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {editName !== null ? (
-                  <input
+                  <Input
                     type="text"
                     autoFocus
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    className="mt-0 flex-1"
                   />
                 ) : (
                   <h3
@@ -464,12 +479,14 @@ export default function TemplatesPage() {
                   </h3>
                 )}
               </div>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setDrawerId(null)}
                 className="ml-2 text-gray-400 hover:text-gray-600 text-2xl leading-none px-1"
               >
                 ×
-              </button>
+              </Button>
             </div>
 
             {drawerLoading ? (
@@ -482,12 +499,12 @@ export default function TemplatesPage() {
             ) : !drawerData ? null : (
               <div className="p-4 space-y-5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${typeBadgeColor[drawerData.messageType] ?? 'bg-gray-100 text-gray-700'}`}>
+                  <Badge tone={messageTypeBadgeTones[drawerData.messageType] ?? 'neutral'}>
                     {messageTypeLabels[drawerData.messageType] ?? drawerData.messageType}
-                  </span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700">
+                  </Badge>
+                  <Badge tone="info" className="rounded-full">
                     {drawerData.category}
-                  </span>
+                  </Badge>
                   <span className="text-[10px] text-gray-400">
                     更新: {formatDate(drawerData.updatedAt)}
                   </span>
@@ -523,9 +540,9 @@ export default function TemplatesPage() {
                 {/* Edit JSON / content */}
                 <div>
                   <h4 className="text-[11px] font-medium text-gray-500 mb-1.5 uppercase tracking-wide">内容 / JSON 編集</h4>
-                  <textarea
+                  <Textarea
                     rows={drawerData.messageType === 'flex' ? 12 : 4}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
+                    className="text-xs font-mono resize-y"
                     value={editContent ?? drawerData.messageContent}
                     onChange={(e) => setEditContent(e.target.value)}
                   />
@@ -533,20 +550,22 @@ export default function TemplatesPage() {
 
                 {(editContent !== null || editName !== null) && (
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      size="sm"
                       onClick={handleSaveEdit}
                       disabled={savingEdit}
-                      className="px-3 py-1.5 text-xs font-medium text-white rounded-md disabled:opacity-50"
+                      className="text-white"
                       style={{ backgroundColor: '#06C755' }}
                     >
                       {savingEdit ? '保存中...' : '保存'}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
                       onClick={() => { setEditContent(null); setEditName(null) }}
-                      className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md"
                     >
                       キャンセル
-                    </button>
+                    </Button>
                   </div>
                 )}
 

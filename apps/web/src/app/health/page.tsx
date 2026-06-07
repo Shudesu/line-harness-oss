@@ -4,6 +4,16 @@ import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
 import { api } from '@/lib/api'
 import CcPromptButton from '@/components/cc-prompt-button'
+import {
+  Button,
+  Card,
+  CardContent,
+  Badge,
+  Banner,
+  Label,
+  Select,
+  EmptyState,
+} from '@/components/ui/primitives'
 
 interface LineAccount {
   id: string
@@ -35,17 +45,25 @@ interface AccountMigration {
   completedAt: string | null
 }
 
-const riskConfig = {
-  normal: { label: '正常', color: 'bg-green-500', textColor: 'text-green-700', bgColor: 'bg-green-100' },
-  warning: { label: '警告', color: 'bg-yellow-500', textColor: 'text-yellow-700', bgColor: 'bg-yellow-100' },
-  danger: { label: '危険', color: 'bg-red-500', textColor: 'text-red-700', bgColor: 'bg-red-100' },
+type BadgeTone = 'default' | 'success' | 'warning' | 'danger' | 'info' | 'neutral'
+
+const riskConfig: Record<
+  AccountHealthLog['riskLevel'],
+  { label: string; tone: BadgeTone; dotColor: string }
+> = {
+  normal: { label: '正常', tone: 'success', dotColor: 'bg-emerald-500' },
+  warning: { label: '警告', tone: 'warning', dotColor: 'bg-amber-500' },
+  danger: { label: '危険', tone: 'danger', dotColor: 'bg-red-500' },
 }
 
-const statusConfig: Record<AccountMigration['status'], { label: string; textColor: string; bgColor: string }> = {
-  pending: { label: '待機中', textColor: 'text-gray-700', bgColor: 'bg-gray-100' },
-  in_progress: { label: '移行中', textColor: 'text-blue-700', bgColor: 'bg-blue-100' },
-  completed: { label: '完了', textColor: 'text-green-700', bgColor: 'bg-green-100' },
-  failed: { label: '失敗', textColor: 'text-red-700', bgColor: 'bg-red-100' },
+const statusConfig: Record<
+  AccountMigration['status'],
+  { label: string; tone: BadgeTone }
+> = {
+  pending: { label: '待機中', tone: 'neutral' },
+  in_progress: { label: '移行中', tone: 'info' },
+  completed: { label: '完了', tone: 'success' },
+  failed: { label: '失敗', tone: 'danger' },
 }
 
 const ccPrompts = [
@@ -166,21 +184,23 @@ export default function HealthPage() {
 
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
+        <div className="mb-4">
+          <Banner tone="danger">{error}</Banner>
         </div>
       )}
 
       {/* Loading */}
       {loading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          読み込み中...
-        </div>
+        <Card>
+          <CardContent className="py-8 text-center text-gray-400">
+            読み込み中...
+          </CardContent>
+        </Card>
       ) : accounts.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          <p className="mb-2">LINEアカウントが登録されていません</p>
-          <p className="text-xs text-gray-300">先にアカウント管理からLINEアカウントを登録してください</p>
-        </div>
+        <EmptyState
+          title="LINEアカウントが登録されていません"
+          description="先にアカウント管理からLINEアカウントを登録してください"
+        />
       ) : (
         <>
           {/* Account Health Cards */}
@@ -192,7 +212,7 @@ export default function HealthPage() {
               const logs = healthLogs[account.id] || []
 
               return (
-                <div key={account.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <Card key={account.id} className="overflow-hidden">
                   <button
                     onClick={() => handleExpand(account.id)}
                     className="w-full p-4 text-left hover:bg-gray-50 transition-colors"
@@ -211,10 +231,12 @@ export default function HealthPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${config.bgColor} ${config.textColor}`}>
-                          <span className={`w-2 h-2 rounded-full ${config.color} ${risk === 'danger' ? 'animate-pulse' : ''}`} />
+                        <Badge tone={config.tone}>
+                          <span
+                            className={`w-2 h-2 rounded-full ${config.dotColor} ${risk === 'danger' ? 'animate-pulse' : ''}`}
+                          />
                           {config.label}
-                        </span>
+                        </Badge>
                         <svg
                           className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                           fill="none"
@@ -231,16 +253,20 @@ export default function HealthPage() {
                   {isExpanded && (
                     <div className="border-t border-gray-200 p-4">
                       {risk === 'danger' && (
-                        <div className="mb-3">
-                          <button
+                        <div className="mb-3 space-y-3">
+                          <Banner tone="danger" title="BANリスクが高い状態です">
+                            早急に友だちの移行を検討してください。
+                          </Banner>
+                          <Button
+                            variant="danger"
+                            size="sm"
                             onClick={() => {
                               setMigrateFrom(account.id)
                               setMigrateToId('')
                             }}
-                            className="px-3 py-1.5 rounded-lg text-white text-xs font-medium bg-red-500 hover:bg-red-600 transition-colors"
                           >
                             友だちを移行する
-                          </button>
+                          </Button>
                         </div>
                       )}
 
@@ -269,10 +295,12 @@ export default function HealthPage() {
                                     <td className="py-2 pr-3 text-gray-700">{log.errorCount}</td>
                                     <td className="py-2 pr-3 text-gray-500">{log.checkPeriod}</td>
                                     <td className="py-2 pr-3">
-                                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${logConfig.bgColor} ${logConfig.textColor}`}>
-                                        <span className={`w-1.5 h-1.5 rounded-full ${logConfig.color} ${log.riskLevel === 'danger' ? 'animate-pulse' : ''}`} />
+                                      <Badge tone={logConfig.tone}>
+                                        <span
+                                          className={`w-1.5 h-1.5 rounded-full ${logConfig.dotColor} ${log.riskLevel === 'danger' ? 'animate-pulse' : ''}`}
+                                        />
                                         {logConfig.label}
-                                      </span>
+                                      </Badge>
                                     </td>
                                     <td className="py-2 text-gray-400 text-xs">
                                       {new Date(log.createdAt).toLocaleString('ja-JP')}
@@ -286,69 +314,68 @@ export default function HealthPage() {
                       )}
                     </div>
                   )}
-                </div>
+                </Card>
               )
             })}
           </div>
 
           {/* Migration Form Modal */}
           {migrateFrom && (
-            <div className="mb-8 bg-white rounded-lg border border-red-200 p-6">
-              <h2 className="text-sm font-bold text-gray-900 mb-4">
-                友だち移行: {getAccountName(migrateFrom)}
-              </h2>
-              <form onSubmit={handleMigrate}>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">移行先アカウント</label>
-                  <select
-                    value={migrateToId}
-                    onChange={(e) => setMigrateToId(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-                    required
-                  >
-                    <option value="">選択してください</option>
-                    {accounts
-                      .filter((a) => a.id !== migrateFrom && a.isActive)
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.channelId})
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="submit"
-                    disabled={migrating || !migrateToId}
-                    className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    style={{ backgroundColor: '#06C755' }}
-                  >
-                    {migrating ? '移行中...' : '移行を開始'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMigrateFrom(null)
-                      setMigrateToId('')
-                    }}
-                    className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    キャンセル
-                  </button>
-                </div>
-              </form>
-            </div>
+            <Card className="mb-8 border-red-200">
+              <CardContent className="pt-5">
+                <h2 className="text-sm font-bold text-gray-900 mb-4">
+                  友だち移行: {getAccountName(migrateFrom)}
+                </h2>
+                <form onSubmit={handleMigrate}>
+                  <div className="mb-4">
+                    <Label htmlFor="migrate-to">移行先アカウント</Label>
+                    <Select
+                      id="migrate-to"
+                      value={migrateToId}
+                      onChange={(e) => setMigrateToId(e.target.value)}
+                      required
+                    >
+                      <option value="">選択してください</option>
+                      {accounts
+                        .filter((a) => a.id !== migrateFrom && a.isActive)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.channelId})
+                          </option>
+                        ))}
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      disabled={migrating || !migrateToId}
+                    >
+                      {migrating ? '移行中...' : '移行を開始'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setMigrateFrom(null)
+                        setMigrateToId('')
+                      }}
+                    >
+                      キャンセル
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
           )}
 
           {/* Migrations Table */}
           <div>
             <h2 className="text-lg font-bold text-gray-900 mb-4">移行履歴</h2>
             {migrations.length === 0 ? (
-              <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-                移行履歴はありません
-              </div>
+              <EmptyState title="移行履歴はありません" />
             ) : (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <Card className="overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm min-w-[640px]">
                     <thead>
@@ -376,9 +403,7 @@ export default function HealthPage() {
                               {getAccountName(migration.toAccountId)}
                             </td>
                             <td className="px-4 py-3">
-                              <span className={`inline-flex text-xs font-medium px-2.5 py-1 rounded-full ${status.bgColor} ${status.textColor}`}>
-                                {status.label}
-                              </span>
+                              <Badge tone={status.tone}>{status.label}</Badge>
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
@@ -407,7 +432,7 @@ export default function HealthPage() {
                     </tbody>
                   </table>
                 </div>
-              </div>
+              </Card>
             )}
           </div>
         </>

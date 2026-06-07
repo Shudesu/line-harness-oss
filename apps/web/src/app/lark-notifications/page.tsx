@@ -11,6 +11,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { fetchApi } from '@/lib/api'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  Input,
+  Label,
+  Select,
+  Textarea,
+} from '@/components/ui/primitives'
 
 type LarkEventType =
   | 'friend_added'
@@ -217,28 +227,26 @@ export default function LarkNotificationsPage() {
     if (!health) return null
     if (!health.configured) {
       return (
-        <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-          <p className="font-medium mb-1">⚠️ Lark 認証情報が未設定です</p>
+        <Banner tone="danger" title="⚠️ Lark 認証情報が未設定です" className="mb-4">
           <p>
             Cloudflare Worker secrets に <code>LARK_APP_ID</code> と{' '}
             <code>LARK_APP_SECRET</code> を登録してください。<br />
             設定するまで、ここで作った通知設定は <strong>すべて skip log</strong> になります。
           </p>
-        </div>
+        </Banner>
       )
     }
     if (!health.ok) {
       return (
-        <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          <p className="font-medium mb-1">⚠️ Lark API 接続失敗</p>
+        <Banner tone="warning" title="⚠️ Lark API 接続失敗" className="mb-4">
           <p>{health.error ?? '不明なエラー'}</p>
-        </div>
+        </Banner>
       )
     }
     return (
-      <div className="mb-4 rounded border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
+      <Banner tone="success" className="mb-4">
         ✅ Lark 認証 OK。通知が送れる状態です。
-      </div>
+      </Banner>
     )
   }, [health])
 
@@ -249,34 +257,28 @@ export default function LarkNotificationsPage() {
           title="Lark 通知設定"
           description="友だち追加 / ブロック / フォーム回答 / 未返信タイムアウト等を、Lark の指定チャットに自動通知します。"
           action={
-            <button
-              type="button"
-              onClick={onOpenNew}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
+            <Button type="button" onClick={onOpenNew}>
               ＋ 新規追加
-            </button>
+            </Button>
           }
         />
 
         {healthBanner}
 
         {error && (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          <Banner tone="danger" className="mb-4">
             {error}
-          </div>
+          </Banner>
         )}
 
         {loading ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">
-            読み込み中…
-          </div>
+          <Card className="p-6 text-sm text-gray-500">読み込み中…</Card>
         ) : items.length === 0 ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">
+          <Card className="p-6 text-sm text-gray-500">
             通知設定はまだありません。「新規追加」で Lark チャット ID を登録してください。
-          </div>
+          </Card>
         ) : (
-          <div className="overflow-x-auto rounded-lg border bg-white">
+          <Card className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50">
                 <tr>
@@ -297,9 +299,7 @@ export default function LarkNotificationsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-                        {EVENT_LABEL[it.event_type]}
-                      </span>
+                      <Badge tone="neutral">{EVENT_LABEL[it.event_type]}</Badge>
                       {it.event_type === 'unread_timeout' && (
                         <div className="mt-1 text-xs text-gray-500">
                           {it.unread_threshold_minutes} 分経過後
@@ -312,65 +312,69 @@ export default function LarkNotificationsPage() {
                     </td>
                     <td className="px-4 py-3 text-center">
                       {it.is_enabled ? (
-                        <span className="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                          有効
-                        </span>
+                        <Badge tone="success">有効</Badge>
                       ) : (
-                        <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
-                          無効
-                        </span>
+                        <Badge tone="neutral">無効</Badge>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <button
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => onTest(it)}
                           disabled={testingId === it.id || !(health?.ok)}
-                          className="rounded border border-blue-300 px-2 py-1 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
                           title={health?.ok ? '実際に Lark へテスト投稿します' : 'Lark 認証が未設定です'}
+                          className="border-blue-300 text-blue-700 hover:bg-blue-50"
                         >
                           {testingId === it.id ? '送信中…' : 'テスト送信'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => onOpenEdit(it)}
-                          className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50"
                         >
                           編集
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => onToggle(it)}
-                          className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50"
                         >
                           {it.is_enabled ? '無効化' : '有効化'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => onDelete(it)}
-                          className="rounded border border-red-300 px-2 py-1 text-red-700 hover:bg-red-50"
+                          className="border-red-300 text-red-700 hover:bg-red-50"
                         >
                           削除
-                        </button>
+                        </Button>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
         )}
 
         {showForm && (
           <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
-            <div className="mt-12 w-full max-w-2xl rounded-lg bg-white p-6 shadow-xl">
+            <Card className="mt-12 w-full max-w-2xl p-6 shadow-xl">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-lg font-semibold">
                   {editingId ? '通知設定を編集' : '通知設定を追加'}
                 </h2>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     setShowForm(false)
                     resetForm()
@@ -378,27 +382,25 @@ export default function LarkNotificationsPage() {
                   className="text-gray-400 hover:text-gray-600"
                 >
                   ×
-                </button>
+                </Button>
               </div>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">名前</label>
-                  <input
+                  <Label>名前</Label>
+                  <Input
                     type="text"
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                     placeholder="例: 友だち追加 → 営業チーム"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">通知するイベント</label>
-                  <select
+                  <Label>通知するイベント</Label>
+                  <Select
                     value={formEvent}
                     onChange={(e) => setFormEvent(e.target.value as LarkEventType)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                     disabled={!!editingId}
                   >
                     {(Object.keys(EVENT_LABEL) as LarkEventType[]).map((k) => (
@@ -406,7 +408,7 @@ export default function LarkNotificationsPage() {
                         {EVENT_LABEL[k]}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   {editingId && (
                     <p className="mt-1 text-xs text-gray-500">
                       イベント種別は作成後は変更できません (削除して作り直してください)
@@ -416,44 +418,43 @@ export default function LarkNotificationsPage() {
 
                 {formEvent === 'unread_timeout' && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      何分応答なしで通知するか
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={1440}
-                      value={formMinutes}
-                      onChange={(e) => setFormMinutes(Number(e.target.value))}
-                      className="mt-1 w-32 rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    />
-                    <span className="ml-2 text-sm text-gray-600">分</span>
+                    <Label>何分応答なしで通知するか</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={formMinutes}
+                        onChange={(e) => setFormMinutes(Number(e.target.value))}
+                        className="w-32"
+                      />
+                      <span className="text-sm text-gray-600">分</span>
+                    </div>
                   </div>
                 )}
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">送信先タイプ</label>
-                  <select
+                  <Label>送信先タイプ</Label>
+                  <Select
                     value={formTargetType}
                     onChange={(e) => setFormTargetType(e.target.value as LarkTargetType)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                   >
                     {(Object.keys(TARGET_LABEL) as LarkTargetType[]).map((k) => (
                       <option key={k} value={k}>
                         {TARGET_LABEL[k]}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">送信先 ID</label>
-                  <input
+                  <Label>送信先 ID</Label>
+                  <Input
                     type="text"
                     value={formTargetId}
                     onChange={(e) => setFormTargetId(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono text-xs"
                     placeholder={TARGET_PLACEHOLDER[formTargetType]}
+                    className="font-mono text-xs"
                   />
                   <p className="mt-1 text-xs text-gray-500">
                     Lark チャットの「メンバー追加」画面で Bot を招待した後、Bot コマンドで
@@ -462,14 +463,12 @@ export default function LarkNotificationsPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    通知本文 (省略時はデフォルト文言)
-                  </label>
-                  <textarea
+                  <Label>通知本文 (省略時はデフォルト文言)</Label>
+                  <Textarea
                     value={formTemplate}
                     onChange={(e) => setFormTemplate(e.target.value)}
                     rows={4}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
+                    className="font-mono"
                     placeholder={'例: {{friend_name}} さんが追加されました\n詳細: {{friend_url}}'}
                   />
                   <p className="mt-1 text-xs text-gray-500">
@@ -479,39 +478,37 @@ export default function LarkNotificationsPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">メモ</label>
-                  <input
+                  <Label>メモ</Label>
+                  <Input
                     type="text"
                     value={formMemo}
                     onChange={(e) => setFormMemo(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                     placeholder="任意"
                   />
                 </div>
               </div>
 
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => {
                     setShowForm(false)
                     resetForm()
                   }}
                   disabled={saving}
-                  className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                 >
                   キャンセル
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
                   onClick={onSave}
                   disabled={saving}
-                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                 >
                   {saving ? '保存中…' : editingId ? '更新' : '追加'}
-                </button>
+                </Button>
               </div>
-            </div>
+            </Card>
           </div>
         )}
       </main>
