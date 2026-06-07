@@ -18,17 +18,19 @@ import {
   deleteCrmForward,
   getCrmForwardLogs,
 } from '@line-crm/db';
+import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
 export const crmForwards = new Hono<Env>();
 
-crmForwards.get('/api/crm-forwards', async (c) => {
+// Codex P2 修正: CRM 転送設定は外部 webhook 送信 = 高権限。owner/admin 限定。
+crmForwards.get('/api/crm-forwards', requireRole('owner', 'admin'), async (c) => {
   const lineAccountId = c.req.query('lineAccountId') ?? null;
   const items = await listCrmForwards(c.env.DB, { lineAccountId });
   return c.json({ success: true, data: items });
 });
 
-crmForwards.post('/api/crm-forwards', async (c) => {
+crmForwards.post('/api/crm-forwards', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json<{
       lineAccountId: string;
@@ -64,7 +66,7 @@ crmForwards.post('/api/crm-forwards', async (c) => {
   }
 });
 
-crmForwards.patch('/api/crm-forwards/:id', async (c) => {
+crmForwards.patch('/api/crm-forwards/:id', requireRole('owner', 'admin'), async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json<{
     name?: string;
@@ -95,12 +97,12 @@ crmForwards.patch('/api/crm-forwards/:id', async (c) => {
   return c.json({ success: true, data: item });
 });
 
-crmForwards.delete('/api/crm-forwards/:id', async (c) => {
+crmForwards.delete('/api/crm-forwards/:id', requireRole('owner'), async (c) => {
   await deleteCrmForward(c.env.DB, c.req.param('id'));
   return c.json({ success: true, data: null });
 });
 
-crmForwards.get('/api/crm-forwards/:id/logs', async (c) => {
+crmForwards.get('/api/crm-forwards/:id/logs', requireRole('owner', 'admin'), async (c) => {
   const limit = Math.min(200, Number(c.req.query('limit') ?? 50));
   const items = await getCrmForwardLogs(c.env.DB, c.req.param('id'), limit);
   return c.json({ success: true, data: items });

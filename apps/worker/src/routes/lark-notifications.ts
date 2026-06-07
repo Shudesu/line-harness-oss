@@ -26,6 +26,7 @@ import {
   sendLarkTextMessage,
   verifyLarkCredentials,
 } from '../lib/lark-client.js';
+import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
 export const larkNotifications = new Hono<Env>();
@@ -40,13 +41,14 @@ const VALID_EVENT_TYPES: LarkEventType[] = [
 
 const VALID_TARGET_TYPES: LarkTargetType[] = ['chat', 'user', 'email'];
 
-larkNotifications.get('/api/lark-notifications', async (c) => {
+// Codex P2 修正: Lark 通知設定は外部 push 経路 = owner/admin 限定
+larkNotifications.get('/api/lark-notifications', requireRole('owner', 'admin'), async (c) => {
   const lineAccountId = c.req.query('lineAccountId') ?? undefined;
   const items = await listLarkNotifications(c.env.DB, lineAccountId);
   return c.json({ success: true, data: items });
 });
 
-larkNotifications.get('/api/lark-notifications/health', async (c) => {
+larkNotifications.get('/api/lark-notifications/health', requireRole('owner', 'admin'), async (c) => {
   const appId = (c.env as unknown as { LARK_APP_ID?: string }).LARK_APP_ID;
   const appSecret = (c.env as unknown as { LARK_APP_SECRET?: string }).LARK_APP_SECRET;
   if (!appId || !appSecret) {
@@ -73,7 +75,7 @@ larkNotifications.get('/api/lark-notifications/health', async (c) => {
   return c.json({ success: true, configured: true });
 });
 
-larkNotifications.post('/api/lark-notifications', async (c) => {
+larkNotifications.post('/api/lark-notifications', requireRole('owner', 'admin'), async (c) => {
   let body: {
     lineAccountId?: string;
     name?: string;
@@ -129,7 +131,7 @@ larkNotifications.post('/api/lark-notifications', async (c) => {
   }
 });
 
-larkNotifications.patch('/api/lark-notifications/:id', async (c) => {
+larkNotifications.patch('/api/lark-notifications/:id', requireRole('owner', 'admin'), async (c) => {
   const id = c.req.param('id');
   let body: {
     name?: string;
@@ -168,18 +170,18 @@ larkNotifications.patch('/api/lark-notifications/:id', async (c) => {
   return c.json({ success: true, data: item });
 });
 
-larkNotifications.delete('/api/lark-notifications/:id', async (c) => {
+larkNotifications.delete('/api/lark-notifications/:id', requireRole('owner'), async (c) => {
   await deleteLarkNotification(c.env.DB, c.req.param('id'));
   return c.json({ success: true, data: null });
 });
 
-larkNotifications.get('/api/lark-notifications/:id/logs', async (c) => {
+larkNotifications.get('/api/lark-notifications/:id/logs', requireRole('owner', 'admin'), async (c) => {
   const limit = Math.min(200, Number(c.req.query('limit') ?? 50));
   const items = await listLarkNotificationLogs(c.env.DB, c.req.param('id'), limit);
   return c.json({ success: true, data: items });
 });
 
-larkNotifications.post('/api/lark-notifications/:id/test', async (c) => {
+larkNotifications.post('/api/lark-notifications/:id/test', requireRole('owner', 'admin'), async (c) => {
   const id = c.req.param('id');
   const notif = await getLarkNotification(c.env.DB, id);
   if (!notif) return c.json({ success: false, error: 'not found' }, 404);
@@ -200,14 +202,30 @@ larkNotifications.post('/api/lark-notifications/:id/test', async (c) => {
 
   const text = `[hyhome Harness テスト送信]\n通知設定「${notif.name}」(${notif.event_type}) は正常に動いています。\n本番イベントが発生したらここに通知が来ます。`;
 
+  // Codex P2 修正: 10 秒タイムアウト (Worker レスポンスが Lark 遅延で伸びるのを防ぐ)
   const startedAt = Date.now();
-  const result = await sendLarkTextMessage({
-    appId,
-    appSecret,
-    receiveIdType,
-    receiveId: notif.target_id,
-    text,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  let result;
+  try {
+    result = await sendLarkTextMessage({
+      appId,
+      appSecret,
+      receiveIdType,
+      receiveId: notif.target_id,
+      text,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    const isAbort = (e as Error)?.name === 'AbortError';
+    result = {
+      ok: false,
+      httpStatus: 0,
+      errorMessage: isAbort ? 'タイムアウト (10 秒)' : ((e as Error)?.message ?? 'unknown'),
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const durationMs = Date.now() - startedAt;
 
   await logLarkNotificationResult(c.env.DB, id, {

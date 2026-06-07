@@ -49,12 +49,9 @@ export async function runCrossAnalysis(
   const include = Array.from(new Set(input.includeTagIds.filter(Boolean)));
   const exclude = Array.from(new Set((input.excludeTagIds ?? []).filter(Boolean)));
   // Codex 指摘 (P3): 上限制限
+  // Codex P2 追記: 黙って空返しは偽陰性。例外で 400 を返してもらう。
   if (include.length > 50 || exclude.length > 50) {
-    return {
-      totalCount: 0,
-      friends: [],
-      inputSummary: { mode: input.mode, includeTagIds: include, excludeTagIds: exclude },
-    };
+    throw new Error('include/exclude タグは合計 50 個までです');
   }
   const limit = Math.min(2000, Math.max(1, input.limit ?? 500));
   const followingOnly = input.followingOnly ?? false;
@@ -68,8 +65,9 @@ export async function runCrossAnalysis(
   }
 
   // 共通フィルタ
+  // Codex P2 修正: NULL 行 (旧データ・未所属) は別アカウントの分析に混入させない
   const accountFilter = input.lineAccountId
-    ? 'AND (f.line_account_id = ? OR f.line_account_id IS NULL)'
+    ? 'AND f.line_account_id = ?'
     : '';
   const followingFilter = followingOnly ? 'AND f.is_following = 1' : '';
 

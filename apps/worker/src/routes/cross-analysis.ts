@@ -66,6 +66,11 @@ crossAnalysis.get('/api/cross-analysis', async (c) => {
     return c.json({ success: true, data: result });
   } catch (err) {
     console.error('[cross-analysis] error:', err);
+    const msg = (err as Error)?.message ?? '';
+    // Codex P2 修正: タグ数上限超過は 400 を返す (偽陰性ではなく明示的エラー)
+    if (msg.includes('合計 50 個')) {
+      return c.json({ success: false, error: msg }, 400);
+    }
     return c.json({ success: false, error: 'internal error' }, 500);
   }
 });

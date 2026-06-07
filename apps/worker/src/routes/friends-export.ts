@@ -111,11 +111,14 @@ app.get('/friends/export.csv', async (c) => {
   // セキュリティ: UUID 形式チェックで SQL injection を防ぐ
   const idsRaw = c.req.query('ids') ?? '';
   const idPattern = /^[a-f0-9-]{32,36}$/i;
-  const requestedIds = idsRaw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .filter((id) => idPattern.test(id));
+  // Codex P2 修正: 不正な ID は黙って捨てず 400 を返す (全件CSV になるリスク防止)
+  const rawIds = idsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+  for (const id of rawIds) {
+    if (!idPattern.test(id)) {
+      return c.text(`Invalid id format: ${id}`, 400);
+    }
+  }
+  const requestedIds = rawIds;
   // 安全のため最大 500 件まで
   if (requestedIds.length > 500) {
     return c.text('Too many ids (max 500)', 400);
