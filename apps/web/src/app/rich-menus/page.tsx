@@ -6,6 +6,15 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { api } from '@/lib/api'
 import { ApplyToTagModal } from '@/components/rich-menus/apply-to-tag-modal'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  CardFooter,
+  EmptyState,
+} from '@/components/ui/primitives'
 
 type RichMenuGroupListItem = {
   id: string
@@ -19,14 +28,10 @@ type RichMenuGroupListItem = {
 }
 
 function StatusBadge({ status }: { status: 'draft' | 'published' }) {
-  const cls =
-    status === 'published'
-      ? 'bg-green-100 text-green-800'
-      : 'bg-gray-100 text-gray-700'
   return (
-    <span className={`text-xs px-2 py-0.5 rounded ${cls}`}>
+    <Badge tone={status === 'published' ? 'success' : 'neutral'}>
       {status === 'published' ? 'LINE 登録済み' : '下書き'}
-    </span>
+    </Badge>
   )
 }
 
@@ -184,9 +189,9 @@ export default function RichMenusListPage() {
       )}
 
       {selectedAccount && !loading && error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded mb-4">
+        <Banner tone="danger" className="mb-4">
           {error}
-        </div>
+        </Banner>
       )}
 
       {/* LINE 公式アカウントの現状 (admin 管理外の rich menu も含む) */}
@@ -200,9 +205,9 @@ export default function RichMenusListPage() {
         />
       )}
       {selectedAccount && !loading && externalError && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3 rounded mb-6">
+        <Banner tone="warning" className="mb-6 text-xs">
           LINE 公式アカウントの状態取得に失敗しました: {externalError}
-        </div>
+        </Banner>
       )}
 
       {/* Admin 管理メニュー見出し */}
@@ -213,30 +218,30 @@ export default function RichMenusListPage() {
       )}
 
       {selectedAccount && !loading && !error && groups.length === 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-12 text-center">
-          <p className="text-gray-500 mb-4">
-            まだリッチメニューが作成されていません。
-          </p>
-          <Link
-            href="/rich-menus/new"
-            className="inline-flex items-center gap-1 px-4 py-2 text-white rounded-lg text-sm font-medium transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            <span className="text-lg leading-none">+</span> 最初のメニューを作る
-          </Link>
-        </div>
+        <EmptyState
+          title="まだリッチメニューが作成されていません。"
+          action={
+            <Link
+              href="/rich-menus/new"
+              className="inline-flex items-center gap-1 px-4 py-2 text-white rounded-lg text-sm font-medium transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              <span className="text-lg leading-none">+</span> 最初のメニューを作る
+            </Link>
+          }
+        />
       )}
 
       {selectedAccount && !loading && !error && groups.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {groups.map((g) => (
-            <div
+            <Card
               key={g.id}
-              className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow flex flex-col"
+              className="hover:shadow-md transition-shadow flex flex-col"
             >
               <Link
                 href={`/rich-menus/edit?id=${g.id}`}
-                className="flex-1 hover:bg-gray-50 rounded-t-lg overflow-hidden"
+                className="flex-1 hover:bg-gray-50 rounded-t-xl overflow-hidden"
               >
                 {/* thumbnail */}
                 <div
@@ -258,7 +263,7 @@ export default function RichMenusListPage() {
                     </div>
                   )}
                 </div>
-                <div className="p-5">
+                <CardContent className="p-5">
                   <div className="flex items-start justify-between mb-2 gap-2">
                     <h2 className="font-semibold text-gray-900 truncate">{g.name}</h2>
                     <StatusBadge status={g.status} />
@@ -272,9 +277,9 @@ export default function RichMenusListPage() {
                       <span className="text-blue-600 font-medium">★ 全員のデフォルト</span>
                     )}
                   </div>
-                </div>
+                </CardContent>
               </Link>
-              <div className="border-t border-gray-100 px-4 py-2.5 flex justify-end gap-4 text-xs">
+              <CardFooter className="px-4 py-2.5 gap-4 text-xs">
                 {g.status === 'published' && (
                   <button
                     onClick={() => setApplyTo(g)}
@@ -297,8 +302,8 @@ export default function RichMenusListPage() {
                 >
                   削除
                 </button>
-              </div>
-            </div>
+              </CardFooter>
+            </Card>
           ))}
         </div>
       )}
@@ -339,7 +344,7 @@ function ExternalSection({
   const unmanagedCount = lineMenus.filter((m) => !m.adminManaged).length
 
   return (
-    <section className="mb-8 bg-white border border-gray-200 rounded-lg shadow-sm p-5">
+    <Card className="mb-8 p-5">
       <div className="flex items-baseline justify-between gap-3 mb-3">
         <h2 className="text-sm font-semibold text-gray-900">
           LINE 公式アカウントの現状
@@ -430,12 +435,13 @@ function ExternalSection({
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-2 mb-1">
                       {m.isCurrentDefault && (
-                        <span
-                          className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded"
+                        <Badge
+                          tone="info"
+                          className="text-[10px] font-bold"
                           title="LINE 公式アカウントの全員のデフォルト"
                         >
                           DEFAULT
-                        </span>
+                        </Badge>
                       )}
                       <span className="font-medium truncate max-w-[180px]">{m.name}</span>
                     </div>
@@ -495,6 +501,6 @@ function ExternalSection({
           </table>
         </div>
       )}
-    </section>
+    </Card>
   )
 }

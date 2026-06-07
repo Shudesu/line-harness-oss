@@ -5,6 +5,12 @@ import Link from 'next/link'
 import { fetchApi } from '@/lib/api'
 import { countryFlag } from '@/lib/country-flag'
 import Header from '@/components/layout/header'
+import {
+  Button,
+  Card,
+  CardContent,
+  EmptyState,
+} from '@/components/ui/primitives'
 
 interface UsedByAccount {
   id: string
@@ -157,9 +163,7 @@ export default function FormSubmissionsPage() {
         {loading ? (
           <div className="text-sm text-gray-400">読み込み中...</div>
         ) : forms.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400 text-sm">
-            フォームがまだありません
-          </div>
+          <EmptyState title="フォームがまだありません" />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
             {forms.map((form) => {
@@ -227,7 +231,9 @@ export default function FormSubmissionsPage() {
                 {subLoading ? '読み込み中...' : `${submissions.length}件`}
               </span>
             </div>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 setSelectedFormId(null)
                 setSubmissions([])
@@ -236,16 +242,18 @@ export default function FormSubmissionsPage() {
               className="text-xs text-gray-400 hover:text-gray-600"
             >
               閉じる ✕
-            </button>
+            </Button>
           </div>
 
           {subLoading ? (
-            <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400 text-sm">読み込み中...</div>
+            <Card>
+              <CardContent className="p-8 text-center text-gray-400 text-sm">読み込み中...</CardContent>
+            </Card>
           ) : submissions.length === 0 ? (
-            <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400 text-sm">回答がありません</div>
+            <EmptyState title="回答がありません" />
           ) : (
             <>
-              <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+              <Card className="overflow-x-auto">
                 <table className="w-full min-w-[700px]">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
@@ -298,7 +306,7 @@ export default function FormSubmissionsPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </Card>
 
               {totalPages > 1 && (
                 <div className="flex items-center justify-between mt-4">
@@ -306,21 +314,23 @@ export default function FormSubmissionsPage() {
                     {(page - 1) * PAGE_SIZE + 1}〜{Math.min(page * PAGE_SIZE, submissions.length)} 件 / 全{submissions.length}件
                   </p>
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setPage((p) => Math.max(1, p - 1))}
                       disabled={page === 1}
-                      className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-50"
                     >
                       前へ
-                    </button>
+                    </Button>
                     <span className="px-3 py-1.5 text-sm text-gray-500">{page} / {totalPages}</span>
-                    <button
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                       disabled={page === totalPages}
-                      className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-50"
                     >
                       次へ
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -340,13 +350,15 @@ export default function FormSubmissionsPage() {
           <aside className="relative h-full w-full max-w-md bg-white shadow-xl overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-gray-200 px-5 py-4 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-900">回答詳細</h3>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setDetailSubmission(null)}
                 className="text-gray-400 hover:text-gray-600 text-lg leading-none"
                 aria-label="閉じる"
               >
                 ×
-              </button>
+              </Button>
             </div>
 
             <div className="p-5 space-y-5">

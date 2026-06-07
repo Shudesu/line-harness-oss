@@ -20,6 +20,14 @@ import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import EditTrackedLinkModal from './_components/edit-tracked-link-modal'
+import {
+  Button,
+  Card,
+  CardContent,
+  Badge,
+  Banner,
+  EmptyState,
+} from '@/components/ui/primitives'
 
 type ListResp = Awaited<ReturnType<typeof api.trackedLinks.list>>
 type ListData = Extract<ListResp, { success: true }>['data']
@@ -77,28 +85,32 @@ export default function TrackedLinksPage() {
           title="トラックリンク"
           description="認証画面スキップ対応のトラッキングリンクを発行・管理します（L-TRACK 互換）"
           action={
-            <button
-              type="button"
-              onClick={() => setEditing('new')}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
+            <Button type="button" variant="primary" onClick={() => setEditing('new')}>
               ＋ 新規発行
-            </button>
+            </Button>
           }
         />
 
         {error && (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          <Banner tone="danger" className="mb-4">
             {error}
-          </div>
+          </Banner>
         )}
 
         {loading ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">読み込み中…</div>
+          <Card>
+            <CardContent className="p-6 text-sm text-gray-500">読み込み中…</CardContent>
+          </Card>
         ) : filtered.length === 0 ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">
-            まだトラックリンクがありません。「新規発行」で作成してください。
-          </div>
+          <EmptyState
+            title="まだトラックリンクがありません"
+            description="「新規発行」で作成してください。"
+            action={
+              <Button type="button" variant="primary" onClick={() => setEditing('new')}>
+                ＋ 新規発行
+              </Button>
+            }
+          />
         ) : (
           <div className="overflow-x-auto rounded-lg border bg-white shadow-sm">
             <table className="min-w-full divide-y divide-gray-200">
@@ -143,13 +155,9 @@ export default function TrackedLinksPage() {
                     </td>
                     <td className="px-4 py-3">
                       {item.skipLiff ? (
-                        <span className="inline-flex items-center rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                          認証スキップ
-                        </span>
+                        <Badge tone="warning">認証スキップ</Badge>
                       ) : (
-                        <span className="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                          LIFF（高精度）
-                        </span>
+                        <Badge tone="success">LIFF（高精度）</Badge>
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
@@ -159,28 +167,31 @@ export default function TrackedLinksPage() {
                       {item.clickCount.toLocaleString()}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 text-xs">
-                        <button
+                      <div className="flex items-center gap-2">
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => onCopy(item.trackingUrl, item.id)}
-                          className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50"
                         >
                           {copiedId === item.id ? '✓ コピー済' : 'URLコピー'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => setEditing(item)}
-                          className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50"
                         >
                           編集
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="danger"
+                          size="sm"
                           onClick={() => onDelete(item.id, item.name)}
-                          className="rounded border border-red-300 px-2 py-1 text-red-700 hover:bg-red-50"
                         >
                           削除
-                        </button>
+                        </Button>
                       </div>
                     </td>
                   </tr>

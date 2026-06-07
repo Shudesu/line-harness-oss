@@ -10,6 +10,16 @@
 import { useEffect, useState } from 'react'
 import { fetchApi } from '@/lib/api'
 import Header from '@/components/layout/header'
+import {
+  Button,
+  Card,
+  CardContent,
+  Badge,
+  Banner,
+  Label,
+  Select,
+  EmptyState,
+} from '@/components/ui/primitives'
 
 interface Row {
   id: string
@@ -60,55 +70,57 @@ export default function PostbackHistoryPage() {
         />
 
         {error && (
-          <div className="mb-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          <Banner tone="danger" className="mb-4">
             {error}
-          </div>
+          </Banner>
         )}
 
-        <div className="mb-4 flex flex-wrap items-center gap-3 rounded border bg-white p-3 text-sm">
-          <label className="flex items-center gap-2">
-            <span className="text-gray-600">ステータス:</span>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as '' | 'sent' | 'failed')}
-              className="rounded border border-gray-300 px-2 py-1"
+        <Card className="mb-4">
+          <CardContent className="flex flex-wrap items-center gap-3 py-3 text-sm">
+            <Label className="flex items-center gap-2 m-0">
+              <span className="text-gray-600">ステータス:</span>
+              <Select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as '' | 'sent' | 'failed')}
+                className="mt-0 w-auto py-1"
+              >
+                <option value="">すべて</option>
+                <option value="sent">sent</option>
+                <option value="failed">failed</option>
+              </Select>
+            </Label>
+            <Label className="flex items-center gap-2 m-0">
+              <span className="text-gray-600">媒体:</span>
+              <Select
+                value={platformName}
+                onChange={(e) => setPlatformName(e.target.value)}
+                className="mt-0 w-auto py-1"
+              >
+                <option value="">すべて</option>
+                <option value="meta">Meta</option>
+                <option value="google">Google</option>
+                <option value="tiktok">TikTok</option>
+                <option value="x">X</option>
+              </Select>
+            </Label>
+            <Button
+              type="button"
+              onClick={load}
+              size="sm"
             >
-              <option value="">すべて</option>
-              <option value="sent">sent</option>
-              <option value="failed">failed</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="text-gray-600">媒体:</span>
-            <select
-              value={platformName}
-              onChange={(e) => setPlatformName(e.target.value)}
-              className="rounded border border-gray-300 px-2 py-1"
-            >
-              <option value="">すべて</option>
-              <option value="meta">Meta</option>
-              <option value="google">Google</option>
-              <option value="tiktok">TikTok</option>
-              <option value="x">X</option>
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={load}
-            className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-700"
-          >
-            再取得
-          </button>
-        </div>
+              再取得
+            </Button>
+          </CardContent>
+        </Card>
 
         {loading ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">読み込み中…</div>
+          <Card>
+            <CardContent className="pt-6 pb-6 text-sm text-gray-500">読み込み中…</CardContent>
+          </Card>
         ) : rows.length === 0 ? (
-          <div className="rounded border bg-white p-6 text-sm text-gray-500">
-            該当する履歴がありません
-          </div>
+          <EmptyState title="該当する履歴がありません" />
         ) : (
-          <div className="overflow-x-auto rounded-lg border bg-white">
+          <Card className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
               <thead className="bg-gray-50">
                 <tr>
@@ -130,18 +142,14 @@ export default function PostbackHistoryPage() {
                     <td className="px-4 py-2">
                       {r.friend_display_name ?? <span className="text-gray-400">{r.friend_id}</span>}
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs break-all">
+                    <td className="px-4 py-2 font-mono text-xs break-all tabular-nums">
                       {r.click_id ? `${r.click_id_type ?? ''}=${r.click_id.slice(0, 20)}…` : '—'}
                     </td>
                     <td className="px-4 py-2">
                       {r.status === 'sent' ? (
-                        <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">
-                          sent
-                        </span>
+                        <Badge tone="success">sent</Badge>
                       ) : (
-                        <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-800">
-                          failed
-                        </span>
+                        <Badge tone="danger">failed</Badge>
                       )}
                     </td>
                     <td className="px-4 py-2 text-xs text-red-700">{r.error_message ?? '—'}</td>
@@ -149,7 +157,7 @@ export default function PostbackHistoryPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
         )}
       </main>
     </div>

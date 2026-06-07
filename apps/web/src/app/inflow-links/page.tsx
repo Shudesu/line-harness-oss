@@ -8,6 +8,7 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import type { EntryRoute, TrafficPool, Scenario } from '@line-crm/shared'
 import EditRouteModal from './_components/edit-route-modal'
+import { Badge, Banner, Button, Card } from '@/components/ui/primitives'
 
 interface MessageTemplate {
   id: string
@@ -277,22 +278,22 @@ export default function InflowLinksPage() {
 
       {summary && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <div className="bg-white rounded-xl p-5 border border-gray-100">
+          <Card className="p-5">
             <p className="text-sm text-gray-500">総友だち数</p>
             <p className="text-3xl font-bold text-gray-900 mt-1">{summary.totalFriends}</p>
-          </div>
-          <div className="bg-white rounded-xl p-5 border border-gray-100">
+          </Card>
+          <Card className="p-5">
             <p className="text-sm text-gray-500">ref 経由</p>
             <p className="text-3xl font-bold text-green-600 mt-1">{summary.friendsWithRef}</p>
-          </div>
-          <div className="bg-white rounded-xl p-5 border border-gray-100">
+          </Card>
+          <Card className="p-5">
             <p className="text-sm text-gray-500">ref 不明</p>
             <p className="text-3xl font-bold text-gray-400 mt-1">{summary.friendsWithoutRef}</p>
-          </div>
-          <div className="bg-white rounded-xl p-5 border border-gray-100">
+          </Card>
+          <Card className="p-5">
             <p className="text-sm text-gray-500">リンク数</p>
             <p className="text-3xl font-bold text-blue-600 mt-1">{routes.length}</p>
-          </div>
+          </Card>
         </div>
       )}
 
@@ -303,32 +304,29 @@ export default function InflowLinksPage() {
             ? `（全 ${allRows.length} 件中、選択中アカ）`
             : ''}
         </span>
-        <button
-          onClick={() => setEditing('new')}
-          className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
-        >
+        <Button size="sm" onClick={() => setEditing('new')}>
           + 新規リンク
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm mb-4">
+        <Banner tone="danger" className="mb-4">
           {error}
-        </div>
+        </Banner>
       )}
 
       {loading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
+        <Card className="p-8 text-center text-gray-400">
           読み込み中...
-        </div>
+        </Card>
       ) : sortedRows.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
+        <Card className="p-8 text-center text-gray-400">
           {selectedAccountId
             ? '選択中のアカウントに紐づくリファラルリンクはありません。'
             : 'リファラルリンクがありません。「+ 新規リンク」から作成してください。'}
-        </div>
+        </Card>
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+        <Card className="overflow-x-auto">
           <table className="w-full min-w-[960px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
@@ -391,12 +389,13 @@ export default function InflowLinksPage() {
                       ) : (
                         <span className="text-gray-700">
                           {r.name}
-                          <span
-                            className="ml-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
+                          <Badge
+                            tone="warning"
+                            className="ml-2"
                             title="entry_routes に未登録 — X Harness など外部システムが発行した ref。流入実績のみ集計。"
                           >
                             未登録
-                          </span>
+                          </Badge>
                         </span>
                       )}
                     </td>
@@ -429,29 +428,35 @@ export default function InflowLinksPage() {
                       {formatDate(r.stats?.latestAt ?? null)}
                     </td>
                     <td className="px-4 py-3 text-sm" onClick={(e) => e.stopPropagation()}>
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => onCopy(r.refCode, r.refCode)}
-                        className="text-xs text-blue-500 hover:text-blue-700"
+                        className="text-blue-500 hover:text-blue-700"
                       >
                         {copiedId === r.refCode ? 'コピー済' : 'コピー'}
-                      </button>
+                      </Button>
                     </td>
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       {editTarget ? (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setEditing(editTarget)}
-                          className="text-xs text-gray-600 hover:underline"
+                          className="text-gray-600"
                         >
                           編集
-                        </button>
+                        </Button>
                       ) : (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setEditing({ register: r.refCode })}
-                          className="text-xs text-blue-600 hover:underline"
+                          className="text-blue-600"
                           title="未登録 ref を entry_routes に登録します。流入実績はそのまま引き継がれます。"
                         >
                           登録
-                        </button>
+                        </Button>
                       )}
                     </td>
                   </FragmentRow>
@@ -459,7 +464,7 @@ export default function InflowLinksPage() {
               })}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
 
       {editing && (

@@ -5,6 +5,21 @@ import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Input,
+  Label,
+  Select,
+  Textarea,
+} from '@/components/ui/primitives'
 
 type AutomationEventType = "friend_add" | "tag_change" | "score_threshold" | "cv_fire" | "message_received" | "calendar_booked"
 
@@ -44,13 +59,16 @@ const eventTypeLabelMap: Record<AutomationEventType, string> = {
   calendar_booked: 'カレンダー予約',
 }
 
-const eventTypeBadgeColor: Record<AutomationEventType, string> = {
-  friend_add: 'bg-green-100 text-green-700',
-  tag_change: 'bg-blue-100 text-blue-700',
-  score_threshold: 'bg-yellow-100 text-yellow-700',
-  cv_fire: 'bg-red-100 text-red-700',
-  message_received: 'bg-purple-100 text-purple-700',
-  calendar_booked: 'bg-indigo-100 text-indigo-700',
+const eventTypeBadgeTone: Record<
+  AutomationEventType,
+  'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'default'
+> = {
+  friend_add: 'success',
+  tag_change: 'info',
+  score_threshold: 'warning',
+  cv_fire: 'danger',
+  message_received: 'default',
+  calendar_booked: 'neutral',
 }
 
 interface CreateFormState {
@@ -220,200 +238,207 @@ export default function AutomationsPage() {
       <Header
         title="オートメーション"
         action={
-          <button
+          <Button
             onClick={() => setShowCreate(true)}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+            className="min-h-[44px] text-white hover:opacity-90"
             style={{ backgroundColor: '#06C755' }}
           >
             + 新規ルール
-          </button>
+          </Button>
         }
       />
 
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <Banner tone="danger" className="mb-4">
           {error}
-        </div>
+        </Banner>
       )}
 
       {/* Create form */}
       {showCreate && (
-        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">新規オートメーションを作成</h2>
-          <div className="space-y-4 max-w-lg">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">ルール名 <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                placeholder="例: 友だち追加時にウェルカムタグ付与"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">説明</label>
-              <textarea
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                rows={2}
-                placeholder="ルールの説明 (省略可)"
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">イベントタイプ</label>
-              <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-                value={form.eventType}
-                onChange={(e) => setForm({ ...form, eventType: e.target.value as AutomationEventType })}
-              >
-                {eventTypeOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">アクション (JSON)</label>
-              <textarea
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-                rows={6}
-                placeholder='[{"type": "add_tag", "params": {"tagId": "..."}}]'
-                value={form.actionsJson}
-                onChange={(e) => setForm({ ...form, actionsJson: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">条件 (JSON)</label>
-              <textarea
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-                rows={3}
-                placeholder='{"tagId": "...", "operator": "equals"}'
-                value={form.conditionsJson}
-                onChange={(e) => setForm({ ...form, conditionsJson: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">優先度</label>
-              <input
-                type="number"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value, 10) || 0 })}
-              />
-            </div>
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-sm">新規オートメーションを作成</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4 max-w-lg">
+              <div>
+                <Label className="text-xs text-gray-600">
+                  ルール名 <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  type="text"
+                  placeholder="例: 友だち追加時にウェルカムタグ付与"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-gray-600">説明</Label>
+                <Textarea
+                  rows={2}
+                  className="resize-none"
+                  placeholder="ルールの説明 (省略可)"
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-gray-600">イベントタイプ</Label>
+                <Select
+                  value={form.eventType}
+                  onChange={(e) => setForm({ ...form, eventType: e.target.value as AutomationEventType })}
+                >
+                  {eventTypeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs text-gray-600">アクション (JSON)</Label>
+                <Textarea
+                  rows={6}
+                  className="font-mono resize-y"
+                  placeholder='[{"type": "add_tag", "params": {"tagId": "..."}}]'
+                  value={form.actionsJson}
+                  onChange={(e) => setForm({ ...form, actionsJson: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-gray-600">条件 (JSON)</Label>
+                <Textarea
+                  rows={3}
+                  className="font-mono resize-y"
+                  placeholder='{"tagId": "...", "operator": "equals"}'
+                  value={form.conditionsJson}
+                  onChange={(e) => setForm({ ...form, conditionsJson: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-gray-600">優先度</Label>
+                <Input
+                  type="number"
+                  value={form.priority}
+                  onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value, 10) || 0 })}
+                />
+              </div>
 
-            {formError && <p className="text-xs text-red-600">{formError}</p>}
+              {formError && <p className="text-xs text-red-600">{formError}</p>}
 
-            <div className="flex gap-2">
-              <button
-                onClick={handleCreate}
-                disabled={saving}
-                className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-                style={{ backgroundColor: '#06C755' }}
-              >
-                {saving ? '作成中...' : '作成'}
-              </button>
-              <button
-                onClick={() => { setShowCreate(false); setFormError('') }}
-                className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                キャンセル
-              </button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleCreate}
+                  disabled={saving}
+                  className="min-h-[44px] text-white hover:opacity-90"
+                  style={{ backgroundColor: '#06C755' }}
+                >
+                  {saving ? '作成中...' : '作成'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowCreate(false); setFormError('') }}
+                  className="min-h-[44px]"
+                >
+                  キャンセル
+                </Button>
+              </div>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Loading skeleton */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="bg-white rounded-lg border border-gray-200 p-5 animate-pulse space-y-3">
+            <Card key={i} className="p-5 animate-pulse space-y-3">
               <div className="h-4 bg-gray-200 rounded w-3/4" />
               <div className="h-3 bg-gray-100 rounded w-full" />
               <div className="flex gap-4">
                 <div className="h-3 bg-gray-100 rounded w-24" />
                 <div className="h-3 bg-gray-100 rounded w-16" />
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       ) : automations.length === 0 && !showCreate ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">オートメーションがありません。「新規ルール」から作成してください。</p>
-        </div>
+        <EmptyState
+          title="オートメーションがありません"
+          description="「新規ルール」から作成してください。"
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {automations.map((automation) => (
-            <div
+            <Card
               key={automation.id}
-              className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:shadow-md transition-shadow"
+              className="hover:shadow-md transition-shadow"
             >
-              {/* Header row */}
-              <div className="flex items-start justify-between mb-2">
-                <h3 className="text-sm font-semibold text-gray-900 leading-tight">{automation.name}</h3>
-                <button
-                  onClick={() => handleToggleActive(automation.id, automation.isActive)}
-                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    automation.isActive ? 'bg-green-500' : 'bg-gray-300'
-                  }`}
-                  title={automation.isActive ? '有効 - クリックで無効化' : '無効 - クリックで有効化'}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                      automation.isActive ? 'translate-x-4' : 'translate-x-0'
+              <CardContent className="p-5">
+                {/* Header row */}
+                <div className="flex items-start justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-gray-900 leading-tight">{automation.name}</h3>
+                  <button
+                    onClick={() => handleToggleActive(automation.id, automation.isActive)}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      automation.isActive ? 'bg-green-500' : 'bg-gray-300'
                     }`}
-                  />
-                </button>
-              </div>
+                    title={automation.isActive ? '有効 - クリックで無効化' : '無効 - クリックで有効化'}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        automation.isActive ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
 
-              {/* Description */}
-              {automation.description && (
-                <p className="text-xs text-gray-500 mb-3 line-clamp-2">{automation.description}</p>
-              )}
+                {/* Description */}
+                {automation.description && (
+                  <p className="text-xs text-gray-500 mb-3 line-clamp-2">{automation.description}</p>
+                )}
 
-              {/* Event type badge */}
-              <div className="flex items-center gap-2 mb-3">
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${eventTypeBadgeColor[automation.eventType]}`}>
-                  {eventTypeLabelMap[automation.eventType]}
-                </span>
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                  automation.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
-                }`}>
-                  {automation.isActive ? '有効' : '無効'}
-                </span>
-              </div>
+                {/* Event type badge */}
+                <div className="flex items-center gap-2 mb-3">
+                  <Badge tone={eventTypeBadgeTone[automation.eventType]}>
+                    {eventTypeLabelMap[automation.eventType]}
+                  </Badge>
+                  <Badge tone={automation.isActive ? 'success' : 'neutral'}>
+                    {automation.isActive ? '有効' : '無効'}
+                  </Badge>
+                </div>
 
-              {/* Meta info */}
-              {(() => {
-                const sendMsgWithTpl = automation.actions.filter(
-                  (a) => a.type === 'send_message' && (a.params as { template_id?: string }).template_id,
-                ).length
-                return (
-                  <div className="flex items-center gap-4 text-xs text-gray-400 mb-3">
-                    <span>アクション: {automation.actions.length}件</span>
-                    {sendMsgWithTpl > 0 && (
-                      <a href="/templates" className="text-blue-600 hover:underline" title="template_id 参照を含む send_message action あり">
-                        🔗 template×{sendMsgWithTpl}
-                      </a>
-                    )}
-                    <span>優先度: {automation.priority}</span>
-                  </div>
-                )
-              })()}
+                {/* Meta info */}
+                {(() => {
+                  const sendMsgWithTpl = automation.actions.filter(
+                    (a) => a.type === 'send_message' && (a.params as { template_id?: string }).template_id,
+                  ).length
+                  return (
+                    <div className="flex items-center gap-4 text-xs text-gray-400">
+                      <span>アクション: {automation.actions.length}件</span>
+                      {sendMsgWithTpl > 0 && (
+                        <a href="/templates" className="text-blue-600 hover:underline" title="template_id 参照を含む send_message action あり">
+                          🔗 template×{sendMsgWithTpl}
+                        </a>
+                      )}
+                      <span>優先度: {automation.priority}</span>
+                    </div>
+                  )
+                })()}
+              </CardContent>
 
               {/* Actions */}
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
-                <button
+              <CardFooter>
+                <Button
+                  variant="danger"
+                  size="sm"
                   onClick={() => handleDelete(automation.id)}
-                  className="px-3 py-1 min-h-[44px] text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                  className="min-h-[44px]"
                 >
                   削除
-                </button>
-              </div>
-            </div>
+                </Button>
+              </CardFooter>
+            </Card>
           ))}
         </div>
       )}
