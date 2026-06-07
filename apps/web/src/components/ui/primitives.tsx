@@ -254,8 +254,12 @@ export function Banner({
   children,
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & { tone?: BannerTone; title?: string }) {
+  // Codex P3 修正: tone に応じた ARIA role を付ける (支援技術への通知)
+  const ariaRole = tone === 'danger' ? 'alert' : tone === 'warning' ? 'status' : undefined
   return (
     <div
+      role={ariaRole}
+      aria-live={ariaRole === 'alert' ? 'assertive' : ariaRole === 'status' ? 'polite' : undefined}
       className={cx(
         'rounded-lg border px-4 py-3 text-sm',
         bannerTones[tone],

@@ -53,6 +53,8 @@ interface StatCardProps {
 }
 
 function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }: StatCardProps) {
+  // V4 修正: 値 0 のときは数字色を薄く + ヒント追加 (「使ったことがない」が直感的に分かる)
+  const isZero = value === 0
   return (
     <Link href={href} className="group block">
       <Card className="transition-shadow hover:shadow-md">
@@ -63,20 +65,20 @@ function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }
               {loading ? (
                 <div className="h-9 w-24 animate-pulse rounded bg-gray-100" />
               ) : (
-                <p className="text-3xl font-bold tabular-nums text-gray-900">
+                <p className={`text-3xl font-bold tabular-nums ${isZero ? 'text-gray-300' : 'text-gray-900'}`}>
                   {value !== null ? value.toLocaleString('ja-JP') : '-'}
                 </p>
               )}
             </div>
             <div
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white"
-              style={{ backgroundColor: accentColor }}
+              style={{ backgroundColor: accentColor, opacity: isZero ? 0.5 : 1 }}
             >
               {icon}
             </div>
           </div>
           <p className="mt-3 text-xs text-gray-400 transition-colors group-hover:text-green-600">
-            詳細を見る →
+            {isZero ? '作成する →' : '詳細を見る →'}
           </p>
         </CardContent>
       </Card>
@@ -244,23 +246,7 @@ export default function DashboardPage() {
         <Banner tone="danger">{error}</Banner>
       )}
 
-      {/* Demo banner */}
-      <a
-        href="https://your-worker.your-subdomain.workers.dev/auth/line?ref=dashboard"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 p-4 transition-colors hover:from-green-100 hover:to-emerald-100"
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-bold text-gray-900">LINE で体験する</p>
-            <p className="mt-0.5 text-xs text-gray-500">友だち追加でステップ配信・フォーム・自動返信を体験</p>
-          </div>
-          <Badge tone="success" className="shrink-0 bg-[#06C755] text-white ring-transparent">
-            友だち追加
-          </Badge>
-        </div>
-      </a>
+      {/* V1 修正: ダミー URL の demo banner を削除 (本番では 404 になる placeholder だった) */}
 
       {/* Trends (新): 過去 N 日の主要指標 */}
       <Card>
@@ -330,18 +316,26 @@ export default function DashboardPage() {
                 />
               </div>
 
-              <div className="mt-5 border-t border-gray-100 pt-5">
+              {/* V3/V5 修正: BarChart を独立カード化、空のとき empty state */}
+              <div className="mt-5 rounded-lg border border-gray-100 bg-gray-50/40 p-4">
                 <div className="mb-2 flex items-baseline justify-between">
-                  <span className="text-xs font-medium text-gray-500">受信メッセージ (日次)</span>
+                  <span className="text-xs font-medium text-gray-600">受信メッセージ (日次)</span>
                   <span className="text-xs text-gray-400 tabular-nums">
                     合計: {trends.incoming.total.toLocaleString('ja-JP')}
                   </span>
                 </div>
-                <BarChart
-                  data={trends.incoming.series}
-                  barColor="#0EA5E9"
-                  height={80}
-                />
+                {trends.incoming.total === 0 ? (
+                  <div className="flex h-20 items-center justify-center rounded bg-white/60 text-xs text-gray-400">
+                    この期間に受信メッセージはありません
+                  </div>
+                ) : (
+                  <BarChart
+                    data={trends.incoming.series}
+                    barColor="#0EA5E9"
+                    height={80}
+                    aria-label={`受信メッセージ日次グラフ (${days} 日, 合計 ${trends.incoming.total} 件)`}
+                  />
+                )}
               </div>
             </>
           ) : (

@@ -23,6 +23,7 @@ export function Sparkline({
   fill = 'rgba(6, 199, 85, 0.15)',
   showArea = true,
   className,
+  'aria-label': ariaLabel,
 }: {
   data: SeriesPoint[]
   width?: number
@@ -31,6 +32,7 @@ export function Sparkline({
   fill?: string
   showArea?: boolean
   className?: string
+  'aria-label'?: string
 }) {
   if (!data || data.length < 2) {
     return <div className={className} style={{ width, height }} />
@@ -54,7 +56,7 @@ export function Sparkline({
       viewBox={`0 0 ${width} ${height}`}
       className={className}
       role="img"
-      aria-label="trend"
+      aria-label={ariaLabel ?? 'trend'}
       preserveAspectRatio="none"
     >
       {showArea && <path d={areaPath} fill={fill} stroke="none" />}
@@ -70,12 +72,14 @@ export function BarChart({
   height = 100,
   barColor = '#06C755',
   className,
+  'aria-label': ariaLabel,
 }: {
   data: SeriesPoint[]
   width?: number
   height?: number
   barColor?: string
   className?: string
+  'aria-label'?: string
 }) {
   if (!data || data.length === 0) {
     return <div className={className} style={{ width, height }} />
@@ -91,6 +95,7 @@ export function BarChart({
       viewBox={`0 0 ${width} ${height}`}
       className={className}
       role="img"
+      aria-label={ariaLabel ?? 'bar chart'}
       preserveAspectRatio="none"
     >
       {data.map((d, i) => {
@@ -173,9 +178,14 @@ export function TrendCard({
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs font-medium text-gray-500">{label}</span>
-        {delta.pct !== null && (
+        {delta.pct !== null ? (
           <span className={`text-xs tabular-nums ${directionColor[effectiveDir]}`}>
             {directionGlyph[delta.direction]} {Math.abs(delta.pct).toFixed(1)}%
+          </span>
+        ) : (
+          // V2 修正: 前期 0 件のときは「新規」or「変化なし」を明示 (空欄だと比較がそもそも無いように見える)
+          <span className="text-xs text-gray-400 tabular-nums">
+            {prev === 0 && current > 0 ? '新規 ✨' : prev === 0 && current === 0 ? '—' : ''}
           </span>
         )}
       </div>
@@ -183,11 +193,10 @@ export function TrendCard({
         <span className="text-3xl font-bold tabular-nums text-gray-900">
           {current.toLocaleString('ja-JP')}
         </span>
-        {delta.pct !== null && (
-          <span className="text-xs text-gray-400 tabular-nums">
-            前期: {prev.toLocaleString('ja-JP')}
-          </span>
-        )}
+        <span className="text-xs text-gray-400 tabular-nums">
+          {/* V2 修正: 前期件数を常に表示 (比較の文脈を失わない) */}
+          前期: {prev.toLocaleString('ja-JP')}
+        </span>
       </div>
       <div className="mt-3">
         <Sparkline
