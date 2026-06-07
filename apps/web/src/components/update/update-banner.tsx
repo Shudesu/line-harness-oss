@@ -49,7 +49,7 @@ export function UpdateBanner() {
         }
       } catch (e) {
         // Banner is best-effort: do not break the dashboard if /admin/version
-        // or the GitHub-hosted manifest is unreachable. Phase 9 will add a
+        // or the Worker-hosted manifest proxy is unreachable. Phase 9 will add a
         // visible error chip; for Phase 6 we just stay in `loading` (null).
         console.error('update banner failed', e)
       }

@@ -27,8 +27,17 @@ if (!API_URL) {
   )
 }
 
-const MANIFEST_URL =
-  process.env.NEXT_PUBLIC_MANIFEST_URL ?? `${API_URL}/admin/manifest`
+/**
+ * Always fetch the manifest through the Worker proxy.
+ *
+ * GitHub release assets do not reliably include browser CORS headers, so a
+ * public `NEXT_PUBLIC_MANIFEST_URL` pointing at GitHub breaks the dashboard.
+ * Operators can still change the upstream source by setting the Worker's
+ * server-side `MANIFEST_URL`; the browser should only talk to `/admin/manifest`.
+ */
+export function getManifestUrl(): string {
+  return `${API_URL}/admin/manifest`
+}
 
 function adminKey(): string {
   const v = process.env.NEXT_PUBLIC_ADMIN_API_KEY
@@ -54,7 +63,7 @@ export async function getCurrentVersion(): Promise<CurrentVersion> {
 }
 
 export async function getManifest(): Promise<Manifest> {
-  const r = await fetch(MANIFEST_URL, { cache: 'no-store' })
+  const r = await fetch(getManifestUrl(), { cache: 'no-store' })
   if (!r.ok) throw new Error(`manifest fetch failed ${r.status}`)
   return r.json() as Promise<Manifest>
 }
