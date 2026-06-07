@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { parseStickerMessageContent, stickerFallback } from '@line-crm/shared'
 import { api, fetchApi } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
@@ -57,6 +58,24 @@ const statusFilters: { key: StatusFilter; label: string }[] = [
 const SHOW_LOADING_PREF_KEY = 'lh_chat_show_loading_indicator'
 const LOADING_SECONDS_PREF_KEY = 'lh_chat_loading_seconds'
 const LOADING_REFRESH_INTERVAL_MS = 4000
+
+function StickerMessageImage({ content }: { content: string }) {
+  const [failed, setFailed] = useState(false)
+  const sticker = parseStickerMessageContent(content)
+  const fallback = stickerFallback(content)
+
+  if (!sticker || failed) return <span>{fallback}</span>
+
+  return (
+    <img
+      src={sticker.stickerUrl}
+      alt={fallback}
+      className="max-h-[140px] max-w-[140px] object-contain"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  )
+}
 
 function formatDatetime(iso: string | null): string {
   if (!iso) return '-'
@@ -191,6 +210,9 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
         return texts.slice(0, 4).join('\n') || '[Flex Message]'
       } catch { return '[Flex Message]' }
     }
+    if (msg.messageType === 'sticker') {
+      return <StickerMessageImage content={msg.content} />
+    }
     return `[${msg.messageType}]`
   }
 
@@ -227,7 +249,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
                   ? 'bg-green-500 text-white'
                   : 'bg-gray-100 text-gray-900'
               }`}>
-                <p className="text-sm whitespace-pre-wrap break-words">{renderContent(msg)}</p>
+                <div className="text-sm whitespace-pre-wrap break-words">{renderContent(msg)}</div>
                 <p className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-200' : 'text-gray-400'}`}>
                   {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
                 </p>
@@ -928,6 +950,8 @@ export default function ChatsPage() {
                       } catch {
                         bubbleContent = <span>🖼️ [画像]</span>
                       }
+                    } else if (msg.messageType === 'sticker') {
+                      bubbleContent = <StickerMessageImage content={msg.content} />
                     } else {
                       bubbleContent = <span>{msg.content}</span>
                     }

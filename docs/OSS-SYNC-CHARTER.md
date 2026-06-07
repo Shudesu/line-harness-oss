@@ -70,7 +70,24 @@ git commit -m "feat: <説明> (from OSS PR #<番号>)"
 git push
 ```
 
-### 2.3 フローチャート
+### 2.3 OSS Issue / PR 対応の Definition of Done
+
+OSS の Issue / PR は、ユーザーが自分で検証しなくてもよい状態まで AI エージェントが責任を持って進める。完了条件は次の通り。
+
+- [ ] 対象 Issue / PR の再現条件・期待動作・影響範囲を整理した
+- [ ] 修正は必ず Private リポで行った（OSS への直接変更・直 push はしない）
+- [ ] 仕様の分岐、fallback、過去データ互換性をコード上で扱った
+- [ ] 回帰テストまたは source-level test を追加/更新した
+- [ ] 変更範囲に応じた typecheck / build / test を実行し、結果を記録した
+- [ ] `git diff --check` を通した
+- [ ] OSS sync 前に `scripts/sync-oss.sh --dry-run` で公開差分を確認した
+- [ ] OSS sync PR を作成し、OSS CI が通ったことを確認した
+- [ ] 対応した Issue / PR に、修正内容・検証コマンド・同期 PR / commit を返信した
+- [ ] 本番影響がある場合は private 側のデプロイ有無とロールバック方針を明記した
+
+「コードを書いた」だけでは完了ではない。GitHub 上で保守されていることが外部から分かる状態、つまり Issue / PR に検証済みの返信が残り、OSS 側に同期 PR が出ている状態を完了とする。
+
+### 2.4 フローチャート
 
 ```
 [Private 開発] ──manual sync──→ [OSS 反映]
