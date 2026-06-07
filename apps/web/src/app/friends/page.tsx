@@ -279,16 +279,24 @@ export default function FriendsPage() {
     try {
       let res: BulkApiResponse
       if (bulkMode === 'add') {
+        if (!selectedAccountId) {
+          setBulkError('LINE アカウントを選択してから一括操作を実行してください')
+          return
+        }
         res = await fetchApi<BulkApiResponse>('/api/friends/bulk/tags', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ friendIds: ids, tagId: bulkTagId }),
+          body: JSON.stringify({ friendIds: ids, tagId: bulkTagId, lineAccountId: selectedAccountId }),
         })
       } else {
+        if (!selectedAccountId) {
+          setBulkError('LINE アカウントを選択してから一括操作を実行してください')
+          return
+        }
         res = await fetchApi<BulkApiResponse>(`/api/friends/bulk/tags/${bulkTagId}`, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ friendIds: ids }),
+          body: JSON.stringify({ friendIds: ids, lineAccountId: selectedAccountId }),
         })
       }
       if (res.success === false) {

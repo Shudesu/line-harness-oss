@@ -455,22 +455,56 @@ friends.post('/api/friends/:id/tags', async (c) => {
 });
 
 // POST /api/friends/bulk/tags - bulk add tag to many friends
-// body: { friendIds: string[], tagId: string }
+// body: { friendIds: string[], tagId: string, lineAccountId: string }
+//
+// Codex P1 修正: account 境界検証 - friend と tag が同じ lineAccountId に属しているか必須チェック
 friends.post('/api/friends/bulk/tags', async (c) => {
   try {
-    const body = await c.req.json<{ friendIds: string[]; tagId: string }>();
+    const body = await c.req.json<{ friendIds: string[]; tagId: string; lineAccountId?: string }>();
     if (!body.tagId || !Array.isArray(body.friendIds) || body.friendIds.length === 0) {
       return c.json({ success: false, error: 'tagId and friendIds[] are required' }, 400);
+    }
+    if (!body.lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required for bulk operations' }, 400);
     }
     if (body.friendIds.length > 500) {
       return c.json({ success: false, error: 'bulk add は最大 500 件まで' }, 400);
     }
+    // UUID 形式チェック (SQL injection 対策)
+    const idPattern = /^[a-f0-9-]{32,36}$/i;
+    for (const id of [...body.friendIds, body.tagId, body.lineAccountId]) {
+      if (!idPattern.test(id)) {
+        return c.json({ success: false, error: `invalid id format: ${id}` }, 400);
+      }
+    }
     const db = c.env.DB;
+    // tag が指定 account に属するか確認
+    const tagRow = await db
+      .prepare(`SELECT line_account_id FROM tags WHERE id = ?`)
+      .bind(body.tagId)
+      .first<{ line_account_id: string | null }>();
+    if (!tagRow) return c.json({ success: false, error: 'tag not found' }, 404);
+    if (tagRow.line_account_id && tagRow.line_account_id !== body.lineAccountId) {
+      return c.json({ success: false, error: 'tag は別の LINE アカウントに属しています' }, 403);
+    }
+    // friend が指定 account に属するか一括 SELECT で確認 (N+1 回避)
+    const placeholders = body.friendIds.map(() => '?').join(',');
+    const friendRows = await db
+      .prepare(`SELECT id, line_account_id FROM friends WHERE id IN (${placeholders})`)
+      .bind(...body.friendIds)
+      .all<{ id: string; line_account_id: string | null }>();
+    const valid = new Set<string>();
+    for (const r of friendRows.results ?? []) {
+      if (r.line_account_id === null || r.line_account_id === body.lineAccountId) {
+        valid.add(r.id);
+      }
+    }
     // tag_added シナリオは一括処理時に enroll しない (大量の副作用回避)。
-    // 単発で追加した時のみ自動 enroll する仕様にする (UX 一貫性のため明記)。
     let succeeded = 0;
     let failed = 0;
+    let rejected = 0;
     for (const friendId of body.friendIds) {
+      if (!valid.has(friendId)) { rejected++; continue; }
       try {
         await addTagToFriend(db, friendId, body.tagId);
         await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
@@ -480,7 +514,7 @@ friends.post('/api/friends/bulk/tags', async (c) => {
         failed++;
       }
     }
-    return c.json({ success: true, data: { succeeded, failed } });
+    return c.json({ success: true, data: { succeeded, failed, rejected } });
   } catch (err) {
     console.error('POST /api/friends/bulk/tags error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -488,21 +522,53 @@ friends.post('/api/friends/bulk/tags', async (c) => {
 });
 
 // DELETE /api/friends/bulk/tags/:tagId - bulk remove tag
-// body: { friendIds: string[] }
+// body: { friendIds: string[], lineAccountId: string }
+// Codex P1 修正: account 境界検証
 friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
   try {
     const tagId = c.req.param('tagId');
-    const body = await c.req.json<{ friendIds: string[] }>();
+    const body = await c.req.json<{ friendIds: string[]; lineAccountId?: string }>();
     if (!Array.isArray(body.friendIds) || body.friendIds.length === 0) {
       return c.json({ success: false, error: 'friendIds[] are required' }, 400);
+    }
+    if (!body.lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required for bulk operations' }, 400);
     }
     if (body.friendIds.length > 500) {
       return c.json({ success: false, error: 'bulk remove は最大 500 件まで' }, 400);
     }
+    const idPattern = /^[a-f0-9-]{32,36}$/i;
+    for (const id of [...body.friendIds, tagId, body.lineAccountId]) {
+      if (!idPattern.test(id)) {
+        return c.json({ success: false, error: `invalid id format: ${id}` }, 400);
+      }
+    }
     const db = c.env.DB;
+    // tag account 境界
+    const tagRow = await db
+      .prepare(`SELECT line_account_id FROM tags WHERE id = ?`)
+      .bind(tagId)
+      .first<{ line_account_id: string | null }>();
+    if (!tagRow) return c.json({ success: false, error: 'tag not found' }, 404);
+    if (tagRow.line_account_id && tagRow.line_account_id !== body.lineAccountId) {
+      return c.json({ success: false, error: 'tag は別の LINE アカウントに属しています' }, 403);
+    }
+    const placeholders = body.friendIds.map(() => '?').join(',');
+    const friendRows = await db
+      .prepare(`SELECT id, line_account_id FROM friends WHERE id IN (${placeholders})`)
+      .bind(...body.friendIds)
+      .all<{ id: string; line_account_id: string | null }>();
+    const valid = new Set<string>();
+    for (const r of friendRows.results ?? []) {
+      if (r.line_account_id === null || r.line_account_id === body.lineAccountId) {
+        valid.add(r.id);
+      }
+    }
     let succeeded = 0;
     let failed = 0;
+    let rejected = 0;
     for (const friendId of body.friendIds) {
+      if (!valid.has(friendId)) { rejected++; continue; }
       try {
         await removeTagFromFriend(db, friendId, tagId);
         await fireEvent(db, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
@@ -512,7 +578,7 @@ friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
         failed++;
       }
     }
-    return c.json({ success: true, data: { succeeded, failed } });
+    return c.json({ success: true, data: { succeeded, failed, rejected } });
   } catch (err) {
     console.error('DELETE /api/friends/bulk/tags/:tagId error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -625,7 +691,11 @@ friends.post('/api/friends/:id/messages', async (c) => {
     if ((friend as unknown as Record<string, unknown>).line_account_id) {
       const { getLineAccountById } = await import('@line-crm/db');
       const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-      if (account) accessToken = account.channel_access_token;
+      if (account) {
+        // Codex P1 修正: 暗号化 token を復号
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        accessToken = await resolveAccessToken(c.env, account.channel_access_token);
+      }
     }
     const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';

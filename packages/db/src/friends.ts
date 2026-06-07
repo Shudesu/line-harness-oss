@@ -191,18 +191,35 @@ export async function upsertFriend(
   return (await getFriendById(db, id))!;
 }
 
+/**
+ * Codex P1 修正: lineAccountId を必ず受け取り、multi-account 環境で
+ * 同一 line_user_id の別 account レコードを誤更新しないようにする。
+ * lineAccountId が null の場合は line_account_id IS NULL の行のみ更新 (旧データ互換)。
+ */
 export async function updateFriendFollowStatus(
   db: D1Database,
   lineUserId: string,
   isFollowing: boolean,
+  lineAccountId?: string | null,
 ): Promise<void> {
+  if (lineAccountId === null || lineAccountId === undefined) {
+    await db
+      .prepare(
+        `UPDATE friends
+           SET is_following = ?, updated_at = ?
+         WHERE line_user_id = ? AND line_account_id IS NULL`,
+      )
+      .bind(isFollowing ? 1 : 0, jstNow(), lineUserId)
+      .run();
+    return;
+  }
   await db
     .prepare(
       `UPDATE friends
-       SET is_following = ?, updated_at = ?
-       WHERE line_user_id = ?`,
+         SET is_following = ?, updated_at = ?
+       WHERE line_user_id = ? AND line_account_id = ?`,
     )
-    .bind(isFollowing ? 1 : 0, jstNow(), lineUserId)
+    .bind(isFollowing ? 1 : 0, jstNow(), lineUserId, lineAccountId)
     .run();
 }
 

@@ -442,7 +442,8 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    await updateFriendFollowStatus(db, userId, false);
+    // Codex P1 修正: lineAccountId を渡して multi-account 境界を守る
+    await updateFriendFollowStatus(db, userId, false, lineAccountId ?? null);
     return;
   }
 

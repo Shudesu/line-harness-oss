@@ -53,9 +53,39 @@ stripe.get('/api/integrations/stripe/events', async (c) => {
 
 // ========== Stripe Webhookレシーバー ==========
 
-/** Stripe署名検証 */
+/**
+ * Stripe 署名検証 (Codex P1 修正: timestamp tolerance + 定時間比較)
+ *
+ * Stripe webhook の正規ロジック:
+ *  - Stripe-Signature: t=<timestamp>,v1=<hex>
+ *  - 期待される HMAC: HMAC_SHA256(secret, "{timestamp}.{rawBody}")
+ *  - timestamp は Unix 秒。Stripe SDK は ±5 分以内を許容。
+ *
+ * 修正点:
+ *  - tolerance を 5 分に設定 (replay 攻撃を抑止)
+ *  - 文字列比較を timingSafeEqual 相当 (Web Crypto では bytes 比較で定時間化)
+ */
+const STRIPE_TOLERANCE_SECONDS = 300; // 5 分
+
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+function hexToBytes(hex: string): Uint8Array | null {
+  if (hex.length % 2 !== 0) return null;
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    const v = parseInt(hex.substr(i * 2, 2), 16);
+    if (Number.isNaN(v)) return null;
+    bytes[i] = v;
+  }
+  return bytes;
+}
+
 async function verifyStripeSignature(secret: string, rawBody: string, sigHeader: string): Promise<boolean> {
-  // Stripe署名形式: t=timestamp,v1=signature
   const parts = Object.fromEntries(
     sigHeader.split(',').map((p) => {
       const [k, ...v] = p.split('=');
@@ -65,6 +95,15 @@ async function verifyStripeSignature(secret: string, rawBody: string, sigHeader:
   const timestamp = parts.t;
   const expectedSig = parts.v1;
   if (!timestamp || !expectedSig) return false;
+
+  // タイムスタンプ tolerance チェック (replay 防止)
+  const tsNum = Number(timestamp);
+  if (!Number.isFinite(tsNum)) return false;
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSec - tsNum) > STRIPE_TOLERANCE_SECONDS) {
+    console.warn(`[stripe] signature timestamp outside tolerance: ts=${tsNum}, now=${nowSec}`);
+    return false;
+  }
 
   const encoder = new TextEncoder();
   const signedPayload = `${timestamp}.${rawBody}`;
@@ -76,10 +115,11 @@ async function verifyStripeSignature(secret: string, rawBody: string, sigHeader:
     ['sign'],
   );
   const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
-  const computedSig = Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  return computedSig === expectedSig;
+
+  const computedBytes = new Uint8Array(sig);
+  const expectedBytes = hexToBytes(expectedSig);
+  if (!expectedBytes) return false;
+  return constantTimeEqual(computedBytes, expectedBytes);
 }
 
 stripe.post('/api/integrations/stripe/webhook', async (c) => {
@@ -102,142 +142,135 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
       body = await c.req.json<StripeWebhookBody>();
     }
 
-    // Codex P1#1 修正: 早期スキップを廃止。重複 event は INSERT 段階で
-    // stripe_event_id UNIQUE 制約に頼り、side effects は別途冪等化する。
-    const existing = await getStripeEventByStripeId(c.env.DB, body.id);
-
     const obj = body.data.object;
     const db = c.env.DB;
 
     // メタデータからfriendIdを取得（Stripeのメタデータにline_friend_idを設定している想定）
     const friendId = obj.metadata?.line_friend_id ?? null;
 
-    // イベントを記録 (重複時は INSERT 失敗を捕捉)
-    let event = existing;
-    if (!existing) {
-      try {
-        event = await createStripeEvent(db, {
-          stripeEventId: body.id,
-          eventType: body.type,
-          friendId: friendId ?? undefined,
-          amount: obj.amount,
-          currency: obj.currency,
-          metadata: JSON.stringify(obj.metadata ?? {}),
-        });
-      } catch (e) {
-        // UNIQUE 違反 = 並行受信、既に他のリクエストが処理中
-        const refetched = await getStripeEventByStripeId(db, body.id);
-        if (refetched) event = refetched;
-        else throw e;
-      }
+    // Codex P1 修正 v3: stripe_events INSERT 成功が「処理権の獲得」(Stripe推奨の event-id idempotency)。
+    // - 成功 = この request が最初の処理担当 → 全 side effects を実行
+    // - UNIQUE 違反 = 既に別の request が処理した/中 → 全 side effects スキップ
+    // これで applyScoring / 自動タグ / cv_fire の重複実行を完全に防げる。
+    let claimed = false;
+    let event;
+    try {
+      event = await createStripeEvent(db, {
+        stripeEventId: body.id,
+        eventType: body.type,
+        friendId: friendId ?? undefined,
+        amount: obj.amount,
+        currency: obj.currency,
+        metadata: JSON.stringify(obj.metadata ?? {}),
+      });
+      claimed = true;
+    } catch {
+      // UNIQUE 違反 (= 重複 webhook)
+      const refetched = await getStripeEventByStripeId(db, body.id);
+      event = refetched ?? undefined;
     }
-
-    // Codex P1#1 副作用冪等化: 購入アクションは stripe_purchases.stripe_event_id の
-    // 存在で既処理判定 (UNIQUE INDEX を migration 065 で追加済)。
-    // 既処理ならスキップ、未処理なら実行。これで再送時の永久ロストを防ぐ。
-    const alreadyHandled = await db
-      .prepare(`SELECT 1 FROM stripe_purchases WHERE stripe_event_id = ? LIMIT 1`)
-      .bind(body.id)
-      .first<{ '1': number }>();
-    if (alreadyHandled) {
+    if (!claimed) {
       return c.json({
         success: true,
-        data: { id: event?.id, message: 'Already handled (side effects done)' },
+        data: { id: event?.id, message: 'Already handled (stripe_events UNIQUE)' },
       });
     }
 
-    // 決済成功時の自動処理
+    // 決済成功時の自動処理 (claim 後だから安全に実行可)
     if (body.type === 'payment_intent.succeeded' && friendId) {
-      const { applyScoring } = await import('@line-crm/db');
-      await applyScoring(db, friendId, 'purchase');
-
-      // 自動タグ付け（product_idベース）
-      const productId = obj.metadata?.product_id;
-      if (productId) {
-        const tag = await db
-          .prepare(`SELECT id FROM tags WHERE name = ?`)
-          .bind(`purchased_${productId}`)
-          .first<{ id: string }>();
-        if (tag) {
-          await db
-            .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
-            .bind(friendId, tag.id, jstNow())
-            .run();
-        }
-      }
-
-      // Codex P1 修正 v2: stripe_purchases INSERT 成功を「処理権の獲得」にする。
-      // 並行受信時、UNIQUE(stripe_event_id) 制約により INSERT に成功するリクエストは
-      // ちょうど1個。それだけが副作用を実行し、他はスキップ → race condition 解消。
-      // 30秒タイムアウト回避のため、副作用群は waitUntil で非同期化。
+      // 重い処理は waitUntil で非同期化 (LINE/Stripe の 30 秒タイムアウト回避)。
+      // claim 済みなので二重実行は起きない。
       const priceId = (obj.metadata?.price_id as string | undefined) ?? null;
       const sessionId = (obj.metadata?.session_id as string | undefined) ?? null;
       const amount = obj.amount ?? 0;
       const eventCurrency = obj.currency ?? 'jpy';
       const eventId = body.id;
       const env = c.env;
+      const legacyProductId = obj.metadata?.product_id;
+
       c.executionCtx.waitUntil(
         (async () => {
           try {
-            if (!priceId) return;
-            const { getStripeProductByPriceId, createStripePurchase, enrollFriendInScenario, addTagToFriend } = await import('@line-crm/db');
-            const product = await getStripeProductByPriceId(db, priceId);
-            if (!product) return;
-            // INSERT 成功 = この request が処理権を獲得
-            let claimed = false;
-            try {
-              await createStripePurchase(db, {
-                friendId,
-                stripeProductId: product.id,
-                stripeEventId: eventId,
-                stripeSessionId: sessionId,
-                amount,
-                currency: eventCurrency,
-              });
-              claimed = true;
-            } catch (e) {
-              // UNIQUE 違反 = 他のリクエストが先に処理権を獲得済み、副作用スキップ
-              console.log('[stripe] purchase claim lost (race), skipping side effects', e);
-              return;
-            }
-            if (!claimed) return;
-            if (product.on_purchase_tag_id) {
-              try { await addTagToFriend(db, friendId, product.on_purchase_tag_id); }
-              catch (e) { console.error('[stripe] purchase tag attach failed', e); }
-            }
-            if (product.on_purchase_scenario_id) {
-              try { await enrollFriendInScenario(db, friendId, product.on_purchase_scenario_id); }
-              catch (e) { console.error('[stripe] purchase scenario enroll failed', e); }
-            }
-            if (product.on_purchase_message_template_id) {
+            // (1) スコアリング
+            const { applyScoring } = await import('@line-crm/db');
+            try { await applyScoring(db, friendId, 'purchase'); }
+            catch (e) { console.error('[stripe] applyScoring failed', e); }
+
+            // (2) 旧 product_id ベース自動タグ (purchased_xxx)
+            if (legacyProductId) {
               try {
-                const { getMessageTemplateById, getFriendById, getLineAccountById } = await import('@line-crm/db');
-                const tmpl = await getMessageTemplateById(db, product.on_purchase_message_template_id);
-                const friend = await getFriendById(db, friendId);
-                if (tmpl && friend?.line_user_id && (friend as unknown as { line_account_id?: string }).line_account_id) {
-                  const acc = await getLineAccountById(db, (friend as unknown as { line_account_id: string }).line_account_id);
-                  if (acc) {
-                    const { resolveAccessToken } = await import('../lib/account-token.js');
-                    const token = await resolveAccessToken(env, acc.channel_access_token);
-                    const { LineClient } = await import('@line-crm/line-sdk');
-                    const { buildMessage } = await import('../services/step-delivery.js');
-                    const message = buildMessage(tmpl.message_type, tmpl.message_content);
-                    await new LineClient(token).pushMessage(friend.line_user_id, [message]);
+                const tag = await db
+                  .prepare(`SELECT id FROM tags WHERE name = ?`)
+                  .bind(`purchased_${legacyProductId}`)
+                  .first<{ id: string }>();
+                if (tag) {
+                  await db
+                    .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
+                    .bind(friendId, tag.id, jstNow())
+                    .run();
+                }
+              } catch (e) { console.error('[stripe] legacy auto-tag failed', e); }
+            }
+
+            // (3) 新 stripe_products / purchases / Phase 2-E 購入者限定アクション
+            if (priceId) {
+              const { getStripeProductByPriceId, createStripePurchase, enrollFriendInScenario, addTagToFriend } = await import('@line-crm/db');
+              const product = await getStripeProductByPriceId(db, priceId);
+              if (product) {
+                try {
+                  await createStripePurchase(db, {
+                    friendId,
+                    stripeProductId: product.id,
+                    stripeEventId: eventId,
+                    stripeSessionId: sessionId,
+                    amount,
+                    currency: eventCurrency,
+                  });
+                } catch (e) {
+                  // ここは stripe_events claim 済なので来ないはずだが、保険
+                  console.log('[stripe] purchase row already exists', e);
+                }
+                if (product.on_purchase_tag_id) {
+                  try { await addTagToFriend(db, friendId, product.on_purchase_tag_id); }
+                  catch (e) { console.error('[stripe] purchase tag attach failed', e); }
+                }
+                if (product.on_purchase_scenario_id) {
+                  try { await enrollFriendInScenario(db, friendId, product.on_purchase_scenario_id); }
+                  catch (e) { console.error('[stripe] purchase scenario enroll failed', e); }
+                }
+                if (product.on_purchase_message_template_id) {
+                  try {
+                    const { getMessageTemplateById, getFriendById, getLineAccountById } = await import('@line-crm/db');
+                    const tmpl = await getMessageTemplateById(db, product.on_purchase_message_template_id);
+                    const friend = await getFriendById(db, friendId);
+                    if (tmpl && friend?.line_user_id && (friend as unknown as { line_account_id?: string }).line_account_id) {
+                      const acc = await getLineAccountById(db, (friend as unknown as { line_account_id: string }).line_account_id);
+                      if (acc) {
+                        const { resolveAccessToken } = await import('../lib/account-token.js');
+                        const token = await resolveAccessToken(env, acc.channel_access_token);
+                        const { LineClient } = await import('@line-crm/line-sdk');
+                        const { buildMessage } = await import('../services/step-delivery.js');
+                        const message = buildMessage(tmpl.message_type, tmpl.message_content);
+                        await new LineClient(token).pushMessage(friend.line_user_id, [message]);
+                      }
+                    }
+                  } catch (e) {
+                    console.error('[stripe] purchase message push failed', e);
                   }
                 }
-              } catch (e) {
-                console.error('[stripe] purchase message push failed', e);
               }
             }
+
+            // (4) イベントバス発火 (自動化ルール用)
+            try {
+              const { fireEvent } = await import('../services/event-bus.js');
+              await fireEvent(db, 'cv_fire', { friendId, eventData: { type: 'purchase', amount, stripeEventId: eventId } });
+            } catch (e) { console.error('[stripe] fireEvent failed', e); }
           } catch (e) {
             console.error('[stripe] async purchase actions failed', e);
           }
         })(),
       );
-
-      // イベントバスに発火（自動化ルール用）
-      const { fireEvent } = await import('../services/event-bus.js');
-      await fireEvent(db, 'cv_fire', { friendId, eventData: { type: 'purchase', amount: obj.amount, stripeEventId: body.id } });
     }
 
     // Phase 2-D: subscription 系イベントを stripe_subscriptions に同期

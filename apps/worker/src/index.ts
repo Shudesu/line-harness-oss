@@ -617,9 +617,9 @@ async function scheduled(
   // 全アカウントの配信が各ループで重複実行されていたバグを修正
   const jobs = [];
   jobs.push(
-    processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL),
+    processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL, env),
     processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env),
-    processReminderDeliveries(env.DB, defaultLineClient),
+    processReminderDeliveries(env.DB, defaultLineClient, env),
   );
   // キュー処理は1回だけ実行（内部でアカウント別lineClientを解決する）
   // ロック解除: タイムアウトでstuckした配信を復旧

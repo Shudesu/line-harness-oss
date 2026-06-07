@@ -1,7 +1,29 @@
 import { Hono } from 'hono';
+import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
 const accountSettings = new Hono<Env>();
+
+/**
+ * Codex P1 修正: accountId が実在の line_accounts 行か確認。
+ * UUID 形式チェック + 存在確認で、任意文字列・他テナント漏洩を防ぐ。
+ * (per-staff scoping は schema 拡張が必要なので別タスク)
+ */
+const idPattern = /^[a-f0-9-]{32,36}$/i;
+async function validateAccountIdOrReject(
+  db: D1Database,
+  accountId: string,
+): Promise<{ ok: true } | { ok: false; status: 400 | 404; error: string }> {
+  if (!idPattern.test(accountId)) {
+    return { ok: false, status: 400, error: 'accountId の形式が不正です' };
+  }
+  const row = await db
+    .prepare('SELECT 1 as exists_flag FROM line_accounts WHERE id = ? LIMIT 1')
+    .bind(accountId)
+    .first<{ exists_flag: number }>();
+  if (!row) return { ok: false, status: 404, error: 'accountId が見つかりません' };
+  return { ok: true };
+}
 
 // GET /api/account-settings/test-recipients?accountId=xxx
 accountSettings.get('/api/account-settings/test-recipients', async (c) => {
@@ -32,10 +54,12 @@ accountSettings.get('/api/account-settings/test-recipients', async (c) => {
   });
 });
 
-// PUT /api/account-settings/test-recipients
-accountSettings.put('/api/account-settings/test-recipients', async (c) => {
+// PUT /api/account-settings/test-recipients (要 owner/admin)
+accountSettings.put('/api/account-settings/test-recipients', requireRole('owner', 'admin'), async (c) => {
   const body = await c.req.json<{ accountId: string; friendIds: string[] }>();
   if (!body.accountId) return c.json({ success: false, error: 'accountId required' }, 400);
+  const v = await validateAccountIdOrReject(c.env.DB, body.accountId);
+  if (!v.ok) return c.json({ success: false, error: v.error }, v.status);
 
   const id = crypto.randomUUID();
   const now = new Date(Date.now() + 9 * 60 * 60_000).toISOString().replace('Z', '+09:00');
@@ -77,8 +101,8 @@ accountSettings.get('/api/account-settings/greeting', async (c) => {
   });
 });
 
-// PUT /api/account-settings/greeting
-accountSettings.put('/api/account-settings/greeting', async (c) => {
+// PUT /api/account-settings/greeting (要 owner/admin)
+accountSettings.put('/api/account-settings/greeting', requireRole('owner', 'admin'), async (c) => {
   let body: { accountId?: string; text?: string | null };
   try {
     body = await c.req.json();
@@ -88,6 +112,8 @@ accountSettings.put('/api/account-settings/greeting', async (c) => {
   if (!body.accountId) {
     return c.json({ success: false, error: 'accountId required' }, 400);
   }
+  const v = await validateAccountIdOrReject(c.env.DB, body.accountId);
+  if (!v.ok) return c.json({ success: false, error: v.error }, v.status);
 
   const text = (body.text ?? '').trim();
   if (text.length > 5000) {

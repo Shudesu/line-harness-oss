@@ -226,7 +226,9 @@ broadcasts.get('/api/broadcasts/:id/per-account-stats', async (c) => {
           const account = await getLineAccountById(c.env.DB, aid);
           if (!account) return;
           try {
-            const client = new LineClient(account.channel_access_token);
+            const { resolveAccessToken } = await import('../lib/account-token.js');
+            const token = await resolveAccessToken(c.env, account.channel_access_token);
+            const client = new LineClient(token);
             const response = await client.getUnitInsight(aggregationUnit, sentDate, sentDate) as Record<string, unknown>;
             const messages = response.messages as Array<Record<string, unknown>> | undefined;
             const overview = messages?.[0] || {};
@@ -521,7 +523,10 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     if (broadcastAccountId) {
       const { getLineAccountById } = await import('@line-crm/db');
       const account = await getLineAccountById(c.env.DB, broadcastAccountId as string);
-      if (account) accessToken = account.channel_access_token;
+      if (account) {
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        accessToken = await resolveAccessToken(c.env, account.channel_access_token);
+      }
     }
     const lineClient = new LineClient(accessToken);
 
@@ -673,7 +678,10 @@ broadcasts.post('/api/broadcasts/:id/fetch-insight', async (c) => {
       if (accountId) {
         const { getLineAccountById } = await import('@line-crm/db');
         const account = await getLineAccountById(c.env.DB, accountId);
-        if (account) accessToken = account.channel_access_token;
+        if (account) {
+          const { resolveAccessToken } = await import('../lib/account-token.js');
+          accessToken = await resolveAccessToken(c.env, account.channel_access_token);
+        }
       }
       const lineClient = new LineClient(accessToken);
       const response = await lineClient.getMessageEventInsight(lineRequestId) as Record<string, unknown>;
@@ -707,7 +715,9 @@ broadcasts.post('/api/broadcasts/:id/fetch-insight', async (c) => {
         // API は叩けるので、過去配信の集計を欠損させない。
         const account = await getLineAccountById(c.env.DB, aid);
         if (!account) continue;
-        const client = new LineClient(account.channel_access_token);
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        const token = await resolveAccessToken(c.env, account.channel_access_token);
+        const client = new LineClient(token);
         try {
           const response = await client.getUnitInsight(aggregationUnit, sentDate, sentDate) as Record<string, unknown>;
           responses.push({ accountId: aid, data: response });
@@ -749,7 +759,10 @@ broadcasts.post('/api/broadcasts/:id/fetch-insight', async (c) => {
       if (accountId) {
         const { getLineAccountById } = await import('@line-crm/db');
         const account = await getLineAccountById(c.env.DB, accountId);
-        if (account) accessToken = account.channel_access_token;
+        if (account) {
+          const { resolveAccessToken } = await import('../lib/account-token.js');
+          accessToken = await resolveAccessToken(c.env, account.channel_access_token);
+        }
       }
       const lineClient = new LineClient(accessToken);
       const response = await lineClient.getUnitInsight(aggregationUnit, sentDate, sentDate) as Record<string, unknown>;
@@ -829,7 +842,9 @@ broadcasts.post('/api/broadcasts/:id/test-send', async (c) => {
 
     const account = await getLineAccountById(c.env.DB, accountId);
     if (!account) return c.json({ success: false, error: 'LINE account not found' }, 400);
-    const lineClient = new LineClient(account.channel_access_token);
+    const { resolveAccessToken } = await import('../lib/account-token.js');
+    const token = await resolveAccessToken(c.env, account.channel_access_token);
+    const lineClient = new LineClient(token);
 
     // Build message with test label
     let messageContent = broadcast.message_content;

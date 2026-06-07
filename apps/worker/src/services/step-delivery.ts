@@ -98,6 +98,8 @@ export async function processStepDeliveries(
   db: D1Database,
   lineClient: LineClient,
   workerUrl?: string,
+  /** Phase 1-G: 暗号化 token を復号するためのキー (LINE_TOKEN_ENC_KEY) を含む env */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   const now = jstNow();
   const dueFriendScenarios = await getFriendScenariosDueForDelivery(db, now);
@@ -111,7 +113,7 @@ export async function processStepDeliveries(
       if (i > 0) {
         await sleep(addJitter(50, 200));
       }
-      const sent = await processSingleDelivery(db, lineClient, fs, workerUrl);
+      const sent = await processSingleDelivery(db, lineClient, fs, workerUrl, env);
       if (sent) sendCount++;
     } catch (err) {
       console.error(`Error processing friend_scenario ${fs.id}:`, err);
@@ -133,6 +135,8 @@ async function processSingleDelivery(
     started_at: string;
   },
   workerUrl?: string,
+  /** Phase 1-G: 暗号化 token を復号するためのキー (LINE_TOKEN_ENC_KEY) を含む env */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<boolean> {
   // Optimistic lock: claim this delivery (prevents duplicate sends from parallel workers)
   const claimed = await claimFriendScenarioForDelivery(db, fs.id, fs.current_step_order);
@@ -231,8 +235,11 @@ async function processSingleDelivery(
     const { getLineAccountById } = await import('@line-crm/db');
     const account = await getLineAccountById(db, friendAccountId);
     if (account) {
+      // Phase 1-G: 透過復号
+      const { resolveAccessToken } = await import('../lib/account-token.js');
+      const token = env ? await resolveAccessToken(env, account.channel_access_token) : account.channel_access_token;
       const { LineClient: LC } = await import('@line-crm/line-sdk');
-      deliveryClient = new LC(account.channel_access_token);
+      deliveryClient = new LC(token);
     }
   }
   await deliveryClient.pushMessage(friend.line_user_id, [message]);

@@ -135,8 +135,10 @@ app.get('/friends/export.csv', async (c) => {
     ? `AND f.id IN (SELECT ft.friend_id FROM friend_tags ft WHERE ft.tag_id = ?)`
     : '';
 
+  // Codex P1 修正: NULL 混入を防ぐため厳密一致のみ。
+  // NULL 行 (旧データ・未所属) は別アカウントの CSV に出さない。
   const accountFilter = lineAccountId
-    ? `AND (f.line_account_id IS NULL OR f.line_account_id = ?)`
+    ? `AND f.line_account_id = ?`
     : '';
 
   const bind: unknown[] = [];

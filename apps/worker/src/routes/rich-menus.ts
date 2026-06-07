@@ -10,7 +10,11 @@ async function resolveLineClient(c: { env: Env['Bindings']; req: { query(key: st
   const accountId = c.req.query('accountId');
   if (accountId) {
     const account = await getLineAccountById(c.env.DB, accountId);
-    if (account) return new LineClient(account.channel_access_token);
+    if (account) {
+      const { resolveAccessToken } = await import('../lib/account-token.js');
+      const token = await resolveAccessToken(c.env, account.channel_access_token);
+      return new LineClient(token);
+    }
   }
   return new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
 }
@@ -90,7 +94,10 @@ richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
     const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
     if (friendAccountId) {
       const account = await getLineAccountById(db, friendAccountId);
-      if (account) accessToken = account.channel_access_token;
+      if (account) {
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        accessToken = await resolveAccessToken(c.env, account.channel_access_token);
+      }
     }
     const lineClient = new LineClient(accessToken);
     await lineClient.linkRichMenuToUser(friend.line_user_id, body.richMenuId);
@@ -118,7 +125,10 @@ richMenus.delete('/api/friends/:friendId/rich-menu', async (c) => {
     const friendAccId = (friend as unknown as Record<string, string | null>).line_account_id;
     if (friendAccId) {
       const account = await getLineAccountById(c.env.DB, friendAccId);
-      if (account) accessToken = account.channel_access_token;
+      if (account) {
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        accessToken = await resolveAccessToken(c.env, account.channel_access_token);
+      }
     }
     const lineClient = new LineClient(accessToken);
     await lineClient.unlinkRichMenuFromUser(friend.line_user_id);
@@ -146,7 +156,10 @@ richMenus.get('/api/friends/:friendId/rich-menu', async (c) => {
     const friendAccId = (friend as unknown as Record<string, string | null>).line_account_id;
     if (friendAccId) {
       const account = await getLineAccountById(db, friendAccId);
-      if (account) accessToken = account.channel_access_token;
+      if (account) {
+        const { resolveAccessToken } = await import('../lib/account-token.js');
+        accessToken = await resolveAccessToken(c.env, account.channel_access_token);
+      }
     }
     const lineClient = new LineClient(accessToken);
 

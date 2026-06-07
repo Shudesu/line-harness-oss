@@ -110,6 +110,10 @@ dashboardStats.get('/api/dashboard/stats', async (c) => {
      ORDER BY date ASC`;
 
   // フォーム回答 (form_submissions.created_at)
+  // Codex P1 修正: lineAccountId フィルタを friend 経由で適用 (NULL は除外、厳密一致のみ)
+  const formsAccountFilter = lineAccountId
+    ? 'AND f.line_account_id = ?'
+    : '';
   const formsSql = `
     SELECT strftime('%Y-%m-%d', fs.created_at) as date,
            COUNT(*) as count,
@@ -118,7 +122,8 @@ dashboardStats.get('/api/dashboard/stats', async (c) => {
              WHEN datetime(fs.created_at) >= datetime('now', '+9 hours', '-${days * 2} days') THEN 'prev'
            END as period
       FROM form_submissions fs
-     WHERE datetime(fs.created_at) >= datetime('now', '+9 hours', '-${days * 2} days')
+      LEFT JOIN friends f ON f.id = fs.friend_id
+     WHERE datetime(fs.created_at) >= datetime('now', '+9 hours', '-${days * 2} days') ${formsAccountFilter}
      GROUP BY date, period
      ORDER BY date ASC`;
 
@@ -154,7 +159,7 @@ dashboardStats.get('/api/dashboard/stats', async (c) => {
     const [friendAdds, blocks, forms, outgoing, incoming] = await Promise.all([
       buildDailyCounts(friendAddsSql, accountBinds),
       buildDailyCounts(blocksSql, accountBinds),
-      buildDailyCounts(formsSql, []),
+      buildDailyCounts(formsSql, accountBinds), // Codex P1 修正
       buildDailyCounts(outgoingSql, accountBinds),
       buildDailyCounts(incomingSql, accountBinds),
     ]);

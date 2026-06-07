@@ -101,6 +101,7 @@ async function resolveFriendAndAccessToken(
   db: D1Database,
   friendId: string,
   defaultAccessToken: string,
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ) {
   const friend = await getFriendById(db, friendId);
   if (!friend) {
@@ -116,7 +117,13 @@ async function resolveFriendAndAccessToken(
     return { friend, accessToken: defaultAccessToken };
   }
 
-  return { friend, accessToken: account.channel_access_token };
+  // Codex P1 修正: 暗号化 token を復号
+  let token = account.channel_access_token;
+  if (env) {
+    const { resolveAccessToken } = await import('../lib/account-token.js');
+    token = await resolveAccessToken(env, token);
+  }
+  return { friend, accessToken: token };
 }
 
 // ========== オペレーターCRUD ==========
@@ -496,6 +503,7 @@ chats.post('/api/chats/:id/loading', async (c) => {
       c.env.DB,
       chat.friend_id,
       c.env.LINE_CHANNEL_ACCESS_TOKEN,
+      c.env, // Codex P1 修正: 暗号化 token 復号用
     );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 
@@ -527,6 +535,7 @@ chats.post('/api/chats/:id/send', async (c) => {
       c.env.DB,
       chat.friend_id,
       c.env.LINE_CHANNEL_ACCESS_TOKEN,
+      c.env, // Codex P1 修正: 暗号化 token 復号用
     );
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 

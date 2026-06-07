@@ -19,6 +19,8 @@ import { addJitter, sleep } from './stealth.js';
 export async function processReminderDeliveries(
   db: D1Database,
   lineClient: LineClient,
+  /** Phase 1-G: 暗号化 token を復号するためのキー (LINE_TOKEN_ENC_KEY) を含む env */
+  env?: { LINE_TOKEN_ENC_KEY?: string },
 ): Promise<void> {
   const now = jstNow();
   const dueReminders = await getDueReminderDeliveries(db, now);
@@ -43,8 +45,11 @@ export async function processReminderDeliveries(
         const { getLineAccountById } = await import('@line-crm/db');
         const account = await getLineAccountById(db, friendAccountId);
         if (account) {
+          // Phase 1-G: 透過復号
+          const { resolveAccessToken } = await import('../lib/account-token.js');
+          const token = env ? await resolveAccessToken(env, account.channel_access_token) : account.channel_access_token;
           const { LineClient: LC } = await import('@line-crm/line-sdk');
-          deliveryClient = new LC(account.channel_access_token);
+          deliveryClient = new LC(token);
         }
       }
 
