@@ -13,6 +13,7 @@ import {
 } from '@line-crm/db';
 import type { TrafficPoolWithAccount, PoolAccountWithDetails } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { requireRole } from '../middleware/role-guard.js';
 
 const trafficPools = new Hono<Env>();
 
@@ -65,7 +66,7 @@ trafficPools.get('/api/traffic-pools', async (c) => {
 });
 
 // POST /api/traffic-pools — create
-trafficPools.post('/api/traffic-pools', async (c) => {
+trafficPools.post('/api/traffic-pools', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json<{
       slug: string;
@@ -90,7 +91,7 @@ trafficPools.post('/api/traffic-pools', async (c) => {
 });
 
 // PUT /api/traffic-pools/:id — update (switch account here)
-trafficPools.put('/api/traffic-pools/:id', async (c) => {
+trafficPools.put('/api/traffic-pools/:id', requireRole('owner', 'admin'), async (c) => {
   try {
     const id = c.req.param('id');
     const body = await c.req.json<{
@@ -116,7 +117,7 @@ trafficPools.put('/api/traffic-pools/:id', async (c) => {
 });
 
 // DELETE /api/traffic-pools/:id
-trafficPools.delete('/api/traffic-pools/:id', async (c) => {
+trafficPools.delete('/api/traffic-pools/:id', requireRole('owner'), async (c) => {
   try {
     const id = c.req.param('id');
     const existing = await getTrafficPoolById(c.env.DB, id);
@@ -161,7 +162,7 @@ trafficPools.get('/api/traffic-pools/:id/accounts', async (c) => {
 });
 
 // POST /api/traffic-pools/:id/accounts — add account to pool
-trafficPools.post('/api/traffic-pools/:id/accounts', async (c) => {
+trafficPools.post('/api/traffic-pools/:id/accounts', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json<{ lineAccountId: string }>();
     if (!body.lineAccountId) {
@@ -179,7 +180,7 @@ trafficPools.post('/api/traffic-pools/:id/accounts', async (c) => {
 });
 
 // PUT /api/traffic-pools/:id/accounts/:accountId — toggle active
-trafficPools.put('/api/traffic-pools/:id/accounts/:accountId', async (c) => {
+trafficPools.put('/api/traffic-pools/:id/accounts/:accountId', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json<{ isActive: boolean }>();
     const result = await togglePoolAccount(c.env.DB, c.req.param('accountId'), body.isActive);
@@ -192,7 +193,7 @@ trafficPools.put('/api/traffic-pools/:id/accounts/:accountId', async (c) => {
 });
 
 // DELETE /api/traffic-pools/:id/accounts/:accountId — remove account from pool
-trafficPools.delete('/api/traffic-pools/:id/accounts/:accountId', async (c) => {
+trafficPools.delete('/api/traffic-pools/:id/accounts/:accountId', requireRole('owner'), async (c) => {
   try {
     const deleted = await removePoolAccount(c.env.DB, c.req.param('accountId'));
     if (!deleted) return c.json({ success: false, error: 'Not found' }, 404);

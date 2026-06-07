@@ -11,6 +11,30 @@ import type {
 
 const LINE_API_BASE = 'https://api.line.me';
 
+// P1 緊急修正 (2026-06-07):
+//   1. fetch にタイムアウト無し → Worker の 30 秒 wall 制限超過リスク。
+//      AbortSignal.timeout(15_000) で 15 秒に強制打ち切り (push/multicast/broadcast 全て)。
+//   2. 429 (rate limit) リトライ無し → broadcast が silent loss。
+//      Retry-After ヘッダを尊重、指数バックオフで最大 2 回までリトライ。
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_RETRY_ATTEMPTS = 2;
+const RETRY_BACKOFF_MS = [3_000, 6_000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(header: string | null, fallbackMs: number): number {
+  if (!header) return fallbackMs;
+  // Retry-After は秒数か HTTP-date。LINE は秒数で返すので数値優先。
+  const sec = Number(header);
+  if (Number.isFinite(sec) && sec > 0) {
+    // Worker の 30 秒制限を超えない範囲にクリップ
+    return Math.min(sec * 1000, 10_000);
+  }
+  return fallbackMs;
+}
+
 export class LineClient {
   constructor(private readonly channelAccessToken: string) {}
 
@@ -23,7 +47,7 @@ export class LineClient {
   ): Promise<{ data: unknown; headers: Headers }> {
     const url = `${LINE_API_BASE}${path}`;
 
-    const options: RequestInit = {
+    const baseOptions: RequestInit = {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -32,28 +56,70 @@ export class LineClient {
     };
 
     if (method !== 'GET' && method !== 'DELETE' && body !== undefined) {
-      options.body = JSON.stringify(body);
+      baseOptions.body = JSON.stringify(body);
     }
 
-    const res = await fetch(url, options);
+    let lastError: Error | null = null;
 
-    if (!res.ok) {
+    for (let attempt = 0; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+      // 各試行ごとに新しい AbortSignal を生成 (使い回し不可)
+      const options: RequestInit = {
+        ...baseOptions,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      };
+
+      let res: Response;
+      try {
+        res = await fetch(url, options);
+      } catch (err) {
+        // AbortError (timeout) は即 throw、リトライしない
+        // (broadcast を 3 回 × 15 秒 = 45 秒待たせると Worker 制限超過)
+        if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+          throw new Error(
+            `LINE API timeout after ${REQUEST_TIMEOUT_MS}ms: ${method} ${path}`,
+          );
+        }
+        throw err;
+      }
+
+      if (res.ok) {
+        // Some endpoints (e.g. push, reply) return an empty body with 200.
+        const contentType = res.headers.get('content-type') ?? '';
+        let data: unknown;
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          data = undefined;
+        }
+        return { data, headers: res.headers };
+      }
+
+      // 429 のみリトライ対象。それ以外は即 throw。
+      if (res.status !== 429) {
+        const text = await res.text().catch(() => '');
+        throw new Error(
+          `LINE API error: ${res.status} ${res.statusText} — ${text}`,
+        );
+      }
+
+      // 429: Retry-After を見て待機 → リトライ
       const text = await res.text().catch(() => '');
-      throw new Error(
+      lastError = new Error(
         `LINE API error: ${res.status} ${res.statusText} — ${text}`,
       );
+
+      if (attempt >= MAX_RETRY_ATTEMPTS) break;
+
+      const fallback = RETRY_BACKOFF_MS[attempt] ?? RETRY_BACKOFF_MS[RETRY_BACKOFF_MS.length - 1];
+      const waitMs = parseRetryAfterMs(res.headers.get('retry-after'), fallback);
+      console.warn(
+        `[line-sdk] 429 rate limit on ${method} ${path}, retry in ${waitMs}ms (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`,
+      );
+      await sleep(waitMs);
     }
 
-    // Some endpoints (e.g. push, reply) return an empty body with 200.
-    const contentType = res.headers.get('content-type') ?? '';
-    let data: unknown;
-    if (contentType.includes('application/json')) {
-      data = await res.json();
-    } else {
-      data = undefined;
-    }
-
-    return { data, headers: res.headers };
+    // 429 リトライ枯渇 → 最後のエラーを throw
+    throw lastError ?? new Error(`LINE API error: 429 retries exhausted on ${method} ${path}`);
   }
 
   // ─── Profile ──────────────────────────────────────────────────────────────

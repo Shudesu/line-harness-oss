@@ -134,6 +134,10 @@ export type Env = {
     // 32 byte / base64 (openssl rand -base64 32) のキー。
     // 未設定なら暗号化機能はオフ (既存平文挙動と完全互換)。
     LINE_TOKEN_ENC_KEY?: string;
+    // P1 (2026-06-07): /api/meet-callback の HMAC-SHA256 署名検証用 secret。
+    // Meet Harness 側で `X-Hyhome-Signature: t=<unix秒>,v1=<hex>` を付与する。
+    // 未設定なら meet-callback は 503 を返して安全側に倒す。
+    MEET_CALLBACK_HMAC_SECRET?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' | 'viewer' };
@@ -628,7 +632,7 @@ async function scheduled(
   jobs.push(recoverStalledBroadcasts(env.DB));
   jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL, env));
   jobs.push(checkAccountHealth(env.DB, env)); // Phase 1-G v3
-  jobs.push(refreshLineAccessTokens(env.DB));
+  jobs.push(refreshLineAccessTokens(env.DB, env)); // P1: env で LINE_TOKEN_ENC_KEY を渡す
 
   await Promise.allSettled(jobs);
 

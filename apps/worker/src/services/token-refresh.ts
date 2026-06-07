@@ -12,9 +12,22 @@
 
 import { getLineAccounts, updateLineAccount } from '@line-crm/db';
 import type { LineAccount } from '@line-crm/db';
+import { encryptToken } from '../lib/token-crypto.js';
 
 const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60_000; // 7 days
 const JST_OFFSET_MS = 9 * 60 * 60_000;
+
+/**
+ * P1 緊急修正 (2026-06-07):
+ *   token refresh 後、`updateLineAccount` で channel_access_token を平文のまま書いていた。
+ *   LINE_TOKEN_ENC_KEY が設定された運用では、Phase 1-G の暗号化が refresh 時に
+ *   silently 平文に戻る (=DB ダンプ流出時の OA 乗っ取りリスクが復活)。
+ *   既存パターン `apps/worker/src/lib/account-token.ts:resolveAccessToken` と対称的に、
+ *   保存直前に env.LINE_TOKEN_ENC_KEY があれば encryptToken で暗号化する。
+ */
+interface TokenRefreshEnv {
+  LINE_TOKEN_ENC_KEY?: string;
+}
 
 function jstNow(): string {
   const jst = new Date(Date.now() + JST_OFFSET_MS);
@@ -55,7 +68,10 @@ async function issueNewToken(
   return res.json() as Promise<TokenResponse>;
 }
 
-export async function refreshLineAccessTokens(db: D1Database): Promise<void> {
+export async function refreshLineAccessTokens(
+  db: D1Database,
+  env?: TokenRefreshEnv,
+): Promise<void> {
   const accounts = await getLineAccounts(db);
 
   for (const account of accounts) {
@@ -67,8 +83,12 @@ export async function refreshLineAccessTokens(db: D1Database): Promise<void> {
       const expiresAt = new Date(Date.now() + token.expires_in * 1000 + JST_OFFSET_MS);
       const expiresAtJst = expiresAt.toISOString().slice(0, -1) + '+09:00';
 
+      // P1: LINE_TOKEN_ENC_KEY が設定されていれば暗号化してから保存する。
+      //     キー未設定なら encryptToken は平文をそのまま返す (=既存挙動と互換)。
+      const tokenToStore = await encryptToken(token.access_token, env?.LINE_TOKEN_ENC_KEY);
+
       await updateLineAccount(db, account.id, {
-        channel_access_token: token.access_token,
+        channel_access_token: tokenToStore,
         token_expires_at: expiresAtJst,
       });
 

@@ -478,15 +478,13 @@ friends.post('/api/friends/bulk/tags', async (c) => {
       }
     }
     const db = c.env.DB;
-    // tag が指定 account に属するか確認
+    // P1 緊急修正: tags テーブルに line_account_id 列が存在しないため、tag 自体の境界は取れない (現状 tags は global)。
+    // friend 側の line_account_id 一致のみで境界を確保する。tag が global 設計なのは別タスクで設計し直す。
     const tagRow = await db
-      .prepare(`SELECT line_account_id FROM tags WHERE id = ?`)
+      .prepare(`SELECT id FROM tags WHERE id = ?`)
       .bind(body.tagId)
-      .first<{ line_account_id: string | null }>();
+      .first<{ id: string }>();
     if (!tagRow) return c.json({ success: false, error: 'tag not found' }, 404);
-    if (tagRow.line_account_id && tagRow.line_account_id !== body.lineAccountId) {
-      return c.json({ success: false, error: 'tag は別の LINE アカウントに属しています' }, 403);
-    }
     // friend が指定 account に属するか一括 SELECT で確認 (N+1 回避)
     const placeholders = body.friendIds.map(() => '?').join(',');
     const friendRows = await db
@@ -544,15 +542,12 @@ friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
       }
     }
     const db = c.env.DB;
-    // tag account 境界
+    // P1 緊急修正: tags は現状 global 設計なので friend 側のみで境界確保
     const tagRow = await db
-      .prepare(`SELECT line_account_id FROM tags WHERE id = ?`)
+      .prepare(`SELECT id FROM tags WHERE id = ?`)
       .bind(tagId)
-      .first<{ line_account_id: string | null }>();
+      .first<{ id: string }>();
     if (!tagRow) return c.json({ success: false, error: 'tag not found' }, 404);
-    if (tagRow.line_account_id && tagRow.line_account_id !== body.lineAccountId) {
-      return c.json({ success: false, error: 'tag は別の LINE アカウントに属しています' }, 403);
-    }
     const placeholders = body.friendIds.map(() => '?').join(',');
     const friendRows = await db
       .prepare(`SELECT id, line_account_id FROM friends WHERE id IN (${placeholders})`)

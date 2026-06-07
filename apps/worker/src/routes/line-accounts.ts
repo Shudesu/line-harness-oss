@@ -114,10 +114,14 @@ lineAccounts.get('/api/line-accounts/:id', async (c) => {
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
+    // P1 緊急修正: viewer もシークレット (channel_access_token / channel_secret 等) を
+    // 読めないように。owner/admin だけが full データを取得可能。
+    // staff / viewer は安全な serializeLineAccount (シークレット除外) のみ。
     const staff = c.get('staff');
-    const data = staff?.role === 'staff'
-      ? serializeLineAccount(account)
-      : serializeLineAccountFull(account);
+    const canSeeSecrets = staff?.role === 'owner' || staff?.role === 'admin';
+    const data = canSeeSecrets
+      ? serializeLineAccountFull(account)
+      : serializeLineAccount(account);
     return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/line-accounts/:id error:', err);

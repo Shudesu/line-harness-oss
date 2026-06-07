@@ -33,6 +33,7 @@ import {
   type R2Like,
   type GroupInput,
 } from '../lib/rich-menu-publisher.js';
+import { requireRole } from '../middleware/role-guard.js';
 
 export const richMenuGroups = new Hono<Env>();
 
@@ -269,7 +270,7 @@ richMenuGroups.get('/api/rich-menu-groups/external/:richMenuId/image', async (c)
 // 取り込み後は通常の編集画面で操作できる。
 //
 // query: { accountId, richMenuId }
-richMenuGroups.post('/api/rich-menu-groups/import', async (c) => {
+richMenuGroups.post('/api/rich-menu-groups/import', requireRole('owner', 'admin'), async (c) => {
   const accountId = c.req.query('accountId');
   const richMenuId = c.req.query('richMenuId');
   if (!accountId || !richMenuId) {
@@ -538,7 +539,7 @@ richMenuGroups.get('/api/rich-menu-groups/external', async (c) => {
 // LINE 上の rich menu を直接削除する (admin 管理外の orphan を片付ける用)。
 // admin 管理されている richMenuId を渡された場合は 409 で拒否
 // (Unpublish 経由で消すべき)。
-richMenuGroups.delete('/api/rich-menu-groups/external/:richMenuId', async (c) => {
+richMenuGroups.delete('/api/rich-menu-groups/external/:richMenuId', requireRole('owner'), async (c) => {
   const richMenuId = c.req.param('richMenuId');
   const accountId = c.req.query('accountId');
   if (!accountId) return c.json({ success: false, error: 'accountId query param required' }, 400);
@@ -629,7 +630,7 @@ richMenuGroups.get('/api/rich-menu-groups/:groupId', async (c) => {
   return c.json({ success: true, data: serializeGroupWithPages(group) });
 });
 
-richMenuGroups.post('/api/rich-menu-groups', async (c) => {
+richMenuGroups.post('/api/rich-menu-groups', requireRole('owner', 'admin'), async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -644,7 +645,7 @@ richMenuGroups.post('/api/rich-menu-groups', async (c) => {
   return c.json({ success: true, data: serializeGroupWithPages(created) });
 });
 
-richMenuGroups.patch('/api/rich-menu-groups/:groupId', async (c) => {
+richMenuGroups.patch('/api/rich-menu-groups/:groupId', requireRole('owner', 'admin'), async (c) => {
   const groupId = c.req.param('groupId');
   const existing = await getRichMenuGroupById(c.env.DB, groupId);
   if (!existing) return c.json({ success: false, error: 'not found' }, 404);
@@ -667,7 +668,7 @@ richMenuGroups.patch('/api/rich-menu-groups/:groupId', async (c) => {
   return c.json({ success: true, data: serializeGroupWithPages(refreshed) });
 });
 
-richMenuGroups.delete('/api/rich-menu-groups/:groupId', async (c) => {
+richMenuGroups.delete('/api/rich-menu-groups/:groupId', requireRole('owner'), async (c) => {
   const groupId = c.req.param('groupId');
   // 公開中の group をいきなり削除すると LINE 上に richmenu / alias / default が
   // 残って復旧不能になる。デフォルトでは status='published' を 409 で reject し、
@@ -691,7 +692,7 @@ richMenuGroups.delete('/api/rich-menu-groups/:groupId', async (c) => {
 
 // ----- Image upload -----
 
-richMenuGroups.post('/api/rich-menu-groups/:groupId/pages/:pageId/image', async (c) => {
+richMenuGroups.post('/api/rich-menu-groups/:groupId/pages/:pageId/image', requireRole('owner', 'admin'), async (c) => {
   const { groupId, pageId } = c.req.param();
   const contentType = c.req.header('content-type') ?? '';
   if (contentType !== 'image/png' && contentType !== 'image/jpeg') {
@@ -836,7 +837,7 @@ function createLineClient(channelAccessToken: string): LineRichMenuClient {
   };
 }
 
-richMenuGroups.post('/api/rich-menu-groups/:groupId/publish', async (c) => {
+richMenuGroups.post('/api/rich-menu-groups/:groupId/publish', requireRole('owner', 'admin'), async (c) => {
   const groupId = c.req.param('groupId');
   const group = await getRichMenuGroupWithPages(c.env.DB, groupId);
   if (!group) return c.json({ success: false, error: 'not found' }, 404);
@@ -894,7 +895,7 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/publish', async (c) => {
 // LINE 上の alias / richmenu / default を全削除して draft に戻す。
 // 削除フローや、別 group を default にしたい時に使う。idempotent (既に消えてる
 // alias / richmenu は 404 を許容)。
-richMenuGroups.post('/api/rich-menu-groups/:groupId/unpublish', async (c) => {
+richMenuGroups.post('/api/rich-menu-groups/:groupId/unpublish', requireRole('owner', 'admin'), async (c) => {
   const groupId = c.req.param('groupId');
   const group = await getRichMenuGroupWithPages(c.env.DB, groupId);
   if (!group) return c.json({ success: false, error: 'not found' }, 404);
@@ -941,7 +942,7 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/unpublish', async (c) => {
 //     同 account 内の他 group の is_default_for_all は 0 にリセット。
 //
 // 前提: group が published かつ default_page に line_richmenu_id がセット済み。
-richMenuGroups.post('/api/rich-menu-groups/:groupId/apply-to-tag', async (c) => {
+richMenuGroups.post('/api/rich-menu-groups/:groupId/apply-to-tag', requireRole('owner', 'admin'), async (c) => {
   const groupId = c.req.param('groupId');
   let body: unknown;
   try {

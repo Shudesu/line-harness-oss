@@ -433,6 +433,16 @@ CREATE TABLE external_events (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE fingerprint_retention_audit (
+  id            TEXT PRIMARY KEY,
+  ran_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
+  retention_days INTEGER NOT NULL,
+  scanned_rows  INTEGER NOT NULL,
+  cleared_rows  INTEGER NOT NULL,
+  trigger       TEXT NOT NULL CHECK (trigger IN ('cron', 'manual', 'consent_revoked')),
+  notes         TEXT
+);
+
 CREATE TABLE form_opens (
   id TEXT PRIMARY KEY,
   form_id TEXT NOT NULL,
@@ -542,6 +552,43 @@ CREATE TABLE incoming_webhooks (
   is_active   INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE lark_notification_logs (
+  id                  TEXT PRIMARY KEY,
+  lark_notification_id TEXT NOT NULL REFERENCES lark_notifications(id) ON DELETE CASCADE,
+  status              TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'timeout', 'skipped')),
+  http_status         INTEGER,
+  duration_ms         INTEGER,
+  error_message       TEXT,
+  -- 何のイベントで発火したかだけ、本文は保存しない
+  trigger_summary     TEXT,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
+CREATE TABLE lark_notifications (
+  id              TEXT PRIMARY KEY,
+  line_account_id TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  event_type      TEXT NOT NULL CHECK (event_type IN (
+    'friend_added',
+    'friend_blocked',
+    'form_submitted',
+    'unread_timeout',
+    'daily_summary'
+  )),
+  target_type     TEXT NOT NULL CHECK (target_type IN ('chat', 'user', 'email')),
+  target_id       TEXT NOT NULL,  -- open_chat_id / open_id / email
+  -- 通知本文テンプレ (省略時はデフォルト文言)
+  template_text   TEXT,
+  -- form_submitted の時にどのフォームに絞るか (NULL = 全フォーム)
+  filter_form_id  TEXT,
+  -- unread_timeout で何分応答無しなら通知するか (デフォルト 30 分)
+  unread_threshold_minutes INTEGER NOT NULL DEFAULT 30,
+  is_enabled      INTEGER NOT NULL DEFAULT 1,
+  memo            TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
 );
 
 CREATE TABLE line_accounts (
@@ -827,6 +874,56 @@ CREATE TABLE stripe_events (
   processed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE stripe_products (
+  id                TEXT PRIMARY KEY,
+  line_account_id   TEXT REFERENCES line_accounts(id) ON DELETE SET NULL,
+  name              TEXT NOT NULL,
+  description       TEXT,
+  -- Stripe 側の Product / Price ID (前田さんが Dashboard で作成して貼り付ける)
+  stripe_product_id TEXT,
+  stripe_price_id   TEXT NOT NULL,
+  -- 表示用 (Stripe 側と同じ値を入れる)
+  amount            INTEGER NOT NULL,  -- 単位: 最小通貨単位 (円なら yen, USD なら cent)
+  currency          TEXT NOT NULL DEFAULT 'jpy',
+  -- 'one_time' (単発) / 'subscription' (継続)
+  billing_type      TEXT NOT NULL CHECK (billing_type IN ('one_time', 'subscription')),
+  -- subscription の場合の周期 (一致は Stripe price の interval と整合させる)
+  recurring_interval TEXT CHECK (recurring_interval IN ('day','week','month','year')),
+  -- 購入後の自動アクション (購入者限定アクション Phase 2-E と紐付け)
+  on_purchase_tag_id      TEXT REFERENCES tags(id) ON DELETE SET NULL,
+  on_purchase_scenario_id TEXT REFERENCES scenarios(id) ON DELETE SET NULL,
+  on_purchase_message_template_id TEXT REFERENCES message_templates(id) ON DELETE SET NULL,
+  is_active         INTEGER NOT NULL DEFAULT 1,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
+CREATE TABLE stripe_purchases (
+  id                  TEXT PRIMARY KEY,
+  friend_id           TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  stripe_product_id   TEXT REFERENCES stripe_products(id) ON DELETE SET NULL,
+  stripe_event_id     TEXT,
+  stripe_session_id   TEXT,
+  amount              INTEGER NOT NULL,
+  currency            TEXT NOT NULL,
+  purchased_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
+CREATE TABLE stripe_subscriptions (
+  id                       TEXT PRIMARY KEY,
+  friend_id                TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  stripe_product_id        TEXT REFERENCES stripe_products(id) ON DELETE SET NULL,
+  stripe_subscription_id   TEXT UNIQUE,        -- Stripe Subscription オブジェクト ID
+  stripe_customer_id       TEXT,
+  status                   TEXT NOT NULL CHECK (status IN ('active','past_due','canceled','unpaid','incomplete','trialing','paused')),
+  current_period_start     TEXT,
+  current_period_end       TEXT,
+  cancel_at                TEXT,
+  canceled_at              TEXT,
+  created_at               TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
+  updated_at               TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
 CREATE TABLE tags (
   id         TEXT PRIMARY KEY,
   name       TEXT UNIQUE NOT NULL,
@@ -989,6 +1086,9 @@ CREATE INDEX idx_external_events_account ON external_events (line_account_id) WH
 
 CREATE INDEX idx_external_events_key ON external_events (event_key);
 
+CREATE INDEX idx_fingerprint_retention_audit_ran
+  ON fingerprint_retention_audit (ran_at DESC);
+
 CREATE INDEX idx_form_opens_form ON form_opens (form_id, opened_at);
 
 CREATE INDEX idx_form_submissions_form ON form_submissions (form_id);
@@ -1022,6 +1122,12 @@ CREATE INDEX idx_friends_user_id ON friends (user_id);
 CREATE INDEX idx_health_logs_account ON account_health_logs (line_account_id);
 
 CREATE INDEX idx_idempotency_expires ON booking_idempotency_keys (expires_at);
+
+CREATE INDEX idx_lark_notification_logs_notif
+  ON lark_notification_logs (lark_notification_id, created_at DESC);
+
+CREATE INDEX idx_lark_notifications_account_event
+  ON lark_notifications (line_account_id, event_type, is_enabled);
 
 CREATE INDEX idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);
@@ -1086,6 +1192,24 @@ CREATE INDEX idx_stripe_events_friend ON stripe_events (friend_id);
 
 CREATE INDEX idx_stripe_events_type ON stripe_events (event_type);
 
+CREATE INDEX idx_stripe_products_account
+  ON stripe_products (line_account_id, is_active);
+
+CREATE INDEX idx_stripe_products_price
+  ON stripe_products (stripe_price_id);
+
+CREATE INDEX idx_stripe_purchases_friend
+  ON stripe_purchases (friend_id, purchased_at DESC);
+
+CREATE INDEX idx_stripe_subscriptions_friend
+  ON stripe_subscriptions (friend_id, status);
+
+CREATE INDEX idx_stripe_subscriptions_product
+  ON stripe_subscriptions (stripe_product_id);
+
+CREATE INDEX idx_stripe_subscriptions_status
+  ON stripe_subscriptions (status, current_period_end);
+
 CREATE INDEX idx_templates_category ON templates (category);
 
 CREATE INDEX idx_tracked_links_af_confirm ON tracked_links (af_confirm_type);
@@ -1105,3 +1229,10 @@ CREATE INDEX idx_users_phone ON users (phone);
 CREATE UNIQUE INDEX uq_ad_conversion_logs_sent_idemp
   ON ad_conversion_logs (ad_platform_id, friend_id, event_name, click_id)
   WHERE status = 'sent';
+
+CREATE UNIQUE INDEX uq_stripe_products_price_id
+  ON stripe_products (stripe_price_id);
+
+CREATE UNIQUE INDEX uq_stripe_purchases_event_id
+  ON stripe_purchases (stripe_event_id)
+  WHERE stripe_event_id IS NOT NULL;

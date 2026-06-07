@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
 import { getFriendById, getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { requireRole } from '../middleware/role-guard.js';
 
 const richMenus = new Hono<Env>();
 
@@ -33,7 +34,7 @@ richMenus.get('/api/rich-menus', async (c) => {
 });
 
 // POST /api/rich-menus — create a rich menu via LINE API
-richMenus.post('/api/rich-menus', async (c) => {
+richMenus.post('/api/rich-menus', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json();
     const lineClient = await resolveLineClient(c);
@@ -47,7 +48,7 @@ richMenus.post('/api/rich-menus', async (c) => {
 });
 
 // DELETE /api/rich-menus/:id — delete a rich menu
-richMenus.delete('/api/rich-menus/:id', async (c) => {
+richMenus.delete('/api/rich-menus/:id', requireRole('owner'), async (c) => {
   try {
     const richMenuId = c.req.param('id');
     const lineClient = await resolveLineClient(c);
@@ -61,7 +62,7 @@ richMenus.delete('/api/rich-menus/:id', async (c) => {
 });
 
 // POST /api/rich-menus/:id/default — set rich menu as default for all users
-richMenus.post('/api/rich-menus/:id/default', async (c) => {
+richMenus.post('/api/rich-menus/:id/default', requireRole('owner', 'admin'), async (c) => {
   try {
     const richMenuId = c.req.param('id');
     const lineClient = await resolveLineClient(c);
@@ -75,7 +76,7 @@ richMenus.post('/api/rich-menus/:id/default', async (c) => {
 });
 
 // POST /api/friends/:friendId/rich-menu — link rich menu to a specific friend
-richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
+richMenus.post('/api/friends/:friendId/rich-menu', requireRole('owner', 'admin'), async (c) => {
   try {
     const friendId = c.req.param('friendId');
     const body = await c.req.json<{ richMenuId: string }>();
@@ -111,7 +112,7 @@ richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
 });
 
 // DELETE /api/friends/:friendId/rich-menu — unlink rich menu from a specific friend
-richMenus.delete('/api/friends/:friendId/rich-menu', async (c) => {
+richMenus.delete('/api/friends/:friendId/rich-menu', requireRole('owner'), async (c) => {
   try {
     const friendId = c.req.param('friendId');
     const db = c.env.DB;
@@ -214,7 +215,7 @@ richMenus.get('/api/friends/:friendId/rich-menu', async (c) => {
 export { richMenus };
 
 // POST /api/rich-menus/:id/image — upload rich menu image (accepts base64 body or binary)
-richMenus.post('/api/rich-menus/:id/image', async (c) => {
+richMenus.post('/api/rich-menus/:id/image', requireRole('owner', 'admin'), async (c) => {
   try {
     const richMenuId = c.req.param('id');
     const contentType = c.req.header('content-type') ?? '';

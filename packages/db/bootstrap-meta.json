@@ -66,7 +66,11 @@
     "058_af_confirm_processing_status.sql",
     "059_staff_members_viewer.sql",
     "060_crm_forward.sql",
-    "061_device_tokens.sql"
+    "061_device_tokens.sql",
+    "062_lark_notifications.sql",
+    "063_fingerprint_retention.sql",
+    "064_stripe_products.sql",
+    "065_stripe_products_uniques.sql"
   ],
-  "migrationCount": 67
+  "migrationCount": 71
 }

@@ -124,6 +124,16 @@ async function verifyStripeSignature(secret: string, rawBody: string, sigHeader:
 
 stripe.post('/api/integrations/stripe/webhook', async (c) => {
   try {
+    // P1 緊急修正: body size guard (DoS 防止)
+    // Stripe webhook の最大 event サイズは ~256KB だが、攻撃者が巨大 JSON で memory 食いを狙える
+    const contentLength = c.req.header('content-length');
+    if (contentLength) {
+      const len = Number(contentLength);
+      if (Number.isFinite(len) && len > 1_048_576) { // 1MiB 上限
+        return c.json({ success: false, error: 'Payload too large' }, 413);
+      }
+    }
+
     const stripeSecret = (c.env as unknown as Record<string, string | undefined>).STRIPE_WEBHOOK_SECRET;
     let body: StripeWebhookBody;
 
@@ -131,6 +141,10 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
       // 署名検証モード（本番環境）
       const sigHeader = c.req.header('Stripe-Signature') ?? '';
       const rawBody = await c.req.text();
+      // 二重チェック: content-length が空でも raw byte で 1MiB 超なら拒否
+      if (rawBody.length > 1_048_576) {
+        return c.json({ success: false, error: 'Payload too large' }, 413);
+      }
 
       const valid = await verifyStripeSignature(stripeSecret, rawBody, sigHeader);
       if (!valid) {
