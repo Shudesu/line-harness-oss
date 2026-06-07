@@ -12,6 +12,11 @@
  *  - totals: 期間合計 + 前期 (デルタ計算用)
  *
  * パフォーマンス: D1 で 30 日 × 5 系列 を 5 クエリ。1 秒未満を想定。
+ *
+ * P1 修正 (068_perf_indexes と同時): WHERE に datetime(col) ラップを掛けると
+ * INDEX が無効化されて seq scan になる。サーバー側で JST cutoff を計算して
+ * 文字列比較 (col >= ?) にすることで、created_at INDEX が効くようにした。
+ * jstNow() と同じ ISO 8601 + '+09:00' フォーマットなので辞書順比較で OK。
  */
 
 import { Hono } from 'hono';
@@ -30,6 +35,17 @@ interface SeriesResult {
   prevTotal: number;
 }
 
+/**
+ * JST で N 日前の ISO 8601 タイムスタンプ (jstNow() と同じフォーマット) を返す。
+ * SQL の created_at と辞書順比較するためのもの。
+ */
+function jstIsoNDaysAgo(days: number): string {
+  const d = new Date();
+  d.setUTCHours(d.getUTCHours() + 9); // JST 化
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, -1) + '+09:00';
+}
+
 dashboardStats.get('/api/dashboard/stats', async (c) => {
   const days = Math.min(90, Math.max(7, Number(c.req.query('days') ?? '30')));
   const lineAccountId = c.req.query('lineAccountId') ?? null;
@@ -42,12 +58,13 @@ dashboardStats.get('/api/dashboard/stats', async (c) => {
   const accountFilter = lineAccountId
     ? 'AND (line_account_id = ? OR line_account_id IS NULL)'
     : '';
-  const accountBinds = lineAccountId ? [lineAccountId] : [];
+
+  // JST cutoff を JS 側で計算 (INDEX を効かせるため WHERE は単純文字列比較に)
+  const currCutoff = jstIsoNDaysAgo(days);
+  const prevCutoff = jstIsoNDaysAgo(days * 2);
 
   // 共通: 過去 N 日 + 前期 N 日 を JST で日別集計
-  // SQLite datetime() で +9 hours 補正済の文字列前提
-  // X.column を strftime('%Y-%m-%d', X.column, '+9 hours') で日付化、または既に '+9 hours' 済なら slice
-  // ここは既存 jstNow() format に合わせ datetime() を経由してから日付抽出する
+  // X.column は既に '+09:00' 付き ISO 8601 なので substr で日付化できる
   const buildDailyCounts = async (
     sql: string,
     binds: unknown[],
@@ -80,34 +97,39 @@ dashboardStats.get('/api/dashboard/stats', async (c) => {
     return { series, total, prevTotal };
   };
 
+  // バインド順序: currCutoff (CASE 判定), prevCutoff (WHERE 下限), [account?]
+  // 「currCutoff 以降 = curr」「currCutoff 未満 かつ prevCutoff 以上 = prev」になる。
+
   // 友だち追加 (friends.created_at)
   const friendAddsSql = `
-    SELECT strftime('%Y-%m-%d', created_at) as date,
+    SELECT substr(created_at, 1, 10) as date,
            COUNT(*) as count,
            CASE
-             WHEN datetime(created_at) >= datetime('now', '+9 hours', '-${days} days') THEN 'curr'
-             WHEN datetime(created_at) >= datetime('now', '+9 hours', '-${days * 2} days') THEN 'prev'
+             WHEN created_at >= ? THEN 'curr'
+             ELSE 'prev'
            END as period
       FROM friends
-     WHERE datetime(created_at) >= datetime('now', '+9 hours', '-${days * 2} days') ${accountFilter}
+     WHERE created_at >= ? ${accountFilter}
      GROUP BY date, period
      ORDER BY date ASC`;
+  const friendAddsBinds: unknown[] = [currCutoff, prevCutoff];
+  if (lineAccountId) friendAddsBinds.push(lineAccountId);
 
   // ブロック (friends.is_following=0 and updated_at since)
-  // 注: 正確には unfollow webhook イベントを別テーブルで保持する方が確実だが
-  // 現状 messages_log にも記録ないので friends.updated_at + is_following=0 で代用
   const blocksSql = `
-    SELECT strftime('%Y-%m-%d', updated_at) as date,
+    SELECT substr(updated_at, 1, 10) as date,
            COUNT(*) as count,
            CASE
-             WHEN datetime(updated_at) >= datetime('now', '+9 hours', '-${days} days') THEN 'curr'
-             WHEN datetime(updated_at) >= datetime('now', '+9 hours', '-${days * 2} days') THEN 'prev'
+             WHEN updated_at >= ? THEN 'curr'
+             ELSE 'prev'
            END as period
       FROM friends
      WHERE is_following = 0
-       AND datetime(updated_at) >= datetime('now', '+9 hours', '-${days * 2} days') ${accountFilter}
+       AND updated_at >= ? ${accountFilter}
      GROUP BY date, period
      ORDER BY date ASC`;
+  const blocksBinds: unknown[] = [currCutoff, prevCutoff];
+  if (lineAccountId) blocksBinds.push(lineAccountId);
 
   // フォーム回答 (form_submissions.created_at)
   // Codex P1 修正: lineAccountId フィルタを friend 経由で適用 (NULL は除外、厳密一致のみ)
@@ -115,53 +137,59 @@ dashboardStats.get('/api/dashboard/stats', async (c) => {
     ? 'AND f.line_account_id = ?'
     : '';
   const formsSql = `
-    SELECT strftime('%Y-%m-%d', fs.created_at) as date,
+    SELECT substr(fs.created_at, 1, 10) as date,
            COUNT(*) as count,
            CASE
-             WHEN datetime(fs.created_at) >= datetime('now', '+9 hours', '-${days} days') THEN 'curr'
-             WHEN datetime(fs.created_at) >= datetime('now', '+9 hours', '-${days * 2} days') THEN 'prev'
+             WHEN fs.created_at >= ? THEN 'curr'
+             ELSE 'prev'
            END as period
       FROM form_submissions fs
       LEFT JOIN friends f ON f.id = fs.friend_id
-     WHERE datetime(fs.created_at) >= datetime('now', '+9 hours', '-${days * 2} days') ${formsAccountFilter}
+     WHERE fs.created_at >= ? ${formsAccountFilter}
      GROUP BY date, period
      ORDER BY date ASC`;
+  const formsBinds: unknown[] = [currCutoff, prevCutoff];
+  if (lineAccountId) formsBinds.push(lineAccountId);
 
   // 配信送信 (messages_log direction=outgoing)
   const outgoingSql = `
-    SELECT strftime('%Y-%m-%d', created_at) as date,
+    SELECT substr(created_at, 1, 10) as date,
            COUNT(*) as count,
            CASE
-             WHEN datetime(created_at) >= datetime('now', '+9 hours', '-${days} days') THEN 'curr'
-             WHEN datetime(created_at) >= datetime('now', '+9 hours', '-${days * 2} days') THEN 'prev'
+             WHEN created_at >= ? THEN 'curr'
+             ELSE 'prev'
            END as period
       FROM messages_log
      WHERE direction = 'outgoing'
-       AND datetime(created_at) >= datetime('now', '+9 hours', '-${days * 2} days') ${accountFilter}
+       AND created_at >= ? ${accountFilter}
      GROUP BY date, period
      ORDER BY date ASC`;
+  const outgoingBinds: unknown[] = [currCutoff, prevCutoff];
+  if (lineAccountId) outgoingBinds.push(lineAccountId);
 
   // 受信 (messages_log direction=incoming)
   const incomingSql = `
-    SELECT strftime('%Y-%m-%d', created_at) as date,
+    SELECT substr(created_at, 1, 10) as date,
            COUNT(*) as count,
            CASE
-             WHEN datetime(created_at) >= datetime('now', '+9 hours', '-${days} days') THEN 'curr'
-             WHEN datetime(created_at) >= datetime('now', '+9 hours', '-${days * 2} days') THEN 'prev'
+             WHEN created_at >= ? THEN 'curr'
+             ELSE 'prev'
            END as period
       FROM messages_log
      WHERE direction = 'incoming'
-       AND datetime(created_at) >= datetime('now', '+9 hours', '-${days * 2} days') ${accountFilter}
+       AND created_at >= ? ${accountFilter}
      GROUP BY date, period
      ORDER BY date ASC`;
+  const incomingBinds: unknown[] = [currCutoff, prevCutoff];
+  if (lineAccountId) incomingBinds.push(lineAccountId);
 
   try {
     const [friendAdds, blocks, forms, outgoing, incoming] = await Promise.all([
-      buildDailyCounts(friendAddsSql, accountBinds),
-      buildDailyCounts(blocksSql, accountBinds),
-      buildDailyCounts(formsSql, accountBinds), // Codex P1 修正
-      buildDailyCounts(outgoingSql, accountBinds),
-      buildDailyCounts(incomingSql, accountBinds),
+      buildDailyCounts(friendAddsSql, friendAddsBinds),
+      buildDailyCounts(blocksSql, blocksBinds),
+      buildDailyCounts(formsSql, formsBinds), // Codex P1 修正
+      buildDailyCounts(outgoingSql, outgoingBinds),
+      buildDailyCounts(incomingSql, incomingBinds),
     ]);
     return c.json({
       success: true,

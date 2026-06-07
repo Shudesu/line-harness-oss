@@ -600,6 +600,30 @@ async function scheduled(
   env: Env['Bindings'],
   _ctx: ExecutionContext,
 ): Promise<void> {
+  // P1 (2026-06-07): cron tick mutex.
+  // wrangler.toml の crons = ["*/5 * * * *", "0 */6 * * *"] は 0/6/12/18 JST に
+  // 両方マッチ → 2 isolate が同時 fire。INSERT OR IGNORE で同一分を 1 isolate に絞る。
+  // event.scheduledTime は UTC ms → 分単位に丸めて YYYY-MM-DDTHH:MM の文字列にする。
+  // (slot は JST/UTC どちらでも一意性は保たれるので UTC ベースで OK)
+  const slotMinute = new Date(event.scheduledTime).toISOString().slice(0, 16);
+  const claim = await env.DB
+    .prepare(`INSERT OR IGNORE INTO cron_locks (slot_minute, claimed_at) VALUES (?, ?)`)
+    .bind(slotMinute, new Date().toISOString())
+    .run();
+  if ((claim.meta?.changes ?? 0) === 0) {
+    console.log(`[cron-mutex] slot=${slotMinute} already claimed → skip`);
+    return;
+  }
+  // 古い lock を掃除 (1h 経過分)。INSERT 失敗は無視する設計なので、
+  // ここで失敗しても本処理には影響しない。
+  try {
+    await env.DB
+      .prepare(`DELETE FROM cron_locks WHERE datetime(claimed_at) < datetime('now', '-1 hour')`)
+      .run();
+  } catch (e) {
+    console.error('[cron-mutex] cleanup failed:', e);
+  }
+
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);
 
@@ -641,6 +665,21 @@ async function scheduled(
     await processInsightFetch(env.DB, lineClients, defaultLineClient, env); // Phase 1-G v3
   } catch (e) {
     console.error('Insight fetch error:', e);
+  }
+
+  // P1 (2026-06-07): CRM forward retry queue 処理。
+  // 5min tick で due な row を fetch → 再送 → 成功なら delete /
+  // 失敗なら attempt++ で次回 due 更新 / 6回失敗で DLQ ('failed_permanent')。
+  try {
+    const { processCrmForwardRetries } = await import('./services/crm-forward-retry.js');
+    const r = await processCrmForwardRetries(env.DB);
+    if (r.processed > 0) {
+      console.log(
+        `[crm-forward-retry] processed=${r.processed} sent=${r.sent} requeued=${r.requeued} dlq=${r.dlq}`,
+      );
+    }
+  } catch (e) {
+    console.error('crm-forward-retry error:', e);
   }
 
   // L-TRACK 互換: AF確定キュー（1h/3h/24h 遅延 CV）の処理

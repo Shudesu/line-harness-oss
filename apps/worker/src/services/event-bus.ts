@@ -368,11 +368,6 @@ async function executeAction(
 
     case 'set_metadata': {
       if (!friendId) break;
-      const existing = await db
-        .prepare('SELECT metadata FROM friends WHERE id = ?')
-        .bind(friendId)
-        .first<{ metadata: string }>();
-      const current = JSON.parse(existing?.metadata || '{}') as Record<string, unknown>;
       // {{message}} を受信メッセージ内容に置換してからパース
       // JSON文字列内に埋め込むため、JSON仕様に準拠して全制御文字をエスケープ
       const escapeForJsonString = (s: string): string =>
@@ -386,11 +381,19 @@ async function executeAction(
       const messageText = typeof payload.eventData?.text === 'string' ? payload.eventData.text : '';
       const raw = (action.params.data || '{}')
         .replace(/\{\{message\}\}/g, escapeForJsonString(messageText));
+      // P1 (2026-06-07): SELECT → JS merge → UPDATE は並行 update が消える race。
+      // json_patch (SQLite 3.38+, D1 対応) で DB 側 atomic に shallow merge する。
+      // 入力 validation のため一度 parse する (壊れた JSON を json_patch に
+      // 渡すと SQLITE_ERROR で全体が落ちる)。
       const patch = JSON.parse(raw) as Record<string, unknown>;
-      const merged = { ...current, ...patch };
       await db
-        .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
-        .bind(JSON.stringify(merged), jstNow(), friendId)
+        .prepare(
+          `UPDATE friends
+              SET metadata = json_patch(COALESCE(metadata, '{}'), ?),
+                  updated_at = ?
+            WHERE id = ?`,
+        )
+        .bind(JSON.stringify(patch), jstNow(), friendId)
         .run();
       break;
     }

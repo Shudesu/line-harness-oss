@@ -260,15 +260,32 @@ CREATE TABLE conversion_points (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE crm_forward_logs (
+CREATE TABLE "crm_forward_logs" (
   id                TEXT PRIMARY KEY,
   crm_forward_id    TEXT NOT NULL REFERENCES crm_forwards(id) ON DELETE CASCADE,
-  status            TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'timeout')),
+  status            TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'timeout', 'failed_permanent')),
   http_status       INTEGER,
   duration_ms       INTEGER,
   error_message     TEXT,
-  -- payload は保存しない (PII 漏洩防止、必要なら別途デバッグログで)
   created_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
+CREATE TABLE crm_forward_queue (
+  id              TEXT PRIMARY KEY,
+  crm_forward_id  TEXT NOT NULL REFERENCES crm_forwards(id) ON DELETE CASCADE,
+  -- 元の LINE webhook payload (PII 含む — log と違って必須なので保存)。
+  -- LINE 側 signature 検証済の rawBody なのでバイト一致が必要。
+  raw_body        TEXT NOT NULL,
+  -- attach_line_signature=1 のとき crm-forwarder.ts で再計算した X-Line-Signature。
+  -- 再送時は再生成せずこの値を流用する (channel_secret が rotation された場合に
+  -- 旧 secret で署名済のバージョンを送るほうが安全)。
+  signature       TEXT,
+  -- 試行回数。0 = まだ未試行 (queue 投入直後)。指数バックオフのインデックス。
+  attempt         INTEGER NOT NULL DEFAULT 0,
+  -- 次回 due 時刻 (ISO 8601, JST naive)。process 側は <= now で fetch する。
+  next_retry_at   TEXT NOT NULL,
+  last_error      TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
 );
 
 CREATE TABLE crm_forwards (
@@ -286,6 +303,11 @@ CREATE TABLE crm_forwards (
   memo              TEXT,
   created_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
   updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
+);
+
+CREATE TABLE cron_locks (
+  slot_minute TEXT PRIMARY KEY,
+  claimed_at TEXT NOT NULL
 );
 
 CREATE TABLE device_tokens (
@@ -603,7 +625,7 @@ CREATE TABLE line_accounts (
   display_order        INTEGER NOT NULL DEFAULT 0,
   created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
-, login_channel_id TEXT, login_channel_secret TEXT, liff_id TEXT, token_expires_at TEXT, og_site_name TEXT, og_default_image_url TEXT, og_default_description TEXT);
+, login_channel_id TEXT, login_channel_secret TEXT, liff_id TEXT, token_expires_at TEXT, og_site_name TEXT, og_default_image_url TEXT, og_default_description TEXT, token_refresh_lock_at TEXT);
 
 CREATE TABLE link_clicks (
   id TEXT PRIMARY KEY,
@@ -922,7 +944,7 @@ CREATE TABLE stripe_subscriptions (
   canceled_at              TEXT,
   created_at               TEXT NOT NULL DEFAULT (datetime('now', '+9 hours')),
   updated_at               TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
-);
+, last_event_at TEXT);
 
 CREATE TABLE tags (
   id         TEXT PRIMARY KEY,
@@ -1027,11 +1049,18 @@ CREATE INDEX idx_broadcast_insights_status ON broadcast_insights(status);
 
 CREATE INDEX idx_broadcasts_status ON broadcasts (status);
 
+CREATE INDEX idx_broadcasts_status_sent_at
+  ON broadcasts (status, sent_at)
+  WHERE status IN ('sending', 'scheduled');
+
 CREATE INDEX idx_calendar_bookings_friend ON calendar_bookings (friend_id);
 
 CREATE INDEX idx_calendar_bookings_start ON calendar_bookings (start_at);
 
 CREATE INDEX idx_chats_friend ON chats (friend_id);
+
+CREATE INDEX idx_chats_friend_created
+  ON chats (friend_id, created_at DESC);
 
 CREATE INDEX idx_chats_operator ON chats (operator_id);
 
@@ -1045,6 +1074,12 @@ CREATE INDEX idx_conversion_events_point ON conversion_events (conversion_point_
 
 CREATE INDEX idx_crm_forward_logs_forward
   ON crm_forward_logs (crm_forward_id, created_at DESC);
+
+CREATE INDEX idx_crm_forward_queue_due
+  ON crm_forward_queue (next_retry_at, attempt);
+
+CREATE INDEX idx_crm_forward_queue_forward
+  ON crm_forward_queue (crm_forward_id);
 
 CREATE INDEX idx_crm_forwards_account
   ON crm_forwards (line_account_id, is_enabled);
@@ -1111,7 +1146,16 @@ CREATE INDEX idx_friend_scores_created ON friend_scores (created_at);
 
 CREATE INDEX idx_friend_scores_friend ON friend_scores (friend_id);
 
+CREATE INDEX idx_friend_tags_assigned_at
+  ON friend_tags (assigned_at);
+
 CREATE INDEX idx_friend_tags_tag_id ON friend_tags (tag_id);
+
+CREATE INDEX idx_friends_account_created
+  ON friends (line_account_id, created_at DESC);
+
+CREATE INDEX idx_friends_account_following
+  ON friends (line_account_id, is_following, created_at DESC);
 
 CREATE INDEX idx_friends_ig_igsid ON friends (ig_igsid);
 
@@ -1136,6 +1180,9 @@ CREATE INDEX idx_link_clicks_country ON link_clicks (country) WHERE country IS N
 
 CREATE INDEX idx_link_clicks_friend ON link_clicks (friend_id);
 
+CREATE INDEX idx_link_clicks_friend_clicked
+  ON link_clicks (friend_id, clicked_at DESC);
+
 CREATE INDEX idx_link_clicks_link ON link_clicks (tracked_link_id);
 
 CREATE INDEX idx_link_clicks_unmatched_fingerprint
@@ -1148,9 +1195,15 @@ CREATE INDEX idx_link_clicks_unmatched_time
 
 CREATE INDEX idx_menus_account_sort ON menus (line_account_id, sort_order);
 
+CREATE INDEX idx_messages_log_account_created
+  ON messages_log (line_account_id, created_at);
+
 CREATE INDEX idx_messages_log_broadcast_id ON messages_log(broadcast_id);
 
 CREATE INDEX idx_messages_log_created_at ON messages_log (created_at);
+
+CREATE INDEX idx_messages_log_direction_created
+  ON messages_log (direction, created_at);
 
 CREATE INDEX idx_messages_log_friend_direction_created ON messages_log (friend_id, direction, created_at);
 
@@ -1163,6 +1216,9 @@ CREATE INDEX idx_notifications_created ON notifications (created_at);
 CREATE INDEX idx_notifications_status ON notifications (status);
 
 CREATE INDEX idx_ref_tracking_friend ON ref_tracking (friend_id);
+
+CREATE INDEX idx_ref_tracking_friend_created
+  ON ref_tracking (friend_id, created_at DESC);
 
 CREATE INDEX idx_ref_tracking_ltp ON ref_tracking (ltp) WHERE ltp IS NOT NULL;
 
@@ -1179,6 +1235,9 @@ CREATE INDEX idx_rich_menu_groups_account ON rich_menu_groups(account_id, status
 CREATE INDEX idx_rich_menu_pages_group    ON rich_menu_pages(group_id, order_index);
 
 CREATE INDEX idx_scenario_steps_scenario_id ON scenario_steps (scenario_id);
+
+CREATE INDEX idx_scenarios_trigger_active_account
+  ON scenarios (trigger_type, is_active, line_account_id);
 
 CREATE INDEX idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
 
@@ -1199,6 +1258,9 @@ CREATE INDEX idx_stripe_products_price
   ON stripe_products (stripe_price_id);
 
 CREATE INDEX idx_stripe_purchases_friend
+  ON stripe_purchases (friend_id, purchased_at DESC);
+
+CREATE INDEX idx_stripe_purchases_friend_purchased
   ON stripe_purchases (friend_id, purchased_at DESC);
 
 CREATE INDEX idx_stripe_subscriptions_friend

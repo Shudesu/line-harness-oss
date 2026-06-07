@@ -18,10 +18,15 @@ import {
   addTagToFriend,
   getEntryRouteByRefCode,
   getMessageTemplateById,
+  getFriendById,
 } from '@line-crm/db';
 import type { EntryRoute } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
-import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { buildMessage, expandVariables, resolveMetadata, messageToLogPayload } from '../services/step-delivery.js';
+// P1 修正 (hot path): webhook 必須経路の dynamic import を static 化。
+// 全 webhook event で必ず通る account-token / lark-notifier-hooks をトップに昇格。
+import { resolveAccessToken } from '../lib/account-token.js';
+import { triggerLarkForFollowEvent } from '../services/lark-notifier-hooks.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -74,9 +79,7 @@ webhook.post('/webhook', async (c) => {
   let matchedAccountId: string | null = null;
   let valid = false;
 
-  // Phase 1-G: 暗号化 token を透過的に復号する
-  const { resolveAccessToken } = await import('../lib/account-token.js');
-
+  // Phase 1-G: 暗号化 token を透過的に復号する (static import に昇格 - hot path)
   const envSecret = c.env.LINE_CHANNEL_SECRET;
   if (envSecret) {
     valid = await verifySignature(envSecret, rawBody, signature);
@@ -131,7 +134,6 @@ webhook.post('/webhook', async (c) => {
         // handleEvent 完了後なので、friends テーブルには既に最新状態が入っている。
         if (matchedAccountId && (event.type === 'follow' || event.type === 'unfollow')) {
           try {
-            const { triggerLarkForFollowEvent } = await import('../services/lark-notifier-hooks.js');
             await triggerLarkForFollowEvent(c.env, db, matchedAccountId, event);
           } catch (err) {
             console.error('[webhook] lark notify error:', err);
@@ -219,7 +221,7 @@ async function handleEvent(
     // delivers the event. Retry a few times (~1s total) before giving up,
     // otherwise override mode and intro pushes silently fall back to the
     // account default whenever the webhook wins the race.
-    const { getFriendById } = await import('@line-crm/db');
+    // getFriendById is static-imported (hot path).
     let friendRefCode = (friend as { ref_code?: string | null }).ref_code ?? null;
     if (!friendRefCode) {
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -309,7 +311,6 @@ async function handleEvent(
               try {
                 // Resolve template_id → templates table (参照型)
                 const resolved = await resolveStepContent(db, firstStep);
-                const { resolveMetadata } = await import('../services/step-delivery.js');
                 const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
                 const expandedContent = expandVariables(resolved.messageContent, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1]);
                 const message = buildMessage(resolved.messageType, expandedContent);
@@ -319,8 +320,7 @@ async function handleEvent(
                 // Log what was actually delivered (post buildMessage normalization)
                 // so the dashboard chat view mirrors LINE 1:1.
                 const logId = crypto.randomUUID();
-                const { messageToLogPayload: logPayload1 } = await import('../services/step-delivery.js');
-                const wbScenarioPayload = logPayload1(message);
+                const wbScenarioPayload = messageToLogPayload(message);
                 await db
                   .prepare(
                     `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, template_id_at_send, created_at)
@@ -496,7 +496,6 @@ async function handleEvent(
 
       if (isMatch) {
         try {
-          const { resolveMetadata } = await import('../services/step-delivery.js');
           const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
           const resolved = await resolveAutoReplyContent(db, {
             template_id: rule.template_id,
@@ -509,8 +508,7 @@ async function handleEvent(
 
           // 送信ログ — Rich Menu 経由の Flex 応答もチャット詳細に残るようにする。
           // テキスト auto_reply (line ~390) と同じパターン。
-          const { messageToLogPayload: logPayload } = await import('../services/step-delivery.js');
-          const replyPayload = logPayload(replyMsg);
+          const replyPayload = messageToLogPayload(replyMsg);
           await db
             .prepare(
               `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
@@ -606,16 +604,14 @@ async function handleEvent(
           const otherFriends = await db.prepare(
             'SELECT f.line_user_id, la.channel_access_token FROM friends f INNER JOIN line_accounts la ON la.id = f.line_account_id WHERE f.user_id = ? AND f.line_account_id != ? AND f.is_following = 1'
           ).bind(friendRecord.user_id, lineAccountId).all<{ line_user_id: string; channel_access_token: string }>();
-          // Phase 1-G: 各行の channel_access_token を復号
-          const { resolveAccessToken } = await import('../lib/account-token.js');
+          // Phase 1-G: 各行の channel_access_token を復号 (static import 化)
           for (const o of otherFriends.results) {
             o.channel_access_token = await resolveAccessToken(c.env, o.channel_access_token);
           }
 
           for (const other of otherFriends.results) {
             const otherClient = new LineClient(other.channel_access_token);
-            const { buildMessage: bm } = await import('../services/step-delivery.js');
-            await otherClient.pushMessage(other.line_user_id, [bm('flex', JSON.stringify({
+            await otherClient.pushMessage(other.line_user_id, [buildMessage('flex', JSON.stringify({
               type: 'bubble', size: 'giga',
               header: { type: 'box', layout: 'vertical', paddingAll: '20px', backgroundColor: '#fffbeb',
                 contents: [{ type: 'text', text: `${friend.display_name || ''}さんへ`, size: 'lg', weight: 'bold', color: '#1e293b' }],
@@ -689,8 +685,7 @@ async function handleEvent(
         }
 
         try {
-          const { resolveMetadata: resolveMeta2 } = await import('../services/step-delivery.js');
-          const resolvedMeta2 = await resolveMeta2(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
+          const resolvedMeta2 = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
           const resolved = await resolveAutoReplyContent(db, {
             template_id: rule.template_id,
             response_type: rule.response_type,
@@ -705,8 +700,7 @@ async function handleEvent(
           // reply message so any cleanEmptyNodes / parse-failure fallback is
           // reflected in the dashboard.
           const outLogId = crypto.randomUUID();
-          const { messageToLogPayload: logPayload2 } = await import('../services/step-delivery.js');
-          const wbAutoReplyPayload = logPayload2(replyMsg);
+          const wbAutoReplyPayload = messageToLogPayload(replyMsg);
           await db
             .prepare(
               `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)

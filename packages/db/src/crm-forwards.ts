@@ -21,12 +21,35 @@ export interface CrmForward {
 export interface CrmForwardLog {
   id: string;
   crm_forward_id: string;
-  status: 'sent' | 'failed' | 'timeout';
+  // 'failed_permanent' は P1 (2026-06-07) で追加。retry queue が 6回失敗した DLQ 状態。
+  status: 'sent' | 'failed' | 'timeout' | 'failed_permanent';
   http_status: number | null;
   duration_ms: number | null;
   error_message: string | null;
   created_at: string;
 }
+
+/**
+ * P1 (2026-06-07): CRM forward 失敗時の retry queue row。
+ * 066_crm_forward_queue.sql 参照。
+ */
+export interface CrmForwardQueueItem {
+  id: string;
+  crm_forward_id: string;
+  raw_body: string;
+  signature: string | null;
+  attempt: number;
+  next_retry_at: string;
+  last_error: string | null;
+  created_at: string;
+}
+
+/**
+ * 指数バックオフのテーブル。attempt が配列長を超えたら DLQ。
+ * 1分 → 5分 → 15分 → 1時間 → 6時間 → 24時間 = 計 6 試行。
+ */
+export const CRM_FORWARD_BACKOFF_SECONDS = [60, 300, 900, 3600, 21600, 86400] as const;
+export const CRM_FORWARD_MAX_ATTEMPTS = CRM_FORWARD_BACKOFF_SECONDS.length;
 
 export async function getEnabledCrmForwards(
   db: D1Database,
@@ -154,7 +177,8 @@ export async function logCrmForwardResult(
   db: D1Database,
   input: {
     crmForwardId: string;
-    status: 'sent' | 'failed' | 'timeout';
+    // 'failed_permanent' は P1 (2026-06-07) で追加 (retry queue が DLQ 化したとき)。
+    status: 'sent' | 'failed' | 'timeout' | 'failed_permanent';
     httpStatus?: number | null;
     durationMs?: number | null;
     errorMessage?: string | null;
@@ -210,4 +234,116 @@ export async function getCrmForwardLogs(
     .bind(crmForwardId, limit)
     .all<CrmForwardLog>();
   return r.results;
+}
+
+// ─── P1 (2026-06-07): CRM forward retry queue helpers ──────────────────
+
+/**
+ * 次回 due 時刻を attempt から計算する (ISO 8601, JST naive)。
+ * attempt=0 は「これから初回 retry」= 1分後、以降は backoff テーブル。
+ * 配列範囲外 (DLQ 直前のセーフティ) は最後の値を使う。
+ */
+function computeNextRetryAt(attempt: number): string {
+  const idx = Math.min(attempt, CRM_FORWARD_BACKOFF_SECONDS.length - 1);
+  const seconds = CRM_FORWARD_BACKOFF_SECONDS[idx];
+  const future = new Date(Date.now() + seconds * 1000);
+  // jstNow と同じ JST naive 形式に揃える (datetime('now','+9 hours') 互換)。
+  const jstMs = future.getTime() + 9 * 60 * 60 * 1000;
+  return new Date(jstMs).toISOString().replace('Z', '');
+}
+
+/**
+ * forward 失敗時に queue へ enqueue。次回 retry は 1分後 (attempt=0)。
+ * 既に同じ payload + forward の row が残っている場合でも別 row として
+ * 投入する (race を恐れて UNIQUE 制約は付けない; payload bytes 完全一致は
+ * ほぼ起きないため重複コストは無視できる)。
+ */
+export async function enqueueCrmForwardRetry(
+  db: D1Database,
+  input: {
+    crmForwardId: string;
+    rawBody: string;
+    signature?: string | null;
+    initialError?: string | null;
+  },
+): Promise<void> {
+  const id = crypto.randomUUID();
+  const nextRetryAt = computeNextRetryAt(0);
+  await db
+    .prepare(
+      `INSERT INTO crm_forward_queue
+         (id, crm_forward_id, raw_body, signature, attempt, next_retry_at, last_error, created_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, datetime('now', '+9 hours'))`,
+    )
+    .bind(
+      id,
+      input.crmForwardId,
+      input.rawBody,
+      input.signature ?? null,
+      nextRetryAt,
+      input.initialError ?? null,
+    )
+    .run();
+}
+
+/**
+ * 5min cron で due な queue row を取得する。
+ * next_retry_at <= now AND attempt < MAX で fetch、古いものから処理。
+ * limit は 1 tick あたりの処理上限 (Worker のサブリクエスト 1k 制限を考慮)。
+ */
+export async function getDueCrmForwardQueueItems(
+  db: D1Database,
+  limit = 50,
+): Promise<CrmForwardQueueItem[]> {
+  const nowIso = jstNow();
+  const r = await db
+    .prepare(
+      `SELECT * FROM crm_forward_queue
+        WHERE next_retry_at <= ? AND attempt < ?
+        ORDER BY next_retry_at ASC
+        LIMIT ?`,
+    )
+    .bind(nowIso, CRM_FORWARD_MAX_ATTEMPTS, limit)
+    .all<CrmForwardQueueItem>();
+  return r.results;
+}
+
+/**
+ * 成功時: queue から削除。crm_forward_logs には呼び出し側で 'sent' を残す前提。
+ */
+export async function deleteCrmForwardQueueItem(
+  db: D1Database,
+  id: string,
+): Promise<void> {
+  await db.prepare(`DELETE FROM crm_forward_queue WHERE id = ?`).bind(id).run();
+}
+
+/**
+ * 失敗時: attempt++ して next_retry_at を更新。
+ * attempt が MAX に達したら queue から削除 (DLQ) して caller 側で
+ * 'failed_permanent' を logs に書く設計。
+ *
+ * 戻り値: 'requeued' = まだ retry 余地あり / 'dlq' = 6回失敗で削除済
+ */
+export async function bumpCrmForwardQueueItem(
+  db: D1Database,
+  id: string,
+  currentAttempt: number,
+  error: string,
+): Promise<'requeued' | 'dlq'> {
+  const nextAttempt = currentAttempt + 1;
+  if (nextAttempt >= CRM_FORWARD_MAX_ATTEMPTS) {
+    await db.prepare(`DELETE FROM crm_forward_queue WHERE id = ?`).bind(id).run();
+    return 'dlq';
+  }
+  const nextRetryAt = computeNextRetryAt(nextAttempt);
+  await db
+    .prepare(
+      `UPDATE crm_forward_queue
+          SET attempt = ?, next_retry_at = ?, last_error = ?
+        WHERE id = ?`,
+    )
+    .bind(nextAttempt, nextRetryAt, error.slice(0, 500), id)
+    .run();
+  return 'requeued';
 }

@@ -65,6 +65,21 @@ export async function processDueReminders(
   let failed = 0;
   for (const row of due.results) {
     const kind: NotificationKind = row.kind;
+    // Optimistic claim: bump retry_count CAS-style on (id, retry_count).
+    // 同じ cron tick の再走、または */5 と 0 */6 の dual-cron が同時に
+    // この row を fetch しても、UPDATE が成功するのは 1 つだけ。
+    // 他は changes=0 で skip し、二重送信を防ぐ。
+    const claim = await db
+      .prepare(
+        `UPDATE booking_reminders
+            SET retry_count = retry_count + 1
+          WHERE id = ? AND retry_count = ? AND status IN ('pending','failed')`,
+      )
+      .bind(row.id, row.retry_count)
+      .run();
+    if ((claim.meta?.changes ?? 0) === 0) continue;
+    const claimedRetry = row.retry_count + 1;
+
     try {
       // Codex P2 修正: 復号失敗を try 内で扱う
       const { resolveAccessToken } = await import('../lib/account-token.js');
@@ -90,13 +105,12 @@ export async function processDueReminders(
         .run();
       sent++;
     } catch (e) {
-      const newRetry = row.retry_count + 1;
-      const newStatus = newRetry >= REMINDER_MAX_RETRY ? 'failed_permanent' : 'failed';
+      const newStatus = claimedRetry >= REMINDER_MAX_RETRY ? 'failed_permanent' : 'failed';
       await db
         .prepare(
-          `UPDATE booking_reminders SET status = ?, retry_count = ?, last_error = ? WHERE id = ?`,
+          `UPDATE booking_reminders SET status = ?, last_error = ? WHERE id = ?`,
         )
-        .bind(newStatus, newRetry, e instanceof Error ? e.message : String(e), row.id)
+        .bind(newStatus, e instanceof Error ? e.message : String(e), row.id)
         .run();
       failed++;
     }

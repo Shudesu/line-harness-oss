@@ -174,10 +174,10 @@ app.post('/api/meet-callback', async (c) => {
   }
 
   // Save to friend metadata
+  // P1 (2026-06-07): read-modify-write を json_patch で DB 側 atomic merge に置換。
+  // 並行 update (例: 同じ friend に対する別系統の metadata write) が消えない。
   try {
-    const existing = JSON.parse(friend.metadata || '{}') as Record<string, unknown>;
-    const updated = {
-      ...existing,
+    const patch = {
       meet_hearing: {
         session_id: body.session_id,
         status: body.status,
@@ -187,8 +187,13 @@ app.post('/api/meet-callback', async (c) => {
         completed_at: body.completed_at,
       },
     };
-    await c.env.DB.prepare('UPDATE friends SET metadata = ?, updated_at = datetime(\'now\') WHERE id = ?')
-      .bind(JSON.stringify(updated), friend.id)
+    await c.env.DB.prepare(
+      `UPDATE friends
+          SET metadata = json_patch(COALESCE(metadata, '{}'), ?),
+              updated_at = datetime('now')
+        WHERE id = ?`,
+    )
+      .bind(JSON.stringify(patch), friend.id)
       .run();
   } catch (e) {
     console.error('Failed to save meet hearing to metadata:', e);

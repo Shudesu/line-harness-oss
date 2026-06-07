@@ -17,6 +17,8 @@ export interface LineAccount {
   role: string | null;
   display_order: number;
   token_expires_at: string | null;
+  /** P1 (2026-06-07): token refresh CAS ロック。NULL = 解放、TS = lock 中。 */
+  token_refresh_lock_at: string | null;
   created_at: string;
   updated_at: string;
 }

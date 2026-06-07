@@ -78,6 +78,25 @@ export async function refreshLineAccessTokens(
     if (!account.is_active) continue;
     if (!shouldRefresh(account)) continue;
 
+    // P1 (2026-06-07): CAS claim — dual-cron 同時 fire 時の二重 refresh を防ぐ。
+    // 自分の lock_at TS を書き込み、`lock_at IS NULL OR < now-2min` のときだけ成功。
+    // 2 分窓は scheduled handler が 5 分間隔のため十分。
+    const claimAt = jstNow();
+    const claim = await db
+      .prepare(
+        `UPDATE line_accounts
+            SET token_refresh_lock_at = ?
+          WHERE id = ?
+            AND (token_refresh_lock_at IS NULL
+                 OR datetime(token_refresh_lock_at) < datetime('now', '-2 minutes'))`,
+      )
+      .bind(claimAt, account.id)
+      .run();
+    if ((claim.meta?.changes ?? 0) === 0) {
+      console.log(`⏭️  Token refresh skipped (locked by another isolate): ${account.name}`);
+      continue;
+    }
+
     try {
       const token = await issueNewToken(account.channel_id, account.channel_secret);
       const expiresAt = new Date(Date.now() + token.expires_in * 1000 + JST_OFFSET_MS);
@@ -95,6 +114,18 @@ export async function refreshLineAccessTokens(
       console.log(`🔄 Token refreshed: ${account.name} (expires ${expiresAtJst})`);
     } catch (err) {
       console.error(`❌ Token refresh failed for ${account.name}:`, err);
+    } finally {
+      // lock を解放 (lock_at = NULL)。失敗時も解放することで次の cron tick で再試行可能。
+      // tolerance (2 分) があるので忘れても自動解放されるが、明示的に解放しておくと
+      // 同 tick 内の即時再 refresh が必要な場合に有利。
+      try {
+        await db
+          .prepare(`UPDATE line_accounts SET token_refresh_lock_at = NULL WHERE id = ?`)
+          .bind(account.id)
+          .run();
+      } catch (e) {
+        console.error(`⚠️  Failed to release token refresh lock for ${account.name}:`, e);
+      }
     }
   }
 }

@@ -4,7 +4,9 @@ import {
   getStripeEventByStripeId,
   createStripeEvent,
   jstNow,
+  applyScoring,
 } from '@line-crm/db';
+import { fireEvent } from '../services/event-bus.js';
 import type { Env } from '../index.js';
 
 const stripe = new Hono<Env>();
@@ -12,6 +14,11 @@ const stripe = new Hono<Env>();
 interface StripeWebhookBody {
   id: string;
   type: string;
+  /**
+   * P1 (2026-06-07): Stripe event の作成 unix 秒。
+   * subscription.updated と subscription.created の re-order を弾く monotonic guard 用。
+   */
+  created?: number;
   data: {
     object: {
       id: string;
@@ -205,8 +212,7 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
       c.executionCtx.waitUntil(
         (async () => {
           try {
-            // (1) スコアリング
-            const { applyScoring } = await import('@line-crm/db');
+            // (1) スコアリング (applyScoring は static import に昇格 - hot path)
             try { await applyScoring(db, friendId, 'purchase'); }
             catch (e) { console.error('[stripe] applyScoring failed', e); }
 
@@ -275,9 +281,8 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
               }
             }
 
-            // (4) イベントバス発火 (自動化ルール用)
+            // (4) イベントバス発火 (自動化ルール用) - fireEvent は static import に昇格
             try {
-              const { fireEvent } = await import('../services/event-bus.js');
               await fireEvent(db, 'cv_fire', { friendId, eventData: { type: 'purchase', amount, stripeEventId: eventId } });
             } catch (e) { console.error('[stripe] fireEvent failed', e); }
           } catch (e) {
@@ -324,6 +329,9 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
             currentPeriodEnd: toIso(subObj.current_period_end),
             cancelAt: toIso(subObj.cancel_at),
             canceledAt: toIso(subObj.canceled_at),
+            // P1 (2026-06-07): event.created を monotonic guard に渡す。
+            // 古い (再送された .created) で新しい (.updated) を上書きしない。
+            eventCreatedAt: toIso(body.created),
           });
         }
       } catch (e) {

@@ -44,15 +44,30 @@ export class LineClient {
     method: string,
     path: string,
     body?: unknown,
+    /**
+     * P1 (2026-06-07): 任意の追加ヘッダ。X-Line-Retry-Key (multicast の重複防止 key)
+     * を渡す経路として使う。Authorization / Content-Type は base 側で固定し、
+     * extra でそれらを上書きできないよう base の後ろから merge する。
+     */
+    extraHeaders?: Record<string, string>,
   ): Promise<{ data: unknown; headers: Headers }> {
     const url = `${LINE_API_BASE}${path}`;
 
+    const mergedHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${this.channelAccessToken}`,
+    };
+    if (extraHeaders) {
+      for (const [k, v] of Object.entries(extraHeaders)) {
+        // base ヘッダは上書きさせない (Authorization 等を retryKey から書き換えられる事故を防ぐ)。
+        if (k.toLowerCase() === 'authorization' || k.toLowerCase() === 'content-type') continue;
+        mergedHeaders[k] = v;
+      }
+    }
+
     const baseOptions: RequestInit = {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.channelAccessToken}`,
-      },
+      headers: mergedHeaders,
     };
 
     if (method !== 'GET' && method !== 'DELETE' && body !== undefined) {
@@ -140,19 +155,32 @@ export class LineClient {
     return data;
   }
 
+  /**
+   * @param retryKey  P1 (2026-06-07): X-Line-Retry-Key として付与する dedup key。
+   *   LINE は 1 分以内に同じ key の multicast を再受信したら無視する公式 dedup を
+   *   持つ。cron double-fire や recoverStuck race で同じ batch が二重発射されても
+   *   ユーザーが重複メッセージを受け取らないようにする。
+   *   呼び出し側は `${broadcast_id}-${batch_offset}` のような決定論的 key を渡す。
+   *   形式: UUID 形式 (8-4-4-4-12) 推奨だが、LINE のドキュメント上は任意の文字列。
+   */
   async multicast(
     to: string[],
     messages: Message[],
     customAggregationUnits?: string[],
+    retryKey?: string,
   ): Promise<{ data: unknown; requestId: string | null }> {
     const body: Record<string, unknown> = { to, messages };
     if (customAggregationUnits) {
       body.customAggregationUnits = customAggregationUnits;
     }
+    const extraHeaders: Record<string, string> | undefined = retryKey
+      ? { 'X-Line-Retry-Key': retryKey }
+      : undefined;
     const { data, headers } = await this.request(
       'POST',
       '/v2/bot/message/multicast',
       body,
+      extraHeaders,
     );
     return { data, requestId: headers.get('x-line-request-id') };
   }

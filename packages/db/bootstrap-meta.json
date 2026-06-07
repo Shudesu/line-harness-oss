@@ -70,7 +70,12 @@
     "062_lark_notifications.sql",
     "063_fingerprint_retention.sql",
     "064_stripe_products.sql",
-    "065_stripe_products_uniques.sql"
+    "065_stripe_products_uniques.sql",
+    "066_crm_forward_queue.sql",
+    "066_token_refresh_lock.sql",
+    "067_cron_locks.sql",
+    "068_perf_indexes.sql",
+    "068_stripe_subscriptions_last_event.sql"
   ],
-  "migrationCount": 71
+  "migrationCount": 76
 }

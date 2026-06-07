@@ -10,6 +10,11 @@
  * - タグは "tag1|tag2|tag3" 形式で1列に
  *
  * 認証は他のadmin APIと同じ middleware に任せる（route登録時にミドルウェアを通す）。
+ *
+ * P1 修正 (パフォーマンス): ストリーミング化。
+ * 旧実装は 10000 行 × 26 列をメモリに展開してから join するため
+ * 5-10MB の文字列が 3 倍コピーされて OOM 寸前だった。
+ * 500 行ずつ LIMIT/OFFSET でページング取得し、ReadableStream で逐次 enqueue する。
  */
 
 import { Hono } from 'hono';
@@ -89,6 +94,42 @@ const HEADERS = [
   'tags',
 ];
 
+// ストリーミングのページサイズ (500行/ページ。D1 1回 / 5-10ms 想定)
+const PAGE_SIZE = 500;
+
+function rowToCsvLine(r: ExportRow): string {
+  return [
+    r.id,
+    r.line_user_id,
+    r.display_name,
+    r.is_following,
+    r.created_at,
+    r.updated_at,
+    r.status_message,
+    r.picture_url,
+    r.ref_code,
+    r.first_tracked_link_id,
+    r.tl_name,
+    r.tl_media_name,
+    r.ltp,
+    r.fbclid,
+    r.gclid,
+    r.twclid,
+    r.ttclid,
+    r.utm_source,
+    r.utm_medium,
+    r.utm_campaign,
+    r.utm_content,
+    r.utm_term,
+    r.user_agent,
+    r.ip_address,
+    r.country,
+    r.tag_names,
+  ]
+    .map(csvEscape)
+    .join(',');
+}
+
 export const friendsExport = new Hono<Env>();
 const app = friendsExport;
 
@@ -127,29 +168,16 @@ app.get('/friends/export.csv', async (c) => {
     ? `AND f.id IN (${requestedIds.map(() => '?').join(',')})`
     : '';
 
-  // 各 friend について、最新の attribution-bearing link_click を LEFT JOIN で1行に出す。
-  // ref_tracking と link_clicks のどちらにも click_id が入る可能性があるので、
-  // ここでは link_clicks（より詳細）を優先し、空欄なら ref_tracking で補完する。
-  //
-  // 注意: D1/SQLite で GROUP_CONCAT を使うとタグの順序が不定だが、
-  // L-TRACK CSV も特に順序は保証していないので問題なし。
-
   const tagFilter = tagId
     ? `AND f.id IN (SELECT ft.friend_id FROM friend_tags ft WHERE ft.tag_id = ?)`
     : '';
 
   // Codex P1 修正: NULL 混入を防ぐため厳密一致のみ。
-  // NULL 行 (旧データ・未所属) は別アカウントの CSV に出さない。
   const accountFilter = lineAccountId
     ? `AND f.line_account_id = ?`
     : '';
 
-  const bind: unknown[] = [];
-  if (tagId) bind.push(tagId);
-  if (lineAccountId) bind.push(lineAccountId);
-  if (requestedIds.length > 0) bind.push(...requestedIds);
-  bind.push(limit);
-
+  // ページング用 SQL (LIMIT/OFFSET でめくる)
   // Codex指摘 中: ltp も ref_tracking フォールバックする（昇格後の ref_tracking にも ltp を保存している）
   const sql = `
     SELECT
@@ -198,52 +226,50 @@ app.get('/friends/export.csv', async (c) => {
       )
     WHERE 1 = 1 ${tagFilter} ${accountFilter} ${idsFilter}
     ORDER BY f.created_at DESC
-    LIMIT ?
+    LIMIT ? OFFSET ?
   `;
 
-  const result = await db.prepare(sql).bind(...bind).all<ExportRow>();
-  const rows = result.results ?? [];
+  // bind の固定部分 (ページごとに LIMIT/OFFSET を末尾に push する)
+  const baseBind: unknown[] = [];
+  if (tagId) baseBind.push(tagId);
+  if (lineAccountId) baseBind.push(lineAccountId);
+  if (requestedIds.length > 0) baseBind.push(...requestedIds);
 
-  const lines: string[] = [];
-  lines.push(HEADERS.join(','));
-  for (const r of rows) {
-    lines.push(
-      [
-        r.id,
-        r.line_user_id,
-        r.display_name,
-        r.is_following,
-        r.created_at,
-        r.updated_at,
-        r.status_message,
-        r.picture_url,
-        r.ref_code,
-        r.first_tracked_link_id,
-        r.tl_name,
-        r.tl_media_name,
-        r.ltp,
-        r.fbclid,
-        r.gclid,
-        r.twclid,
-        r.ttclid,
-        r.utm_source,
-        r.utm_medium,
-        r.utm_campaign,
-        r.utm_content,
-        r.utm_term,
-        r.user_agent,
-        r.ip_address,
-        r.country,
-        r.tag_names,
-      ]
-        .map(csvEscape)
-        .join(','),
-    );
-  }
-  // UTF-8 BOM 付き（Excel で文字化けしないように）
-  const body = '﻿' + lines.join('\r\n');
+  const encoder = new TextEncoder();
 
-  return new Response(body, {
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        // UTF-8 BOM + ヘッダ行
+        controller.enqueue(encoder.encode('﻿' + HEADERS.join(',') + '\r\n'));
+
+        let fetched = 0;
+        let offset = 0;
+        while (fetched < limit) {
+          const pageSize = Math.min(PAGE_SIZE, limit - fetched);
+          const bind = [...baseBind, pageSize, offset];
+          const result = await db.prepare(sql).bind(...bind).all<ExportRow>();
+          const rows = result.results ?? [];
+          if (rows.length === 0) break;
+
+          for (const r of rows) {
+            controller.enqueue(encoder.encode(rowToCsvLine(r) + '\r\n'));
+          }
+
+          fetched += rows.length;
+          offset += rows.length;
+          // 最終ページ (満杯未満) ならループ終了
+          if (rows.length < pageSize) break;
+        }
+        controller.close();
+      } catch (err) {
+        console.error('[friends-export] stream error:', err);
+        controller.error(err);
+      }
+    },
+  });
+
+  return new Response(stream, {
     status: 200,
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
@@ -252,4 +278,3 @@ app.get('/friends/export.csv', async (c) => {
     },
   });
 });
-

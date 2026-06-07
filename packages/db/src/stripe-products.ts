@@ -186,6 +186,8 @@ export interface StripeSubscription {
   current_period_end: string | null;
   cancel_at: string | null;
   canceled_at: string | null;
+  /** P1 (2026-06-07): Stripe event.created の monotonic timestamp。 */
+  last_event_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -213,6 +215,13 @@ export async function upsertStripeSubscription(
     currentPeriodEnd?: string | null;
     cancelAt?: string | null;
     canceledAt?: string | null;
+    /**
+     * P1 (2026-06-07): Stripe event.created を ISO 文字列で渡す。
+     * UPDATE 経路は last_event_at が NULL または bind 値より古い場合のみ書き込む
+     * (= subscription.updated → subscription.created の re-order を弾く)。
+     * 省略時は monotonic guard を skip (=旧挙動と互換)。
+     */
+    eventCreatedAt?: string | null;
   },
 ): Promise<StripeSubscription> {
   // Stripe subscription_id をユニークキーとして upsert
@@ -223,27 +232,57 @@ export async function upsertStripeSubscription(
     .first<{ id: string }>();
 
   if (existing) {
-    await db
-      .prepare(
-        `UPDATE stripe_subscriptions
-            SET friend_id = ?, stripe_product_id = ?, stripe_customer_id = ?,
-                status = ?, current_period_start = ?, current_period_end = ?,
-                cancel_at = ?, canceled_at = ?, updated_at = ?
-          WHERE id = ?`,
-      )
-      .bind(
-        input.friendId,
-        input.stripeProductId ?? null,
-        input.stripeCustomerId ?? null,
-        input.status,
-        input.currentPeriodStart ?? null,
-        input.currentPeriodEnd ?? null,
-        input.cancelAt ?? null,
-        input.canceledAt ?? null,
-        now,
-        existing.id,
-      )
-      .run();
+    // P1: monotonic guard。eventCreatedAt が指定されていれば、現在の last_event_at
+    // より新しい場合のみ UPDATE 全体を実行する。古い event は no-op。
+    // ISO 8601 文字列の lexicographic 比較は時系列順と一致する。
+    if (input.eventCreatedAt) {
+      await db
+        .prepare(
+          `UPDATE stripe_subscriptions
+              SET friend_id = ?, stripe_product_id = ?, stripe_customer_id = ?,
+                  status = ?, current_period_start = ?, current_period_end = ?,
+                  cancel_at = ?, canceled_at = ?, last_event_at = ?, updated_at = ?
+            WHERE id = ?
+              AND (last_event_at IS NULL OR last_event_at < ?)`,
+        )
+        .bind(
+          input.friendId,
+          input.stripeProductId ?? null,
+          input.stripeCustomerId ?? null,
+          input.status,
+          input.currentPeriodStart ?? null,
+          input.currentPeriodEnd ?? null,
+          input.cancelAt ?? null,
+          input.canceledAt ?? null,
+          input.eventCreatedAt,
+          now,
+          existing.id,
+          input.eventCreatedAt,
+        )
+        .run();
+    } else {
+      await db
+        .prepare(
+          `UPDATE stripe_subscriptions
+              SET friend_id = ?, stripe_product_id = ?, stripe_customer_id = ?,
+                  status = ?, current_period_start = ?, current_period_end = ?,
+                  cancel_at = ?, canceled_at = ?, updated_at = ?
+            WHERE id = ?`,
+        )
+        .bind(
+          input.friendId,
+          input.stripeProductId ?? null,
+          input.stripeCustomerId ?? null,
+          input.status,
+          input.currentPeriodStart ?? null,
+          input.currentPeriodEnd ?? null,
+          input.cancelAt ?? null,
+          input.canceledAt ?? null,
+          now,
+          existing.id,
+        )
+        .run();
+    }
     const row = await db
       .prepare('SELECT * FROM stripe_subscriptions WHERE id = ?')
       .bind(existing.id)
@@ -258,8 +297,8 @@ export async function upsertStripeSubscription(
       `INSERT INTO stripe_subscriptions
         (id, friend_id, stripe_product_id, stripe_subscription_id, stripe_customer_id,
          status, current_period_start, current_period_end, cancel_at, canceled_at,
-         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         last_event_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -272,6 +311,7 @@ export async function upsertStripeSubscription(
       input.currentPeriodEnd ?? null,
       input.cancelAt ?? null,
       input.canceledAt ?? null,
+      input.eventCreatedAt ?? null,
       now,
       now,
     )

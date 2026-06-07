@@ -804,14 +804,16 @@ liffRoutes.get('/auth/callback', async (c) => {
     if (utmCampaign) adMeta.utm_campaign = utmCampaign;
 
     if (Object.keys(adMeta).length > 0) {
-      const existingMeta = await db
-        .prepare('SELECT metadata FROM friends WHERE id = ?')
-        .bind(friend.id)
-        .first<{ metadata: string }>();
-      const merged = { ...JSON.parse(existingMeta?.metadata || '{}'), ...adMeta };
+      // P1 (2026-06-07): json_patch で atomic shallow merge。
+      // LIFF 同時アクセスや別 cron からの metadata write が消えない。
       await db
-        .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
-        .bind(JSON.stringify(merged), jstNow(), friend.id)
+        .prepare(
+          `UPDATE friends
+              SET metadata = json_patch(COALESCE(metadata, '{}'), ?),
+                  updated_at = ?
+            WHERE id = ?`,
+        )
+        .bind(JSON.stringify(adMeta), jstNow(), friend.id)
         .run();
     }
 
@@ -821,15 +823,15 @@ liffRoutes.get('/auth/callback', async (c) => {
         const xhToken = ref.slice(3);
         const xhResult = await resolveXHarnessToken(xhToken, c.env);
         if (xhResult?.xUsername) {
-          const existingMeta = await db
-            .prepare('SELECT metadata FROM friends WHERE id = ?')
-            .bind(friend.id)
-            .first<{ metadata: string }>();
-          const meta = JSON.parse(existingMeta?.metadata || '{}');
-          meta.x_username = xhResult.xUsername;
+          // P1 (2026-06-07): json_patch で atomic shallow merge。
           await db
-            .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
-            .bind(JSON.stringify(meta), jstNow(), friend.id)
+            .prepare(
+              `UPDATE friends
+                  SET metadata = json_patch(COALESCE(metadata, '{}'), ?),
+                      updated_at = ?
+                WHERE id = ?`,
+            )
+            .bind(JSON.stringify({ x_username: xhResult.xUsername }), jstNow(), friend.id)
             .run();
           console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
         }
@@ -1212,15 +1214,14 @@ liffRoutes.post('/api/liff/link', async (c) => {
           const xhToken = body.ref.slice(3);
           const xhResult = await resolveXHarnessToken(xhToken, c.env);
           if (xhResult?.xUsername) {
-            const existingMeta = await db
-              .prepare('SELECT metadata FROM friends WHERE id = ?')
-              .bind(friend.id)
-              .first<{ metadata: string }>();
-            const meta = JSON.parse(existingMeta?.metadata || '{}');
-            meta.x_username = xhResult.xUsername;
+            // P1 (2026-06-07): json_patch で atomic shallow merge。
             await db
-              .prepare('UPDATE friends SET metadata = ? WHERE id = ?')
-              .bind(JSON.stringify(meta), friend.id)
+              .prepare(
+                `UPDATE friends
+                    SET metadata = json_patch(COALESCE(metadata, '{}'), ?)
+                  WHERE id = ?`,
+              )
+              .bind(JSON.stringify({ x_username: xhResult.xUsername }), friend.id)
               .run();
             console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
           }
@@ -1280,15 +1281,14 @@ liffRoutes.post('/api/liff/link', async (c) => {
         const xhToken = body.ref.slice(3);
         const xhResult = await resolveXHarnessToken(xhToken, c.env);
         if (xhResult?.xUsername) {
-          const existingMeta = await db
-            .prepare('SELECT metadata FROM friends WHERE id = ?')
-            .bind(friend.id)
-            .first<{ metadata: string }>();
-          const meta = JSON.parse(existingMeta?.metadata || '{}');
-          meta.x_username = xhResult.xUsername;
+          // P1 (2026-06-07): json_patch で atomic shallow merge。
           await db
-            .prepare('UPDATE friends SET metadata = ? WHERE id = ?')
-            .bind(JSON.stringify(meta), friend.id)
+            .prepare(
+              `UPDATE friends
+                  SET metadata = json_patch(COALESCE(metadata, '{}'), ?)
+                WHERE id = ?`,
+            )
+            .bind(JSON.stringify({ x_username: xhResult.xUsername }), friend.id)
             .run();
           console.log(`X Harness: linked @${xhResult.xUsername} to friend ${friend.id}`);
         }

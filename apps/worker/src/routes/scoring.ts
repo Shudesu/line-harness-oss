@@ -9,6 +9,7 @@ import {
   getFriendScoreHistory,
   addScore,
 } from '@line-crm/db';
+import { getFriendOrReject } from '../utils/account-boundary.js';
 import type { Env } from '../index.js';
 
 const scoring = new Hono<Env>();
@@ -90,9 +91,19 @@ scoring.delete('/api/scoring-rules/:id', async (c) => {
 
 // ========== 友だちスコア ==========
 
+// Codex P0 修正: account 境界。任意 friendId で他テナント friend のスコア閲覧/加算
+// ができないよう、lineAccountId 必須化 + friend.line_account_id と突合。
 scoring.get('/api/friends/:id/score', async (c) => {
   try {
     const friendId = c.req.param('id');
+    const lineAccountId = c.req.query('lineAccountId');
+    if (!lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+    }
+    const guard = await getFriendOrReject(c.env.DB, friendId, lineAccountId);
+    if (!guard.ok) {
+      return c.json({ success: false, error: guard.error }, guard.status);
+    }
     const [score, history] = await Promise.all([
       getFriendScore(c.env.DB, friendId),
       getFriendScoreHistory(c.env.DB, friendId),
@@ -118,11 +129,19 @@ scoring.get('/api/friends/:id/score', async (c) => {
 });
 
 // 手動スコア加算
+// Codex P0 修正: body に lineAccountId を必須化、境界突合してから加算。
 scoring.post('/api/friends/:id/score', async (c) => {
   try {
     const friendId = c.req.param('id');
-    const body = await c.req.json<{ scoreChange: number; reason?: string }>();
+    const body = await c.req.json<{ scoreChange: number; reason?: string; lineAccountId?: string }>();
     if (body.scoreChange === undefined) return c.json({ success: false, error: 'scoreChange is required' }, 400);
+    if (!body.lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+    }
+    const guard = await getFriendOrReject(c.env.DB, friendId, body.lineAccountId);
+    if (!guard.ok) {
+      return c.json({ success: false, error: guard.error }, guard.status);
+    }
     await addScore(c.env.DB, { friendId, scoreChange: body.scoreChange, reason: body.reason });
     const newScore = await getFriendScore(c.env.DB, friendId);
     return c.json({ success: true, data: { friendId, currentScore: newScore } }, 201);

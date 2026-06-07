@@ -11,6 +11,7 @@ import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js'
 import { buildSegmentQuery } from './segment-query.js';
 import type { SegmentCondition } from './segment-query.js';
 import { buildMessage } from './broadcast.js';
+import { buildRetryKey } from '../utils/retry-key.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 
@@ -78,7 +79,9 @@ export async function processSegmentSend(
       }
 
       try {
-        await lineClient.multicast(lineUserIds, [batchMessage], [unit]);
+        // P1 (2026-06-07): X-Line-Retry-Key で cron double-fire の二重配信防止。
+        const retryKey = await buildRetryKey(`broadcast:${broadcast.id}:segment:${i}`);
+        await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
         successCount += batch.length;
 
         // Log successfully sent messages (batch insert for performance)

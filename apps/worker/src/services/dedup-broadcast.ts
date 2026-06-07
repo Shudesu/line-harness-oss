@@ -187,6 +187,7 @@ import { getLineAccountById, jstNow, updateBroadcastLineRequestId } from '@line-
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
 import { renderMessageContent } from './render-message.js';
 import { buildMessage } from './broadcast.js';
+import { buildRetryKey } from '../utils/retry-key.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 
@@ -354,7 +355,12 @@ export async function processMultiAccountDedupBroadcast(
           batchMessage = { ...message, text: addMessageVariation(message.text, batchIdx) } as Message;
         }
 
-        await client.multicast(batch.map((r) => r.lineUserId), [batchMessage], [unit]);
+        // P1 (2026-06-07): X-Line-Retry-Key で resume race の二重配信防止。
+        // account ID と batch index を入れて per-account batch ごとにユニーク化。
+        const retryKey = await buildRetryKey(
+          `broadcast:${broadcast.id}:dedup:${account.id}:${i}`,
+        );
+        await client.multicast(batch.map((r) => r.lineUserId), [batchMessage], [unit], retryKey);
 
         // multicast 成功直後に identKey を sent set へ追加。
         for (const r of batch) {

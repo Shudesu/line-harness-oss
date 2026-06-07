@@ -3,6 +3,15 @@
  *
  * LINE内アクション発生時に、友だちの広告クリックIDを元に
  * 各広告媒体のConversion APIへオフラインCVを送信する。
+ *
+ * P1 緊急修正 (2026-06-07):
+ *   1. fetch にタイムアウトが無く graph.facebook.com 等のハングで Worker 30秒制限に当たる
+ *      → 全 fetch に AbortSignal.timeout(10_000) を付与。
+ *   2. Meta CAPI に event_id idempotency key を付けていない → Meta 側 24h 窓 dedup が効かず
+ *      重複 CV カウントの恐れ。各 platform に「決定的に同じ logical event なら同じ key」を
+ *      生成して付与。
+ *   3. 失敗時の error category (4xx vs 5xx vs network/timeout) を細分して logAdConversion の
+ *      status に保存し、retry 可否判断のヒントにする。
  */
 
 import {
@@ -13,6 +22,91 @@ import {
   type AdPlatformConfig,
   type RefTracking,
 } from '@line-crm/db';
+
+/** 外部広告 API への fetch タイムアウト。Worker 30秒 wall 内に必ず収める。 */
+const AD_CAPI_TIMEOUT_MS = 10_000;
+
+/**
+ * 失敗カテゴリ。ad_conversion_logs.status の細分値として使う。
+ * - 'failed_client'  : 4xx (リクエスト不備) → retry 不可
+ * - 'failed_server'  : 5xx (プラットフォーム側エラー) → retry 可能
+ * - 'failed_timeout' : AbortSignal タイムアウト → retry 可能
+ * - 'failed_network' : ネットワーク層エラー (DNS, TLS, etc) → retry 可能
+ * - 'failed'         : 上記に分類不能の汎用失敗 (互換用)
+ */
+type FailedStatus = 'failed' | 'failed_client' | 'failed_server' | 'failed_timeout' | 'failed_network';
+
+/**
+ * CAPI 送信側で `throw` する独自エラー。`category` を持つので呼び出し元で
+ * logAdConversion(status=…) に正確な値を書ける。message には HTTP status と body が入る。
+ */
+class AdCapiError extends Error {
+  public readonly category: FailedStatus;
+  public readonly httpStatus: number | null;
+  constructor(category: FailedStatus, httpStatus: number | null, message: string) {
+    super(message);
+    this.name = 'AdCapiError';
+    this.category = category;
+    this.httpStatus = httpStatus;
+  }
+}
+
+/**
+ * fetch ラッパ: AbortSignal.timeout + 4xx/5xx/network/timeout を AdCapiError に正規化。
+ * 成功時は Response を返す (呼び出し側で body 必要なら読む)。
+ */
+async function adCapiFetch(url: string, init: RequestInit, label: string): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(AD_CAPI_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new AdCapiError(
+        'failed_timeout',
+        null,
+        `${label} timeout after ${AD_CAPI_TIMEOUT_MS}ms`,
+      );
+    }
+    throw new AdCapiError('failed_network', null, `${label} network error: ${String(err)}`);
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const category: FailedStatus =
+      response.status >= 400 && response.status < 500 ? 'failed_client' : 'failed_server';
+    throw new AdCapiError(category, response.status, `${label} error: ${response.status} ${body}`);
+  }
+  return response;
+}
+
+/**
+ * Idempotency key を作る。同じ logical event (= same platform/friend/event/clickId) なら
+ * 必ず同じ key になる決定的ハッシュ。SHA-256 → hex (32文字に切る) で各 API の長さ制限内に収める。
+ *
+ * 設計理由:
+ *   - 乱数 UUID だと retry 時に別の key になり Meta 側 dedup が効かない。
+ *   - friendId と clickId と eventName を含めるので、同じ友だち × 同じ広告 × 同じ event は
+ *     どの retry でも同一 key になる。
+ */
+async function buildIdempotencyKey(
+  platformName: string,
+  friendId: string,
+  eventName: string,
+  clickId: string,
+): Promise<string> {
+  const text = `${platformName}|${friendId}|${eventName}|${clickId}`;
+  const data = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const bytes = new Uint8Array(digest);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex.slice(0, 32);
+}
 
 /**
  * 冪等チェック: 同 platform × 同 friend × 同 event × 同 click_id で status='sent'
@@ -54,15 +148,20 @@ async function sendOneRef(
       config.test_mode === true ||
       config.test_mode === 'true' ||
       String(config.test_mode) === '1';
-    // クリックID 未保持なら何もしない。
-    const clickIdAndType: Array<{ id: string; type: string; send: () => Promise<void> }> = [];
+    // クリックID 未保持なら何もしない。各 entry には platform 名を持たせ、
+    // idempotency key 生成時の決定論的入力に使う。
+    const clickIdAndType: Array<{
+      id: string;
+      type: string;
+      send: (idempotencyKey: string) => Promise<void>;
+    }> = [];
     switch (platform.name) {
       case 'meta':
         if (ref.fbclid)
           clickIdAndType.push({
             id: ref.fbclid,
             type: 'fbclid',
-            send: () => sendMetaConversion(config, ref, eventName, eventValue),
+            send: (key) => sendMetaConversion(config, ref, eventName, eventValue, key),
           });
         break;
       case 'x':
@@ -70,7 +169,7 @@ async function sendOneRef(
           clickIdAndType.push({
             id: ref.twclid,
             type: 'twclid',
-            send: () => sendXConversion(config, ref, eventName, eventValue),
+            send: (key) => sendXConversion(config, ref, eventName, eventValue, key),
           });
         break;
       case 'google':
@@ -78,7 +177,7 @@ async function sendOneRef(
           clickIdAndType.push({
             id: ref.gclid,
             type: 'gclid',
-            send: () => sendGoogleConversion(config, ref, eventName, eventValue),
+            send: (key) => sendGoogleConversion(config, ref, eventName, eventValue, key),
           });
         break;
       case 'tiktok':
@@ -86,7 +185,7 @@ async function sendOneRef(
           clickIdAndType.push({
             id: ref.ttclid,
             type: 'ttclid',
-            send: () => sendTikTokConversion(config, ref, eventName, eventValue),
+            send: (key) => sendTikTokConversion(config, ref, eventName, eventValue, key),
           });
         break;
     }
@@ -95,6 +194,14 @@ async function sendOneRef(
       if (await alreadySent(db, platform.id, friendId, eventName, entry.id)) {
         continue;
       }
+      // P1: idempotency key を決定的に生成 (retry されても同じ key になる)。
+      // Meta CAPI の event_id で 24h 窓 dedup、他プラットフォームの client-side dedup にも使う。
+      const idempotencyKey = await buildIdempotencyKey(
+        platform.name,
+        friendId,
+        eventName,
+        entry.id,
+      );
       // test_mode: 実 API を叩かず 'sent' でログだけ残す。
       if (testMode) {
         await logAdConversion(db, {
@@ -104,12 +211,12 @@ async function sendOneRef(
           clickId: entry.id,
           clickIdType: entry.type,
           status: 'sent',
-          responseBody: JSON.stringify({ test_mode: true, value: eventValue ?? null }),
+          responseBody: JSON.stringify({ test_mode: true, value: eventValue ?? null, event_id: idempotencyKey }),
         });
         continue;
       }
       try {
-        await entry.send();
+        await entry.send(idempotencyKey);
         await logAdConversion(db, {
           platformId: platform.id,
           friendId,
@@ -119,13 +226,17 @@ async function sendOneRef(
           status: 'sent',
         });
       } catch (error) {
+        // P1: failure category を細分して status に保存 (retry 可否のヒント)。
+        // AdCapiError 以外 (想定外) は汎用 'failed' に倒す。
+        const status: FailedStatus =
+          error instanceof AdCapiError ? error.category : 'failed';
         await logAdConversion(db, {
           platformId: platform.id,
           friendId,
           eventName,
           clickId: entry.id,
           clickIdType: entry.type,
-          status: 'failed',
+          status,
           errorMessage: String(error),
         });
       }
@@ -231,7 +342,8 @@ async function sendMetaConversion(
   config: AdPlatformConfig,
   ref: RefTracking,
   eventName: string,
-  eventValue?: number,
+  eventValue: number | undefined,
+  idempotencyKey: string,
 ): Promise<void> {
   const url = `https://graph.facebook.com/v21.0/${config.pixel_id}/events`;
 
@@ -239,6 +351,8 @@ async function sendMetaConversion(
     event_name: eventName,
     event_time: Math.floor(Date.now() / 1000),
     action_source: 'website',
+    // P1: Meta 側 24h dedup を効かせる。同じ logical event は同じ key で送る。
+    event_id: idempotencyKey,
     user_data: {
       fbc: `fb.1.${Date.now()}.${ref.fbclid}`,
       client_ip_address: ref.ip_address || undefined,
@@ -259,30 +373,32 @@ async function sendMetaConversion(
     body.test_event_code = config.test_event_code;
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Meta CAPI error: ${response.status} ${errorBody}`);
-  }
+  await adCapiFetch(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    'Meta CAPI',
+  );
 }
 
 async function sendXConversion(
   config: AdPlatformConfig,
   ref: RefTracking,
   eventName: string,
-  eventValue?: number,
+  eventValue: number | undefined,
+  idempotencyKey: string,
 ): Promise<void> {
   const url = 'https://ads-api.x.com/12/measurement/conversions';
 
   const body = {
     conversions: [{
       conversion_time: new Date().toISOString(),
-      event_id: crypto.randomUUID(),
+      // P1: X Conversion API は event_id を client-side dedup key として扱う。
+      // 決定論的 key を渡せば retry でも重複 CV にならない。
+      event_id: idempotencyKey,
       identifiers: [{ twclid: ref.twclid }],
       conversion_id: config.pixel_id,
       event_name: eventName,
@@ -290,26 +406,26 @@ async function sendXConversion(
     }],
   };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      // OAuth 1.0a signature required — placeholder for production implementation
+  await adCapiFetch(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // OAuth 1.0a signature required — placeholder for production implementation
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`X Conversion API error: ${response.status} ${errorBody}`);
-  }
+    'X Conversion API',
+  );
 }
 
 async function sendGoogleConversion(
   config: AdPlatformConfig,
   ref: RefTracking,
   eventName: string,
-  eventValue?: number,
+  eventValue: number | undefined,
+  idempotencyKey: string,
 ): Promise<void> {
   const url = `https://googleads.googleapis.com/v17/customers/${config.customer_id}:uploadClickConversions`;
 
@@ -318,39 +434,44 @@ async function sendGoogleConversion(
       gclid: ref.gclid,
       conversion_action: `customers/${config.customer_id}/conversionActions/${config.conversion_action_id}`,
       conversion_date_time: new Date().toISOString().replace('Z', '+09:00'),
+      // P1: Google Ads は order_id (任意文字列) を transaction-level dedup key として
+      // 扱う。同じ key で送ると同じ conversion とみなされる (公式ドキュメント
+      // "Avoid duplicate conversions" 参照)。
+      order_id: idempotencyKey,
       ...(eventValue && { conversion_value: eventValue, currency_code: 'JPY' }),
     }],
     partial_failure: true,
   };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.oauth_token}`,
-      'developer-token': config.developer_token || '',
+  await adCapiFetch(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.oauth_token}`,
+        'developer-token': config.developer_token || '',
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Google Ads API error: ${response.status} ${errorBody}`);
-  }
+    'Google Ads API',
+  );
 }
 
 async function sendTikTokConversion(
   config: AdPlatformConfig,
   ref: RefTracking,
   eventName: string,
-  eventValue?: number,
+  eventValue: number | undefined,
+  idempotencyKey: string,
 ): Promise<void> {
   const url = 'https://business-api.tiktok.com/open_api/v1.3/event/track/';
 
   const body = {
     pixel_code: config.pixel_code,
     event: eventName,
-    event_id: crypto.randomUUID(),
+    // P1: TikTok Events API も event_id で client-side dedup を行う。
+    event_id: idempotencyKey,
     timestamp: new Date().toISOString(),
     context: {
       user_agent: ref.user_agent || '',
@@ -362,17 +483,16 @@ async function sendTikTokConversion(
     },
   };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Token': config.access_token || '',
+  await adCapiFetch(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Token': config.access_token || '',
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`TikTok Events API error: ${response.status} ${errorBody}`);
-  }
+    'TikTok Events API',
+  );
 }

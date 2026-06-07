@@ -31,6 +31,13 @@ function stubDB(due: DueRow[]) {
         },
         async run() {
           updates.push({ sql, bound });
+          // CAS claim 行 (`SET retry_count = retry_count + 1`) は in-memory の
+          // due[].retry_count を bump して、test 側で claimedRetry を検証可能にする。
+          if (sql.includes('SET retry_count = retry_count + 1')) {
+            const id = bound[0];
+            const row = due.find((r) => r.id === id);
+            if (row) row.retry_count += 1;
+          }
           return { success: true, meta: { changes: 1 } };
         },
         async first() {
@@ -114,10 +121,13 @@ describe('processDueReminders', () => {
       reminderHoursBefore: REMINDER_HOURS_BEFORE,
     });
     expect(result).toEqual({ sent: 0, failed: 1 });
-    const failedUpdate = updates.find((u) => u.sql.includes('UPDATE booking_reminders SET status'));
+    // CAS 移行後: retry_count は claim 側 (`SET retry_count = retry_count + 1`) で
+    // bump されるため、失敗 UPDATE には含まれない (status, last_error, id の 3 binds)。
+    const failedUpdate = updates.find((u) => u.sql.includes('UPDATE booking_reminders SET status ='));
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate!.bound[0]).toBe('failed');
-    expect(failedUpdate!.bound[1]).toBe(1); // retry_count
+    // bumped retry_count は in-memory に反映される (claim 側)
+    expect(due[0].retry_count).toBe(1);
   });
 
   test('送信失敗 3 回目: failed_permanent', async () => {
@@ -141,8 +151,8 @@ describe('processDueReminders', () => {
       sender,
       reminderHoursBefore: REMINDER_HOURS_BEFORE,
     });
-    const u = updates.find((x) => x.sql.includes('UPDATE booking_reminders SET status'));
+    const u = updates.find((x) => x.sql.includes('UPDATE booking_reminders SET status ='));
     expect(u!.bound[0]).toBe('failed_permanent');
-    expect(u!.bound[1]).toBe(3);
+    expect(due[0].retry_count).toBe(3); // claim 側 で bump 済み
   });
 });

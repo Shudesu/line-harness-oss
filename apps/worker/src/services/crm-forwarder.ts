@@ -11,11 +11,16 @@
  * - 各 forward 先には Promise.allSettled で並列送信
  * - タイムアウト: 10秒
  * - X-Line-Signature ヘッダを付け直す (attach_line_signature=1 のとき)
+ *
+ * P1 (2026-06-07): 失敗時に raw_body + signature を crm_forward_queue に enqueue。
+ * 5min cron tick で services/crm-forward-retry.ts が指数バックオフ retry する。
+ * 6回失敗で DLQ 化し crm_forward_logs に 'failed_permanent' を残す。
  */
 
 import {
   getEnabledCrmForwards,
   logCrmForwardResult,
+  enqueueCrmForwardRetry,
 } from '@line-crm/db';
 
 const TIMEOUT_MS = 10_000;
@@ -56,10 +61,12 @@ async function sendOne(
   };
 
   // attach_line_signature=1 のとき、X-Line-Signature を再計算して付与
-  // エルメ等の forward 先が LINE 公式 webhook 互換のとき、署名検証で受け取れるように
+  // エルメ等の forward 先が LINE 公式 webhook 互換のとき、署名検証で受け取れるように。
+  // 署名値は queue enqueue にも流用するので outer scope に保持する。
+  let signature: string | null = null;
   if (fwd.attach_line_signature && channelSecret) {
     try {
-      const signature = await signLineHmac(rawBody, channelSecret);
+      signature = await signLineHmac(rawBody, channelSecret);
       headers['X-Line-Signature'] = signature;
     } catch (err) {
       console.error('[crm-forward] signature error:', err);
@@ -68,6 +75,13 @@ async function sendOne(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  // P1: 失敗判定後に queue enqueue するかどうかのフラグ。
+  // 成功 (r.ok) は false、4xx/5xx/timeout/network はすべて true。
+  // 4xx も含めるのは「forward 先 (エルメ) がメンテで一時的に 400/401 を返す」ケースを
+  // 救うため。permanent 4xx は 6回 retry を待たずに DLQ 化するほうが運用的に正しいが、
+  // payload を絶対にロストしない原則を優先する。
+  let shouldEnqueue = false;
+  let enqueueError = '';
   try {
     const r = await fetch(fwd.webhook_url, {
       method: 'POST',
@@ -83,6 +97,10 @@ async function sendOne(
       durationMs: duration,
       errorMessage: r.ok ? null : `HTTP ${r.status}`,
     });
+    if (!r.ok) {
+      shouldEnqueue = true;
+      enqueueError = `HTTP ${r.status}`;
+    }
   } catch (err) {
     const duration = Date.now() - startedAt;
     const isAbort =
@@ -93,8 +111,25 @@ async function sendOne(
       durationMs: duration,
       errorMessage: err instanceof Error ? err.message : String(err),
     });
+    shouldEnqueue = true;
+    enqueueError = err instanceof Error ? err.message : String(err);
   } finally {
     clearTimeout(timer);
+  }
+
+  if (shouldEnqueue) {
+    try {
+      await enqueueCrmForwardRetry(db, {
+        crmForwardId: fwd.id,
+        rawBody,
+        // 署名は forward 時点の channel_secret で計算したものを流用 (rotation 耐性)。
+        signature,
+        initialError: enqueueError,
+      });
+    } catch (e) {
+      // enqueue 失敗は致命的ではない (log は既に残っている) ので吐いて続行。
+      console.error('[crm-forward] enqueue retry error:', e);
+    }
   }
 }
 

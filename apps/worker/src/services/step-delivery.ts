@@ -10,11 +10,17 @@ import {
   computeNextDeliveryAt,
   resolveStepContent,
   addTagToFriend,
+  getMergedMetadataByUserId,
+  getLineAccountById,
   type DeliveryMode,
 } from '@line-crm/db';
-import type { LineClient } from '@line-crm/line-sdk';
+import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
+// P1 修正 (hot path): cron 配信ループの dynamic import を static 化。
+// auto-track / account-token は配信1回ごとに必ず通る確実な依存。
+import { autoTrackContent } from './auto-track.js';
+import { resolveAccessToken } from '../lib/account-token.js';
 
 /**
  * Replace template variables in message content.
@@ -82,7 +88,6 @@ export async function resolveMetadata(
 ): Promise<Record<string, unknown>> {
   // If friend has a UUID, merge metadata from all linked records
   if (friend.user_id) {
-    const { getMergedMetadataByUserId } = await import('@line-crm/db');
     return getMergedMetadataByUserId(db, friend.user_id);
   }
   // Fallback: parse own metadata
@@ -222,7 +227,6 @@ async function processSingleDelivery(
   let trackedType: string = resolved.messageType;
   let trackedContent = expandedContent;
   if (workerUrl) {
-    const { autoTrackContent } = await import('./auto-track.js');
     const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl);
     trackedType = tracked.messageType;
     trackedContent = tracked.content;
@@ -232,14 +236,11 @@ async function processSingleDelivery(
   let deliveryClient = lineClient;
   const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
   if (friendAccountId) {
-    const { getLineAccountById } = await import('@line-crm/db');
     const account = await getLineAccountById(db, friendAccountId);
     if (account) {
       // Phase 1-G: 透過復号
-      const { resolveAccessToken } = await import('../lib/account-token.js');
       const token = env ? await resolveAccessToken(env, account.channel_access_token) : account.channel_access_token;
-      const { LineClient: LC } = await import('@line-crm/line-sdk');
-      deliveryClient = new LC(token);
+      deliveryClient = new LineClient(token);
     }
   }
   await deliveryClient.pushMessage(friend.line_user_id, [message]);

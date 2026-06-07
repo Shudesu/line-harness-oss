@@ -264,12 +264,14 @@ forms.post('/api/forms/:id/partial', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
 
-    // Save survey data to friend metadata (merge with existing)
-    const existingMeta = friend.metadata ? JSON.parse(friend.metadata) : {};
-    const merged = { ...existingMeta, ...body.data };
+    // Save survey data to friend metadata.
+    // P1 (2026-06-07): json_patch で atomic shallow merge し、並行 update の喪失を防ぐ。
     await c.env.DB.prepare(
-      'UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?',
-    ).bind(JSON.stringify(merged), jstNow(), friend.id).run();
+      `UPDATE friends
+          SET metadata = json_patch(COALESCE(metadata, '{}'), ?),
+              updated_at = ?
+        WHERE id = ?`,
+    ).bind(JSON.stringify(body.data ?? {}), jstNow(), friend.id).run();
 
     return c.json({ success: true });
   } catch (err) {
@@ -417,17 +419,20 @@ forms.post('/api/forms/:id/submit', async (c) => {
 
       const sideEffects: Promise<unknown>[] = [];
 
-      // Save response data to friend's metadata
+      // Save response data to friend's metadata.
+      // P1 (2026-06-07): json_patch で atomic shallow merge。
+      // friend を SELECT する read-modify-write を排して並行 update 喪失を防ぐ。
       if (form.save_to_metadata) {
         sideEffects.push(
           (async () => {
-            const friend = await getFriendById(db, friendId!);
-            if (!friend) return;
-            const existing = JSON.parse(friend.metadata || '{}') as Record<string, unknown>;
-            const merged = { ...existing, ...submissionData };
             await db
-              .prepare(`UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?`)
-              .bind(JSON.stringify(merged), now, friendId)
+              .prepare(
+                `UPDATE friends
+                    SET metadata = json_patch(COALESCE(metadata, '{}'), ?),
+                        updated_at = ?
+                  WHERE id = ?`,
+              )
+              .bind(JSON.stringify(submissionData), now, friendId)
               .run();
           })(),
         );

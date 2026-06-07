@@ -8,6 +8,7 @@ import {
   getConversionEvents,
   getConversionReport,
 } from '@line-crm/db';
+import { getFriendOrReject } from '../utils/account-boundary.js';
 import type { Env } from '../index.js';
 
 const conversions = new Hono<Env>();
@@ -78,11 +79,15 @@ conversions.delete('/api/conversions/points/:id', async (c) => {
 // ── Conversion Tracking ─────────────────────────────────────────────────────
 
 // POST /api/conversions/track - record conversion
+// Codex P0 修正: account 境界を強制。任意 friendId で他テナントの CV を記録
+// できないよう、呼び出し側に lineAccountId を渡させ、friend.line_account_id と
+// 一致しなければ 403。
 conversions.post('/api/conversions/track', async (c) => {
   try {
     const body = await c.req.json<{
       conversionPointId: string;
       friendId: string;
+      lineAccountId?: string;
       userId?: string | null;
       affiliateCode?: string | null;
       metadata?: Record<string, unknown> | null;
@@ -93,6 +98,18 @@ conversions.post('/api/conversions/track', async (c) => {
         { success: false, error: 'conversionPointId and friendId are required' },
         400,
       );
+    }
+    // body 優先、無ければ query (cookie/external from LIFF 等で query 経由になる)
+    const lineAccountId = body.lineAccountId ?? c.req.query('lineAccountId');
+    if (!lineAccountId) {
+      return c.json(
+        { success: false, error: 'lineAccountId is required' },
+        400,
+      );
+    }
+    const guard = await getFriendOrReject(c.env.DB, body.friendId, lineAccountId);
+    if (!guard.ok) {
+      return c.json({ success: false, error: guard.error }, guard.status);
     }
 
     const event = await trackConversion(c.env.DB, {

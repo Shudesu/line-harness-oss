@@ -13,6 +13,7 @@ import {
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage } from '../services/step-delivery.js';
+import { getFriendOrReject } from '../utils/account-boundary.js';
 import type { Env } from '../index.js';
 
 const friends = new Hono<Env>();
@@ -390,10 +391,20 @@ friends.get('/api/friends/ref-stats', async (c) => {
 });
 
 // GET /api/friends/:id - get single friend with tags
+// Codex P0 修正: account 境界。任意 UUID で他テナント friend の display_name /
+// metadata を覗けないよう、lineAccountId 必須化 + friend.line_account_id と突合。
 friends.get('/api/friends/:id', async (c) => {
   try {
     const id = c.req.param('id');
+    const lineAccountId = c.req.query('lineAccountId');
+    if (!lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+    }
     const db = c.env.DB;
+    const guard = await getFriendOrReject(db, id, lineAccountId);
+    if (!guard.ok) {
+      return c.json({ success: false, error: guard.error }, guard.status);
+    }
 
     const [friend, tags] = await Promise.all([
       getFriendById(db, id),
@@ -418,16 +429,25 @@ friends.get('/api/friends/:id', async (c) => {
 });
 
 // POST /api/friends/:id/tags - add tag
+// Codex P0 修正: account 境界。bulk と同じ方針 (friend のみ厳密 / tag は global)。
+// body に lineAccountId を必須化、friend.line_account_id と突合してから付与する。
 friends.post('/api/friends/:id/tags', async (c) => {
   try {
     const friendId = c.req.param('id');
-    const body = await c.req.json<{ tagId: string }>();
+    const body = await c.req.json<{ tagId: string; lineAccountId?: string }>();
 
     if (!body.tagId) {
       return c.json({ success: false, error: 'tagId is required' }, 400);
     }
+    if (!body.lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+    }
 
     const db = c.env.DB;
+    const guard = await getFriendOrReject(db, friendId, body.lineAccountId);
+    if (!guard.ok) {
+      return c.json({ success: false, error: guard.error }, guard.status);
+    }
     await addTagToFriend(db, friendId, body.tagId);
 
     // Enroll in tag_added scenarios that match this tag
@@ -498,18 +518,45 @@ friends.post('/api/friends/bulk/tags', async (c) => {
       }
     }
     // tag_added シナリオは一括処理時に enroll しない (大量の副作用回避)。
+    //
+    // P1 修正 (N+1 解消): 旧実装は 500 件 × (INSERT + fireEvent) = 1000+ subrequest で
+    // CF Worker の上限 1000 を超えていた。INSERT は multi-VALUES で 100 件単位の
+    // chunk INSERT に集約。fireEvent は副作用 (シナリオ enroll 等) があり得るので
+    // friend ごとに呼ぶが、?skipEvents=1 で抑制可能にした。
+    const validFriendIds = body.friendIds.filter((id) => valid.has(id));
+    const rejected = body.friendIds.length - validFriendIds.length;
     let succeeded = 0;
     let failed = 0;
-    let rejected = 0;
-    for (const friendId of body.friendIds) {
-      if (!valid.has(friendId)) { rejected++; continue; }
+    const now = jstNow();
+    const CHUNK = 100;
+    for (let i = 0; i < validFriendIds.length; i += CHUNK) {
+      const chunk = validFriendIds.slice(i, i + CHUNK);
+      const valuesSql = chunk.map(() => '(?, ?, ?)').join(', ');
+      const binds: unknown[] = [];
+      for (const fid of chunk) {
+        binds.push(fid, body.tagId, now);
+      }
       try {
-        await addTagToFriend(db, friendId, body.tagId);
-        await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
-        succeeded++;
+        await db
+          .prepare(
+            `INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES ${valuesSql}`,
+          )
+          .bind(...binds)
+          .run();
+        succeeded += chunk.length;
       } catch (e) {
-        console.error(`[bulk-tag] add failed friend=${friendId}:`, e);
-        failed++;
+        console.error(`[bulk-tag] add chunk failed (size=${chunk.length}):`, e);
+        failed += chunk.length;
+      }
+    }
+    const skipEvents = c.req.query('skipEvents') === '1';
+    if (!skipEvents) {
+      for (const friendId of validFriendIds) {
+        try {
+          await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
+        } catch (e) {
+          console.error(`[bulk-tag] add fireEvent failed friend=${friendId}:`, e);
+        }
       }
     }
     return c.json({ success: true, data: { succeeded, failed, rejected } });
@@ -559,18 +606,36 @@ friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
         valid.add(r.id);
       }
     }
+    // P1 修正 (N+1 解消): DELETE も IN (...) で chunk まとめ。
+    const validFriendIds = body.friendIds.filter((id) => valid.has(id));
+    const rejected = body.friendIds.length - validFriendIds.length;
     let succeeded = 0;
     let failed = 0;
-    let rejected = 0;
-    for (const friendId of body.friendIds) {
-      if (!valid.has(friendId)) { rejected++; continue; }
+    const CHUNK = 100;
+    for (let i = 0; i < validFriendIds.length; i += CHUNK) {
+      const chunk = validFriendIds.slice(i, i + CHUNK);
+      const inPlaceholders = chunk.map(() => '?').join(',');
       try {
-        await removeTagFromFriend(db, friendId, tagId);
-        await fireEvent(db, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
-        succeeded++;
+        await db
+          .prepare(
+            `DELETE FROM friend_tags WHERE tag_id = ? AND friend_id IN (${inPlaceholders})`,
+          )
+          .bind(tagId, ...chunk)
+          .run();
+        succeeded += chunk.length;
       } catch (e) {
-        console.error(`[bulk-tag] remove failed friend=${friendId}:`, e);
-        failed++;
+        console.error(`[bulk-tag] remove chunk failed (size=${chunk.length}):`, e);
+        failed += chunk.length;
+      }
+    }
+    const skipEvents = c.req.query('skipEvents') === '1';
+    if (!skipEvents) {
+      for (const friendId of validFriendIds) {
+        try {
+          await fireEvent(db, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
+        } catch (e) {
+          console.error(`[bulk-tag] remove fireEvent failed friend=${friendId}:`, e);
+        }
       }
     }
     return c.json({ success: true, data: { succeeded, failed, rejected } });
@@ -581,10 +646,30 @@ friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
 });
 
 // DELETE /api/friends/:id/tags/:tagId - remove tag
+// Codex P0 修正: account 境界。bulk と同じ方針 (friend のみ厳密 / tag は global)。
+// DELETE は body を持たないことが多いので query から lineAccountId を受け取る。
+// (body も許容: 一部クライアントが fetch DELETE で body を送る)
 friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
   try {
     const friendId = c.req.param('id');
     const tagId = c.req.param('tagId');
+    let lineAccountId: string | undefined = c.req.query('lineAccountId') ?? undefined;
+    if (!lineAccountId) {
+      // body fallback (なければ無視)
+      try {
+        const body = await c.req.json<{ lineAccountId?: string }>();
+        lineAccountId = body?.lineAccountId;
+      } catch {
+        // body 無し / JSON でない → そのまま下で 400
+      }
+    }
+    if (!lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+    }
+    const guard = await getFriendOrReject(c.env.DB, friendId, lineAccountId);
+    if (!guard.ok) {
+      return c.json({ success: false, error: guard.error }, guard.status);
+    }
 
     await removeTagFromFriend(c.env.DB, friendId, tagId);
 
@@ -599,24 +684,44 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
 });
 
 // PUT /api/friends/:id/metadata - merge metadata fields
+// Codex P0 修正: account 境界。任意 UUID で他テナント friend の metadata 上書きが
+// できないよう、body に lineAccountId を必須化して境界突合してから merge する。
+// merge 対象 metadata 自体は残りの body フィールドを使う。
 friends.put('/api/friends/:id/metadata', async (c) => {
   try {
     const friendId = c.req.param('id');
     const db = c.env.DB;
+
+    const body = await c.req.json<Record<string, unknown>>();
+    const lineAccountId = typeof body.lineAccountId === 'string' ? body.lineAccountId : undefined;
+    if (!lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId is required' }, 400);
+    }
+    const guard = await getFriendOrReject(db, friendId, lineAccountId);
+    if (!guard.ok) {
+      return c.json({ success: false, error: guard.error }, guard.status);
+    }
 
     const friend = await getFriendById(db, friendId);
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
 
-    const body = await c.req.json<Record<string, unknown>>();
-    const existing = JSON.parse(friend.metadata || '{}');
-    const merged = { ...existing, ...body };
+    // merge 対象は body から境界キーを除いた残り。lineAccountId は metadata に混入させない。
+    const { lineAccountId: _omit, ...metadataPatch } = body;
+    void _omit;
     const now = jstNow();
 
+    // P1 (2026-06-07): json_patch で atomic shallow merge。
+    // 並行 PUT が消えないよう DB 側で merge する。
     await db
-      .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
-      .bind(JSON.stringify(merged), now, friendId)
+      .prepare(
+        `UPDATE friends
+            SET metadata = json_patch(COALESCE(metadata, '{}'), ?),
+                updated_at = ?
+          WHERE id = ?`,
+      )
+      .bind(JSON.stringify(metadataPatch), now, friendId)
       .run();
 
     const updated = await getFriendById(db, friendId);

@@ -1,4 +1,5 @@
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
+import { buildRetryKey } from '../utils/retry-key.js';
 import {
   getBroadcastById,
   getBroadcasts,
@@ -99,7 +100,11 @@ export async function processBroadcastSend(
         }
 
         try {
-          await lineClient.multicast(lineUserIds, [batchMessage], [unit]);
+          // P1 (2026-06-07): X-Line-Retry-Key で cron double-fire の重複配信を防ぐ。
+          // 同じ broadcast の同じ batch_offset は決定論的 UUID になるので、1 分以内に
+          // 二重発射されても LINE 側で吸収されてユーザーは 1 通だけ受け取る。
+          const retryKey = await buildRetryKey(`broadcast:${broadcast.id}:tag:${i}`);
+          await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
           successCount += batch.length;
 
           // Log only successfully sent messages (batch insert for performance)
@@ -363,7 +368,10 @@ async function processQueuedBroadcastBatches(
     }
 
     try {
-      await lineClient.multicast(lineUserIds, [batchMessage], [unit]);
+      // P1 (2026-06-07): X-Line-Retry-Key で cron double-fire / recoverStuck race 時の
+      // 同 batch 二重発射を吸収。currentOffset を入れることで batch ごとにユニーク。
+      const retryKey = await buildRetryKey(`broadcast:${broadcast.id}:queue:${currentOffset}`);
+      await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
     } catch (err) {
       console.error(`Queued broadcast batch ${batchIndex} send failed:`, err);
       // 送信失敗: ロック解除 + offsetを保存して次のCronで再開

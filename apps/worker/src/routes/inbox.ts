@@ -11,7 +11,17 @@ export const inbox = new Hono<Env>();
 inbox.get('/api/inbox/unanswered', async (c) => {
   try {
     const q = c.req.query('q');
-    const account = c.req.query('account') || undefined;
+    // Codex P0 修正: account (= lineAccountId) を必須化。
+    // 省略すると全アカ横断で未回答 inbox を返すため、テナント境界がない。
+    // 単一アカ運用のクライアントも明示的に accountId を渡す方針に変える。
+    const account = c.req.query('account');
+    if (!account) {
+      return c.json({ success: false, error: 'account (lineAccountId) is required' }, 400);
+    }
+    const idPattern = /^[a-f0-9-]{32,36}$/i;
+    if (!idPattern.test(account)) {
+      return c.json({ success: false, error: 'account の形式が不正です' }, 400);
+    }
     const minWaitMinutesStr = c.req.query('minWaitMinutes');
     const pageStr = c.req.query('page');
     const pageSizeStr = c.req.query('pageSize');

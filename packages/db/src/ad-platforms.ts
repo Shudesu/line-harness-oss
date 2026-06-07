@@ -125,6 +125,26 @@ export async function deleteAdPlatform(db: D1Database, id: string): Promise<void
   await db.prepare(`DELETE FROM ad_platforms WHERE id = ?`).bind(id).run();
 }
 
+/**
+ * ad_conversion_logs.status の許容値。
+ * - 'sent'           : 正常送信
+ * - 'failed'         : 分類不能の失敗 (汎用)
+ * - 'failed_client'  : 4xx (P1 追加, retry 不可)
+ * - 'failed_server'  : 5xx (P1 追加, retry 可)
+ * - 'failed_timeout' : タイムアウト (P1 追加, retry 可)
+ * - 'failed_network' : ネットワーク層エラー (P1 追加, retry 可)
+ *
+ * NOTE: 010_ad_conversions.sql の status カラムには CHECK 制約が無いので
+ *       schema 変更なしで追加できる。retry processor は将来追加予定。
+ */
+export type AdConversionStatus =
+  | 'sent'
+  | 'failed'
+  | 'failed_client'
+  | 'failed_server'
+  | 'failed_timeout'
+  | 'failed_network';
+
 export async function logAdConversion(
   db: D1Database,
   opts: {
@@ -133,7 +153,7 @@ export async function logAdConversion(
     eventName: string;
     clickId: string;
     clickIdType: string;
-    status: 'sent' | 'failed';
+    status: AdConversionStatus;
     requestBody?: string | null;
     responseBody?: string | null;
     errorMessage?: string | null;

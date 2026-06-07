@@ -6,6 +6,11 @@
  * forms.ts を肥大化させずに済む。
  *
  * 全関数 fire-and-forget で安全に動く前提 (内部で try/catch + skip log)。
+ *
+ * P1 (2026-06-07): APNs (iOS) 通知も同じイベントで並列に発射する。
+ *   - Lark 通知の動作は無変更
+ *   - APNS_* env 未設定なら ios-notifier 側で no-op
+ *   - 失敗しても Lark 通知に影響させないため Promise.allSettled で並列実行
  */
 
 import type { WebhookEvent } from '@line-crm/line-sdk';
@@ -14,6 +19,11 @@ import {
   notifyLarkFriendBlocked,
   notifyLarkFormSubmitted,
 } from './lark-notifier.js';
+import {
+  triggerApnsForFollowEvent,
+  triggerApnsForFormSubmit,
+  triggerApnsForUnreadTimeout,
+} from './ios-notifier.js';
 
 interface MinimalEnv {
   DB: D1Database;
@@ -21,6 +31,11 @@ interface MinimalEnv {
   LARK_APP_SECRET?: string;
   ADMIN_PUBLIC_URL?: string;
   WORKER_PUBLIC_URL?: string;
+  // P1: APNs secrets (未設定なら APNs はスキップ、Lark のみ動く)
+  APNS_TEAM_ID?: string;
+  APNS_KEY_ID?: string;
+  APNS_AUTH_KEY?: string;
+  APNS_BUNDLE_ID?: string;
 }
 
 async function lookupFriendAndAccount(
@@ -66,22 +81,32 @@ export async function triggerLarkForFollowEvent(
 
   const publicBaseUrl = env.ADMIN_PUBLIC_URL;
 
-  if (event.type === 'follow') {
-    await notifyLarkFriendAdded(env, {
-      lineAccountId,
-      accountName: found.accountName,
-      friendName: found.friendName,
-      friendId: found.friendId,
-      publicBaseUrl,
-    });
-  } else {
-    await notifyLarkFriendBlocked(env, {
-      lineAccountId,
-      accountName: found.accountName,
-      friendName: found.friendName,
-      friendId: found.friendId,
-    });
-  }
+  // P1 (2026-06-07): Lark と APNs を並列発射。片方の失敗が他方に伝播しないように
+  // Promise.allSettled。APNs は env 未設定なら no-op (ios-notifier 側でガード)。
+  const larkPromise = event.type === 'follow'
+    ? notifyLarkFriendAdded(env, {
+        lineAccountId,
+        accountName: found.accountName,
+        friendName: found.friendName,
+        friendId: found.friendId,
+        publicBaseUrl,
+      })
+    : notifyLarkFriendBlocked(env, {
+        lineAccountId,
+        accountName: found.accountName,
+        friendName: found.friendName,
+        friendId: found.friendId,
+      });
+
+  const apnsPromise = triggerApnsForFollowEvent(env, db, {
+    lineAccountId,
+    accountName: found.accountName,
+    friendName: found.friendName,
+    friendId: found.friendId,
+    eventType: event.type,
+  });
+
+  await Promise.allSettled([larkPromise, apnsPromise]);
 }
 
 export async function triggerLarkForFormSubmit(
@@ -95,7 +120,8 @@ export async function triggerLarkForFormSubmit(
     friendName: string;
   },
 ): Promise<void> {
-  await notifyLarkFormSubmitted(env, {
+  // P1 (2026-06-07): Lark と APNs を並列発射。
+  const larkPromise = notifyLarkFormSubmitted(env, {
     lineAccountId: args.lineAccountId,
     formId: args.formId,
     formName: args.formName,
@@ -103,4 +129,30 @@ export async function triggerLarkForFormSubmit(
     friendId: args.friendId,
     publicBaseUrl: env.ADMIN_PUBLIC_URL,
   });
+  const apnsPromise = triggerApnsForFormSubmit(env, db, {
+    lineAccountId: args.lineAccountId,
+    formId: args.formId,
+    formName: args.formName,
+    friendId: args.friendId,
+    friendName: args.friendName,
+  });
+  await Promise.allSettled([larkPromise, apnsPromise]);
+}
+
+/**
+ * P1 (2026-06-07): 未対応タイムアウト時の APNs 通知。
+ * 既存の Lark 用 trigger は無いので、呼び出し側 (services/unanswered-inbox.ts 等)
+ * からの追加呼び出し用に新規 export。
+ */
+export async function triggerApnsForUnreadTimeoutEvent(
+  env: MinimalEnv,
+  db: D1Database,
+  args: {
+    lineAccountId: string;
+    friendId: string;
+    friendName: string;
+    minutes: number;
+  },
+): Promise<void> {
+  await triggerApnsForUnreadTimeout(env, db, args);
 }

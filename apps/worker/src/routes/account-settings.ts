@@ -29,6 +29,10 @@ async function validateAccountIdOrReject(
 accountSettings.get('/api/account-settings/test-recipients', async (c) => {
   const accountId = c.req.query('accountId');
   if (!accountId) return c.json({ success: false, error: 'accountId required' }, 400);
+  // Codex P0 修正: GET も accountId の実在/形式チェックを通す。
+  // 任意文字列での試行アクセスや誤入力で他テナント漏洩を防ぐ。
+  const v = await validateAccountIdOrReject(c.env.DB, accountId);
+  if (!v.ok) return c.json({ success: false, error: v.error }, v.status);
 
   const row = await c.env.DB.prepare(
     `SELECT value FROM account_settings WHERE line_account_id = ? AND key = 'test_recipients'`
@@ -90,6 +94,9 @@ accountSettings.put('/api/account-settings/test-recipients', requireRole('owner'
 accountSettings.get('/api/account-settings/greeting', async (c) => {
   const accountId = c.req.query('accountId');
   if (!accountId) return c.json({ success: false, error: 'accountId required' }, 400);
+  // Codex P0 修正: GET も accountId の形式/実在チェック。
+  const v = await validateAccountIdOrReject(c.env.DB, accountId);
+  if (!v.ok) return c.json({ success: false, error: v.error }, v.status);
 
   const row = await c.env.DB.prepare(
     `SELECT value FROM account_settings WHERE line_account_id = ? AND key = 'default_greeting_text'`
