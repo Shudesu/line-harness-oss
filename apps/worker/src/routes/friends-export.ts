@@ -107,6 +107,23 @@ app.get('/friends/export.csv', async (c) => {
   const limitRaw = Number(c.req.query('limit') ?? '5000');
   const limit = Math.max(1, Math.min(10000, Number.isFinite(limitRaw) ? limitRaw : 5000));
 
+  // C: 一括選択エクスポート対応 - ids=uuid1,uuid2,... で friend_id 列挙
+  // セキュリティ: UUID 形式チェックで SQL injection を防ぐ
+  const idsRaw = c.req.query('ids') ?? '';
+  const idPattern = /^[a-f0-9-]{32,36}$/i;
+  const requestedIds = idsRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((id) => idPattern.test(id));
+  // 安全のため最大 500 件まで
+  if (requestedIds.length > 500) {
+    return c.text('Too many ids (max 500)', 400);
+  }
+  const idsFilter = requestedIds.length > 0
+    ? `AND f.id IN (${requestedIds.map(() => '?').join(',')})`
+    : '';
+
   // 各 friend について、最新の attribution-bearing link_click を LEFT JOIN で1行に出す。
   // ref_tracking と link_clicks のどちらにも click_id が入る可能性があるので、
   // ここでは link_clicks（より詳細）を優先し、空欄なら ref_tracking で補完する。
@@ -125,6 +142,7 @@ app.get('/friends/export.csv', async (c) => {
   const bind: unknown[] = [];
   if (tagId) bind.push(tagId);
   if (lineAccountId) bind.push(lineAccountId);
+  if (requestedIds.length > 0) bind.push(...requestedIds);
   bind.push(limit);
 
   // Codex指摘 中: ltp も ref_tracking フォールバックする（昇格後の ref_tracking にも ltp を保存している）
@@ -173,7 +191,7 @@ app.get('/friends/export.csv', async (c) => {
          ORDER BY created_at DESC
          LIMIT 1
       )
-    WHERE 1 = 1 ${tagFilter} ${accountFilter}
+    WHERE 1 = 1 ${tagFilter} ${accountFilter} ${idsFilter}
     ORDER BY f.created_at DESC
     LIMIT ?
   `;

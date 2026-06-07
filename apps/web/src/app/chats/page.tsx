@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { api, fetchApi } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
@@ -8,6 +8,10 @@ import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
 import ImageUploader, { type ImageUploaderValue } from '@/components/shared/image-uploader'
+import { Badge, EmptyState, Input, cx } from '@/components/ui/primitives'
+
+const PINNED_CHATS_KEY = 'hyhome-harness:pinned-chat-friend-ids'
+const MESSAGE_GROUP_THRESHOLD_MS = 5000
 
 interface Chat {
   id: string
@@ -40,12 +44,6 @@ interface ChatDetail extends Chat {
 }
 
 type StatusFilter = 'all' | 'unread' | 'in_progress' | 'resolved'
-
-const statusConfig: Record<Chat['status'], { label: string; className: string }> = {
-  unread: { label: '未読', className: 'bg-red-100 text-red-700' },
-  in_progress: { label: '対応中', className: 'bg-yellow-100 text-yellow-700' },
-  resolved: { label: '解決済', className: 'bg-green-100 text-green-700' },
-}
 
 const statusFilters: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: '全て' },
@@ -82,6 +80,41 @@ function sameYmd(aIso: string, bIso: string): boolean {
 function formatYmdSlash(iso: string): string {
   const d = new Date(iso)
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+}
+
+const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'] as const
+function formatDateSeparator(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}/${d.getDate()} ${WEEKDAY_JA[d.getDay()]}`
+}
+
+function formatFullDatetime(iso: string): string {
+  return new Date(iso).toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+/**
+ * 一覧で表示する preview と検索対象を同じ文字列に揃えるための helper。
+ * 「画像」「Flexメッセージ」など type 表記を出している先頭の絵文字付きラベルを返す。
+ * 通常テキストは改行を空白に潰し、長すぎる場合は 60 文字で切る (検索用にも十分)。
+ */
+function chatPreviewText(chat: Chat): string {
+  switch (chat.lastMessageType) {
+    case 'image': return '📷 画像'
+    case 'flex': return '📋 Flexメッセージ'
+    case 'sticker': return '🎨 スタンプ'
+    case 'video': return '🎥 動画'
+    case 'audio': return '🎤 音声'
+    case 'file': return '📎 ファイル'
+    case 'location': return '📍 位置情報'
+    default: return (chat.lastMessageContent ?? '').replace(/\n+/g, ' ').slice(0, 60)
+  }
 }
 
 const ccPrompts = [
@@ -269,6 +302,105 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   )
 }
 
+function ChatListRow({
+  chat,
+  isSelected,
+  isPinned,
+  onSelect,
+  onTogglePin,
+}: {
+  chat: Chat
+  isSelected: boolean
+  isPinned: boolean
+  onSelect: () => void
+  onTogglePin: () => void
+}) {
+  // 「真の自発（要対応）」= chat.status='unread'。webhook 側で auto_reply に
+  // マッチしなかった incoming のみ unread に設定される。auto_reply trigger
+  // (キーワード "コスト比較" 等) は matched 扱いで unread 化しない。
+  // bold / 強調表示はこの status を使う。
+  const needsAttention = chat.status === 'unread'
+  // 表示と検索で同じ文字列を使うため module-level helper (chatPreviewText) に集約。
+  const preview = chatPreviewText(chat)
+
+  // ステータスは Badge で表現（情報量を増やすが圧迫しないよう小さく）
+  const statusBadge = (() => {
+    if (chat.status === 'unread') return <Badge tone="danger" className="px-1.5 py-0">未対応</Badge>
+    if (chat.status === 'in_progress') return <Badge tone="warning" className="px-1.5 py-0">対応中</Badge>
+    if (chat.status === 'resolved') return <Badge tone="success" className="px-1.5 py-0">対応済</Badge>
+    return null
+  })()
+
+  return (
+    <div
+      className={cx(
+        'group relative border-b border-gray-100 transition-colors',
+        isSelected ? 'bg-green-50' : 'hover:bg-gray-50',
+      )}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left px-4 py-3 pr-9"
+      >
+        <div className="flex items-start gap-3">
+          {chat.friendPictureUrl ? (
+            <img src={chat.friendPictureUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0 object-cover" />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+              <span className="text-gray-500 text-sm">{chat.friendName.charAt(0) || '?'}</span>
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                {chat.status === 'unread' && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" aria-label="未読" />
+                )}
+                <p className={cx('text-sm truncate', needsAttention ? 'font-semibold text-gray-900' : 'font-medium text-gray-900')}>
+                  {chat.friendName}
+                </p>
+              </div>
+              <span className="text-[10px] text-gray-400 flex-shrink-0">{formatDatetime(chat.lastMessageAt)}</span>
+            </div>
+            <p
+              className={cx(
+                'text-xs mt-0.5 truncate',
+                needsAttention ? 'text-gray-900 font-medium' : 'text-gray-500',
+              )}
+              title={preview}
+            >
+              {chat.lastMessageDirection === 'outgoing' && (
+                <span className="text-gray-400 mr-1">↪</span>
+              )}
+              {preview || <span className="italic text-gray-300">(まだメッセージなし)</span>}
+            </p>
+            <div className="mt-1 flex items-center gap-1.5">
+              {statusBadge}
+            </div>
+          </div>
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onTogglePin()
+        }}
+        aria-label={isPinned ? 'ピン留めを解除' : 'ピン留めする'}
+        title={isPinned ? 'ピン留めを解除' : 'ピン留めする'}
+        className={cx(
+          'absolute top-2 right-2 rounded-md p-1 text-sm leading-none transition',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400',
+          isPinned ? 'text-amber-500 hover:text-amber-600' : 'text-gray-300 hover:text-amber-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+        )}
+      >
+        {isPinned ? '★' : '☆'}
+      </button>
+    </div>
+  )
+}
+
 export default function ChatsPage() {
   const { selectedAccountId } = useAccount()
   const [chats, setChats] = useState<Chat[]>([])
@@ -312,6 +444,53 @@ export default function ChatsPage() {
   const isComposingRef = useRef(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [pinnedIds, setPinnedIds] = useState<string[]>([])
+
+  // Load pinned chat ids from localStorage (SSR-safe)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PINNED_CHATS_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed) && parsed.every((v): v is string => typeof v === 'string')) {
+        setPinnedIds(parsed)
+      }
+    } catch {
+      // ignore corrupt localStorage value
+    }
+  }, [])
+
+  const togglePin = useCallback((friendId: string) => {
+    setPinnedIds((prev) => {
+      const next = prev.includes(friendId)
+        ? prev.filter((id) => id !== friendId)
+        : [...prev, friendId]
+      try {
+        localStorage.setItem(PINNED_CHATS_KEY, JSON.stringify(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }, [])
+
+  // `/` key focuses the search box, unless user is already typing in a field.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== '/') return
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      const tag = target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+      e.preventDefault()
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   useEffect(() => {
     try {
@@ -665,6 +844,28 @@ export default function ChatsPage() {
     }
   }
 
+  // Apply search filter to the chat list (matches display name or last message preview).
+  // Then partition into pinned vs unpinned for two-section rendering.
+  // 検索対象は一覧表示と同じ chatPreviewText を使う (画像/Flex/スタンプ等の type ラベルでも引っかかるように)。
+  const { pinnedChats, normalChats } = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const filtered = q
+      ? chats.filter((c) => {
+          const name = (c.friendName || '').toLowerCase()
+          const preview = chatPreviewText(c).toLowerCase()
+          return name.includes(q) || preview.includes(q)
+        })
+      : chats
+    const pinSet = new Set(pinnedIds)
+    const pinned: Chat[] = []
+    const normal: Chat[] = []
+    for (const c of filtered) {
+      if (pinSet.has(c.id)) pinned.push(c)
+      else normal.push(c)
+    }
+    return { pinnedChats: pinned, normalChats: normal }
+  }, [chats, searchQuery, pinnedIds])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     // IME変換確定のEnterでは送信しない
     if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) return
@@ -693,6 +894,30 @@ export default function ChatsPage() {
         {/* Left Panel: Chat List */}
         <div className={`w-full lg:w-96 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
           {/* タブ (全て / 未読 / 対応中 / 解決済) は意図的に削除。直近メッセージが見やすい LINE 風一覧を優先。 */}
+
+          {/* Search bar (sticky) */}
+          <div className="sticky top-0 z-10 bg-white border-b border-gray-100 px-3 py-2">
+            <div className="relative">
+              <svg
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z" />
+              </svg>
+              <Input
+                ref={searchInputRef}
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="会話・名前を検索（/ でフォーカス）"
+                aria-label="会話・名前を検索"
+                className="mt-0 pl-8 py-1.5 text-sm"
+              />
+            </div>
+          </div>
 
           {/* Filter row */}
           <div className="px-3 py-2 border-b border-gray-100 flex flex-wrap items-center gap-2">
@@ -737,72 +962,47 @@ export default function ChatsPage() {
                   </div>
                 ))}
               </div>
+            ) : pinnedChats.length === 0 && normalChats.length === 0 ? (
+              <div className="p-4">
+                <EmptyState
+                  title={searchQuery ? '一致するチャットがありません' : 'チャットはまだありません'}
+                  description={searchQuery ? '検索条件を変えるか、フィルタを「全て」に切り替えてください。' : 'LINE からメッセージが届くとここに表示されます。'}
+                />
+              </div>
             ) : (
               <>
-                {chats.map((chat) => {
-                  const isSelected = selectedChatId === chat.id
-                  // 「真の自発（要対応）」= chat.status='unread'。webhook 側で auto_reply に
-                  // マッチしなかった incoming のみ unread に設定される。auto_reply trigger
-                  // (キーワード "コスト比較" 等) は matched 扱いで unread 化しない。
-                  // bold / 🟥 の表示はこの status を使う。direction だけだと button 押下も
-                  // 強調してしまって S/N 比が悪化する。
-                  const needsAttention = chat.status === 'unread'
-                  // 最新メッセージの本文 preview。flex/image は文字列で見せても意味が薄いので type 表記に置換。
-                  const previewRaw = chat.lastMessageContent ?? ''
-                  const preview = (() => {
-                    if (chat.lastMessageType === 'image') return '📷 画像'
-                    if (chat.lastMessageType === 'flex') return '📋 Flexメッセージ'
-                    if (chat.lastMessageType === 'sticker') return '🎨 スタンプ'
-                    if (chat.lastMessageType === 'video') return '🎥 動画'
-                    if (chat.lastMessageType === 'audio') return '🎤 音声'
-                    if (chat.lastMessageType === 'file') return '📎 ファイル'
-                    if (chat.lastMessageType === 'location') return '📍 位置情報'
-                    return previewRaw.replace(/\n+/g, ' ').slice(0, 60)
-                  })()
-                  return (
-                    <button
-                      key={chat.id}
-                      onClick={() => { setSelectedFriendId(null); handleSelectChat(chat.id); }}
-                      className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors ${
-                        isSelected && !selectedFriendId ? 'bg-green-50' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        {chat.friendPictureUrl ? (
-                          <img src={chat.friendPictureUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0" />
-                        ) : (
-                          <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                            <span className="text-gray-500 text-sm">{chat.friendName.charAt(0)}</span>
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                              {chat.status === 'unread' && (
-                                <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" aria-label="未読" />
-                              )}
-                              <p className="text-sm font-medium text-gray-900 truncate">{chat.friendName}</p>
-                            </div>
-                            <span className="text-[10px] text-gray-400 flex-shrink-0">{formatDatetime(chat.lastMessageAt)}</span>
-                          </div>
-                          <p
-                            className={`text-xs mt-0.5 truncate ${
-                              needsAttention
-                                ? 'text-gray-900 font-medium'
-                                : 'text-gray-400'
-                            }`}
-                            title={preview}
-                          >
-                            {chat.lastMessageDirection === 'outgoing' && (
-                              <span className="text-gray-400 mr-1">↪</span>
-                            )}
-                            {preview || <span className="italic text-gray-300">(まだメッセージなし)</span>}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                  )
-                })}
+                {pinnedChats.length > 0 && (
+                  <>
+                    <div className="px-4 py-1.5 bg-amber-50/60 border-b border-amber-100">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                        ★ ピン留め
+                      </span>
+                    </div>
+                    {pinnedChats.map((chat) => (
+                      <ChatListRow
+                        key={`pinned-${chat.id}`}
+                        chat={chat}
+                        isSelected={selectedChatId === chat.id && !selectedFriendId}
+                        isPinned
+                        onSelect={() => { setSelectedFriendId(null); handleSelectChat(chat.id) }}
+                        onTogglePin={() => togglePin(chat.id)}
+                      />
+                    ))}
+                    {normalChats.length > 0 && (
+                      <div className="h-2 bg-gray-50 border-y border-gray-100" aria-hidden />
+                    )}
+                  </>
+                )}
+                {normalChats.map((chat) => (
+                  <ChatListRow
+                    key={chat.id}
+                    chat={chat}
+                    isSelected={selectedChatId === chat.id && !selectedFriendId}
+                    isPinned={false}
+                    onSelect={() => { setSelectedFriendId(null); handleSelectChat(chat.id) }}
+                    onTogglePin={() => togglePin(chat.id)}
+                  />
+                ))}
               </>
             )}
           </div>
@@ -847,10 +1047,14 @@ export default function ChatsPage() {
                     <p className="text-sm font-medium text-gray-900 truncate">
                       {chatDetail.friendName}
                     </p>
-                    <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mt-1 ${statusConfig[chatDetail.status].className}`}
-                    >
-                      {statusConfig[chatDetail.status].label}
+                    <span className="inline-block mt-1">
+                      {chatDetail.status === 'unread' ? (
+                        <Badge tone="danger">未対応</Badge>
+                      ) : chatDetail.status === 'in_progress' ? (
+                        <Badge tone="warning">対応中</Badge>
+                      ) : (
+                        <Badge tone="success">対応済</Badge>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -899,17 +1103,42 @@ export default function ChatsPage() {
                 </div>
               </div>
 
-              {/* Messages — LINE-style chat bubbles */}
-              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
+              {/*
+                Messages — iMessage / LINE 風 chat bubbles
+                前提: chatDetail.messages は createdAt 昇順。日付区切りと 5 秒 grouping
+                はこの順序に依存している。/api/chats/:id は DESC で取った後 reverse()
+                して昇順で返している (route.ts 参照)。WebSocket 追加や追加ページング
+                を入れる際は、ここに渡る前に昇順整列を必ず守ること。
+              */}
+              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 bg-gray-50">
                 {(!chatDetail.messages || chatDetail.messages.length === 0) ? (
                   <div className="text-center py-8">
-                    <p className="text-white/60 text-sm">メッセージはまだありません。</p>
+                    <p className="text-gray-400 text-sm">メッセージはまだありません。</p>
                   </div>
                 ) : (
                   (chatDetail.messages ?? []).map((msg, idx) => {
-                    const prevMsg = idx > 0 ? (chatDetail.messages ?? [])[idx - 1] : null
+                    const allMsgs = chatDetail.messages ?? []
+                    const prevMsg = idx > 0 ? allMsgs[idx - 1] : null
+                    const nextMsg = idx < allMsgs.length - 1 ? allMsgs[idx + 1] : null
                     const showDateSep = !prevMsg || !sameYmd(prevMsg.createdAt, msg.createdAt)
                     const isOutgoing = msg.direction === 'outgoing'
+
+                    // 同じ送り手から 5 秒以内に続いたメッセージは「グループ内」とみなして
+                    // バブル間の縦余白を詰める (iMessage 風)。送り手切替や 5 秒超の隙間では通常余白。
+                    const gapToPrevMs =
+                      prevMsg && prevMsg.direction === msg.direction && !showDateSep
+                        ? new Date(msg.createdAt).getTime() - new Date(prevMsg.createdAt).getTime()
+                        : Number.POSITIVE_INFINITY
+                    const inGroupWithPrev = gapToPrevMs >= 0 && gapToPrevMs < MESSAGE_GROUP_THRESHOLD_MS
+                    const gapToNextMs =
+                      nextMsg && nextMsg.direction === msg.direction && sameYmd(nextMsg.createdAt, msg.createdAt)
+                        ? new Date(nextMsg.createdAt).getTime() - new Date(msg.createdAt).getTime()
+                        : Number.POSITIVE_INFINITY
+                    const inGroupWithNext = gapToNextMs >= 0 && gapToNextMs < MESSAGE_GROUP_THRESHOLD_MS
+                    // showDateSep 時はその上で my-3 separator が入るので gap は 0 で良い。
+                    const wrapperMarginTop = showDateSep ? 'mt-0' : inGroupWithPrev ? 'mt-1' : 'mt-3'
+                    // グループ末尾のメッセージのみ下に時刻ラベルを出す（連続中は省略してすっきり見せる）。
+                    const showTimestampBelow = !inGroupWithNext
 
                     // メッセージ表示の分岐
                     let bubbleContent: React.ReactNode
@@ -921,7 +1150,7 @@ export default function ChatsPage() {
                       )
                     } else if (msg.messageType === 'image') {
                       try {
-                        const parsed = JSON.parse(msg.content)
+                        const parsed = JSON.parse(msg.content) as { originalContentUrl?: string; previewImageUrl?: string }
                         bubbleContent = (
                           <img src={parsed.originalContentUrl || parsed.previewImageUrl} alt="" className="max-w-[200px] rounded" />
                         )
@@ -933,42 +1162,50 @@ export default function ChatsPage() {
                     }
 
                     return (
-                      <div key={msg.id}>
+                      <div key={msg.id} className={wrapperMarginTop}>
                         {showDateSep && (
-                          <div className="flex justify-center my-3">
-                            <span className="text-[11px] text-white/85 bg-black/20 px-2.5 py-0.5 rounded-full">
-                              {formatYmdSlash(msg.createdAt)}
+                          <div className="flex items-center gap-2 my-3" aria-label={formatYmdSlash(msg.createdAt)}>
+                            <span className="flex-1 h-px bg-gray-200" aria-hidden />
+                            <span className="text-[11px] font-medium text-gray-500 px-2">
+                              {formatDateSeparator(msg.createdAt)}
                             </span>
+                            <span className="flex-1 h-px bg-gray-200" aria-hidden />
                           </div>
                         )}
                         <div
-                          className={`flex items-end gap-2 ${isOutgoing ? 'justify-end' : 'justify-start'}`}
+                          className={cx('flex items-end gap-2', isOutgoing ? 'justify-end' : 'justify-start')}
                         >
-                          {/* 相手のアイコン（incoming のみ） */}
+                          {/* 相手のアイコン（incoming のグループ末尾だけ表示。連続中は揃いを保つ余白に） */}
                           {!isOutgoing && (
-                            chatDetail.friendPictureUrl ? (
-                              <img src={chatDetail.friendPictureUrl} alt="" className="w-8 h-8 rounded-full flex-shrink-0 mb-1" />
+                            inGroupWithNext ? (
+                              <div className="w-8 flex-shrink-0" aria-hidden />
+                            ) : chatDetail.friendPictureUrl ? (
+                              <img src={chatDetail.friendPictureUrl} alt="" className="w-8 h-8 rounded-full flex-shrink-0 mb-1 object-cover" />
                             ) : (
                               <div className="w-8 h-8 rounded-full bg-gray-300 flex-shrink-0 mb-1" />
                             )
                           )}
 
-                          <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
-                            {/* メッセージバブル */}
+                          <div className={cx('flex flex-col', isOutgoing ? 'items-end' : 'items-start')}>
+                            {/* メッセージバブル (hover で full datetime を title 属性で見せる) */}
                             <div
-                              className={`max-w-[320px] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                              title={formatFullDatetime(msg.createdAt)}
+                              className={cx(
+                                'max-w-[320px] px-3 py-2 text-sm break-words whitespace-pre-wrap shadow-sm',
                                 isOutgoing
                                   ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
-                                  : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
-                              }`}
+                                  : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-gray-200 text-gray-900',
+                              )}
                               style={isOutgoing ? { backgroundColor: '#06C755' } : undefined}
                             >
                               {bubbleContent}
                             </div>
-                            {/* 時刻 */}
-                            <span className="text-xs text-white/50 mt-0.5 px-1">
-                              {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
+                            {/* 時刻 — グループ末尾のみ表示 (連続中は省略してコンパクトに) */}
+                            {showTimestampBelow && (
+                              <span className="text-[11px] text-gray-400 mt-0.5 px-1">
+                                {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

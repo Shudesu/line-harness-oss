@@ -67,6 +67,7 @@ import { tokenEncryption } from './routes/token-encryption.js';
 import { crossAnalysis } from './routes/cross-analysis.js';
 import { stripeProducts } from './routes/stripe-products.js';
 import { dashboardStats } from './routes/dashboard-stats.js';
+import { reportsAnalytics } from './routes/reports-analytics.js';
 import { entryRoutes } from './routes/entry-routes.js';
 import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
@@ -169,6 +170,7 @@ app.route('/', tokenEncryption);
 app.route('/', crossAnalysis);
 app.route('/', stripeProducts); // Phase 2-D
 app.route('/', dashboardStats);
+app.route('/', reportsAnalytics);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);

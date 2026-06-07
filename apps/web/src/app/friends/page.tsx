@@ -521,6 +521,44 @@ export default function FriendsPage() {
           <Button variant="outline" size="sm" onClick={openBulkRemove}>
             タグを一括削除
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              // C: 一括選択 CSV エクスポート
+              const ids = Array.from(selectedIds)
+              if (ids.length === 0) return
+              try {
+                const apiKey = (typeof window !== 'undefined' && localStorage.getItem('lh_api_key')) || ''
+                const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? ''
+                const params = new URLSearchParams()
+                params.set('ids', ids.join(','))
+                if (selectedAccountId) params.set('lineAccountId', selectedAccountId)
+                const res = await fetch(`${apiUrl}/api/friends/export.csv?${params.toString()}`, {
+                  headers: { Authorization: `Bearer ${apiKey}` },
+                })
+                if (!res.ok) {
+                  alert('CSV エクスポートに失敗しました')
+                  return
+                }
+                const blob = await res.blob()
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                const ts = new Date().toISOString().slice(0, 10)
+                a.href = url
+                a.download = `friends-selected-${ts}-${ids.length}.csv`
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                URL.revokeObjectURL(url)
+              } catch (e) {
+                console.error('CSV export failed:', e)
+                alert('CSV エクスポートに失敗しました')
+              }
+            }}
+          >
+            CSV エクスポート
+          </Button>
           <Button variant="ghost" size="sm" onClick={clearSelection}>
             キャンセル
           </Button>
