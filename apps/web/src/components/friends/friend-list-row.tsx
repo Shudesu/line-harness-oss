@@ -11,6 +11,11 @@ interface Props {
   // to the row body — the row body navigates to /chats and we don't want
   // the tag-edit affordance to compete with that primary click target.
   onTagEditClick?: () => void
+  // Multi-select checkbox (Linear/Notion style bulk action support). When
+  // `selected` is undefined the column is hidden entirely so the row keeps
+  // its old layout in callers that don't opt in.
+  selected?: boolean
+  onSelectChange?: (next: boolean) => void
 }
 
 // Single row of the L-step style friend list. Renders 5 columns:
@@ -19,12 +24,18 @@ interface Props {
 // `/chats?friend=<id>` so the operator can read history / reply / mark as
 // resolved without leaving the list. The "タグ" button at the end of the
 // last column opens an inline tag editor (handled by the parent table).
-export default function FriendListRow({ friend, onTagEditClick }: Props) {
+export default function FriendListRow({ friend, onTagEditClick, selected, onSelectChange }: Props) {
   const router = useRouter()
   const navigateToChat = () => router.push(`/chats?friend=${friend.id}`)
   const incoming = friend.latestIncomingMessage
   const scenario = friend.activeScenario
   const isFollowing = friend.isFollowing
+  // The checkbox column is conditionally rendered; keep the grid template
+  // in sync so header (table) and body (row) stay aligned.
+  const showCheckbox = onSelectChange !== undefined
+  const gridClass = showCheckbox
+    ? 'grid grid-cols-[40px_80px_220px_120px_1fr_280px] gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50'
+    : 'grid grid-cols-[80px_220px_120px_1fr_280px] gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50'
 
   return (
     <div
@@ -42,8 +53,19 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           navigateToChat()
         }
       }}
-      className="grid grid-cols-[80px_220px_120px_1fr_280px] gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50"
+      className={gridClass}
     >
+      {showCheckbox && (
+        <div className="pt-1.5" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selected ?? false}
+            onChange={(e) => onSelectChange?.(e.target.checked)}
+            aria-label={`${friend.displayName} を選択`}
+            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+          />
+        </div>
+      )}
       {/* 対応マーク — chats.status 由来 (unread / in_progress / resolved). */}
       <div className="pt-1">
         {friend.chatStatus === 'unread' ? (

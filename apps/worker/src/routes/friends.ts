@@ -454,6 +454,71 @@ friends.post('/api/friends/:id/tags', async (c) => {
   }
 });
 
+// POST /api/friends/bulk/tags - bulk add tag to many friends
+// body: { friendIds: string[], tagId: string }
+friends.post('/api/friends/bulk/tags', async (c) => {
+  try {
+    const body = await c.req.json<{ friendIds: string[]; tagId: string }>();
+    if (!body.tagId || !Array.isArray(body.friendIds) || body.friendIds.length === 0) {
+      return c.json({ success: false, error: 'tagId and friendIds[] are required' }, 400);
+    }
+    if (body.friendIds.length > 500) {
+      return c.json({ success: false, error: 'bulk add は最大 500 件まで' }, 400);
+    }
+    const db = c.env.DB;
+    // tag_added シナリオは一括処理時に enroll しない (大量の副作用回避)。
+    // 単発で追加した時のみ自動 enroll する仕様にする (UX 一貫性のため明記)。
+    let succeeded = 0;
+    let failed = 0;
+    for (const friendId of body.friendIds) {
+      try {
+        await addTagToFriend(db, friendId, body.tagId);
+        await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
+        succeeded++;
+      } catch (e) {
+        console.error(`[bulk-tag] add failed friend=${friendId}:`, e);
+        failed++;
+      }
+    }
+    return c.json({ success: true, data: { succeeded, failed } });
+  } catch (err) {
+    console.error('POST /api/friends/bulk/tags error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// DELETE /api/friends/bulk/tags/:tagId - bulk remove tag
+// body: { friendIds: string[] }
+friends.delete('/api/friends/bulk/tags/:tagId', async (c) => {
+  try {
+    const tagId = c.req.param('tagId');
+    const body = await c.req.json<{ friendIds: string[] }>();
+    if (!Array.isArray(body.friendIds) || body.friendIds.length === 0) {
+      return c.json({ success: false, error: 'friendIds[] are required' }, 400);
+    }
+    if (body.friendIds.length > 500) {
+      return c.json({ success: false, error: 'bulk remove は最大 500 件まで' }, 400);
+    }
+    const db = c.env.DB;
+    let succeeded = 0;
+    let failed = 0;
+    for (const friendId of body.friendIds) {
+      try {
+        await removeTagFromFriend(db, friendId, tagId);
+        await fireEvent(db, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
+        succeeded++;
+      } catch (e) {
+        console.error(`[bulk-tag] remove failed friend=${friendId}:`, e);
+        failed++;
+      }
+    }
+    return c.json({ success: true, data: { succeeded, failed } });
+  } catch (err) {
+    console.error('DELETE /api/friends/bulk/tags/:tagId error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // DELETE /api/friends/:id/tags/:tagId - remove tag
 friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
   try {
