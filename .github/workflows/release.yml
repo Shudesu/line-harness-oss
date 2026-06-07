@@ -75,11 +75,16 @@ jobs:
       - name: Build shared workspace packages
         run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db --filter @line-harness/update-engine build
 
+      - name: Capture build metadata
+        id: build-meta
+        run: echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Build Admin (Next.js static export)
         # Placeholder URL gets baked into the bundle. End users replace it at
         # install time (Phase 2 will introduce runtime config to avoid this).
         env:
           NEXT_PUBLIC_API_URL: "https://__LH_WORKER_URL__"
+          APP_BUILD_TIME: ${{ steps.build-meta.outputs.build_time }}
         run: pnpm --filter web build
 
       - name: Build LIFF

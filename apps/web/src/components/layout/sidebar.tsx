@@ -7,6 +7,11 @@ import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
 
+const appVersion = process.env.APP_VERSION || '0.0.0'
+const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
+const appBuildTime = process.env.APP_BUILD_TIME || ''
+const appBuildDate = appBuildTime ? appBuildTime.replace('T', ' ').replace(/\.\d{3}Z$/, 'Z') : ''
+
 // ─── メニュー定義（ユーザー目線のカテゴリ） ───
 
 const menuSections = [
@@ -309,7 +314,12 @@ export default function Sidebar() {
           </div>
         )}
         <div className="px-6 py-4 space-y-3">
-        <p className="text-xs text-gray-400">L Harness v{process.env.APP_VERSION || '0.0.0'}</p>
+        <div className="space-y-0.5">
+          <p className="text-xs text-gray-400">L Harness v{appVersion}</p>
+          <p className="text-[10px] text-gray-400 font-mono break-all">
+            build {appCommitSha}{appBuildDate ? ` · ${appBuildDate}` : ''}
+          </p>
+        </div>
         <button
           onClick={async () => {
             try {

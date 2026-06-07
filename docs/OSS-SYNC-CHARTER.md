@@ -253,6 +253,10 @@ gh release create v0.13.0 --repo Shudesu/line-harness-oss --title "v0.13.0" --no
 
 `apps/web/next.config.ts` がビルド時に root `package.json` を読み、`APP_VERSION` env として注入する。サイドバーの `LINE Harness v{APP_VERSION}` 表示はこの値を使う。手動の env 上書き不要。
 
+Admin UI はスクリーンショットだけでデプロイ元を判別できるよう、`APP_COMMIT_SHA` (GitHub Actions の `GITHUB_SHA`、またはローカル git SHA) と `APP_BUILD_TIME` もビルド時に埋め込み、サイドバーに `build <sha> · <UTC time>` として表示する。
+
+root version だけを変更した場合にも Admin deploy が走るよう、Admin deploy workflow の path filter には root `package.json` を含める。通常リリースでは version sync で `apps/web/package.json` も更新されるが、path filter 側でも root version を明示的に監視して二重に守る。
+
 ### 7.5 バージョン同期チェック
 
 - `bash scripts/sync-versions.sh` — root → umbrella packages へ伝播 (apply mode)
