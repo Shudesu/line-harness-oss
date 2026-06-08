@@ -36,6 +36,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   if (
     path === '/' ||
     path === '/book' ||
+    path.startsWith('/form/') ||
     path === '/admin/reservations' ||
     path === '/admin/reservations/settings' ||
     path.startsWith('/assets/') ||
