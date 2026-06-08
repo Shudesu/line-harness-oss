@@ -21,6 +21,7 @@ import { defaultLineAccessToken } from '../services/line-bindings.js';
 import { hasColumn } from '../utils/db-compat.js';
 
 const chats = new Hono<Env>();
+const D1_VARIABLE_CHUNK_SIZE = 80;
 
 function recentSinceFromQuery(value: string | undefined): string | null {
   if (!value) return null;
@@ -118,22 +119,25 @@ async function getTagsByFriendIds(db: D1Database, friendIds: string[]): Promise<
   const uniqueIds = [...new Set(friendIds.filter(Boolean))];
   if (uniqueIds.length === 0) return tagsByFriendId;
 
-  const placeholders = uniqueIds.map(() => '?').join(', ');
-  const result = await db
-    .prepare(
-      `SELECT ft.friend_id, t.id, t.name, t.color
-       FROM friend_tags ft
-       INNER JOIN tags t ON t.id = ft.tag_id
-       WHERE ft.friend_id IN (${placeholders})
-       ORDER BY t.name ASC`,
-    )
-    .bind(...uniqueIds)
-    .all<ChatTagRow>();
+  for (let i = 0; i < uniqueIds.length; i += D1_VARIABLE_CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(i, i + D1_VARIABLE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const result = await db
+      .prepare(
+        `SELECT ft.friend_id, t.id, t.name, t.color
+         FROM friend_tags ft
+         INNER JOIN tags t ON t.id = ft.tag_id
+         WHERE ft.friend_id IN (${placeholders})
+         ORDER BY t.name ASC`,
+      )
+      .bind(...chunk)
+      .all<ChatTagRow>();
 
-  for (const row of result.results ?? []) {
-    const list = tagsByFriendId.get(row.friend_id) ?? [];
-    list.push(row);
-    tagsByFriendId.set(row.friend_id, list);
+    for (const row of result.results ?? []) {
+      const list = tagsByFriendId.get(row.friend_id) ?? [];
+      list.push(row);
+      tagsByFriendId.set(row.friend_id, list);
+    }
   }
 
   return tagsByFriendId;

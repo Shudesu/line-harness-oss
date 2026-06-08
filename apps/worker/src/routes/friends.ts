@@ -19,6 +19,7 @@ import { defaultLineAccessToken, workerBaseUrl } from '../services/line-bindings
 import { hasColumn } from '../utils/db-compat.js';
 
 const friends = new Hono<Env>();
+const D1_VARIABLE_CHUNK_SIZE = 80;
 
 function recentSinceFromQuery(value: string | undefined): string | null {
   if (!value) return null;
@@ -57,24 +58,28 @@ function serializeTag(row: DbTag) {
 
 async function getTagsByFriendIds(db: D1Database, friendIds: string[]): Promise<Map<string, DbTag[]>> {
   const tagsByFriendId = new Map<string, DbTag[]>();
-  if (friendIds.length === 0) return tagsByFriendId;
+  const uniqueIds = [...new Set(friendIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return tagsByFriendId;
 
-  const placeholders = friendIds.map(() => '?').join(', ');
-  const result = await db
-    .prepare(
-      `SELECT ft.friend_id, t.*
-       FROM friend_tags ft
-       INNER JOIN tags t ON t.id = ft.tag_id
-       WHERE ft.friend_id IN (${placeholders})
-       ORDER BY t.name ASC`,
-    )
-    .bind(...friendIds)
-    .all<DbTag & { friend_id: string }>();
+  for (let i = 0; i < uniqueIds.length; i += D1_VARIABLE_CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(i, i + D1_VARIABLE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const result = await db
+      .prepare(
+        `SELECT ft.friend_id, t.*
+         FROM friend_tags ft
+         INNER JOIN tags t ON t.id = ft.tag_id
+         WHERE ft.friend_id IN (${placeholders})
+         ORDER BY t.name ASC`,
+      )
+      .bind(...chunk)
+      .all<DbTag & { friend_id: string }>();
 
-  for (const row of result.results ?? []) {
-    const list = tagsByFriendId.get(row.friend_id) ?? [];
-    list.push(row);
-    tagsByFriendId.set(row.friend_id, list);
+    for (const row of result.results ?? []) {
+      const list = tagsByFriendId.get(row.friend_id) ?? [];
+      list.push(row);
+      tagsByFriendId.set(row.friend_id, list);
+    }
   }
 
   return tagsByFriendId;

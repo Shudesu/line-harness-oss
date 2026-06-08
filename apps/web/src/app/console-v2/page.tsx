@@ -20,7 +20,6 @@ import type {
   BroadcastDraft,
   ConsoleChat,
   ConsoleChatDetail,
-  ConsoleConversionReportItem,
   ConsoleForm,
   ConsoleFriend,
   ConsoleTag,
@@ -47,7 +46,6 @@ export default function ConsoleV2Page() {
   const [forms, setForms] = useState<ConsoleForm[]>([])
   const [trackedLinks, setTrackedLinks] = useState<ConsoleTrackedLink[]>([])
   const [broadcasts, setBroadcasts] = useState<ApiBroadcast[]>([])
-  const [conversionReport, setConversionReport] = useState<ConsoleConversionReportItem[]>([])
   const [recentEvents, setRecentEvents] = useState<ApiUserEvent[]>([])
   const [friendCount, setFriendCount] = useState<number | null>(null)
   const [message, setMessage] = useState('')
@@ -81,7 +79,6 @@ export default function ConsoleV2Page() {
       formsResult,
       trackedLinksResult,
       broadcastsResult,
-      conversionReportResult,
       eventsResult,
     ] = await Promise.allSettled([
       api.chats.list({ accountId, recentDays: 30 }),
@@ -91,7 +88,6 @@ export default function ConsoleV2Page() {
       api.forms.list(),
       fetchApi<{ success: boolean; data: ConsoleTrackedLink[] }>('/api/tracked-links'),
       api.broadcasts.list({ accountId }),
-      api.conversions.report(),
       api.events.list({ lineAccountId: accountId, limit: 20 }),
     ])
 
@@ -119,9 +115,6 @@ export default function ConsoleV2Page() {
     if (broadcastsResult.status === 'fulfilled' && broadcastsResult.value.success) {
       setBroadcasts(broadcastsResult.value.data)
     }
-    if (conversionReportResult.status === 'fulfilled' && conversionReportResult.value.success) {
-      setConversionReport(conversionReportResult.value.data)
-    }
     if (eventsResult.status === 'fulfilled' && eventsResult.value.success) {
       setRecentEvents(eventsResult.value.data)
     }
@@ -133,7 +126,6 @@ export default function ConsoleV2Page() {
       formsResult,
       trackedLinksResult,
       broadcastsResult,
-      conversionReportResult,
       eventsResult,
     ].some((result) => result.status === 'rejected')
 
@@ -440,23 +432,26 @@ export default function ConsoleV2Page() {
     }
   }
 
-  const totalClicks = trackedLinks.reduce((sum, link) => sum + (link.clickCount || 0), 0)
-  const activeLinks = trackedLinks.filter((link) => link.isActive).length
   const latestTemplates = templates.slice(0, 5)
-  const topLinks = [...trackedLinks].sort((a, b) => b.clickCount - a.clickCount).slice(0, 5)
 
   return (
     <div className="space-y-5 p-4 pb-28 sm:p-6 sm:pb-28">
       <Header title="かんたん運用コンソール" />
 
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="relative rounded-2xl border border-gray-200 bg-white p-4 pr-16 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Operation Console</p>
             <h2 className="mt-1 text-lg font-bold text-gray-950">{selectedAccount?.displayName || selectedAccount?.name || 'LINEアカウント未選択'}</h2>
           </div>
-          <button onClick={() => void loadDashboard()} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
-            最新化
+          <button
+            type="button"
+            onClick={() => void loadDashboard()}
+            aria-label="最新化"
+            title="最新化"
+            className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full border border-emerald-100 bg-emerald-50 text-lg font-black text-emerald-700 hover:bg-emerald-100"
+          >
+            ↻
           </button>
         </div>
       </div>
@@ -532,7 +527,7 @@ export default function ConsoleV2Page() {
       )}
 
       {activeTab === 'analytics' && (
-        <AnalyticsTab trackedLinks={topLinks} activeLinks={activeLinks} totalClicks={totalClicks} conversionReport={conversionReport} recentEvents={recentEvents} />
+        <AnalyticsTab lineAccountId={selectedAccountId || undefined} />
       )}
 
       <FooterNav activeTab={activeTab} onChange={setActiveTab} />

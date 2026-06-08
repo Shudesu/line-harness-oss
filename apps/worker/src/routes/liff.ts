@@ -5,6 +5,7 @@ import {
   getUserByEmail,
   linkFriendToUser,
   upsertFriend,
+  createEntryRoute,
   getEntryRouteByRefCode,
   recordRefTracking,
   addTagToFriend,
@@ -29,6 +30,33 @@ import {
 import { hasColumn, hasTable } from '../utils/db-compat.js';
 
 const liffRoutes = new Hono<Env>();
+
+function normalizeRefCode(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+function makeRefCode(name: string): string {
+  const normalized = normalizeRefCode(name);
+  const suffix = crypto.randomUUID().slice(0, 8);
+  return `${normalized || 'route'}-${suffix}`;
+}
+
+function isDate(value: string | undefined): value is string {
+  return !!value && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function defaultDateRange(): { dateFrom: string; dateTo: string } {
+  const now = new Date();
+  const to = now.toISOString().slice(0, 10);
+  const fromDate = new Date(now);
+  fromDate.setDate(fromDate.getDate() - 29);
+  return { dateFrom: fromDate.toISOString().slice(0, 10), dateTo: to };
+}
 
 // Persist ig_igsid on the LINE friend and notify IG Harness.
 // Used anywhere a LIFF/OAuth flow resolves with a known IGSID so existing
@@ -1122,6 +1150,187 @@ liffRoutes.get('/api/analytics/ref-summary', async (c) => {
     });
   } catch (err) {
     console.error('GET /api/analytics/ref-summary error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+/**
+ * POST /api/analytics/friend-routes — create a friend-add route URL.
+ */
+liffRoutes.post('/api/analytics/friend-routes', async (c) => {
+  try {
+    const db = c.env.DB;
+    if (!await hasTable(db, 'entry_routes')) {
+      return c.json({ success: false, error: 'entry_routes table is not available' }, 500);
+    }
+
+    const body = await c.req.json<{ name?: string; refCode?: string; redirectUrl?: string | null }>();
+    const name = body.name?.trim();
+    if (!name) {
+      return c.json({ success: false, error: 'name is required', code: 'bad_request' }, 400);
+    }
+
+    const refCode = body.refCode ? normalizeRefCode(body.refCode) : makeRefCode(name);
+    if (!refCode) {
+      return c.json({ success: false, error: 'refCode is invalid', code: 'bad_request' }, 400);
+    }
+
+    const existing = await db
+      .prepare(`SELECT id FROM entry_routes WHERE ref_code = ?`)
+      .bind(refCode)
+      .first<{ id: string }>();
+    if (existing) {
+      return c.json({ success: false, error: 'refCode already exists', code: 'conflict' }, 409);
+    }
+
+    const route = await createEntryRoute(db, {
+      name,
+      refCode,
+      redirectUrl: body.redirectUrl ?? null,
+      isActive: true,
+    });
+    const baseUrl = await workerBaseUrl(c.env, c.req.url);
+
+    return c.json({
+      success: true,
+      data: {
+        id: route.id,
+        refCode: route.ref_code,
+        name: route.name,
+        url: `${baseUrl}/r/${encodeURIComponent(route.ref_code)}`,
+        isActive: route.is_active === 1,
+        createdAt: route.created_at,
+      },
+    }, 201);
+  } catch (err) {
+    console.error('POST /api/analytics/friend-routes error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+/**
+ * GET /api/analytics/friend-routes — daily/monthly friend-add route stats.
+ */
+liffRoutes.get('/api/analytics/friend-routes', async (c) => {
+  try {
+    const db = c.env.DB;
+    const hasEntryRoutes = await hasTable(db, 'entry_routes');
+    const hasRefCode = await hasColumn(db, 'friends', 'ref_code');
+    if (!hasRefCode) {
+      return c.json({ success: true, data: { routes: [], period: 'day', dateFrom: '', dateTo: '' } });
+    }
+
+    const period = c.req.query('period') === 'month' ? 'month' : 'day';
+    const fallback = defaultDateRange();
+    const dateFrom = isDate(c.req.query('dateFrom')) ? c.req.query('dateFrom')! : fallback.dateFrom;
+    const dateTo = isDate(c.req.query('dateTo')) ? c.req.query('dateTo')! : fallback.dateTo;
+    const lineAccountId = c.req.query('lineAccountId');
+    const hasFriendLineAccountId = await hasColumn(db, 'friends', 'line_account_id');
+    const accountFilter = lineAccountId && hasFriendLineAccountId ? 'AND line_account_id = ?' : '';
+    const accountBinds = lineAccountId && hasFriendLineAccountId ? [lineAccountId] : [];
+    const bucketExpr = period === 'month' ? `substr(created_at, 1, 7)` : `substr(created_at, 1, 10)`;
+
+    const routeRows = hasEntryRoutes
+      ? (await db
+        .prepare(`SELECT id, ref_code, name, is_active, created_at FROM entry_routes ORDER BY created_at DESC`)
+        .all<{ id: string; ref_code: string; name: string; is_active: number; created_at: string }>()).results ?? []
+      : [];
+
+    const countRows = (await db
+      .prepare(
+        `SELECT
+          ref_code,
+          ${bucketExpr} as bucket,
+          COUNT(*) as count
+        FROM friends
+        WHERE ref_code IS NOT NULL
+          AND ref_code != ''
+          AND substr(created_at, 1, 10) >= ?
+          AND substr(created_at, 1, 10) <= ?
+          ${accountFilter}
+        GROUP BY ref_code, bucket
+        ORDER BY bucket ASC`,
+      )
+      .bind(dateFrom, dateTo, ...accountBinds)
+      .all<{ ref_code: string; bucket: string; count: number }>()).results ?? [];
+
+    const totalRows = (await db
+      .prepare(
+        `SELECT ref_code, COUNT(*) as total
+         FROM friends
+         WHERE ref_code IS NOT NULL
+           AND ref_code != ''
+           ${accountFilter}
+         GROUP BY ref_code`,
+      )
+      .bind(...accountBinds)
+      .all<{ ref_code: string; total: number }>()).results ?? [];
+
+    const baseUrl = await workerBaseUrl(c.env, c.req.url);
+    const byRef = new Map<string, {
+      id: string | null;
+      refCode: string;
+      name: string;
+      url: string;
+      isActive: boolean;
+      totalFriends: number;
+      series: { bucket: string; count: number }[];
+    }>();
+
+    for (const route of routeRows) {
+      byRef.set(route.ref_code, {
+        id: route.id,
+        refCode: route.ref_code,
+        name: route.name,
+        url: `${baseUrl}/r/${encodeURIComponent(route.ref_code)}`,
+        isActive: route.is_active === 1,
+        totalFriends: 0,
+        series: [],
+      });
+    }
+
+    for (const total of totalRows) {
+      const current = byRef.get(total.ref_code) ?? {
+        id: null,
+        refCode: total.ref_code,
+        name: total.ref_code,
+        url: `${baseUrl}/r/${encodeURIComponent(total.ref_code)}`,
+        isActive: true,
+        totalFriends: 0,
+        series: [],
+      };
+      current.totalFriends = total.total;
+      byRef.set(total.ref_code, current);
+    }
+
+    for (const row of countRows) {
+      const current = byRef.get(row.ref_code) ?? {
+        id: null,
+        refCode: row.ref_code,
+        name: row.ref_code,
+        url: `${baseUrl}/r/${encodeURIComponent(row.ref_code)}`,
+        isActive: true,
+        totalFriends: 0,
+        series: [],
+      };
+      current.series.push({ bucket: row.bucket, count: row.count });
+      byRef.set(row.ref_code, current);
+    }
+
+    const routes = Array.from(byRef.values())
+      .sort((a, b) => b.totalFriends - a.totalFriends || a.name.localeCompare(b.name));
+
+    return c.json({
+      success: true,
+      data: {
+        routes,
+        period,
+        dateFrom,
+        dateTo,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/analytics/friend-routes error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
