@@ -112,9 +112,17 @@ LIFFアプリ内のフォーム表示URLは以下の形式:
 https://liff.line.me/{LIFF_ID}?page=form&id={FORM_UUID}
 ```
 
+Worker直URLとして開く場合は以下の形式:
+
+```
+https://{WORKER_OR_CUSTOM_DOMAIN}/form/{FORM_UUID}
+```
+
+`/form/{FORM_UUID}` は Worker 側で `/?page=form&id={FORM_UUID}` にリダイレクトする。`ref` や `liffId` などの既存クエリは保持される。
+
 LIFF SDKがユーザーのプロフィール（`lineUserId`）を取得し、フォーム送信時に自動的に付与する。
 
-管理画面の `/form-submissions` では、LIFF Endpoint URL を入力するとこのクエリ形式で公開フォームURLを生成する。すでに `?liffId=...` などのクエリを含むURLでも、`&page=form&id=...` として連結する。
+管理画面の `/form-submissions` では、直URLとクエリパターンURLの両方を生成する。LIFF Endpoint URL にすでに `?liffId=...` などのクエリを含む場合は、`&page=form&id=...` として連結する。
 
 フォーム内に画像を入れる場合は、管理画面から画像をアップロードする。画像は Worker の `/api/images` 経由で R2 に保存され、フォーム定義の `fields` に `type: "image"` の表示専用項目として保存される。画像項目は回答データ・必須チェック・集計列には含めない。
 

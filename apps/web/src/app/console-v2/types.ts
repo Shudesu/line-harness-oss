@@ -12,6 +12,7 @@ export type ConsoleChat = {
   status: ChatStatus
   notes: string | null
   lastMessageAt: string | null
+  tags?: ConsoleTag[]
 }
 
 export type ConsoleMessage = {

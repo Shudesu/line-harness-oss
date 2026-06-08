@@ -410,6 +410,21 @@ app.get('/book', (c) => {
   }
   return c.redirect(`${target.pathname}${target.search}`);
 });
+
+// Convenience redirect for /form/:id path. Preserve LIFF/ref params.
+app.get('/form/:id', (c) => {
+  const formId = c.req.param('id');
+  const url = new URL(c.req.url);
+  const target = new URL('/', url.origin);
+  target.searchParams.set('page', 'form');
+  target.searchParams.set('id', formId);
+  for (const [key, value] of url.searchParams.entries()) {
+    if (key === 'page' || key === 'id') continue;
+    target.searchParams.set(key, value);
+  }
+  return c.redirect(`${target.pathname}${target.search}`);
+});
+
 app.get('/admin/reservations', (c) => c.json({
   success: false,
   error: 'Worker reservation admin UI has been removed. Use the web dashboard /reservations page.',

@@ -83,7 +83,6 @@ export default function ConsoleV2Page() {
       broadcastsResult,
       conversionReportResult,
       eventsResult,
-      friendsResult,
     ] = await Promise.allSettled([
       api.chats.list({ accountId, recentDays: 30 }),
       api.friends.count({ accountId }),
@@ -94,13 +93,13 @@ export default function ConsoleV2Page() {
       api.broadcasts.list({ accountId }),
       api.conversions.report(),
       api.events.list({ lineAccountId: accountId, limit: 20 }),
-      api.friends.list({ accountId, recentDays: 30, limit: 500 }),
     ])
 
     if (chatsResult.status === 'fulfilled' && chatsResult.value.success) {
       const loaded = chatsResult.value.data as unknown as ConsoleChat[]
       setChats(loaded)
       setSelectedChatId((current) => current || loaded[0]?.id || null)
+      setFriendTagsById(Object.fromEntries(loaded.map((chat) => [chat.friendId, chat.tags || []])))
     }
     if (friendCountResult.status === 'fulfilled' && friendCountResult.value.success) {
       setFriendCount(friendCountResult.value.data.count)
@@ -126,11 +125,6 @@ export default function ConsoleV2Page() {
     if (eventsResult.status === 'fulfilled' && eventsResult.value.success) {
       setRecentEvents(eventsResult.value.data)
     }
-    if (friendsResult.status === 'fulfilled' && friendsResult.value.success) {
-      const items = friendsResult.value.data.items as unknown as ConsoleFriend[]
-      setFriendTagsById(Object.fromEntries(items.map((friend) => [friend.id, friend.tags || []])))
-    }
-
     const failed = [
       chatsResult,
       friendCountResult,
@@ -141,7 +135,6 @@ export default function ConsoleV2Page() {
       broadcastsResult,
       conversionReportResult,
       eventsResult,
-      friendsResult,
     ].some((result) => result.status === 'rejected')
 
     setState({

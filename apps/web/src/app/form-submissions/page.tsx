@@ -3,20 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Header from '@/components/layout/header'
 import { fetchApi } from '@/lib/api'
+import {
+  buildDirectFormUrl,
+  buildFormUrl,
+  normalizeFormFields,
+  parseFormOptions,
+  slugFieldName,
+  type ManagedFormField,
+} from '@/lib/form-manager-utils'
 
 type FormFieldType = 'text' | 'email' | 'tel' | 'number' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'date' | 'image'
 
-type FormField = {
-  name: string
-  label: string
-  type: FormFieldType
-  required?: boolean
-  options?: string[]
-  placeholder?: string
-  columns?: number
-  imageUrl?: string
-  imageAlt?: string
-}
+type FormField = ManagedFormField & { type: FormFieldType }
 
 type ManagedForm = {
   id: string
@@ -53,6 +51,7 @@ type ImageUploadResult = {
 
 const PAGE_SIZE = 20
 const STORAGE_LIFF_URL = 'line_harness_form_liff_url'
+const STORAGE_WORKER_URL = 'line_harness_form_worker_url'
 
 const emptyField = (index: number): FormField => ({
   name: `field_${index}`,
@@ -62,41 +61,8 @@ const emptyField = (index: number): FormField => ({
   options: [],
 })
 
-function normalizeFields(fields: ManagedForm['fields']): FormField[] {
-  if (Array.isArray(fields)) return fields
-  try {
-    const parsed = JSON.parse(fields || '[]') as FormField[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function slugFieldName(value: string, fallback: string) {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^\w]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  return slug || fallback
-}
-
 function fieldOptionsText(field: FormField) {
   return (field.options || []).join('\n')
-}
-
-function parseOptions(value: string) {
-  return value
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function buildFormUrl(liffBaseUrl: string, formId: string) {
-  const base = liffBaseUrl.trim()
-  if (!base) return `/?page=form&id=${encodeURIComponent(formId)}`
-  const separator = base.includes('?') ? '&' : '?'
-  return `${base}${separator}page=form&id=${encodeURIComponent(formId)}`
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -118,6 +84,87 @@ function formatDateTime(iso: string | null | undefined) {
   })
 }
 
+function PreviewField({ field }: { field: FormField }) {
+  const label = field.label.trim() || '未設定項目'
+  const required = field.required && field.type !== 'image'
+  const options = field.options?.length ? field.options : ['選択肢1', '選択肢2']
+
+  if (field.type === 'image') {
+    return (
+      <div className="overflow-hidden rounded-xl border border-gray-100 bg-gray-50">
+        {field.imageUrl ? (
+          <img src={field.imageUrl} alt={field.imageAlt || label} className="max-h-64 w-full object-cover" />
+        ) : (
+          <div className="flex h-28 items-center justify-center text-xs text-gray-400">画像未設定</div>
+        )}
+        {label && <p className="bg-white px-3 py-2 text-xs text-gray-500">{label}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-bold text-gray-700">
+        {label}{required && <span className="ml-1 text-red-500">*</span>}
+      </p>
+      {field.type === 'textarea' ? (
+        <div className="h-20 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-400">{field.placeholder || '入力してください'}</div>
+      ) : field.type === 'select' ? (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-400">{options[0] || '選択してください'}</div>
+      ) : field.type === 'radio' || field.type === 'checkbox' ? (
+        <div className={field.columns === 2 ? 'grid grid-cols-2 gap-2' : 'space-y-2'}>
+          {options.map((option) => (
+            <div key={option} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+              <span className={`h-4 w-4 border border-gray-300 bg-white ${field.type === 'radio' ? 'rounded-full' : 'rounded'}`} />
+              <span>{option}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-400">{field.placeholder || '入力してください'}</div>
+      )}
+    </div>
+  )
+}
+
+function FormPreview({
+  name,
+  description,
+  fields,
+}: {
+  name: string
+  description: string
+  fields: FormField[]
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-bold text-gray-950">プレビュー</p>
+        <span className="rounded-full bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-500">LIFF想定</span>
+      </div>
+      <div className="mx-auto max-w-[360px] overflow-hidden rounded-[24px] border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 bg-emerald-50 px-4 py-5 text-center">
+          <h3 className="text-base font-bold text-gray-950">{name.trim() || 'フォーム名未設定'}</h3>
+          {description.trim() && <p className="mt-2 whitespace-pre-line text-xs leading-5 text-gray-500">{description.trim()}</p>}
+        </div>
+        <div className="space-y-4 p-4">
+          {fields.length === 0 ? (
+            <p className="text-center text-sm text-gray-400">項目がありません</p>
+          ) : (
+            fields.map((field, index) => <PreviewField key={`${field.name}-${index}`} field={field} />)
+          )}
+          <button type="button" className="w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-white">
+            送信する
+          </button>
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-gray-500">
+        実際のLIFF画面ではLINEログイン・友だち情報取得後に表示されます。画像はR2の公開URLを使用します。
+      </p>
+    </div>
+  )
+}
+
 export default function FormSubmissionsPage() {
   const [activeTab, setActiveTab] = useState<'builder' | 'submissions'>('builder')
   const [forms, setForms] = useState<ManagedForm[]>([])
@@ -129,6 +176,7 @@ export default function FormSubmissionsPage() {
   const [saveToMetadata, setSaveToMetadata] = useState(true)
   const [isActive, setIsActive] = useState(true)
   const [liffBaseUrl, setLiffBaseUrl] = useState('')
+  const [workerBaseUrl, setWorkerBaseUrl] = useState('')
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [fieldLabels, setFieldLabels] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -140,7 +188,8 @@ export default function FormSubmissionsPage() {
   const [error, setError] = useState('')
 
   const selectedForm = forms.find((form) => form.id === selectedFormId) || null
-  const editingPublicUrl = editingFormId ? buildFormUrl(liffBaseUrl, editingFormId) : ''
+  const editingQueryUrl = editingFormId ? buildFormUrl(liffBaseUrl, editingFormId) : ''
+  const editingDirectUrl = editingFormId ? buildDirectFormUrl(workerBaseUrl, editingFormId) : ''
 
   const loadForms = useCallback(async () => {
     setLoading(true)
@@ -162,6 +211,7 @@ export default function FormSubmissionsPage() {
     void loadForms()
     try {
       setLiffBaseUrl(localStorage.getItem(STORAGE_LIFF_URL) || '')
+      setWorkerBaseUrl(localStorage.getItem(STORAGE_WORKER_URL) || '')
     } catch {
       // ignore
     }
@@ -174,6 +224,14 @@ export default function FormSubmissionsPage() {
       // ignore
     }
   }, [liffBaseUrl])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_WORKER_URL, workerBaseUrl)
+    } catch {
+      // ignore
+    }
+  }, [workerBaseUrl])
 
   const resetBuilder = () => {
     setEditingFormId(null)
@@ -195,7 +253,8 @@ export default function FormSubmissionsPage() {
       setEditingFormId(form.id)
       setName(form.name)
       setDescription(form.description || '')
-      setFields(normalizeFields(form.fields).length ? normalizeFields(form.fields) : [emptyField(1)])
+      const loadedFields = normalizeFormFields(form.fields) as FormField[]
+      setFields(loadedFields.length ? loadedFields : [emptyField(1)])
       setSaveToMetadata(form.saveToMetadata !== false)
       setIsActive(Boolean(form.isActive))
       setActiveTab('builder')
@@ -216,7 +275,7 @@ export default function FormSubmissionsPage() {
       ])
       if (formRes.success) {
         const labels: Record<string, string> = {}
-        for (const field of normalizeFields(formRes.data.fields)) {
+        for (const field of normalizeFormFields(formRes.data.fields)) {
           if (field.type !== 'image') labels[field.name] = field.label
         }
         setFieldLabels(labels)
@@ -519,7 +578,7 @@ export default function FormSubmissionsPage() {
                     {['select', 'radio', 'checkbox'].includes(field.type) && (
                       <label className="mt-3 block">
                         <span className="mb-1 block text-xs font-bold text-gray-600">選択肢（改行またはカンマ区切り）</span>
-                        <textarea value={fieldOptionsText(field)} onChange={(event) => updateField(index, { options: parseOptions(event.target.value) })} rows={3} className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" />
+                        <textarea value={fieldOptionsText(field)} onChange={(event) => updateField(index, { options: parseFormOptions(event.target.value) })} rows={3} className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" />
                       </label>
                     )}
                   </div>
@@ -541,17 +600,34 @@ export default function FormSubmissionsPage() {
             {editingFormId && (
               <div className="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 p-4">
                 <p className="text-sm font-bold text-emerald-950">公開フォームURL</p>
-                <p className="mt-1 text-xs text-emerald-800">LIFF Endpoint URLを入れると、フォームID付きURLを生成します。すでにクエリがあるURLでも使えます。</p>
-                <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
-                  <input value={liffBaseUrl} onChange={(event) => setLiffBaseUrl(event.target.value)} className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm" placeholder="例: https://liff.line.me/xxxx または https://worker.dev/?liffId=xxxx" />
-                  <button onClick={() => void copyUrl(editingPublicUrl)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white">URLコピー</button>
+                <p className="mt-1 text-xs text-emerald-800">直URLと、LIFF Endpoint URLにクエリを付けるURLの両方を生成します。</p>
+
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-emerald-950">直URL</p>
+                    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <input value={workerBaseUrl} onChange={(event) => setWorkerBaseUrl(event.target.value)} className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm" placeholder="例: https://reservation.example.com" />
+                      <button onClick={() => void copyUrl(editingDirectUrl)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white">直URLコピー</button>
+                    </div>
+                    <div className="mt-2 break-all rounded-lg bg-white px-3 py-2 font-mono text-xs text-emerald-900">{editingDirectUrl}</div>
+                  </div>
+
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-emerald-950">クエリパターンURL</p>
+                    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <input value={liffBaseUrl} onChange={(event) => setLiffBaseUrl(event.target.value)} className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm" placeholder="例: https://liff.line.me/xxxx または https://worker.dev/?liffId=xxxx" />
+                      <button onClick={() => void copyUrl(editingQueryUrl)} className="rounded-lg bg-white px-4 py-2 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">クエリURLコピー</button>
+                    </div>
+                    <div className="mt-2 break-all rounded-lg bg-white px-3 py-2 font-mono text-xs text-emerald-900">{editingQueryUrl}</div>
+                  </div>
                 </div>
-                <div className="mt-3 break-all rounded-lg bg-white px-3 py-2 font-mono text-xs text-emerald-900">{editingPublicUrl}</div>
               </div>
             )}
           </section>
 
           <aside className="space-y-3">
+            <FormPreview name={name} description={description} fields={fields} />
+
             <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
               <p className="text-sm font-bold text-gray-950">フォーム一覧</p>
               <div className="mt-3 space-y-2">
@@ -560,7 +636,8 @@ export default function FormSubmissionsPage() {
                 ) : forms.length === 0 ? (
                   <p className="text-sm text-gray-400">フォームはまだありません。</p>
                 ) : forms.map((form) => {
-                  const url = buildFormUrl(liffBaseUrl, form.id)
+                  const directUrl = buildDirectFormUrl(workerBaseUrl, form.id)
+                  const queryUrl = buildFormUrl(liffBaseUrl, form.id)
                   return (
                     <div key={form.id} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
                       <div className="flex items-start justify-between gap-2">
@@ -571,7 +648,8 @@ export default function FormSubmissionsPage() {
                         <button onClick={() => void loadFormForEdit(form.id)} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-gray-700">編集</button>
                       </div>
                       <div className="mt-2 flex gap-2">
-                        <button onClick={() => void copyUrl(url)} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600">URLコピー</button>
+                        <button onClick={() => void copyUrl(directUrl)} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600">直URL</button>
+                        <button onClick={() => void copyUrl(queryUrl)} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600">クエリURL</button>
                         <button onClick={() => { setSelectedFormId(form.id); setActiveTab('submissions') }} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600">回答</button>
                       </div>
                     </div>

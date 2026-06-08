@@ -106,6 +106,39 @@ type ChatLike = {
   updated_at: string;
 };
 
+type ChatTagRow = {
+  friend_id: string;
+  id: string;
+  name: string;
+  color: string | null;
+};
+
+async function getTagsByFriendIds(db: D1Database, friendIds: string[]): Promise<Map<string, ChatTagRow[]>> {
+  const tagsByFriendId = new Map<string, ChatTagRow[]>();
+  const uniqueIds = [...new Set(friendIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return tagsByFriendId;
+
+  const placeholders = uniqueIds.map(() => '?').join(', ');
+  const result = await db
+    .prepare(
+      `SELECT ft.friend_id, t.id, t.name, t.color
+       FROM friend_tags ft
+       INNER JOIN tags t ON t.id = ft.tag_id
+       WHERE ft.friend_id IN (${placeholders})
+       ORDER BY t.name ASC`,
+    )
+    .bind(...uniqueIds)
+    .all<ChatTagRow>();
+
+  for (const row of result.results ?? []) {
+    const list = tagsByFriendId.get(row.friend_id) ?? [];
+    list.push(row);
+    tagsByFriendId.set(row.friend_id, list);
+  }
+
+  return tagsByFriendId;
+}
+
 // id は chats.id もしくは friend.id のどちらか。friend.id のときは chats 行を遅延作成する。
 // push / broadcast / scenario 配信だけを受けた友だちもチャット画面に現れるため、ここで lazy create が必要。
 // 新規作成する場合は status='resolved' にし、last_message_at は messages_log の実際の最終時刻を使う
@@ -308,9 +341,15 @@ chats.get('/api/chats', async (c) => {
       : c.env.DB.prepare(sql);
     const result = await stmt.all();
 
+    const rows = result.results as Array<Record<string, unknown>>;
+    const tagsByFriendId = await getTagsByFriendIds(
+      c.env.DB,
+      rows.map((ch) => String(ch.friend_id ?? '')),
+    );
+
     return c.json({
       success: true,
-      data: result.results.map((ch: Record<string, unknown>) => ({
+      data: rows.map((ch: Record<string, unknown>) => ({
         id: ch.id,
         friendId: ch.friend_id,
         friendName: ch.display_name || '名前なし',
@@ -321,6 +360,11 @@ chats.get('/api/chats', async (c) => {
         lastMessageAt: ch.last_message_at,
         createdAt: ch.created_at,
         updatedAt: ch.updated_at,
+        tags: (tagsByFriendId.get(String(ch.friend_id)) ?? []).map((tag) => ({
+          id: tag.id,
+          name: tag.name,
+          color: tag.color,
+        })),
       })),
     });
   } catch (err) {
