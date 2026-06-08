@@ -94,7 +94,6 @@ export default function ConsoleV2Page() {
     if (chatsResult.status === 'fulfilled' && chatsResult.value.success) {
       const loaded = chatsResult.value.data as unknown as ConsoleChat[]
       setChats(loaded)
-      setSelectedChatId((current) => current || loaded[0]?.id || null)
       setFriendTagsById(Object.fromEntries(loaded.map((chat) => [chat.friendId, chat.tags || []])))
     }
     if (friendCountResult.status === 'fulfilled' && friendCountResult.value.success) {
@@ -211,6 +210,22 @@ export default function ConsoleV2Page() {
     setSelectedFriend(friend)
     setSelectedChatId(friend.id)
     setActiveTab('messages')
+  }
+
+  const handleOpenFriendChatById = async (friendId: string) => {
+    if (!friendId) return
+    try {
+      const friendRes = await api.friends.get(friendId)
+      if (friendRes.success) {
+        handleOpenFriendChat(friendRes.data as unknown as ConsoleFriend)
+        return
+      }
+      setSelectedChatId(friendId)
+      setActiveTab('messages')
+    } catch {
+      setSelectedChatId(friendId)
+      setActiveTab('messages')
+    }
   }
 
   const handleSendMessage = async () => {
@@ -519,11 +534,11 @@ export default function ConsoleV2Page() {
       )}
 
       {activeTab === 'broadcast' && (
-        <BroadcastTab templates={templates} tags={tags} broadcasts={broadcasts} draft={broadcastDraft} setDraft={setBroadcastDraft} creating={creatingBroadcast} onCreateDraft={handleCreateBroadcastDraft} />
+        <BroadcastTab templates={templates} tags={tags} broadcasts={broadcasts} draft={broadcastDraft} setDraft={setBroadcastDraft} creating={creatingBroadcast} onCreateDraft={handleCreateBroadcastDraft} onTemplateCreated={(template) => setTemplates((current) => [template as ConsoleTemplate, ...current])} />
       )}
 
       {activeTab === 'forms' && (
-        <FormsTab forms={forms} tags={tags} draft={formDraft} setDraft={setFormDraft} creating={creatingForm} onCreateForm={handleCreateSimpleForm} />
+        <FormsTab forms={forms} tags={tags} draft={formDraft} setDraft={setFormDraft} creating={creatingForm} onCreateForm={handleCreateSimpleForm} onOpenFriendChat={handleOpenFriendChatById} />
       )}
 
       {activeTab === 'analytics' && (

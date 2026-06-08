@@ -37,6 +37,10 @@ type ReservationItem = {
 
 export function ReservationCalendarTab() {
   const [date, setDate] = useState(toYmd(new Date()))
+  const [calendarOpen, setCalendarOpen] = useState(false)
+  const [calendarMonth, setCalendarMonth] = useState(toYmd(new Date()).slice(0, 7))
+  const [slotDays, setSlotDays] = useState<Set<string>>(new Set())
+  const [selectedReservation, setSelectedReservation] = useState<ReservationItem | null>(null)
   const [resources, setResources] = useState<ReservationResource[]>([])
   const [resourceId, setResourceId] = useState('')
   const [slots, setSlots] = useState<ReservationSlot[]>([])
@@ -51,6 +55,10 @@ export function ReservationCalendarTab() {
   useEffect(() => {
     void loadDay()
   }, [date, resourceId])
+
+  useEffect(() => {
+    if (calendarOpen) void loadCalendarMonth()
+  }, [calendarOpen, calendarMonth, resourceId])
 
   const reservationsBySlot = useMemo(() => {
     const map = new Map<string, ReservationItem[]>()
@@ -94,20 +102,50 @@ export function ReservationCalendarTab() {
     }
   }
 
+  async function loadCalendarMonth() {
+    if (!resourceId) {
+      setSlotDays(new Set())
+      return
+    }
+    const days = monthDates(calendarMonth)
+    try {
+      const results = await Promise.all(days.map(async (day) => {
+        const res = await fetchApi<ApiResponse<ReservationSlot[]>>(`/api/reservation-slots?resourceId=${encodeURIComponent(resourceId)}&date=${encodeURIComponent(day)}&people=1`)
+        return res.success && res.data.length > 0 ? day : null
+      }))
+      setSlotDays(new Set(results.filter(Boolean) as string[]))
+    } catch {
+      setSlotDays(new Set())
+    }
+  }
+
+  const moveCalendarMonth = (direction: -1 | 1) => {
+    const next = new Date(`${calendarMonth}-01T00:00:00`)
+    next.setMonth(next.getMonth() + direction)
+    setCalendarMonth(toYmd(next).slice(0, 7))
+  }
+
   const activeReservations = reservations.filter(isActiveReservation)
 
   return (
     <section className="space-y-4">
       <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
-        <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">Reservation Calendar</p>
-        <h2 className="mt-1 text-xl font-black text-gray-950">予約カレンダー</h2>
-        <p className="mt-1 text-sm text-gray-500">日付と予約対象を選ぶと、その日の枠と予約客を確認できます。</p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_1.5fr_auto]">
-          <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">Reservation Calendar</p>
+            <h2 className="mt-1 text-xl font-black text-gray-950">予約カレンダー</h2>
+            <p className="mt-1 text-sm text-gray-500">カレンダーから日付を選び、その日の枠と予約客を確認します。</p>
+          </div>
+          <button onClick={() => setCalendarOpen(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+            カレンダー
+          </button>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-[1.5fr_1fr_auto]">
           <select value={resourceId} onChange={(event) => setResourceId(event.target.value)} className="rounded-xl border border-gray-200 px-3 py-2 text-sm">
             <option value="">予約対象を選択</option>
             {resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
           </select>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800">{date}</div>
           <button onClick={() => void loadDay()} className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-bold text-white">更新</button>
         </div>
       </div>
@@ -147,7 +185,7 @@ export function ReservationCalendarTab() {
                     {list.length === 0 ? (
                       <p className="text-sm text-gray-400">予約客はいません。</p>
                     ) : list.map((reservation) => (
-                      <div key={reservation.id} className="rounded-xl bg-white p-3 shadow-sm">
+                      <button key={reservation.id} onClick={() => setSelectedReservation(reservation)} className="w-full rounded-xl bg-white p-3 text-left shadow-sm hover:bg-blue-50">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-bold text-gray-950">{reservation.customerName || reservation.title}</p>
@@ -155,7 +193,7 @@ export function ReservationCalendarTab() {
                           </div>
                           <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">{reservation.status}</span>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </details>
@@ -164,6 +202,47 @@ export function ReservationCalendarTab() {
           </div>
         )}
       </div>
+
+      {calendarOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-black/45 p-0 sm:items-center sm:p-4">
+          <section className="w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:mx-auto sm:max-w-xl sm:rounded-3xl">
+            <div className="flex items-center justify-between gap-2">
+              <button onClick={() => moveCalendarMonth(-1)} className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700">前月</button>
+              <input type="month" value={calendarMonth} onChange={(event) => setCalendarMonth(event.target.value || calendarMonth)} className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-bold text-gray-900" />
+              <button onClick={() => moveCalendarMonth(1)} className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700">次月</button>
+              <button onClick={() => setCalendarOpen(false)} className="rounded-xl bg-gray-100 px-3 py-2 text-xs font-bold text-gray-700">閉じる</button>
+            </div>
+            <div className="mt-4 grid grid-cols-7 gap-1 text-center text-xs font-bold text-gray-400">
+              {['日', '月', '火', '水', '木', '金', '土'].map((w) => <div key={w} className="py-1">{w}</div>)}
+            </div>
+            <div className="mt-1 grid grid-cols-7 gap-1">
+              {calendarCells(calendarMonth).map((day, index) => {
+                const inMonth = day.startsWith(calendarMonth)
+                const hasSlot = slotDays.has(day)
+                const selected = day === date
+                return (
+                  <button
+                    key={`${day}-${index}`}
+                    onClick={() => {
+                      setDate(day)
+                      setCalendarOpen(false)
+                    }}
+                    className={`min-h-14 rounded-xl border p-1 text-left ${selected ? 'border-blue-500 bg-blue-50' : hasSlot ? 'border-emerald-200 bg-emerald-50' : 'border-gray-100 bg-white'} ${inMonth ? 'text-gray-900' : 'text-gray-300'}`}
+                  >
+                    <span className="text-xs font-black">{Number(day.slice(8, 10))}</span>
+                    {hasSlot && <span className="mt-1 block text-center text-lg leading-none text-emerald-500">○</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="mt-3 text-xs text-gray-500">○ は予約枠がある日です。</p>
+          </section>
+        </div>
+      )}
+
+      {selectedReservation && (
+        <ReservationDetailModal reservation={selectedReservation} onClose={() => setSelectedReservation(null)} />
+      )}
     </section>
   )
 }
@@ -203,4 +282,58 @@ function toYmd(date: Date) {
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
+}
+
+function monthDates(month: string) {
+  const start = new Date(`${month}-01T00:00:00`)
+  const dates: string[] = []
+  const cursor = new Date(start)
+  while (cursor.getMonth() === start.getMonth()) {
+    dates.push(toYmd(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return dates
+}
+
+function calendarCells(month: string) {
+  const start = new Date(`${month}-01T00:00:00`)
+  const cursor = new Date(start)
+  cursor.setDate(1 - start.getDay())
+  const days: string[] = []
+  for (let i = 0; i < 42; i += 1) {
+    days.push(toYmd(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return days
+}
+
+function ReservationDetailModal({ reservation, onClose }: { reservation: ReservationItem; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/45 p-0 sm:items-center sm:p-4">
+      <section className="w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:mx-auto sm:max-w-lg sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-lg font-black text-gray-950">{reservation.customerName || reservation.title}</p>
+            <p className="mt-1 text-sm text-gray-500">{timeLabel(reservation.startAt)} - {timeLabel(reservation.endAt)}</p>
+          </div>
+          <button onClick={onClose} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-700">閉じる</button>
+        </div>
+        <dl className="mt-4 grid gap-2 sm:grid-cols-2">
+          <Info label="人数" value={`${reservation.totalPeople}名`} />
+          <Info label="経路" value={sourceLabel(reservation.source)} />
+          <Info label="電話" value={reservation.customerPhone || '-'} />
+          <Info label="状態" value={reservation.status} />
+        </dl>
+      </section>
+    </div>
+  )
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-gray-50 p-3">
+      <dt className="text-xs font-bold text-gray-400">{label}</dt>
+      <dd className="mt-1 text-sm font-bold text-gray-900">{value}</dd>
+    </div>
+  )
 }

@@ -1,7 +1,10 @@
 import Link from 'next/link'
+import { useState } from 'react'
+import FlexPreviewComponent from '@/components/flex-preview'
+import { api } from '@/lib/api'
 import type { ApiBroadcast, BroadcastDraft, ConsoleTag, ConsoleTemplate } from '../types'
 import { normalizeTemplatePreview } from '../utils'
-import { MiniList, MiniListItem, StepCard } from './shared'
+import { MiniList, MiniListItem } from './shared'
 
 export function BroadcastTab({
   templates,
@@ -11,6 +14,7 @@ export function BroadcastTab({
   setDraft,
   creating,
   onCreateDraft,
+  onTemplateCreated,
 }: {
   templates: ConsoleTemplate[]
   tags: ConsoleTag[]
@@ -19,7 +23,9 @@ export function BroadcastTab({
   setDraft: (draft: BroadcastDraft) => void
   creating: boolean
   onCreateDraft: () => void
+  onTemplateCreated: (template: ConsoleTemplate) => void
 }) {
+  const [templateModalOpen, setTemplateModalOpen] = useState(false)
   const selectedTemplate = templates.find((template) => template.id === draft.templateId)
   const selectedTag = tags.find((tag) => tag.id === draft.targetTagId)
 
@@ -29,16 +35,16 @@ export function BroadcastTab({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold text-gray-950">配信を作る</p>
-            <p className="mt-1 text-sm text-gray-500">テンプレートを選び、全員またはタグ指定で下書きを作ります。</p>
+            <p className="mt-1 text-sm text-gray-500">テンプレート作成、対象選択、プレビュー、下書き作成までこのタブで行います。</p>
           </div>
-          <Link href="/broadcasts" className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
-            配信管理
-          </Link>
-        </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <StepCard index="1" title="テンプレ作成" body="文章やカードを先にテンプレートとして作ります。" href="/templates" />
-          <StepCard index="2" title="対象を絞る" body="全員配信か、タグで絞った配信を選びます。" href="/tags-events" />
-          <StepCard index="3" title="確認して送信" body="下書きを作成し、配信管理画面で送信します。" href="/broadcasts" />
+          <div className="flex gap-2">
+            <button onClick={() => setTemplateModalOpen(true)} className="rounded-lg bg-gray-950 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">
+              テンプレ作成
+            </button>
+            <Link href="/broadcasts" className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              配信管理
+            </Link>
+          </div>
         </div>
 
         <div className="mt-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
@@ -76,10 +82,13 @@ export function BroadcastTab({
           <div className="mt-4 rounded-xl bg-white p-4">
             <p className="text-xs font-bold uppercase tracking-wider text-gray-400">プレビュー</p>
             {selectedTemplate ? (
-              <div className="mt-2">
-                <p className="text-sm font-bold text-gray-950">{selectedTemplate.name}</p>
-                <p className="mt-1 text-xs text-gray-500">{selectedTemplate.messageType} / 対象: {draft.targetType === 'all' ? '全員' : selectedTag?.name || 'タグ未選択'}</p>
-                <pre className="mt-3 max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-700">{normalizeTemplatePreview(selectedTemplate)}</pre>
+              <div className="mt-2 grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+                <div>
+                  <p className="text-sm font-bold text-gray-950">{selectedTemplate.name}</p>
+                  <p className="mt-1 text-xs text-gray-500">{selectedTemplate.messageType} / 対象: {draft.targetType === 'all' ? '全員' : selectedTag?.name || 'タグ未選択'}</p>
+                  <p className="mt-3 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-700">{normalizeTemplatePreview(selectedTemplate)}</p>
+                </div>
+                <MessagePreview template={selectedTemplate} />
               </div>
             ) : (
               <p className="mt-2 text-sm text-gray-500">テンプレートを選択すると内容を確認できます。</p>
@@ -103,6 +112,109 @@ export function BroadcastTab({
           ))}
         </MiniList>
       </aside>
+
+      {templateModalOpen && (
+        <TemplateCreateModal
+          onClose={() => setTemplateModalOpen(false)}
+          onCreated={(template) => {
+            onTemplateCreated(template)
+            setDraft({ ...draft, templateId: template.id })
+            setTemplateModalOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function MessagePreview({ template }: { template: ConsoleTemplate }) {
+  if (template.messageType === 'flex' && template.messageContent.trim().startsWith('{')) {
+    return <FlexPreviewComponent content={template.messageContent} maxWidth={260} />
+  }
+  if (template.messageType === 'image') {
+    return <img src={template.messageContent.trim()} alt="テンプレート画像" className="max-h-64 rounded-xl object-contain" />
+  }
+  return <div className="rounded-2xl bg-[#8FE1B8] p-4 text-sm font-semibold leading-6 text-gray-900">{template.messageContent || '本文なし'}</div>
+}
+
+function TemplateCreateModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated: (template: ConsoleTemplate) => void
+}) {
+  const [form, setForm] = useState({ name: '', category: 'broadcast', messageType: 'text', messageContent: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const isFlex = form.messageType === 'flex'
+  const isImage = form.messageType === 'image'
+
+  async function save() {
+    if (!form.name.trim() || !form.messageContent.trim()) {
+      setError('テンプレート名と内容を入力してください。')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const res = await api.templates.create({
+        name: form.name.trim(),
+        category: form.category.trim() || 'broadcast',
+        messageType: form.messageType,
+        messageContent: form.messageContent,
+      })
+      if (!res.success) throw new Error(res.error || 'テンプレートを作成できませんでした。')
+      onCreated(res.data as unknown as ConsoleTemplate)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'テンプレートを作成できませんでした。')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/45 p-0 sm:items-center sm:p-4">
+      <section className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:mx-auto sm:max-w-4xl sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-lg font-black text-gray-950">テンプレート作成</p>
+            <p className="mt-1 text-sm text-gray-500">作成後、そのまま配信下書きに使えます。</p>
+          </div>
+          <button onClick={onClose} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-700">閉じる</button>
+        </div>
+        {error && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{error}</div>}
+        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-3">
+            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" placeholder="テンプレート名" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <input value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" placeholder="カテゴリ" />
+              <select value={form.messageType} onChange={(event) => setForm({ ...form, messageType: event.target.value, messageContent: '' })} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm">
+                <option value="text">テキスト</option>
+                <option value="flex">Flex</option>
+                <option value="image">画像URL</option>
+              </select>
+            </div>
+            <textarea
+              value={form.messageContent}
+              onChange={(event) => setForm({ ...form, messageContent: event.target.value })}
+              rows={isFlex ? 14 : 7}
+              className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 font-mono text-sm"
+              placeholder={isFlex ? 'Flex JSONを貼り付け' : isImage ? '画像URLを入力' : '配信本文を入力'}
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={onClose} className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700">キャンセル</button>
+              <button onClick={() => void save()} disabled={saving} className="rounded-xl bg-emerald-500 px-5 py-2 text-sm font-bold text-white disabled:opacity-50">
+                {saving ? '保存中' : '作成'}
+              </button>
+            </div>
+          </div>
+          <div className="rounded-2xl bg-gray-50 p-4">
+            <p className="mb-3 text-xs font-bold text-gray-400">プレビュー</p>
+            <MessagePreview template={form as ConsoleTemplate} />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import FlexPreviewComponent from '@/components/flex-preview'
 import { LineMessageBubble } from '@/components/line-message-bubble'
+import { fetchApi } from '@/lib/api'
 import type {
   ApiExternalCustomer,
   ApiExternalCustomerLink,
@@ -14,7 +15,22 @@ import type {
 } from '../types'
 import { formatDateTime, normalizeTemplatePreview, statusClass, statusLabel } from '../utils'
 
-type ChatPanel = 'chat' | 'templates' | 'customer' | 'tags'
+type ChatPanel = 'chat' | 'templates' | 'customer' | 'forms' | 'tags'
+
+type FormSummary = {
+  id: string
+  name: string
+  submitCount?: number
+}
+
+type FormSubmission = {
+  id: string
+  formId: string
+  friendId: string | null
+  friendName?: string | null
+  data: Record<string, unknown> | string
+  createdAt: string
+}
 
 export function SupportTab(props: {
   chats: ConsoleChat[]
@@ -179,6 +195,7 @@ function ChatModal(props: Parameters<typeof SupportTab>[0] & {
             {panelButton('chat', 'チャット')}
             {panelButton('templates', 'テンプレート')}
             {panelButton('customer', '顧客情報')}
+            {panelButton('forms', 'フォーム回答')}
             {panelButton('tags', 'タグ')}
           </div>
         </div>
@@ -187,6 +204,7 @@ function ChatModal(props: Parameters<typeof SupportTab>[0] & {
           {props.panel === 'chat' && <ChatPanelContent {...props} />}
           {props.panel === 'templates' && <TemplatePanel {...props} />}
           {props.panel === 'customer' && <CustomerPanel {...props} />}
+          {props.panel === 'forms' && <FriendFormsPanel friendId={props.chatDetail?.friendId || props.selectedFriend?.id || null} />}
           {props.panel === 'tags' && <TagPanel {...props} selectedTagIds={selectedTagIds} />}
         </div>
 
@@ -238,6 +256,98 @@ function ChatPanelContent(props: Parameters<typeof SupportTab>[0]) {
       })}
     </div>
   )
+}
+
+function FriendFormsPanel({ friendId }: { friendId: string | null }) {
+  const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState('')
+  const [items, setItems] = useState<Array<{ form: FormSummary; submission: FormSubmission }>>([])
+
+  const load = async () => {
+    if (!friendId || loading) return
+    setLoading(true)
+    setError('')
+    try {
+      const formsRes = await fetchApi<{ success: boolean; data: FormSummary[]; error?: string }>('/api/forms')
+      if (!formsRes.success) throw new Error(formsRes.error || 'フォーム一覧を取得できませんでした。')
+      const collected: Array<{ form: FormSummary; submission: FormSubmission }> = []
+      for (const form of formsRes.data) {
+        const res = await fetchApi<{ success: boolean; data: FormSubmission[]; error?: string }>(`/api/forms/${encodeURIComponent(form.id)}/submissions`)
+        if (!res.success) continue
+        for (const submission of res.data) {
+          if (submission.friendId === friendId) collected.push({ form, submission })
+        }
+      }
+      collected.sort((a, b) => String(b.submission.createdAt).localeCompare(String(a.submission.createdAt)))
+      setItems(collected)
+      setLoaded(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'フォーム回答を取得できませんでした。')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!friendId) {
+    return <div className="rounded-2xl bg-white p-5 text-sm text-gray-500 shadow-sm">友達情報を読み込み中です。</div>
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-gray-950">フォーム回答</p>
+            <p className="mt-1 text-xs text-gray-500">この顧客が送信したフォーム回答を確認します。</p>
+          </div>
+          <button onClick={() => void load()} disabled={loading} className="rounded-xl bg-gray-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
+            {loading ? '取得中' : loaded ? '再取得' : '回答を見る'}
+          </button>
+        </div>
+      </div>
+      {error && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{error}</div>}
+      {loaded && items.length === 0 && <div className="rounded-2xl bg-white p-5 text-sm text-gray-500 shadow-sm">この顧客のフォーム回答はありません。</div>}
+      {items.map(({ form, submission }) => {
+        const data = typeof submission.data === 'string' ? safeParseObject(submission.data) : submission.data
+        return (
+          <article key={submission.id} className="rounded-2xl bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-black text-gray-950">{form.name}</p>
+                <p className="mt-1 text-xs text-gray-400">{formatDateTime(submission.createdAt)}</p>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">回答</span>
+            </div>
+            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+              {Object.entries(data || {}).map(([key, value]) => (
+                <div key={key} className="rounded-xl bg-gray-50 p-3">
+                  <dt className="text-[11px] font-bold text-gray-400">{key}</dt>
+                  <dd className="mt-1 whitespace-pre-wrap text-sm font-semibold text-gray-800">{formatSubmissionValue(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
+function safeParseObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function formatSubmissionValue(value: unknown): string {
+  if (Array.isArray(value)) return value.join(', ')
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
 }
 
 function ChatTagRow({ tags }: { tags: ConsoleTag[] }) {
