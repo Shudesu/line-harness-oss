@@ -13,10 +13,13 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../env.js';
+import type { Env } from '../index.js';
 import { jstNow } from '@line-crm/db';
 
-const pinnedFriends = new Hono<{ Bindings: Env; Variables: { staff: { id: string; line_account_id: string | null } } }>();
+const pinnedFriends = new Hono<{
+  Bindings: Env;
+  Variables: { staff: { id: string; role: string; line_account_id: string | null } };
+}>();
 
 // GET /api/pinned-friends
 pinnedFriends.get('/api/pinned-friends', async (c) => {

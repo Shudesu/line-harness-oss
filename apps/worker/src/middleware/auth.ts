@@ -78,13 +78,24 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   // Check staff_members table first
   const staff = await getStaffByApiKey(c.env.DB, token);
   if (staff) {
-    c.set('staff', { id: staff.id, name: staff.name, role: staff.role });
+    // Round3: 069 で追加した line_account_id も context に載せる (pinned-friends 等が参照)
+    c.set('staff', {
+      id: staff.id,
+      name: staff.name,
+      role: staff.role,
+      line_account_id: staff.line_account_id ?? null,
+    });
     return next();
   }
 
   // Fallback: env API_KEY acts as owner (current rotation slot)
   if (token === c.env.API_KEY) {
-    c.set('staff', { id: 'env-owner', name: 'Owner', role: 'owner' as const });
+    c.set('staff', {
+      id: 'env-owner',
+      name: 'Owner',
+      role: 'owner' as const,
+      line_account_id: null,
+    });
     return next();
   }
 
@@ -100,7 +111,12 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     c.env.LEGACY_API_KEY !== c.env.API_KEY &&
     token === c.env.LEGACY_API_KEY
   ) {
-    c.set('staff', { id: 'env-owner', name: 'Owner', role: 'owner' as const });
+    c.set('staff', {
+      id: 'env-owner',
+      name: 'Owner',
+      role: 'owner' as const,
+      line_account_id: null,
+    });
     console.log('[auth] accept_via=LEGACY_API_KEY');
     return next();
   }
