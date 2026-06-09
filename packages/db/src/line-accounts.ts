@@ -100,6 +100,27 @@ export async function getLineAccountByChannelId(
     .first<LineAccount>();
 }
 
+/**
+ * Reverse-lookup an account by its LINE Login `login_channel_id` (= the `aud`
+ * claim of a verified LIFF / LINE Login id_token). Used by routes that have a
+ * verified token and need to resolve the owning account *strictly* — without
+ * falling back to legacy heuristics that may match the wrong tenant.
+ *
+ * Returns `null` if no account has registered this login channel. Multiple
+ * accounts SHOULD NOT share the same `login_channel_id` (LIFF login channels
+ * are 1:1 with messaging channels in practice); if they ever do, the first
+ * row wins (`LIMIT 1`).
+ */
+export async function getLineAccountByLoginChannelId(
+  db: D1Database,
+  loginChannelId: string,
+): Promise<LineAccount | null> {
+  return db
+    .prepare(`SELECT * FROM line_accounts WHERE login_channel_id = ? LIMIT 1`)
+    .bind(loginChannelId)
+    .first<LineAccount>();
+}
+
 export type UpdateLineAccountInput = Partial<
   Pick<
     LineAccount,

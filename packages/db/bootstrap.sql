@@ -305,6 +305,13 @@ CREATE TABLE crm_forwards (
   updated_at        TEXT NOT NULL DEFAULT (datetime('now', '+9 hours'))
 );
 
+CREATE TABLE cron_jobs (
+  job_name TEXT PRIMARY KEY,
+  last_run_at TEXT NOT NULL,
+  last_run_duration_ms INTEGER,
+  last_success INTEGER DEFAULT 1
+);
+
 CREATE TABLE cron_locks (
   slot_minute TEXT PRIMARY KEY,
   claimed_at TEXT NOT NULL
@@ -540,19 +547,30 @@ CREATE TABLE friend_tags (
   PRIMARY KEY (friend_id, tag_id)
 );
 
-CREATE TABLE friends (
-  id               TEXT PRIMARY KEY,
-  line_user_id     TEXT UNIQUE NOT NULL,
-  display_name     TEXT,
-  picture_url      TEXT,
-  status_message   TEXT,
-  is_following     INTEGER NOT NULL DEFAULT 1,
-  user_id          TEXT,
-  ig_igsid         TEXT,
-  score            INTEGER NOT NULL DEFAULT 0,
-  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
-, ref_code TEXT, metadata TEXT NOT NULL DEFAULT '{}', line_account_id TEXT REFERENCES line_accounts(id), first_tracked_link_id TEXT REFERENCES tracked_links (id) ON DELETE SET NULL);
+CREATE TABLE "friends" (
+  id                    TEXT PRIMARY KEY,
+  line_user_id          TEXT NOT NULL,
+  display_name          TEXT,
+  picture_url           TEXT,
+  status_message        TEXT,
+  is_following          INTEGER NOT NULL DEFAULT 1,
+  user_id               TEXT,
+  ig_igsid              TEXT,
+  score                 INTEGER NOT NULL DEFAULT 0,
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  ref_code              TEXT,
+  metadata              TEXT NOT NULL DEFAULT '{}',
+  line_account_id       TEXT REFERENCES line_accounts(id),
+  first_tracked_link_id TEXT REFERENCES tracked_links (id) ON DELETE SET NULL,
+  -- 新 UNIQUE: マルチアカウント環境では「LINE user × account」で 1 行が正しい粒度。
+  -- ただし SQLite の UNIQUE は NULL を distinct 扱いする (NULLs distinct) ため、
+  -- (lineUser, NULL) は本制約では重複と判定されず、複数行 INSERT が可能になる。
+  -- legacy NULL 行を line_user_id 単位で 1 行に collapse する partial UNIQUE INDEX は
+  -- 074_friends_legacy_null_unique.sql で別途張る (本 migration の編集は既適用環境に
+  -- 届かないため独立 migration として切り出している)。
+  UNIQUE (line_user_id, line_account_id)
+);
 
 CREATE TABLE google_calendar_connections (
   id            TEXT PRIMARY KEY,
@@ -719,6 +737,15 @@ CREATE TABLE outgoing_webhooks (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE pinned_friends (
+  staff_id         TEXT NOT NULL REFERENCES staff_members(id) ON DELETE CASCADE,
+  friend_id        TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  -- Codex Round 5 Critical: line_account_id にも FK を貼って tenant 境界を DB レベルで保証する
+  line_account_id  TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  pinned_at        TEXT NOT NULL,
+  PRIMARY KEY (staff_id, friend_id)
+);
+
 CREATE TABLE pool_accounts (
   id TEXT PRIMARY KEY,
   pool_id TEXT NOT NULL REFERENCES traffic_pools(id) ON DELETE CASCADE,
@@ -860,7 +887,7 @@ CREATE TABLE "staff_members" (
   is_active  INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
-);
+, line_account_id TEXT);
 
 CREATE TABLE staff_menus (
   staff_id                  TEXT NOT NULL,
@@ -1151,17 +1178,19 @@ CREATE INDEX idx_friend_tags_assigned_at
 
 CREATE INDEX idx_friend_tags_tag_id ON friend_tags (tag_id);
 
-CREATE INDEX idx_friends_account_created
-  ON friends (line_account_id, created_at DESC);
+CREATE INDEX idx_friends_account_created   ON friends (line_account_id, created_at DESC);
 
-CREATE INDEX idx_friends_account_following
-  ON friends (line_account_id, is_following, created_at DESC);
+CREATE INDEX idx_friends_account_following ON friends (line_account_id, is_following, created_at DESC);
 
-CREATE INDEX idx_friends_ig_igsid ON friends (ig_igsid);
+CREATE INDEX idx_friends_ig_igsid          ON friends (ig_igsid);
 
-CREATE INDEX idx_friends_line_user_id ON friends (line_user_id);
+CREATE INDEX idx_friends_line_user_id      ON friends (line_user_id);
 
-CREATE INDEX idx_friends_user_id ON friends (user_id);
+CREATE UNIQUE INDEX idx_friends_line_user_id_legacy_unique
+  ON friends (line_user_id)
+  WHERE line_account_id IS NULL;
+
+CREATE INDEX idx_friends_user_id           ON friends (user_id);
 
 CREATE INDEX idx_health_logs_account ON account_health_logs (line_account_id);
 
@@ -1215,6 +1244,12 @@ CREATE INDEX idx_notifications_created ON notifications (created_at);
 
 CREATE INDEX idx_notifications_status ON notifications (status);
 
+CREATE INDEX idx_pinned_friends_account
+  ON pinned_friends (line_account_id, staff_id);
+
+CREATE INDEX idx_pinned_friends_staff
+  ON pinned_friends (staff_id, pinned_at DESC);
+
 CREATE INDEX idx_ref_tracking_friend ON ref_tracking (friend_id);
 
 CREATE INDEX idx_ref_tracking_friend_created
@@ -1243,7 +1278,13 @@ CREATE INDEX idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
 
 CREATE INDEX idx_staff_account_sort ON staff (line_account_id, sort_order);
 
+CREATE INDEX idx_staff_members_active_account
+  ON staff_members (is_active, line_account_id);
+
 CREATE UNIQUE INDEX idx_staff_members_api_key ON staff_members (api_key);
+
+CREATE INDEX idx_staff_members_line_account
+  ON staff_members (line_account_id);
 
 CREATE INDEX idx_staff_members_role ON staff_members (role);
 

@@ -35,11 +35,14 @@ interface ApnsEnv {
 /**
  * line_account_id に紐付く active staff の active iOS device token を取得。
  *
- * Round2 セキュリティ agent 指摘: 旧実装は lineAccountId を void して全テナント
- * fan-out しており、顧問先間で PII (友だち名/メッセージ) 漏洩経路だった。
- * 069_staff_members_line_account.sql で line_account_id 列を追加し、
- * NULL = 全アカウント受信 (owner)、値あり = その line_account_id のイベントのみ
- * の規則で絞り込む。
+ * Round3 修正: NULL = 「どのアカウントにも紐づかない＝受信しない（安全側にフェイル）」
+ * に変更。明示的に line_account_id をセットした staff のみが該当アカウントの通知を受け取る。
+ * 069 migration でバックフィル SQL を同梱しており、デプロイ時に既存 staff は
+ * is_active=1 の主 line_account に自動紐付けされる。
+ *
+ * 性能: staff_members を先に絞り込んで device_tokens を JOIN する形に逆転した。
+ * 069 で複合インデックス idx_staff_members_active_account を追加済みなので、
+ * staff 側を index で絞ってから device_tokens の小集合を引く。
  */
 async function getDeviceTokensForAccount(
   db: D1Database,
@@ -48,12 +51,12 @@ async function getDeviceTokensForAccount(
   const r = await db
     .prepare(
       `SELECT dt.*
-         FROM device_tokens dt
-         JOIN staff_members sm ON sm.id = dt.staff_id
-        WHERE dt.is_active = 1
-          AND dt.platform = 'ios'
-          AND (sm.line_account_id IS NULL OR sm.line_account_id = ?)
-          AND sm.is_active = 1`,
+         FROM staff_members sm
+         JOIN device_tokens dt ON dt.staff_id = sm.id
+        WHERE sm.is_active = 1
+          AND sm.line_account_id = ?
+          AND dt.is_active = 1
+          AND dt.platform = 'ios'`,
     )
     .bind(lineAccountId)
     .all<DeviceToken>();

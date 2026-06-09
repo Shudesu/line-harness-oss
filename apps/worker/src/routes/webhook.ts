@@ -5,6 +5,7 @@ import {
   upsertFriend,
   updateFriendFollowStatus,
   getFriendByLineUserId,
+  getFriendByLineUserIdLegacy,
   getScenarios,
   enrollFriendInScenario,
   getScenarioSteps,
@@ -203,21 +204,18 @@ async function handleEvent(
 
     console.log(`[follow] profile=${profile?.displayName ?? 'null'}`);
 
+    // multi-account 正規パス: lineAccountId を upsertFriend に渡すことで、
+    // 同じ user が別 account を follow している既存行を上書きせず、
+    // (line_user_id, line_account_id) 粒度で別行を作る/更新する。
     const friend = await upsertFriend(db, {
       lineUserId: userId,
+      lineAccountId: lineAccountId ?? null,
       displayName: profile?.displayName ?? null,
       pictureUrl: profile?.pictureUrl ?? null,
       statusMessage: profile?.statusMessage ?? null,
     });
 
     console.log(`[follow] friend.id=${friend.id} friend.line_account_id=${(friend as any).line_account_id}`);
-
-    // Set line_account_id for multi-account tracking (always update on follow)
-    if (lineAccountId) {
-      await db.prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
-        .bind(lineAccountId, jstNow(), friend.id).run();
-      console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
-    }
 
     // Resolve referral link (entry_route) for this friend.
     // /auth/callback (OAuth path) writes friends.ref_code in parallel with
@@ -457,7 +455,11 @@ async function handleEvent(
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    // multi-account 正規パス: lineAccountId が分かるので厳密 match を優先。
+    // legacy NULL 行は helper 内で fallback される。
+    const friend = lineAccountId
+      ? await getFriendByLineUserId(db, userId, lineAccountId)
+      : await getFriendByLineUserIdLegacy(db, userId);
     if (!friend) return;
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
@@ -535,7 +537,10 @@ async function handleEvent(
   if (event.type === 'message' && event.message.type !== 'text') {
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
-    const friend = await getFriendByLineUserId(db, userId);
+    // multi-account 正規パス: lineAccountId が分かるので厳密 match を優先。
+    const friend = lineAccountId
+      ? await getFriendByLineUserId(db, userId, lineAccountId)
+      : await getFriendByLineUserIdLegacy(db, userId);
     if (!friend) return;
 
     const msg = event.message as { id: string; type: string; fileName?: string; title?: string };
@@ -583,7 +588,10 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    // multi-account 正規パス: lineAccountId が分かるので厳密 match を優先。
+    const friend = lineAccountId
+      ? await getFriendByLineUserId(db, userId, lineAccountId)
+      : await getFriendByLineUserIdLegacy(db, userId);
     if (!friend) return;
 
     const incomingText = textMessage.text;

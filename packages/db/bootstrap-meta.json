@@ -75,7 +75,12 @@
     "066_token_refresh_lock.sql",
     "067_cron_locks.sql",
     "068_perf_indexes.sql",
-    "068_stripe_subscriptions_last_event.sql"
+    "068_stripe_subscriptions_last_event.sql",
+    "069_staff_members_line_account.sql",
+    "070_pinned_friends.sql",
+    "072_cron_jobs.sql",
+    "073_friends_multi_account_unique.sql",
+    "074_friends_legacy_null_unique.sql"
   ],
-  "migrationCount": 76
+  "migrationCount": 81
 }

@@ -26,6 +26,9 @@ function serializeStaff(row: StaffMember, masked = true) {
     role: row.role,
     apiKey: masked ? maskApiKey(row.api_key) : row.api_key,
     isActive: Boolean(row.is_active),
+    // 069: NULL = どのアカウントにも紐づかない = 通知ゼロ。owner が UI で
+    // 明示的に割り当てる前提なので、レスポンスにも露出する。
+    lineAccountId: row.line_account_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -98,7 +101,12 @@ staff.get('/api/staff/:id', requireRole('owner'), async (c) => {
 // POST /api/staff — owner only. Create staff. Returns full API key (one-time visible).
 staff.post('/api/staff', requireRole('owner'), async (c) => {
   try {
-    const body = await c.req.json<{ name: string; email?: string; role: string }>();
+    const body = await c.req.json<{
+      name: string;
+      email?: string;
+      role: string;
+      lineAccountId?: string | null;
+    }>();
 
     if (!body.name) {
       return c.json({ success: false, error: 'name is required' }, 400);
@@ -113,6 +121,7 @@ staff.post('/api/staff', requireRole('owner'), async (c) => {
       name: body.name,
       email: body.email ?? null,
       role: body.role as 'owner' | 'admin' | 'staff',
+      lineAccountId: body.lineAccountId ?? null,
     });
 
     // Return full (unmasked) API key one-time
@@ -132,6 +141,7 @@ staff.patch('/api/staff/:id', requireRole('owner'), async (c) => {
       email?: string | null;
       role?: string;
       isActive?: boolean;
+      lineAccountId?: string | null;
     }>();
 
     const validRoles = ['owner', 'admin', 'staff'] as const;
@@ -161,6 +171,7 @@ staff.patch('/api/staff/:id', requireRole('owner'), async (c) => {
       email: body.email,
       role: body.role as 'owner' | 'admin' | 'staff' | undefined,
       is_active: body.isActive !== undefined ? (body.isActive ? 1 : 0) : undefined,
+      lineAccountId: body.lineAccountId,
     });
 
     if (!updated) {

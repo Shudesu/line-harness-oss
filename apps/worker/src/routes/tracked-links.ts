@@ -9,6 +9,7 @@ import {
   recordLinkClickExtended,
   getLinkClicks,
   getFriendByLineUserId,
+  getFriendByLineUserIdLegacy,
 } from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { TrackedLink } from '@line-crm/db';
@@ -360,9 +361,13 @@ trackedLinks.get('/t/:linkId', async (c) => {
     return c.redirect(liffRedirect, 302);
   }
 
-  // Resolve friendId from LINE user ID if provided
+  // Resolve friendId from LINE user ID if provided.
+  // multi-account: link.line_account_id があれば厳密 match を試みる。
+  // (link.line_account_id IS NULL は any-account 扱いで legacy 経路に逃がす)
   if (!friendId && lineUserId) {
-    const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
+    const friend = link.line_account_id
+      ? await getFriendByLineUserId(c.env.DB, lineUserId, link.line_account_id)
+      : await getFriendByLineUserIdLegacy(c.env.DB, lineUserId);
     if (friend) {
       friendId = friend.id;
     }

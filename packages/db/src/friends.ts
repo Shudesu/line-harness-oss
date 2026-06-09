@@ -90,12 +90,59 @@ export async function getFollowingLineUserIdsByTag(
   return (result.results ?? []).map((r) => r.line_user_id);
 }
 
+/**
+ * multi-account 正規パス: `(line_user_id, line_account_id)` で friend を引く。
+ *
+ * migration 070 で friends の UNIQUE が `(line_user_id, line_account_id)` に
+ * 変わったため、新規 caller はこちらを使うこと。`lineAccountId` を必ず渡す:
+ *
+ * - 厳密 match を優先する。同じ user が複数 account を follow しているケースで
+ *   別 account の行を誤って返さない。
+ * - 厳密 match が無い場合は legacy 行 (`line_account_id IS NULL`) を fallback
+ *   として 1 行だけ返す。migration 070 以前のデータ (multi-account 化前) は
+ *   line_account_id が NULL のままになっているので、これを救う必要がある。
+ *
+ * caller 側で account を解決できない (例: 外部 webhook が line_user_id だけを
+ * 渡してくる) 場合は `getFriendByLineUserIdLegacy` を使う。
+ */
 export async function getFriendByLineUserId(
+  db: D1Database,
+  lineUserId: string,
+  lineAccountId: string,
+): Promise<Friend | null> {
+  // 厳密 match を優先しつつ legacy NULL 行に fallback する。
+  // ORDER BY (line_account_id = ?) DESC は match=1 を 0 より前に並べる。
+  return db
+    .prepare(
+      `SELECT * FROM friends
+         WHERE line_user_id = ?
+           AND (line_account_id = ? OR line_account_id IS NULL)
+         ORDER BY (line_account_id = ?) DESC
+         LIMIT 1`,
+    )
+    .bind(lineUserId, lineAccountId, lineAccountId)
+    .first<Friend>();
+}
+
+/**
+ * legacy パス: account を解決できない caller 向けに、line_user_id 単独で
+ * friend を 1 行返す。multi-account 環境で同じ user の複数行が存在する場合は
+ * 最も古い行を返す (created_at ASC) ことで挙動を安定させる。
+ *
+ * このヘルパを使っている caller はすべて **将来 cleanup 対象**。account を
+ * 解決できるルートが整えば、上の正規 helper に置き換える。
+ */
+export async function getFriendByLineUserIdLegacy(
   db: D1Database,
   lineUserId: string,
 ): Promise<Friend | null> {
   return db
-    .prepare(`SELECT * FROM friends WHERE line_user_id = ?`)
+    .prepare(
+      `SELECT * FROM friends
+         WHERE line_user_id = ?
+         ORDER BY created_at ASC
+         LIMIT 1`,
+    )
     .bind(lineUserId)
     .first<Friend>();
 }
@@ -136,50 +183,105 @@ export async function setFriendFirstTrackedLinkIfNull(
 
 export interface UpsertFriendInput {
   lineUserId: string;
+  /**
+   * 必須: friend がどの LINE 公式アカウントに紐づくかを示す。
+   * - `string`: 厳密に `(line_user_id, lineAccountId)` で upsert する。
+   *   migration 070 で UNIQUE (line_user_id, line_account_id) なので、
+   *   同 user が別 account で follow している既存行とは衝突しない。
+   * - `null`: legacy 行 (line_account_id IS NULL) を upsert する。
+   *   外部 webhook 等、account を解決できない caller 用の救済パス。
+   */
+  lineAccountId: string | null;
   displayName?: string | null;
   pictureUrl?: string | null;
   statusMessage?: string | null;
 }
 
+/**
+ * multi-account 安全な friend upsert。
+ *
+ * - `(line_user_id, lineAccountId)` で既存行を引いて UPDATE / INSERT する。
+ * - `lineAccountId=null` の場合は legacy 行 (line_account_id IS NULL) を
+ *   upsert する。同じ user の別 account 行は触らない。
+ *
+ * 注意: 旧 upsert は `(line_user_id)` 単独 UNIQUE 前提で「先に find して無ければ
+ * INSERT」していた。migration 070 後は UNIQUE が複合キーになっているため、
+ * find 句にも line_account_id を含めないと、別 account の既存行を上書きしてしまう
+ * (= 旧バグの再来)。
+ */
 export async function upsertFriend(
   db: D1Database,
   input: UpsertFriendInput,
 ): Promise<Friend> {
   const now = jstNow();
-  const existing = await getFriendByLineUserId(db, input.lineUserId);
+  const accountId = input.lineAccountId ?? null;
+
+  // 厳密 match を引く。getFriendByLineUserId の fallback (legacy NULL 行) は
+  // 別行扱いになるべきなので、ここでは fallback を使わず直接 SQL で WHERE する。
+  const existing = await db
+    .prepare(
+      accountId === null
+        ? `SELECT * FROM friends WHERE line_user_id = ? AND line_account_id IS NULL LIMIT 1`
+        : `SELECT * FROM friends WHERE line_user_id = ? AND line_account_id = ? LIMIT 1`,
+    )
+    .bind(...(accountId === null ? [input.lineUserId] : [input.lineUserId, accountId]))
+    .first<Friend>();
 
   if (existing) {
-    await db
-      .prepare(
-        `UPDATE friends
-         SET display_name = ?,
-             picture_url = ?,
-             status_message = ?,
-             is_following = 1,
-             updated_at = ?
-         WHERE line_user_id = ?`,
-      )
-      .bind(
-        'displayName' in input ? (input.displayName ?? null) : existing.display_name,
-        'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
-        'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
-        now,
-        input.lineUserId,
-      )
-      .run();
+    if (accountId === null) {
+      await db
+        .prepare(
+          `UPDATE friends
+             SET display_name = ?,
+                 picture_url = ?,
+                 status_message = ?,
+                 is_following = 1,
+                 updated_at = ?
+           WHERE line_user_id = ? AND line_account_id IS NULL`,
+        )
+        .bind(
+          'displayName' in input ? (input.displayName ?? null) : existing.display_name,
+          'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
+          'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
+          now,
+          input.lineUserId,
+        )
+        .run();
+    } else {
+      await db
+        .prepare(
+          `UPDATE friends
+             SET display_name = ?,
+                 picture_url = ?,
+                 status_message = ?,
+                 is_following = 1,
+                 updated_at = ?
+           WHERE line_user_id = ? AND line_account_id = ?`,
+        )
+        .bind(
+          'displayName' in input ? (input.displayName ?? null) : existing.display_name,
+          'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
+          'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
+          now,
+          input.lineUserId,
+          accountId,
+        )
+        .run();
+    }
 
-    return (await getFriendByLineUserId(db, input.lineUserId))!;
+    return (await getFriendById(db, existing.id))!;
   }
 
   const id = crypto.randomUUID();
   await db
     .prepare(
-      `INSERT INTO friends (id, line_user_id, display_name, picture_url, status_message, is_following, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO friends (id, line_user_id, line_account_id, display_name, picture_url, status_message, is_following, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     )
     .bind(
       id,
       input.lineUserId,
+      accountId,
       input.displayName ?? null,
       input.pictureUrl ?? null,
       input.statusMessage ?? null,

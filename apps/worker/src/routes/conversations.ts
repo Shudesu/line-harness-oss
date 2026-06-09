@@ -155,7 +155,7 @@ conversations.get('/api/conversations', async (c) => {
     return c.json({ success: true, data: { total: countRow?.total ?? 0, items } });
   } catch (err) {
     console.error('GET /api/conversations error:', err);
-    return c.json({ success: false, error: String(err) }, 500);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
 
@@ -256,7 +256,7 @@ conversations.get('/api/conversations/:friendId', async (c) => {
     });
   } catch (err) {
     console.error('GET /api/conversations/:friendId error:', err);
-    return c.json({ success: false, error: String(err) }, 500);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
 

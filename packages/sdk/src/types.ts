@@ -487,6 +487,11 @@ export interface StaffMember {
    */
   apiKey: string
   isActive: boolean
+  /**
+   * Which LINE account this staff member is scoped to for notifications.
+   * NULL = scoped to none (no APNs / push). Set by owner via PATCH.
+   */
+  lineAccountId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -502,6 +507,9 @@ export interface CreateStaffInput {
   name: string
   email?: string
   role: 'admin' | 'staff'
+  // 069: NULL = どのアカウントにも紐づかない = 通知ゼロ。新規 staff 作成時に
+  // 明示しない限り永久に通知が届かないので、API でも受けられるよう公開する。
+  lineAccountId?: string | null
 }
 
 export interface UpdateStaffInput {
@@ -509,6 +517,7 @@ export interface UpdateStaffInput {
   email?: string | null
   role?: StaffRole
   isActive?: boolean
+  lineAccountId?: string | null
 }
 
 // ─── High-Level ─────────────────────────────────────────

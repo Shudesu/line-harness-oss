@@ -195,7 +195,21 @@
 
 ---
 
-## 今夜 (2026-06-07) のラウンドで対応済み一覧
+## Round 5 (2026-06-09) で対応済み一覧
+
+| 修正 | 状態 |
+|---|---|
+| 構造的 P1 #1: multi-account friends UNIQUE 再設計 (migration 073 + caller 11 callsite) | ✅ |
+| 構造的 P1 #5: /api/forms/:id/submit LIFF ID token 認証必須化 + SSRF guard | ✅ |
+| 構造的 P1 #6: cron 6h ジョブ skip 解消 (cron_jobs テーブル + shouldRunSixHourJob/markCronJobRan) | ✅ |
+| 構造的 P1 #7: APNs テナント治療 (staff_members.line_account_id + createStaff/updateStaff 対応) | ✅ |
+| Codex 第二回指摘: forms auth skip 復帰 / cron helper 未定義 / forms friend lookup 厳密化 / form 境界検証 / _skipWebhook 無視 / migration 074 partial UNIQUE / SSRF IPv4-mapped IPv6 / schema.sql 追従 | ✅ |
+| migration 番号衝突解消 (070 二重 → 073/074 にリネーム) | ✅ |
+| pinned_friends 機能 (migration 070 + route) | ✅ (前夜 Codex 由来) |
+| device_tokens 認可 (他人 token 削除防止) | ✅ (前夜 Codex 由来) |
+| conversations.ts / rate-limit.ts 治療 | ✅ (前夜 Codex 由来) |
+
+## Round 4 (2026-06-07) のラウンドで対応済み一覧
 
 | 修正 | 状態 |
 |---|---|

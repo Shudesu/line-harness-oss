@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
   getFriendByLineUserId,
+  getFriendByLineUserIdLegacy,
   createUser,
   getUserByEmail,
   linkFriendToUser,
@@ -717,9 +718,19 @@ liffRoutes.get('/auth/callback', async (c) => {
     const db = c.env.DB;
     const lineUserId = verified.sub;
 
+    // multi-account 解決: accountParam (LINE Login channel ID) → line_accounts.id
+    // OAuth 経路では follow webhook が未着信でも friend を作成するため、
+    // ここで line_account_id を確定させてから upsert する必要がある。
+    // accountParam が無い (= env default の login channel を使ったケース) は
+    // legacy 行 (line_account_id NULL) として upsert する。
+    const resolvedAccountId = accountParam
+      ? (await getLineAccountByChannelId(db, accountParam))?.id ?? null
+      : null;
+
     // Upsert friend (may not exist yet if webhook hasn't fired)
     const friend = await upsertFriend(db, {
       lineUserId,
+      lineAccountId: resolvedAccountId,
       displayName,
       pictureUrl,
       statusMessage: null,
@@ -1124,7 +1135,9 @@ liffRoutes.post('/api/liff/profile', async (c) => {
       return c.json({ success: false, error: 'lineUserId is required' }, 400);
     }
 
-    const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
+    // legacy 経路: /api/liff/profile は body.lineUserId のみで account 解決ができない。
+    // 将来 cleanup 対象 (clients から lineAccountId を渡すか、idToken 必須化する)。
+    const friend = await getFriendByLineUserIdLegacy(c.env.DB, body.lineUserId);
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
@@ -1169,13 +1182,17 @@ liffRoutes.post('/api/liff/link', async (c) => {
     }
 
     let verifyRes: Response | null = null;
+    let matchedLoginChannelId: string | null = null;
     for (const channelId of loginChannelIds) {
       verifyRes = await fetch('https://api.line.me/oauth2/v2.1/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ id_token: body.idToken, client_id: channelId }),
       });
-      if (verifyRes.ok) break;
+      if (verifyRes.ok) {
+        matchedLoginChannelId = channelId;
+        break;
+      }
     }
 
     if (!verifyRes?.ok) {
@@ -1187,7 +1204,16 @@ liffRoutes.post('/api/liff/link', async (c) => {
     const email = verified.email || null;
 
     const db = c.env.DB;
-    const friend = await getFriendByLineUserId(db, lineUserId);
+    // multi-account: 検証に通った login_channel_id から line_account_id を解決して、
+    // 同じ user が他 account で follow 中でも誤って別行を更新しないようにする。
+    // 解決できない場合 (env default の channel など) は legacy fallback に逃がす。
+    const matchedAccountForLink =
+      matchedLoginChannelId
+        ? dbAccounts.find((a) => a.login_channel_id === matchedLoginChannelId) ?? null
+        : null;
+    const friend = matchedAccountForLink
+      ? await getFriendByLineUserId(db, lineUserId, matchedAccountForLink.id)
+      : await getFriendByLineUserIdLegacy(db, lineUserId);
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
@@ -1735,10 +1761,12 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
     }
 
     // Verify idToken — ensures caller is the actual user
+    let matchedSendFormChannelId: string | null = null;
+    let sendFormDbAccounts: Awaited<ReturnType<typeof getLineAccounts>> = [];
     {
       const loginChannelIds = [c.env.LINE_LOGIN_CHANNEL_ID];
-      const dbAccounts = await getLineAccounts(c.env.DB);
-      for (const acct of dbAccounts) {
+      sendFormDbAccounts = await getLineAccounts(c.env.DB);
+      for (const acct of sendFormDbAccounts) {
         if (acct.login_channel_id) loginChannelIds.push(acct.login_channel_id);
       }
       let verified = false;
@@ -1754,6 +1782,7 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
             return c.json({ success: false, error: 'Token mismatch' }, 403);
           }
           verified = true;
+          matchedSendFormChannelId = channelId;
           break;
         }
       }
@@ -1763,7 +1792,15 @@ liffRoutes.post('/api/liff/send-form-link', async (c) => {
     }
 
     const db = c.env.DB;
-    const friend = await getFriendByLineUserId(db, lineUserId);
+    // multi-account: 検証通過した login_channel_id から line_account_id を解決して
+    // 厳密 match で friend を引く。解決できなければ legacy fallback。
+    const matchedSendFormAccount =
+      matchedSendFormChannelId
+        ? sendFormDbAccounts.find((a) => a.login_channel_id === matchedSendFormChannelId) ?? null
+        : null;
+    const friend = matchedSendFormAccount
+      ? await getFriendByLineUserId(db, lineUserId, matchedSendFormAccount.id)
+      : await getFriendByLineUserIdLegacy(db, lineUserId);
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }

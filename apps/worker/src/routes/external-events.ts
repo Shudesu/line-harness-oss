@@ -17,6 +17,7 @@ import {
   logExternalEventReceipt,
   getExternalEventReceipts,
   getFriendByLineUserId,
+  getFriendByLineUserIdLegacy,
 } from '@line-crm/db';
 import { sendAdConversionsExplicit } from '../services/ad-conversion.js';
 import type { Env } from '../index.js';
@@ -210,8 +211,14 @@ externalEvents.post('/api/external-events/:eventKey/receive', async (c) => {
       ? Math.floor(Number(body.value))
       : ev.default_value ?? null;
 
-  // multi-account 境界: external_event が account 指定されていれば、その account の friend のみ対象
-  const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
+  // multi-account 境界: external_event が account 指定されていれば、その account の
+  // friend のみ厳密 match。未指定 (ev.line_account_id IS NULL) は any-account 扱い
+  // で legacy fallback。後段に「friend と ev の line_account_id が食い違うなら null」
+  // の既存ガードを残してあり、ev.line_account_id NULL + 異なる account の friend に
+  // 当たっても CAPI 紐付けはされない。
+  const friend = ev.line_account_id
+    ? await getFriendByLineUserId(c.env.DB, lineUserId, ev.line_account_id)
+    : await getFriendByLineUserIdLegacy(c.env.DB, lineUserId);
   let friendId: string | null = friend?.id ?? null;
   if (
     friend &&

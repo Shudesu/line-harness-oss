@@ -15,7 +15,7 @@
  */
 
 import type { DeviceToken } from '@line-crm/db';
-import { touchDeviceTokenUsage, deleteDeviceToken } from '@line-crm/db';
+import { touchDeviceTokenUsage, deleteDeviceToken, deactivateDeviceToken } from '@line-crm/db';
 
 const PROD_HOST = 'https://api.push.apple.com';
 const SANDBOX_HOST = 'https://api.sandbox.push.apple.com';
@@ -97,14 +97,17 @@ async function pushToOneDevice(
   payload: ApnsPayload,
   secrets: Required<ApnsSecrets>,
 ): Promise<{ ok: boolean; status: number; reason?: string }> {
-  // Round2 セキュリティ agent 指摘 #9: bundle_id mismatch を APNs に送ると BadTopic だが
-  // Worker は silent fail。事前ガードで bundle_id 不一致 token を弾く。
+  // Round3 修正: bundle_id mismatch / 無効 environment は **永久に直らない** ので
+  // token を deactivate して送信ループから除外する（自己治癒）。
+  // 元の Round2 修正だと毎通知で「弾く→ログ→未達」を繰り返し iOS 側からは
+  // 「通知が来ない」という障害として観測されていた。
   if (device.bundle_id !== secrets.APNS_BUNDLE_ID) {
-    return { ok: false, status: 0, reason: 'bundle_id_mismatch' };
+    await deactivateDeviceToken(db, device.token);
+    return { ok: false, status: 0, reason: 'bundle_id_mismatch_deactivated' };
   }
-  // environment 列の値も "production"/"sandbox" 以外なら弾く（iOS が誤送信した場合）
   if (device.environment !== 'production' && device.environment !== 'sandbox') {
-    return { ok: false, status: 0, reason: 'invalid_environment' };
+    await deactivateDeviceToken(db, device.token);
+    return { ok: false, status: 0, reason: 'invalid_environment_deactivated' };
   }
   const host = device.environment === 'production' ? PROD_HOST : SANDBOX_HOST;
   const url = `${host}/3/device/${device.token}`;
@@ -182,19 +185,29 @@ export async function pushToDevices(
   // iOS のみ対象（Android は別途 FCM 実装）
   const iosDevices = devices.filter((d) => d.platform === 'ios');
 
-  for (const d of iosDevices) {
-    try {
-      const r = await pushToOneDevice(db, d, payload, secrets);
-      results.push({ token: d.token.slice(0, 16) + '...', status: r.status, reason: r.reason });
+  // Round3 修正: serial loop だと 100 devices で 5-10 秒、Cloudflare wall timeout
+  // のリスクがある。10 並列 chunk で送信する。
+  const CONCURRENCY = 10;
+  for (let i = 0; i < iosDevices.length; i += CONCURRENCY) {
+    const chunk = iosDevices.slice(i, i + CONCURRENCY);
+    const chunkResults = await Promise.all(
+      chunk.map((d) =>
+        pushToOneDevice(db, d, payload, secrets).catch(
+          (err): { ok: boolean; status: number; reason?: string } => ({
+            ok: false,
+            status: 0,
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+      ),
+    );
+    for (let j = 0; j < chunk.length; j++) {
+      const d = chunk[j];
+      const r = chunkResults[j];
+      // ログから device token を特定できないよう、prefix を 8 char に縮める
+      results.push({ token: d.token.slice(0, 8) + '...', status: r.status, reason: r.reason });
       if (r.ok) sent++;
       else failed++;
-    } catch (err) {
-      failed++;
-      results.push({
-        token: d.token.slice(0, 16) + '...',
-        status: 0,
-        reason: err instanceof Error ? err.message : String(err),
-      });
     }
   }
 

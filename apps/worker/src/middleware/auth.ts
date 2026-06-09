@@ -46,8 +46,20 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     // L-TRACK 互換: EC 等の外部システムから成果受信。内部で HMAC 署名検証 + replay 抑止。
     path.match(/^\/api\/external-events\/[^/]+\/receive$/) ||
     path.match(/^\/api\/webhooks\/incoming\/[^/]+\/receive$/) ||
-    path.match(/^\/api\/forms\/[^/]+\/submit$/) ||
+    // /api/forms/:id/submit and /api/forms/:id/partial must skip the
+    // global Authorization-header gate because the LIFF client cannot
+    // attach a Bearer API_KEY (the key would have to be embedded in the
+    // page = trivially exfiltrated). The routes themselves enforce
+    // fail-closed `idToken` authentication in the body: missing / invalid
+    // id_token returns 401, mismatching line_account_id returns 403, and
+    // the friend is always resolved from the verified `sub` — client-supplied
+    // friendId / lineUserId are explicitly ignored. See routes/forms.ts
+    // (the POST handlers for /submit and /partial).
+    //
+    // /opened stays public — it is a non-mutating telemetry write
+    // (form_opens table only) used by LIFF's first-paint beacon.
     path.match(/^\/api\/forms\/[^/]+\/opened$/) ||
+    path.match(/^\/api\/forms\/[^/]+\/submit$/) ||
     path.match(/^\/api\/forms\/[^/]+\/partial$/) ||
     path.match(/^\/api\/forms\/[^/]+$/) || // GET form definition (public for LIFF)
     path === '/api/meet-callback' || // Meet Harness completion callback

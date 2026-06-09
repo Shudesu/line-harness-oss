@@ -8,6 +8,8 @@ import {
   getRandomPoolAccount,
   getPoolAccounts,
   getEntryRouteByRefCode,
+  shouldRunSixHourJob,
+  markCronJobRan,
 } from '@line-crm/db';
 import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts, processQueuedBroadcasts } from './services/broadcast.js';
@@ -715,14 +717,17 @@ async function scheduled(
     console.error('booking-reminders error:', e);
   }
 
-  // Booking expirer — runs only on the 6h cron tick.
-  if (event.cron === '0 */6 * * *') {
+  // Booking expirer — 6h ジョブ (migration 072_cron_jobs).
+  // 旧 `event.cron === '0 */6 * * *'` ガードは 067_cron_locks との競合で
+  // 永久に走らない可能性があったため廃止。cron_jobs.last_run_at で間隔を判定する。
+  if (await shouldRunSixHourJob(env.DB, 'booking-expirer')) {
     try {
       const result = await runExpirer(env.DB, {
         now: new Date(),
         sender: sendBookingNotification,
         env, // Phase 1-G
       });
+      await markCronJobRan(env.DB, 'booking-expirer');
       console.log(
         `[booking-expirer] expired=${result.expired} idempotency_purged=${result.idempotencyPurged}`,
       );
@@ -745,10 +750,13 @@ async function scheduled(
     console.error('event-booking-reminders error:', e);
   }
 
-  // Event-booking expirer — 6h cron tick.
-  if (event.cron === '0 */6 * * *') {
+  // Event-booking expirer — 6h ジョブ (migration 072_cron_jobs).
+  // 旧 `event.cron === '0 */6 * * *'` ガードは 067_cron_locks との競合で
+  // 永久に走らない可能性があったため廃止。cron_jobs.last_run_at で間隔を判定する。
+  if (await shouldRunSixHourJob(env.DB, 'event-booking-expirer')) {
     try {
       const result = await runEventBookingExpirer(env.DB, { now: new Date() });
+      await markCronJobRan(env.DB, 'event-booking-expirer');
       console.log(
         `[event-booking-expirer] expired=${result.expired} idempotency_purged=${result.idempotencyPurged}`,
       );
@@ -757,10 +765,12 @@ async function scheduled(
     }
   }
 
-  // Phase 1-H: fingerprint データの自動削除 — 6h cron tick で実行 (=1日4回)。
+  // Phase 1-H: fingerprint データの自動削除 — 6h ジョブ (migration 072_cron_jobs).
   // account_settings から retention_days を読んで、それより古い link_clicks の
   // user_agent / ip_address / ua_fingerprint を NULL クリアする。
-  if (event.cron === '0 */6 * * *') {
+  // 旧 `event.cron === '0 */6 * * *'` ガードは 067_cron_locks との競合で
+  // 永久に走らない可能性があったため廃止。cron_jobs.last_run_at で間隔を判定する。
+  if (await shouldRunSixHourJob(env.DB, 'fingerprint-purger')) {
     try {
       const retentionRow = await env.DB
         .prepare(`SELECT value FROM account_settings WHERE line_account_id = '__system__' AND key = 'fingerprint_retention_days'`)
@@ -771,6 +781,7 @@ async function scheduled(
         retentionDays: Number.isFinite(retentionDays) && retentionDays > 0 ? retentionDays : 90,
         trigger: 'cron',
       });
+      await markCronJobRan(env.DB, 'fingerprint-purger');
       if (r.clearedRows > 0) {
         console.log(
           `[fingerprint-purger] retention=${retentionDays}d scanned=${r.scannedRows} cleared=${r.clearedRows}`,

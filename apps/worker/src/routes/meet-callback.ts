@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
-import { getFriendByLineUserId } from '@line-crm/db';
+import { getFriendByLineUserIdLegacy } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 import { resolveAccessToken } from '../lib/account-token.js';
 
@@ -119,7 +119,9 @@ app.post('/api/meet-callback', async (c) => {
     return c.json({ success: false, error: 'line_user_id required' }, 400);
   }
 
-  const friend = await getFriendByLineUserId(c.env.DB, body.line_user_id);
+  // legacy 経路: meet-callback は外部 webhook で line_account_id 情報を持たない。
+  // 将来 cleanup: 外部側に account 識別子を渡してもらい厳密 match へ。
+  const friend = await getFriendByLineUserIdLegacy(c.env.DB, body.line_user_id);
   if (!friend) {
     return c.json({ success: false, error: 'friend not found' }, 404);
   }

@@ -10,7 +10,12 @@ import {
   createFormSubmission,
   jstNow,
 } from '@line-crm/db';
-import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
+import {
+  getFriendByLineUserId,
+  getFriendByLineUserIdLegacy,
+  getFriendById,
+  getLineAccountByLoginChannelId,
+} from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type {
   Form as DbForm,
@@ -20,6 +25,8 @@ import type {
 import type { Env } from '../index.js';
 import { requireRole } from '../middleware/role-guard.js';
 import { resolveAccessToken } from '../lib/account-token.js';
+import { verifyLiffIdToken } from '../lib/liff-verify.js';
+import { validateOutboundWebhookUrl } from '../lib/safe-fetch-url.js';
 
 const forms = new Hono<Env>();
 
@@ -224,10 +231,12 @@ forms.post('/api/forms/:id/opened', async (c) => {
     const friendId = body.friendId;
 
     // Resolve friend
+    // legacy 経路: forms.opened は body.lineUserId だけで account 解決できない。
+    // 将来 cleanup 対象 (idToken 必須化 or form の line_account_id 経由解決)。
     let friend = friendId
       ? await getFriendById(c.env.DB, friendId)
       : lineUserId
-        ? await getFriendByLineUserId(c.env.DB, lineUserId)
+        ? await getFriendByLineUserIdLegacy(c.env.DB, lineUserId)
         : null;
 
     const now = jstNow();
@@ -248,21 +257,64 @@ forms.post('/api/forms/:id/opened', async (c) => {
   }
 });
 
-// POST /api/forms/:id/partial — save survey answers without x_username (public, used by LIFF page 1)
+// POST /api/forms/:id/partial — save survey answers without x_username (LIFF page 1)
+//
+// AUTHENTICATION: requires `idToken` in the body (LIFF.getIDToken()). The
+// previous version trusted `friendId` from the body and could be invoked
+// against any friend in the database. The friend is now resolved from the
+// verified LINE user id (`sub`) and the friend's `line_account_id` must
+// match the login channel that signed the token, so cross-tenant injection
+// is blocked.
 forms.post('/api/forms/:id/partial', async (c) => {
   try {
     const formId = c.req.param('id');
-    const body = await c.req.json<{ lineUserId?: string; friendId?: string; data?: Record<string, unknown> }>();
+    const form = await getFormById(c.env.DB, formId);
+    if (!form) {
+      return c.json({ success: false, error: 'Form not found' }, 404);
+    }
 
-    // Resolve friend
-    let friend = body.friendId
-      ? await getFriendById(c.env.DB, body.friendId)
-      : body.lineUserId
-        ? await getFriendByLineUserId(c.env.DB, body.lineUserId)
-        : null;
+    const body = await c.req.json<{
+      idToken?: string;
+      lineUserId?: string; // ignored, retained only to surface a warning
+      friendId?: string; // ignored, retained only to surface a warning
+      data?: Record<string, unknown>;
+    }>();
 
+    if (body.friendId || body.lineUserId) {
+      console.warn('[forms.partial] ignoring client-supplied friendId/lineUserId');
+    }
+
+    if (!body.idToken) {
+      return c.json({ success: false, error: 'idToken is required' }, 401);
+    }
+
+    const verified = await verifyLiffIdToken(c.env, body.idToken);
+    if (!verified) {
+      return c.json({ success: false, error: 'Invalid ID token' }, 401);
+    }
+
+    // 厳密 account 解決: verified.channelId (= LIFF login channel = aud) →
+    // line_accounts.login_channel_id で line_account_id を逆引きし、
+    // getFriendByLineUserId(sub, line_account_id) で friend を引く。
+    //
+    // legacy fallback (getFriendByLineUserIdLegacy) は multi-account 環境で
+    // 同一 LINE user が A/B 両 account にいる場合に古い行を拾い、
+    // isFriendChannelMismatch の login_channel_id 未設定パスをすり抜けて
+    // 別 account の friend に副作用を注入できる穴があったため使わない。
+    const account = await getLineAccountByLoginChannelId(c.env.DB, verified.channelId);
+    if (!account) {
+      return c.json({ success: false, error: 'Forbidden' }, 403);
+    }
+
+    const friend = await getFriendByLineUserId(c.env.DB, verified.sub, account.id);
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
+    }
+
+    // form 境界チェック: form.line_account_id が設定されていれば、解決された
+    // account.id と一致する form しか受け付けない。
+    if (!isFormAllowedForAccount(form, account.id)) {
+      return c.json({ success: false, error: 'Forbidden' }, 403);
     }
 
     // Save survey data to friend metadata.
@@ -281,7 +333,20 @@ forms.post('/api/forms/:id/partial', async (c) => {
   }
 });
 
-// POST /api/forms/:id/submit — submit form (public, used by LIFF)
+// POST /api/forms/:id/submit — submit form (LIFF page 2)
+//
+// AUTHENTICATION: requires `idToken` in the body (LIFF.getIDToken()). The
+// previous version trusted `friendId` / `lineUserId` from the body and
+// could be invoked against any friend in the database — letting the
+// attacker forge metadata writes, tag attaches, scenario enrollments and
+// outbound webhooks (including LINE push) for arbitrary friends. The
+// friend is now resolved from the verified LINE user id (`sub`) and the
+// friend's `line_account_id` must match the login channel that signed
+// the token.
+//
+// Public (unauthenticated) survey use is intentionally NOT supported by
+// this route. If we later need it we'll gate on a per-form `public` flag
+// stored on `forms` rather than re-opening this surface globally.
 forms.post('/api/forms/:id/submit', async (c) => {
   try {
     const formId = c.req.param('id');
@@ -294,12 +359,65 @@ forms.post('/api/forms/:id/submit', async (c) => {
     }
 
     const body = await c.req.json<{
+      idToken?: string;
+      // The following fields are no longer trusted from the body. They
+      // are accepted for transitional log warnings only — they will NOT
+      // influence friend resolution.
       lineUserId?: string;
       friendId?: string;
       data?: Record<string, unknown>;
+      // P1 (2026-06-09): `_skipWebhook` is no longer honoured. The previous
+      // implementation trusted a client-supplied flag, which let any valid
+      // id_token holder bypass the eligibility webhook (= signup gate).
+      // We accept the field only to log a warning so legacy clients are
+      // visible during the transition; the value is discarded.
+      // TODO: if a "pre-verified" path is genuinely needed, design a
+      // server-signed HMAC proof (e.g. _skipWebhookSignature with a server
+      // secret) and verify it here. Out of scope for this change.
       _skipWebhook?: boolean;
       trackedLinkId?: string;
     }>();
+
+    if (body.friendId || body.lineUserId) {
+      console.warn('[forms.submit] ignoring client-supplied friendId/lineUserId');
+    }
+    if (body._skipWebhook) {
+      console.warn('[forms.submit] ignoring client-supplied _skipWebhook (server-enforced)');
+    }
+
+    if (!body.idToken) {
+      return c.json({ success: false, error: 'idToken is required' }, 401);
+    }
+
+    const verified = await verifyLiffIdToken(c.env, body.idToken);
+    if (!verified) {
+      return c.json({ success: false, error: 'Invalid ID token' }, 401);
+    }
+
+    // 厳密 account 解決: verified.channelId (= LIFF login channel = aud) →
+    // line_accounts.login_channel_id で line_account_id を逆引きし、
+    // getFriendByLineUserId(sub, line_account_id) で friend を厳密に引く。
+    //
+    // legacy fallback (getFriendByLineUserIdLegacy) は multi-account 環境で
+    // 同一 LINE user が A/B 両 account にいる場合に古い行を拾うため、
+    // 別 account の friend に副作用 (metadata / scenario / tag / push) を
+    // 注入できる穴があった。逆引き失敗 (account 未登録) は 403 で落とす。
+    const account = await getLineAccountByLoginChannelId(c.env.DB, verified.channelId);
+    if (!account) {
+      return c.json({ success: false, error: 'Forbidden' }, 403);
+    }
+
+    const verifiedFriend = await getFriendByLineUserId(c.env.DB, verified.sub, account.id);
+    if (!verifiedFriend) {
+      return c.json({ success: false, error: 'Friend not found' }, 404);
+    }
+
+    // form 境界チェック: form.line_account_id が設定されていれば、解決された
+    // account.id と一致する form しか受け付けない。account 専用 form を
+    // 別 account の token で submit して副作用注入する経路を塞ぐ。
+    if (!isFormAllowedForAccount(form, account.id)) {
+      return c.json({ success: false, error: 'Forbidden' }, 403);
+    }
 
     const submissionData = body.data ?? {};
 
@@ -323,21 +441,21 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
     }
 
-    // Resolve friend by lineUserId or friendId
-    let friendId: string | null = body.friendId ?? null;
-    if (!friendId && body.lineUserId) {
-      const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
-      if (friend) {
-        friendId = friend.id;
-      }
-    }
+    // Friend resolution: ALWAYS from the verified id_token. Body
+    // friendId / lineUserId were already ignored above.
+    let friendId: string | null = verifiedFriend.id;
 
-    // Webhook gate — skip if client pre-verified via repliers endpoint
+    // Webhook gate — ALWAYS runs when configured. We previously honoured a
+    // client-supplied `_skipWebhook` flag to let "pre-verified" callers
+    // bypass the eligibility check; that was a footgun (any valid id_token
+    // holder could skip the signup gate just by setting it in the body).
+    // The flag is now logged-and-ignored above; webhook always fires.
+    // Strip residual hint fields that may still arrive from older clients
+    // so they don't leak into stored submission data.
     delete submissionData._webhookVerified;
-    const skipWebhook = Boolean(body._skipWebhook);
     delete submissionData._skipWebhook;
     let webhookData: Record<string, unknown> | null = null;
-    if (form.on_submit_webhook_url && !skipWebhook) {
+    if (form.on_submit_webhook_url) {
       const webhookResult = await callFormWebhook(form, submissionData);
       webhookData = webhookResult.data as Record<string, unknown> | null;
       if (!webhookResult.passed) {
@@ -649,6 +767,37 @@ forms.post('/api/forms/:id/submit', async (c) => {
   }
 });
 
+/**
+ * Form ⇄ account boundary check.
+ *
+ * Contract:
+ *   - `form.line_account_id === null` (or column absent / undefined) →
+ *     "global form" shared across every account. Always allowed.
+ *   - `form.line_account_id === resolvedLineAccountId` → match, allowed.
+ *   - `form.line_account_id !== resolvedLineAccountId` → mismatch, denied.
+ *
+ * This prevents an attacker who has a valid id_token issued under
+ * account A from submitting/partial-saving against a form bound to
+ * account B (which could otherwise drop them into account B's
+ * scenario, attach account B's tag, or fire account B's webhook with
+ * account A's user data).
+ *
+ * The `forms` schema does not (yet) carry `line_account_id`; the cast
+ * here is forward-compatible. When the column lands, callers
+ * automatically gain enforcement without further code changes. Until
+ * then every form is treated as "global" and this helper degrades to
+ * always-allow.
+ */
+function isFormAllowedForAccount(
+  form: DbForm,
+  resolvedLineAccountId: string,
+): boolean {
+  const formAccountId =
+    (form as DbForm & { line_account_id?: string | null }).line_account_id ?? null;
+  if (formAccountId === null) return true; // global form
+  return formAccountId === resolvedLineAccountId;
+}
+
 async function callFormWebhook(
   form: DbForm,
   submissionData: Record<string, unknown>,
@@ -660,6 +809,22 @@ async function callFormWebhook(
     let url = form.on_submit_webhook_url;
     for (const [key, value] of Object.entries(submissionData)) {
       url = url.replace(`{${key}}`, encodeURIComponent(String(value ?? '')));
+    }
+
+    // SSRF guard. Admin-configurable URL ⇒ must reject loopback /
+    // private / link-local addresses (incl. 169.254.169.254 metadata)
+    // before we issue the request. Schemes restricted to http/https
+    // because the Workers fetch implementation honours other schemes
+    // we don't want exposed (data:, blob:, file:, etc).
+    const validated = validateOutboundWebhookUrl(url);
+    if (!validated.ok) {
+      console.warn(
+        `[forms.webhook] blocked outbound URL form=${form.id} reason=${validated.reason}`,
+      );
+      return {
+        passed: false,
+        data: { error: `Webhook URL rejected (${validated.reason})` },
+      };
     }
 
     // Parse headers
@@ -675,10 +840,11 @@ async function callFormWebhook(
     const isGet = form.on_submit_webhook_url.includes('{');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, {
+    const res = await fetch(validated.url.toString(), {
       method: isGet ? 'GET' : 'POST',
       headers,
       signal: controller.signal,
+      redirect: 'manual',
       ...(isGet ? {} : { body: JSON.stringify(submissionData) }),
     });
     clearTimeout(timeout);

@@ -4,9 +4,15 @@
 -- ============================================================
 -- Friends
 -- ============================================================
+-- 注: line_user_id 単独の UNIQUE は 073_friends_multi_account_unique.sql で
+-- (line_user_id, line_account_id) の複合 UNIQUE に置き換え済。schema.sql は
+-- 「migration を全部当てた後の最終形」を表すので、こちらも複合 UNIQUE で書く。
+-- line_account_id は 008_multi_account.sql で追加されるが、schema.sql でも
+-- 最終形を再現するため最初から列定義に含める (replay test 上は migration 008
+-- の ALTER TABLE が「duplicate column」で benign スキップされる)。
 CREATE TABLE IF NOT EXISTS friends (
   id               TEXT PRIMARY KEY,
-  line_user_id     TEXT UNIQUE NOT NULL,
+  line_user_id     TEXT NOT NULL,
   display_name     TEXT,
   picture_url      TEXT,
   status_message   TEXT,
@@ -14,13 +20,20 @@ CREATE TABLE IF NOT EXISTS friends (
   user_id          TEXT,
   ig_igsid         TEXT,
   score            INTEGER NOT NULL DEFAULT 0,
+  line_account_id  TEXT REFERENCES line_accounts(id),
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE (line_user_id, line_account_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
+
+-- legacy NULL line_account_id の friends を line_user_id だけで一意にする (NULLs distinct 対策)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_line_user_id_legacy_unique
+  ON friends (line_user_id)
+  WHERE line_account_id IS NULL;
 
 -- ============================================================
 -- Tags
@@ -612,19 +625,28 @@ CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_friend ON ad_conversion_logs (
 CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_status ON ad_conversion_logs (status);
 
 -- Staff member accounts with role-based access control
+-- 注: schema.sql は migration を全部当てた後の最終形を表す。
+--   - 'viewer' role は 059_staff_members_viewer.sql で追加
+--   - line_account_id 列 + 関連 index は 069_staff_members_line_account.sql で追加
+-- replay path 上では 059/069 の ALTER が「benign スキップ」になる。
 CREATE TABLE IF NOT EXISTS staff_members (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  email      TEXT,
-  role       TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff')),
-  api_key    TEXT UNIQUE NOT NULL,
-  is_active  INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  email           TEXT,
+  role            TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff', 'viewer')),
+  api_key         TEXT UNIQUE NOT NULL,
+  is_active       INTEGER NOT NULL DEFAULT 1,
+  line_account_id TEXT,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
 CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
+CREATE INDEX IF NOT EXISTS idx_staff_members_line_account
+  ON staff_members (line_account_id);
+CREATE INDEX IF NOT EXISTS idx_staff_members_active_account
+  ON staff_members (is_active, line_account_id);
 
 -- Reusable message templates (text or Flex) for reward messages in campaigns
 CREATE TABLE IF NOT EXISTS message_templates (

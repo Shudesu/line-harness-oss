@@ -34,19 +34,25 @@ export async function registerDeviceToken(
 ): Promise<DeviceToken> {
   const id = crypto.randomUUID();
   const now = jstNow();
-  // UPSERT: 同じ token が来たら staff_id 等を最新化（再ログイン・再起動時）
+  // Round3 修正: token 奪取防止。staff_id 不一致時は staff_id を **書き換えず**保持する。
+  // 同じ staff が再登録する正常ケースのみ更新を許可。
+  // （別 staff の API key を持つ第三者が他人の APNs token を登録しても、staff_id は
+  //  奪取できないので、奪う側に通知は配信されない。攻撃成立条件のハードルを高く保つ。）
   await db
     .prepare(
       `INSERT INTO device_tokens
          (id, staff_id, token, platform, bundle_id, environment, device_name, is_active, last_seen_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
        ON CONFLICT(token) DO UPDATE SET
-         staff_id = excluded.staff_id,
+         staff_id = CASE WHEN device_tokens.staff_id = excluded.staff_id
+                         THEN excluded.staff_id
+                         ELSE device_tokens.staff_id END,
          platform = excluded.platform,
          bundle_id = excluded.bundle_id,
          environment = excluded.environment,
          device_name = excluded.device_name,
-         is_active = 1,
+         is_active = CASE WHEN device_tokens.staff_id = excluded.staff_id
+                          THEN 1 ELSE device_tokens.is_active END,
          last_seen_at = excluded.last_seen_at`,
     )
     .bind(

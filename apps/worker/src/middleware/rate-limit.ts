@@ -74,12 +74,10 @@ function isUnauthenticatedPath(path: string): boolean {
 }
 
 function getClientIp(c: Context): string {
-  return (
-    c.req.header('cf-connecting-ip') ||
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-    c.req.header('x-real-ip') ||
-    '0.0.0.0'
-  );
+  // Round3 修正: CF Workers では cf-connecting-ip は常にセットされる（CF が信頼）。
+  // x-forwarded-for / x-real-ip はクライアントから改竄可能なので採用しない。
+  // 一度でも信用すると、攻撃者がヘッダを付け替えて IP-keyed rate limit を完全 bypass できる。
+  return c.req.header('cf-connecting-ip') || '0.0.0.0';
 }
 
 // ---------------------------------------------------------------------------
