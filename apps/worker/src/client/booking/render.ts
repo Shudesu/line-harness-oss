@@ -18,7 +18,7 @@ function selectedSlotRemaining(): number | null {
 function remainingLabel(slot: Slot): string {
   const remaining = lineRemaining(slot);
   if (!slot.available || remaining <= 0) return '満席';
-  return remaining <= 2 ? `残り${remaining}名` : '予約可';
+  return remaining <= 8 ? `残り${remaining}名` : '予約可';
 }
 
 function requiredBadge(): string {
@@ -38,7 +38,7 @@ function summaryMark(summary: AvailabilitySummary | undefined): { mark: string; 
 
 function slotMark(slot: Slot): { mark: string; className: string; label: string } {
   const remaining = lineRemaining(slot);
-  if (slot.available && remaining >= 3) return { mark: '◎', className: 'many', label: '予約可' };
+  if (slot.available && remaining >= 8) return { mark: '◎', className: 'many', label: '予約可' };
   if (slot.available && remaining >= 1) return { mark: '△', className: 'few', label: `残り${remaining}名` };
   return { mark: '×', className: 'full', label: '満席' };
 }
