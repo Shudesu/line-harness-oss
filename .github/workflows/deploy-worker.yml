@@ -47,6 +47,7 @@ jobs:
 
 
 
+
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db build
       - run: pnpm --filter @line-crm/db test

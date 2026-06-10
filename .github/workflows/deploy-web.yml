@@ -67,6 +67,7 @@ jobs:
           }
           NODE
 
+
       - name: Build web
         run: pnpm --filter web build
         env:
