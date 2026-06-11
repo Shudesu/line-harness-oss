@@ -60,7 +60,10 @@ const DISCORD_MESSAGE_COMPONENT = 3;
 const DISCORD_RESPONSE_PONG = 1;
 const DISCORD_RESPONSE_CHANNEL_MESSAGE = 4;
 const EPHEMERAL = 1 << 6;
-const COMPLETE_PREFIX = 'reservation:complete:';
+const COMPLETE_REQUEST_PREFIX = 'reservation:complete-request:';
+const COMPLETE_CONFIRM_PREFIX = 'reservation:complete-confirm:';
+const LEGACY_COMPLETE_PREFIX = 'reservation:complete:';
+const MAX_VISIBLE_RESERVATIONS = 20;
 
 export async function verifyDiscordInteractionRequest(
   request: Request,
@@ -115,10 +118,19 @@ export async function handleDiscordReservationInteraction(
   }
 
   if (interaction.type === DISCORD_MESSAGE_COMPONENT) {
-    const reservationId = parseDiscordReservationCompleteId(interaction.data?.custom_id);
-    if (!reservationId) return channelMessage('未対応のボタンです。', true);
+    const requestId = parseDiscordReservationCompleteRequestId(interaction.data?.custom_id)
+      ?? parseLegacyDiscordReservationCompleteId(interaction.data?.custom_id);
+    if (requestId) {
+      return {
+        type: DISCORD_RESPONSE_CHANNEL_MESSAGE,
+        data: buildCompleteConfirmationMessage(requestId),
+      };
+    }
 
-    const result = await updateReservationStatus(db, reservationId, {
+    const confirmId = parseDiscordReservationCompleteConfirmId(interaction.data?.custom_id);
+    if (!confirmId) return channelMessage('未対応のボタンです。', true);
+
+    const result = await updateReservationStatus(db, confirmId, {
       status: 'completed',
       actorType: 'admin',
       actorId: 'discord',
@@ -156,7 +168,7 @@ export function buildReservationListMessage(date: string, reservations: Reservat
     };
   }
 
-  const visible = active.slice(0, 20);
+  const visible = active.slice(0, MAX_VISIBLE_RESERVATIONS);
   const fields = visible.map((reservation, index) => ({
     name: `${index + 1}. ${timeRange(reservation)} ${safe(reservation.customer_name_snapshot)}`,
     value: [
@@ -173,9 +185,9 @@ export function buildReservationListMessage(date: string, reservations: Reservat
       type: 1,
       components: visible.slice(i, i + 5).map((reservation) => ({
         type: 2,
-        style: 3,
-        label: completeButtonLabel(reservation),
-        custom_id: buildDiscordReservationCompleteId(reservation.id),
+        style: 2,
+        label: completeRequestButtonLabel(reservation),
+        custom_id: buildDiscordReservationCompleteRequestId(reservation.id),
         disabled: reservation.status !== 'confirmed',
       })),
     });
@@ -194,13 +206,35 @@ export function buildReservationListMessage(date: string, reservations: Reservat
 }
 
 export function buildDiscordReservationCompleteId(reservationId: string): string {
-  return `${COMPLETE_PREFIX}${reservationId}`.slice(0, 100);
+  return buildDiscordReservationCompleteConfirmId(reservationId);
 }
 
 export function parseDiscordReservationCompleteId(customId: unknown): string | null {
-  if (typeof customId !== 'string' || !customId.startsWith(COMPLETE_PREFIX)) return null;
-  const id = customId.slice(COMPLETE_PREFIX.length).trim();
-  return id || null;
+  return parseDiscordReservationCompleteConfirmId(customId);
+}
+
+export function buildDiscordReservationCompleteRequestId(reservationId: string): string {
+  return `${COMPLETE_REQUEST_PREFIX}${reservationId}`.slice(0, 100);
+}
+
+export function parseDiscordReservationCompleteRequestId(customId: unknown): string | null {
+  return parseCustomId(customId, COMPLETE_REQUEST_PREFIX);
+}
+
+export function buildDiscordReservationCompleteConfirmId(reservationId: string): string {
+  return `${COMPLETE_CONFIRM_PREFIX}${reservationId}`.slice(0, 100);
+}
+
+export function parseDiscordReservationCompleteConfirmId(customId: unknown): string | null {
+  return parseCustomId(customId, COMPLETE_CONFIRM_PREFIX);
+}
+
+export function parseLegacyDiscordReservationCompleteId(customId: unknown): string | null {
+  return parseCustomId(customId, LEGACY_COMPLETE_PREFIX);
+}
+
+export function discordReservationVisibleLimit(): number {
+  return MAX_VISIBLE_RESERVATIONS;
 }
 
 function extractDateOption(options: DiscordCommandOption[]): string | null {
@@ -225,9 +259,25 @@ function validDate(value: string): string | null {
   return date.toISOString().slice(0, 10) === value ? value : null;
 }
 
-function completeButtonLabel(reservation: Reservation): string {
+function buildCompleteConfirmationMessage(reservationId: string): DiscordMessage {
+  return {
+    content: 'この予約を「来園済み」に変更します。間違いなければ下のボタンを押してください。',
+    flags: EPHEMERAL,
+    components: [{
+      type: 1,
+      components: [{
+        type: 2,
+        style: 3,
+        label: '来園済みにする',
+        custom_id: buildDiscordReservationCompleteConfirmId(reservationId),
+      }],
+    }],
+  };
+}
+
+function completeRequestButtonLabel(reservation: Reservation): string {
   const name = safe(reservation.customer_name_snapshot);
-  return `来園済み ${timeRange(reservation)} ${truncate(name, 18)}`.slice(0, 80);
+  return `来園確認 ${timeRange(reservation)} ${truncate(name, 18)}`.slice(0, 80);
 }
 
 function peopleText(reservation: Reservation): string {
@@ -249,6 +299,12 @@ function safe(value: string | null | undefined): string {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function parseCustomId(customId: unknown, prefix: string): string | null {
+  if (typeof customId !== 'string' || !customId.startsWith(prefix)) return null;
+  const id = customId.slice(prefix.length).trim();
+  return id || null;
 }
 
 function hexToArrayBuffer(hex: string): ArrayBuffer {

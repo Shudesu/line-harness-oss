@@ -3,6 +3,7 @@ import type { Reservation } from '@line-crm/db';
 import {
   buildDiscordReservationCompleteId,
   buildReservationListMessage,
+  discordReservationVisibleLimit,
   normalizeDiscordReservationDate,
   parseDiscordReservationCompleteId,
 } from './discord-interactions.js';
@@ -26,12 +27,12 @@ describe('discord reservation interactions', () => {
     expect(message.embeds?.[0]?.fields).toHaveLength(2);
     expect(message.components?.[0]?.components).toHaveLength(2);
     expect(message.components?.[0]?.components[0]).toMatchObject({
-      style: 3,
-      custom_id: 'reservation:complete:r_confirmed',
+      style: 2,
+      custom_id: 'reservation:complete-request:r_confirmed',
       disabled: false,
     });
     expect(message.components?.[0]?.components[1]).toMatchObject({
-      custom_id: 'reservation:complete:r_pending',
+      custom_id: 'reservation:complete-request:r_pending',
       disabled: true,
     });
   });
@@ -41,6 +42,19 @@ describe('discord reservation interactions', () => {
     expect(parseDiscordReservationCompleteId(customId)).toBe('reservation-1');
     expect(parseDiscordReservationCompleteId('unknown:reservation-1')).toBeNull();
     expect(parseDiscordReservationCompleteId(undefined)).toBeNull();
+  });
+
+  it('keeps the visible list under the Discord button limit', () => {
+    const reservations = Array.from({ length: 26 }, (_, index) => reservation({
+      id: `reservation-${index}`,
+      customer_name_snapshot: `予約者${index}`,
+    }));
+
+    const message = buildReservationListMessage('2026-06-12', reservations);
+
+    expect(discordReservationVisibleLimit()).toBe(20);
+    expect(message.components?.flatMap((row) => row.components)).toHaveLength(20);
+    expect(message.content).toContain('残り6件');
   });
 });
 
