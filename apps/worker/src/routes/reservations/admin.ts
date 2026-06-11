@@ -16,6 +16,7 @@ import {
   listReservationSchedules,
   listReservationSlots,
   listReservations,
+  reopenCompletedReservation,
   updateExternalReservationSourceParseStatus,
   updateReservationMenu,
   updateReservationResource,
@@ -561,6 +562,34 @@ adminReservations.put('/api/reservations/:id/status', async (c) => {
     return jsonOk(c, { reservation: toReservationResponse(result.reservation), changed: result.changed });
   } catch (err) {
     console.error('PUT /api/reservations/:id/status error:', err);
+    return jsonError(c, 'internal_error', 500);
+  }
+});
+
+adminReservations.post('/api/reservations/:id/maintenance/reopen-completed', async (c) => {
+  try {
+    const json = await readOptionalJsonObjectForMaintenance(c);
+    if (!json.ok) return jsonError(c, 'bad_request', 400, json.error);
+    const result = await reopenCompletedReservation(c.env.DB, c.req.param('id'), {
+      reason: optionalString(json.value, 'reason') ?? 'manual_reopen_completed',
+      actorType: 'admin',
+      actorId: c.get('staff')?.id ?? null,
+    });
+    if (!result.ok) {
+      return jsonError(
+        c,
+        result.reason === 'not_found' ? 'not_found' : 'invalid_state_transition',
+        result.reason === 'not_found' ? 404 : 409,
+        result.reason,
+      );
+    }
+    return jsonOk(c, {
+      reservation: toReservationResponse(result.reservation),
+      changed: result.changed,
+      deletedVisits: result.deletedVisits,
+    });
+  } catch (err) {
+    console.error('POST /api/reservations/:id/maintenance/reopen-completed error:', err);
     return jsonError(c, 'internal_error', 500);
   }
 });

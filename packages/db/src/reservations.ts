@@ -387,6 +387,10 @@ export type UpdateReservationStatusResult =
   | { ok: true; reservation: Reservation; changed: boolean }
   | { ok: false; reason: 'not_found' | 'invalid_state_transition' };
 
+export type ReopenCompletedReservationResult =
+  | { ok: true; reservation: Reservation; changed: boolean; deletedVisits: number }
+  | { ok: false; reason: 'not_found' | 'not_completed' };
+
 export interface ImportExternalReservationInput {
   source: ExternalReservationSource;
   eventType: ExternalReservationEventType;
@@ -1433,6 +1437,55 @@ export async function updateReservationStatus(
   }
 
   return { ok: false, reason: 'invalid_state_transition' };
+}
+
+export async function reopenCompletedReservation(
+  db: D1Database,
+  id: string,
+  input: { reason?: string | null; actorType?: ReservationActorType; actorId?: string | null } = {},
+): Promise<ReopenCompletedReservationResult> {
+  const reservation = await getReservationById(db, id);
+  if (!reservation) return { ok: false, reason: 'not_found' };
+  if (reservation.status !== 'completed') return { ok: false, reason: 'not_completed' };
+
+  const now = jstNow();
+  await db
+    .prepare(`UPDATE reservations SET status = 'confirmed', updated_at = ? WHERE id = ? AND status = 'completed'`)
+    .bind(now, id)
+    .run();
+
+  const deletedVisitsResult = await db
+    .prepare(`DELETE FROM visits WHERE reservation_id = ?`)
+    .bind(id)
+    .run();
+
+  const updated = (await getReservationById(db, id))!;
+  await createReservationEvent(
+    db,
+    id,
+    'updated',
+    input.actorType ?? 'admin',
+    input.actorId ?? null,
+    reservation,
+    {
+      ...updated,
+      maintenanceAction: 'reopen_completed_reservation',
+      reason: input.reason ?? null,
+      deletedVisits: deletedVisitsResult.meta.changes ?? 0,
+    },
+  );
+  if (updated.user_id) await recomputeReservationCustomerProfileStatus(db, updated.user_id, updated.source);
+  await recomputeReservationSystemTagsForReservation(db, updated);
+  await recordReservationUserEventBestEffort(db, updated, 'reservation.reopened', '来園済み取り消し', {
+    reason: input.reason ?? null,
+  });
+
+  return {
+    ok: true,
+    reservation: updated,
+    changed: true,
+    deletedVisits: deletedVisitsResult.meta.changes ?? 0,
+  };
 }
 
 export type ClaimReservationResult =

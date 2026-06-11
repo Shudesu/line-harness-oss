@@ -14,6 +14,7 @@ import {
   generateReservationSlots,
   createReservationWithCapacityCheck,
   updateReservationStatus,
+  reopenCompletedReservation,
   importExternalReservation,
   getReservationSlotById,
   deleteReservationSlotsByDateRange,
@@ -601,6 +602,32 @@ describe('reservations — D1 integration', () => {
         .bind(r.reservation.id).first();
       expect(visit).toBeTruthy();
       expect(await slotCounters(slot.id)).toEqual({ reserved: 3, line: 3, ext: 0 });
+    });
+
+    it('reopens accidental completed reservation to confirmed and removes visit', async () => {
+      const slot = await insertSlot();
+      const r = await createReservationWithCapacityCheck(db, baseInput(slot.id));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const completed = await updateReservationStatus(db, r.reservation.id, { status: 'completed' });
+      expect(completed.ok).toBe(true);
+
+      const reopened = await reopenCompletedReservation(db, r.reservation.id, {
+        reason: 'accidental_discord_tap',
+        actorType: 'admin',
+        actorId: 'test',
+      });
+      expect(reopened.ok).toBe(true);
+      if (!reopened.ok) return;
+      expect(reopened.reservation.status).toBe('confirmed');
+      expect(reopened.deletedVisits).toBe(1);
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 3, line: 3, ext: 0 });
+
+      const visit = await db
+        .prepare(`SELECT * FROM visits WHERE reservation_id = ?`)
+        .bind(r.reservation.id).first();
+      expect(visit).toBeNull();
     });
 
     it('confirmed → no_show does NOT release capacity', async () => {
