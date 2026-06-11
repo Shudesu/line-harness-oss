@@ -206,6 +206,39 @@ function parseReservationMetadata(value: string | null | undefined): Record<stri
   }
 }
 
+function readTextCandidate(source: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  }
+  return ''
+}
+
+function reservationNote(reservation: ReservationResponse): string {
+  const formData = parseReservationMetadata(reservation.formData)
+  const metadata = parseReservationMetadata(reservation.metadata)
+  const direct = readTextCandidate(formData, [
+    'memo',
+    'note',
+    'notes',
+    'remarks',
+    'message',
+    'comment',
+    '備考',
+    'ご要望',
+    'その他',
+  ])
+  if (direct) return direct
+
+  const customer = metadata.customer && typeof metadata.customer === 'object' && !Array.isArray(metadata.customer)
+    ? metadata.customer as Record<string, unknown>
+    : {}
+  return readTextCandidate(metadata, ['memo', 'note', 'notes', 'remarks', 'message', 'comment'])
+    || readTextCandidate(customer, ['memo', 'note', 'notes', 'remarks', 'message', 'comment'])
+    || '-'
+}
+
 function readMoneyCandidate(metadata: Record<string, unknown>, keys: string[]): number | null {
   for (const key of keys) {
     const value = metadata[key]
@@ -1806,7 +1839,7 @@ function OpsReservationDetailModal({ reservation, onClose }: { reservation: Rese
           <Info label="電話" value={reservation.customerPhone || '-'} />
           <Info label="メール" value={reservation.customerEmail || '-'} />
           <Info label="人数" value={`${reservation.totalPeople}名 大人${reservation.adultCount} / 小学生${reservation.childCount} / 幼児${reservation.infantCount} / 3歳以下${reservation.underThreeCount}`} />
-          <Info label="枠消費" value={`${reservation.capacityPeople}枠`} />
+          <Info label="備考" value={reservationNote(reservation)} />
           {hasPriceDetails(reservation) && <Info label="料金" value={formatPriceDetails(reservation)} />}
           <Info label="状態" value={reservation.status} />
           <Info label="予約作成日" value={formatDateTime(reservation.createdAt)} />
