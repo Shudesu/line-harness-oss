@@ -93,10 +93,10 @@ DISCORD_APPLICATION_ID=
 DISCORD_BOT_TOKEN=
 ```
 
-標準workflowのデフォルトbindingには `DISCORD_PUBLIC_KEY` を含めない。Secret未作成の状態でbindingするとdeployが失敗するためである。Discord Interactionを使う場合だけ、Cloudflare Secrets Storeに `DISCORD_PUBLIC_KEY` を作成し、GitHub Variablesの `CF_SECRETS_STORE_BINDINGS` に追加する。
+標準workflowのデフォルトbindingには `DISCORD_PUBLIC_KEY` を含めない。Secret未作成の状態でbindingするとdeployが失敗するためである。Discord Interactionを使う場合だけ、Cloudflare Secrets Storeに `DISCORD_PUBLIC_KEY` を作成し、GitHub Variablesの `CLOUDFLARE_SECRETS_STORE_BINDINGS` に追加する。
 
 ```text
-CF_SECRETS_STORE_BINDINGS=DISCORD_PUBLIC_KEY
+CLOUDFLARE_SECRETS_STORE_BINDINGS=DISCORD_PUBLIC_KEY
 ```
 
 運用は以下のどちらかにする。
