@@ -58,6 +58,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.match(/^\/api\/public\/reservations\/[^/]+\/tokens$/) ||
     path.match(/^\/api\/public\/reservations\/[^/]+\/cancel$/) ||
     path === '/api/integrations/google-calendar/oauth/callback' ||
+    path === '/api/integrations/discord/interactions' ||
     path.startsWith('/auth/') ||
     path === '/setup' ||
     path === '/api/integrations/stripe/webhook' ||

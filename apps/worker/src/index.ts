@@ -48,6 +48,7 @@ import { meetCallback } from './routes/meet-callback.js';
 import { messageTemplates } from './routes/message-templates.js';
 import { providerConfig } from './routes/provider-config.js';
 import { externalCustomers } from './routes/external-customers.js';
+import { discord } from './routes/discord.js';
 import { defaultLiffUrl, defaultLineAccessToken, workerBaseUrl } from './services/line-bindings.js';
 import { processActiveGmailImportRules } from './services/gmail-jalan-import.js';
 import {
@@ -85,6 +86,9 @@ export type Env = {
     DISCORD_RESERVATION_THREAD_ID?: SecretLike;
     DISCORD_DAILY_THREAD_ID?: SecretLike;
     DISCORD_REVIEW_THREAD_ID?: SecretLike;
+    DISCORD_PUBLIC_KEY?: SecretLike;
+    DISCORD_APPLICATION_ID?: SecretLike;
+    DISCORD_BOT_TOKEN?: SecretLike;
     RESEND_API_KEY?: SecretLike;
     RESEND_FROM_EMAIL?: SecretLike;
     RESEND_FROM_NAME?: SecretLike;
@@ -203,6 +207,7 @@ app.route('/', meetCallback);
 app.route('/', messageTemplates);
 app.route('/', providerConfig);
 app.route('/', externalCustomers);
+app.route('/', discord);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {

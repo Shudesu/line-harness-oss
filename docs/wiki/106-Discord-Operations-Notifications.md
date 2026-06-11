@@ -15,7 +15,8 @@ Discord = 通知とWeb管理画面への入口
 - じゃらん/Gmail取り込みで `needs_review` または失敗が出た場合、要確認通知を送る。
 - Worker Cronで毎朝8:00 JSTから10分以内に、その日の有効予約がある場合だけ当日予約サマリーを送る。
 - 朝サマリーは `discord_notification_runs` で日付単位に冪等化し、同じ日に二重送信しない。
-- Discord通知には `reservation-ops` へのURLボタンを付ける。Discord内でDB更新はしない。
+- Discord通知には `reservation-ops` へのURLボタンを付ける。
+- Discord Interaction Endpointで、日付指定の予約確認と `confirmed -> completed` 更新を扱う。
 
 ## スレッド分け
 
@@ -37,6 +38,32 @@ DISCORD_DAILY_THREAD_ID
 DISCORD_REVIEW_THREAD_ID
 ```
 
+## Discordからの予約確認・来園済み更新
+
+通常のWebhookでは、Discordチャネルに投稿された `YYYYMMDD` の通常メッセージをWorkerで受け取れない。Cloudflare Workerで安全に実装するため、通常メッセージ監視ではなくDiscord Slash Command / Interactionを使う。
+
+```text
+/reservations date:20260612
+↓
+POST /api/integrations/discord/interactions
+↓
+WorkerがDiscord署名を検証
+↓
+指定日の有効予約を返す
+↓
+各予約の「来園済み」ボタンで completed に更新
+```
+
+状態変更は既存の `updateReservationStatus` を使う。これにより、予約状態遷移表、来園イベント、タグ同期、顧客ステータス再計算の既存ルールを通る。
+
+安全制約:
+
+- Discord署名 `X-Signature-Ed25519` / `X-Signature-Timestamp` を必ず検証する。
+- `DISCORD_PUBLIC_KEY` が未設定ならInteractionは401にする。
+- ボタンで更新できるのは既存状態遷移で許可された予約のみ。基本は `confirmed -> completed`。
+- `completed` の再押下は冪等成功、`cancelled` / `no_show` などは拒否する。
+- 1回の一覧表示は最大20件までボタンを表示する。多い日はWeb管理画面で確認する。
+
 ## 必要な環境変数
 
 GitHub Actions経由でデプロイする場合、以下はCloudflare Secrets Storeに保存し、`deploy-worker.yml` がWorkerへ `secrets_store_secrets` としてbindingする。
@@ -57,6 +84,20 @@ CLOUDFLARE_SECRETS_STORE_BINDINGS=DISCORD_WEBHOOK_URL,DISCORD_RESERVATION_THREAD
 ```
 
 `DISCORD_WEBHOOK_URL` は共通Webhook用の任意設定である。チャンネル分割で `DISCORD_RESERVATION_WEBHOOK_URL`, `DISCORD_DAILY_WEBHOOK_URL`, `DISCORD_REVIEW_WEBHOOK_URL` を使う場合は不要。
+
+`DISCORD_PUBLIC_KEY` はInteraction署名検証に必須。Discord Developer PortalのApplicationから取得する。`DISCORD_APPLICATION_ID` と `DISCORD_BOT_TOKEN` はSlash Command登録を自動化する場合に使う。WorkerがInteractionを受けるだけなら、最低限 `DISCORD_PUBLIC_KEY` があればよい。
+
+```text
+DISCORD_PUBLIC_KEY=
+DISCORD_APPLICATION_ID=
+DISCORD_BOT_TOKEN=
+```
+
+標準workflowのデフォルトbindingには `DISCORD_PUBLIC_KEY` を含めない。Secret未作成の状態でbindingするとdeployが失敗するためである。Discord Interactionを使う場合だけ、Cloudflare Secrets Storeに `DISCORD_PUBLIC_KEY` を作成し、GitHub Variablesの `CF_SECRETS_STORE_BINDINGS` に追加する。
+
+```text
+CF_SECRETS_STORE_BINDINGS=DISCORD_PUBLIC_KEY
+```
 
 運用は以下のどちらかにする。
 
@@ -118,12 +159,10 @@ Gmail取り込み失敗
 
 ## 今はやらないこと
 
-Discordのボタンから直接 `completed` にする処理はMVPでは実装しない。
+通常メッセージ `YYYYMMDD` をBot Gatewayで監視する方式は採用しない。
 
 理由:
 
-- Discord Interaction Endpointと署名検証が必要。
-- スタッフ権限とDiscordユーザーの紐づけが必要。
-- 誤タップ時の取り消し導線が必要。
-
-まずはWebの `reservation-ops` に操作を寄せ、Discordは通知と入口に限定する。
+- Gatewayは常時WebSocket接続が必要で、Cloudflare Workerと相性が悪い。
+- 権限設定が広くなり、運用事故時の影響範囲が大きい。
+- Slash CommandならDiscord署名つきHTTPだけで完結する。
