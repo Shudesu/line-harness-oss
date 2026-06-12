@@ -134,5 +134,8 @@ WORKER_PUBLIC_URL = "${config.workerPublicUrl}"
 ADMIN_PUBLIC_URL = "${config.adminPublicUrl}"
 LIFF_PUBLIC_URL = "${config.liffPublicUrl}"
 CF_ACCOUNT_ID = "${config.accountId}"
+WORKER_URL = "${config.workerPublicUrl}"
+ADMIN_ORIGIN = "${config.adminPublicUrl}"
+ADMIN_ALLOW_CROSS_SITE = "true"
 `;
 }

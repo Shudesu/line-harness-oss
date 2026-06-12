@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { setCsrfToken, setSessionApiKey } from '@/lib/api'
 
 export default function LoginPage() {
   const [apiKey, setApiKey] = useState('')
@@ -31,6 +32,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         localStorage.removeItem('lh_api_key')
+        setSessionApiKey(apiKey)
         try {
           const loginData = await res.json()
           if (loginData.success && loginData.data) {
@@ -39,7 +41,7 @@ export default function LoginPage() {
           }
           // Cache the CSRF token for mutating requests (double-submit).
           if (loginData.csrfToken) {
-            localStorage.setItem('lh_csrf', loginData.csrfToken)
+            setCsrfToken(loginData.csrfToken)
           }
         } catch {
           // Profile / CSRF caching is best-effort.

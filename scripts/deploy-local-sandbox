@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/deploy-local-sandbox [options] [-- create-line-harness args...]
+
+Options:
+  --name NAME              Sandbox name (default: local)
+  --root PATH              Persistent sandbox root (default: ./.sandboxes/local)
+  --reset                  Delete the sandbox root before copying local source
+  --no-reuse-wrangler-auth Do not copy the current user's wrangler auth
+  -h, --help               Show this help
+
+Examples:
+  scripts/deploy-local-sandbox \
+    --name aitenposhukyaku-local \
+    --root /Users/taroken/client-harnesses/client-settings/aitenposhukyaku/line-harness-local
+
+What this does:
+  1. Copies the current checkout, including uncommitted source edits, into
+     <root>/local-source.
+  2. Runs inside the LINE Harness sandbox environment.
+  3. Installs dependencies in the copied source.
+  4. Builds local workspace packages required by create-line-harness.
+  5. Runs the built local CLI with --repo-dir <root>/local-source.
+
+This avoids npm's create-line-harness@latest and deploys from local source.
+EOF
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+SANDBOX_NAME="local"
+SANDBOX_ROOT="$REPO_ROOT/.sandboxes/local"
+RESET_SANDBOX=0
+REUSE_WRANGLER_AUTH=1
+CLI_ARGS=()
+HAS_CLI_ARGS=0
+
+while (($# > 0)); do
+  case "$1" in
+    --name)
+      shift
+      (($# > 0)) || die "--name requires a value"
+      SANDBOX_NAME="$1"
+      ;;
+    --root)
+      shift
+      (($# > 0)) || die "--root requires a value"
+      SANDBOX_ROOT="$1"
+      ;;
+    --reset)
+      RESET_SANDBOX=1
+      ;;
+    --no-reuse-wrangler-auth)
+      REUSE_WRANGLER_AUTH=0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      CLI_ARGS=("$@")
+      HAS_CLI_ARGS=1
+      break
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+  shift
+done
+
+SANDBOX_ROOT="${SANDBOX_ROOT%/}"
+LOCAL_SOURCE="$SANDBOX_ROOT/local-source"
+
+if (( RESET_SANDBOX )); then
+  echo "Resetting sandbox root: $SANDBOX_ROOT"
+  rm -rf "$SANDBOX_ROOT"
+fi
+
+mkdir -p "$LOCAL_SOURCE"
+
+echo "Copying local source to: $LOCAL_SOURCE"
+rsync -a --delete \
+  --exclude ".git" \
+  --exclude ".line-harness-config.json" \
+  --exclude ".line-harness-setup.json" \
+  --exclude "node_modules" \
+  --exclude ".sandboxes" \
+  --exclude "apps/web/out" \
+  --exclude "apps/worker/dist" \
+  --exclude "packages/*/dist" \
+  --exclude ".next" \
+  --exclude ".wrangler" \
+  "$REPO_ROOT/" \
+  "$LOCAL_SOURCE/"
+
+SANDBOX_ARGS=(
+  "--name" "$SANDBOX_NAME"
+  "--root" "$SANDBOX_ROOT"
+)
+
+if (( REUSE_WRANGLER_AUTH )); then
+  SANDBOX_ARGS+=("--reuse-wrangler-auth")
+fi
+
+echo "Starting local-source create-line-harness inside sandbox."
+echo "  sandbox root: $SANDBOX_ROOT"
+echo "  local source : $LOCAL_SOURCE"
+
+run_local_cli() {
+  "$SCRIPT_DIR/run-create-line-harness-sandbox.sh" \
+    "${SANDBOX_ARGS[@]}" \
+    -- bash -lc '
+    set -euo pipefail
+
+    SRC="$LINE_HARNESS_SANDBOX_ROOT/local-source"
+
+    echo "Installing dependencies in $SRC"
+    npx -y pnpm@9.15.4 --dir "$SRC" install --frozen-lockfile
+
+    echo "Building local workspace packages"
+    npx -y pnpm@9.15.4 --dir "$SRC" \
+      --filter @line-crm/shared \
+      --filter @line-crm/line-sdk \
+      --filter @line-harness/update-engine \
+      build
+
+    echo "Building local create-line-harness CLI"
+    npx -y pnpm@9.15.4 --dir "$SRC" --filter create-line-harness build
+
+    echo "Running local create-line-harness CLI"
+    node "$SRC/packages/create-line-harness/dist/index.js" --repo-dir "$SRC" "$@"
+  ' bash "$@"
+}
+
+if (( HAS_CLI_ARGS )); then
+  run_local_cli "${CLI_ARGS[@]}"
+else
+  run_local_cli
+fi
