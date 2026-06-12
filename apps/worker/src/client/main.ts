@@ -17,6 +17,7 @@
 
 import { initBooking } from './booking.js';
 import { initForm } from './form.js';
+import { safeRedirectTarget } from '../lib/safe-redirect.js';
 
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
@@ -63,7 +64,11 @@ function getPage(): string | null {
 
 function getRedirectUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
-  return params.get('redirect');
+  // Guard the client-side navigation sink (window.location.href below) against
+  // open-redirect / javascript: abuse, mirroring the server-side /auth/callback
+  // guard. A directly-crafted LIFF URL never reaches the server route, so the
+  // client must validate too.
+  return safeRedirectTarget(params.get('redirect'));
 }
 
 function getRef(): string | null {
