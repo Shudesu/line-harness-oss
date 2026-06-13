@@ -1016,5 +1016,42 @@ describe('reservations — D1 integration', () => {
       expect(names).not.toContain('sys:予約確定');
       expect(names).toContain('sys:キャンセル経験あり');
     });
+
+    it('adds visited tag after first completed reservation without marking repeater', async () => {
+      const slot = await insertSlot();
+      const result = await createReservationWithCapacityCheck(db, baseInput(slot.id, { friendId: FRIEND_ID }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const completed = await updateReservationStatus(db, result.reservation.id, { status: 'completed' });
+      expect(completed.ok).toBe(true);
+
+      const tags = await getFriendTags(db, FRIEND_ID);
+      const names = tags.map((tag) => tag.name);
+      expect(names).toContain('sys:来園済み');
+      expect(names).not.toContain('sys:リピーター');
+    });
+
+    it('adds repeater tag after second completed reservation', async () => {
+      const slot1 = await insertSlot();
+      const slot2 = await insertSlot({
+        id: 'slot_second_visit',
+        start_at: `${SLOT_DATE}T10:00:00+09:00`,
+        end_at: `${SLOT_DATE}T11:00:00+09:00`,
+      });
+      const first = await createReservationWithCapacityCheck(db, baseInput(slot1.id, { friendId: FRIEND_ID }));
+      const second = await createReservationWithCapacityCheck(db, baseInput(slot2.id, { friendId: FRIEND_ID }));
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+
+      await updateReservationStatus(db, first.reservation.id, { status: 'completed' });
+      await updateReservationStatus(db, second.reservation.id, { status: 'completed' });
+
+      const tags = await getFriendTags(db, FRIEND_ID);
+      const names = tags.map((tag) => tag.name);
+      expect(names).toContain('sys:来園済み');
+      expect(names).toContain('sys:リピーター');
+    }, 15000);
   });
 });

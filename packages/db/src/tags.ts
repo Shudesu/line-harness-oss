@@ -252,18 +252,16 @@ export async function recomputeReservationSystemTagsForFriend(db: D1Database, fr
   const noShow = await count(`status = 'no_show'`);
   const completed = await count(`status = 'completed'`);
   const season = await count(`status IN ('pending', 'confirmed') AND reservation_date >= ? AND reservation_date <= ?`, [`${currentYear}-01-01`, `${currentYear}-12-31`]);
-  const visits = friend.user_id
-    ? (await db.prepare(`SELECT COUNT(*) AS count FROM visits WHERE user_id = ?`).bind(friend.user_id).first<{ count: number }>())?.count ?? 0
-    : 0;
+  const visitLikeCount = await countDistinctVisitLikeReservations(db, friend.id, friend.user_id);
 
   const shouldHave = new Set<string>();
   if (active > 0) shouldHave.add(tags.hasReservation.id);
   if (confirmed > 0) shouldHave.add(tags.confirmedReservation.id);
   if (pending > 0 && confirmed === 0) shouldHave.add(tags.pendingReservation.id);
   if (cancelled > 0) shouldHave.add(tags.cancelledHistory.id);
-  if (completed > 0 || visits > 0) shouldHave.add(tags.visited.id);
+  if (completed > 0 || visitLikeCount > 0) shouldHave.add(tags.visited.id);
   if (noShow > 0) shouldHave.add(tags.noShowHistory.id);
-  if (completed + visits >= 2) shouldHave.add(tags.repeater.id);
+  if (visitLikeCount >= 2) shouldHave.add(tags.repeater.id);
   if (season > 0) shouldHave.add(tags.seasonReservation.id);
 
   for (const tagId of managedTagIds) {
@@ -273,6 +271,33 @@ export async function recomputeReservationSystemTagsForFriend(db: D1Database, fr
       await removeTagFromFriend(db, friend.id, tagId);
     }
   }
+}
+
+async function countDistinctVisitLikeReservations(db: D1Database, friendId: string, userId: string | null): Promise<number> {
+  if (!userId) {
+    const row = await db
+      .prepare(`SELECT COUNT(*) AS count FROM reservations WHERE friend_id = ? AND status = 'completed'`)
+      .bind(friendId)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM (
+         SELECT id AS visit_key
+         FROM reservations
+         WHERE (friend_id = ? OR user_id = ?) AND status = 'completed'
+         UNION
+         SELECT COALESCE(reservation_id, id) AS visit_key
+         FROM visits
+         WHERE user_id = ?
+       )`,
+    )
+    .bind(friendId, userId, userId)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
 }
 
 export async function recomputeReservationSystemTagsForUser(db: D1Database, userId: string): Promise<void> {
