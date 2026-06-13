@@ -14,6 +14,7 @@ import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { Form as DbForm, FormSubmission as DbFormSubmission } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { defaultLineAccessToken } from '../services/line-bindings.js';
+import { notifyFormSubmissionToDiscord } from '../services/discord-notifications.js';
 
 const forms = new Hono<Env>();
 
@@ -346,6 +347,10 @@ forms.post('/api/forms/:id/submit', async (c) => {
           friendId: friendId || null,
           data: JSON.stringify({ ...submissionData, _webhookResult: webhookResult.data }),
         });
+        c.executionCtx.waitUntil((async () => {
+          const friend = friendId ? await getFriendById(c.env.DB, friendId).catch(() => null) : null;
+          await notifyFormSubmissionToDiscord(c.env, form, submission, friend?.display_name ?? null);
+        })());
         return c.json({ success: true, data: { ...serializeSubmission(submission), webhookPassed: false, webhookData: webhookResult.data } }, 201);
       }
     }
@@ -356,6 +361,10 @@ forms.post('/api/forms/:id/submit', async (c) => {
       friendId: friendId || null,
       data: JSON.stringify(submissionData),
     });
+    c.executionCtx.waitUntil((async () => {
+      const friend = friendId ? await getFriendById(c.env.DB, friendId).catch(() => null) : null;
+      await notifyFormSubmissionToDiscord(c.env, form, submission, friend?.display_name ?? null);
+    })());
 
     // Side effects (best-effort, don't fail the request)
     if (friendId) {

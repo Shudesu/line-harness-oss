@@ -1,12 +1,14 @@
 import type {
   ExternalReservationSourceRow,
+  Form,
+  FormSubmission,
   Reservation,
 } from '@line-crm/db';
 import { listExternalReservationSources, listReservations } from '@line-crm/db';
 import { resolveBindingValue, type SecretLike } from './bindings.js';
 import { getAccountSetting } from './account-settings-store.js';
 
-export type DiscordNotificationTopic = 'reservation' | 'daily' | 'review';
+export type DiscordNotificationTopic = 'reservation' | 'daily' | 'review' | 'form';
 
 export interface DiscordNotificationEnv {
   DB?: D1Database;
@@ -14,9 +16,11 @@ export interface DiscordNotificationEnv {
   DISCORD_RESERVATION_WEBHOOK_URL?: SecretLike;
   DISCORD_DAILY_WEBHOOK_URL?: SecretLike;
   DISCORD_REVIEW_WEBHOOK_URL?: SecretLike;
+  DISCORD_FORM_WEBHOOK_URL?: SecretLike;
   DISCORD_RESERVATION_THREAD_ID?: SecretLike;
   DISCORD_DAILY_THREAD_ID?: SecretLike;
   DISCORD_REVIEW_THREAD_ID?: SecretLike;
+  DISCORD_FORM_THREAD_ID?: SecretLike;
   WEB_URL?: SecretLike;
   NEXT_PUBLIC_WEB_URL?: SecretLike;
   WORKER_URL?: SecretLike;
@@ -49,6 +53,7 @@ const TOPIC_COLOR: Record<DiscordNotificationTopic, number> = {
   reservation: 0x69a3d0,
   daily: 0x06c755,
   review: 0xf59e0b,
+  form: 0x8b5cf6,
 };
 
 export async function notifyReservationToDiscord(
@@ -136,6 +141,37 @@ export async function notifyGmailImportRunToDiscord(
   });
 }
 
+export async function notifyFormSubmissionToDiscord(
+  env: DiscordNotificationEnv,
+  form: Pick<Form, 'id' | 'name'>,
+  submission: Pick<FormSubmission, 'id' | 'friend_id' | 'data' | 'created_at'>,
+  friendName?: string | null,
+): Promise<void> {
+  const answers = summarizeFormAnswers(submission.data);
+  await sendDiscordNotification(env, 'form', {
+    embeds: [{
+      title: '📝 フォーム回答',
+      color: TOPIC_COLOR.form,
+      fields: [
+        { name: 'フォーム', value: safe(form.name), inline: true },
+        { name: '回答者', value: safe(friendName), inline: true },
+        { name: '回答', value: answers || '回答内容なし', inline: false },
+      ],
+      footer: { text: `form=${form.id} / submission=${submission.id}` },
+      timestamp: submission.created_at || new Date().toISOString(),
+    }],
+    components: genericLinkComponents(await formSubmissionsUrl(env, form.id), '回答一覧を開く'),
+  });
+}
+
+async function formSubmissionsUrl(env: DiscordNotificationEnv, formId: string): Promise<string> {
+  const base = await reservationOpsBaseUrl(env);
+  if (!base) return '';
+  const url = new URL('/form-submissions', base);
+  url.searchParams.set('formId', formId);
+  return url.toString();
+}
+
 export async function processDiscordDailyReservationSummary(
   db: D1Database,
   env: DiscordNotificationEnv,
@@ -211,7 +247,9 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
         ? 'discord.reservation_webhook_url'
         : topic === 'daily'
           ? 'discord.daily_webhook_url'
-          : 'discord.review_webhook_url',
+          : topic === 'review'
+            ? 'discord.review_webhook_url'
+            : 'discord.form_webhook_url',
     ).catch(() => '')　
     : '';
   const topicUrl = await resolveBindingValue(
@@ -219,7 +257,9 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
       ? env.DISCORD_RESERVATION_WEBHOOK_URL
       : topic === 'daily'
         ? env.DISCORD_DAILY_WEBHOOK_URL
-        : env.DISCORD_REVIEW_WEBHOOK_URL,
+        : topic === 'review'
+          ? env.DISCORD_REVIEW_WEBHOOK_URL
+          : env.DISCORD_FORM_WEBHOOK_URL,
   );
   const settingBaseUrl = db
     ? await getAccountSetting(db, env as DiscordNotificationEnv & { DB: D1Database }, 'discord.webhook_url').catch(() => '')
@@ -235,7 +275,9 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
         ? 'discord.reservation_thread_id'
         : topic === 'daily'
           ? 'discord.daily_thread_id'
-          : 'discord.review_thread_id',
+          : topic === 'review'
+            ? 'discord.review_thread_id'
+            : 'discord.form_thread_id',
     ).catch(() => '')
     : '';
   const threadId = await resolveBindingValue(
@@ -243,7 +285,9 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
       ? env.DISCORD_RESERVATION_THREAD_ID
       : topic === 'daily'
         ? env.DISCORD_DAILY_THREAD_ID
-        : env.DISCORD_REVIEW_THREAD_ID,
+        : topic === 'review'
+          ? env.DISCORD_REVIEW_THREAD_ID
+          : env.DISCORD_FORM_THREAD_ID,
   );
   const resolvedThreadId = settingThreadId || threadId;
   if (!resolvedThreadId || baseUrl.includes('thread_id=')) return baseUrl;
@@ -254,7 +298,7 @@ async function resolveDiscordWebhookUrl(env: DiscordNotificationEnv, topic: Disc
 }
 
 function reservationFields(reservation: Reservation): DiscordEmbed['fields'] {
-  return [
+  const fields: DiscordEmbed['fields'] = [
     { name: '日時', value: `${reservation.reservation_date} ${timeRange(reservation)}`, inline: false },
     { name: '名前', value: safe(reservation.customer_name_snapshot), inline: true },
     { name: '人数', value: peopleText(reservation), inline: true },
@@ -262,6 +306,9 @@ function reservationFields(reservation: Reservation): DiscordEmbed['fields'] {
     { name: '電話', value: safe(reservation.customer_phone_snapshot), inline: true },
     { name: 'メール', value: safe(reservation.customer_email_snapshot), inline: true },
   ];
+  const note = reservationNoteForDiscord(reservation);
+  if (note) fields.push({ name: '備考', value: note, inline: false });
+  return fields;
 }
 
 function reservationLinkComponents(url: string): DiscordPayload['components'] {
@@ -308,6 +355,79 @@ function peopleText(reservation: Reservation): string {
 function amountText(reservation: Reservation): string {
   if (reservation.total_amount === null || reservation.total_amount === undefined) return '-';
   return `${Number(reservation.total_amount).toLocaleString('ja-JP')}円`;
+}
+
+const RESERVATION_NOTE_KEYS = [
+  'note',
+  'memo',
+  'notes',
+  'remarks',
+  'message',
+  'comment',
+  '備考',
+  'ご要望',
+  'その他',
+];
+
+export function reservationNoteForDiscord(reservation: Pick<Reservation, 'form_data' | 'metadata'>): string {
+  const formData = parseObjectText(reservation.form_data);
+  const metadata = parseObjectText(reservation.metadata);
+  const nestedFormData = objectValue(metadata.formData) ?? objectValue(metadata.form_data);
+  const customerMetadata = objectValue(metadata.customer);
+  const note = readFirstText(formData, RESERVATION_NOTE_KEYS)
+    || readFirstText(nestedFormData, RESERVATION_NOTE_KEYS)
+    || readFirstText(metadata, RESERVATION_NOTE_KEYS)
+    || readFirstText(customerMetadata, RESERVATION_NOTE_KEYS);
+  return note ? truncateDiscordValue(note) : '';
+}
+
+function parseObjectText(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return objectValue(parsed) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function readFirstText(source: Record<string, unknown> | null | undefined, keys: string[]): string {
+  if (!source) return '';
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  }
+  return '';
+}
+
+function truncateDiscordValue(value: string): string {
+  return value.length > 1000 ? `${value.slice(0, 997)}...` : value;
+}
+
+function summarizeFormAnswers(data: string | null | undefined): string {
+  if (!data) return '';
+  try {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    return Object.entries(parsed)
+      .slice(0, 10)
+      .map(([key, value]) => `${key}: ${formatAnswerValue(value)}`)
+      .join('\n')
+      .slice(0, 1000);
+  } catch {
+    return data.slice(0, 1000);
+  }
+}
+
+function formatAnswerValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map((item) => formatAnswerValue(item)).join(', ');
+  if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
 }
 
 function timeRange(reservation: Pick<Reservation, 'start_at' | 'end_at'>): string {

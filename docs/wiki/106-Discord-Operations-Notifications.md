@@ -27,6 +27,7 @@ Discord = 通知とWeb管理画面への入口
 | `reservation` | 新規予約、キャンセル、来園済み | `DISCORD_RESERVATION_WEBHOOK_URL` |
 | `daily` | 朝8時の当日予約サマリー | `DISCORD_DAILY_WEBHOOK_URL` |
 | `review` | じゃらん/Gmail要確認、失敗 | `DISCORD_REVIEW_WEBHOOK_URL` |
+| `form` | フォーム回答 | `DISCORD_FORM_WEBHOOK_URL` |
 
 個別Webhookが未設定の場合は `DISCORD_WEBHOOK_URL` を使う。
 
@@ -36,6 +37,7 @@ Discord = 通知とWeb管理画面への入口
 DISCORD_RESERVATION_THREAD_ID
 DISCORD_DAILY_THREAD_ID
 DISCORD_REVIEW_THREAD_ID
+DISCORD_FORM_THREAD_ID
 ```
 
 ## Discordからの予約確認・来園済み更新
@@ -77,10 +79,16 @@ DISCORD_REVIEW_WEBHOOK_URL=
 
 Secrets Storeに保存しただけではWorkerから読めない。Worker deploy時のbinding対象に含める必要がある。標準workflowでは上記のDiscord系secretをデフォルトbindingに含める。
 
+フォーム回答通知を使う場合だけ、追加で以下をSecrets Storeに作成し、GitHub Variablesの `CLOUDFLARE_SECRETS_STORE_BINDINGS` に追加する。
+
+```text
+DISCORD_FORM_WEBHOOK_URL=
+```
+
 Thread IDは任意設定である。Secrets Storeに存在しないThread IDをbindingするとdeployが失敗するため、標準workflowのデフォルトbindingには含めない。1チャンネル内の複数スレッド運用をする場合だけ、GitHub Variablesの `CLOUDFLARE_SECRETS_STORE_BINDINGS` に明示追加する。
 
 ```text
-CLOUDFLARE_SECRETS_STORE_BINDINGS=DISCORD_WEBHOOK_URL,DISCORD_RESERVATION_THREAD_ID,DISCORD_DAILY_THREAD_ID,DISCORD_REVIEW_THREAD_ID
+CLOUDFLARE_SECRETS_STORE_BINDINGS=DISCORD_WEBHOOK_URL,DISCORD_FORM_WEBHOOK_URL,DISCORD_RESERVATION_THREAD_ID,DISCORD_DAILY_THREAD_ID,DISCORD_REVIEW_THREAD_ID,DISCORD_FORM_THREAD_ID
 ```
 
 `DISCORD_WEBHOOK_URL` は共通Webhook用の任意設定である。チャンネル分割で `DISCORD_RESERVATION_WEBHOOK_URL`, `DISCORD_DAILY_WEBHOOK_URL`, `DISCORD_REVIEW_WEBHOOK_URL` を使う場合は不要。
@@ -155,6 +163,28 @@ LINE件数
 ルート未設定
 枠不足
 Gmail取り込み失敗
+```
+
+### フォーム回答通知
+
+フォーム送信APIで回答が保存された後、best-effortでDiscordへ通知する。通知失敗でフォーム送信自体は失敗させない。
+
+通知内容:
+
+```text
+フォーム名
+回答者名
+回答内容の先頭10項目
+form-submissions URL
+```
+
+宛先の優先順位:
+
+```text
+account_settings.discord.form_webhook_url
+DISCORD_FORM_WEBHOOK_URL
+account_settings.discord.webhook_url
+DISCORD_WEBHOOK_URL
 ```
 
 ## 今はやらないこと

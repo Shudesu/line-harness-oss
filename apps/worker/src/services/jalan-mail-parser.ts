@@ -83,9 +83,9 @@ function normalizeText(value: string): string {
 }
 
 function detectEventType(text: string): ExternalReservationEventType {
-  if (/キャンセル|取消|取り消し|解約/i.test(text)) return 'cancelled';
-  if (/変更|修正|更新/i.test(text)) return 'updated';
-  if (/予約|受付|成立|確定/i.test(text)) return 'created';
+  if (/予約(?:が)?キャンセルされました|予約キャンセル|キャンセル通知|取消|取り消し|解約/i.test(text)) return 'cancelled';
+  if (/予約(?:が)?確定しました|予約確定|予約確定通知|予約が入りました|予約内容\s*[\s\S]*予約番号/i.test(text)) return 'created';
+  if (/予約(?:が)?変更されました|予約変更|変更通知|予約内容(?:の)?変更|利用日時(?:の)?変更/i.test(text)) return 'updated';
   return 'unknown';
 }
 

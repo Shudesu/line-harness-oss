@@ -46,6 +46,13 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     description: 'じゃらん/Gmail取り込みの要確認・失敗通知の送信先です。',
   },
   {
+    key: 'discord.form_webhook_url',
+    label: 'Discordフォーム回答Webhook URL',
+    category: 'discord',
+    secret: true,
+    description: 'フォーム回答が送信されたときの通知先です。',
+  },
+  {
     key: 'discord.reservation_thread_id',
     label: 'Discord予約通知スレッドID',
     category: 'discord',
@@ -65,6 +72,13 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     category: 'discord',
     secret: false,
     description: '同じチャンネル内で要確認通知を分ける場合に設定します。',
+  },
+  {
+    key: 'discord.form_thread_id',
+    label: 'Discordフォーム回答スレッドID',
+    category: 'discord',
+    secret: false,
+    description: '同じチャンネル内でフォーム回答通知を分ける場合に設定します。',
   },
   {
     key: 'email.resend_api_key',
