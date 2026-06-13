@@ -1086,6 +1086,7 @@ CREATE INDEX IF NOT EXISTS idx_reservations_user ON reservations (user_id);
 CREATE INDEX IF NOT EXISTS idx_reservations_slot ON reservations (slot_id, status);
 CREATE INDEX IF NOT EXISTS idx_reservations_source_external ON reservations (source, external_reservation_id);
 CREATE INDEX IF NOT EXISTS idx_reservations_source_dedupe ON reservations (source, dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_reservation_items_reservation ON reservation_items (reservation_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_reservations_external_id
   ON reservations (source, external_reservation_id)
   WHERE external_reservation_id IS NOT NULL;
