@@ -1661,10 +1661,6 @@ export async function importExternalReservation(
     };
   }
 
-  if (existingSource && (input.eventType === 'created' || input.eventType === 'unknown')) {
-    return { ok: true, status: 'needs_review', source: existingSource };
-  }
-
   if (input.eventType === 'updated') {
     const source = await saveExternalReservationSource(db, existingSource, {
       ...input,

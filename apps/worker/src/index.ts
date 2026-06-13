@@ -55,6 +55,7 @@ import {
   notifyGmailImportRunToDiscord,
   processDiscordDailyReservationSummary,
 } from './services/discord-notifications.js';
+import { processReservationAutoCompleteAtNight } from './services/reservation-auto-complete.js';
 import type { SecretLike } from './services/bindings.js';
 
 export type Env = {
@@ -510,6 +511,15 @@ async function scheduled(
     await processDiscordDailyReservationSummary(env.DB, env);
   } catch (e) {
     console.error('Discord daily reservation summary error:', e);
+  }
+
+  try {
+    const autoCompleteResult = await processReservationAutoCompleteAtNight(env.DB);
+    if (!autoCompleteResult.skipped) {
+      console.log('Reservation nightly auto-complete result:', autoCompleteResult);
+    }
+  } catch (e) {
+    console.error('Reservation nightly auto-complete error:', e);
   }
 
   // Fetch broadcast insights (runs daily, self-throttled)

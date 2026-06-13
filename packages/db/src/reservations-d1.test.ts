@@ -800,6 +800,45 @@ describe('reservations — D1 integration', () => {
       expect(await slotCounters(slot.id)).toEqual({ reserved: 3, line: 0, ext: 3 });
     });
 
+    it('created re-import can recover an existing needs_review source without matching reservation', async () => {
+      const slot = await insertSlot();
+      const reviewed = await importExternalReservation(db, {
+        source: 'jalan',
+        eventType: 'updated',
+        externalId: 'jalan_low_stock_reparse',
+        adultCount: 4,
+      });
+      expect(reviewed.ok).toBe(true);
+      if (!reviewed.ok) return;
+      expect(reviewed.status).toBe('needs_review');
+
+      const imported = await importExternalReservation(db, {
+        source: 'jalan',
+        eventType: 'created',
+        externalId: 'jalan_low_stock_reparse',
+        resourceId: RES_ID,
+        menuId: MENU_ID,
+        slotId: slot.id,
+        adultCount: 4,
+        childCount: 0,
+        customerName: '低残数メール再取込',
+      });
+
+      expect(imported.ok).toBe(true);
+      if (!imported.ok) return;
+      expect(imported.status).toBe('imported');
+      expect(await slotCounters(slot.id)).toEqual({ reserved: 4, line: 0, ext: 4 });
+
+      const source = await db
+        .prepare(`SELECT event_type, parse_status, reservation_id, last_error FROM external_reservation_sources WHERE external_id = ?`)
+        .bind('jalan_low_stock_reparse')
+        .first<{ event_type: string; parse_status: string; reservation_id: string | null; last_error: string | null }>();
+      expect(source?.event_type).toBe('created');
+      expect(source?.parse_status).toBe('imported');
+      expect(source?.reservation_id).toBe(imported.reservation.id);
+      expect(source?.last_error).toBeNull();
+    });
+
     it('rejects import when both externalId and dedupeKey are empty', async () => {
       const r = await importExternalReservation(db, {
         source: 'jalan', eventType: 'created', externalId: '', dedupeKey: '',
