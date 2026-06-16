@@ -29,6 +29,7 @@ import {
 } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import FlexPreviewComponent from '@/components/flex-preview'
+import { ReservationChatModal } from '@/components/reservations/reservation-chat-modal'
 import {
   DEFAULT_EXTERNAL_IMPORT_NAME,
   DEFAULT_EXTERNAL_IMPORT_QUERY,
@@ -1822,6 +1823,9 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 function OpsReservationDetailModal({ reservation, onClose }: { reservation: ReservationResponse; onClose: () => void }) {
+  const [chatOpen, setChatOpen] = useState(false)
+  const customerName = reservationName(reservation)
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
       <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl sm:mx-auto sm:max-w-lg sm:rounded-2xl">
@@ -1845,6 +1849,26 @@ function OpsReservationDetailModal({ reservation, onClose }: { reservation: Rese
           <Info label="予約作成日" value={formatDateTime(reservation.createdAt)} />
           <Info label="外部ID" value={reservation.externalReservationId || '-'} />
         </dl>
+        <div className="mt-4">
+          {reservation.friendId ? (
+            <button
+              type="button"
+              onClick={() => setChatOpen(true)}
+              className="rounded-lg bg-green-600 px-3 py-2 text-sm font-bold text-white"
+            >
+              チャットする
+            </button>
+          ) : (
+            <span className="rounded-lg bg-gray-100 px-3 py-2 text-sm font-bold text-gray-500">LINE未連携</span>
+          )}
+        </div>
+        {chatOpen && (
+          <ReservationChatModal
+            friendId={reservation.friendId}
+            customerName={customerName}
+            onClose={() => setChatOpen(false)}
+          />
+        )}
       </div>
     </div>
   )

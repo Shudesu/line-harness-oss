@@ -13,6 +13,7 @@ import type {
   ReservationSlotWithAvailability,
 } from '@line-crm/shared'
 import Header from '@/components/layout/header'
+import { ReservationChatModal } from '@/components/reservations/reservation-chat-modal'
 import { api, fetchApi, type ApiProviderConfig } from '@/lib/api'
 import { buildReservationEntryUrl, reservationEntryUi } from '@/lib/provider-ui'
 
@@ -1304,6 +1305,9 @@ function ReservationDetailModal({
   onClose: () => void
   onCancel: (reservation: ReservationResponse) => void
 }) {
+  const [chatOpen, setChatOpen] = useState(false)
+  const customerName = reservation.customerName || reservation.title || 'お客様'
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-0 sm:items-center sm:p-4">
       <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-2xl bg-white p-4 shadow-xl sm:mx-auto sm:max-w-lg sm:rounded-2xl">
@@ -1327,10 +1331,30 @@ function ReservationDetailModal({
           <Info label="予約作成日" value={formatDateTime(reservation.createdAt)} />
           <Info label="外部ID" value={reservation.externalReservationId || '-'} />
         </dl>
-        {(reservation.status === 'pending' || reservation.status === 'confirmed') && (
-          <button disabled={saving} onClick={() => onCancel(reservation)} className="mt-4 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
-            キャンセル
-          </button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {reservation.friendId ? (
+            <button
+              type="button"
+              onClick={() => setChatOpen(true)}
+              className="rounded-lg bg-green-600 px-3 py-2 text-sm font-bold text-white"
+            >
+              チャットする
+            </button>
+          ) : (
+            <span className="rounded-lg bg-gray-100 px-3 py-2 text-sm font-bold text-gray-500">LINE未連携</span>
+          )}
+          {(reservation.status === 'pending' || reservation.status === 'confirmed') && (
+            <button disabled={saving} onClick={() => onCancel(reservation)} className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
+              キャンセル
+            </button>
+          )}
+        </div>
+        {chatOpen && (
+          <ReservationChatModal
+            friendId={reservation.friendId}
+            customerName={customerName}
+            onClose={() => setChatOpen(false)}
+          />
         )}
       </div>
     </div>
