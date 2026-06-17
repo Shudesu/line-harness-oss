@@ -20,7 +20,7 @@ import {
   getEntryRouteByRefCode,
   getMessageTemplateById,
 } from '@line-crm/db';
-import type { EntryRoute } from '@line-crm/db';
+import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
@@ -32,6 +32,46 @@ const webhook = new Hono<Env>();
 // bursty batched deliveries (~100 events × ~5 KB) while still well below the
 // 128 MB Cloudflare Workers memory ceiling.
 const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
+
+async function ensureFriendFromWebhookUser(
+  db: D1Database,
+  lineClient: LineClient,
+  userId: string,
+  lineAccountId: string | null,
+): Promise<Friend | null> {
+  let friend = await getFriendByLineUserId(db, userId);
+
+  if (!friend) {
+    let profile: Awaited<ReturnType<LineClient['getProfile']>> | null = null;
+    try {
+      profile = await lineClient.getProfile(userId);
+    } catch (err) {
+      // A signed webhook already proves this user interacted with the bot.
+      // If profile lookup is temporarily unavailable, keep the event processable
+      // by creating the friend with the LINE userId and filling profile later.
+      console.error('[webhook] Failed to get profile for unknown user', userId, err);
+    }
+
+    friend = await upsertFriend(db, {
+      lineUserId: userId,
+      displayName: profile?.displayName ?? null,
+      pictureUrl: profile?.pictureUrl ?? null,
+      statusMessage: profile?.statusMessage ?? null,
+    });
+    console.log(`[webhook] auto-registered existing friend userId=${userId} friendId=${friend.id}`);
+  }
+
+  if (lineAccountId && friend.line_account_id !== lineAccountId) {
+    const now = jstNow();
+    await db
+      .prepare('UPDATE friends SET line_account_id = ?, is_following = 1, updated_at = ? WHERE id = ?')
+      .bind(lineAccountId, now, friend.id)
+      .run();
+    friend = { ...friend, line_account_id: lineAccountId, is_following: 1, updated_at: now };
+  }
+
+  return friend;
+}
 
 webhook.post('/webhook', async (c) => {
   // Pre-read size guard: reject before reading the body if Content-Length is oversized.
@@ -340,7 +380,7 @@ async function handleEvent(
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await ensureFriendFromWebhookUser(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
@@ -420,7 +460,7 @@ async function handleEvent(
   if (event.type === 'message' && event.message.type !== 'text') {
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await ensureFriendFromWebhookUser(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const msg = event.message as {
@@ -485,7 +525,7 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await ensureFriendFromWebhookUser(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const incomingText = textMessage.text;

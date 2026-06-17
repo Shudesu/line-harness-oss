@@ -1,8 +1,14 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 
-// Stub the DB graph — these tests only exercise the size guard and
-// signature-verify-before-parse path; webhook event handling is out of scope.
+const lineClientMocks = vi.hoisted(() => ({
+  getProfile: vi.fn(),
+  replyMessage: vi.fn(),
+  pushMessage: vi.fn(),
+}));
+
+// Stub the DB graph — these tests focus on webhook guard behavior and the
+// first-contact friend registration path without touching real D1/LINE.
 vi.mock('@line-crm/db', () => ({
   upsertFriend: vi.fn(),
   updateFriendFollowStatus: vi.fn(),
@@ -27,7 +33,7 @@ vi.mock('@line-crm/line-sdk', async () => {
   return {
     ...actual,
     verifySignature: vi.fn(),
-    LineClient: vi.fn().mockImplementation(() => ({})),
+    LineClient: vi.fn().mockImplementation(() => lineClientMocks),
   };
 });
 
@@ -41,6 +47,25 @@ vi.mock('../services/step-delivery.js', () => ({
 }));
 
 import { verifySignature } from '@line-crm/line-sdk';
+import {
+  addTagToFriend,
+  advanceFriendScenario,
+  completeFriendScenario,
+  computeNextDeliveryAt,
+  enrollFriendInScenario,
+  getEntryRouteByRefCode,
+  getFriendByLineUserId,
+  getLineAccounts,
+  getMessageTemplateById,
+  getScenarioSteps,
+  getScenarios,
+  jstNow,
+  resolveStepContent,
+  updateFriendFollowStatus,
+  upsertChatOnMessage,
+  upsertFriend,
+} from '@line-crm/db';
+import { fireEvent } from '../services/event-bus.js';
 import { webhook } from './webhook.js';
 
 function setupApp() {
@@ -63,6 +88,7 @@ const baseExecutionCtx = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getLineAccounts).mockResolvedValue([]);
 });
 
 describe('POST /webhook — DoS defenses (#104)', () => {
@@ -154,5 +180,120 @@ describe('POST /webhook — DoS defenses (#104)', () => {
     expect(res.status).toBe(200);
     // Fast-rejected before any crypto / DB work.
     expect(verifySignature).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — first-contact existing friends', () => {
+  test('auto-registers an unknown text-message sender without firing friend_add handling', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(getFriendByLineUserId).mockResolvedValue(null);
+    vi.mocked(jstNow).mockReturnValue('2026-06-18T12:00:00.000+09:00');
+    lineClientMocks.getProfile.mockResolvedValue({
+      userId: 'U-existing',
+      displayName: 'Existing Friend',
+      pictureUrl: 'https://example.com/profile.jpg',
+      statusMessage: 'hello',
+    });
+    vi.mocked(upsertFriend).mockResolvedValue({
+      id: 'friend-1',
+      line_user_id: 'U-existing',
+      display_name: 'Existing Friend',
+      picture_url: 'https://example.com/profile.jpg',
+      status_message: 'hello',
+      is_following: 1,
+      user_id: null,
+      line_account_id: null,
+      metadata: '{}',
+      first_tracked_link_id: null,
+      created_at: '2026-06-18T12:00:00.000+09:00',
+      updated_at: '2026-06-18T12:00:00.000+09:00',
+    });
+    vi.mocked(upsertChatOnMessage).mockResolvedValue({
+      id: 'chat-1',
+      friend_id: 'friend-1',
+      operator_id: null,
+      status: 'unread',
+      notes: null,
+      last_message_at: '2026-06-18T12:00:00.000+09:00',
+      created_at: '2026-06-18T12:00:00.000+09:00',
+      updated_at: '2026-06-18T12:00:00.000+09:00',
+    });
+
+    const stmt = {
+      bind: vi.fn(),
+      run: vi.fn().mockResolvedValue({}),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+    };
+    stmt.bind.mockReturnValue(stmt);
+    const db = { prepare: vi.fn().mockReturnValue(stmt) } as unknown as D1Database;
+
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+
+    const app = setupApp();
+    const validShapedSignature = 'A'.repeat(43) + '=';
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': validShapedSignature,
+        },
+        body: JSON.stringify({
+          destination: 'bot',
+          events: [
+            {
+              type: 'message',
+              replyToken: 'reply-token',
+              message: { type: 'text', id: 'message-1', text: 'こんにちは' },
+              timestamp: Date.now(),
+              source: { type: 'user', userId: 'U-existing' },
+              webhookEventId: 'event-1',
+              deliveryContext: { isRedelivery: false },
+              mode: 'active',
+            },
+          ],
+        }),
+      },
+      { ...baseEnv, DB: db },
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const processing = vi.mocked(executionCtx.waitUntil).mock.calls[0]?.[0] as Promise<unknown>;
+    await processing;
+
+    expect(lineClientMocks.getProfile).toHaveBeenCalledWith('U-existing');
+    expect(upsertFriend).toHaveBeenCalledWith(db, {
+      lineUserId: 'U-existing',
+      displayName: 'Existing Friend',
+      pictureUrl: 'https://example.com/profile.jpg',
+      statusMessage: 'hello',
+    });
+    expect(upsertChatOnMessage).toHaveBeenCalledWith(db, 'friend-1');
+    expect(fireEvent).toHaveBeenCalledWith(
+      db,
+      'message_received',
+      expect.objectContaining({ friendId: 'friend-1' }),
+      'env-default-token',
+      null,
+    );
+    expect(getScenarios).not.toHaveBeenCalled();
+    expect(enrollFriendInScenario).not.toHaveBeenCalled();
+
+    // Keep the unrelated DB stubs quiet but type-checked as mocked imports.
+    expect(updateFriendFollowStatus).not.toHaveBeenCalled();
+    expect(getScenarioSteps).not.toHaveBeenCalled();
+    expect(advanceFriendScenario).not.toHaveBeenCalled();
+    expect(completeFriendScenario).not.toHaveBeenCalled();
+    expect(computeNextDeliveryAt).not.toHaveBeenCalled();
+    expect(resolveStepContent).not.toHaveBeenCalled();
+    expect(addTagToFriend).not.toHaveBeenCalled();
+    expect(getEntryRouteByRefCode).not.toHaveBeenCalled();
+    expect(getMessageTemplateById).not.toHaveBeenCalled();
   });
 });
