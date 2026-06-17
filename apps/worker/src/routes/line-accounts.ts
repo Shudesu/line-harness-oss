@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { LineClient } from '@line-crm/line-sdk';
 import {
   getLineAccounts,
   getLineAccountById,
@@ -122,6 +123,39 @@ lineAccounts.get('/api/line-accounts/:id', async (c) => {
   } catch (err) {
     console.error('GET /api/line-accounts/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/line-accounts/:id/follower-insight - compare DB state with LINE official follower stats
+lineAccounts.get('/api/line-accounts/:id/follower-insight', async (c) => {
+  try {
+    const date = c.req.query('date');
+    if (!date || !/^\d{8}$/.test(date)) {
+      return c.json({ success: false, error: 'date query is required in yyyyMMdd format' }, 400);
+    }
+
+    const account = await getLineAccountById(c.env.DB, c.req.param('id'));
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+
+    const client = new LineClient(account.channel_access_token);
+    const insight = await client.getFollowersInsight(date);
+    return c.json({
+      success: true,
+      data: {
+        lineAccountId: account.id,
+        date,
+        status: insight.status,
+        followers: typeof insight.followers === 'number' ? insight.followers : null,
+        targetedReaches: typeof insight.targetedReaches === 'number' ? insight.targetedReaches : null,
+        blocks: typeof insight.blocks === 'number' ? insight.blocks : null,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('GET /api/line-accounts/:id/follower-insight error:', message);
+    return c.json({ success: false, error: 'Failed to fetch LINE follower insight' }, 502);
   }
 });
 

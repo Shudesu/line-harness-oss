@@ -11,6 +11,13 @@ import type {
 
 const LINE_API_BASE = 'https://api.line.me';
 
+export interface FollowersInsight {
+  status: string;
+  followers?: number;
+  targetedReaches?: number;
+  blocks?: number;
+}
+
 export class LineClient {
   constructor(private readonly channelAccessToken: string) {}
 
@@ -262,5 +269,17 @@ export class LineClient {
       `/v2/bot/insight/message/event/aggregation?${params.toString()}`,
     );
     return data;
+  }
+
+  /**
+   * Get the number of followers for a LINE Official Account on a given date.
+   * GET only — no messages are sent.
+   */
+  async getFollowersInsight(date: string): Promise<FollowersInsight> {
+    const { data } = await this.request(
+      'GET',
+      `/v2/bot/insight/followers?date=${encodeURIComponent(date)}`,
+    );
+    return data as FollowersInsight;
   }
 }

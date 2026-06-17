@@ -16,6 +16,13 @@ const dbMocks = {
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
+const lineClientMocks = {
+  getFollowersInsight: vi.fn(),
+};
+vi.mock('@line-crm/line-sdk', () => ({
+  LineClient: vi.fn().mockImplementation(() => lineClientMocks),
+}));
+
 // Re-import after mock so the module picks up mocked deps.
 const { lineAccounts } = await import('./line-accounts.js');
 
@@ -71,6 +78,56 @@ const fakeAccount = {
 
 beforeEach(() => {
   for (const fn of Object.values(dbMocks)) fn.mockReset();
+  lineClientMocks.getFollowersInsight.mockReset();
+});
+
+describe('GET /api/line-accounts/:id/follower-insight', () => {
+  test('returns LINE follower insight without exposing account token', async () => {
+    dbMocks.getLineAccountById.mockResolvedValue(fakeAccount);
+    lineClientMocks.getFollowersInsight.mockResolvedValue({
+      status: 'ready',
+      followers: 123,
+      targetedReaches: 111,
+      blocks: 4,
+    });
+
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts/acc-1/follower-insight?date=20260616');
+
+    expect(res.status).toBe(200);
+    expect(dbMocks.getLineAccountById).toHaveBeenCalledWith(expect.anything(), 'acc-1');
+    expect(lineClientMocks.getFollowersInsight).toHaveBeenCalledWith('20260616');
+    const body = (await res.json()) as {
+      success: boolean;
+      data: {
+        lineAccountId: string;
+        date: string;
+        status: string;
+        followers: number;
+        targetedReaches: number;
+        blocks: number;
+        channelAccessToken?: string;
+      };
+    };
+    expect(body.success).toBe(true);
+    expect(body.data).toMatchObject({
+      lineAccountId: 'acc-1',
+      date: '20260616',
+      status: 'ready',
+      followers: 123,
+      targetedReaches: 111,
+      blocks: 4,
+    });
+    expect(body.data.channelAccessToken).toBeUndefined();
+  });
+
+  test('rejects missing insight date', async () => {
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts/acc-1/follower-insight');
+
+    expect(res.status).toBe(400);
+    expect(lineClientMocks.getFollowersInsight).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/line-accounts', () => {
