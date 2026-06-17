@@ -189,6 +189,39 @@ function readMoneyCandidate(metadata: Record<string, unknown>, keys: string[]): 
   return null
 }
 
+function readTextCandidate(source: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  }
+  return ''
+}
+
+function reservationNote(reservation: ReservationResponse): string {
+  const formData = parseReservationMetadata(reservation.formData)
+  const metadata = parseReservationMetadata(reservation.metadata)
+  const direct = readTextCandidate(formData, [
+    'memo',
+    'note',
+    'notes',
+    'remarks',
+    'message',
+    'comment',
+    '備考',
+    'ご要望',
+    'その他',
+  ])
+  if (direct) return direct
+
+  const customer = metadata.customer && typeof metadata.customer === 'object' && !Array.isArray(metadata.customer)
+    ? metadata.customer as Record<string, unknown>
+    : {}
+  return readTextCandidate(metadata, ['memo', 'note', 'notes', 'remarks', 'message', 'comment'])
+    || readTextCandidate(customer, ['memo', 'note', 'notes', 'remarks', 'message', 'comment'])
+    || ''
+}
+
 function reservationPriceDetails(reservation: ReservationResponse): ReservationPriceDetails | null {
   const metadata = parseReservationMetadata(reservation.metadata)
   const details: ReservationPriceDetails = {
@@ -1189,6 +1222,7 @@ function SlotsCard({
                             <div className="min-w-0">
                               <p className="truncate font-semibold text-gray-900">{reservation.customerName || reservation.title}</p>
                               <p className="mt-1 text-xs text-gray-500">{reservation.customerPhone || '電話未登録'}</p>
+                              {reservationNote(reservation) && <p className="mt-1 line-clamp-2 text-xs font-semibold text-amber-700">備考: {reservationNote(reservation)}</p>}
                             </div>
                             <StatusBadge status={reservation.status} />
                           </div>
@@ -1268,6 +1302,7 @@ function ReservationListPanel({
                           </p>
                           {reservationEntryInfo(reservation).detail && <p className="mt-1 text-xs text-blue-700">{reservationEntryInfo(reservation).detail}</p>}
                           {reservation.source === 'jalan' && <p className="mt-1 text-xs font-semibold text-gray-700">{formatPriceSummary(reservation)}</p>}
+                          {reservationNote(reservation) && <p className="mt-1 line-clamp-2 text-xs font-semibold text-amber-700">備考: {reservationNote(reservation)}</p>}
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1">
                           <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700">{reservationEntryInfo(reservation).label}</span>

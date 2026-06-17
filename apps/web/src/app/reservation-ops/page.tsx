@@ -1740,6 +1740,7 @@ function ReservationsPanel({
                               <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / {reservation.customerPhone || '電話未登録'}</p>
                               {reservationEntryInfo(reservation).detail && <p className="mt-1 text-xs text-blue-700">{reservationEntryInfo(reservation).detail}</p>}
                               {hasPriceDetails(reservation) && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
+                              {reservationNote(reservation) !== '-' && <p className="mt-1 line-clamp-2 text-xs font-semibold text-amber-700">備考: {reservationNote(reservation)}</p>}
                             </div>
                             <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{reservationEntryInfo(reservation).label}</span>
                           </div>
@@ -1786,6 +1787,7 @@ function ReservationsPanel({
                           <p className="mt-1 text-xs text-gray-500">{reservation.totalPeople}名 / {reservation.customerPhone || '電話未登録'}</p>
                           {reservationEntryInfo(reservation).detail && <p className="mt-1 text-xs text-blue-700">{reservationEntryInfo(reservation).detail}</p>}
                           {hasPriceDetails(reservation) && <p className="mt-1 text-xs font-semibold text-amber-700">{formatPriceSummary(reservation)}</p>}
+                          {reservationNote(reservation) !== '-' && <p className="mt-1 line-clamp-2 text-xs font-semibold text-amber-700">備考: {reservationNote(reservation)}</p>}
                         </div>
                         <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">{reservationEntryInfo(reservation).label}</span>
                       </div>
