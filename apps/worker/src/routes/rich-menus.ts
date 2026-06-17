@@ -211,12 +211,13 @@ richMenus.post('/api/rich-menus/:id/image', async (c) => {
 
     if (contentType.includes('application/json')) {
       // Accept base64 encoded image in JSON body
-      const body = await c.req.json<{ image: string; contentType?: string }>();
-      if (!body.image) {
+      const body = await c.req.json<{ image?: string; imageData?: string; contentType?: string }>();
+      const imageBase64 = body.image ?? body.imageData;
+      if (!imageBase64) {
         return c.json({ success: false, error: 'image (base64) is required' }, 400);
       }
       // Strip data URI prefix if present
-      const base64 = body.image.replace(/^data:image\/\w+;base64,/, '');
+      const base64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
       const binaryString = atob(base64);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
