@@ -72,6 +72,7 @@ import { messageTemplates } from './routes/message-templates.js';
 import dedupPreview from './routes/dedup-preview.js';
 import { profileRefresh } from './routes/profile-refresh.js';
 import { richMenuGroups } from './routes/rich-menu-groups.js';
+import { kuchikomiRobo } from './routes/kuchikomi-robo.js';
 import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
 
@@ -99,6 +100,10 @@ export type Env = {
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
+    KUCHIKOMI_ROBO_WEBHOOK_URL?: string; // Optional: outbound review-request webhook/API endpoint
+    KUCHIKOMI_ROBO_API_KEY?: string; // Optional: Bearer token for Kuchikomi Robo delivery
+    KUCHIKOMI_ROBO_SHARED_SECRET?: string; // Optional: HMAC signing secret for delivery
+    KUCHIKOMI_ROBO_STORE_ID?: string; // Optional: default store/location identifier
     // Phase 5 self-update — consumed by /admin/update/*. Defaults live in
     // wrangler.toml [vars]; secrets (CF_API_TOKEN, ADMIN_API_KEY) come from
     // `wrangler secret put`. All are optional at the type level so the rest
@@ -210,6 +215,7 @@ app.route('/', messageTemplates);
 app.route('/', dedupPreview);
 app.route('/', profileRefresh);
 app.route('/', richMenuGroups);
+app.route('/', kuchikomiRobo);
 
 // Phase 5 (upgrade flow) — public build metadata endpoint. Mounted under
 // /admin/ but intentionally unauthenticated: the dashboard fetches /admin/version

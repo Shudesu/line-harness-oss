@@ -445,7 +445,7 @@ friends.post('/api/friends/:id/tags', async (c) => {
     }
 
     // イベントバス発火: tag_change
-    await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
+    await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } }, undefined, undefined, c.env);
 
     return c.json({ success: true, data: null }, 201);
   } catch (err) {
@@ -463,7 +463,7 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
     await removeTagFromFriend(c.env.DB, friendId, tagId);
 
     // イベントバス発火: tag_change
-    await fireEvent(c.env.DB, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
+    await fireEvent(c.env.DB, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } }, undefined, undefined, c.env);
 
     return c.json({ success: true, data: null });
   } catch (err) {

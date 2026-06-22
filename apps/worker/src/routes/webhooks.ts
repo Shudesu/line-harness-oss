@@ -372,7 +372,7 @@ webhooks.post('/api/webhooks/incoming/:id/receive', async (c) => {
     const eventType = `incoming_webhook.${wh.source_type}`;
     await fireEvent(c.env.DB, eventType, {
       eventData: { webhookId: wh.id, source: wh.source_type, payload },
-    });
+    }, undefined, undefined, c.env);
 
     return c.json({ success: true, data: { received: true, source: wh.source_type } });
   } catch (err) {

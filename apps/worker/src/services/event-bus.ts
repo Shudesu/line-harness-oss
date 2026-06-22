@@ -23,6 +23,11 @@ import {
 import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
+import {
+  buildKuchikomiRoboReviewRequest,
+  sendKuchikomiRoboReviewRequest,
+  type KuchikomiRoboEnv,
+} from './kuchikomi-robo.js';
 
 export interface EventPayload {
   friendId?: string;
@@ -47,6 +52,7 @@ export async function fireEvent(
   payload: EventPayload,
   lineAccessToken?: string,
   lineAccountId?: string | null,
+  integrationEnv?: KuchikomiRoboEnv,
 ): Promise<void> {
   // Phase 1: fire webhooks, apply scoring rules, and ad conversion postback concurrently.
   const phase1: Promise<unknown>[] = [
@@ -72,7 +78,7 @@ export async function fireEvent(
     : payload;
 
   // Phase 2: evaluate automations.
-  await processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId);
+  await processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId, integrationEnv);
 }
 
 /** 送信Webhookへの通知 */
@@ -141,6 +147,7 @@ async function processAutomations(
   payload: EventPayload,
   lineAccessToken?: string,
   lineAccountId?: string | null,
+  integrationEnv?: KuchikomiRoboEnv,
 ): Promise<void> {
   try {
     const allAutomations = await getActiveAutomationsByEvent(db, eventType);
@@ -160,7 +167,7 @@ async function processAutomations(
 
       for (const action of actions) {
         try {
-          await executeAction(db, action, payload, lineAccessToken, lineAccountId);
+          await executeAction(db, action, payload, lineAccessToken, lineAccountId, integrationEnv);
           results.push({ action: action.type, success: true });
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
@@ -229,9 +236,10 @@ async function executeAction(
   payload: EventPayload,
   lineAccessToken?: string,
   lineAccountId?: string | null,
+  integrationEnv?: KuchikomiRoboEnv,
 ): Promise<void> {
   const friendId = payload.friendId;
-  if (!friendId && action.type !== 'send_webhook') {
+  if (!friendId && action.type !== 'send_webhook' && action.type !== 'send_kuchikomi_robo') {
     throw new Error('friendId is required for this action');
   }
 
@@ -339,6 +347,25 @@ async function executeAction(
           body: JSON.stringify({ friendId, ...payload.eventData }),
         });
       }
+      break;
+    }
+
+    case 'send_kuchikomi_robo': {
+      const request = await buildKuchikomiRoboReviewRequest(db, {
+        friendId,
+        storeId: action.params.storeId,
+        trigger: action.params.trigger ?? 'automation',
+        visitAt: action.params.visitAt || (typeof payload.eventData?.visitAt === 'string' ? payload.eventData.visitAt : undefined),
+        reviewUrl: action.params.reviewUrl || (typeof payload.eventData?.reviewUrl === 'string' ? payload.eventData.reviewUrl : undefined),
+        lineAccountId,
+        metadata: {
+          ...payload.eventData,
+          automationAction: action.type,
+        },
+      }, {
+        defaultStoreId: integrationEnv?.KUCHIKOMI_ROBO_STORE_ID,
+      });
+      await sendKuchikomiRoboReviewRequest(integrationEnv ?? {}, request);
       break;
     }
 

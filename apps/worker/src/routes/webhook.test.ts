@@ -281,6 +281,7 @@ describe('POST /webhook — first-contact existing friends', () => {
       expect.objectContaining({ friendId: 'friend-1' }),
       'env-default-token',
       null,
+      expect.objectContaining({ LINE_CHANNEL_ACCESS_TOKEN: 'env-default-token' }),
     );
     expect(getScenarios).not.toHaveBeenCalled();
     expect(enrollFriendInScenario).not.toHaveBeenCalled();

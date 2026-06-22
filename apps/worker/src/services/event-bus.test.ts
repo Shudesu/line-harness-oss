@@ -225,3 +225,78 @@ describe('fireEvent — send_message action logging', () => {
     expect(String(captured[0].binds[3])).toContain('from-template');
   });
 });
+
+describe('fireEvent — send_kuchikomi_robo action', () => {
+  beforeEach(async () => {
+    const db = await import('@line-crm/db');
+    (db.getActiveAutomationsByEvent as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      {
+        id: 'auto-kuchikomi',
+        line_account_id: 'acc-1',
+        conditions: JSON.stringify({}),
+        actions: JSON.stringify([
+          {
+            type: 'send_kuchikomi_robo',
+            params: {
+              trigger: 'booking_completed',
+              reviewUrl: 'https://g.page/r/example/review',
+            },
+          },
+        ]),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('delivers a configured Kuchikomi Robo review request from automation', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = fakeDb({
+      friend: { line_user_id: 'U_test' },
+      capturedInserts: [],
+    });
+
+    await fireEvent(
+      db,
+      'calendar_booked',
+      {
+        friendId: 'friend-1',
+        eventData: { bookingId: 'booking-1', visitAt: '2026-06-22T13:00:00+09:00' },
+      },
+      undefined,
+      'acc-1',
+      {
+        KUCHIKOMI_ROBO_WEBHOOK_URL: 'https://kuchikomi.example.test/webhook',
+        KUCHIKOMI_ROBO_STORE_ID: 'store-1',
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({
+      source: 'line-harness',
+      event: 'review_request',
+      storeId: 'store-1',
+      customer: {
+        friendId: 'friend-1',
+        lineUserId: 'U_test',
+      },
+      context: {
+        trigger: 'booking_completed',
+        visitAt: '2026-06-22T13:00:00+09:00',
+        reviewUrl: 'https://g.page/r/example/review',
+        lineAccountId: 'acc-1',
+      },
+    });
+    expect(body.context.metadata).toMatchObject({
+      bookingId: 'booking-1',
+      automationAction: 'send_kuchikomi_robo',
+    });
+  });
+});
