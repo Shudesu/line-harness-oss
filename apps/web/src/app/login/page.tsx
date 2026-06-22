@@ -73,11 +73,11 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#f3fbf6] text-gray-900 lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
-      <section className="relative hidden overflow-hidden bg-[#E9FBEF] px-12 py-10 text-gray-950 lg:flex lg:flex-col lg:justify-between">
+      <section className="relative hidden overflow-hidden bg-[#E9FBEF] px-10 py-8 text-gray-950 lg:flex lg:flex-col">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(6,199,85,0.22),transparent_30%),radial-gradient(circle_at_86%_12%,rgba(6,199,85,0.16),transparent_24%),linear-gradient(145deg,#F7FFF9_0%,#E9FBEF_48%,#D8F7E4_100%)]" />
         <div className="absolute -bottom-24 -left-16 h-72 w-72 rounded-full bg-[#06C755]/20 blur-3xl" />
         <div className="absolute right-8 top-28 h-32 w-32 rotate-12 rounded-[2rem] border border-[#06C755]/18" />
-        <div className="absolute bottom-20 right-20 h-24 w-24 rounded-full border border-[#06C755]/20" />
+        <div className="absolute bottom-16 right-20 h-20 w-20 rounded-full border border-[#06C755]/20" />
 
         <div className="relative flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#06C755] text-lg font-black text-white shadow-lg shadow-green-900/15">
@@ -89,53 +89,55 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <div className="relative max-w-xl">
-          <p className="mb-4 inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold text-[#057A35] shadow-sm ring-1 ring-[#06C755]/15">
-            LINEっぽく、すぐ使える管理画面
-          </p>
-          <h1 className="text-5xl font-black leading-[1.04] tracking-tight text-gray-950 xl:text-6xl">
-            {PRODUCT_TAGLINE}
-          </h1>
-          <p className="mt-6 max-w-md text-base font-medium leading-7 text-gray-700">
-            友だちとの会話、配信、未返信チェックをひとつの流れで確認できます。
-          </p>
-        </div>
+        <div className="relative flex flex-1 flex-col justify-center gap-7 py-4">
+          <div className="max-w-[560px]">
+            <p className="mb-4 inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold text-[#057A35] shadow-sm ring-1 ring-[#06C755]/15">
+              LINEっぽく、すぐ使える管理画面
+            </p>
+            <h1 className="text-4xl font-black leading-[1.08] tracking-tight text-gray-950 xl:text-5xl">
+              {PRODUCT_TAGLINE}
+            </h1>
+            <p className="mt-5 max-w-md text-base font-medium leading-7 text-gray-700">
+              会話、配信、未返信チェックをひとつの流れで確認できます。
+            </p>
+          </div>
 
-        <div className="relative max-w-[540px] rounded-[34px] bg-white/96 p-4 text-gray-950 shadow-[0_26px_80px_rgba(0,80,36,0.28)]">
-          <div className="rounded-[26px] bg-[#f2f7f3] p-4">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#06C755] text-sm font-black text-white">
-                  ラ
+          <div className="max-w-[500px] rounded-[30px] bg-white/96 p-3 text-gray-950 shadow-[0_22px_64px_rgba(0,80,36,0.20)]">
+            <div className="rounded-[24px] bg-[#f2f7f3] p-4">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#06C755] text-sm font-black text-white">
+                    ラ
+                  </div>
+                  <div>
+                    <p className="text-sm font-black">今日のLINE対応</p>
+                    <p className="text-xs text-gray-500">未返信・配信・タグをまとめて確認</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm font-black">今日のLINE対応</p>
-                  <p className="text-xs text-gray-500">未返信・配信・タグをまとめて確認</p>
-                </div>
+                <span className="rounded-full bg-[#06C755] px-3 py-1 text-xs font-bold text-white">
+                  Online
+                </span>
               </div>
-              <span className="rounded-full bg-[#06C755] px-3 py-1 text-xs font-bold text-white">
-                Online
-              </span>
-            </div>
 
-            <div className="space-y-3">
-              <div className="flex items-end gap-2">
-                <div className="h-8 w-8 rounded-full bg-white shadow-sm" />
-                <div className="max-w-[72%] rounded-3xl rounded-bl-md bg-white px-4 py-3 text-sm font-medium shadow-sm">
-                  明日の予約、まだ空いてますか？
+              <div className="space-y-3">
+                <div className="flex items-end gap-2">
+                  <div className="h-8 w-8 rounded-full bg-white shadow-sm" />
+                  <div className="max-w-[72%] rounded-3xl rounded-bl-md bg-white px-4 py-3 text-sm font-medium shadow-sm">
+                    明日の予約、まだ空いてますか？
+                  </div>
                 </div>
-              </div>
-              <div className="flex justify-end">
-                <div className="max-w-[74%] rounded-3xl rounded-br-md bg-[#B9F5C8] px-4 py-3 text-sm font-bold text-gray-950 shadow-sm">
-                  空き枠を確認してご案内しますね。
+                <div className="flex justify-end">
+                  <div className="max-w-[74%] rounded-3xl rounded-br-md bg-[#B9F5C8] px-4 py-3 text-sm font-bold text-gray-950 shadow-sm">
+                    空き枠を確認してご案内しますね。
+                  </div>
                 </div>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {['未返信 3件', '予約見込み', '配信OK'].map((label) => (
-                  <span key={label} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-gray-600 shadow-sm">
-                    {label}
-                  </span>
-                ))}
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {['未返信 3件', '予約見込み', '配信OK'].map((label) => (
+                    <span key={label} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-gray-600 shadow-sm">
+                      {label}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
