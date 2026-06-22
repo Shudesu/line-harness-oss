@@ -5,26 +5,11 @@ import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
-
-type AutomationEventType = "friend_add" | "tag_change" | "score_threshold" | "cv_fire" | "message_received" | "calendar_booked"
-
-interface AutomationAction {
-  type: "add_tag" | "remove_tag" | "start_scenario" | "send_message" | "send_webhook" | "switch_rich_menu"
-  params: Record<string, unknown>
-}
-
-interface Automation {
-  id: string
-  name: string
-  description: string | null
-  eventType: AutomationEventType
-  conditions: Record<string, unknown>
-  actions: AutomationAction[]
-  isActive: boolean
-  priority: number
-  createdAt: string
-  updatedAt: string
-}
+import type {
+  Automation,
+  AutomationAction,
+  AutomationEventType,
+} from '@line-crm/shared'
 
 const eventTypeOptions: { value: AutomationEventType; label: string }[] = [
   { value: 'friend_add', label: '友だち追加' },

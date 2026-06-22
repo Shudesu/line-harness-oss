@@ -22,6 +22,7 @@ const buildTime = process.env.APP_BUILD_TIME || new Date().toISOString()
 
 const nextConfig: NextConfig = {
   output: 'export',
+  outputFileTracingRoot: repoRoot,
   transpilePackages: ['@line-crm/shared'],
   env: {
     APP_VERSION: pkg.version,
