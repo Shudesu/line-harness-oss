@@ -94,7 +94,7 @@ export default function LoginPage() {
             <p className="mb-4 inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold text-[#057A35] shadow-sm ring-1 ring-[#06C755]/15">
               LINEっぽく、すぐ使える管理画面
             </p>
-            <h1 className="text-4xl font-black leading-[1.08] tracking-tight text-gray-950 xl:text-5xl">
+            <h1 className="whitespace-nowrap text-[clamp(2.125rem,3.1vw,4.2rem)] font-black leading-[1.08] tracking-tight text-gray-950">
               {PRODUCT_TAGLINE}
             </h1>
             <p className="mt-5 max-w-md text-base font-medium leading-7 text-gray-700">
