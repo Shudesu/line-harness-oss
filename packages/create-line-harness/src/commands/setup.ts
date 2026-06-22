@@ -287,7 +287,7 @@ async function verifyAccount(
 }
 
 export async function runSetup(repoDir: string): Promise<void> {
-  p.intro(pc.bgCyan(pc.black(" LINE Harness セットアップ ")));
+  p.intro(pc.bgCyan(pc.black(" ラクらくLINE セットアップ ")));
 
   const state = loadState(repoDir);
 
@@ -625,7 +625,7 @@ async function runSetupInner(
       // the CLI working against older databases that resumed an old install.
       const insertSql = `
 INSERT INTO line_accounts (id, channel_id, name, channel_access_token, channel_secret, is_active, created_at, updated_at)
-VALUES (${q(id)}, ${q(state.lineChannelId!)}, ${q("LINE Harness")}, ${q(state.lineChannelAccessToken!)}, ${q(state.lineChannelSecret!)}, 1, ${q(jstNowStr)}, ${q(jstNowStr)})
+VALUES (${q(id)}, ${q(state.lineChannelId!)}, ${q("ラクらくLINE")}, ${q(state.lineChannelAccessToken!)}, ${q(state.lineChannelSecret!)}, 1, ${q(jstNowStr)}, ${q(jstNowStr)})
 ON CONFLICT(channel_id) DO UPDATE SET
   channel_access_token = excluded.channel_access_token,
   channel_secret = excluded.channel_secret,
@@ -830,5 +830,5 @@ ON CONFLICT(channel_id) DO UPDATE SET
   };
   writeFileSync(configPath, JSON.stringify(fullConfig, null, 2) + "\n");
 
-  p.outro(pc.green("LINE Harness を使い始めましょう 🎉"));
+  p.outro(pc.green("ラクらくLINE を使い始めましょう 🎉"));
 }

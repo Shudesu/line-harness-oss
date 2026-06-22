@@ -1,6 +1,6 @@
 🌐 **日本語** | [English](README.en.md) | [简体中文](README.zh-CN.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
-# LINE Harness
+# ラクらくLINE
 
 > ### **[LINE で無料体験する](https://shudesu.github.io/line-harness-oss/)** 👈
 
@@ -9,15 +9,15 @@ Cloudflare 無料枠で動く。サーバー代 **0 円**。Claude Code から�
 
 ### ▶️ [動画で見る (YouTube・約20分)](https://youtu.be/DiRuGaeq1sM)
 
-[![クリックで YouTube を再生 — LINE Harness 導入の全手順](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+[![クリックで YouTube を再生 — ラクらくLINE 導入の全手順](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
 
 **現バージョン**: v0.14.1 ・ MIT License ・ TypeScript / Cloudflare Workers + D1
 
 ---
 
-## なぜ LINE Harness？
+## なぜ ラクらくLINE？
 
-| | L社 | U社 | **LINE Harness** |
+| | L社 | U社 | **ラクらくLINE** |
 |---|---|---|---|
 | 月額 | 2万円〜 | 1万円〜 | **0円** |
 | ステップ配信 | ✅ | ✅ | ✅ |
@@ -155,4 +155,4 @@ Issue / PR 歓迎。OSS リポへの PR は `Shudesu/line-harness-oss` (この�
 
 ---
 
-> **LINE Harness** by [@Shudesu](https://github.com/Shudesu) — AI ネイティブ時代の OSS LINE CRM
+> **ラクらくLINE** by [@Shudesu](https://github.com/Shudesu) — AI ネイティブ時代の OSS LINE CRM

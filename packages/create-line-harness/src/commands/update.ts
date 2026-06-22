@@ -385,7 +385,7 @@ async function promptForMissingFields(
 }
 
 export async function runUpdate(repoDir: string): Promise<void> {
-  p.intro(pc.bgCyan(pc.black(" LINE Harness アップデート ")));
+  p.intro(pc.bgCyan(pc.black(" ラクらくLINE アップデート ")));
 
   const configPath = join(repoDir, ".line-harness-config.json");
   let state = loadState(repoDir);

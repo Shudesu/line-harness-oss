@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
+import { PRODUCT_INITIAL, PRODUCT_NAME } from '@/lib/branding'
 import { countryFlag } from '@/lib/country-flag'
 
 const appVersion = process.env.APP_VERSION || '0.0.0'
@@ -240,10 +241,10 @@ export default function Sidebar() {
       <div className="px-6 py-5 border-b border-gray-200">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm" style={{ backgroundColor: '#06C755' }}>
-            H
+            {PRODUCT_INITIAL}
           </div>
           <div>
-            <p className="text-sm font-bold text-gray-900 leading-tight">L Harness</p>
+            <p className="text-sm font-bold text-gray-900 leading-tight">{PRODUCT_NAME}</p>
             <p className="text-xs text-gray-400">管理画面</p>
           </div>
         </div>
@@ -315,7 +316,7 @@ export default function Sidebar() {
         )}
         <div className="px-6 py-4 space-y-3">
         <div className="space-y-0.5">
-          <p className="text-xs text-gray-400">L Harness v{appVersion}</p>
+          <p className="text-xs text-gray-400">{PRODUCT_NAME} v{appVersion}</p>
           <p className="text-[10px] text-gray-400 font-mono break-all">
             build {appCommitSha}{appBuildDate ? ` · ${appBuildDate}` : ''}
           </p>
@@ -368,8 +369,8 @@ export default function Sidebar() {
           </svg>
         </button>
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{ backgroundColor: '#06C755' }}>H</div>
-          <p className="text-sm font-bold text-gray-900">L Harness</p>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{ backgroundColor: '#06C755' }}>{PRODUCT_INITIAL}</div>
+          <p className="text-sm font-bold text-gray-900">{PRODUCT_NAME}</p>
         </div>
       </div>
 
