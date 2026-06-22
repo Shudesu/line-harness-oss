@@ -14,12 +14,12 @@ import type { UpdateEvent } from '@line-harness/update-engine'
  *
  * Fallback to polling
  * -------------------
- * EventSource cannot send custom headers, but the Worker SSE route currently
- * gates on `x-admin-api-key` (see Phase 6 KNOWN LIMITATION in update-client).
- * To keep the modal usable until Phase 9 fixes the auth, we wire `es.onerror`
- * to fall back to a 1500ms polling loop against `getUpdateStatus` which DOES
- * send the admin key. The visual difference is a small `(polling)` badge in
- * the header so operators know which transport is live.
+ * SSE now uses the same HttpOnly admin session cookie as the rest of the
+ * dashboard (`withCredentials: true`). We still wire `es.onerror` to fall back
+ * to a 1500ms polling loop against `getUpdateStatus` so transient network or
+ * browser EventSource issues do not leave the modal stuck. The visual
+ * difference is a small `(polling)` badge in the header so operators know
+ * which transport is live.
  *
  * Cleanup
  * -------

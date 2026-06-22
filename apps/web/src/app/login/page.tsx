@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
-  const [apiKey, setApiKey] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
@@ -20,13 +21,17 @@ export default function LoginPage() {
         setLoading(false)
         return
       }
-      // Exchange the API key for an HttpOnly session cookie. The key is never
-      // stored in localStorage (removes the XSS-exposed credential).
+      // Exchange admin credentials for an HttpOnly session cookie. API keys
+      // are for SDK/MCP/server-to-server access and should not be pasted into
+      // the human-facing dashboard.
       const res = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey }),
+        // Keep the login POST a CORS-simple request in local dev. The Worker
+        // still parses this JSON body, and avoiding an OPTIONS preflight works
+        // around Cloudflare/Vite dev's incomplete credentialed CORS response.
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ email, password }),
       })
 
       if (res.ok) {
@@ -46,7 +51,7 @@ export default function LoginPage() {
         }
         router.push('/')
       } else if (res.status === 401) {
-        setError('APIキーが正しくありません')
+        setError('メールアドレスまたはパスワードが正しくありません')
       } else {
         // Surface topology / configuration errors (e.g. cross-site cookie guard).
         let message = 'ログインに失敗しました'
@@ -78,14 +83,25 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin}>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
             <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="APIキーを入力"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="owner@example.com"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
               autoFocus
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">パスワード</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="パスワードを入力"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
 
@@ -95,7 +111,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading || !apiKey}
+            disabled={loading || !email || !password}
             className="w-full py-3 text-white font-medium rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
             style={{ backgroundColor: '#06C755' }}
           >

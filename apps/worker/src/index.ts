@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import { LineClient } from '@line-crm/line-sdk';
 import {
   getLineAccounts,
@@ -94,6 +93,9 @@ export type Env = {
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
     ADMIN_ALLOW_CROSS_SITE?: string; // 'true' opts into SameSite=None cross-site cookies
+    ADMIN_SESSION_SECRET?: string;  // Signs browser admin sessions; intentionally separate from API_KEY
+    ADMIN_EMAIL?: string;           // Optional bootstrap owner login
+    ADMIN_PASSWORD?: string;        // Optional bootstrap owner password
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
@@ -125,13 +127,35 @@ const app = new Hono<Env>();
 // same-origin requests and origins on the ADMIN_ORIGIN allowlist; everything
 // else gets no Access-Control-Allow-Origin header (browser blocks it). Bearer
 // SDK/MCP callers send no Origin header and are unaffected.
-app.use('*', cors({
-  origin: (origin, c) => resolveCorsOrigin(c.env, origin, c.req.url),
-  credentials: true,
-  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
-  maxAge: 600,
-}));
+//
+// Keep this explicit instead of relying only on hono/cors: the local
+// Cloudflare/Vite dev adapter has been observed to return preflight OPTIONS
+// without Access-Control-Allow-Credentials, which makes browser fetch(...,
+// credentials: 'include') fail before POST /api/auth/login reaches the app.
+app.use('*', async (c, next) => {
+  const allowOrigin = resolveCorsOrigin(c.env, c.req.header('Origin'), c.req.url);
+  if (allowOrigin) {
+    c.header('Access-Control-Allow-Origin', allowOrigin);
+    c.header('Access-Control-Allow-Credentials', 'true');
+    c.header('Vary', 'Origin', { append: true });
+  }
+
+  if (c.req.method === 'OPTIONS') {
+    c.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    c.header(
+      'Access-Control-Allow-Headers',
+      c.req.header('Access-Control-Request-Headers') ||
+        'Content-Type,Authorization,X-CSRF-Token',
+    );
+    c.header('Access-Control-Max-Age', '600');
+    if (c.req.header('Access-Control-Request-Headers')) {
+      c.header('Vary', 'Access-Control-Request-Headers', { append: true });
+    }
+    return c.body(null, 204);
+  }
+
+  await next();
+});
 
 // Rate limiting — runs before auth to block abuse early
 app.use('*', rateLimitMiddleware);
@@ -190,10 +214,11 @@ app.route('/', richMenuGroups);
 // Phase 5 (upgrade flow) — public build metadata endpoint. Mounted under
 // /admin/ but intentionally unauthenticated: the dashboard fetches /admin/version
 // before login to render the upgrade banner, and the returned hashes are
-// derivable from the deployed bundle. /admin/update/* (Task 18) layers
-// ADMIN_API_KEY middleware on subpaths.
+// derivable from the deployed bundle. /admin/update/* (Task 18) owns its
+// cookie-session auth gate on subpaths, with legacy API-key automation support.
 app.route('/admin', adminVersion);
-// Phase 5 Task 18 — self-update endpoints guarded by x-admin-api-key.
+// Phase 5 Task 18 — self-update endpoints guarded by admin session cookies
+// (or legacy x-admin-api-key for server-side automation).
 // authMiddleware skips non-/api/ paths so this router owns its own auth gate.
 app.route('/admin/update', adminUpdate);
 

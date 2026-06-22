@@ -11,6 +11,7 @@ vi.mock('@line-crm/db', () => ({
     if (token !== 'staff-key') return null;
     return { id: 'staff-1', name: 'Staff One', role: 'admin' };
   }),
+  getAdminUserByEmail: vi.fn(async () => null),
 }));
 
 const PAGES = 'https://line-crm-admin.pages.dev';
@@ -29,6 +30,9 @@ function env(overrides: Partial<Env['Bindings']> = {}): Env['Bindings'] {
     LINE_LOGIN_CHANNEL_ID: 'login-channel',
     LINE_LOGIN_CHANNEL_SECRET: 'login-secret',
     WORKER_URL: WORKERS,
+    ADMIN_EMAIL: 'owner@example.test',
+    ADMIN_PASSWORD: 'owner-password',
+    ADMIN_SESSION_SECRET: 'test-session-secret',
     ...overrides,
   };
 }
@@ -62,21 +66,41 @@ function cookieFor(res: Response, name: string): string | undefined {
   return setCookies(res).find((c) => c.startsWith(`${name}=`));
 }
 
+function cookieHeaderFor(res: Response): string {
+  return setCookies(res).map((cookie) => cookie.split(';')[0]).join('; ');
+}
+
+async function loginSession(bindings = crossSiteEnv()) {
+  const res = await app().request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email: 'owner@example.test', password: 'owner-password' }),
+    headers: { 'Content-Type': 'application/json' },
+  }, bindings);
+  expect(res.status).toBe(200);
+  const body = await res.json() as { csrfToken: string };
+  return {
+    cookie: cookieHeaderFor(res),
+    csrfToken: body.csrfToken,
+  };
+}
+
 describe('admin login cookie attributes', () => {
   test('cross-site login sets HttpOnly Secure SameSite=None session + readable CSRF cookie', async () => {
     const res = await app().request('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ apiKey: 'staff-key' }),
+      body: JSON.stringify({ email: 'owner@example.test', password: 'owner-password' }),
       headers: { 'Content-Type': 'application/json' },
     }, crossSiteEnv());
 
     expect(res.status).toBe(200);
     const body = await res.json() as { success: boolean; data: { id: string }; csrfToken: string };
-    expect(body.data).toMatchObject({ id: 'staff-1', role: 'admin' });
+    expect(body.data).toMatchObject({ id: 'env-owner', role: 'owner' });
     expect(body.csrfToken).toBeTruthy();
 
     const session = cookieFor(res, 'lh_admin_session') ?? '';
-    expect(session).toContain('lh_admin_session=staff-key');
+    expect(session).toContain('lh_admin_session=lh_session_v1.');
+    expect(session).not.toContain('owner-password');
+    expect(session).not.toContain('env-key');
     expect(session).toContain('HttpOnly');
     expect(session).toContain('Secure');
     expect(session).toContain('SameSite=None');
@@ -91,7 +115,7 @@ describe('admin login cookie attributes', () => {
   test('same-site (custom domain) login uses SameSite=Lax', async () => {
     const res = await app().request('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ apiKey: 'staff-key' }),
+      body: JSON.stringify({ email: 'owner@example.test', password: 'owner-password' }),
       headers: { 'Content-Type': 'application/json' },
     }, env({ ADMIN_ORIGIN: 'https://admin.example.com', WORKER_URL: 'https://api.example.com' }));
 
@@ -114,7 +138,7 @@ describe('topology guard', () => {
   test('cross-site WITHOUT opt-in refuses login with an actionable error', async () => {
     const res = await app().request('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ apiKey: 'staff-key' }),
+      body: JSON.stringify({ email: 'owner@example.test', password: 'owner-password' }),
       headers: { 'Content-Type': 'application/json' },
     }, env({ ADMIN_ORIGIN: PAGES })); // no ADMIN_ALLOW_CROSS_SITE
 
@@ -128,12 +152,13 @@ describe('topology guard', () => {
 
 describe('protected API access', () => {
   test('accepts the admin session cookie (GET, no CSRF needed)', async () => {
+    const { cookie } = await loginSession();
     const res = await app().request('/api/protected', {
-      headers: { Cookie: 'lh_admin_session=staff-key' },
+      headers: { Cookie: cookie },
     }, crossSiteEnv());
     expect(res.status).toBe(200);
     const body = await res.json() as { data: { id: string } };
-    expect(body.data).toMatchObject({ id: 'staff-1', role: 'admin' });
+    expect(body.data).toMatchObject({ id: 'env-owner', role: 'owner' });
   });
 
   test('still accepts Bearer tokens for SDK / MCP callers', async () => {
@@ -161,19 +186,21 @@ describe('protected API access', () => {
 
 describe('CSRF protection', () => {
   test('cookie-authenticated POST without an X-CSRF-Token is rejected', async () => {
+    const { cookie } = await loginSession();
     const res = await app().request('/api/protected', {
       method: 'POST',
-      headers: { Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc' },
+      headers: { Cookie: cookie },
     }, crossSiteEnv());
     expect(res.status).toBe(403);
     expect((await res.json() as { error: string }).error).toMatch(/csrf/i);
   });
 
   test('cookie-authenticated POST with a mismatched token is rejected', async () => {
+    const { cookie } = await loginSession();
     const res = await app().request('/api/protected', {
       method: 'POST',
       headers: {
-        Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc',
+        Cookie: cookie,
         'X-CSRF-Token': 'token-WRONG',
       },
     }, crossSiteEnv());
@@ -181,11 +208,12 @@ describe('CSRF protection', () => {
   });
 
   test('cookie-authenticated POST with a matching double-submit token succeeds', async () => {
+    const { cookie, csrfToken } = await loginSession();
     const res = await app().request('/api/protected', {
       method: 'POST',
       headers: {
-        Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc',
-        'X-CSRF-Token': 'token-abc',
+        Cookie: cookie,
+        'X-CSRF-Token': csrfToken,
       },
     }, crossSiteEnv());
     expect(res.status).toBe(200);
@@ -213,18 +241,21 @@ describe('logout', () => {
 
 describe('session endpoint', () => {
   test('returns the staff identity and a CSRF token', async () => {
+    const { cookie, csrfToken } = await loginSession();
     const res = await app().request('/api/auth/session', {
-      headers: { Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc' },
+      headers: { Cookie: cookie },
     }, crossSiteEnv());
     expect(res.status).toBe(200);
     const body = await res.json() as { data: { id: string }; csrfToken: string };
-    expect(body.data).toMatchObject({ id: 'staff-1' });
-    expect(body.csrfToken).toBe('token-abc');
+    expect(body.data).toMatchObject({ id: 'env-owner' });
+    expect(body.csrfToken).toBe(csrfToken);
   });
 
   test('mints and sets a CSRF cookie when none is present', async () => {
+    const { cookie } = await loginSession();
+    const sessionOnly = cookie.split('; ').find((part) => part.startsWith('lh_admin_session=')) ?? '';
     const res = await app().request('/api/auth/session', {
-      headers: { Cookie: 'lh_admin_session=staff-key' },
+      headers: { Cookie: sessionOnly },
     }, crossSiteEnv());
     expect(res.status).toBe(200);
     const body = await res.json() as { csrfToken: string };
@@ -235,16 +266,18 @@ describe('session endpoint', () => {
 
 describe('CORS allowed / blocked origins', () => {
   test('allowlisted admin origin is echoed back', async () => {
+    const { cookie } = await loginSession();
     const res = await app().request('/api/protected', {
-      headers: { Origin: PAGES, Cookie: 'lh_admin_session=staff-key' },
+      headers: { Origin: PAGES, Cookie: cookie },
     }, crossSiteEnv());
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(PAGES);
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
   });
 
   test('unknown origin gets no Access-Control-Allow-Origin header', async () => {
+    const { cookie } = await loginSession();
     const res = await app().request('/api/protected', {
-      headers: { Origin: 'https://evil.example.com', Cookie: 'lh_admin_session=staff-key' },
+      headers: { Origin: 'https://evil.example.com', Cookie: cookie },
     }, crossSiteEnv());
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });

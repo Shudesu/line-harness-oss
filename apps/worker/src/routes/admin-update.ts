@@ -1,13 +1,15 @@
 /**
  * Self-update HTTP API — Phase 5 Task 18.
  *
- * Mounted at `/admin/update` from `index.ts`. Every endpoint is guarded by an
- * `x-admin-api-key` header check that must equal `c.env.ADMIN_API_KEY`. The
- * sibling `/admin/version` route is intentionally UN-authenticated (the
- * upgrade banner reads it pre-login) — that route lives in `admin-version.ts`
- * and is mounted at `/admin` directly. The per-router middleware here only
- * sees requests under `/admin/update/*`, so adding it does not leak auth to
- * `/admin/version`.
+ * Mounted at `/admin/update` from `index.ts`. Every endpoint is guarded by the
+ * browser admin session cookie issued by `/api/auth/login`; mutating requests
+ * also require the double-submit CSRF header. A legacy `x-admin-api-key` header
+ * remains accepted for server-side automation only, but the dashboard does not
+ * need (or expose) an API key. The sibling `/admin/version` route is
+ * intentionally UN-authenticated (the upgrade banner reads it pre-login) —
+ * that route lives in `admin-version.ts` and is mounted at `/admin` directly.
+ * The per-router middleware here only sees requests under `/admin/update/*`,
+ * so adding it does not leak auth to `/admin/version`.
  *
  * High-level flow for `POST /start`:
  *   1. Read the release manifest.
@@ -50,6 +52,12 @@ import {
   ADMIN_HASH,
   LIFF_HASH,
 } from '../_version.js';
+import {
+  CSRF_HEADER,
+  adminSessionTokenFromCookie,
+  authenticateAdminSessionToken,
+  csrfTokenFromCookie,
+} from '../middleware/auth.js';
 
 /**
  * Env bindings consumed by this router. Kept local because only this file
@@ -59,7 +67,8 @@ import {
 type UpdateEnv = {
   Bindings: {
     DB: D1Database;
-    ADMIN_API_KEY: string;
+    ADMIN_API_KEY?: string;
+    ADMIN_SESSION_SECRET?: string;
     CF_API_TOKEN: string;
     CF_ACCOUNT_ID: string;
     WORKER_NAME: string;
@@ -74,6 +83,7 @@ type UpdateEnv = {
 };
 
 const app = new Hono<UpdateEnv>();
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * Adapter from Cloudflare's `D1Database` to the engine's local `D1Like`
@@ -103,12 +113,36 @@ function adaptD1(db: D1Database): D1Like {
   };
 }
 
-/** Auth gate — single source of truth for every endpoint in this router. */
+/**
+ * Auth gate — single source of truth for every endpoint in this router.
+ *
+ * Browser/dashboard path: signed `lh_admin_session` cookie + CSRF on writes.
+ * Legacy automation path: `x-admin-api-key` stays accepted when configured, so
+ * old server-side scripts are not broken. Do not use that path in the SPA.
+ */
 app.use('/*', async (c, next) => {
   const key = c.req.header('x-admin-api-key');
-  if (!key || key !== c.env.ADMIN_API_KEY) {
+  if (key && c.env.ADMIN_API_KEY && key === c.env.ADMIN_API_KEY) {
+    await next();
+    return;
+  }
+
+  const staff = await authenticateAdminSessionToken(c.env, adminSessionTokenFromCookie(c));
+  if (!staff) {
     return c.text('unauthorized', 401);
   }
+  if (staff.role === 'staff') {
+    return c.text('forbidden', 403);
+  }
+
+  if (!SAFE_METHODS.has(c.req.method.toUpperCase())) {
+    const header = c.req.header(CSRF_HEADER);
+    const expected = csrfTokenFromCookie(c);
+    if (!header || !expected || header !== expected) {
+      return c.text('csrf token mismatch', 403);
+    }
+  }
+
   await next();
 });
 

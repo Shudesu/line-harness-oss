@@ -28,6 +28,7 @@ export * from './auto-replies';
 export * from './traffic-pools';
 export * from './message-templates';
 export * from './rich-menus';
+export * from './admin-users';
 
 /**
  * Thin wrapper around D1Database.

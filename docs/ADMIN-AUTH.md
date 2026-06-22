@@ -1,16 +1,24 @@
 # Admin Authentication (cookie session + CSRF)
 
-The admin dashboard authenticates against the Worker API with an **HttpOnly
-session cookie** instead of an API key stored in `localStorage`. This removes
-the XSS-exposed credential (OSS security issue #102) while keeping SDK/MCP
-Bearer-token access unchanged.
+The admin dashboard authenticates against the Worker API with
+**email/password → signed HttpOnly session cookie**. Humans should not paste an
+API key into the dashboard. API keys remain for SDK/MCP/server-to-server
+Bearer-token access only.
+
+## Login method compatibility contract
+
+Do **not** change the admin dashboard login method back to API-key entry.
+The human-facing admin UI must continue to use **email/password + HttpOnly
+cookie session** authentication. API keys are intentionally reserved for
+machine-to-machine SDK/MCP/Bearer-token integrations, not browser login.
 
 ## How it works
 
-1. **Login** — `POST /api/auth/login { apiKey }`. The Worker validates the key
-   (staff table, `API_KEY`, or `LEGACY_API_KEY`) and sets two cookies:
-   - `lh_admin_session` — the credential. **HttpOnly**, `Secure`, `Path=/`,
-     `Max-Age=604800`. JavaScript can never read it.
+1. **Login** — `POST /api/auth/login { email, password }`. The Worker
+   validates the bootstrap `ADMIN_EMAIL` / `ADMIN_PASSWORD` pair or an
+   `admin_users.password_hash` record, then sets two cookies:
+   - `lh_admin_session` — a signed opaque admin session token. **HttpOnly**,
+     `Secure`, `Path=/`, `Max-Age=604800`. JavaScript can never read it.
    - `lh_csrf` — a random CSRF token. Readable, `Secure`. Also returned in the
      response body.
 2. **Authenticated requests** — the browser sends `lh_admin_session`
@@ -38,14 +46,20 @@ SDK and MCP callers continue to send `Authorization: Bearer <key>`. They are not
 cookie-driven, so CSRF enforcement does not apply to them, and CORS does not
 affect non-browser (no `Origin`) callers.
 
+The legacy `POST /api/auth/login { apiKey }` path is kept only for backwards
+compatibility with old callers. The admin UI must use `{ email, password }`.
+
 ## Topology & configuration
 
 Cookies only reach the API if `SameSite` matches the topology. The Worker reads
-three environment variables (see
+these environment variables (see
 `apps/worker/src/middleware/admin-auth-config.ts`):
 
 | Variable | Purpose |
 |----------|---------|
+| `ADMIN_EMAIL` | Bootstrap owner email for dashboard login. |
+| `ADMIN_PASSWORD` | Bootstrap owner password for dashboard login. Prefer a Worker secret. |
+| `ADMIN_SESSION_SECRET` | Required long random secret used to sign browser admin sessions. Keep it separate from `API_KEY`. |
 | `ADMIN_ORIGIN` | Comma-separated allowlist of admin origins for credentialed CORS. No trailing slash. |
 | `ADMIN_ALLOW_CROSS_SITE` | `true` → issue `SameSite=None; Secure` cookies (required when admin and API are cross-site). |
 | `ADMIN_COOKIE_SAMESITE` | Optional explicit override: `Strict` \| `Lax` \| `None`. |

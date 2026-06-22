@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!
-const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY!
 
 interface Row {
   id: string
@@ -18,7 +17,7 @@ interface Row {
 
 async function fetchHistory(): Promise<Row[]> {
   const r = await fetch(`${API_URL}/admin/update/history`, {
-    headers: { 'x-admin-api-key': ADMIN_KEY },
+    credentials: 'include',
   })
   if (!r.ok) throw new Error(`history fetch ${r.status}`)
   const j = (await r.json()) as { history: Row[] }

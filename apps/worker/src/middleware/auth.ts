@@ -9,6 +9,7 @@ export const CSRF_HEADER = 'x-csrf-token';
 
 // 7 days, matching the previous localStorage session longevity.
 const SESSION_MAX_AGE = 604800;
+const SESSION_TOKEN_PREFIX = 'lh_session_v1.';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -46,8 +47,12 @@ function cookieToken(c: Context<Env>): string | null {
   return parseCookieHeader(c.req.header('Cookie'))[ADMIN_AUTH_COOKIE] || null;
 }
 
-export function csrfTokenFromCookie(c: Context<Env>): string | null {
+export function csrfTokenFromCookie(c: Context): string | null {
   return parseCookieHeader(c.req.header('Cookie'))[CSRF_COOKIE] || null;
+}
+
+export function adminSessionTokenFromCookie(c: Context): string | null {
+  return parseCookieHeader(c.req.header('Cookie'))[ADMIN_AUTH_COOKIE] || null;
 }
 
 function buildCookie(
@@ -63,7 +68,7 @@ function buildCookie(
   return parts.join('; ');
 }
 
-/** HttpOnly session cookie carrying the API token. */
+/** HttpOnly session cookie carrying an opaque signed admin session token. */
 export function adminSessionCookie(token: string, sameSite: AdminSameSite): string {
   return buildCookie(ADMIN_AUTH_COOKIE, token, sameSite, SESSION_MAX_AGE, true);
 }
@@ -90,16 +95,125 @@ export type AuthenticatedStaff = {
   role: 'owner' | 'admin' | 'staff';
 };
 
+type SessionEnv = {
+  ADMIN_SESSION_SECRET?: string;
+};
+
+type AdminSessionPayload = AuthenticatedStaff & {
+  v: 1;
+  exp: number;
+};
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function base64UrlToString(value: string): string {
+  return new TextDecoder().decode(base64UrlToBytes(value));
+}
+
+function stringToBase64Url(value: string): string {
+  return bytesToBase64Url(new TextEncoder().encode(value));
+}
+
+function sessionSecret(env: SessionEnv): string | null {
+  return env.ADMIN_SESSION_SECRET || null;
+}
+
+async function hmacSha256(secret: string, payload: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return bytesToBase64Url(new Uint8Array(sig));
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const left = new TextEncoder().encode(a);
+  const right = new TextEncoder().encode(b);
+  let diff = left.length ^ right.length;
+  const len = Math.max(left.length, right.length);
+  for (let i = 0; i < len; i += 1) {
+    diff |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  }
+  return diff === 0;
+}
+
+export async function createAdminSessionToken(
+  env: SessionEnv,
+  staff: AuthenticatedStaff,
+): Promise<string> {
+  const secret = sessionSecret(env);
+  if (!secret) {
+    throw new Error('Admin session secret is not configured');
+  }
+  const payload: AdminSessionPayload = {
+    ...staff,
+    v: 1,
+    exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE,
+  };
+  const encodedPayload = stringToBase64Url(JSON.stringify(payload));
+  const signature = await hmacSha256(secret, encodedPayload);
+  return `${SESSION_TOKEN_PREFIX}${encodedPayload}.${signature}`;
+}
+
+export async function authenticateAdminSessionToken(
+  env: SessionEnv,
+  token: string | null,
+): Promise<AuthenticatedStaff | null> {
+  if (!token?.startsWith(SESSION_TOKEN_PREFIX)) return null;
+  const secret = sessionSecret(env);
+  if (!secret) return null;
+  const rest = token.slice(SESSION_TOKEN_PREFIX.length);
+  const dot = rest.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const encodedPayload = rest.slice(0, dot);
+  const signature = rest.slice(dot + 1);
+  const expected = await hmacSha256(secret, encodedPayload);
+  if (!timingSafeEqual(signature, expected)) return null;
+
+  let payload: AdminSessionPayload;
+  try {
+    payload = JSON.parse(base64UrlToString(encodedPayload)) as AdminSessionPayload;
+  } catch {
+    return null;
+  }
+  if (payload.v !== 1 || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  if (!['owner', 'admin', 'staff'].includes(payload.role)) return null;
+  return {
+    id: payload.id,
+    name: payload.name,
+    role: payload.role,
+  };
+}
+
 /**
- * Resolve a token (from a Bearer header or the session cookie) to a staff
- * identity. Shared by the auth middleware and the /api/auth/login endpoint so
- * cookie and Bearer auth accept exactly the same credentials.
+ * Resolve a token (from a Bearer header, legacy login request, or the signed
+ * session cookie) to a staff identity.
  */
 export async function authenticateApiToken(
   c: Context<Env>,
   token: string | null,
 ): Promise<AuthenticatedStaff | null> {
   if (!token) return null;
+
+  const sessionStaff = await authenticateAdminSessionToken(c.env, token);
+  if (sessionStaff) return sessionStaff;
 
   const staff = await getStaffByApiKey(c.env.DB, token);
   if (staff) {
