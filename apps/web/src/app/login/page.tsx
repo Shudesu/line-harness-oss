@@ -73,30 +73,30 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#f3fbf6] text-gray-900 lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
-      <section className="relative hidden overflow-hidden bg-[#06C755] px-12 py-10 text-white lg:flex lg:flex-col lg:justify-between">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(255,255,255,0.30),transparent_28%),radial-gradient(circle_at_86%_12%,rgba(255,255,255,0.18),transparent_24%),linear-gradient(145deg,#06C755_0%,#06C755_48%,#02B84C_100%)]" />
-        <div className="absolute -bottom-24 -left-16 h-72 w-72 rounded-full bg-white/15 blur-3xl" />
-        <div className="absolute right-8 top-28 h-32 w-32 rounded-[2rem] border border-white/15 rotate-12" />
-        <div className="absolute bottom-20 right-20 h-24 w-24 rounded-full border border-white/20" />
+      <section className="relative hidden overflow-hidden bg-[#E9FBEF] px-12 py-10 text-gray-950 lg:flex lg:flex-col lg:justify-between">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(6,199,85,0.22),transparent_30%),radial-gradient(circle_at_86%_12%,rgba(6,199,85,0.16),transparent_24%),linear-gradient(145deg,#F7FFF9_0%,#E9FBEF_48%,#D8F7E4_100%)]" />
+        <div className="absolute -bottom-24 -left-16 h-72 w-72 rounded-full bg-[#06C755]/20 blur-3xl" />
+        <div className="absolute right-8 top-28 h-32 w-32 rotate-12 rounded-[2rem] border border-[#06C755]/18" />
+        <div className="absolute bottom-20 right-20 h-24 w-24 rounded-full border border-[#06C755]/20" />
 
         <div className="relative flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-lg font-black text-[#06C755] shadow-lg shadow-green-900/15">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#06C755] text-lg font-black text-white shadow-lg shadow-green-900/15">
             {PRODUCT_INITIAL}
           </div>
           <div>
             <p className="text-sm font-bold tracking-wide">{PRODUCT_NAME}</p>
-            <p className="text-xs text-white/75">LINE公式アカウント運用</p>
+            <p className="text-xs font-medium text-[#057A35]/75">LINE公式アカウント運用</p>
           </div>
         </div>
 
         <div className="relative max-w-xl">
-          <p className="mb-4 inline-flex rounded-full bg-white/18 px-3 py-1 text-xs font-bold text-white ring-1 ring-white/25">
+          <p className="mb-4 inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold text-[#057A35] shadow-sm ring-1 ring-[#06C755]/15">
             LINEっぽく、すぐ使える管理画面
           </p>
-          <h1 className="text-5xl font-black leading-[1.04] tracking-tight text-white drop-shadow-sm xl:text-6xl">
+          <h1 className="text-5xl font-black leading-[1.04] tracking-tight text-gray-950 xl:text-6xl">
             {PRODUCT_TAGLINE}
           </h1>
-          <p className="mt-6 max-w-md text-base leading-7 text-white/82">
+          <p className="mt-6 max-w-md text-base font-medium leading-7 text-gray-700">
             友だちとの会話、配信、未返信チェックをひとつの流れで確認できます。
           </p>
         </div>
@@ -126,7 +126,7 @@ export default function LoginPage() {
                 </div>
               </div>
               <div className="flex justify-end">
-                <div className="max-w-[74%] rounded-3xl rounded-br-md bg-[#06C755] px-4 py-3 text-sm font-bold text-white shadow-sm">
+                <div className="max-w-[74%] rounded-3xl rounded-br-md bg-[#B9F5C8] px-4 py-3 text-sm font-bold text-gray-950 shadow-sm">
                   空き枠を確認してご案内しますね。
                 </div>
               </div>
