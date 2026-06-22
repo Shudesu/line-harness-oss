@@ -117,10 +117,11 @@ function AccountSwitcher() {
   const displayName = selectedAccount?.displayName || selectedAccount?.name || ''
 
   return (
-    <div ref={ref} className="px-3 py-3 border-b border-gray-200">
+    <div ref={ref} className="relative border-b border-gray-100 px-3 py-3">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+        className="flex w-full items-center gap-2.5 rounded-2xl bg-white/70 px-2.5 py-2 ring-1 ring-gray-200/70 transition hover:bg-white hover:ring-green-200"
+        aria-expanded={open}
       >
         {selectedAccount && <AccountAvatar account={selectedAccount} size={28} />}
         <div className="flex-1 text-left min-w-0">
@@ -134,7 +135,7 @@ function AccountSwitcher() {
           </p>
         </div>
         <svg
-          className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -144,7 +145,7 @@ function AccountSwitcher() {
       </button>
 
       {open && (
-        <div className="mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute left-3 right-3 top-[62px] z-30 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl shadow-gray-900/10">
           {accounts.map((account) => {
             const isSelected = account.id === selectedAccount?.id
             const name = account.displayName || account.name
@@ -238,14 +239,14 @@ export default function Sidebar() {
   const sidebarContent = (
     <>
       {/* ロゴ */}
-      <div className="px-6 py-5 border-b border-gray-200">
+      <div className="border-b border-gray-100 px-5 py-5">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm" style={{ backgroundColor: '#06C755' }}>
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl text-sm font-black text-white shadow-sm shadow-green-600/20" style={{ backgroundColor: '#06C755' }}>
             {PRODUCT_INITIAL}
           </div>
           <div>
-            <p className="text-sm font-bold text-gray-900 leading-tight">{PRODUCT_NAME}</p>
-            <p className="text-xs text-gray-400">管理画面</p>
+            <p className="text-sm font-black leading-tight tracking-tight text-gray-950">{PRODUCT_NAME}</p>
+            <p className="text-xs font-medium text-gray-400">管理コンソール</p>
           </div>
         </div>
       </div>
@@ -273,15 +274,20 @@ export default function Sidebar() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  aria-current={active ? 'page' : undefined}
+                  className={`relative flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-all ${
                     active
-                      ? 'text-white'
+                      ? isDanger
+                        ? 'bg-red-50 text-red-600 ring-1 ring-red-100'
+                        : 'bg-[#E9FBEF] text-[#057A35] ring-1 ring-[#06C755]/15'
                       : isDanger
                         ? 'text-red-500 hover:bg-red-50'
-                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                        : 'text-gray-600 hover:bg-white hover:text-gray-950 hover:shadow-sm hover:ring-1 hover:ring-gray-100'
                   }`}
-                  style={active ? { backgroundColor: isDanger ? '#EF4444' : '#06C755' } : {}}
                 >
+                  {active && !isDanger && (
+                    <span className="absolute left-1 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-[#06C755]" />
+                  )}
                   <NavIcon d={item.icon} />
                   <span className="flex-1">{item.label}</span>
                   {item.href === '/notifications' && unansweredCount > 0 && (
@@ -314,7 +320,7 @@ export default function Sidebar() {
             </span>
           </div>
         )}
-        <div className="px-6 py-4 space-y-3">
+        <div className="space-y-3 px-5 py-4">
         <div className="space-y-0.5">
           <p className="text-xs text-gray-400">{PRODUCT_NAME} v{appVersion}</p>
           <p className="text-[10px] text-gray-400 font-mono break-all">
@@ -340,7 +346,7 @@ export default function Sidebar() {
             localStorage.removeItem('lh_staff_role')
             window.location.href = '/login'
           }}
-          className="flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 transition-colors"
+          className="flex items-center gap-2 rounded-xl px-2 py-2 text-xs font-medium text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -355,10 +361,10 @@ export default function Sidebar() {
   return (
     <>
       {/* モバイル: ハンバーガーヘッダー */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+      <div className="fixed left-0 right-0 top-0 z-50 flex items-center gap-3 border-b border-gray-200/70 bg-white/90 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-2xl transition-colors hover:bg-gray-100"
           aria-label="メニュー"
         >
           <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -369,18 +375,18 @@ export default function Sidebar() {
           </svg>
         </button>
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{ backgroundColor: '#06C755' }}>{PRODUCT_INITIAL}</div>
+          <div className="flex h-8 w-8 items-center justify-center rounded-2xl text-xs font-black text-white" style={{ backgroundColor: '#06C755' }}>{PRODUCT_INITIAL}</div>
           <p className="text-sm font-bold text-gray-900">{PRODUCT_NAME}</p>
         </div>
       </div>
 
       {/* モバイル: オーバーレイ */}
-      {isOpen && <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsOpen(false)} />}
+      {isOpen && <div className="fixed inset-0 z-40 bg-gray-950/45 backdrop-blur-[2px] lg:hidden" onClick={() => setIsOpen(false)} />}
 
       {/* モバイル: スライドインサイドバー */}
-      <aside className={`lg:hidden fixed top-0 left-0 z-50 w-72 bg-white flex flex-col h-screen transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed left-0 top-0 z-50 flex h-screen w-72 transform flex-col bg-[#f8faf8] shadow-2xl transition-transform duration-300 ease-in-out lg:hidden ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="absolute top-4 right-4">
-          <button onClick={() => setIsOpen(false)} className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100" aria-label="閉じる">
+          <button onClick={() => setIsOpen(false)} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-2xl hover:bg-gray-100" aria-label="閉じる">
             <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -390,7 +396,7 @@ export default function Sidebar() {
       </aside>
 
       {/* デスクトップ: 常時表示 */}
-      <aside className="hidden lg:flex w-64 bg-white border-r border-gray-200 flex-col h-screen sticky top-0">
+      <aside className="sticky top-0 hidden h-screen w-[17rem] flex-col border-r border-gray-200/80 bg-[#f8faf8] lg:flex">
         {sidebarContent}
       </aside>
     </>

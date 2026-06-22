@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { PRODUCT_INITIAL, PRODUCT_NAME } from '@/lib/branding'
+import { PRODUCT_INITIAL, PRODUCT_NAME, PRODUCT_TAGLINE } from '@/lib/branding'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -72,70 +72,121 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#06C755' }}>
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
-        <div className="text-center mb-6">
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg mx-auto mb-3" style={{ backgroundColor: '#06C755' }}>
+    <div className="min-h-screen bg-[#f3fbf6] text-gray-900 lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
+      <section className="relative hidden overflow-hidden bg-[#06170d] px-12 py-10 text-white lg:flex lg:flex-col lg:justify-between">
+        <div className="absolute -left-24 top-16 h-72 w-72 rounded-full bg-[#06C755]/25 blur-3xl" />
+        <div className="absolute bottom-0 right-0 h-[420px] w-[420px] translate-x-1/4 translate-y-1/4 rounded-full bg-emerald-300/10 blur-3xl" />
+
+        <div className="relative flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#06C755] text-lg font-black shadow-lg shadow-green-950/30">
             {PRODUCT_INITIAL}
           </div>
-          <h1 className="text-xl font-bold text-gray-900">{PRODUCT_NAME}</h1>
-          <p className="text-sm text-gray-500 mt-1">管理画面にログイン</p>
+          <div>
+            <p className="text-sm font-bold tracking-wide">{PRODUCT_NAME}</p>
+            <p className="text-xs text-emerald-100/70">管理コンソール</p>
+          </div>
         </div>
 
-        <form onSubmit={handleLogin}>
-          <div className="mb-4">
-            <label htmlFor="admin-email" className="block text-sm font-medium text-gray-700 mb-1">
-              メールアドレス
-            </label>
-            <input
-              id="admin-email"
-              name="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="owner@example.com"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              autoComplete="username"
-              aria-invalid={Boolean(error)}
-              aria-describedby={error ? 'login-error' : undefined}
-              autoFocus
-              required
-            />
+        <div className="relative max-w-xl">
+          <p className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-emerald-100">
+            LINE公式アカウント運用をひとつに
+          </p>
+          <h1 className="text-5xl font-black leading-[1.05] tracking-tight xl:text-6xl">
+            {PRODUCT_TAGLINE}
+          </h1>
+          <p className="mt-6 max-w-md text-base leading-7 text-emerald-50/75">
+            配信、チャット、フォーム、分析を同じ作業台で確認。次に触るべき場所がすぐ分かる管理画面です。
+          </p>
+        </div>
+
+        <div className="relative grid max-w-2xl grid-cols-3 gap-px overflow-hidden rounded-3xl border border-white/10 bg-white/10 text-sm">
+          {['友だち管理', 'シナリオ配信', '未返信確認'].map((label) => (
+            <div key={label} className="bg-white/[0.04] px-4 py-4 text-emerald-50/85">
+              <span className="block text-xs text-emerald-100/50">Ready</span>
+              <span className="mt-1 block font-semibold">{label}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <main className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
+        <div className="w-full max-w-[430px]">
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#06C755] text-lg font-black text-white">
+              {PRODUCT_INITIAL}
+            </div>
+            <div>
+              <p className="font-bold text-gray-950">{PRODUCT_NAME}</p>
+              <p className="text-xs text-gray-500">{PRODUCT_TAGLINE}</p>
+            </div>
           </div>
 
-          <div className="mb-4">
-            <label htmlFor="admin-password" className="block text-sm font-medium text-gray-700 mb-1">
-              パスワード
-            </label>
-            <input
-              id="admin-password"
-              name="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="パスワードを入力"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              autoComplete="current-password"
-              aria-invalid={Boolean(error)}
-              aria-describedby={error ? 'login-error' : undefined}
-              required
-            />
+          <div className="rounded-[28px] bg-white p-7 shadow-[0_24px_80px_rgba(15,23,42,0.12)] ring-1 ring-gray-950/5 sm:p-8">
+            <div className="mb-7">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#06C755]">Admin login</p>
+              <h2 className="mt-3 text-2xl font-bold tracking-tight text-gray-950">管理画面にログイン</h2>
+              <p className="mt-2 text-sm leading-6 text-gray-500">
+                メールアドレスとパスワードで安全にログインします。
+              </p>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-5">
+              <div>
+                <label htmlFor="admin-email" className="mb-2 block text-sm font-semibold text-gray-700">
+                  メールアドレス
+                </label>
+                <input
+                  id="admin-email"
+                  name="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="owner@example.com"
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50/80 px-4 py-3 text-sm transition focus:border-[#06C755] focus:bg-white focus:outline-none focus:ring-4 focus:ring-[#06C755]/10"
+                  autoComplete="username"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'login-error' : undefined}
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="admin-password" className="mb-2 block text-sm font-semibold text-gray-700">
+                  パスワード
+                </label>
+                <input
+                  id="admin-password"
+                  name="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="パスワードを入力"
+                  className="w-full rounded-2xl border border-gray-200 bg-gray-50/80 px-4 py-3 text-sm transition focus:border-[#06C755] focus:bg-white focus:outline-none focus:ring-4 focus:ring-[#06C755]/10"
+                  autoComplete="current-password"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'login-error' : undefined}
+                  required
+                />
+              </div>
+
+              {error && (
+                <p id="login-error" className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-100">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || !email || !password}
+                className="flex w-full items-center justify-center rounded-2xl bg-[#06C755] px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-green-600/20 transition hover:-translate-y-0.5 hover:bg-[#05A847] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? 'ログイン中...' : 'ログインして開始'}
+              </button>
+            </form>
           </div>
-
-          {error && (
-            <p id="login-error" className="text-sm text-red-600 mb-4">{error}</p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading || !email || !password}
-            className="w-full py-3 text-white font-medium rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            {loading ? 'ログイン中...' : 'ログイン'}
-          </button>
-        </form>
-      </div>
+        </div>
+      </main>
     </div>
   )
 }

@@ -1,1 +1,32 @@
 @import "tailwindcss";
+
+:root {
+  --brand: #06c755;
+  --brand-dark: #05a847;
+  --surface: #f6f8f6;
+}
+
+html {
+  background: var(--surface);
+}
+
+body {
+  min-height: 100svh;
+}
+
+::selection {
+  background: rgba(6, 199, 85, 0.18);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+*:focus-visible {
+  outline: 3px solid rgba(6, 199, 85, 0.3);
+  outline-offset: 2px;
+}
