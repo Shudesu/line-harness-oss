@@ -25,7 +25,7 @@
 import { cpSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { argv, exit, stderr, stdout } from 'node:process';
 
@@ -63,10 +63,9 @@ export function buildBundle(args: BuildBundleArgs): void {
     mkdirSync(dirname(absOut), { recursive: true });
 
     // Build the tarball. -C makes paths inside the tar relative to staging.
-    execSync(
-      `tar czf ${shellQuote(absOut)} -C ${shellQuote(staging)} worker admin liff migrations`,
-      { stdio: 'inherit' },
-    );
+    execFileSync('tar', ['czf', absOut, '-C', staging, 'worker', 'admin', 'liff', 'migrations'], {
+      stdio: 'inherit',
+    });
 
     // Log final size (stat -> MB, two decimal places).
     const size = statSync(absOut).size;
@@ -76,12 +75,6 @@ export function buildBundle(args: BuildBundleArgs): void {
     // Always clean up staging.
     rmSync(staging, { recursive: true, force: true });
   }
-}
-
-function shellQuote(p: string): string {
-  // Minimal POSIX-shell single-quote escaping for paths passed to execSync.
-  // execSync runs through /bin/sh, so quote to be safe with spaces/specials.
-  return `'${p.replace(/'/g, `'\\''`)}'`;
 }
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
