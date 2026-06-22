@@ -83,30 +83,46 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin}>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
+            <label htmlFor="admin-email" className="block text-sm font-medium text-gray-700 mb-1">
+              メールアドレス
+            </label>
             <input
+              id="admin-email"
+              name="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="owner@example.com"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              autoComplete="username"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? 'login-error' : undefined}
               autoFocus
+              required
             />
           </div>
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">パスワード</label>
+            <label htmlFor="admin-password" className="block text-sm font-medium text-gray-700 mb-1">
+              パスワード
+            </label>
             <input
+              id="admin-password"
+              name="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="パスワードを入力"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              autoComplete="current-password"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? 'login-error' : undefined}
+              required
             />
           </div>
 
           {error && (
-            <p className="text-sm text-red-600 mb-4">{error}</p>
+            <p id="login-error" className="text-sm text-red-600 mb-4">{error}</p>
           )}
 
           <button

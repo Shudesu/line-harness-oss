@@ -24,7 +24,7 @@ export interface AdminAuthConfig {
   allowedOrigins: string[];
   /** SameSite attribute applied to the session + CSRF cookies. */
   sameSite: AdminSameSite;
-  /** Cookies are always Secure (HTTPS only) in this app. */
+  /** Whether cookies should carry the Secure attribute. Disabled only for loopback HTTP dev. */
   secure: boolean;
   /** True when an admin origin is cross-site relative to the Worker API. */
   crossSite: boolean;
@@ -158,6 +158,11 @@ export function resolveAdminAuthConfig(
   // browser sends cross-site). An explicit override always wins.
   const sameSite: AdminSameSite =
     explicit ?? (allowCrossSite ? 'None' : 'Lax');
+  const secure = !(
+    workerOrigin &&
+    isLoopbackOrigin(workerOrigin) &&
+    sameSite !== 'None'
+  );
 
   let misconfigured: string | null = null;
   if (crossSite && sameSite !== 'None') {
@@ -172,7 +177,7 @@ export function resolveAdminAuthConfig(
       `credentialed CORS, but ADMIN_ORIGIN is unset.`;
   }
 
-  return { allowedOrigins, sameSite, secure: true, crossSite, misconfigured };
+  return { allowedOrigins, sameSite, secure, crossSite, misconfigured };
 }
 
 /**

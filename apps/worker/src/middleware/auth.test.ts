@@ -123,6 +123,25 @@ describe('admin login cookie attributes', () => {
     expect(cookieFor(res, 'lh_admin_session') ?? '').toContain('SameSite=Lax');
   });
 
+  test('loopback HTTP dev login omits Secure so local clients keep the cookie', async () => {
+    const res = await app().request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'owner@example.test', password: 'owner-password' }),
+      headers: { 'Content-Type': 'application/json' },
+    }, env({
+      WORKER_URL: 'http://localhost:8787',
+      ADMIN_ORIGIN: 'http://localhost:3007',
+      ADMIN_ALLOW_CROSS_SITE: 'false',
+    }));
+
+    expect(res.status).toBe(200);
+    const session = cookieFor(res, 'lh_admin_session') ?? '';
+    const csrf = cookieFor(res, 'lh_csrf') ?? '';
+    expect(session).toContain('SameSite=Lax');
+    expect(session).not.toContain('Secure');
+    expect(csrf).not.toContain('Secure');
+  });
+
   test('invalid api key is rejected without a cookie', async () => {
     const res = await app().request('/api/auth/login', {
       method: 'POST',

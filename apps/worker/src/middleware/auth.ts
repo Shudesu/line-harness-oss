@@ -61,16 +61,18 @@ function buildCookie(
   sameSite: AdminSameSite,
   maxAge: number,
   httpOnly: boolean,
+  secure = true,
 ): string {
   const parts = [`${name}=${encodeURIComponent(value)}`, 'Path=/'];
   if (httpOnly) parts.push('HttpOnly');
-  parts.push('Secure', `SameSite=${sameSite}`, `Max-Age=${maxAge}`);
+  if (secure) parts.push('Secure');
+  parts.push(`SameSite=${sameSite}`, `Max-Age=${maxAge}`);
   return parts.join('; ');
 }
 
 /** HttpOnly session cookie carrying an opaque signed admin session token. */
-export function adminSessionCookie(token: string, sameSite: AdminSameSite): string {
-  return buildCookie(ADMIN_AUTH_COOKIE, token, sameSite, SESSION_MAX_AGE, true);
+export function adminSessionCookie(token: string, sameSite: AdminSameSite, secure = true): string {
+  return buildCookie(ADMIN_AUTH_COOKIE, token, sameSite, SESSION_MAX_AGE, true, secure);
 }
 
 /**
@@ -81,12 +83,12 @@ export function adminSessionCookie(token: string, sameSite: AdminSameSite): stri
  * header against this cookie, which the browser does send back to the API
  * (SameSite=None).
  */
-export function csrfCookie(token: string, sameSite: AdminSameSite): string {
-  return buildCookie(CSRF_COOKIE, token, sameSite, SESSION_MAX_AGE, false);
+export function csrfCookie(token: string, sameSite: AdminSameSite, secure = true): string {
+  return buildCookie(CSRF_COOKIE, token, sameSite, SESSION_MAX_AGE, false, secure);
 }
 
-export function expiredCookie(name: string, sameSite: AdminSameSite): string {
-  return buildCookie(name, '', sameSite, 0, name === ADMIN_AUTH_COOKIE);
+export function expiredCookie(name: string, sameSite: AdminSameSite, secure = true): string {
+  return buildCookie(name, '', sameSite, 0, name === ADMIN_AUTH_COOKIE, secure);
 }
 
 export type AuthenticatedStaff = {
