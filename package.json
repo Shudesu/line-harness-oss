@@ -26,5 +26,8 @@
     "typescript": "^5.9.3",
     "vitest": "^2.1.0",
     "wrangler": "4"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
   }
 }

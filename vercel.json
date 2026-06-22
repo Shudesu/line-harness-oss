@@ -1,14 +1,63 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "pnpm --filter web build",
+  "buildCommand": "pnpm --filter worker build && node -e \"require('node:fs').rmSync('apps/worker/dist/line_harness/.dev.vars',{force:true})\" && pnpm --filter web build",
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": "apps/web/out",
   "cleanUrls": true,
+  "functions": {
+    "api/**/*.js": {
+      "includeFiles": "{apps/worker/dist/line_harness/**,packages/db/bootstrap.sql}"
+    }
+  },
   "rewrites": [
     {
       "source": "/admin/:path*",
-      "destination": "/api/admin/:path*"
+      "destination": "/api/worker-api?__lh_path=admin/:path*"
+    },
+    {
+      "source": "/images/:path*",
+      "destination": "/api/worker-api?__lh_path=images/:path*"
+    },
+    {
+      "source": "/r/:path*",
+      "destination": "/api/worker-api?__lh_path=r/:path*"
+    },
+    {
+      "source": "/t/:path*",
+      "destination": "/api/worker-api?__lh_path=t/:path*"
+    },
+    {
+      "source": "/pool/:path*",
+      "destination": "/api/worker-api?__lh_path=pool/:path*"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "/api/worker-api?__lh_path=auth/:path*"
+    },
+    {
+      "source": "/webhook",
+      "destination": "/api/worker-api?__lh_path=webhook"
+    },
+    {
+      "source": "/setup",
+      "destination": "/api/worker-api?__lh_path=setup"
+    },
+    {
+      "source": "/book",
+      "destination": "/api/worker-api?__lh_path=book"
+    },
+    {
+      "source": "/docs",
+      "destination": "/api/worker-api?__lh_path=docs"
+    },
+    {
+      "source": "/openapi.json",
+      "destination": "/api/worker-api?__lh_path=openapi.json"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/worker-api?__lh_path=api/:path*"
     }
   ]
 }
