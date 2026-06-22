@@ -63,7 +63,7 @@ const TOTALS_SQL = `
   ),
   groups AS (
     SELECT ident_key, COUNT(DISTINCT line_account_id) AS span, COUNT(*) AS row_cnt
-    FROM ident GROUP BY ident_key HAVING span > 1
+    FROM ident GROUP BY ident_key HAVING COUNT(DISTINCT line_account_id) > 1
   )
   SELECT
     (SELECT COUNT(*) FROM friends
