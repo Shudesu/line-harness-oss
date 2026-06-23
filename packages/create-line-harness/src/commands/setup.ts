@@ -749,7 +749,7 @@ ON CONFLICT(channel_id) DO UPDATE SET
     message: "MCP 設定を .mcp.json に追加しますか？（Claude Code / Cursor 用）",
   });
   if (addMcp && !p.isCancel(addMcp)) {
-    generateMcpConfig({ workerUrl: state.workerUrl!, apiKey: state.apiKey! });
+    await generateMcpConfig({ workerUrl: state.workerUrl!, apiKey: state.apiKey! });
   }
 
   // Step 15: Show completion screen
