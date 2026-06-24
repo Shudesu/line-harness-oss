@@ -300,10 +300,6 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     void changeResource(resourceId);
     return;
   }
-  if (action === 'select-menu') {
-    handleField('menuId', element.dataset.menuId ?? '');
-    return;
-  }
   if (action === 'close-slot-modal') {
     state.slotModalOpen = false;
     render();

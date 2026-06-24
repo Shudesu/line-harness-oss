@@ -272,8 +272,8 @@
       font-weight: 800;
       padding: 7px 10px;
     }
-    .booking-choice-panel {
-      padding-bottom: 14px;
+    .resource-choice-panel {
+      padding-bottom: 12px;
     }
     .choice-block {
       margin-top: 14px;
@@ -317,11 +317,26 @@
       font-family: inherit;
       box-shadow: 0 6px 18px rgba(35, 59, 69, .06);
       scroll-snap-align: start;
+      position: relative;
     }
     .choice-card.selected {
-      border-color: var(--sky-500);
+      border-color: var(--sky-700);
+      outline: 3px solid rgba(105, 163, 208, .32);
+      outline-offset: 2px;
       background: linear-gradient(180deg, #ffffff 0%, #eef8ff 100%);
       box-shadow: 0 10px 22px rgba(105, 163, 208, .24);
+    }
+    .choice-card.selected::after {
+      content: "選択中";
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      border-radius: 999px;
+      background: var(--sky-700);
+      color: #fff;
+      padding: 4px 8px;
+      font-size: 10px;
+      font-weight: 900;
     }
     .choice-card-kicker {
       display: inline-flex;
@@ -363,6 +378,9 @@
       .choice-card {
         flex-basis: 62%;
       }
+    }
+    .view-toggle-panel {
+      margin-bottom: 14px;
     }
     .line-link-panel {
       display: grid;

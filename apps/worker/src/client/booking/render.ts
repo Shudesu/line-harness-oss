@@ -246,7 +246,9 @@ function renderCafeMenuModal(menuItems: Array<{ id: string; name: string; price:
 function renderBooking(): string {
   return `
     ${renderLineLinkPanel()}
+    ${renderResourceCarousel()}
     ${renderBookingControls()}
+    ${renderViewToggle()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
     ${renderSlotModal()}
     ${state.selectedSlot && !state.slotModalOpen ? renderReopenSelectedSlot() : ''}
@@ -282,7 +284,7 @@ function renderBookingControls(): string {
   const menu = selectedMenu();
   const resource = selectedResource();
   return `
-    <section class="booking-panel booking-choice-panel">
+    <section class="booking-panel">
       <div class="section-title-row">
         <div>
           <h2>予約内容</h2>
@@ -290,22 +292,30 @@ function renderBookingControls(): string {
         </div>
       </div>
       ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
-      ${renderResourceCarousel()}
-      ${renderMenuCarousel()}
+      <label class="field-label">
+        メニュー ${requiredBadge()}
+        <select data-field="menuId">
+          ${state.menus.length === 0 ? '<option value="">メニューがありません</option>' : state.menus.map((item) => `
+            <option value="${escapeHtml(item.id)}" ${item.id === state.menuId ? 'selected' : ''}>
+              ${escapeHtml(item.name)}
+            </option>
+          `).join('')}
+        </select>
+        ${validationError('menuId')}
+      </label>
       ${renderMenuPriceSummary(menu)}
-      <div class="view-toggle">
-        <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
-        <button type="button" class="${state.viewMode === 'month' ? 'active' : ''}" data-action="view-month">1か月で見る</button>
-      </div>
     </section>
   `;
 }
 
 function renderResourceCarousel(): string {
   return `
-    <div class="choice-block" aria-label="予約対象">
+    <section class="booking-panel resource-choice-panel" aria-label="予約対象">
       <div class="choice-heading">
-        <strong>予約対象</strong>
+        <div>
+          <h2>予約対象を選ぶ</h2>
+          <p>横にスライドして、体験・場所を選択してください。</p>
+        </div>
         <span>${state.resources.length}件</span>
       </div>
       <div class="choice-carousel">
@@ -323,34 +333,18 @@ function renderResourceCarousel(): string {
           </button>
         `).join('')}
       </div>
-    </div>
+    </section>
   `;
 }
 
-function renderMenuCarousel(): string {
+function renderViewToggle(): string {
   return `
-    <div class="choice-block" aria-label="メニュー">
-      <div class="choice-heading">
-        <strong>メニュー ${requiredBadge()}</strong>
-        <span>${state.menus.length}件</span>
+    <section class="view-toggle-panel" aria-label="空き状況の表示切替">
+      <div class="view-toggle">
+        <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
+        <button type="button" class="${state.viewMode === 'month' ? 'active' : ''}" data-action="view-month">1か月で見る</button>
       </div>
-      <div class="choice-carousel">
-        ${state.menus.length === 0 ? '<p class="choice-empty">メニューがありません。</p>' : state.menus.map((menu) => `
-          <button
-            type="button"
-            class="choice-card menu-card ${menu.id === state.menuId ? 'selected' : ''}"
-            data-action="select-menu"
-            data-menu-id="${escapeHtml(menu.id)}"
-            aria-pressed="${menu.id === state.menuId ? 'true' : 'false'}"
-          >
-            <span class="choice-card-kicker">MENU</span>
-            <strong>${escapeHtml(menu.name)}</strong>
-            ${menu.description ? `<small>${escapeHtml(menu.description)}</small>` : `<small>${menu.minPeople}名から予約できます</small>`}
-          </button>
-        `).join('')}
-      </div>
-      ${validationError('menuId')}
-    </div>
+    </section>
   `;
 }
 
