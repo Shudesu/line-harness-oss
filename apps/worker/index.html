@@ -307,7 +307,7 @@
     }
     .choice-card {
       flex: 0 0 74%;
-      min-height: 172px;
+      min-height: 232px;
       border: 1px solid rgba(105, 163, 208, .24);
       border-radius: 22px;
       background: rgba(255, 255, 255, .96);
@@ -358,12 +358,12 @@
     .choice-card-image {
       display: block;
       width: 100%;
-      aspect-ratio: 16 / 9;
-      object-fit: contain;
+      height: 132px;
+      object-fit: cover;
       object-position: center;
       border-radius: 0;
       margin: 0 0 12px;
-      background: #f7fbfd;
+      background: #eef6fb;
       border-bottom: 1px solid rgba(105, 163, 208, .18);
     }
     .choice-card.no-image {
@@ -375,6 +375,7 @@
       font-size: 16px;
       line-height: 1.35;
       margin: 0 14px 7px;
+      min-height: 43px;
     }
     .choice-card small {
       display: -webkit-box;
@@ -385,6 +386,7 @@
       font-size: 12px;
       line-height: 1.45;
       margin: 0 14px;
+      min-height: 35px;
     }
     .choice-empty {
       min-width: 100%;
