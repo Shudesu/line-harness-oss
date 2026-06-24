@@ -289,6 +289,21 @@ async function handleAction(action: string, element: HTMLElement): Promise<void>
     selectSlot(element.dataset.slotId ?? '');
     return;
   }
+  if (action === 'select-resource') {
+    const resourceId = element.dataset.resourceId ?? '';
+    trackLiffEvent('liff.booking.resource_selected', {
+      eventName: '予約対象選択',
+      subjectType: 'reservation_resource',
+      subjectId: resourceId,
+      metadata: { nextResourceId: resourceId },
+    });
+    void changeResource(resourceId);
+    return;
+  }
+  if (action === 'select-menu') {
+    handleField('menuId', element.dataset.menuId ?? '');
+    return;
+  }
   if (action === 'close-slot-modal') {
     state.slotModalOpen = false;
     render();

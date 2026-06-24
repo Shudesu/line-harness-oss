@@ -245,7 +245,6 @@ function renderCafeMenuModal(menuItems: Array<{ id: string; name: string; price:
 
 function renderBooking(): string {
   return `
-    ${renderExperienceIntro()}
     ${renderLineLinkPanel()}
     ${renderBookingControls()}
     ${state.viewMode === 'week' ? renderWeekAvailability() : renderMonthAvailability()}
@@ -279,28 +278,11 @@ function renderLineLinkPanel(): string {
   `;
 }
 
-function renderExperienceIntro(): string {
-  return `
-    <section class="experience-intro">
-      <div class="experience-copy">
-        <p class="eyebrow">BLUEBERRY PICKING</p>
-        <h2>つくばの農園で、旬のブルーベリーを楽しむ体験</h2>
-        <p>日付を選んで、空いている時間枠から予約できます。カフェでは石窯ピザやブルーベリースイーツも楽しめます。</p>
-      </div>
-      <div class="experience-points" aria-label="体験概要">
-        <span>6月より営業</span>
-        <span>家族で来園OK</span>
-        <span>ワンちゃん連れOK</span>
-      </div>
-    </section>
-  `;
-}
-
 function renderBookingControls(): string {
   const menu = selectedMenu();
   const resource = selectedResource();
   return `
-    <section class="booking-panel">
+    <section class="booking-panel booking-choice-panel">
       <div class="section-title-row">
         <div>
           <h2>予約内容</h2>
@@ -308,33 +290,67 @@ function renderBookingControls(): string {
         </div>
       </div>
       ${state.notice ? `<p class="error">${escapeHtml(state.notice)}</p>` : ''}
-      <label class="field-label">
-        予約対象
-        <select data-field="resourceId">
-          ${state.resources.length === 0 ? '<option value="">予約対象がありません</option>' : state.resources.map((item) => `
-            <option value="${escapeHtml(item.id)}" ${item.id === state.resourceId ? 'selected' : ''}>
-              ${escapeHtml(item.name)}
-            </option>
-          `).join('')}
-        </select>
-      </label>
-      <label class="field-label">
-        メニュー ${requiredBadge()}
-        <select data-field="menuId">
-          ${state.menus.length === 0 ? '<option value="">メニューがありません</option>' : state.menus.map((item) => `
-            <option value="${escapeHtml(item.id)}" ${item.id === state.menuId ? 'selected' : ''}>
-              ${escapeHtml(item.name)}
-            </option>
-          `).join('')}
-        </select>
-        ${validationError('menuId')}
-      </label>
+      ${renderResourceCarousel()}
+      ${renderMenuCarousel()}
       ${renderMenuPriceSummary(menu)}
       <div class="view-toggle">
         <button type="button" class="${state.viewMode === 'week' ? 'active' : ''}" data-action="view-week">1週間で見る</button>
         <button type="button" class="${state.viewMode === 'month' ? 'active' : ''}" data-action="view-month">1か月で見る</button>
       </div>
     </section>
+  `;
+}
+
+function renderResourceCarousel(): string {
+  return `
+    <div class="choice-block" aria-label="予約対象">
+      <div class="choice-heading">
+        <strong>予約対象</strong>
+        <span>${state.resources.length}件</span>
+      </div>
+      <div class="choice-carousel">
+        ${state.resources.length === 0 ? '<p class="choice-empty">予約対象がありません。</p>' : state.resources.map((resource) => `
+          <button
+            type="button"
+            class="choice-card resource-card ${resource.id === state.resourceId ? 'selected' : ''}"
+            data-action="select-resource"
+            data-resource-id="${escapeHtml(resource.id)}"
+            aria-pressed="${resource.id === state.resourceId ? 'true' : 'false'}"
+          >
+            <span class="choice-card-kicker">RESOURCE</span>
+            <strong>${escapeHtml(resource.name)}</strong>
+            ${resource.description ? `<small>${escapeHtml(resource.description)}</small>` : '<small>この体験を選択</small>'}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderMenuCarousel(): string {
+  return `
+    <div class="choice-block" aria-label="メニュー">
+      <div class="choice-heading">
+        <strong>メニュー ${requiredBadge()}</strong>
+        <span>${state.menus.length}件</span>
+      </div>
+      <div class="choice-carousel">
+        ${state.menus.length === 0 ? '<p class="choice-empty">メニューがありません。</p>' : state.menus.map((menu) => `
+          <button
+            type="button"
+            class="choice-card menu-card ${menu.id === state.menuId ? 'selected' : ''}"
+            data-action="select-menu"
+            data-menu-id="${escapeHtml(menu.id)}"
+            aria-pressed="${menu.id === state.menuId ? 'true' : 'false'}"
+          >
+            <span class="choice-card-kicker">MENU</span>
+            <strong>${escapeHtml(menu.name)}</strong>
+            ${menu.description ? `<small>${escapeHtml(menu.description)}</small>` : `<small>${menu.minPeople}名から予約できます</small>`}
+          </button>
+        `).join('')}
+      </div>
+      ${validationError('menuId')}
+    </div>
   `;
 }
 
