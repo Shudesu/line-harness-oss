@@ -901,6 +901,8 @@ export interface Reservation {
   userId: string | null;
   friendId: string | null;
   slotId: string;
+  resourceId: string | null;
+  resourceName: string | null;
   source: ReservationSource;
   capacityChannel: CapacityChannel;
   externalReservationId: string | null;

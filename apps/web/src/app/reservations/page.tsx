@@ -20,6 +20,10 @@ import { buildReservationEntryUrl, reservationEntryUi } from '@/lib/provider-ui'
 type Mode = 'overview' | 'settings'
 type ViewMode = 'week' | 'month'
 type ReservationDisplayMode = 'all' | 'line' | 'jalan' | 'time'
+type ReservationWithResource = ReservationResponse & {
+  resourceId?: string | null
+  resourceName?: string | null
+}
 type AdminExternalSource = ExternalReservationSourceResponse & {
   rawText?: string | null
   parsedPayload?: string | null
@@ -111,6 +115,26 @@ function sourceLabel(source: ReservationResponse['source']): string {
   if (source === 'web') return 'Web'
   if (source === 'jalan') return 'じゃらん'
   return source
+}
+
+const resourceColorPalette = ['#2563eb', '#16a34a', '#f97316', '#9333ea', '#dc2626', '#0891b2', '#ca8a04', '#be185d']
+
+function resourceColor(resourceId: string | null | undefined, resources: ReservationResource[]): string {
+  if (!resourceId) return '#94a3b8'
+  const index = resources.findIndex((resource) => resource.id === resourceId)
+  return resourceColorPalette[(index >= 0 ? index : Math.abs(hashText(resourceId))) % resourceColorPalette.length]
+}
+
+function hashText(value: string): number {
+  return Array.from(value).reduce((hash, char) => ((hash << 5) - hash + char.charCodeAt(0)) | 0, 0)
+}
+
+function reservationResourceId(reservation: ReservationResponse): string | null {
+  return (reservation as ReservationWithResource).resourceId ?? null
+}
+
+function reservationResourceLabel(reservation: ReservationResponse): string {
+  return (reservation as ReservationWithResource).resourceName || '予約対象未設定'
 }
 
 function channelLabel(channel: string): string {
@@ -654,6 +678,7 @@ export default function ReservationsPage() {
           <ReservationListPanel
             date={date}
             mode="all"
+            resources={resources}
             reservations={reservations}
             selectedReservation={selectedReservation}
             onSelect={setSelectedReservation}
@@ -1246,6 +1271,7 @@ function SlotsCard({
 function ReservationListPanel({
   date,
   mode,
+  resources,
   reservations,
   selectedReservation,
   onSelect,
@@ -1254,6 +1280,7 @@ function ReservationListPanel({
 }: {
   date: string
   mode: Exclude<ReservationDisplayMode, 'time'>
+  resources: ReservationResource[]
   reservations: ReservationResponse[]
   selectedReservation: ReservationResponse | null
   onSelect: (reservation: ReservationResponse | null) => void
@@ -1293,10 +1320,20 @@ function ReservationListPanel({
                 </div>
                 <div className="divide-y divide-gray-100">
                   {group.map((reservation) => (
-                    <button key={reservation.id} onClick={() => onSelect(reservation)} className="w-full p-3 text-left hover:bg-gray-50">
+                    <button
+                      key={reservation.id}
+                      onClick={() => onSelect(reservation)}
+                      className="w-full border-l-4 p-3 text-left hover:bg-gray-50"
+                      style={{ borderLeftColor: resourceColor(reservationResourceId(reservation), resources) }}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="truncate font-semibold text-gray-900">{reservation.customerName || reservation.title}</p>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <p className="truncate font-semibold text-gray-900">{reservation.customerName || reservation.title}</p>
+                            <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">
+                              {reservationResourceLabel(reservation)}
+                            </span>
+                          </div>
                           <p className="mt-1 text-xs text-gray-500">
                             {reservation.totalPeople}名 / 大人{reservation.adultCount}・小学生{reservation.childCount}・幼児{reservation.infantCount}・3歳以下{reservation.underThreeCount}
                           </p>

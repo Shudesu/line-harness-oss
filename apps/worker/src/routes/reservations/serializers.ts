@@ -136,6 +136,8 @@ export function toReservationResponse(item: Reservation): ReservationResponse {
     userId: item.user_id,
     friendId: item.friend_id,
     slotId: item.slot_id,
+    resourceId: item.resource_id ?? null,
+    resourceName: item.resource_name ?? null,
     source: item.source,
     capacityChannel: item.capacity_channel,
     externalReservationId: item.external_reservation_id,

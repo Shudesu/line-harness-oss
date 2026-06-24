@@ -181,6 +181,8 @@ export interface Reservation {
   form_data: string;
   metadata: string;
   total_amount?: number | null;
+  resource_id?: string | null;
+  resource_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -579,8 +581,12 @@ export async function listReservations(
   const result = await db
     .prepare(
       `SELECT r.*,
+              s.resource_id AS resource_id,
+              rr.name AS resource_name,
               (SELECT SUM(amount) FROM reservation_items WHERE reservation_id = r.id) AS total_amount
        FROM reservations r
+       LEFT JOIN reservation_slots s ON s.id = r.slot_id
+       LEFT JOIN reservation_resources rr ON rr.id = s.resource_id
        ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY r.start_at ASC, r.created_at DESC
        LIMIT ?`,
