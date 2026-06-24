@@ -511,7 +511,7 @@ export async function getReservationById(
 export async function listReservationResources(db: D1Database): Promise<ReservationResource[]> {
   await ensureReservationPeopleCapacitySchema(db);
   const result = await db
-    .prepare(`SELECT * FROM reservation_resources ORDER BY display_order ASC, created_at DESC`)
+    .prepare(`SELECT * FROM reservation_resources ORDER BY display_order ASC, created_at ASC`)
     .all<ReservationResource>();
   return result.results;
 }
