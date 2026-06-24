@@ -322,7 +322,7 @@ function renderResourceCarousel(): string {
         ${state.resources.length === 0 ? '<p class="choice-empty">予約対象がありません。</p>' : state.resources.map((resource) => `
           <button
             type="button"
-            class="choice-card resource-card ${resource.id === state.resourceId ? 'selected' : ''}"
+            class="choice-card resource-card ${resource.id === state.resourceId ? 'selected' : ''} ${resource.imageUrl ? 'has-image' : 'no-image'}"
             data-action="select-resource"
             data-resource-id="${escapeHtml(resource.id)}"
             aria-pressed="${resource.id === state.resourceId ? 'true' : 'false'}"

@@ -307,36 +307,41 @@
     }
     .choice-card {
       flex: 0 0 74%;
-      min-height: 116px;
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: #fff;
+      min-height: 172px;
+      border: 1px solid rgba(105, 163, 208, .24);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, .96);
       color: var(--ink);
-      padding: 13px;
+      padding: 0 0 14px;
       text-align: left;
       font-family: inherit;
-      box-shadow: 0 6px 18px rgba(35, 59, 69, .06);
+      box-shadow: 0 8px 22px rgba(35, 59, 69, .08);
       scroll-snap-align: start;
       position: relative;
+      overflow: hidden;
+      transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+    }
+    .choice-card:active {
+      transform: translateY(1px);
     }
     .choice-card.selected {
       border-color: var(--sky-700);
-      outline: 3px solid rgba(105, 163, 208, .32);
-      outline-offset: 2px;
-      background: linear-gradient(180deg, #ffffff 0%, #eef8ff 100%);
-      box-shadow: 0 10px 22px rgba(105, 163, 208, .24);
+      outline: none;
+      background: #fff;
+      box-shadow: 0 12px 26px rgba(105, 163, 208, .22);
     }
     .choice-card.selected::after {
       content: "選択中";
       position: absolute;
-      right: 10px;
-      bottom: 10px;
+      right: 12px;
+      top: 12px;
       border-radius: 999px;
       background: var(--sky-700);
       color: #fff;
-      padding: 4px 8px;
+      padding: 5px 9px;
       font-size: 10px;
       font-weight: 900;
+      box-shadow: 0 6px 14px rgba(35, 59, 69, .18);
     }
     .choice-card-kicker {
       display: inline-flex;
@@ -355,16 +360,20 @@
       width: 100%;
       aspect-ratio: 16 / 9;
       object-fit: cover;
-      border-radius: 14px;
-      margin-bottom: 10px;
-      background: var(--sky-100);
+      border-radius: 0;
+      margin: 0 0 12px;
+      background: #eef6fb;
+      border-bottom: 1px solid rgba(105, 163, 208, .18);
+    }
+    .choice-card.no-image {
+      padding-top: 14px;
     }
     .choice-card strong {
       display: block;
       color: var(--ink);
       font-size: 16px;
       line-height: 1.35;
-      margin-bottom: 7px;
+      margin: 0 14px 7px;
     }
     .choice-card small {
       display: -webkit-box;
@@ -374,6 +383,7 @@
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
+      margin: 0 14px;
     }
     .choice-empty {
       min-width: 100%;
