@@ -26,6 +26,7 @@ export interface CreateReservationResourceInput {
   id?: string
   name: string
   description?: string | null
+  imageUrl?: string | null
   lineAccountId?: string | null
   defaultDurationMinutes?: number
   defaultCapacity?: number

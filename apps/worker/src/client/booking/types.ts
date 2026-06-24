@@ -25,6 +25,7 @@ export interface Resource {
   id: string;
   name: string;
   description?: string | null;
+  imageUrl?: string | null;
   isActive: boolean;
 }
 

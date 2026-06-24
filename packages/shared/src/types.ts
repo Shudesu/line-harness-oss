@@ -819,6 +819,7 @@ export interface ReservationResource {
   lineAccountId: string | null;
   name: string;
   description: string | null;
+  imageUrl: string | null;
   defaultDurationMinutes: number;
   defaultCapacity: number;
   defaultLineCapacity: number | null;

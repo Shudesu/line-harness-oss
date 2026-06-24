@@ -327,7 +327,7 @@ function renderResourceCarousel(): string {
             data-resource-id="${escapeHtml(resource.id)}"
             aria-pressed="${resource.id === state.resourceId ? 'true' : 'false'}"
           >
-            <span class="choice-card-kicker">RESOURCE</span>
+            ${resource.imageUrl ? `<img class="choice-card-image" src="${escapeHtml(resource.imageUrl)}" alt="${escapeHtml(resource.name)}" loading="lazy">` : ''}
             <strong>${escapeHtml(resource.name)}</strong>
             ${resource.description ? `<small>${escapeHtml(resource.description)}</small>` : '<small>この体験を選択</small>'}
           </button>

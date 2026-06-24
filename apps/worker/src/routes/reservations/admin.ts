@@ -114,6 +114,7 @@ adminReservations.post('/api/reservation-resources', async (c) => {
       id: optionalString(body, 'id') ?? undefined,
       name: name.value,
       description: optionalString(body, 'description'),
+      imageUrl: optionalString(body, 'imageUrl'),
       lineAccountId: optionalString(body, 'lineAccountId'),
       defaultDurationMinutes: optionalNumber(body, 'defaultDurationMinutes'),
       defaultCapacity: optionalNumber(body, 'defaultCapacity'),
@@ -140,6 +141,7 @@ adminReservations.put('/api/reservation-resources/:resourceId', async (c) => {
     const result = await updateReservationResource(c.env.DB, c.req.param('resourceId'), {
       name: optionalString(body, 'name') ?? undefined,
       description: optionalString(body, 'description'),
+      imageUrl: optionalString(body, 'imageUrl'),
       defaultDurationMinutes: optionalNumber(body, 'defaultDurationMinutes'),
       defaultCapacity: optionalNumber(body, 'defaultCapacity'),
       defaultLineCapacity: optionalNullableNumber(body, 'defaultLineCapacity'),

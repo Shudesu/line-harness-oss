@@ -36,6 +36,7 @@ let reservationPeopleCapacitySchemaReady = false;
 async function ensureReservationPeopleCapacitySchema(db: D1Database): Promise<void> {
   if (reservationPeopleCapacitySchemaReady) return;
   await ensureColumns(db, 'reservation_resources', [
+    ['image_url', 'TEXT'],
     ['google_calendar_connection_id', 'TEXT'],
     ['slot_interval_minutes', 'INTEGER NOT NULL DEFAULT 60'],
     ['timezone', "TEXT NOT NULL DEFAULT 'Asia/Tokyo'"],
@@ -76,6 +77,7 @@ export interface ReservationResource {
   line_account_id: string | null;
   name: string;
   description: string | null;
+  image_url: string | null;
   default_duration_minutes: number;
   default_capacity: number;
   default_line_capacity: number | null;
@@ -216,6 +218,7 @@ export interface CreateReservationResourceInput {
   lineAccountId?: string | null;
   name: string;
   description?: string | null;
+  imageUrl?: string | null;
   defaultDurationMinutes?: number;
   defaultCapacity?: number;
   defaultLineCapacity?: number | null;
@@ -231,6 +234,7 @@ export interface CreateReservationResourceInput {
 export interface UpdateReservationResourceInput {
   name?: string;
   description?: string | null;
+  imageUrl?: string | null;
   defaultDurationMinutes?: number;
   defaultCapacity?: number;
   defaultLineCapacity?: number | null;
@@ -651,17 +655,18 @@ export async function createReservationResource(
   await db
     .prepare(
       `INSERT INTO reservation_resources
-         (id, line_account_id, name, description, default_duration_minutes, default_capacity,
+         (id, line_account_id, name, description, image_url, default_duration_minutes, default_capacity,
           default_line_capacity, default_external_capacity, default_buffer_capacity,
           google_calendar_connection_id, slot_interval_minutes, timezone, is_active, display_order,
           metadata, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
     )
     .bind(
       id,
       input.lineAccountId ?? null,
       input.name,
       input.description ?? null,
+      input.imageUrl ?? null,
       input.defaultDurationMinutes ?? 60,
       input.defaultCapacity ?? 1,
       input.defaultLineCapacity ?? null,
@@ -703,6 +708,7 @@ export async function updateReservationResource(
       `UPDATE reservation_resources
        SET name = ?,
            description = ?,
+           image_url = ?,
            default_duration_minutes = ?,
            default_capacity = ?,
            default_line_capacity = ?,
@@ -720,6 +726,7 @@ export async function updateReservationResource(
     .bind(
       input.name ?? resource.name,
       input.description === undefined ? resource.description : input.description,
+      input.imageUrl === undefined ? resource.image_url : input.imageUrl,
       input.defaultDurationMinutes ?? resource.default_duration_minutes,
       defaultCapacity,
       defaultLineCapacity,

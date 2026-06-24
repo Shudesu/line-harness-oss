@@ -1628,6 +1628,8 @@ function SettingsPanel(props: {
                 {props.showResourceForm && (
                   <form action={props.onCreateResource} className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
                     <Field label="名前"><input name="name" className="input" placeholder="ブルーベリー摘み取り" /></Field>
+                    <Field label="説明"><input name="description" className="input" /></Field>
+                    <ResourceImageInput />
                     <div className="grid grid-cols-2 gap-3">
                       <Field label="標準時間"><input name="defaultDurationMinutes" type="number" defaultValue={60} className="input" /></Field>
                       <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={20} className="input" /></Field>
@@ -1831,6 +1833,76 @@ function ReservationEntryUrlCard({
   )
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+function ResourceImageInput({ initialImageUrl = '' }: { initialImageUrl?: string }) {
+  const [imageUrl, setImageUrl] = useState(initialImageUrl)
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState('')
+
+  const upload = async (file: File | null) => {
+    if (!file) return
+    setError('')
+    if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) {
+      setError('画像は png / jpeg / gif / webp のみ対応です')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('画像サイズは5MB以下にしてください')
+      return
+    }
+    setUploading(true)
+    try {
+      const data = await fileToDataUrl(file)
+      const res = await fetchApi<ApiResponse<{ url: string }>>('/api/images', {
+        method: 'POST',
+        body: JSON.stringify({ data, mimeType: file.type, filename: file.name }),
+      })
+      if (!res.success) throw new Error(res.error || '画像アップロードに失敗しました')
+      setImageUrl(res.data.url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '画像アップロードに失敗しました')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <Field label="予約画面カード画像URL">
+        <input name="imageUrl" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} className="input" placeholder="https://.../images/example.webp" />
+      </Field>
+      {imageUrl && <img src={imageUrl} alt="" className="mt-3 h-28 w-full rounded-lg object-cover" />}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label className="inline-flex cursor-pointer items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50">
+          {uploading ? 'アップロード中...' : 'R2へ画像アップロード'}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className="hidden"
+            disabled={uploading}
+            onChange={(event) => void upload(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        {imageUrl && (
+          <button type="button" onClick={() => setImageUrl('')} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50">
+            画像を外す
+          </button>
+        )}
+      </div>
+      <p className="mt-2 text-xs text-gray-500">アップロードするとR2の公開URLが入り、Worker予約画面の予約対象カードに表示されます。</p>
+      {error && <p className="mt-2 text-xs font-bold text-red-600">{error}</p>}
+    </div>
+  )
+}
+
 function ResourceEditor({
   resource,
   loading,
@@ -1847,6 +1919,7 @@ function ResourceEditor({
       {!resource.isActive && <p className="rounded-md bg-gray-200 px-2 py-1 text-xs text-gray-600">削除済み</p>}
       <Field label="名前"><input name="name" defaultValue={resource.name} className="input" /></Field>
       <Field label="説明"><input name="description" defaultValue={resource.description ?? ''} className="input" /></Field>
+      <ResourceImageInput initialImageUrl={resource.imageUrl ?? ''} />
       <div className="grid grid-cols-2 gap-3">
         <Field label="標準時間"><input name="defaultDurationMinutes" type="number" defaultValue={resource.defaultDurationMinutes} className="input" /></Field>
         <Field label="総枠"><input name="defaultCapacity" type="number" defaultValue={resource.defaultCapacity} className="input" /></Field>
@@ -2108,6 +2181,7 @@ function resourcePayload(formData: FormData, update = false) {
   return {
     name: String(formData.get('name') || ''),
     description: String(formData.get('description') || '') || null,
+    imageUrl: String(formData.get('imageUrl') || '') || null,
     defaultDurationMinutes: numberOrUndefined(formData.get('defaultDurationMinutes')),
     defaultCapacity: numberOrUndefined(formData.get('defaultCapacity')),
     defaultLineCapacity: nullableNumber(formData.get('defaultLineCapacity')),

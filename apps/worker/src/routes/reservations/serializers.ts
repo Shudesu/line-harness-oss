@@ -22,6 +22,7 @@ export function toResourceResponse(item: ReservationResource): ReservationResour
     lineAccountId: item.line_account_id,
     name: item.name,
     description: item.description,
+    imageUrl: item.image_url,
     defaultDurationMinutes: item.default_duration_minutes,
     defaultCapacity: item.default_capacity,
     defaultLineCapacity: item.default_line_capacity,

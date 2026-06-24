@@ -877,6 +877,7 @@ CREATE TABLE IF NOT EXISTS reservation_resources (
   line_account_id TEXT REFERENCES line_accounts (id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   description TEXT,
+  image_url TEXT,
   default_duration_minutes INTEGER NOT NULL DEFAULT 60,
   default_capacity INTEGER NOT NULL DEFAULT 1,
   default_line_capacity INTEGER,
