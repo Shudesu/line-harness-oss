@@ -91,6 +91,9 @@ export type Env = {
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
+    TELEGRAM_BOT_TOKEN?: string;
+    TELEGRAM_CHAT_ID?: string;
+    TELEGRAM_ACTION_SECRET?: string;
     // Phase 5 self-update — consumed by /admin/update/*. Defaults live in
     // wrangler.toml [vars]; secrets (CF_API_TOKEN, ADMIN_API_KEY) come from
     // `wrangler secret put`. All are optional at the type level so the rest
@@ -522,6 +525,368 @@ ${longPressBlock}
 
 // Convenience redirect for /book path
 app.get('/book', (c) => c.redirect('/?page=book'));
+app.get('/event-list', async (c) => {
+  const liffId = c.req.query('liffId');
+  if (!liffId) return c.text('liffId is required', 400);
+  c.header('Cache-Control', 'no-store');
+
+  const account = await c.env.DB
+    .prepare(`SELECT id FROM line_accounts WHERE liff_id = ? AND is_active = 1`)
+    .bind(liffId)
+    .first<{ id: string }>();
+  if (!account) return c.text('LINE account not found', 404);
+
+  const nowIso = new Date().toISOString();
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT
+         e.id,
+         e.name,
+         e.venue_name,
+         e.image_url,
+         e.requires_approval,
+         (
+           SELECT s.starts_at
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at >= ?
+            ORDER BY s.starts_at ASC
+            LIMIT 1
+         ) AS starts_at,
+         (
+           SELECT s.ends_at
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at >= ?
+            ORDER BY s.starts_at ASC
+            LIMIT 1
+         ) AS ends_at,
+         (
+           SELECT COUNT(*)
+             FROM event_bookings b
+            WHERE b.event_id = e.id
+              AND b.status IN ('requested','confirmed')
+         ) AS total_active
+       FROM events e
+       WHERE e.deleted_at IS NULL
+         AND e.is_published = 1
+         AND (
+           (e.target_type = 'single' AND e.line_account_id = ?)
+           OR (e.target_type = 'multi-account-dedup'
+               AND EXISTS (SELECT 1 FROM json_each(e.account_ids) WHERE value = ?))
+         )
+         AND EXISTS (
+           SELECT 1
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at >= ?
+         )
+       ORDER BY starts_at ASC, e.sort_order ASC, e.created_at DESC`,
+    )
+    .bind(nowIso, nowIso, account.id, account.id, nowIso)
+    .all<{
+      id: string;
+      name: string;
+      venue_name: string | null;
+      image_url: string | null;
+      requires_approval: number;
+      starts_at: string;
+      ends_at: string;
+      total_active: number;
+    }>();
+
+  const esc = (value: unknown): string =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  const fmtDate = (iso: string): string =>
+    new Intl.DateTimeFormat('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      weekday: 'short',
+    }).format(new Date(iso));
+  const fmtTime = (iso: string): string =>
+    new Intl.DateTimeFormat('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(iso));
+  const eventUrl = (id: string): string =>
+    `https://liff.line.me/${encodeURIComponent(liffId)}?page=event&id=${encodeURIComponent(id)}&liffId=${encodeURIComponent(liffId)}`;
+  const historyUrl = (): string =>
+    `https://liff.line.me/${encodeURIComponent(liffId)}?page=event-me&liffId=${encodeURIComponent(liffId)}`;
+  const items = (results ?? [])
+    .map((event) => {
+      const image = event.image_url
+        ? `<img class="event-image" src="${esc(event.image_url)}" alt="">`
+        : `<div class="event-image placeholder"></div>`;
+      return `<article class="event-card">
+        ${image}
+        <div class="event-body">
+          <div class="event-title-row">
+            <h2>${esc(event.name)}</h2>
+            ${event.requires_approval === 1 ? '<span class="badge">承認制</span>' : ''}
+          </div>
+          <p class="date">${esc(fmtDate(event.starts_at))}</p>
+          <p class="time">${esc(fmtTime(event.starts_at))} - ${esc(fmtTime(event.ends_at))}</p>
+          ${event.venue_name ? `<p class="venue">${esc(event.venue_name)}</p>` : ''}
+          <p class="capacity">原則MAX16名</p>
+          <a class="button" href="${esc(eventUrl(event.id))}">詳細・予約へ</a>
+        </div>
+      </article>`;
+    })
+    .join('');
+
+  return c.html(`<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>茶はいダーツバー西新宿Luuイベント予約</title>
+  <style>
+    :root { color-scheme: light; --green: #06c755; --ink: #111827; --muted: #6b7280; --line: #e5e7eb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f8fa; color: var(--ink); }
+    header { position: sticky; top: 0; z-index: 2; background: var(--green); color: #fff; padding: 16px 18px; box-shadow: 0 1px 8px rgba(0,0,0,.08); }
+    header h1 { margin: 0; font-size: 18px; line-height: 1.35; }
+    header p { margin: 4px 0 0; font-size: 13px; opacity: .92; }
+    main { width: min(720px, 100%); margin: 0 auto; padding: 16px; }
+    .event-list { display: grid; gap: 14px; }
+    .event-card { background: #fff; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(15,23,42,.05); }
+    .event-image { display: block; width: 100%; height: 132px; object-fit: cover; background: #dcfce7; }
+    .event-image.placeholder { display: block; height: 28px; }
+    .event-body { padding: 14px; }
+    .event-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    h2 { margin: 0; font-size: 16px; line-height: 1.45; }
+    .badge { flex: 0 0 auto; background: #fef3c7; color: #92400e; border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 700; }
+    p { margin: 0; }
+    .date { margin-top: 10px; font-size: 15px; font-weight: 700; }
+    .time { margin-top: 3px; font-size: 15px; }
+    .venue, .capacity { margin-top: 8px; font-size: 13px; color: var(--muted); }
+    .button { display: block; margin-top: 14px; width: 100%; border-radius: 8px; background: var(--green); color: #fff; text-align: center; text-decoration: none; font-weight: 800; padding: 13px 14px; }
+    .guide-box { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(15,23,42,.05); }
+    .guide-box p { color: var(--muted); font-size: 13px; line-height: 1.65; }
+    .history-link { display: block; margin-top: 10px; width: 100%; border-radius: 8px; background: #fff; color: var(--green); border: 1.5px solid var(--green); text-align: center; text-decoration: none; font-weight: 800; padding: 12px 14px; }
+    .history-box { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(15,23,42,.05); }
+    .history-box p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .history-button { display: block; width: 100%; border: 0; margin-top: 10px; border-radius: 8px; background: #dc2626; color: #fff; text-align: center; text-decoration: none; font-weight: 800; padding: 12px 14px; font-size: 15px; }
+    .history-status { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .booking-list { display: grid; gap: 10px; margin-top: 12px; }
+    .booking-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fafafa; }
+    .booking-card h3 { margin: 0; font-size: 14px; line-height: 1.4; }
+    .booking-card .meta { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .cancel-button { margin-top: 10px; width: 100%; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f2; color: #dc2626; font-weight: 800; padding: 10px 12px; }
+    .empty { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 32px 16px; text-align: center; color: var(--muted); }
+  </style>
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <header>
+    <h1>茶はいダーツバー西新宿Luuイベント予約</h1>
+    <p>参加したい交流会を選択してください</p>
+  </header>
+  <main>
+    <section class="guide-box">
+      <p>予約内容の確認・キャンセルは予約履歴からできます。</p>
+      <a class="history-link" href="${esc(historyUrl())}">予約履歴を見る</a>
+    </section>
+    <section class="event-list">
+      ${items || '<div class="empty">現在受付中のイベントはありません。</div>'}
+    </section>
+  </main>
+  <script>
+(function(){
+  var LIFF_ID = ${JSON.stringify(liffId)};
+  var button = document.getElementById('loadHistoryButton');
+  var status = document.getElementById('historyStatus');
+  var list = document.getElementById('bookingList');
+  var liffReady = false;
+  var activeRun = 0;
+  if (!button || !status || !list) return;
+
+  function setStatus(text) {
+    status.textContent = text || '';
+  }
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function formatJp(iso) {
+    try {
+      return new Intl.DateTimeFormat('ja-JP', {
+        timeZone: 'Asia/Tokyo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).format(new Date(iso));
+    } catch (e) {
+      return iso || '';
+    }
+  }
+  function timeoutError(label) {
+    var err = new Error(label + '_timeout');
+    err.code = label + '_timeout';
+    return err;
+  }
+  function withTimeout(promise, ms, label) {
+    return Promise.race([
+      promise,
+      new Promise(function(_, reject){
+        setTimeout(function(){ reject(timeoutError(label)); }, ms);
+      })
+    ]);
+  }
+  async function fetchJsonWithTimeout(url, options, ms, label) {
+    var controller = new AbortController();
+    var timer = setTimeout(function(){ controller.abort(); }, ms);
+    try {
+      return await fetch(url, Object.assign({}, options || {}, { signal: controller.signal }));
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw timeoutError(label);
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function canCancel(booking) {
+    if (booking.status !== 'requested' && booking.status !== 'confirmed') return false;
+    if (booking.cancel_deadline_hours_before == null) return false;
+    var deadline = new Date(booking.slot_starts_at).getTime() - Number(booking.cancel_deadline_hours_before) * 3600000;
+    return deadline > Date.now();
+  }
+  async function ensureIdToken() {
+    if (!window.liff) throw new Error('LIFF SDKを読み込めませんでした。LINEアプリ内で開き直してください。');
+    if (!liffReady) {
+      setStatus('LINE認証を準備しています...');
+      await withTimeout(window.liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true }), 12000, 'liff_init');
+      liffReady = true;
+    }
+    setStatus('LINEログイン状態を確認しています...');
+    if (!window.liff.isLoggedIn()) {
+      try { sessionStorage.setItem('lh_event_history_after_login', '1'); } catch (e) {}
+      setStatus('LINEログインへ移動します。移動しない場合はLINEアプリ内で開き直してください。');
+      window.liff.login({ redirectUri: window.location.href });
+      return null;
+    }
+    var idToken = window.liff.getIDToken();
+    if (!idToken) throw new Error('LINE認証情報を取得できませんでした。LINEアプリ内で開き直してください。');
+    return idToken;
+  }
+  async function apiGet(path, idToken) {
+    var url = new URL(path, window.location.origin);
+    url.searchParams.set('liffId', LIFF_ID);
+    var res = await fetchJsonWithTimeout(url.toString(), { headers: { Authorization: 'Bearer ' + idToken } }, 12000, 'history_fetch');
+    if (!res.ok) throw new Error('予約履歴の取得に失敗しました');
+    return res.json();
+  }
+  async function apiPost(path, idToken) {
+    var url = new URL(path, window.location.origin);
+    url.searchParams.set('liffId', LIFF_ID);
+    var res = await fetchJsonWithTimeout(url.toString(), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+      body: '{}'
+    }, 12000, 'cancel_fetch');
+    if (!res.ok) {
+      var text = await res.text().catch(function(){ return ''; });
+      throw new Error(text || 'キャンセルに失敗しました');
+    }
+    return res.json();
+  }
+  function renderBookings(items, idToken) {
+    if (!items.length) {
+      list.innerHTML = '<div class="empty">これからの予約はありません。</div>';
+      return;
+    }
+    list.innerHTML = items.map(function(booking){
+      var cancel = canCancel(booking)
+        ? '<button class="cancel-button" data-booking-id="' + escapeHtml(booking.id) + '" data-event-name="' + escapeHtml(booking.event_name) + '">キャンセルする</button>'
+        : '';
+      return '<article class="booking-card">' +
+        '<h3>' + escapeHtml(booking.event_name) + '</h3>' +
+        '<div class="meta">' + escapeHtml(formatJp(booking.slot_starts_at)) + '<br>' + escapeHtml(booking.venue_name || '') + '</div>' +
+        cancel +
+      '</article>';
+    }).join('');
+    Array.prototype.forEach.call(list.querySelectorAll('[data-booking-id]'), function(cancelButton){
+      cancelButton.addEventListener('click', async function(){
+        var eventName = cancelButton.getAttribute('data-event-name') || 'この予約';
+        if (!confirm('「' + eventName + '」をキャンセルしますか？')) return;
+        cancelButton.disabled = true;
+        setStatus('キャンセル処理中です...');
+        try {
+          await apiPost('/api/liff/events/me/' + encodeURIComponent(cancelButton.getAttribute('data-booking-id')) + '/cancel', idToken);
+          setStatus('キャンセルしました。');
+          await loadHistory();
+        } catch (e) {
+          setStatus(e instanceof Error ? e.message : String(e));
+          cancelButton.disabled = false;
+        }
+      });
+    });
+  }
+  async function loadHistory() {
+    var runId = ++activeRun;
+    list.innerHTML = '';
+    setStatus('予約履歴を読み込んでいます...');
+    button.disabled = true;
+    var watchdog = setTimeout(function(){
+      if (runId !== activeRun) return;
+      setStatus('読み込みに時間がかかっています。LINEアプリ内で開き直すか、イベント名とお名前をこのLINEに送ってください。');
+      button.disabled = false;
+    }, 15000);
+    try {
+      var idToken = await ensureIdToken();
+      if (!idToken) return;
+      setStatus('予約履歴を取得しています...');
+      var data = await apiGet('/api/liff/events/me?tab=upcoming', idToken);
+      if (runId !== activeRun) return;
+      renderBookings(data.items || [], idToken);
+      setStatus('');
+    } catch (e) {
+      if (runId !== activeRun) return;
+      if (e && (e.code === 'liff_init_timeout' || e.code === 'history_fetch_timeout')) {
+        setStatus('読み込みに時間がかかっています。LINEアプリ内で開き直すか、イベント名とお名前をこのLINEに送ってください。');
+      } else {
+        setStatus(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      clearTimeout(watchdog);
+      if (runId === activeRun) button.disabled = false;
+    }
+  }
+  button.addEventListener('click', function(){ void loadHistory(); });
+  try {
+    if (sessionStorage.getItem('lh_event_history_after_login') === '1') {
+      sessionStorage.removeItem('lh_event_history_after_login');
+      setTimeout(function(){ void loadHistory(); }, 300);
+    }
+  } catch (e) {}
+})();
+  </script>
+</body>
+</html>`);
+});
 
 // 404 fallback — API paths return JSON 404, everything else serves from static assets (LIFF/admin)
 export const notFoundHandler = async (c: Parameters<typeof app.notFound>[0] extends (ctx: infer C) => unknown ? C : never) => {

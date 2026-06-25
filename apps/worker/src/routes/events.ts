@@ -49,6 +49,171 @@ function bad(c: Context<Env>, code: string, status = 422): Response {
   return c.json({ error: code }, status as 400 | 401 | 403 | 404 | 409 | 410 | 422 | 429);
 }
 
+function jsonB64(value: unknown): string {
+  const json = JSON.stringify(value);
+  const bytes = new TextEncoder().encode(json);
+  let bin = '';
+  for (const byte of bytes) bin += String.fromCharCode(byte);
+  return btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+
+function fromJsonB64<T>(value: string): T | null {
+  try {
+    const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const bin = atob(padded);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return JSON.parse(new TextDecoder().decode(bytes)) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function hmacSha256Hex(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let out = 0;
+  for (let i = 0; i < a.length; i += 1) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return out === 0;
+}
+
+function telegramActionSecret(c: Context<Env>): string | null {
+  return c.env.TELEGRAM_ACTION_SECRET || c.env.API_KEY || null;
+}
+
+async function signTelegramAction(c: Context<Env>, payload: Record<string, unknown>): Promise<string | null> {
+  const secret = telegramActionSecret(c);
+  if (!secret) return null;
+  const p = jsonB64(payload);
+  const s = await hmacSha256Hex(secret, p);
+  return `${p}.${s}`;
+}
+
+async function verifyTelegramActionToken<T extends Record<string, unknown>>(
+  c: Context<Env>,
+  token: string | undefined,
+): Promise<T | null> {
+  if (!token) return null;
+  const secret = telegramActionSecret(c);
+  if (!secret) return null;
+  const [p, s] = token.split('.');
+  if (!p || !s) return null;
+  const expected = await hmacSha256Hex(secret, p);
+  if (!timingSafeEqual(expected, s)) return null;
+  return fromJsonB64<T>(p);
+}
+
+function parseCustomerNote(note: string | null | undefined): Record<string, string> {
+  const data: Record<string, string> = {};
+  for (const line of String(note || '').replaceAll('\\n', '\n').split(/\r?\n/)) {
+    const m = line.match(/^([^:：]+)[:：]\s*(.*)$/);
+    if (m) data[m[1].trim()] = m[2].trim();
+  }
+  return data;
+}
+
+function adminTelegramText(args: {
+  eventName: string;
+  startsAt: string;
+  venueName: string | null;
+  friendDisplayName: string | null;
+  customerNote: string | null;
+  bookingId: string;
+}): string {
+  const note = parseCustomerNote(args.customerNote);
+  return [
+    '新しいイベント予約リクエストが届きました。',
+    '',
+    `イベント: ${args.eventName}`,
+    `日時: ${startsAtJst(args.startsAt)}`,
+    `会場: ${args.venueName || ''}`,
+    `表示名: ${args.friendDisplayName || '未取得'}`,
+    `名前: ${note['名前'] || note['お名前'] || ''}`,
+    `電話番号: ${note['電話番号'] || ''}`,
+    `人数: ${note['人数'] || ''}`,
+    `同行者人数: ${note['同行者人数'] || ''}`,
+    `同行者名: ${note['同行者名'] || ''}`,
+    `X/SNS: ${note['Xアカウント'] || note['SNSアカウント'] || ''}`,
+    `備考: ${note['備考'] || ''}`,
+    '',
+    `bookingId: ${args.bookingId}`,
+  ].join('\n');
+}
+
+async function sendTelegramMessage(c: Context<Env>, payload: Record<string, unknown>): Promise<void> {
+  if (!c.env.TELEGRAM_BOT_TOKEN || !c.env.TELEGRAM_CHAT_ID) return;
+  const res = await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: c.env.TELEGRAM_CHAT_ID,
+      ...payload,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Telegram sendMessage failed: ${res.status} ${text}`);
+  }
+}
+
+async function notifyEventBookingTelegramAdmin(c: Context<Env>, args: {
+  accountId: string;
+  eventId: string;
+  bookingId: string;
+  eventName: string;
+  startsAt: string;
+  venueName: string | null;
+  friendDisplayName: string | null;
+  customerNote: string | null;
+}): Promise<void> {
+  if (!c.env.TELEGRAM_BOT_TOKEN || !c.env.TELEGRAM_CHAT_ID) return;
+  const origin = new URL(c.req.url).origin;
+  const exp = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 14;
+  const approveToken = await signTelegramAction(c, {
+    accountId: args.accountId,
+    eventId: args.eventId,
+    bookingId: args.bookingId,
+    action: 'confirm',
+    exp,
+  });
+  const rejectToken = await signTelegramAction(c, {
+    accountId: args.accountId,
+    eventId: args.eventId,
+    bookingId: args.bookingId,
+    action: 'reject',
+    exp,
+  });
+  if (!approveToken || !rejectToken) return;
+  await sendTelegramMessage(c, {
+    text: adminTelegramText({
+      eventName: args.eventName,
+      startsAt: args.startsAt,
+      venueName: args.venueName,
+      friendDisplayName: args.friendDisplayName,
+      customerNote: args.customerNote,
+      bookingId: args.bookingId,
+    }),
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '承認する', url: `${origin}/telegram/event-booking-action?t=${encodeURIComponent(approveToken)}` },
+        { text: '拒否する', url: `${origin}/telegram/event-booking-action?t=${encodeURIComponent(rejectToken)}` },
+      ]],
+    },
+  });
+}
+
 function getAccountId(c: Context<Env>): string | null {
   return c.req.query('account_id') ?? null;
 }
@@ -598,6 +763,75 @@ events.put('/api/events/admin/events/:id/slots/:slotId', async (c) => {
 // MUST be registered before /:id paths so "me" is not consumed as :id.
 // ============================================================
 
+events.get('/api/liff/events', async (c) => {
+  const account_id = await resolveAccountIdFromLiff(c);
+  if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
+  const nowIso = new Date().toISOString();
+
+  const { results } = await c.env.DB
+    .prepare(
+      `SELECT
+         e.id,
+         e.name,
+         e.venue_name,
+         e.venue_url,
+         e.image_url,
+         e.description,
+         e.description_centered,
+         e.max_bookings_per_friend,
+         e.requires_approval,
+         (
+           SELECT s.starts_at
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at >= ?
+            ORDER BY s.starts_at ASC
+            LIMIT 1
+         ) AS next_slot_starts_at,
+         (
+           SELECT s.ends_at
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at >= ?
+            ORDER BY s.starts_at ASC
+            LIMIT 1
+         ) AS next_slot_ends_at,
+         (
+           SELECT COUNT(*)
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at >= ?
+         ) AS future_slot_count
+       FROM events e
+       WHERE e.deleted_at IS NULL
+         AND e.is_published = 1
+         AND (
+           (e.target_type = 'single' AND e.line_account_id = ?)
+           OR (e.target_type = 'multi-account-dedup'
+               AND EXISTS (SELECT 1 FROM json_each(e.account_ids) WHERE value = ?))
+         )
+         AND EXISTS (
+           SELECT 1
+             FROM event_slots s
+            WHERE s.event_id = e.id
+              AND s.deleted_at IS NULL
+              AND s.is_active = 1
+              AND s.starts_at >= ?
+         )
+       ORDER BY next_slot_starts_at ASC, e.sort_order ASC, e.created_at DESC`,
+    )
+    .bind(nowIso, nowIso, nowIso, account_id, account_id, nowIso)
+    .all();
+
+  return c.json({ items: results ?? [] });
+});
+
 events.get('/api/liff/events/me', async (c) => {
   const account_id = await resolveAccountIdFromLiff(c);
   if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
@@ -764,7 +998,18 @@ events.get('/api/liff/events/:id/slots', async (c) => {
     only_active: true,
     only_future: true,
   });
-  return c.json({ items });
+  return c.json({
+    items: items.map((slot) => ({
+      id: slot.id,
+      event_id: slot.event_id,
+      starts_at: slot.starts_at,
+      ends_at: slot.ends_at,
+      capacity: slot.capacity,
+      is_active: slot.is_active,
+      sort_order: slot.sort_order,
+      is_full: slot.remaining != null && slot.remaining <= 0,
+    })),
+  });
 });
 
 // ----------------------------------------------------------------
@@ -800,6 +1045,7 @@ function startsAtJst(utcIso: string): string {
 events.post('/api/liff/events/:id/bookings', async (c) => {
   const account_id = await resolveAccountIdFromLiff(c);
   if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
+  const resolvedAccountId = account_id;
   const idemKey = c.req.header('Idempotency-Key');
   if (!idemKey) return bad(c, 'idempotency_key_required', 400);
   const callerLineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
@@ -1049,9 +1295,9 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   // best-effort notification: do not fail the booking if push fails.
   try {
     const acc = await c.env.DB
-      .prepare(`SELECT channel_access_token FROM line_accounts WHERE id = ?`)
+      .prepare(`SELECT channel_access_token, liff_id FROM line_accounts WHERE id = ?`)
       .bind(account_id)
-      .first<{ channel_access_token: string }>();
+      .first<{ channel_access_token: string; liff_id: string | null }>();
     if (acc?.channel_access_token) {
       const kind: EventNotificationKind =
         status === 'requested' ? 'received_pending' : 'received_confirmed';
@@ -1064,11 +1310,29 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
           startsAtJst: startsAtJst(slot.starts_at),
           venueName: event.venue_name,
           venueUrl: event.venue_url,
+          liffId: acc.liff_id,
         },
       });
     }
   } catch (e) {
     console.error('[event-booking] notify failed', e);
+  }
+
+  if (status === 'requested') {
+    try {
+      await notifyEventBookingTelegramAdmin(c, {
+        accountId: resolvedAccountId,
+        eventId: event.id,
+        bookingId: id,
+        eventName: event.name,
+        startsAt: slot.starts_at,
+        venueName: event.venue_name,
+        friendDisplayName: null,
+        customerNote: body.customer_note ?? null,
+      });
+    } catch (e) {
+      console.error('[event-booking] telegram admin notify failed', e);
+    }
   }
 
   return finalize(201, { id, status });
@@ -1118,6 +1382,149 @@ events.get('/api/events/admin/events/notifications/pending', async (c) => {
   return c.json({ count: row?.c ?? 0 });
 });
 
+function buildManualEventCustomerNote(body: {
+  name: string;
+  phone?: string | null;
+  x_account?: string | null;
+  participant_count?: number;
+  companion_count?: number;
+  companion_names?: string | null;
+  note?: string | null;
+  source?: string | null;
+}): string {
+  const rows = [
+    ['受付区分', body.source || '管理者追加'],
+    ['名前', body.name],
+    ['Xアカウント', body.x_account || ''],
+    ['電話番号', body.phone || ''],
+    ['人数', String(body.participant_count ?? 1)],
+    ['同行者人数', String(body.companion_count ?? 0)],
+    ['同行者名', body.companion_names || ''],
+    ['備考', body.note || ''],
+  ];
+  return rows.map(([k, v]) => `${k}: ${v}`).join('\n');
+}
+
+events.post('/api/events/admin/events/:id/bookings', async (c) => {
+  const account_id = getAccountId(c);
+  if (!account_id) return bad(c, 'account_id_required', 400);
+  const event_id = c.req.param('id');
+  if (!(await ownsEvent(c.env.DB, event_id, account_id))) return bad(c, 'not_found', 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    slot_id?: string;
+    name?: string;
+    phone?: string;
+    x_account?: string | null;
+    participant_count?: number;
+    companion_count?: number;
+    companion_names?: string | null;
+    note?: string | null;
+    source?: string | null;
+  };
+  const name = body.name?.trim();
+  const phone = body.phone?.trim() || '';
+  if (!body.slot_id) return bad(c, 'invalid_slot_id', 422);
+  if (!name) return bad(c, 'name_required', 422);
+  const participantCount = Number.isFinite(body.participant_count)
+    ? Math.max(1, Math.floor(body.participant_count ?? 1))
+    : 1;
+  const companionCount = Number.isFinite(body.companion_count)
+    ? Math.max(0, Math.floor(body.companion_count ?? 0))
+    : 0;
+  if (participantCount > 30 || companionCount > 29) return bad(c, 'invalid_party_size', 422);
+
+  const slot = await c.env.DB
+    .prepare(
+      `SELECT id, starts_at, capacity, is_active, deleted_at
+         FROM event_slots WHERE id = ? AND event_id = ? AND deleted_at IS NULL`,
+    )
+    .bind(body.slot_id, event_id)
+    .first<{ id: string; starts_at: string; capacity: number | null; is_active: number; deleted_at: string | null }>();
+  if (!slot || slot.is_active !== 1) return bad(c, 'slot_inactive', 409);
+
+  if (slot.capacity != null) {
+    const cnt = await c.env.DB
+      .prepare(
+        `SELECT COUNT(*) AS c FROM event_bookings
+          WHERE slot_id = ? AND status IN ('requested','confirmed')`,
+      )
+      .bind(slot.id)
+      .first<{ c: number }>();
+    if ((cnt?.c ?? 0) >= slot.capacity) return bad(c, 'slot_full', 409);
+  }
+
+  const nowIso = new Date().toISOString();
+  const friendId = crypto.randomUUID();
+  const bookingId = crypto.randomUUID();
+  const manualLineUserId = `manual:${account_id}:${bookingId}`;
+  const staff = c.get('staff');
+  await c.env.DB
+    .prepare(
+      `INSERT INTO friends
+         (id, line_account_id, line_user_id, display_name, is_following, user_id, metadata, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+    )
+    .bind(
+      friendId,
+      account_id,
+      manualLineUserId,
+      name,
+      crypto.randomUUID(),
+      JSON.stringify({ source: 'event_admin_manual' }),
+      nowIso,
+      nowIso,
+    )
+    .run();
+
+  const source = body.source?.trim() || '管理者追加';
+  const customerNote = buildManualEventCustomerNote({
+    ...body,
+    name,
+    phone,
+    participant_count: participantCount,
+    companion_count: companionCount,
+    source,
+  });
+  if (customerNote.length > CUSTOMER_NOTE_MAX) return bad(c, 'invalid_customer_note', 422);
+
+  await c.env.DB
+    .prepare(
+      `INSERT INTO event_bookings
+         (id, line_account_id, event_id, slot_id, friend_id, status, customer_note, internal_note,
+          requested_at, decided_at, decided_by_staff_id, identity_key)
+       VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      bookingId,
+      account_id,
+      event_id,
+      slot.id,
+      friendId,
+      customerNote,
+      `受付区分: ${source}`,
+      nowIso,
+      nowIso,
+      staff?.id ?? null,
+      `manual:${bookingId}`,
+    )
+    .run();
+
+  const row = await c.env.DB
+    .prepare(
+      `SELECT b.*,
+              s.starts_at AS slot_starts_at, s.ends_at AS slot_ends_at,
+              f.display_name AS friend_display_name, f.line_user_id AS friend_line_user_id
+         FROM event_bookings b
+         JOIN event_slots s ON s.id = b.slot_id
+         LEFT JOIN friends f ON f.id = b.friend_id
+        WHERE b.id = ?`,
+    )
+    .bind(bookingId)
+    .first();
+  return c.json(row, 201);
+});
+
 events.get('/api/events/admin/events/:id/bookings', async (c) => {
   const account_id = getAccountId(c);
   if (!account_id) return bad(c, 'account_id_required', 400);
@@ -1127,7 +1534,7 @@ events.get('/api/events/admin/events/:id/bookings', async (c) => {
   const slot_id = c.req.query('slot_id');
   const conditions = ['b.event_id = ?'];
   const params: unknown[] = [event_id];
-  if (status) {
+  if (status && status !== 'all') {
     conditions.push('b.status = ?');
     params.push(status);
   }
@@ -1194,6 +1601,7 @@ async function notifyBookingFriend(
         `SELECT e.name AS event_name, e.venue_name, e.venue_url,
                 s.starts_at AS slot_starts_at,
                 la.channel_access_token,
+                la.liff_id,
                 f.line_user_id
            FROM event_bookings b
            JOIN events e ON e.id = b.event_id
@@ -1209,6 +1617,7 @@ async function notifyBookingFriend(
         venue_url: string | null;
         slot_starts_at: string;
         channel_access_token: string;
+        liff_id: string | null;
         line_user_id: string;
       }>();
     if (!row || !row.channel_access_token) return;
@@ -1221,6 +1630,7 @@ async function notifyBookingFriend(
         startsAtJst: startsAtJst(row.slot_starts_at),
         venueName: row.venue_name,
         venueUrl: row.venue_url,
+        liffId: row.liff_id,
       },
     });
   } catch (e) {
@@ -1228,22 +1638,22 @@ async function notifyBookingFriend(
   }
 }
 
-events.post('/api/events/admin/events/:id/bookings/:bookingId/decide', async (c) => {
-  const account_id = getAccountId(c);
-  if (!account_id) return bad(c, 'account_id_required', 400);
-  const event_id = c.req.param('id');
-  if (!(await ownsEvent(c.env.DB, event_id, account_id))) return bad(c, 'not_found', 404);
-  const booking = await loadBookingForAction(c.env.DB, account_id, event_id, c.req.param('bookingId'));
+async function decideEventBooking(
+  c: Context<Env>,
+  args: {
+    account_id: string;
+    event_id: string;
+    booking_id: string;
+    action: EventBookingAction;
+    reason?: string;
+  },
+): Promise<Response> {
+  if (!(await ownsEvent(c.env.DB, args.event_id, args.account_id))) return bad(c, 'not_found', 404);
+  const booking = await loadBookingForAction(c.env.DB, args.account_id, args.event_id, args.booking_id);
   if (!booking) return bad(c, 'not_found', 404);
   if (booking.decided_at != null) return bad(c, 'already_decided', 409);
-
-  const body = (await c.req.json().catch(() => ({}))) as { action?: string; reason?: string };
-  if (body.action !== 'confirm' && body.action !== 'reject') {
-    return bad(c, 'invalid_action', 422);
-  }
-  const action: EventBookingAction = body.action;
-  if (!canTransition(booking.status as never, action)) return bad(c, 'invalid_state', 409);
-  const next = nextStatus(booking.status as never, action);
+  if (!canTransition(booking.status as never, args.action)) return bad(c, 'invalid_state', 409);
+  const next = nextStatus(booking.status as never, args.action);
 
   const nowIso = new Date().toISOString();
   const staff = c.get('staff');
@@ -1260,7 +1670,7 @@ events.post('/api/events/admin/events/:id/bookings/:bookingId/decide', async (c)
     .run();
   if ((upd.meta?.changes ?? 0) === 0) return bad(c, 'already_decided', 409);
 
-  if (action === 'reject' && body.reason) {
+  if (args.action === 'reject' && args.reason) {
     await c.env.DB
       .prepare(
         `UPDATE event_bookings
@@ -1268,11 +1678,11 @@ events.post('/api/events/admin/events/:id/bookings/:bookingId/decide', async (c)
                 updated_at = ?
           WHERE id = ?`,
       )
-      .bind(`[reject reason] ${body.reason}`, nowIso, booking.id)
+      .bind(`[reject reason] ${args.reason}`, nowIso, booking.id)
       .run();
   }
 
-  if (action === 'confirm') {
+  if (args.action === 'confirm') {
     const slot = await c.env.DB
       .prepare(`SELECT starts_at FROM event_slots WHERE id = ?`)
       .bind(booking.slot_id)
@@ -1293,12 +1703,87 @@ events.post('/api/events/admin/events/:id/bookings/:bookingId/decide', async (c)
     }
   }
 
-  await notifyBookingFriend(c.env.DB, booking.id, action === 'confirm' ? 'confirmed' : 'rejected');
+  await notifyBookingFriend(c.env.DB, booking.id, args.action === 'confirm' ? 'confirmed' : 'rejected');
   const updated = await c.env.DB
     .prepare(`SELECT * FROM event_bookings WHERE id = ?`)
     .bind(booking.id)
     .first();
   return c.json(updated);
+}
+
+events.get('/telegram/event-booking-action', async (c) => {
+  const payload = await verifyTelegramActionToken<{
+    accountId?: string;
+    eventId?: string;
+    bookingId?: string;
+    action?: string;
+    exp?: number;
+  }>(c, c.req.query('t'));
+  if (
+    !payload ||
+    typeof payload.accountId !== 'string' ||
+    typeof payload.eventId !== 'string' ||
+    typeof payload.bookingId !== 'string' ||
+    (payload.action !== 'confirm' && payload.action !== 'reject') ||
+    typeof payload.exp !== 'number' ||
+    payload.exp < Math.floor(Date.now() / 1000)
+  ) {
+    return c.html(
+      '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:sans-serif;padding:24px"><h2>リンクが無効です</h2><p>期限切れ、または不正なリンクです。管理画面から確認してください。</p></body>',
+      400,
+    );
+  }
+
+  const res = await decideEventBooking(c, {
+    account_id: payload.accountId,
+    event_id: payload.eventId,
+    booking_id: payload.bookingId,
+    action: payload.action,
+  });
+  if (res.status === 409) {
+    return c.html(
+      '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:sans-serif;padding:24px"><h2>処理済みです</h2><p>この予約はすでに承認または拒否されています。</p></body>',
+    );
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.error('[event-booking] telegram action failed', res.status, text);
+    return c.html(
+      '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:sans-serif;padding:24px"><h2>処理に失敗しました</h2><p>管理画面から確認してください。</p></body>',
+      500,
+    );
+  }
+  const label = payload.action === 'confirm' ? '承認しました' : '拒否しました';
+  try {
+    await sendTelegramMessage(c, {
+      text: payload.action === 'confirm'
+        ? `イベント予約を承認しました。\nbookingId: ${payload.bookingId}`
+        : `イベント予約を拒否しました。\nbookingId: ${payload.bookingId}`,
+    });
+  } catch (e) {
+    console.error('[event-booking] telegram action result notify failed', e);
+  }
+  return c.html(
+    `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:sans-serif;padding:24px"><h2>${label}</h2><p>LINE Harnessへ反映しました。この画面は閉じて大丈夫です。</p></body>`,
+  );
+});
+
+events.post('/api/events/admin/events/:id/bookings/:bookingId/decide', async (c) => {
+  const account_id = getAccountId(c);
+  if (!account_id) return bad(c, 'account_id_required', 400);
+  const event_id = c.req.param('id');
+
+  const body = (await c.req.json().catch(() => ({}))) as { action?: string; reason?: string };
+  if (body.action !== 'confirm' && body.action !== 'reject') {
+    return bad(c, 'invalid_action', 422);
+  }
+  return decideEventBooking(c, {
+    account_id,
+    event_id,
+    booking_id: c.req.param('bookingId'),
+    action: body.action,
+    reason: body.reason,
+  });
 });
 
 events.post('/api/events/admin/events/:id/bookings/:bookingId/cancel', async (c) => {

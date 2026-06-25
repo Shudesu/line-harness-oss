@@ -19,9 +19,10 @@ import {
   getEntryRouteByRefCode,
   getMessageTemplateById,
 } from '@line-crm/db';
-import type { EntryRoute } from '@line-crm/db';
+import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { renderMessageContent } from '../services/render-message.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -31,6 +32,164 @@ const webhook = new Hono<Env>();
 // bursty batched deliveries (~100 events × ~5 KB) while still well below the
 // 128 MB Cloudflare Workers memory ceiling.
 const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
+const UNMATCHED_ACK_WINDOW_HOURS = 6;
+
+function extractLiffId(value: string | undefined): string | null {
+  if (!value) return null;
+  const fromUrl = value.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/)?.[1];
+  if (fromUrl) return fromUrl;
+  return /^[0-9]+-[A-Za-z0-9]+$/.test(value) ? value : null;
+}
+
+async function resolveLiffIdForReply(
+  db: D1Database,
+  lineAccountId: string | null,
+  fallbackLiffUrl?: string,
+): Promise<string | null> {
+  if (lineAccountId) {
+    const row = await db
+      .prepare('SELECT liff_id FROM line_accounts WHERE id = ?')
+      .bind(lineAccountId)
+      .first<{ liff_id: string | null }>();
+    if (row?.liff_id) return row.liff_id;
+  }
+  return extractLiffId(fallbackLiffUrl);
+}
+
+function buildUnmatchedMessageAckFlex(): unknown {
+  return {
+    type: 'bubble',
+    size: 'mega',
+    header: {
+      type: 'box',
+      layout: 'vertical',
+      paddingAll: '16px',
+      backgroundColor: '#111827',
+      contents: [
+        { type: 'text', text: 'メッセージを受け付けました', color: '#FFFFFF', weight: 'bold', size: 'lg', wrap: true },
+        { type: 'text', text: 'スタッフが確認後、順次返信いたします', color: '#D1D5DB', size: 'sm', margin: 'xs', wrap: true },
+      ],
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        {
+          type: 'text',
+          text: 'お急ぎの場合や追加情報がある場合は、このまま続けてお送りください。',
+          size: 'sm',
+          color: '#374151',
+          wrap: true,
+        },
+        {
+          type: 'text',
+          text: 'イベント予約・キャンセルは下のボタンから操作できます。',
+          size: 'sm',
+          color: '#111827',
+          weight: 'bold',
+          wrap: true,
+        },
+      ],
+    },
+    footer: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          color: '#06C755',
+          action: { type: 'message', label: 'イベント予約はこちら', text: 'イベント' },
+        },
+        {
+          type: 'button',
+          style: 'secondary',
+          action: { type: 'message', label: 'キャンセルはこちら', text: 'キャンセル' },
+        },
+      ],
+    },
+  };
+}
+
+async function shouldSendUnmatchedAck(db: D1Database, friendId: string): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT created_at
+         FROM messages_log
+        WHERE friend_id = ?
+          AND direction = 'outgoing'
+          AND source = 'unmatched_ack'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    )
+    .bind(friendId)
+    .first<{ created_at: string }>();
+  if (!row?.created_at) return true;
+  const last = new Date(row.created_at).getTime();
+  if (!Number.isFinite(last)) return true;
+  return Date.now() - last >= UNMATCHED_ACK_WINDOW_HOURS * 3600_000;
+}
+
+async function sendUnmatchedMessageAck(
+  db: D1Database,
+  lineClient: LineClient,
+  friendId: string,
+  replyToken: string,
+  lineAccountId: string | null,
+): Promise<boolean> {
+  if (!(await shouldSendUnmatchedAck(db, friendId))) return false;
+  const contents = buildUnmatchedMessageAckFlex();
+  const replyMsg = buildMessage('flex', JSON.stringify(contents), 'メッセージを受け付けました');
+  await lineClient.replyMessage(replyToken, [replyMsg]);
+  const { messageToLogPayload } = await import('../services/step-delivery.js');
+  const payload = messageToLogPayload(replyMsg);
+  await db
+    .prepare(
+      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
+       VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'unmatched_ack', ?, ?)`,
+    )
+    .bind(crypto.randomUUID(), friendId, payload.messageType, payload.content, lineAccountId, jstNow())
+    .run();
+  return true;
+}
+
+async function resolveWebhookFriend(
+  db: D1Database,
+  lineClient: LineClient,
+  userId: string,
+  lineAccountId: string | null,
+): Promise<Friend | null> {
+  let friend = await getFriendByLineUserId(db, userId);
+
+  if (!friend) {
+    let profile: Awaited<ReturnType<LineClient['getProfile']>> | null = null;
+    try {
+      profile = await lineClient.getProfile(userId);
+    } catch (err) {
+      console.error('Failed to get profile for message sender', userId, err);
+    }
+
+    friend = await upsertFriend(db, {
+      lineUserId: userId,
+      displayName: profile?.displayName ?? null,
+      pictureUrl: profile?.pictureUrl ?? null,
+      statusMessage: profile?.statusMessage ?? null,
+    });
+    console.log(`[webhook] auto-registered message sender friend=${friend.id} userId=${userId}`);
+  }
+
+  if (lineAccountId && friend.line_account_id !== lineAccountId) {
+    await db
+      .prepare('UPDATE friends SET line_account_id = ?, is_following = 1, updated_at = ? WHERE id = ?')
+      .bind(lineAccountId, jstNow(), friend.id)
+      .run();
+    friend = { ...friend, line_account_id: lineAccountId, is_following: 1 };
+  }
+
+  return friend;
+}
 
 webhook.post('/webhook', async (c) => {
   // Pre-read size guard: reject before reading the body if Content-Length is oversized.
@@ -339,7 +498,7 @@ async function handleEvent(
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await resolveWebhookFriend(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
@@ -389,7 +548,10 @@ async function handleEvent(
             response_type: rule.response_type,
             response_content: rule.response_content,
           });
-          const expandedContent = expandVariables(resolved.content, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], workerUrl);
+          const expandedContent = renderMessageContent(
+            expandVariables(resolved.content, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], workerUrl),
+            await resolveLiffIdForReply(db, lineAccountId, liffUrl),
+          );
           const replyMsg = buildMessage(resolved.messageType, expandedContent);
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
 
@@ -419,7 +581,7 @@ async function handleEvent(
   if (event.type === 'message' && event.message.type !== 'text') {
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await resolveWebhookFriend(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const msg = event.message as { id: string; type: string; fileName?: string; title?: string };
@@ -453,10 +615,10 @@ async function handleEvent(
 
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-         VALUES (?, ?, 'incoming', ?, ?, NULL, NULL, 'user', ?)`,
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
+         VALUES (?, ?, 'incoming', ?, ?, NULL, NULL, 'user', ?, ?)`,
       )
-      .bind(crypto.randomUUID(), friend.id, msg.type, finalContent, jstNow())
+      .bind(crypto.randomUUID(), friend.id, msg.type, finalContent, lineAccountId, jstNow())
       .run();
     return;
   }
@@ -467,7 +629,7 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    const friend = await resolveWebhookFriend(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const incomingText = textMessage.text;
@@ -477,10 +639,10 @@ async function handleEvent(
     // 受信メッセージをログに記録
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?)`,
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
+         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?, ?)`,
       )
-      .bind(logId, friend.id, incomingText, now)
+      .bind(logId, friend.id, incomingText, lineAccountId, now)
       .run();
 
     // Cross-account trigger: send message from another account via UUID
@@ -577,7 +739,10 @@ async function handleEvent(
             response_type: rule.response_type,
             response_content: rule.response_content,
           });
-          const expandedContent = expandVariables(resolved.content, { ...friend, metadata: resolvedMeta2 } as Parameters<typeof expandVariables>[1], workerUrl);
+          const expandedContent = renderMessageContent(
+            expandVariables(resolved.content, { ...friend, metadata: resolvedMeta2 } as Parameters<typeof expandVariables>[1], workerUrl),
+            await resolveLiffIdForReply(db, lineAccountId, liffUrl),
+          );
           const replyMsg = buildMessage(resolved.messageType, expandedContent);
           await lineClient.replyMessage(event.replyToken, [replyMsg]);
           replyTokenConsumed = true;
@@ -590,10 +755,10 @@ async function handleEvent(
           const wbAutoReplyPayload = logPayload2(replyMsg);
           await db
             .prepare(
-              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
-               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'auto_reply', ?)`,
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
+               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'auto_reply', ?, ?)`,
             )
-            .bind(outLogId, friend.id, wbAutoReplyPayload.messageType, wbAutoReplyPayload.content, jstNow())
+            .bind(outLogId, friend.id, wbAutoReplyPayload.messageType, wbAutoReplyPayload.content, lineAccountId, jstNow())
             .run();
         } catch (err) {
           console.error('Failed to send auto-reply', err);
@@ -607,6 +772,11 @@ async function handleEvent(
     // auto_replies にマッチしなかった = 自発メッセージ → unread にする
     if (!matched) {
       await upsertChatOnMessage(db, friend.id);
+      try {
+        replyTokenConsumed = await sendUnmatchedMessageAck(db, lineClient, friend.id, event.replyToken, lineAccountId);
+      } catch (err) {
+        console.error('Failed to send unmatched message ack', err);
+      }
     }
 
     // イベントバス発火: message_received

@@ -39,6 +39,14 @@ interface ChatDetail extends Chat {
   messages?: ChatMessage[]
 }
 
+interface MessageTemplate {
+  id: string
+  name: string
+  category: string
+  messageType: string
+  messageContent: string
+}
+
 type StatusFilter = 'all' | 'unread' | 'in_progress' | 'resolved'
 
 const statusConfig: Record<Chat['status'], { label: string; className: string }> = {
@@ -300,6 +308,8 @@ export default function ChatsPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState('')
   const [messageContent, setMessageContent] = useState('')
+  const [templates, setTemplates] = useState<MessageTemplate[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [pendingImage, setPendingImage] = useState<ImageUploaderValue | null>(null)
   const [sending, setSending] = useState(false)
   const sendLockRef = useRef(false)
@@ -367,6 +377,20 @@ export default function ChatsPage() {
   }, [selectedAccountId])
 
   useEffect(() => { void loadAllFriends() }, [loadAllFriends])
+
+  useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const res = await api.templates.list('manual')
+        if (res.success) {
+          setTemplates((res.data as unknown as MessageTemplate[]).filter((t) => t.messageType === 'text'))
+        }
+      } catch {
+        // 定型文は補助機能なので、チャット本体の利用は止めない
+      }
+    }
+    void loadTemplates()
+  }, [])
 
   // Keep refs in sync so setChats updater can read the latest filter without stale closure
   useEffect(() => { statusFilterRef.current = statusFilter }, [statusFilter])
@@ -502,7 +526,18 @@ export default function ChatsPage() {
   const handleSelectChat = (chatId: string) => {
     setSelectedChatId(chatId)
     setMessageContent('')
+    setSelectedTemplateId('')
     setPendingImage(null)
+  }
+
+  const handleInsertTemplate = () => {
+    const template = templates.find((t) => t.id === selectedTemplateId)
+    if (!template) return
+    setMessageContent((prev) => {
+      const current = prev.trimEnd()
+      return current ? `${current}\n\n${template.messageContent}` : template.messageContent
+    })
+    textareaRef.current?.focus()
   }
 
   const triggerLoadingAnimation = useCallback(async (chatId: string) => {
@@ -1047,6 +1082,31 @@ export default function ChatsPage() {
                     label="画像を送る (任意)"
                   />
                 </div>
+                {templates.length > 0 && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <select
+                      value={selectedTemplateId}
+                      onChange={(e) => setSelectedTemplateId(e.target.value)}
+                      className="min-h-[40px] flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                      aria-label="定型文を選択"
+                    >
+                      <option value="">定型文を選択</option>
+                      {templates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleInsertTemplate}
+                      disabled={!selectedTemplateId}
+                      className="min-h-[40px] rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      入力欄へ入れる
+                    </button>
+                  </div>
+                )}
                 <div className="flex items-end gap-2">
                   <textarea
                     ref={textareaRef}

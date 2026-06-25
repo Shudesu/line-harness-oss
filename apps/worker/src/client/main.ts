@@ -31,8 +31,29 @@ declare const liff: {
 };
 
 // Resolve LIFF ID: ?liffId= param (from endpoint URL) > env var (fallback to ①)
+function getEffectiveUrl(): URL {
+  const current = new URL(window.location.href);
+  const liffState = current.searchParams.get('liff.state');
+  if (!liffState) return current;
+  try {
+    return new URL(liffState, window.location.origin);
+  } catch {
+    try {
+      return new URL(decodeURIComponent(liffState), window.location.origin);
+    } catch {
+      return current;
+    }
+  }
+}
+
+function getParam(name: string): string | null {
+  const current = new URL(window.location.href);
+  const effective = getEffectiveUrl();
+  return effective.searchParams.get(name) ?? current.searchParams.get(name);
+}
+
 function detectLiffId(): string {
-  const fromParam = new URLSearchParams(window.location.search).get('liffId');
+  const fromParam = getParam('liffId');
   if (fromParam) return fromParam;
   return import.meta.env?.VITE_LIFF_ID || '';
 }
@@ -55,20 +76,18 @@ function apiCall(path: string, options?: RequestInit): Promise<Response> {
 }
 
 function getPage(): string | null {
-  const path = window.location.pathname.replace(/^\/+/, '');
+  const effective = getEffectiveUrl();
+  const path = effective.pathname.replace(/^\/+/, '');
   if (path === 'book') return 'book';
-  const params = new URLSearchParams(window.location.search);
-  return params.get('page');
+  return getParam('page');
 }
 
 function getRedirectUrl(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('redirect');
+  return getParam('redirect');
 }
 
 function getRef(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('ref');
+  return getParam('ref');
 }
 
 function getSavedUuid(): string | null {
@@ -126,23 +145,22 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
       if (!friendFlag) return;
 
       // Send form link if form param exists (was lost during friend-add flow)
-      const formParam = new URLSearchParams(window.location.search).get('form');
+      const formParam = getParam('form');
       if (formParam && !formLinkSent) {
         formLinkSent = true;
         try {
           const fp = await liff.getProfile();
           const idToken = liff.getIDToken();
-          const params = new URLSearchParams(window.location.search);
           await apiCall('/api/liff/send-form-link', {
             method: 'POST',
             body: JSON.stringify({
               lineUserId: fp.userId,
               formId: formParam,
               idToken: idToken || '',
-              ref: params.get('ref') || '',
-              gate: params.get('gate') || '',
-              xh: params.get('xh') || '',
-              ig: params.get('ig') || '',
+              ref: getParam('ref') || '',
+              gate: getParam('gate') || '',
+              xh: getParam('xh') || '',
+              ig: getParam('ig') || '',
             }),
           });
         } catch { /* best-effort */ }
@@ -196,6 +214,15 @@ function showError(message: string) {
   `;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error(`${label} がタイムアウトしました`)), ms);
+    }),
+  ]);
+}
+
 // ─── Core Flow ──────────────────────────────────────────
 
 async function linkAndAddFlow() {
@@ -213,7 +240,6 @@ async function linkAndAddFlow() {
     ]);
 
     // 1. UUID linking (always, regardless of friendship)
-    const linkParams = new URLSearchParams(window.location.search);
     const linkPromise = apiCall('/api/liff/link', {
       method: 'POST',
       body: JSON.stringify({
@@ -221,7 +247,7 @@ async function linkAndAddFlow() {
         displayName: profile.displayName,
         existingUuid: existingUuid,
         ref: ref,
-        ig: linkParams.get('ig') || '',
+        ig: getParam('ig') || '',
       }),
     }).then(async (res) => {
       if (res.ok) {
@@ -268,12 +294,11 @@ async function linkAndAddFlow() {
       showFriendAdd(profile);
     } else {
       // Already a friend — check for form param
-      const formParam = new URLSearchParams(window.location.search).get('form');
+      const formParam = getParam('form');
       if (formParam) {
         // Send form link via push message, then show completion
         try {
           const idToken = liff.getIDToken();
-          const params = new URLSearchParams(window.location.search);
           await apiCall('/api/liff/send-form-link', {
             method: 'POST',
             body: JSON.stringify({
@@ -281,9 +306,9 @@ async function linkAndAddFlow() {
               formId: formParam,
               idToken: idToken || '',
               ref: ref || '',
-              gate: params.get('gate') || '',
-              xh: params.get('xh') || '',
-              ig: params.get('ig') || '',
+              gate: getParam('gate') || '',
+              xh: getParam('xh') || '',
+              ig: getParam('ig') || '',
             }),
           });
         } catch { /* best-effort */ }
@@ -325,7 +350,7 @@ async function initSalonBooking(): Promise<void> {
 
   const existingUuid = getSavedUuid();
   const ref = getRef();
-  const ig = new URLSearchParams(window.location.search).get('ig');
+  const ig = getParam('ig');
 
   // ② Silent UUID linking (fire-and-forget; booking API は id_token verify で
   //    認証するので待つ必要はない)。
@@ -383,13 +408,13 @@ async function initSalonBooking(): Promise<void> {
 
 // ─── Event Booking (React, dynamic-imported) ─────────────
 
-async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void> {
-  // salon-booking と同じ初期化シーケンス: profile/idToken/friendship 取得、
-  // 未友達なら friend-add gate、友達なら React mount。
-  const [profile, idToken, friendship] = await Promise.all([
-    liff.getProfile(),
+async function initEventBooking(initialKind: 'list' | 'detail' | 'history'): Promise<void> {
+  // 予約履歴は本人の idToken で取得できるため、getFriendship() を待たない。
+  // LINE外ブラウザや一部端末で friendship が返らず、履歴画面が spinner のまま
+  // 止まることがある。
+  const [profile, idToken] = await Promise.all([
+    withTimeout(liff.getProfile(), 10000, 'プロフィール取得'),
     Promise.resolve(liff.getIDToken()),
-    liff.getFriendship(),
   ]);
   if (!idToken) {
     showError('LINE 認証情報の取得に失敗しました。LINE アプリ内で再度開いてください。');
@@ -419,9 +444,12 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
       /* silent */
     });
 
-  if (!friendship.friendFlag) {
-    showFriendAdd(profile);
-    return;
+  if (initialKind !== 'history') {
+    const friendship = await withTimeout(liff.getFriendship(), 10000, '友だち状態確認');
+    if (!friendship.friendFlag) {
+      showFriendAdd(profile);
+      return;
+    }
   }
 
   const container = document.getElementById('app');
@@ -429,8 +457,7 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
     showError('mount target #app が見つかりません');
     return;
   }
-  const params = new URLSearchParams(window.location.search);
-  const eventId = params.get('id') ?? '';
+  const eventId = getParam('id') ?? '';
   if (initialKind === 'detail' && !eventId) {
     showError('id クエリパラメータが必要です（?page=event&id=<eventId>）');
     return;
@@ -439,6 +466,8 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
   const ctx = { liffId: LIFF_ID, lineUserId: profile.userId, idToken };
   const initial = initialKind === 'detail'
     ? { kind: 'detail' as const, eventId }
+    : initialKind === 'list'
+      ? { kind: 'list' as const }
     : { kind: 'history' as const };
   mountEventBooking(container, ctx, initial);
 }
@@ -447,7 +476,7 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
 
 async function main() {
   try {
-    await liff.init({ liffId: LIFF_ID });
+    await withTimeout(liff.init({ liffId: LIFF_ID }), 12000, 'LIFF初期化');
 
     if (!liff.isLoggedIn()) {
       liff.login({ redirectUri: window.location.href });
@@ -472,11 +501,12 @@ async function main() {
       await initSalonBooking();
     } else if (page === 'event') {
       await initEventBooking('detail');
+    } else if (page === 'events') {
+      await initEventBooking('list');
     } else if (page === 'event-me') {
       await initEventBooking('history');
     } else if (page === 'form') {
-      const params = new URLSearchParams(window.location.search);
-      const formId = params.get('id');
+      const formId = getParam('id');
       await initForm(formId);
     } else if (!page) {
       await linkAndAddFlow();

@@ -2,7 +2,7 @@
 // apps/worker/src/client/main.ts (?page=event&id=<eventId> or ?page=event-me).
 // Mirrors salon-booking design language (LINE 緑 + sb-card + fade animations).
 
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import './styles.css';
 
@@ -42,8 +42,7 @@ interface EventSlot {
   ends_at: string;
   capacity: number | null;
   is_active: number;
-  active_count: number;
-  remaining: number | null;
+  is_full?: boolean;
 }
 
 interface MyBooking {
@@ -60,25 +59,58 @@ interface MyBooking {
   slot_ends_at: string;
 }
 
+interface EventListItem {
+  id: string;
+  name: string;
+  venue_name: string | null;
+  venue_url: string | null;
+  image_url: string | null;
+  description: string | null;
+  description_centered: number;
+  max_bookings_per_friend: number | null;
+  requires_approval: number;
+  next_slot_starts_at: string;
+  next_slot_ends_at: string;
+  future_slot_count: number;
+}
+
 function buildAuthHeaders(ctx: EventBookingContext, extra: Record<string, string> = {}): Record<string, string> {
   return { Authorization: `Bearer ${ctx.idToken}`, ...extra };
 }
 
-function apiGet<T>(path: string, ctx: EventBookingContext): Promise<T> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function apiGetOnce<T>(path: string, ctx: EventBookingContext): Promise<T> {
   const url = new URL(path, window.location.origin);
   url.searchParams.set('liffId', ctx.liffId);
-  return fetch(url.toString(), { headers: buildAuthHeaders(ctx) }).then(async (r) => {
-    if (!r.ok) {
-      const text = await r.text();
-      let parsed: unknown = null;
-      try { parsed = JSON.parse(text); } catch { /* ignore */ }
-      const err = new Error(`API ${r.status}`) as Error & { status: number; body: unknown };
-      err.status = r.status;
-      err.body = parsed ?? text;
-      throw err;
+  const r = await fetch(url.toString(), { headers: buildAuthHeaders(ctx) });
+  if (!r.ok) {
+    const text = await r.text();
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(text); } catch { /* ignore */ }
+    const err = new Error(`API ${r.status}`) as Error & { status: number; body: unknown };
+    err.status = r.status;
+    err.body = parsed ?? text;
+    throw err;
+  }
+  return r.json() as Promise<T>;
+}
+
+async function apiGet<T>(path: string, ctx: EventBookingContext): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await apiGetOnce<T>(path, ctx);
+    } catch (err) {
+      lastError = err;
+      const status = (err as { status?: number }).status;
+      if (status != null && status < 500) break;
+      await sleep(450);
     }
-    return r.json() as Promise<T>;
-  });
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function apiPost<T>(
@@ -144,11 +176,13 @@ function EventDetailScreen({
   eventId,
   onPickSlot,
   onGoHistory,
+  onGoList,
 }: {
   ctx: EventBookingContext;
   eventId: string;
   onPickSlot: (slot: EventSlot, event: EventDetail) => void;
   onGoHistory: () => void;
+  onGoList: () => void;
 }) {
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [slots, setSlots] = useState<EventSlot[]>([]);
@@ -247,20 +281,13 @@ function EventDetailScreen({
       <div className="px-4 -mt-6">
         <div className="eb-card">
           <h1 className="text-lg font-bold text-gray-900 leading-snug">{event.name}</h1>
+          <button onClick={onGoList} className="eb-list-back-btn mt-3">
+            予約一覧に戻る
+          </button>
           {event.venue_name && (
             <div className="mt-2 text-sm text-gray-700 flex items-start gap-1.5">
               <span>📍</span><span>{event.venue_name}</span>
             </div>
-          )}
-          {event.venue_url && (
-            <a
-              href={event.venue_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 inline-block text-xs eb-line-green-text underline break-all"
-            >
-              {event.venue_url}
-            </a>
           )}
           {max != null && (
             <div className="mt-3 inline-flex items-center gap-1 eb-badge bg-gray-100 text-gray-700">
@@ -291,7 +318,7 @@ function EventDetailScreen({
           ) : (
             <ul className="space-y-2">
               {slots.map((s) => {
-                const full = s.remaining != null && s.remaining <= 0;
+                const full = s.is_full === true;
                 const disabled = full || overLimit;
                 return (
                   <li key={s.id}>
@@ -305,7 +332,7 @@ function EventDetailScreen({
                         <span className="text-base">{formatJpTimeOnly(s.starts_at)} 〜 {formatJpTimeOnly(s.ends_at)}</span>
                       </span>
                       <span className="text-xs font-medium">
-                        {full ? '満員' : s.capacity == null ? '定員なし' : `残 ${s.remaining}`}
+                        {full ? '満員' : s.capacity == null ? '原則MAX16名' : '受付中'}
                       </span>
                     </button>
                   </li>
@@ -320,8 +347,8 @@ function EventDetailScreen({
           )}
         </div>
 
-        <div className="mt-6 text-center">
-          <button onClick={onGoHistory} className="text-sm eb-line-green-text underline">
+        <div className="mt-5">
+          <button onClick={onGoHistory} className="eb-history-btn">
             予約履歴を見る
           </button>
         </div>
@@ -343,14 +370,55 @@ function ConfirmScreen({
   onBack: () => void;
   onDone: (status: string) => void;
 }) {
+  const [customerName, setCustomerName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [xAccount, setXAccount] = useState('');
+  const [partySize, setPartySize] = useState('1');
+  const [companionCount, setCompanionCount] = useState('0');
+  const [companionNames, setCompanionNames] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idemKey] = useState(uid);
 
+  function buildCustomerNote(): string {
+    return [
+      `名前: ${customerName.trim()}`,
+      `電話番号: ${phone.trim()}`,
+      `Xアカウント: ${xAccount.trim()}`,
+      `人数: ${partySize.trim()}`,
+      `同行者人数: ${companionCount.trim()}`,
+      `同行者名: ${companionNames.trim()}`,
+      `備考: ${note.trim()}`,
+    ].join('\n');
+  }
+
   async function submit() {
-    if (note.length > 5000) {
-      setError('備考は 5000 字以内で入力してください');
+    const normalizedPartySize = Number(partySize);
+    const normalizedCompanionCount = Number(companionCount);
+    if (!customerName.trim()) {
+      setError('名前を入力してください');
+      return;
+    }
+    if (!phone.trim()) {
+      setError('電話番号を入力してください');
+      return;
+    }
+    if (!Number.isInteger(normalizedPartySize) || normalizedPartySize < 1) {
+      setError('人数は1以上で入力してください');
+      return;
+    }
+    if (!Number.isInteger(normalizedCompanionCount) || normalizedCompanionCount < 0) {
+      setError('同行者人数は0以上で入力してください');
+      return;
+    }
+    if (normalizedCompanionCount > 0 && !companionNames.trim()) {
+      setError('同行者がいる場合は同行者名を入力してください');
+      return;
+    }
+    const customerNote = buildCustomerNote();
+    if (customerNote.length > 5000) {
+      setError('入力内容は 5000 字以内で入力してください');
       return;
     }
     setSubmitting(true);
@@ -358,7 +426,7 @@ function ConfirmScreen({
     try {
       const res = await apiPost<{ id: string; status: string }>(
         `/api/liff/events/${event.id}/bookings`,
-        { slot_id: slot.id, customer_note: note || null },
+        { slot_id: slot.id, customer_note: customerNote },
         ctx,
         { 'Idempotency-Key': idemKey },
       );
@@ -417,19 +485,73 @@ function ConfirmScreen({
         </div>
       )}
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">
-          備考（任意）
-        </label>
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={4}
-          maxLength={5000}
-          placeholder="質問や伝えたいことがあれば..."
-          className="w-full border border-gray-300 rounded-xl p-3 text-sm bg-white"
-        />
-        <div className="text-xs text-gray-500 text-right mt-1">{note.length} / 5000</div>
+      <div className="space-y-3">
+        <Field label="名前" required>
+          <input
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            placeholder="例: 山田 太郎"
+            className="eb-input"
+          />
+        </Field>
+        <Field label="電話番号" required>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            inputMode="tel"
+            placeholder="例: 09012345678"
+            className="eb-input"
+          />
+        </Field>
+        <Field label="Xアカウント">
+          <input
+            value={xAccount}
+            onChange={(e) => setXAccount(e.target.value)}
+            placeholder="例: @example"
+            className="eb-input"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="人数" required>
+            <input
+              value={partySize}
+              onChange={(e) => setPartySize(e.target.value)}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              className="eb-input"
+            />
+          </Field>
+          <Field label="同行者人数">
+            <input
+              value={companionCount}
+              onChange={(e) => setCompanionCount(e.target.value)}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              className="eb-input"
+            />
+          </Field>
+        </div>
+        <Field label="同行者名">
+          <textarea
+            value={companionNames}
+            onChange={(e) => setCompanionNames(e.target.value)}
+            rows={2}
+            placeholder="同行者がいる場合は名前を入力"
+            className="eb-input"
+          />
+        </Field>
+        <Field label="備考">
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder="遅れる、質問など"
+            className="eb-input"
+          />
+        </Field>
       </div>
 
       {error && (
@@ -457,7 +579,27 @@ function Row({ label, value, valueClassName }: { label: string; value: string; v
   );
 }
 
-function DoneScreen({ status, onGoHistory }: { status: string; onGoHistory: () => void }) {
+function Field({ label, required, children }: { label: string; required?: boolean; children: ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-sm font-medium text-gray-700 mb-1.5">
+        {label}
+        {required && <span className="text-red-500 text-xs ml-1">必須</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function DoneScreen({
+  status,
+  onGoHistory,
+  onGoList,
+}: {
+  status: string;
+  onGoHistory: () => void;
+  onGoList: () => void;
+}) {
   const isPending = status === 'requested';
   return (
     <div className="px-4 py-10 text-center eb-slide-up">
@@ -474,6 +616,109 @@ function DoneScreen({ status, onGoHistory }: { status: string; onGoHistory: () =
         <button onClick={onGoHistory} className="eb-primary-btn">
           予約履歴を見る
         </button>
+        <button onClick={onGoList} className="eb-secondary-btn mt-3">
+          イベント一覧へ
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EventListScreen({
+  ctx,
+  onOpenEvent,
+  onGoHistory,
+}: {
+  ctx: EventBookingContext;
+  onOpenEvent: (eventId: string) => void;
+  onGoHistory: () => void;
+}) {
+  const [items, setItems] = useState<EventListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await apiGet<{ items: EventListItem[] }>('/api/liff/events', ctx);
+        if (!cancelled) setItems(res.items);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [ctx]);
+
+  return (
+    <div className="pb-24 eb-fade-in">
+      <div className="px-4 py-4">
+        <div className="mb-3">
+          <div>
+            <h1 className="text-base font-bold text-gray-900">イベント一覧</h1>
+            <p className="text-xs text-gray-500 mt-1">参加したい交流会を選択してください</p>
+          </div>
+        </div>
+
+        <div className="eb-card mb-4">
+          <p className="text-sm text-gray-700 leading-relaxed">
+            予約内容の確認・キャンセルは予約履歴からできます。
+          </p>
+          <button onClick={onGoHistory} className="eb-history-btn mt-3">
+            予約履歴を見る
+          </button>
+        </div>
+
+        {error && <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-sm">{error}</div>}
+        {loading ? (
+          <Spinner />
+        ) : items.length === 0 ? (
+          <div className="eb-card text-center text-sm text-gray-500 py-8">
+            現在受付中のイベントはありません。
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {items.map((event) => (
+              <button
+                key={event.id}
+                onClick={() => onOpenEvent(event.id)}
+                className="eb-card !p-0 w-full text-left overflow-hidden"
+              >
+                {event.image_url ? (
+                  <img src={event.image_url} alt="" className="w-full h-36 object-cover bg-gray-100" />
+                ) : (
+                  <div className="w-full h-7 bg-gradient-to-br from-green-100 to-green-200" />
+                )}
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <h2 className="text-sm font-bold text-gray-900 leading-snug">{event.name}</h2>
+                    {event.requires_approval === 1 && (
+                      <span className="eb-badge bg-amber-100 text-amber-800 shrink-0">承認制</span>
+                    )}
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-gray-800">
+                    {formatJpDateOnly(event.next_slot_starts_at)}
+                  </div>
+                  <div className="text-sm text-gray-700">
+                    {formatJpTimeOnly(event.next_slot_starts_at)} 〜 {formatJpTimeOnly(event.next_slot_ends_at)}
+                  </div>
+                  {event.venue_name && (
+                    <div className="mt-1 text-xs text-gray-500 truncate">📍 {event.venue_name}</div>
+                  )}
+                  <div className="mt-3 text-xs text-gray-500">
+                    <span>{event.future_slot_count > 1 ? `日時 ${event.future_slot_count}件` : '受付中'}</span>
+                    <span className="eb-card-cta">詳細・予約へ</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -496,7 +741,7 @@ function canCancel(b: MyBooking): boolean {
   return deadlineMs > Date.now();
 }
 
-function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
+function HistoryScreen({ ctx, onGoList }: { ctx: EventBookingContext; onGoList: () => void }) {
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [items, setItems] = useState<MyBooking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -546,6 +791,11 @@ function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
 
   return (
     <div className="pb-20 eb-fade-in">
+      <div className="px-4 pt-4">
+        <button onClick={onGoList} className="eb-list-back-primary-btn">
+          予約一覧に戻る
+        </button>
+      </div>
       <div className="sticky top-12 z-10 bg-white border-b border-gray-200">
         <div className="flex">
           {(['upcoming', 'past'] as const).map((t) => (
@@ -612,6 +862,7 @@ function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
 // ─── App ──────────────────────────────────────────────────
 
 type Screen =
+  | { kind: 'list' }
   | { kind: 'detail'; eventId: string }
   | { kind: 'confirm'; event: EventDetail; slot: EventSlot }
   | { kind: 'done'; status: string }
@@ -622,6 +873,7 @@ function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
 
   const headerLabel = (() => {
     switch (screen.kind) {
+      case 'list': return '茶はいダーツバー西新宿Luuイベント予約';
       case 'detail': return 'イベント予約';
       case 'confirm': return 'ご予約内容の確認';
       case 'done': return '完了';
@@ -638,12 +890,20 @@ function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
         {headerLabel}
       </header>
       <main className="max-w-md mx-auto">
+        {screen.kind === 'list' && (
+          <EventListScreen
+            ctx={ctx}
+            onOpenEvent={(eventId) => setScreen({ kind: 'detail', eventId })}
+            onGoHistory={() => setScreen({ kind: 'history' })}
+          />
+        )}
         {screen.kind === 'detail' && (
           <EventDetailScreen
             ctx={ctx}
             eventId={screen.eventId}
             onPickSlot={(slot, event) => setScreen({ kind: 'confirm', event, slot })}
             onGoHistory={() => setScreen({ kind: 'history' })}
+            onGoList={() => setScreen({ kind: 'list' })}
           />
         )}
         {screen.kind === 'confirm' && (
@@ -656,9 +916,18 @@ function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
           />
         )}
         {screen.kind === 'done' && (
-          <DoneScreen status={screen.status} onGoHistory={() => setScreen({ kind: 'history' })} />
+          <DoneScreen
+            status={screen.status}
+            onGoHistory={() => setScreen({ kind: 'history' })}
+            onGoList={() => setScreen({ kind: 'list' })}
+          />
         )}
-        {screen.kind === 'history' && <HistoryScreen ctx={ctx} />}
+        {screen.kind === 'history' && (
+          <HistoryScreen
+            ctx={ctx}
+            onGoList={() => setScreen({ kind: 'list' })}
+          />
+        )}
       </main>
     </div>
   );
