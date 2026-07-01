@@ -95,3 +95,50 @@ If the admin is cross-site to the API but `SameSite` is not `None` (e.g. the old
 **refuses with a 500 and an actionable error** rather than silently issuing a
 cookie the browser will drop. This converts the "login breaks after deploy"
 failure mode into a clear configuration error.
+
+## Troubleshooting
+
+### Admin login fails with a CORS error (`No 'Access-Control-Allow-Origin'`)
+
+**Symptom.** The login page shows a connection/failure message and the browser
+console logs:
+
+```text
+Access to fetch at 'https://<worker>.workers.dev/api/auth/login'
+from origin 'https://<admin>.pages.dev' has been blocked by CORS policy:
+No 'Access-Control-Allow-Origin' header is present on the requested resource.
+```
+
+**Cause.** `ADMIN_ORIGIN` is not set on the Worker, so the admin Pages origin is
+not on the credentialed-CORS allowlist and the Worker returns no
+`Access-Control-Allow-Origin` header (see `resolveCorsOrigin` in
+`apps/worker/src/middleware/admin-auth-config.ts`). `create-line-harness` sets
+`ADMIN_ORIGIN` / `ADMIN_ALLOW_CROSS_SITE` **after** deploying the admin, so a
+setup that aborted earlier (for example the Worker-deploy failure fixed in
+`create-line-harness@0.1.27`, issue #177) never reaches that step and leaves the
+Worker without them.
+
+**Confirm.** The Worker logs a hint on every rejected request — tail them and
+retry the login:
+
+```bash
+npx wrangler tail <worker-name>
+# → [admin-auth] CORS rejected origin "https://<admin>.pages.dev" on /api/auth/login but ADMIN_ORIGIN is empty. ...
+```
+
+You can also list the Worker's secrets and check `ADMIN_ORIGIN` is absent:
+
+```bash
+npx wrangler secret list --name <worker-name>
+```
+
+**Fix (existing install).** Add the two secrets — they persist across redeploys
+(use your real admin URL, including any `-<suffix>` in the Pages project name):
+
+```bash
+printf '%s' 'https://<admin>.pages.dev' | npx wrangler secret put ADMIN_ORIGIN --name <worker-name>
+printf '%s' 'true' | npx wrangler secret put ADMIN_ALLOW_CROSS_SITE --name <worker-name>
+```
+
+Reload the admin page and log in again. Alternatively, re-run
+`npx create-line-harness@latest` (≥ `0.1.27`), which sets these automatically.

@@ -207,5 +207,51 @@ export function resolveCorsOrigin(
   const allowed = new Set(
     [...allowedOrigins, requestOrigin].filter(Boolean).map(stripTrailingSlash),
   );
-  return allowed.has(stripTrailingSlash(origin)) ? origin : '';
+  if (allowed.has(stripTrailingSlash(origin))) return origin;
+
+  // Rejected. Never reflect the origin here — that would defeat the
+  // credentialed-CORS allowlist. But a cross-origin *admin auth* request that is
+  // rejected while the allowlist is empty is almost always a forgotten
+  // ADMIN_ORIGIN: `create-line-harness` sets it after deploying the admin, so a
+  // setup that aborted earlier (e.g. the Worker-deploy failure fixed in
+  // create-line-harness@0.1.27, issue #177) leaves it unset and the browser then
+  // sees only an opaque CORS block. Surface an actionable hint in the Worker
+  // logs (`wrangler tail`) — bounded to avoid amplification (see below).
+  if (allowedOrigins.length === 0) {
+    warnMissingAdminOrigin(env, origin, requestUrl);
+  }
+  return '';
+}
+
+// The "ADMIN_ORIGIN is empty" hint is emitted at most once per isolate (keyed on
+// the `env` binding object, which the runtime reuses across requests) so a flood
+// of cross-origin requests — scanners, CSRF probes — cannot amplify it into log
+// spam / Workers Logs cost.
+const warnedEnvs = new WeakSet<object>();
+
+function warnMissingAdminOrigin(
+  env: AdminAuthEnv,
+  origin: string,
+  requestUrl: string,
+): void {
+  if (warnedEnvs.has(env)) return;
+
+  // Only the admin auth routes are the real signal; a stray cross-origin hit on
+  // a data route (e.g. a scanner probing /api/friends) is not the operator's
+  // missing-config symptom, so stay quiet there.
+  let pathname = '';
+  try {
+    pathname = new URL(requestUrl).pathname;
+  } catch {
+    return;
+  }
+  if (!pathname.startsWith('/api/auth/')) return;
+
+  warnedEnvs.add(env);
+  console.warn(
+    `[admin-auth] CORS rejected origin "${origin.slice(0, 256)}" on ${pathname} ` +
+      `but ADMIN_ORIGIN is empty. Set ADMIN_ORIGIN to your admin URL (and ` +
+      `ADMIN_ALLOW_CROSS_SITE=true for the default Pages↔Workers topology). ` +
+      `See docs/ADMIN-AUTH.md.`,
+  );
 }
