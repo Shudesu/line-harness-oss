@@ -71,6 +71,7 @@ if (!API_URL) {
  * cached here.
  */
 export const CSRF_STORAGE_KEY = 'lh_csrf'
+export const SESSION_API_KEY_STORAGE_KEY = 'lh_session_api_key'
 
 export function getCsrfToken(): string {
   if (typeof window === 'undefined') return ''
@@ -82,6 +83,21 @@ export function setCsrfToken(token: string | undefined | null): void {
   localStorage.setItem(CSRF_STORAGE_KEY, token)
 }
 
+export function getSessionApiKey(): string {
+  if (typeof window === 'undefined') return ''
+  return sessionStorage.getItem(SESSION_API_KEY_STORAGE_KEY) || ''
+}
+
+export function setSessionApiKey(token: string | undefined | null): void {
+  if (typeof window === 'undefined' || !token) return
+  sessionStorage.setItem(SESSION_API_KEY_STORAGE_KEY, token)
+}
+
+export function clearSessionApiKey(): void {
+  if (typeof window === 'undefined') return
+  sessionStorage.removeItem(SESSION_API_KEY_STORAGE_KEY)
+}
+
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
@@ -91,12 +107,17 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
     const token = getCsrfToken()
     if (token) csrfHeaders['X-CSRF-Token'] = token
   }
+  const apiKey = getSessionApiKey()
+  const authHeaders: Record<string, string> = apiKey
+    ? { Authorization: `Bearer ${apiKey}` }
+    : {}
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     // Send the HttpOnly session cookie with every request.
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders,
       ...csrfHeaders,
       ...options?.headers,
     },

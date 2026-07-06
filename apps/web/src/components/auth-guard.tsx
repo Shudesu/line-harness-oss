@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import { getSessionApiKey, setCsrfToken } from '@/lib/api'
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -21,13 +22,20 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       try {
         localStorage.removeItem('lh_api_key')
         const apiUrl = process.env.NEXT_PUBLIC_API_URL
-        const res = await fetch(`${apiUrl}/api/auth/session`, { credentials: 'include' })
+        let res = await fetch(`${apiUrl}/api/auth/session`, { credentials: 'include' })
+        const apiKey = getSessionApiKey()
+        if (!res.ok && apiKey) {
+          res = await fetch(`${apiUrl}/api/auth/session`, {
+            credentials: 'include',
+            headers: { Authorization: `Bearer ${apiKey}` },
+          })
+        }
         if (!res.ok) throw new Error('unauthenticated')
         const data = await res.json()
         if (!data?.success || !data?.data) throw new Error('unauthenticated')
         if (data.data.name) localStorage.setItem('lh_staff_name', data.data.name)
         if (data.data.role) localStorage.setItem('lh_staff_role', data.data.role)
-        if (data.csrfToken) localStorage.setItem('lh_csrf', data.csrfToken)
+        if (data.csrfToken) setCsrfToken(data.csrfToken)
         if (!cancelled) setChecked(true)
       } catch {
         if (!cancelled) router.replace('/login')
