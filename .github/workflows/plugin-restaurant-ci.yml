@@ -1,0 +1,39 @@
+name: Plugin Restaurant CI
+
+on:
+  pull_request:
+    paths:
+      - 'packages/plugin-restaurant/**'
+      - 'packages/sdk/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/plugin-restaurant-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/plugin-restaurant/**'
+      - 'packages/sdk/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/plugin-restaurant-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-restaurant-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @line-harness/sdk build
+      - run: pnpm --filter @line-harness/plugin-restaurant typecheck
+      - run: pnpm --filter @line-harness/plugin-restaurant test
+      - run: pnpm --filter @line-harness/plugin-restaurant build

@@ -1,0 +1,51 @@
+name = "line-harness-plugin-restaurant"
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+# Cron: every 10 minutes — reservation reminders + (once per day) birthday / winback jobs
+[triggers]
+crons = ["*/10 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "restaurant-plugin"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+[vars]
+# LINE Harness API connection
+LINE_HARNESS_API_URL = "https://your-line-harness.example.com"
+# LIFF app ID (create one in LINE Developers console; endpoint = this worker's /liff/card)
+LIFF_ID = "0000000000-XXXXXXXX"
+# Store profile
+STORE_NAME = "サンプル食堂"
+# Stamp card: stamps needed for one reward
+STAMP_GOAL = "10"
+REWARD_NAME = "お食事10%OFFクーポン"
+# Winback: days since last visit before sending a come-back message
+WINBACK_DAYS = "30"
+# Googleマップの口コミ投稿URL（設定すると来店2時間後にレビュー依頼を自動送信）
+# 取得方法: Googleビジネスプロフィール > 「クチコミを増やす」の短縮URL
+# GOOGLE_REVIEW_URL = "https://g.page/r/XXXXXXXX/review"
+# 新規テイクアウト注文をスタッフ端末にプッシュする ntfy.sh トピック（任意）
+# NTFY_TOPIC = "your-store-takeout-xxxxxxxx"
+# 無料の自動音声通話: 店長のTelegramに着信して注文を読み上げ（CallMeBot・任意）
+# 事前にTelegramで @CallMeBot_txtbot に /start を送って認可しておく
+# CALLMEBOT_TELEGRAM_USER = "@tenchou"
+# CallMeBot有料プラン($1-3/月・月5〜30回上限)で実電話に架電する場合（低頻度店向け）
+# APIキーはsecret: wrangler secret put CALLMEBOT_PHONE_APIKEY
+# CALLMEBOT_PHONE_NUMBER = "+81521234567"
+# ClickSendで実電話に架電（審査なし・従量課金・回数無制限。CallMeBot上限超え店の移行先）
+# 宛先は下の STORE_PHONE_NUMBER を使う。APIキーはsecret: wrangler secret put CLICKSEND_API_KEY
+# CLICKSEND_USERNAME = "your-clicksend-username"
+# 新規テイクアウト注文で店舗に自動架電（任意・Twilioアカウント必要）
+# 4つすべて設定されたときのみ有効。AUTH_TOKENはsecret: wrangler secret put TWILIO_AUTH_TOKEN
+# TWILIO_ACCOUNT_SID = "ACxxxxxxxx"
+# TWILIO_FROM_NUMBER = "+815012345678"   # Twilioで購入した番号
+# STORE_PHONE_NUMBER = "+819012345678"   # お店の電話
+# Optional: LINE account ID for multi-account harness setups
+# LINE_ACCOUNT_ID = ""
+
+# Secrets — set via `wrangler secret put <NAME>`:
+#   LINE_HARNESS_API_KEY   LINE Harness API key
+#   STAFF_PIN              PIN for the staff page (/staff)
+#   PLUGIN_API_KEY         Bearer key for /api/admin/* (MCP server)

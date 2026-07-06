@@ -242,6 +242,37 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/plugin-restaurant:
+    dependencies:
+      '@line-harness/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      hono:
+        specifier: ^4.6.0
+        version: 4.12.8
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20240620.0
+        version: 4.20260317.1
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.12.1
+        version: 1.28.0(zod@3.25.76)
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@25.5.0)(lightningcss@1.32.0)
+      wrangler:
+        specifier: ^3.60.0
+        version: 3.114.17(@cloudflare/workers-types@4.20260317.1)
+      zod:
+        specifier: ^3.24.4
+        version: 3.25.76
+
   packages/plugin-template:
     dependencies:
       '@line-harness/sdk':
