@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient } from "../client.js";
-import { autoTrackUrls } from "./auto-track-urls.js";
 
 export function registerBroadcast(server: McpServer): void {
   server.tool(
@@ -47,6 +46,12 @@ export function registerBroadcast(server: McpServer): void {
         .string()
         .optional()
         .describe("LINE account ID (uses default if omitted)"),
+      trackLinks: z
+        .boolean()
+        .default(true)
+        .describe(
+          "Set false to disable automatic URL shortening (/t/ tracking links). URLs are sent as-is. Default true.",
+        ),
     },
     async ({
       title,
@@ -58,6 +63,7 @@ export function registerBroadcast(server: McpServer): void {
       scheduledAt,
       altText,
       accountId,
+      trackLinks,
     }) => {
       try {
         const client = getClient();
@@ -125,20 +131,18 @@ export function registerBroadcast(server: McpServer): void {
             };
           }
 
-          const { content: trackedContent } = await autoTrackUrls(
-            client,
-            messageContent,
-            messageType,
-            title,
-          );
-
+          // URL の短縮 (auto-track) は worker が送信時に行う (broadcast の
+          // line_account_id 付きでリンクを所有させるため、ここでは変換しない。
+          // 事前に変換すると draft/scheduled で trackLinks を OFF に切り替えても
+          // 短縮済み URL のまま送られてしまう)。
           const broadcast = await client.broadcasts.create({
             title: `[SEGMENT] ${title}`,
             messageType,
-            messageContent: trackedContent,
+            messageContent,
             targetType: "all",
             lineAccountId: accountId,
             altText,
+            trackLinks,
           });
 
           try {
@@ -164,24 +168,18 @@ export function registerBroadcast(server: McpServer): void {
           }
         }
 
-        // Auto-track URLs in flex messages
-        const { content: trackedContent, trackedUrls } = await autoTrackUrls(
-          client,
-          messageContent,
-          messageType,
-          title,
-        );
-
+        // URL の短縮 (auto-track) は worker が送信時に行う (上の segment 経路と同じ理由)。
         // At this point targetType is guaranteed to be 'all' or 'tag' (segment handled above)
         const broadcast = await client.broadcasts.create({
           title,
           messageType,
-          messageContent: trackedContent,
+          messageContent,
           targetType: targetType as "all" | "tag",
           targetTagId,
           scheduledAt,
           lineAccountId: accountId,
           altText,
+          trackLinks,
         });
 
         const result = scheduledAt

@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient } from "../client.js";
-import { autoTrackUrls } from "./auto-track-urls.js";
 
 export function registerSendMessage(server: McpServer): void {
   server.tool(
@@ -32,8 +31,14 @@ export function registerSendMessage(server: McpServer): void {
         .describe(
           "Mark as test send. Prepends 【テスト配信】 to text messages, adds test banner to flex messages.",
         ),
+      trackLinks: z
+        .boolean()
+        .default(true)
+        .describe(
+          "Set false to disable automatic URL shortening (/t/ tracking links). URLs are sent as-is. Default true.",
+        ),
     },
-    async ({ friendId, content, messageType, altText, isTest }) => {
+    async ({ friendId, content, messageType, altText, isTest, trackLinks }) => {
       try {
         const client = getClient();
 
@@ -63,19 +68,15 @@ export function registerSendMessage(server: McpServer): void {
           }
         }
 
-        // Auto-track URLs in flex messages
-        const { content: trackedContent } = await autoTrackUrls(
-          client,
-          finalContent,
-          messageType,
-          `DM to ${friendId.slice(0, 8)}`,
-        );
-
+        // URL の短縮 (auto-track) は worker が送信時に行う (friend の所属アカウント
+        // 付きでリンクを所有させるため、ここでは変換しない)。trackLinks=false は
+        // API に渡して worker 側の短縮もスキップさせる。
         const result = await client.friends.sendMessage(
           friendId,
-          trackedContent,
+          finalContent,
           messageType,
           altText,
+          { trackLinks },
         );
         return {
           content: [

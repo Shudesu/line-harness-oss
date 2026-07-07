@@ -32,11 +32,17 @@ export function registerCreateTrackedLink(server: McpServer): void {
         .describe(
           "Message template ID to push as the reward message after form submission verification passes. Overrides the form's built-in on_submit_message. Use this when reusing one form across multiple campaigns with different rewards.",
         ),
+      accountId: z
+        .string()
+        .optional()
+        .describe(
+          "LINE account ID that owns this link. LINE in-app clicks on /t/ redirect to this account's LIFF for user identification — set it so friends of that account never see another account's consent screen.",
+        ),
       ogTitle: z.string().nullable().optional().describe("OGP title override for the tracking link preview (overrides the destination page's og:title)"),
       ogDescription: z.string().nullable().optional().describe("OGP description override for the tracking link preview"),
       ogImageUrl: z.string().nullable().optional().describe("OGP image URL override for the tracking link preview"),
     },
-    async ({ name, originalUrl, tagId, scenarioId, introTemplateId, rewardTemplateId, ogTitle, ogDescription, ogImageUrl }) => {
+    async ({ name, originalUrl, tagId, scenarioId, introTemplateId, rewardTemplateId, accountId, ogTitle, ogDescription, ogImageUrl }) => {
       try {
         const client = getClient();
         const link = await client.trackedLinks.create({
@@ -46,6 +52,7 @@ export function registerCreateTrackedLink(server: McpServer): void {
           scenarioId,
           introTemplateId,
           rewardTemplateId,
+          lineAccountId: accountId ?? null,
           ogTitle,
           ogDescription,
           ogImageUrl,

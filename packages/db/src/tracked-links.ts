@@ -11,6 +11,7 @@ export interface TrackedLink {
   scenario_id: string | null;
   intro_template_id: string | null;
   reward_template_id: string | null;
+  line_account_id: string | null;
   is_active: number;
   click_count: number;
   og_title: string | null;
@@ -53,6 +54,7 @@ export interface CreateTrackedLinkInput {
   scenarioId?: string | null;
   introTemplateId?: string | null;
   rewardTemplateId?: string | null;
+  lineAccountId?: string | null;
   ogTitle?: string | null;
   ogDescription?: string | null;
   ogImageUrl?: string | null;
@@ -67,8 +69,8 @@ export async function createTrackedLink(
 
   await db
     .prepare(
-      `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, is_active, click_count, og_title, og_description, og_image_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, line_account_id, is_active, click_count, og_title, og_description, og_image_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -78,6 +80,7 @@ export async function createTrackedLink(
       input.scenarioId ?? null,
       input.introTemplateId ?? null,
       input.rewardTemplateId ?? null,
+      input.lineAccountId ?? null,
       input.ogTitle ?? null,
       input.ogDescription ?? null,
       input.ogImageUrl ?? null,
@@ -95,6 +98,7 @@ export interface UpdateTrackedLinkInput {
   scenarioId?: string | null;
   introTemplateId?: string | null;
   rewardTemplateId?: string | null;
+  lineAccountId?: string | null;
   isActive?: boolean;
   ogTitle?: string | null;
   ogDescription?: string | null;
@@ -117,6 +121,8 @@ export async function updateTrackedLink(
     input.introTemplateId === undefined ? existing.intro_template_id : input.introTemplateId;
   const rewardTemplateId =
     input.rewardTemplateId === undefined ? existing.reward_template_id : input.rewardTemplateId;
+  const lineAccountId =
+    input.lineAccountId === undefined ? existing.line_account_id : input.lineAccountId;
   const isActive = input.isActive === undefined ? existing.is_active : (input.isActive ? 1 : 0);
   const ogTitle = input.ogTitle === undefined ? existing.og_title : input.ogTitle;
   const ogDescription =
@@ -127,10 +133,10 @@ export async function updateTrackedLink(
   await db
     .prepare(
       `UPDATE tracked_links
-         SET name = ?, tag_id = ?, scenario_id = ?, intro_template_id = ?, reward_template_id = ?, is_active = ?, og_title = ?, og_description = ?, og_image_url = ?, updated_at = ?
+         SET name = ?, tag_id = ?, scenario_id = ?, intro_template_id = ?, reward_template_id = ?, line_account_id = ?, is_active = ?, og_title = ?, og_description = ?, og_image_url = ?, updated_at = ?
        WHERE id = ?`,
     )
-    .bind(name, tagId, scenarioId, introTemplateId, rewardTemplateId, isActive, ogTitle, ogDescription, ogImageUrl, now, id)
+    .bind(name, tagId, scenarioId, introTemplateId, rewardTemplateId, lineAccountId, isActive, ogTitle, ogDescription, ogImageUrl, now, id)
     .run();
 
   return getTrackedLinkById(db, id);

@@ -125,7 +125,8 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   dedup_priority     TEXT CHECK (dedup_priority IS NULL OR json_valid(dedup_priority)),
   failed_account_ids TEXT CHECK (failed_account_ids IS NULL OR json_valid(failed_account_ids)),
   dedup_progress     TEXT CHECK (dedup_progress IS NULL OR json_valid(dedup_progress)),
-  batch_lock_at      TEXT
+  batch_lock_at      TEXT,
+  track_links        INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts (status);
@@ -515,7 +516,43 @@ CREATE TABLE IF NOT EXISTS chats (
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_chats_friend ON chats (friend_id);
+-- 1 friend = 1 chat 行 (048_chats_friend_unique)。
+-- schema.sql は既存 DB への差分適用 (pnpm db:migrate) にも使われるため、UNIQUE
+-- インデックス作成前に旧重複行を最新行へ寄せる。新規 DB では no-op。
+-- マージ規則は migrations/048_chats_friend_unique.sql と同一に保つこと。
+UPDATE chats SET
+  status = (
+    SELECT c2.status FROM chats c2
+    WHERE c2.friend_id = chats.friend_id
+    ORDER BY c2.updated_at DESC, c2.rowid DESC LIMIT 1
+  ),
+  operator_id = (
+    SELECT c2.operator_id FROM chats c2
+    WHERE c2.friend_id = chats.friend_id AND c2.operator_id IS NOT NULL
+    ORDER BY c2.updated_at DESC, c2.rowid DESC LIMIT 1
+  ),
+  notes = (
+    SELECT c2.notes FROM chats c2
+    WHERE c2.friend_id = chats.friend_id AND c2.notes IS NOT NULL
+    ORDER BY c2.updated_at DESC, c2.rowid DESC LIMIT 1
+  ),
+  last_message_at = (
+    SELECT MAX(c2.last_message_at) FROM chats c2
+    WHERE c2.friend_id = chats.friend_id
+  )
+WHERE EXISTS (
+  SELECT 1 FROM chats c2
+  WHERE c2.friend_id = chats.friend_id AND c2.rowid != chats.rowid
+);
+DELETE FROM chats
+WHERE EXISTS (
+  SELECT 1 FROM chats c2
+  WHERE c2.friend_id = chats.friend_id
+    AND (c2.created_at > chats.created_at
+         OR (c2.created_at = chats.created_at AND c2.rowid > chats.rowid))
+);
+DROP INDEX IF EXISTS idx_chats_friend;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_friend_unique ON chats (friend_id);
 CREATE INDEX IF NOT EXISTS idx_chats_operator ON chats (operator_id);
 CREATE INDEX IF NOT EXISTS idx_chats_status ON chats (status);
 

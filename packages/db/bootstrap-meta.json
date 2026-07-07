@@ -52,7 +52,9 @@
     "044_forms_og.sql",
     "045_menus_auto_tag.sql",
     "046_affiliate_links.sql",
-    "047_affiliate_offers.sql"
+    "046_link_tracking_controls.sql",
+    "047_affiliate_offers.sql",
+    "048_chats_friend_unique.sql"
   ],
-  "migrationCount": 53
+  "migrationCount": 55
 }

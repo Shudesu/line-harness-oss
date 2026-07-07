@@ -70,12 +70,14 @@ async function createTrackingMap(
   db: D1Database,
   urls: Set<string>,
   workerUrl: string,
+  lineAccountId?: string | null,
 ): Promise<Map<string, { trackingUrl: string; originalUrl: string; label: string }>> {
   const urlMap = new Map<string, { trackingUrl: string; originalUrl: string; label: string }>();
   for (const url of urls) {
     const link = await createTrackedLink(db, {
       name: `auto: ${url.slice(0, 60)}`,
       originalUrl: url,
+      lineAccountId: lineAccountId ?? null,
     });
     // Use direct /t/ URL — Worker handles LINE app detection and LIFF redirect server-side
     const trackingUrl = `${workerUrl}/t/${link.id}`;
@@ -152,6 +154,16 @@ export interface AutoTrackResult {
   content: string;
 }
 
+export interface AutoTrackOptions {
+  /**
+   * LINE account that owns the created tracked links. /t/:linkId uses this to
+   * redirect LINE in-app clicks to the owning account's LIFF (instead of the
+   * global env.LIFF_URL) so friends of that account never see another
+   * account's consent screen.
+   */
+  lineAccountId?: string | null;
+}
+
 /**
  * Auto-wrap URLs in message content with tracking links.
  * For text messages with URLs, converts to Flex with button.
@@ -162,6 +174,7 @@ export async function autoTrackContent(
   messageType: string,
   content: string,
   workerUrl: string,
+  options?: AutoTrackOptions,
 ): Promise<AutoTrackResult> {
   if (messageType === 'image') return { messageType, content };
 
@@ -179,7 +192,7 @@ export async function autoTrackContent(
     // (無駄な link_clicks レコード防止)。
     const trackable = new Set([...urls].filter((u) => !isAppLinkDomain(u)));
     const urlMap = trackable.size > 0
-      ? await createTrackingMap(db, trackable, workerUrl)
+      ? await createTrackingMap(db, trackable, workerUrl, options?.lineAccountId)
       : new Map<string, { trackingUrl: string; originalUrl: string; label: string }>();
 
     let result = content;
@@ -198,7 +211,7 @@ export async function autoTrackContent(
 
   // Flex messages → replace URLs inline in the JSON
   // For app-link domains, also inject openExternalBrowser=1 into the URI action
-  const urlMap = await createTrackingMap(db, urls, workerUrl);
+  const urlMap = await createTrackingMap(db, urls, workerUrl, options?.lineAccountId);
   let result = content;
   for (const [original, { trackingUrl, originalUrl }] of urlMap) {
     const finalUrl = isAppLinkDomain(originalUrl)

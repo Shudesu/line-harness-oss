@@ -21,6 +21,7 @@ export interface Broadcast {
   failed_account_ids: string | null;
   dedup_progress: string | null;
   batch_lock_at: string | null;
+  track_links: number;
 }
 
 export async function getBroadcasts(db: D1Database, accountId?: string): Promise<Broadcast[]> {
@@ -83,6 +84,7 @@ export interface CreateBroadcastInput {
   scheduledAt?: string | null;
   accountIds?: string[];
   dedupPriority?: string[];
+  trackLinks?: boolean;
 }
 
 export async function createBroadcast(
@@ -97,8 +99,8 @@ export async function createBroadcast(
   await db
     .prepare(
       `INSERT INTO broadcasts
-         (id, title, message_type, message_content, target_type, target_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?)`,
+         (id, title, message_type, message_content, target_type, target_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, track_links, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -111,6 +113,7 @@ export async function createBroadcast(
       input.scheduledAt ?? null,
       input.accountIds ? JSON.stringify(input.accountIds) : null,
       input.dedupPriority ? JSON.stringify(input.dedupPriority) : null,
+      input.trackLinks === false ? 0 : 1,
       now,
     )
     .run();
@@ -128,6 +131,7 @@ export type UpdateBroadcastInput = Partial<
     | 'target_tag_id'
     | 'status'
     | 'scheduled_at'
+    | 'track_links'
   >
 >;
 
@@ -166,6 +170,10 @@ export async function updateBroadcast(
   if (updates.scheduled_at !== undefined) {
     fields.push('scheduled_at = ?');
     values.push(updates.scheduled_at);
+  }
+  if (updates.track_links !== undefined) {
+    fields.push('track_links = ?');
+    values.push(updates.track_links ? 1 : 0);
   }
 
   if (fields.length > 0) {

@@ -27,12 +27,13 @@ export function registerManageTrackedLinks(server: McpServer): void {
         .describe(
           "Message template ID to push as the reward message after form submission verification passes, or null to clear. Overrides the form's built-in on_submit_message. Use this when reusing one form across multiple campaigns with different rewards. (update only)",
         ),
+      accountId: z.string().nullable().optional().describe("LINE account ID that owns this link (used to resolve the LIFF for /t/ in-app redirects), or null to clear (update only)"),
       isActive: z.boolean().optional().describe("Whether the link is active (update only)"),
       ogTitle: z.string().nullable().optional().describe("OGP title override for the tracking link preview, or null to clear (update only)"),
       ogDescription: z.string().nullable().optional().describe("OGP description override for the tracking link preview, or null to clear (update only)"),
       ogImageUrl: z.string().nullable().optional().describe("OGP image URL override for the tracking link preview, or null to clear (update only)"),
     },
-    async ({ action, linkId, name, tagId, scenarioId, introTemplateId, rewardTemplateId, isActive, ogTitle, ogDescription, ogImageUrl }) => {
+    async ({ action, linkId, name, tagId, scenarioId, introTemplateId, rewardTemplateId, accountId, isActive, ogTitle, ogDescription, ogImageUrl }) => {
       try {
         const client = getClient();
         if (action === "list") {
@@ -47,6 +48,7 @@ export function registerManageTrackedLinks(server: McpServer): void {
             scenarioId,
             introTemplateId,
             rewardTemplateId,
+            lineAccountId: accountId,
             isActive,
             ogTitle,
             ogDescription,

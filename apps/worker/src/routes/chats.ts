@@ -67,8 +67,10 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
   if (existing) return existing as ChatLike;
   const friend = await getFriendById(db, id);
   if (!friend) return null;
+  // 最新行を選ぶ (unanswered-inbox / conversations の latest_chat CTE と同じ基準)。
+  // 最古行を選ぶと、旧重複データがある DB で読み手と別の行に status を書いてしまう。
   const byFriend = await db
-    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at ASC LIMIT 1`)
+    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at DESC LIMIT 1`)
     .bind(friend.id)
     .first<ChatLike>();
   if (byFriend) return byFriend;
@@ -82,17 +84,18 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
   const newId = crypto.randomUUID();
   const now = jstNow();
   const lastMessageAt = lastMsg?.last ?? null;
-  // 同時実行で二重挿入されないように WHERE NOT EXISTS で原子挿入。挿入結果に関わらず最古行を返して収束。
+  // 同時実行で二重挿入されないように WHERE NOT EXISTS + OR IGNORE で原子挿入。
+  // 挿入結果に関わらず最新行を返して収束。
   await db
     .prepare(
-      `INSERT INTO chats (id, friend_id, status, last_message_at, created_at, updated_at)
+      `INSERT OR IGNORE INTO chats (id, friend_id, status, last_message_at, created_at, updated_at)
        SELECT ?, ?, 'resolved', ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM chats WHERE friend_id = ?)`,
     )
     .bind(newId, friend.id, lastMessageAt, now, now, friend.id)
     .run();
   return (await db
-    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at ASC LIMIT 1`)
+    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at DESC LIMIT 1`)
     .bind(friend.id)
     .first<ChatLike>())!;
 }

@@ -226,7 +226,7 @@ CREATE TABLE "broadcasts" (
   account_ids        TEXT CHECK (account_ids IS NULL OR json_valid(account_ids)),
   dedup_priority     TEXT CHECK (dedup_priority IS NULL OR json_valid(dedup_priority)),
   failed_account_ids TEXT CHECK (failed_account_ids IS NULL OR json_valid(failed_account_ids))
-, dedup_progress TEXT, batch_lock_at TEXT);
+, dedup_progress TEXT, batch_lock_at TEXT, track_links INTEGER NOT NULL DEFAULT 1);
 
 CREATE TABLE calendar_bookings (
   id             TEXT PRIMARY KEY,
@@ -800,7 +800,7 @@ CREATE TABLE tracked_links (
   click_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-, intro_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, reward_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, og_title TEXT, og_description TEXT, og_image_url TEXT);
+, intro_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, reward_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, og_title TEXT, og_description TEXT, og_image_url TEXT, line_account_id TEXT REFERENCES line_accounts(id) ON DELETE SET NULL);
 
 CREATE TABLE traffic_pools (
   id TEXT PRIMARY KEY,
@@ -876,7 +876,7 @@ CREATE INDEX idx_calendar_bookings_friend ON calendar_bookings (friend_id);
 
 CREATE INDEX idx_calendar_bookings_start ON calendar_bookings (start_at);
 
-CREATE INDEX idx_chats_friend ON chats (friend_id);
+CREATE UNIQUE INDEX idx_chats_friend_unique ON chats (friend_id);
 
 CREATE INDEX idx_chats_operator ON chats (operator_id);
 

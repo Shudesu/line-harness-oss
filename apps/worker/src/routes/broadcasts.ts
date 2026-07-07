@@ -56,6 +56,8 @@ function serializeBroadcast(row: DbBroadcast) {
     accountIds: parseJsonArray(r.account_ids),
     dedupPriority: parseJsonArray(r.dedup_priority),
     failedAccountIds: parseJsonArray(r.failed_account_ids),
+    // 046 以前の行/未マイグレーション環境では undefined → 従来挙動 (ON) 扱い
+    trackLinks: row.track_links === undefined ? true : row.track_links !== 0,
     createdAt: row.created_at,
   };
 }
@@ -270,6 +272,7 @@ broadcasts.post('/api/broadcasts', async (c) => {
       altText?: string | null;
       accountIds?: string[];
       dedupPriority?: string[];
+      trackLinks?: boolean;
     }>();
 
     if (!body.title || !body.messageType || !body.messageContent || !body.targetType) {
@@ -307,6 +310,7 @@ broadcasts.post('/api/broadcasts', async (c) => {
       scheduledAt: body.scheduledAt ?? null,
       accountIds: body.accountIds,
       dedupPriority: body.dedupPriority,
+      trackLinks: body.trackLinks,
     });
 
     // Save line_account_id and alt_text if provided
@@ -348,6 +352,7 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       targetType?: BroadcastTargetType;
       targetTagId?: string | null;
       scheduledAt?: string | null;
+      trackLinks?: boolean;
     }>();
 
     // Keep status in sync with scheduledAt changes
@@ -363,6 +368,7 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       target_type: body.targetType,
       target_tag_id: body.targetTagId,
       scheduled_at: body.scheduledAt,
+      ...(body.trackLinks !== undefined ? { track_links: body.trackLinks ? 1 : 0 } : {}),
       ...(statusUpdate !== undefined ? { status: statusUpdate } : {}),
     });
 
@@ -837,9 +843,14 @@ broadcasts.post('/api/broadcasts/:id/test-send', async (c) => {
       messageContent = `【テスト配信】\n${messageContent}`;
     }
 
-    // Auto-track URLs
-    const { autoTrackContent } = await import('../services/auto-track.js');
-    const tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, c.env.WORKER_URL);
+    // Auto-track URLs (track_links=0 なら本番送信と同様に短縮せず raw のまま)
+    let tracked = { messageType: broadcast.message_type as string, content: messageContent };
+    if (broadcast.track_links !== 0) {
+      const { autoTrackContent } = await import('../services/auto-track.js');
+      tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, c.env.WORKER_URL, {
+        lineAccountId: accountId,
+      });
+    }
 
     const { extractFlexAltText } = await import('../utils/flex-alt-text.js');
     const altText = raw.alt_text as string || (tracked.messageType === 'flex' ? extractFlexAltText(tracked.content) : undefined);

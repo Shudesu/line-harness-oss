@@ -29,6 +29,7 @@ function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
     scenarioId: row.scenario_id,
     introTemplateId: row.intro_template_id,
     rewardTemplateId: row.reward_template_id,
+    lineAccountId: row.line_account_id,
     isActive: Boolean(row.is_active),
     clickCount: row.click_count,
     ogTitle: row.og_title,
@@ -42,6 +43,30 @@ function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
 function getBaseUrl(c: { req: { url: string } }): string {
   const url = new URL(c.req.url);
   return `${url.protocol}//${url.host}`;
+}
+
+/**
+ * Resolve the LINE account that owns a tracked link.
+ * Priority: tracked_links.line_account_id → scenario_id → scenarios.line_account_id.
+ * Returns null for legacy/unowned links (callers fall back to env defaults).
+ */
+async function resolveLinkAccount(
+  db: D1Database,
+  link: TrackedLink,
+): Promise<Record<string, unknown> | null> {
+  let accountId: string | null = link.line_account_id ?? null;
+  if (!accountId && link.scenario_id) {
+    const scRow = await db
+      .prepare(`SELECT line_account_id FROM scenarios WHERE id = ?`)
+      .bind(link.scenario_id)
+      .first<{ line_account_id: string | null }>();
+    accountId = scRow?.line_account_id ?? null;
+  }
+  if (!accountId) return null;
+  return db
+    .prepare(`SELECT * FROM line_accounts WHERE id = ?`)
+    .bind(accountId)
+    .first<Record<string, unknown>>();
 }
 
 // GET /api/tracked-links — list all
@@ -94,6 +119,7 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId?: string | null;
       introTemplateId?: string | null;
       rewardTemplateId?: string | null;
+      lineAccountId?: string | null;
       ogTitle?: string | null;
       ogDescription?: string | null;
       ogImageUrl?: string | null;
@@ -110,6 +136,7 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId: body.scenarioId ?? null,
       introTemplateId: body.introTemplateId ?? null,
       rewardTemplateId: body.rewardTemplateId ?? null,
+      lineAccountId: body.lineAccountId ?? null,
       ogTitle: body.ogTitle ?? null,
       ogDescription: body.ogDescription ?? null,
       ogImageUrl: body.ogImageUrl ?? null,
@@ -133,6 +160,7 @@ trackedLinks.patch('/api/tracked-links/:id', async (c) => {
       scenarioId?: string | null;
       introTemplateId?: string | null;
       rewardTemplateId?: string | null;
+      lineAccountId?: string | null;
       isActive?: boolean;
       ogTitle?: string | null;
       ogDescription?: string | null;
@@ -258,23 +286,10 @@ trackedLinks.get('/t/:linkId', async (c) => {
   const ua = c.req.header('user-agent') || '';
   if (isLinkPreviewBot(ua)) {
     const canonical = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
-    // tracked_links には line_account_id カラムが無いので、紐付く scenario 経由で
-    // アカウントを解決する（scenarios.line_account_id を引く）。シナリオ無しの
-    // リンクは account=null（og:site_name='LINE' フォールバック）。
-    let account: any = null;
-    if (link.scenario_id) {
-      const scRow = await c.env.DB
-        .prepare(`SELECT line_account_id FROM scenarios WHERE id = ?`)
-        .bind(link.scenario_id)
-        .first<{ line_account_id: string | null }>();
-      if (scRow?.line_account_id) {
-        account = await c.env.DB
-          .prepare(`SELECT * FROM line_accounts WHERE id = ?`)
-          .bind(scRow.line_account_id)
-          .first<any>();
-      }
-    }
-    const og = resolveOgForTrackedLink(link, account, canonical);
+    // link.line_account_id 優先、無ければ scenario 経由でアカウントを解決する。
+    // どちらも無いリンクは account=null（og:site_name='LINE' フォールバック）。
+    const account = await resolveLinkAccount(c.env.DB, link);
+    const og = resolveOgForTrackedLink(link, account as any, canonical);
     return c.html(buildOgHtml(og));
   }
 
@@ -282,11 +297,21 @@ trackedLinks.get('/t/:linkId', async (c) => {
 
   // If no user ID yet, check if this is LINE's in-app browser → redirect to LIFF for identification
   // Skip LIFF redirect for app-link domains (they'll come from Safari via externalBrowser)
+  //
+  // LIFF はリンクを所有するアカウントのものを使う。グローバル env.LIFF_URL 固定だと
+  // 他アカウントの友だちに①の同意画面が出る（未同意チャネルの LIFF に飛ぶため）。
   const isLineApp = /\bLine\b/i.test(ua);
-  if (!useAppRedirect && !lineUserId && !friendId && isLineApp && c.env.LIFF_URL) {
-    const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
-    const liffRedirect = `${c.env.LIFF_URL}?redirect=${encodeURIComponent(directUrl)}`;
-    return c.redirect(liffRedirect, 302);
+  if (!useAppRedirect && !lineUserId && !friendId && isLineApp) {
+    let liffBase: string | null = null;
+    const account = await resolveLinkAccount(c.env.DB, link);
+    const liffId = (account?.liff_id as string | null | undefined) ?? null;
+    if (liffId) liffBase = `https://liff.line.me/${liffId}`;
+    if (!liffBase && c.env.LIFF_URL) liffBase = c.env.LIFF_URL;
+    if (liffBase) {
+      const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
+      const liffRedirect = `${liffBase}?redirect=${encodeURIComponent(directUrl)}`;
+      return c.redirect(liffRedirect, 302);
+    }
   }
 
   // Resolve friendId from LINE user ID if provided

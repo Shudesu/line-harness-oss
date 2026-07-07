@@ -288,6 +288,29 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         </div>
       )}
 
+      {/* Link tracking toggle — 送信前 (draft/scheduled) に最終切替できる */}
+      {(broadcast.status === 'draft' || broadcast.status === 'scheduled') && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={broadcast.trackLinks}
+              onChange={async (e) => {
+                const trackLinks = e.target.checked
+                try {
+                  await api.broadcasts.update(id, { trackLinks })
+                  load()
+                } catch { /* keep previous state on failure */ }
+              }}
+            />
+            このメッセージでリンクを短縮する（クリック計測）
+          </label>
+          <p className="text-xs text-gray-500 mt-1 ml-6">
+            OFFにすると本文のURLを計測用リンク（/t/…）に変換せず、そのまま送信します。
+          </p>
+        </div>
+      )}
+
       {/* Test Send */}
       {broadcast.status === 'draft' && accountId && (
         <div className="mb-4">

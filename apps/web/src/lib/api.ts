@@ -68,6 +68,7 @@ export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
   accountIds: string[] | null;
   dedupPriority: string[] | null;
   failedAccountIds: string[] | null;
+  trackLinks: boolean;
 };
 
 export type BroadcastInsight = {
@@ -318,6 +319,7 @@ export const api = {
       lineAccountId?: string | null
       accountIds?: string[]
       dedupPriority?: string[]
+      trackLinks?: boolean
     }) =>
       fetchApi<ApiResponse<ApiBroadcast>>('/api/broadcasts', {
         method: 'POST',
@@ -332,6 +334,7 @@ export const api = {
         targetType?: ApiBroadcast['targetType']
         targetTagId?: string | null
         scheduledAt?: string | null
+        trackLinks?: boolean
       }
     ) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}`, {

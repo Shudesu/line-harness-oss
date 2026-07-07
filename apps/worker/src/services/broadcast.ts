@@ -57,11 +57,15 @@ export async function processBroadcastSend(
   }
 
   // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+  // track_links=0 の broadcast は明示的に短縮 OFF (URL をそのまま送る)。
+  const broadcastAccountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
   let finalType: string = broadcast.message_type;
   let finalContent = broadcast.message_content;
-  if (workerUrl) {
+  if (workerUrl && broadcast.track_links !== 0) {
     const { autoTrackContent } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl);
+    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl, {
+      lineAccountId: broadcastAccountId,
+    });
     finalType = tracked.messageType;
     finalContent = tracked.content;
   }
@@ -69,7 +73,6 @@ export async function processBroadcastSend(
   // ここは tag / all 系の単一 account 経路のみ (multi-account-dedup は冒頭で queue に
   // 委譲済みで到達しない。dedup の {{liff_id}} 置換は dedup-broadcast.ts 側で per-account
   // に行う)。
-  const broadcastAccountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
   if (broadcastAccountId) {
     const { getLineAccountById: getLA } = await import('@line-crm/db');
     const acct = await getLA(db, broadcastAccountId);
@@ -270,9 +273,13 @@ async function processQueuedBroadcastBatches(
     broadcast.target_type === 'multi-account-dedup' && !!broadcast.dedup_progress;
   let finalType: string = broadcast.message_type;
   let finalContent = broadcast.message_content;
-  if (workerUrl && batchOffset === 0 && !isDedupContinuation) {
+  if (workerUrl && batchOffset === 0 && !isDedupContinuation && broadcast.track_links !== 0) {
     const { autoTrackContent } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl);
+    // dedup broadcast は複数アカウントから送るためリンクの所有アカウントを一意に
+    // 決められない → line_account_id は null のまま (env.LIFF_URL フォールバック)。
+    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl, {
+      lineAccountId: (raw.line_account_id as string | null) ?? null,
+    });
     finalType = tracked.messageType;
     finalContent = tracked.content;
     // 変換後のコンテンツを保存（次バッチ以降で使えるように）

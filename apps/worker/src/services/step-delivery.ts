@@ -224,18 +224,21 @@ async function processSingleDelivery(
   const friendWithMeta = { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1];
   const expandedContent = expandVariables(resolved.messageContent, friendWithMeta, workerUrl, resolved.messageType);
   // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+  // リンクの所有アカウントは実際に配信するアカウント (= friend の account) に合わせる
+  const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
   let trackedType: string = resolved.messageType;
   let trackedContent = expandedContent;
   if (workerUrl) {
     const { autoTrackContent } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl);
+    const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl, {
+      lineAccountId: friendAccountId ?? null,
+    });
     trackedType = tracked.messageType;
     trackedContent = tracked.content;
   }
   const message = buildMessage(trackedType, trackedContent);
   // Resolve the correct LINE client for this friend's account
   let deliveryClient = lineClient;
-  const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
   if (friendAccountId) {
     const { getLineAccountById } = await import('@line-crm/db');
     const account = await getLineAccountById(db, friendAccountId);
