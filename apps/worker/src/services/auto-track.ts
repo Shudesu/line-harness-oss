@@ -196,15 +196,60 @@ export async function autoTrackContent(
     return { messageType: 'text', content: result };
   }
 
-  // Flex messages → replace URLs inline in the JSON
-  // For app-link domains, also inject openExternalBrowser=1 into the URI action
-  const urlMap = await createTrackingMap(db, urls, workerUrl);
-  let result = content;
-  for (const [original, { trackingUrl, originalUrl }] of urlMap) {
-    const finalUrl = isAppLinkDomain(originalUrl)
-      ? appendOpenExternalBrowser(trackingUrl)
-      : trackingUrl;
-    result = result.split(original).join(finalUrl);
+  // Flex messages → rewrite ONLY uri actions (action / defaultAction).
+  // Never rewrite the `url` field of image/video/icon components: LINE's image
+  // loader fetches that URL directly, and the tracking endpoint returns an HTML
+  // interstitial (not an image), which renders hero/body images as blank space.
+  let tree: unknown;
+  try {
+    tree = JSON.parse(content);
+  } catch {
+    // Not valid JSON — leave untouched rather than risk corrupting the payload
+    return { messageType, content };
   }
-  return { messageType, content: result };
+  const actionUris = new Set<string>();
+  collectActionUris(tree, actionUris);
+  const trackableUris = new Set([...actionUris].filter((u) => !shouldSkip(u)));
+  if (trackableUris.size === 0) return { messageType, content };
+  const uriMap = await createTrackingMap(db, trackableUris, workerUrl);
+  rewriteActionUris(tree, (u) => {
+    const tracked = uriMap.get(u);
+    if (!tracked) return u;
+    return isAppLinkDomain(u)
+      ? appendOpenExternalBrowser(tracked.trackingUrl)
+      : tracked.trackingUrl;
+  });
+  return { messageType, content: JSON.stringify(tree) };
+}
+
+/** Collect every action/defaultAction uri in a Flex JSON tree */
+function collectActionUris(node: unknown, out: Set<string>): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const child of node) collectActionUris(child, out);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  for (const key of ['action', 'defaultAction']) {
+    const a = obj[key] as Record<string, unknown> | undefined;
+    if (a && a.type === 'uri' && typeof a.uri === 'string') out.add(a.uri);
+  }
+  for (const value of Object.values(obj)) collectActionUris(value, out);
+}
+
+/** Rewrite every action/defaultAction uri in a Flex JSON tree */
+function rewriteActionUris(node: unknown, fn: (u: string) => string): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const child of node) rewriteActionUris(child, fn);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  for (const key of ['action', 'defaultAction']) {
+    const a = obj[key] as Record<string, unknown> | undefined;
+    if (a && a.type === 'uri' && typeof a.uri === 'string') {
+      a.uri = fn(a.uri as string);
+    }
+  }
+  for (const value of Object.values(obj)) rewriteActionUris(value, fn);
 }
