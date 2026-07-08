@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, test, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 
 const lineClientMocks = vi.hoisted(() => ({
@@ -86,9 +86,76 @@ const baseExecutionCtx = {
   props: {},
 } as unknown as ExecutionContext;
 
+function makeFriend(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'friend-1',
+    line_user_id: 'U-existing',
+    display_name: 'Existing Friend',
+    picture_url: null,
+    status_message: null,
+    is_following: 1,
+    user_id: null,
+    line_account_id: null,
+    metadata: '{}',
+    first_tracked_link_id: null,
+    created_at: '2026-06-18T12:00:00.000+09:00',
+    updated_at: '2026-06-18T12:00:00.000+09:00',
+    ...overrides,
+  };
+}
+
+function makeChat() {
+  return {
+    id: 'chat-1',
+    friend_id: 'friend-1',
+    operator_id: null,
+    status: 'unread',
+    notes: null,
+    last_message_at: '2026-06-18T12:00:00.000+09:00',
+    created_at: '2026-06-18T12:00:00.000+09:00',
+    updated_at: '2026-06-18T12:00:00.000+09:00',
+  };
+}
+
+function makeDbStub() {
+  const stmt = {
+    bind: vi.fn(),
+    run: vi.fn().mockResolvedValue({}),
+    all: vi.fn().mockResolvedValue({ results: [] }),
+  };
+  stmt.bind.mockReturnValue(stmt);
+  return {
+    db: { prepare: vi.fn().mockReturnValue(stmt) } as unknown as D1Database,
+    stmt,
+  };
+}
+
+function makeR2Stub() {
+  const store = new Map<string, { data: ArrayBuffer; contentType: string; customMetadata?: Record<string, string> }>();
+  return {
+    put: vi.fn(async (
+      key: string,
+      data: ArrayBuffer,
+      opts: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> },
+    ) => {
+      store.set(key, {
+        data,
+        contentType: opts.httpMetadata?.contentType ?? '',
+        customMetadata: opts.customMetadata,
+      });
+      return null;
+    }),
+    _store: store,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getLineAccounts).mockResolvedValue([]);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('POST /webhook — DoS defenses (#104)', () => {
@@ -275,13 +342,11 @@ describe('POST /webhook — first-contact existing friends', () => {
       statusMessage: 'hello',
     });
     expect(upsertChatOnMessage).toHaveBeenCalledWith(db, 'friend-1');
-    expect(fireEvent).toHaveBeenCalledWith(
-      db,
-      'message_received',
-      expect.objectContaining({ friendId: 'friend-1' }),
-      'env-default-token',
-      null,
-    );
+    expect(fireEvent).toHaveBeenCalledWith(db, 'message_received', {
+      friendId: 'friend-1',
+      eventData: { text: 'こんにちは', matched: false },
+      replyToken: 'reply-token',
+    }, 'env-default-token', null);
     expect(getScenarios).not.toHaveBeenCalled();
     expect(enrollFriendInScenario).not.toHaveBeenCalled();
 
@@ -295,5 +360,196 @@ describe('POST /webhook — first-contact existing friends', () => {
     expect(addTagToFriend).not.toHaveBeenCalled();
     expect(getEntryRouteByRefCode).not.toHaveBeenCalled();
     expect(getMessageTemplateById).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — incoming media', () => {
+  test('image 受信時に R2 保存 refs を記録し media 付き message_received を発火する', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(getFriendByLineUserId).mockResolvedValue(makeFriend());
+    vi.mocked(jstNow).mockReturnValue('2026-06-18T12:00:00.000+09:00');
+    vi.mocked(upsertChatOnMessage).mockResolvedValue(makeChat());
+
+    const fetchMock = vi.fn(async () =>
+      new Response(new ArrayBuffer(64), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { db, stmt } = makeDbStub();
+    const r2 = makeR2Stub();
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+
+    const app = setupApp();
+    const validShapedSignature = 'A'.repeat(43) + '=';
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': validShapedSignature,
+        },
+        body: JSON.stringify({
+          destination: 'bot',
+          events: [
+            {
+              type: 'message',
+              replyToken: 'reply-image',
+              message: {
+                type: 'image',
+                id: 'img-1',
+                contentProvider: { type: 'line' },
+              },
+              timestamp: Date.now(),
+              source: { type: 'user', userId: 'U-existing' },
+              webhookEventId: 'event-image',
+              deliveryContext: { isRedelivery: false },
+              mode: 'active',
+            },
+          ],
+        }),
+      },
+      {
+        ...baseEnv,
+        DB: db,
+        IMAGES: r2 as unknown as R2Bucket,
+        WORKER_URL: 'https://worker.example.com',
+      },
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const processing = vi.mocked(executionCtx.waitUntil).mock.calls[0]?.[0] as Promise<unknown>;
+    await processing;
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api-data.line.me/v2/bot/message/img-1/content',
+      expect.objectContaining({ headers: { Authorization: 'Bearer env-default-token' } }),
+    );
+    const [key, , putOpts] = r2.put.mock.calls[0];
+    expect(key).toBe('incoming-unknown-img-1.png');
+    expect(putOpts.httpMetadata?.contentType).toBe('image/png');
+
+    const logBind = stmt.bind.mock.calls[0];
+    expect(logBind[1]).toBe('friend-1');
+    expect(logBind[2]).toBe('image');
+    expect(JSON.parse(logBind[3] as string)).toEqual({
+      originalContentUrl: 'https://worker.example.com/images/incoming-unknown-img-1.png',
+      previewImageUrl: 'https://worker.example.com/images/incoming-unknown-img-1.png',
+    });
+    expect(upsertChatOnMessage).toHaveBeenCalledWith(db, 'friend-1');
+    expect(fireEvent).toHaveBeenCalledWith(db, 'message_received', {
+      friendId: 'friend-1',
+      eventData: {
+        messageType: 'image',
+        media: { url: 'https://worker.example.com/images/incoming-unknown-img-1.png' },
+        text: null,
+      },
+      replyToken: 'reply-image',
+    }, 'env-default-token', null);
+  });
+
+  test('file 受信時に R2 保存 refs を記録し media 付き message_received を発火する', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(getFriendByLineUserId).mockResolvedValue(makeFriend());
+    vi.mocked(jstNow).mockReturnValue('2026-06-18T12:00:00.000+09:00');
+    vi.mocked(upsertChatOnMessage).mockResolvedValue(makeChat());
+
+    const fetchMock = vi.fn(async () =>
+      new Response(new ArrayBuffer(128), {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { db, stmt } = makeDbStub();
+    const r2 = makeR2Stub();
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+
+    const app = setupApp();
+    const validShapedSignature = 'A'.repeat(43) + '=';
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': validShapedSignature,
+        },
+        body: JSON.stringify({
+          destination: 'bot',
+          events: [
+            {
+              type: 'message',
+              replyToken: 'reply-file',
+              message: {
+                type: 'file',
+                id: 'file-1',
+                fileName: 'resume.pdf',
+                fileSize: 4567,
+              },
+              timestamp: Date.now(),
+              source: { type: 'user', userId: 'U-existing' },
+              webhookEventId: 'event-file',
+              deliveryContext: { isRedelivery: false },
+              mode: 'active',
+            },
+          ],
+        }),
+      },
+      {
+        ...baseEnv,
+        DB: db,
+        IMAGES: r2 as unknown as R2Bucket,
+        WORKER_URL: 'https://worker.example.com',
+      },
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const processing = vi.mocked(executionCtx.waitUntil).mock.calls[0]?.[0] as Promise<unknown>;
+    await processing;
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api-data.line.me/v2/bot/message/file-1/content',
+      expect.objectContaining({ headers: { Authorization: 'Bearer env-default-token' } }),
+    );
+    const [key, , putOpts] = r2.put.mock.calls[0];
+    expect(key).toBe('incoming-unknown-file-1-resume.pdf');
+    expect(putOpts.httpMetadata?.contentType).toBe('application/pdf');
+    expect(putOpts.customMetadata).toEqual({ originalFilename: 'resume.pdf', fileSize: '4567' });
+
+    const saved = {
+      url: 'https://worker.example.com/images/incoming-unknown-file-1-resume.pdf',
+      fileName: 'resume.pdf',
+      contentType: 'application/pdf',
+      size: 4567,
+    };
+    const logBind = stmt.bind.mock.calls[0];
+    expect(logBind[1]).toBe('friend-1');
+    expect(logBind[2]).toBe('file');
+    expect(JSON.parse(logBind[3] as string)).toEqual(saved);
+    expect(upsertChatOnMessage).toHaveBeenCalledWith(db, 'friend-1');
+    expect(fireEvent).toHaveBeenCalledWith(db, 'message_received', {
+      friendId: 'friend-1',
+      eventData: {
+        messageType: 'file',
+        media: saved,
+        text: null,
+      },
+      replyToken: 'reply-file',
+    }, 'env-default-token', null);
   });
 });

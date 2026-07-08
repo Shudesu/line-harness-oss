@@ -474,6 +474,7 @@ async function handleEvent(
       sticker_id?: string | number;
       stickerResourceType?: string | number;
       sticker_resource_type?: string | number;
+      fileSize?: number;
     };
     const labels: Record<string, string> = {
       sticker: '[スタンプ]',
@@ -488,6 +489,7 @@ async function handleEvent(
     // image の場合は LINE Content API でバイナリを取得 → R2 → JSON URL に置換。
     // 失敗時は labels[msg.type] のラベル文字列のまま (フォールバック)。
     let finalContent = content;
+    let mediaInfo: { url: string; fileName?: string; contentType?: string; size?: number } | null = null;
     if (msg.type === 'sticker') {
       const stickerContent = createStickerMessageContent(msg);
       if (stickerContent) {
@@ -506,6 +508,28 @@ async function handleEvent(
       });
       if (refs) {
         finalContent = JSON.stringify(refs);
+        mediaInfo = { url: refs.originalContentUrl };
+      }
+    }
+    if (msg.type === 'file' && r2 && workerUrl) {
+      const { fetchAndStoreIncomingFile } = await import('../services/incoming-image.js');
+      const refs = await fetchAndStoreIncomingFile({
+        r2,
+        workerUrl,
+        channelAccessToken: lineAccessToken,
+        accountId: lineAccountId ?? 'unknown',
+        messageId: msg.id,
+        fileName: msg.fileName ?? 'file',
+        fileSize: msg.fileSize,
+      });
+      if (refs) {
+        finalContent = JSON.stringify(refs);
+        mediaInfo = {
+          url: refs.url,
+          fileName: refs.fileName,
+          contentType: refs.contentType,
+          size: refs.size,
+        };
       }
     }
 
@@ -521,6 +545,15 @@ async function handleEvent(
     // 画像だけ送ってきた友だち」をバッジ・未対応一覧から永久に落としてしまう。
     // 非 text は auto_reply keyword にマッチし得ないので常に要対応扱いで正しい。
     await upsertChatOnMessage(db, friend.id);
+    // ATS 連携向け: 保存済みURLを持てる image/file のみ message_received を発火する。
+    // sticker/video/audio は今回スコープ外。必要になったら media 保存の形を揃えて追加する。
+    if ((msg.type === 'image' || msg.type === 'file') && mediaInfo) {
+      await fireEvent(db, 'message_received', {
+        friendId: friend.id,
+        eventData: { messageType: msg.type, media: mediaInfo, text: null },
+        replyToken: event.replyToken,
+      }, lineAccessToken, lineAccountId);
+    }
     return;
   }
 
