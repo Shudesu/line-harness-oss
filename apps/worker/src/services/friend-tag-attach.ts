@@ -15,15 +15,22 @@ export async function attachTagAndFireSideEffects(
   friendId: string,
   tagId: string,
 ): Promise<{ added: boolean }> {
-  const result = await db
+  // 「新規付与か」の判定に INSERT の meta.changes を使わない。本番 D1 ランタイムでは
+  // INSERT OR IGNORE の meta.changes がテスト環境 (miniflare) と一致しない場合があり、
+  // 判定が偽って false になると tag_change が発火せず外部連携が静かに欠落する。
+  // SELECT で存在確認してから INSERT する方式は環境差の影響を受けない。
+  const alreadyAttached = await db
+    .prepare(`SELECT 1 AS x FROM friend_tags WHERE friend_id = ? AND tag_id = ?`)
+    .bind(friendId, tagId)
+    .first();
+  if (alreadyAttached) return { added: false };
+  await db
     .prepare(
       `INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at)
        VALUES (?, ?, ?)`,
     )
     .bind(friendId, tagId, jstNow())
     .run();
-  const added = (result.meta?.changes ?? 0) > 0;
-  if (!added) return { added: false };
 
   const scenarios = await getScenarios(db);
   for (const scenario of scenarios) {
