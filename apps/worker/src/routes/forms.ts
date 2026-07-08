@@ -11,13 +11,14 @@ import {
   jstNow,
 } from '@line-crm/db';
 import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
-import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
+import { enrollFriendInScenario } from '@line-crm/db';
 import type {
   Form as DbForm,
   FormSubmission as DbFormSubmission,
   FormUsedByAccount,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 
 const forms = new Hono<Env>();
 
@@ -429,11 +430,12 @@ forms.post('/api/forms/:id/submit', async (c) => {
         );
       }
 
-      const sideEffects: Promise<unknown>[] = [];
+      let sideEffects: Promise<unknown>[] = [];
 
       // Save response data to friend's metadata
       if (form.save_to_metadata) {
-        sideEffects.push(
+        sideEffects = [
+          ...sideEffects,
           (async () => {
             const friend = await getFriendById(db, friendId!);
             if (!friend) return;
@@ -444,22 +446,29 @@ forms.post('/api/forms/:id/submit', async (c) => {
               .bind(JSON.stringify(merged), now, friendId)
               .run();
           })(),
-        );
+        ];
       }
 
       // Add tag
       if (form.on_submit_tag_id) {
-        sideEffects.push(addTagToFriend(db, friendId, form.on_submit_tag_id));
+        sideEffects = [
+          ...sideEffects,
+          attachTagAndFireSideEffects(db, friendId, form.on_submit_tag_id),
+        ];
       }
 
       // Enroll in scenario
       if (form.on_submit_scenario_id) {
-        sideEffects.push(enrollFriendInScenario(db, friendId, form.on_submit_scenario_id));
+        sideEffects = [
+          ...sideEffects,
+          enrollFriendInScenario(db, friendId, form.on_submit_scenario_id),
+        ];
       }
 
       // If webhook returned a join_url (e.g. Meet Harness), send a Flex button to the user
       if (webhookData?.join_url) {
-        sideEffects.push(
+        sideEffects = [
+          ...sideEffects,
           (async () => {
             const friend = await getFriendById(db, friendId!);
             if (!friend?.line_user_id) return;
@@ -510,16 +519,15 @@ forms.post('/api/forms/:id/submit', async (c) => {
               .bind(crypto.randomUUID(), friend.id, JSON.stringify(meetFlex), jstNow())
               .run();
           })(),
-        );
+        ];
       }
 
       // Send confirmation message with submitted data back to user
-      sideEffects.push(
+      sideEffects = [
+        ...sideEffects,
         (async () => {
-          console.log('Form reply: starting for friendId', friendId);
           const friend = await getFriendById(db, friendId!);
-          if (!friend?.line_user_id) { console.log('Form reply: no line_user_id'); return; }
-          console.log('Form reply: sending to', friend.line_user_id);
+          if (!friend?.line_user_id) return;
           const { LineClient } = await import('@line-crm/line-sdk');
           // Resolve access token from friend's account (multi-account support)
           let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -612,7 +620,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
               .run();
           }
         })(),
-      );
+      ];
 
       if (sideEffects.length > 0) {
         const results = await Promise.allSettled(sideEffects);

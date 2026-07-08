@@ -278,6 +278,7 @@ async function processSingleDelivery(
   // 失敗してもログに残すだけで配信フローは止めない。
   if (currentStep.on_reach_tag_id) {
     try {
+      // TODO: 到達タグも tag_change を発火する経路へ寄せる。影響範囲が広いため別修正で扱う。
       await addTagToFriend(db, friend.id, currentStep.on_reach_tag_id);
     } catch (err) {
       console.error(`[scenario] tag attach failed step=${currentStep.id}:`, err);
