@@ -10,6 +10,8 @@
  * URL format: https://liff.line.me/{LIFF_ID}?page=form&id={FORM_ID}
  */
 
+import { shouldUseWebhookGate } from './form-gate.js';
+
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
   isLoggedIn(): boolean;
@@ -384,7 +386,7 @@ function render(): void {
   // Split fields: survey fields (page 1) vs x_username field (page 2)
   const surveyFields = formDef.fields.filter((f) => f.name !== 'x_username');
   const xUsernameField = formDef.fields.find((f) => f.name === 'x_username');
-  const hasTwoPages = !!xUsernameField && !!formDef.onSubmitWebhookUrl;
+  const hasTwoPages = shouldUseWebhookGate(formDef);
 
   const surveyFieldsHtml = surveyFields.map(renderField).join('');
   const xFieldHtml = xUsernameField ? renderField(xUsernameField) : '';
@@ -738,10 +740,9 @@ async function submitForm(): Promise<void> {
 
   try {
     const data = collectFormData();
-    console.log('Form data collected:', JSON.stringify(data));
 
     // Webhook gate — pre-verified by /repliers endpoint
-    if (state.formDef.onSubmitWebhookUrl) {
+    if (shouldUseWebhookGate(state.formDef)) {
       // Check that user was selected from pre-verified repliers list
       const xField = ((data.x_username as string) ?? '').trim().replace(/^@/, '');
       if (!xField || xField !== state.verifiedXUsername) {
@@ -802,13 +803,11 @@ async function submitForm(): Promise<void> {
     if (state.profile?.userId) body.lineUserId = state.profile.userId;
     if (state.refTrackedLinkId) body.trackedLinkId = state.refTrackedLinkId;
     // Note: state.friendId is users.id (UUID), not friends.id — don't send as friendId
-    console.log('Submitting to:', `/api/forms/${state.formDef.id}/submit`);
 
     const res = await apiCall(`/api/forms/${state.formDef.id}/submit`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
-    console.log('Response status:', res.status);
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
@@ -1259,4 +1258,3 @@ export async function initForm(formId: string | null): Promise<void> {
     renderFormError(err instanceof Error ? err.message : 'エラーが発生しました');
   }
 }
-
