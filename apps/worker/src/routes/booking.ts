@@ -61,6 +61,88 @@ export function jstDayWindowUtc(jstDate: string): { startUtc: string; endUtc: st
   };
 }
 
+function toJstDate(d: Date): string {
+  return new Date(d.getTime() + JST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function toJstHHMM(d: Date): string {
+  return new Date(d.getTime() + JST_OFFSET_MS).toISOString().slice(11, 16);
+}
+
+function timeToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function minutesToTime(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function isDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return false;
+  return date.toISOString().slice(0, 10) === value;
+}
+
+function isHHMM(value: string, allow24 = false): boolean {
+  if (allow24 && value === '24:00') return true;
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function isValidTimeRange(start: string, end: string): boolean {
+  if (!isHHMM(start) || !isHHMM(end, true)) return false;
+  return timeToMinutes(start) < timeToMinutes(end);
+}
+
+function intervalsOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+  return (
+    timeToMinutes(aStart) < timeToMinutes(bEnd) &&
+    timeToMinutes(aEnd) > timeToMinutes(bStart)
+  );
+}
+
+function bookingBlockEndHHMM(
+  startHHMM: string,
+  durationMinutes: number,
+  bufferMinutes: number,
+): string {
+  return minutesToTime(timeToMinutes(startHHMM) + durationMinutes + bufferMinutes);
+}
+
+type StaffBlockInterval = { start_time: string; end_time: string };
+
+async function listStaffBlocksForDate(
+  db: D1Database,
+  staffId: string,
+  blockDate: string,
+): Promise<StaffBlockInterval[]> {
+  const rows = await db
+    .prepare(
+      `SELECT start_time, end_time FROM staff_blocks
+        WHERE staff_id = ? AND block_date = ?`,
+    )
+    .bind(staffId, blockDate)
+    .all<StaffBlockInterval>();
+  return rows.results;
+}
+
+function hasStaffBlockConflict(
+  blocks: StaffBlockInterval[],
+  startHHMM: string,
+  endHHMM: string,
+): boolean {
+  return blocks.some((b) => intervalsOverlap(startHHMM, endHHMM, b.start_time, b.end_time));
+}
+
+function staffBlocksToBusyIntervals(
+  blocks: StaffBlockInterval[],
+): Array<{ start: string; end: string }> {
+  return blocks.map((b) => ({ start: b.start_time || '00:00', end: b.end_time || '24:00' }));
+}
+
 async function resolveAccountIdFromLiff(c: Context<Env>): Promise<string | null> {
   const liffId = c.req.query('liffId');
   if (!liffId) return null;
@@ -153,6 +235,38 @@ function isNotificationKind(value: string): value is NotificationKind {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+type StaffBlockInput = {
+  blockDate: string;
+  startTime: string;
+  endTime: string;
+  reason: string | null;
+};
+
+function parseStaffBlockInput(
+  body: unknown,
+): { ok: true; value: StaffBlockInput } | { ok: false; error: string } {
+  if (!isRecord(body)) return { ok: false, error: 'invalid_body' };
+  const blockDate = body.block_date;
+  const startTime = body.start_time;
+  const endTime = body.end_time;
+  if (
+    typeof blockDate !== 'string' ||
+    typeof startTime !== 'string' ||
+    typeof endTime !== 'string'
+  ) {
+    return { ok: false, error: 'missing_params' };
+  }
+  if (!isDateOnly(blockDate)) return { ok: false, error: 'invalid_block_date' };
+  if (!isHHMM(startTime) || !isHHMM(endTime, true)) return { ok: false, error: 'invalid_time' };
+  if (!isValidTimeRange(startTime, endTime)) return { ok: false, error: 'invalid_time_range' };
+  if (body.reason !== undefined && body.reason !== null && typeof body.reason !== 'string') {
+    return { ok: false, error: 'invalid_reason' };
+  }
+  const reason = typeof body.reason === 'string' ? body.reason.trim() || null : null;
+  if (reason && reason.length > 500) return { ok: false, error: 'reason_too_long' };
+  return { ok: true, value: { blockDate, startTime, endTime, reason } };
 }
 
 function notificationTemplatesResponse(
@@ -411,8 +525,8 @@ booking.post('/api/liff/booking/requests', async (c) => {
 
   // Server-side availability 再検証: シフト内 / リードタイム / 既存予約と非衝突を保証する。
   // UI フィルタだけでは公開 API への直 POST で営業時間外予約を作れてしまうため必須。
-  const startJstDate = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
-  const startJstHHMM = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(11, 16);
+  const startJstDate = toJstDate(startsAt);
+  const startJstHHMM = toJstHHMM(startsAt);
   const shift = await c.env.DB
     .prepare(`SELECT start_time, end_time FROM staff_shifts WHERE staff_id = ? AND work_date = ?`)
     .bind(body.staff_id, startJstDate)
@@ -430,12 +544,34 @@ booking.post('/api/liff/booking/requests', async (c) => {
       jstDayWindowUtc(startJstDate).startUtc,
     )
     .all<{ starts_at: string; block_ends_at: string }>();
+  const staffBlocks = await listStaffBlocksForDate(c.env.DB, body.staff_id, startJstDate);
+  const requestBlockEndHHMM = bookingBlockEndHHMM(
+    startJstHHMM,
+    menuRow.dur,
+    menuRow.buffer_after_minutes,
+  );
+  if (hasStaffBlockConflict(staffBlocks, startJstHHMM, requestBlockEndHHMM)) {
+    const err = { error: 'slot_conflict' };
+    await saveIdempotencyResponse(c.env.DB, {
+      key: idemKey,
+      lineAccountId: accountId,
+      friendId,
+      status: 409,
+      body: err,
+      ttlMinutes: IDEMPOTENCY_TTL_MINUTES,
+      now: new Date(),
+    });
+    return c.json(err, 409);
+  }
   const slotsToday = computeSlots({
     working: [{ start: shift.start_time, end: shift.end_time }],
-    busy: existingBookings.results.map((b) => ({
-      start: new Date(new Date(b.starts_at).getTime() + 9 * 3600_000).toISOString().slice(11, 16),
-      end: new Date(new Date(b.block_ends_at).getTime() + 9 * 3600_000).toISOString().slice(11, 16),
-    })),
+    busy: [
+      ...existingBookings.results.map((b) => ({
+        start: toJstHHMM(new Date(b.starts_at)),
+        end: toJstHHMM(new Date(b.block_ends_at)),
+      })),
+      ...staffBlocksToBusyIntervals(staffBlocks),
+    ],
     menu: { duration_minutes: menuRow.dur, buffer_after_minutes: menuRow.buffer_after_minutes },
     granularityMinutes: 30,
   });
@@ -903,8 +1039,8 @@ booking.post('/api/booking/admin/bookings', async (c) => {
   const blockEndsAt = new Date(endsAt.getTime() + menuRow.buffer_after_minutes * 60_000);
 
   // Shift + slot validation — same shape as the LIFF create route.
-  const startJstDate = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
-  const startJstHHMM = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(11, 16);
+  const startJstDate = toJstDate(startsAt);
+  const startJstHHMM = toJstHHMM(startsAt);
   const shift = await c.env.DB
     .prepare(`SELECT start_time, end_time FROM staff_shifts WHERE staff_id = ? AND work_date = ?`)
     .bind(body.staff_id, startJstDate)
@@ -922,12 +1058,24 @@ booking.post('/api/booking/admin/bookings', async (c) => {
       jstDayWindowUtc(startJstDate).startUtc,
     )
     .all<{ starts_at: string; block_ends_at: string }>();
+  const staffBlocks = await listStaffBlocksForDate(c.env.DB, body.staff_id, startJstDate);
+  const requestBlockEndHHMM = bookingBlockEndHHMM(
+    startJstHHMM,
+    menuRow.dur,
+    menuRow.buffer_after_minutes,
+  );
+  if (hasStaffBlockConflict(staffBlocks, startJstHHMM, requestBlockEndHHMM)) {
+    return c.json({ error: 'slot_conflict' }, 409);
+  }
   const slotsToday = computeSlots({
     working: [{ start: shift.start_time, end: shift.end_time }],
-    busy: existingBookings.results.map((b) => ({
-      start: new Date(new Date(b.starts_at).getTime() + 9 * 3600_000).toISOString().slice(11, 16),
-      end: new Date(new Date(b.block_ends_at).getTime() + 9 * 3600_000).toISOString().slice(11, 16),
-    })),
+    busy: [
+      ...existingBookings.results.map((b) => ({
+        start: toJstHHMM(new Date(b.starts_at)),
+        end: toJstHHMM(new Date(b.block_ends_at)),
+      })),
+      ...staffBlocksToBusyIntervals(staffBlocks),
+    ],
     menu: { duration_minutes: menuRow.dur, buffer_after_minutes: menuRow.buffer_after_minutes },
     granularityMinutes: 30,
   });
@@ -1271,6 +1419,81 @@ booking.post('/api/booking/admin/staff/:id/shifts/generate', async (c) => {
   if (stmts.length === 0) return c.json({ inserted: 0 });
   await c.env.DB.batch(stmts);
   return c.json({ inserted: stmts.length });
+});
+
+// ---- staff blocks ----
+
+booking.get('/api/booking/admin/staff/:id/blocks', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const from = c.req.query('from');
+  const to = c.req.query('to');
+  if (!from || !to) return c.json({ error: 'missing_params' }, 400);
+  if (!isDateOnly(from) || !isDateOnly(to)) return c.json({ error: 'invalid_date' }, 400);
+  if (from > to) return c.json({ error: 'invalid_range' }, 400);
+
+  const rows = await c.env.DB
+    .prepare(
+      `SELECT id, block_date, start_time, end_time, reason, created_at
+         FROM staff_blocks
+        WHERE staff_id = ? AND block_date BETWEEN ? AND ?
+        ORDER BY block_date ASC, start_time ASC, id ASC`,
+    )
+    .bind(staffId, from, to)
+    .all();
+  return c.json({ blocks: rows.results });
+});
+
+booking.post('/api/booking/admin/staff/:id/blocks', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+
+  const body = await c.req.json().catch((): unknown => null);
+  const parsed = parseStaffBlockInput(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  const id = crypto.randomUUID();
+  const createdAt = new Date(Date.now() + JST_OFFSET_MS).toISOString().replace('Z', '+09:00');
+  await c.env.DB
+    .prepare(
+      `INSERT INTO staff_blocks
+        (id, staff_id, block_date, start_time, end_time, reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      staffId,
+      parsed.value.blockDate,
+      parsed.value.startTime,
+      parsed.value.endTime,
+      parsed.value.reason,
+      createdAt,
+    )
+    .run();
+  return c.json({ id }, 201);
+});
+
+booking.delete('/api/booking/admin/staff/:id/blocks/:blockId', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const blockId = c.req.param('blockId');
+  await c.env.DB
+    .prepare(`DELETE FROM staff_blocks WHERE id = ? AND staff_id = ?`)
+    .bind(blockId, staffId)
+    .run();
+  return c.json({ ok: true });
 });
 
 // ---- Bookings (requests) ----

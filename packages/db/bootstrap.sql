@@ -728,6 +728,17 @@ CREATE TABLE staff (
   FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
 );
 
+CREATE TABLE staff_blocks (
+  id TEXT PRIMARY KEY,
+  staff_id TEXT NOT NULL,
+  block_date TEXT NOT NULL,      -- YYYY-MM-DD (JST)
+  start_time TEXT NOT NULL,      -- HH:MM（終日は 00:00）
+  end_time TEXT NOT NULL,        -- HH:MM（終日は 24:00）
+  reason TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+
 CREATE TABLE staff_members (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
@@ -989,6 +1000,8 @@ CREATE INDEX idx_scenario_steps_scenario_id ON scenario_steps (scenario_id);
 CREATE INDEX idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
 
 CREATE INDEX idx_staff_account_sort ON staff (line_account_id, sort_order);
+
+CREATE INDEX idx_staff_blocks_staff_date ON staff_blocks(staff_id, block_date);
 
 CREATE UNIQUE INDEX idx_staff_members_api_key ON staff_members(api_key);
 

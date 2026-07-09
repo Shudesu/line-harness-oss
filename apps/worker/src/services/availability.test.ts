@@ -136,6 +136,7 @@ interface StubData {
   staff?: Array<{ id: string; display_name: string; is_designation_optional: number }>;
   shifts?: Array<{ staff_id: string; work_date: string; start_time: string; end_time: string }>;
   bookings?: Array<{ staff_id: string; starts_at: string; block_ends_at: string }>;
+  blocks?: Array<{ staff_id: string; block_date: string; start_time: string; end_time: string }>;
 }
 
 function stubDB(data: StubData): D1Database {
@@ -153,6 +154,9 @@ function stubDB(data: StubData): D1Database {
           }
           if (sql.includes('FROM staff_shifts')) {
             return { results: data.shifts ?? [] };
+          }
+          if (sql.includes('FROM staff_blocks')) {
+            return { results: data.blocks ?? [] };
           }
           if (sql.includes('FROM bookings')) {
             return { results: data.bookings ?? [] };
@@ -242,6 +246,83 @@ describe('getAvailability', () => {
     });
     // 11:00-12:00 が busy なので 10:00 / 12:00 だけが残るはず
     expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['10:00', '12:00']);
+  });
+
+  test('staff_blocks があるとその時間帯は除外', async () => {
+    const db = stubDB({
+      menu: {
+        duration_minutes: 60,
+        buffer_after_minutes: 0,
+        override_duration: null,
+        override_price: null,
+      },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '13:00' }],
+      blocks: [{ staff_id: 'S1', block_date: '2026-05-09', start_time: '11:00', end_time: '12:00' }],
+      bookings: [],
+    });
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1',
+      menuId: 'M1',
+      from: '2026-05-09',
+      to: '2026-05-09',
+      now: new Date('2026-05-08T00:00:00Z'),
+      minLeadTimeMinutes: 60,
+    });
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['10:00', '12:00']);
+  });
+
+  test('staff_blocks と隣接する非重複スロットは残る', async () => {
+    const db = stubDB({
+      menu: {
+        duration_minutes: 60,
+        buffer_after_minutes: 0,
+        override_duration: null,
+        override_price: null,
+      },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '14:00' }],
+      blocks: [{ staff_id: 'S1', block_date: '2026-05-09', start_time: '11:00', end_time: '12:00' }],
+      bookings: [],
+    });
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1',
+      menuId: 'M1',
+      from: '2026-05-09',
+      to: '2026-05-09',
+      now: new Date('2026-05-08T00:00:00Z'),
+      minLeadTimeMinutes: 60,
+    });
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual([
+      '10:00',
+      '12:00',
+      '12:30',
+      '13:00',
+    ]);
+  });
+
+  test('終日 staff_blocks は 00:00-24:00 busy として扱う', async () => {
+    const db = stubDB({
+      menu: {
+        duration_minutes: 60,
+        buffer_after_minutes: 0,
+        override_duration: null,
+        override_price: null,
+      },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '13:00' }],
+      blocks: [{ staff_id: 'S1', block_date: '2026-05-09', start_time: '00:00', end_time: '24:00' }],
+      bookings: [],
+    });
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1',
+      menuId: 'M1',
+      from: '2026-05-09',
+      to: '2026-05-09',
+      now: new Date('2026-05-08T00:00:00Z'),
+      minLeadTimeMinutes: 60,
+    });
+    expect(result.by_staff[0].slots).toEqual([]);
   });
 
   test('シフト無い日はスロット出ない', async () => {

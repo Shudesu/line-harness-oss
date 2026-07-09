@@ -166,6 +166,16 @@ export async function getAvailability(
     .bind(...staffIds, params.from, params.to)
     .all<{ staff_id: string; work_date: string; start_time: string; end_time: string }>();
 
+  const blocks = await db
+    .prepare(
+      `SELECT staff_id, block_date, start_time, end_time
+         FROM staff_blocks
+        WHERE staff_id IN (${placeholders})
+          AND block_date BETWEEN ? AND ?`,
+    )
+    .bind(...staffIds, params.from, params.to)
+    .all<{ staff_id: string; block_date: string; start_time: string; end_time: string }>();
+
   // Coarse range filter: from の前日 00:00 UTC 〜 to の翌日 00:00 UTC で十分な余裕
   const rangeStart = new Date(`${params.from}T00:00:00Z`);
   rangeStart.setUTCDate(rangeStart.getUTCDate() - 1);
@@ -203,9 +213,15 @@ export async function getAvailability(
           start: jstHHMM(new Date(b.starts_at)),
           end: jstHHMM(new Date(b.block_ends_at)),
         }));
+      const dayBlocks = blocks.results
+        .filter((b) => b.staff_id === s.id && b.block_date === date)
+        .map((b) => ({
+          start: b.start_time || '00:00',
+          end: b.end_time || '24:00',
+        }));
       const daySlots = computeSlots({
         working: [{ start: shift.start_time, end: shift.end_time }],
-        busy: dayBookings,
+        busy: [...dayBookings, ...dayBlocks],
         menu: menuForCalc,
         granularityMinutes: SLOT_GRANULARITY_MINUTES,
       });

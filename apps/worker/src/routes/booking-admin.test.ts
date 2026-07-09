@@ -100,18 +100,33 @@ type Handler = {
 // SQL 断片マッチで応答を返す scripted D1。マッチしない SQL は空応答。
 function scriptedDb(handlers: [string, Handler][]) {
   const calls: { sql: string; params: unknown[] }[] = [];
+  const methodsFor = (sql: string, params: unknown[]) => {
+    const h = handlers.find(([frag]) => sql.includes(frag))?.[1] ?? {};
+    return {
+      first: async () => h.first ?? null,
+      all: async () => h.all ?? { results: [] },
+      run: async () => h.run ?? { meta: { changes: 0 } },
+    };
+  };
   return {
     calls,
     prepare(sql: string) {
       return {
         bind(...params: unknown[]) {
           calls.push({ sql, params });
-          const h = handlers.find(([frag]) => sql.includes(frag))?.[1] ?? {};
-          return {
-            first: async () => h.first ?? null,
-            all: async () => h.all ?? { results: [] },
-            run: async () => h.run ?? { meta: { changes: 0 } },
-          };
+          return methodsFor(sql, params);
+        },
+        first: async () => {
+          calls.push({ sql, params: [] });
+          return methodsFor(sql, []).first();
+        },
+        all: async () => {
+          calls.push({ sql, params: [] });
+          return methodsFor(sql, []).all();
+        },
+        run: async () => {
+          calls.push({ sql, params: [] });
+          return methodsFor(sql, []).run();
         },
       };
     },
@@ -160,6 +175,74 @@ const execCtx = {
   waitUntil: () => undefined,
   passThroughOnException: () => undefined,
 } as unknown as ExecutionContext;
+
+type StaffBlockRow = {
+  id: string;
+  staff_id: string;
+  block_date: string;
+  start_time: string;
+  end_time: string;
+  reason: string | null;
+  created_at: string;
+};
+
+function staffBlocksDb() {
+  let blocks: StaffBlockRow[] = [];
+  return {
+    prepare(sql: string) {
+      return {
+        bind(...params: unknown[]) {
+          return {
+            first: async () => {
+              if (sql.includes('FROM staff WHERE')) return { ok: 1 };
+              return null;
+            },
+            all: async () => {
+              if (!sql.includes('FROM staff_blocks')) return { results: [] };
+              const [staffId, from, to] = params as [string, string, string];
+              return {
+                results: blocks
+                  .filter((b) => b.staff_id === staffId)
+                  .filter((b) => b.block_date >= from && b.block_date <= to)
+                  .map(({ staff_id, ...b }) => b),
+              };
+            },
+            run: async () => {
+              if (sql.includes('INSERT INTO staff_blocks')) {
+                const [id, staffId, blockDate, startTime, endTime, reason, createdAt] = params as [
+                  string,
+                  string,
+                  string,
+                  string,
+                  string,
+                  string | null,
+                  string,
+                ];
+                blocks = [...blocks, {
+                  id,
+                  staff_id: staffId,
+                  block_date: blockDate,
+                  start_time: startTime,
+                  end_time: endTime,
+                  reason,
+                  created_at: createdAt,
+                }];
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes('DELETE FROM staff_blocks')) {
+                const [blockId, staffId] = params as [string, string];
+                const before = blocks.length;
+                blocks = blocks.filter((b) => b.id !== blockId || b.staff_id !== staffId);
+                return { meta: { changes: before - blocks.length } };
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}
 
 describe('GET/PUT /api/booking/admin/notification-templates', () => {
   test('GET は保存テンプレート・既定文言・プレースホルダを返す', async () => {
@@ -362,6 +445,46 @@ describe('POST /api/booking/admin/bookings', () => {
     expect(res.status).toBe(409);
   });
 
+  test('409 slot_conflict when requested interval overlaps a staff block', async () => {
+    availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
+    const db = scriptedDb([
+      ['FROM friends', { first: { id: 'f1', is_following: 1 } }],
+      ['FROM staff WHERE', { first: { ok: 1 } }],
+      [
+        'FROM menus m',
+        {
+          first: {
+            duration_minutes: 60,
+            buffer_after_minutes: 10,
+            dur: 60,
+            price: 8000,
+            is_offered: 1,
+          },
+        },
+      ],
+      ['FROM staff_shifts', { first: { start_time: '10:00', end_time: '19:00' } }],
+      ['SELECT start_time, end_time FROM staff_blocks', {
+        all: { results: [{ start_time: '10:30', end_time: '11:30' }] },
+      }],
+      ['SELECT starts_at, block_ends_at FROM bookings', { all: { results: [] } }],
+      ['INSERT INTO bookings', { run: { meta: { changes: 1 } } }],
+    ]);
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/bookings?account_id=acc1',
+      {
+        method: 'POST',
+        body: JSON.stringify(validBody),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env,
+      execCtx,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'slot_conflict' });
+    expect(db.calls.some((c) => c.sql.includes('INSERT INTO bookings'))).toBe(false);
+  });
+
   test('422 when slot not in availability', async () => {
     availabilityMocks.computeSlots.mockReturnValue([{ start: '14:00', end: '15:00' }]);
     const db = happyDb();
@@ -425,6 +548,156 @@ describe('POST /api/booking/admin/bookings', () => {
     const [, endUtc, startUtc] = windowQuery!.params as [string, string, string];
     expect(startUtc).toBe('2026-09-09T15:00:00.000Z'); // JST 2026-09-10 00:00 = prev-day 15:00Z
     expect(endUtc).toBe('2026-09-10T15:00:00Z'); // JST 2026-09-11 00:00 = 2026-09-10 15:00Z
+  });
+});
+
+describe('POST /api/liff/booking/requests staff blocks', () => {
+  const validBody = {
+    menu_id: 'm1',
+    staff_id: 's1',
+    starts_at: '2026-07-10T02:00:00.000Z',
+  };
+
+  test('409 slot_conflict when requested interval overlaps a staff block', async () => {
+    availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ sub: 'U1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const db = scriptedDb([
+      ['FROM line_accounts WHERE liff_id', { first: { id: 'acc1' } }],
+      ['FROM line_accounts ORDER BY', {
+        all: {
+          results: [{
+            id: 'acc1',
+            channel_id: 'login-channel',
+            login_channel_id: 'login-channel',
+            liff_id: 'liff1',
+          }],
+        },
+      }],
+      ['line_user_id = ? AND line_account_id', { first: { id: 'f1' } }],
+      ['SELECT is_following FROM friends', { first: { is_following: 1 } }],
+      [
+        'FROM menus m',
+        {
+          first: {
+            duration_minutes: 60,
+            buffer_after_minutes: 10,
+            auto_tag_id: null,
+            dur: 60,
+            price: 8000,
+            is_offered: 1,
+          },
+        },
+      ],
+      ['FROM staff_shifts', { first: { start_time: '10:00', end_time: '19:00' } }],
+      ['SELECT start_time, end_time FROM staff_blocks', {
+        all: { results: [{ start_time: '10:30', end_time: '11:30' }] },
+      }],
+      ['SELECT starts_at, block_ends_at FROM bookings', { all: { results: [] } }],
+      ['INSERT INTO booking_idempotency_keys', { run: { meta: { changes: 1 } } }],
+    ]);
+    try {
+      const { app, env } = makeApp(db);
+      const res = await app.request(
+        '/api/liff/booking/requests?liffId=liff1',
+        {
+          method: 'POST',
+          body: JSON.stringify(validBody),
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': 'idem-1',
+            Authorization: 'Bearer token',
+          },
+        },
+        env,
+        execCtx,
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: 'slot_conflict' });
+      expect(db.calls.some((c) => c.sql.includes('INSERT INTO bookings'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('GET/POST/DELETE /api/booking/admin/staff/:id/blocks', () => {
+  test('full CRUD roundtrip', async () => {
+    const db = staffBlocksDb();
+    const { app, env } = makeApp(db);
+    const create = await app.request(
+      '/api/booking/admin/staff/s1/blocks?account_id=acc1',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          block_date: '2026-07-10',
+          start_time: '13:00',
+          end_time: '14:30',
+          reason: '社内MTG',
+        }),
+      },
+      env,
+    );
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { id: string };
+    expect(created.id).toEqual(expect.any(String));
+
+    const list = await app.request(
+      '/api/booking/admin/staff/s1/blocks?account_id=acc1&from=2026-07-01&to=2026-07-31',
+      {},
+      env,
+    );
+    expect(list.status).toBe(200);
+    const listed = (await list.json()) as { blocks: Array<Omit<StaffBlockRow, 'staff_id'>> };
+    expect(listed.blocks).toEqual([{
+      id: created.id,
+      block_date: '2026-07-10',
+      start_time: '13:00',
+      end_time: '14:30',
+      reason: '社内MTG',
+      created_at: expect.any(String),
+    }]);
+
+    const del = await app.request(
+      `/api/booking/admin/staff/s1/blocks/${created.id}?account_id=acc1`,
+      { method: 'DELETE' },
+      env,
+    );
+    expect(del.status).toBe(200);
+    expect(await del.json()).toEqual({ ok: true });
+
+    const after = await app.request(
+      '/api/booking/admin/staff/s1/blocks?account_id=acc1&from=2026-07-01&to=2026-07-31',
+      {},
+      env,
+    );
+    expect(await after.json()).toEqual({ blocks: [] });
+  });
+
+  test('POST rejects invalid time range', async () => {
+    const db = staffBlocksDb();
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/staff/s1/blocks?account_id=acc1',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          block_date: '2026-07-10',
+          start_time: '14:00',
+          end_time: '13:00',
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_time_range' });
   });
 });
 
