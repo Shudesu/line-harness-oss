@@ -17,6 +17,7 @@ export default function Confirm({
   onBack: () => void;
 }) {
   const ctx = useSalonContext();
+  const labels = ctx.labels;
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,25 +61,27 @@ export default function Confirm({
       </div>
       <div className="sb-card">
         <dl className="space-y-3 text-sm">
-          <Row label="メニュー" value={menu.name} />
-          <Row label="担当" value={staff.display_name} />
+          <Row label={labels.confirmMenuLabel} value={menu.name} />
+          <Row label={labels.confirmStaffLabel} value={staff.display_name} />
           <Row label="日時" value={`${formatJp(slot.date)} ${slot.start}`} />
           <Row label="所要" value={`${staff.duration_minutes} 分`} />
-          <Row
-            label="料金"
-            value={`¥${staff.price.toLocaleString()}`}
-            valueClassName="font-bold text-base sb-line-green-text"
-          />
+          {staff.price !== 0 && (
+            <Row
+              label={labels.confirmPriceLabel}
+              value={`¥${staff.price.toLocaleString()}`}
+              valueClassName="font-bold text-base sb-line-green-text"
+            />
+          )}
         </dl>
       </div>
       <label className="block">
-        <span className="text-xs font-medium text-gray-600 mb-1 block">ご要望（任意）</span>
+        <span className="text-xs font-medium text-gray-600 mb-1 block">{labels.noteLabel}</span>
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-y bg-white"
           rows={3}
-          placeholder="髪型の希望、アレルギー、その他"
+          placeholder={labels.notePlaceholder}
         />
       </label>
       {error && (

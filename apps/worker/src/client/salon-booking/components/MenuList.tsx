@@ -4,6 +4,7 @@ import { useSalonContext } from '../lib/context.js';
 
 export default function MenuList({ onSelect }: { onSelect: (m: MenuItem) => void }) {
   const ctx = useSalonContext();
+  const labels = ctx.labels;
   const [menus, setMenus] = useState<MenuItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,7 +19,7 @@ export default function MenuList({ onSelect }: { onSelect: (m: MenuItem) => void
   if (error) {
     return (
       <div className="sb-card text-center" style={{ animation: 'sb-fade-in 0.3s' }}>
-        <p className="text-red-600 text-sm mb-3">メニュー情報の取得に失敗しました</p>
+        <p className="text-red-600 text-sm mb-3">{labels.menuError}</p>
         <p className="text-gray-500 text-xs mb-4">{error}</p>
         <button
           onClick={() => window.location.reload()}
@@ -33,14 +34,14 @@ export default function MenuList({ onSelect }: { onSelect: (m: MenuItem) => void
     return (
       <div className="flex flex-col items-center py-12">
         <div className="sb-spinner" />
-        <p className="text-sm text-gray-500 mt-3">メニューを読み込み中…</p>
+        <p className="text-sm text-gray-500 mt-3">{labels.menuLoading}</p>
       </div>
     );
   }
   if (menus.length === 0) {
     return (
       <div className="sb-card text-center text-sm text-gray-500">
-        まだメニューが登録されていません
+        {labels.menuEmpty}
       </div>
     );
   }
@@ -55,7 +56,7 @@ export default function MenuList({ onSelect }: { onSelect: (m: MenuItem) => void
   return (
     <div className="space-y-5 sb-fade-in">
       <div>
-        <h1 className="text-base font-bold text-gray-900">メニューを選んでください</h1>
+        <h1 className="text-base font-bold text-gray-900">{labels.menuTitle}</h1>
         <p className="text-xs text-gray-500 mt-1">step 1 / 4</p>
       </div>
       {[...grouped.entries()].map(([cat, items]) => (
@@ -84,12 +85,14 @@ export default function MenuList({ onSelect }: { onSelect: (m: MenuItem) => void
                         )}
                       </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="font-bold sb-line-green-text tabular-nums">
-                        ¥{m.base_price.toLocaleString()}
+                    {m.base_price !== 0 && (
+                      <div className="text-right shrink-0">
+                        <div className="font-bold sb-line-green-text tabular-nums">
+                          ¥{m.base_price.toLocaleString()}
+                        </div>
+                        <div className="text-xs text-gray-300">〜</div>
                       </div>
-                      <div className="text-xs text-gray-300">〜</div>
-                    </div>
+                    )}
                   </div>
                 </button>
               </li>

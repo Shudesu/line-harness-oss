@@ -9,13 +9,6 @@ import { createApi, type MenuItem, type StaffItem } from '../lib/api.js';
 
 type Step = 'menu' | 'staff' | 'datetime' | 'confirm' | 'done';
 
-const STEPS: Array<{ key: Step; label: string }> = [
-  { key: 'menu', label: 'メニュー' },
-  { key: 'staff', label: '担当' },
-  { key: 'datetime', label: '日時' },
-  { key: 'confirm', label: '確認' },
-];
-
 export default function Booking({
   peekMode,
   exitPeek,
@@ -26,6 +19,7 @@ export default function Booking({
   initialMenuId?: string | null;
 }) {
   const ctx = useSalonContext();
+  const labels = ctx.labels;
   const [step, setStep] = useState<Step>('menu');
   const [menu, setMenu] = useState<MenuItem | null>(null);
   const [staff, setStaff] = useState<StaffItem | null>(null);
@@ -70,7 +64,13 @@ export default function Booking({
   }
 
   const showStepper = step !== 'done';
-  const stepIdx = STEPS.findIndex((s) => s.key === step);
+  const steps: Array<{ key: Step; label: string }> = [
+    { key: 'menu', label: labels.stepMenu },
+    { key: 'staff', label: labels.stepStaff },
+    { key: 'datetime', label: labels.stepDateTime },
+    { key: 'confirm', label: labels.stepConfirm },
+  ];
+  const stepIdx = steps.findIndex((s) => s.key === step);
 
   return (
     <div>
@@ -79,11 +79,11 @@ export default function Booking({
           className="mb-5 px-1"
           style={{
             display: 'grid',
-            gridTemplateColumns: `repeat(${STEPS.length}, minmax(0, 1fr))`,
+            gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))`,
             gap: 0,
           }}
         >
-          {STEPS.map((s, i) => {
+          {steps.map((s, i) => {
             const done = i < stepIdx;
             const active = i === stepIdx;
             const future = i > stepIdx;

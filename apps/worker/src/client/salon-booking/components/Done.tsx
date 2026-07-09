@@ -2,6 +2,7 @@ import { useSalonContext } from '../lib/context.js';
 
 export default function Done() {
   const ctx = useSalonContext();
+  const labels = ctx.labels;
   function gotoHistory() {
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'history');
@@ -26,7 +27,7 @@ export default function Done() {
         </div>
         <h1 className="text-lg font-bold text-gray-900 mt-4">リクエストを送信しました</h1>
         <p className="text-sm text-gray-600 mt-3 leading-relaxed">
-          お店からの返信をお待ちください。
+          {labels.doneReplyLine}
           <br />
           確定すると LINE に通知が届きます。
         </p>
@@ -36,7 +37,7 @@ export default function Done() {
             className="py-3 rounded-xl font-semibold text-sm border-2 sb-line-green-text"
             style={{ borderColor: '#06C755' }}
           >
-            予約履歴
+            {labels.historyButton}
           </button>
           <button
             onClick={close}

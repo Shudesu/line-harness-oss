@@ -5,6 +5,7 @@ import HistoryCard from '../components/HistoryCard.js';
 
 export default function BookingHistory() {
   const ctx = useSalonContext();
+  const labels = ctx.labels;
   const [data, setData] = useState<{ upcoming: BookingHistoryItem[]; past: BookingHistoryItem[] } | null>(
     null,
   );
@@ -84,7 +85,7 @@ export default function BookingHistory() {
         </ul>
       )}
       <p className="text-xs text-gray-400 text-center pt-2">
-        変更・キャンセルはお店に LINE で直接ご連絡ください
+        {labels.historyContactNotice}
       </p>
     </div>
   );

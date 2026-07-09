@@ -14,6 +14,7 @@ export default function StaffList({
   onBack: () => void;
 }) {
   const ctx = useSalonContext();
+  const labels = ctx.labels;
   const [list, setList] = useState<StaffItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +31,7 @@ export default function StaffList({
       <div className="space-y-5 sb-fade-in">
         <BackButton onBack={onBack} />
         <div className="sb-card text-center">
-          <p className="text-red-600 text-sm mb-2">スタッフ情報の取得に失敗しました</p>
+          <p className="text-red-600 text-sm mb-2">{labels.staffError}</p>
           <p className="text-gray-500 text-xs mb-4">{error}</p>
           <button
             onClick={() => window.location.reload()}
@@ -48,7 +49,7 @@ export default function StaffList({
         <BackButton onBack={onBack} />
         <div className="flex flex-col items-center py-12">
           <div className="sb-spinner" />
-          <p className="text-sm text-gray-500 mt-3">スタッフを読み込み中…</p>
+          <p className="text-sm text-gray-500 mt-3">{labels.staffLoading}</p>
         </div>
       </div>
     );
@@ -58,7 +59,7 @@ export default function StaffList({
       <div className="space-y-5 sb-fade-in">
         <BackButton onBack={onBack} />
         <div className="sb-card text-center text-sm text-gray-500">
-          このメニューを担当できるスタッフがいません
+          {labels.staffEmpty}
         </div>
       </div>
     );
@@ -68,7 +69,7 @@ export default function StaffList({
     <div className="space-y-5 sb-fade-in">
       <BackButton onBack={onBack} />
       <div>
-        <h1 className="text-base font-bold text-gray-900">担当を選んでください</h1>
+        <h1 className="text-base font-bold text-gray-900">{labels.staffTitle}</h1>
         <p className="text-xs text-gray-500 mt-1">step 2 / 4</p>
       </div>
       <ul className="space-y-2">
@@ -94,22 +95,24 @@ export default function StaffList({
                       : 'linear-gradient(135deg, #06C755 0%, #04a046 100%)',
                   }}
                 >
-                  {s.is_designation_optional ? '指' : s.display_name.slice(0, 1)}
+                  {s.is_designation_optional ? labels.staffOptionalAvatar : s.display_name.slice(0, 1)}
                 </div>
               )}
               <div className="text-left flex-1 min-w-0">
                 <div className="font-semibold text-gray-900">{s.display_name}</div>
                 {s.role && <div className="text-xs text-gray-500 mt-0.5">{s.role}</div>}
                 {s.is_designation_optional ? (
-                  <div className="text-xs text-purple-600 mt-1">指名なし枠</div>
+                  <div className="text-xs text-purple-600 mt-1">{labels.staffOptionalBadge}</div>
                 ) : null}
               </div>
-              <div className="text-right shrink-0">
-                <div className="text-sm font-semibold sb-line-green-text tabular-nums">
-                  ¥{s.price.toLocaleString()}
+              {s.price !== 0 && (
+                <div className="text-right shrink-0">
+                  <div className="text-sm font-semibold sb-line-green-text tabular-nums">
+                    ¥{s.price.toLocaleString()}
+                  </div>
+                  {s.price !== basePrice && <div className="text-xs text-gray-300">〜</div>}
                 </div>
-                {s.price !== basePrice && <div className="text-xs text-gray-300">〜</div>}
-              </div>
+              )}
             </button>
           </li>
         ))}

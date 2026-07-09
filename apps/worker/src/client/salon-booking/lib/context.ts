@@ -6,12 +6,16 @@
 // caller を verify し、friends.line_user_id から UUID を引くため React 側では不要。
 
 import { createContext, useContext } from 'react';
+import type { SalonBookingLabels } from './labels.js';
 
 export interface SalonBookingContext {
   liffId: string;
   lineUserId: string;
   idToken: string;
+  labels: SalonBookingLabels;
 }
+
+export type SalonBookingMountContext = Omit<SalonBookingContext, 'labels'>;
 
 const Ctx = createContext<SalonBookingContext | null>(null);
 

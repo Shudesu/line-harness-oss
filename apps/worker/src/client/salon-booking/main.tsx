@@ -4,7 +4,8 @@
 
 import { StrictMode, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { SalonBookingProvider, type SalonBookingContext } from './lib/context.js';
+import { SalonBookingProvider, type SalonBookingContext, type SalonBookingMountContext } from './lib/context.js';
+import { getSalonBookingLabelsFromUrl } from './lib/labels.js';
 import Booking from './pages/Booking.js';
 import BookingHistory from './pages/BookingHistory.js';
 import './styles.css';
@@ -30,7 +31,11 @@ function App({ ctx }: { ctx: SalonBookingContext }) {
   // mount 時点の値だけ Booking に渡す。
   const [initialMenuId] = useState(initial.menuId);
 
-  const headerLabel = view === 'history' ? '予約履歴' : peekMode ? '空き状況' : 'ご予約';
+  const headerLabel = view === 'history'
+    ? ctx.labels.headerHistory
+    : peekMode
+      ? ctx.labels.headerAvailability
+      : ctx.labels.headerBooking;
 
   return (
     <SalonBookingProvider value={ctx}>
@@ -57,7 +62,7 @@ function App({ ctx }: { ctx: SalonBookingContext }) {
   );
 }
 
-export function mountSalonBooking(container: HTMLElement, ctx: SalonBookingContext): void {
+export function mountSalonBooking(container: HTMLElement, ctx: SalonBookingMountContext): void {
   // body.sb-active は preflight reset と #app inline 上書きが効くための前提。
   // useEffect で付けると初回 paint がブラウザデフォルト (black border, list disc 等)
   // のままチラつくので、createRoot 前に同期で付ける。
@@ -68,10 +73,12 @@ export function mountSalonBooking(container: HTMLElement, ctx: SalonBookingConte
     _root = null;
   }
   container.innerHTML = '';
+  const labels = getSalonBookingLabelsFromUrl();
+  const providerContext: SalonBookingContext = { ...ctx, labels };
   _root = createRoot(container);
   _root.render(
     <StrictMode>
-      <App ctx={ctx} />
+      <App ctx={providerContext} />
     </StrictMode>,
   );
 }
