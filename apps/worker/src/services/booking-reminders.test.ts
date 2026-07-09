@@ -9,11 +9,12 @@ interface DueRow {
   starts_at: string;
   menu_name: string;
   staff_name: string;
+  line_account_id: string;
   channel_access_token: string;
   line_user_id: string;
 }
 
-function stubDB(due: DueRow[]) {
+function stubDB(due: DueRow[], settings: Record<string, string> = {}) {
   const updates: Array<{ sql: string; bound: unknown[] }> = [];
   const db = {
     prepare(sql: string) {
@@ -34,6 +35,10 @@ function stubDB(due: DueRow[]) {
           return { success: true, meta: { changes: 1 } };
         },
         async first() {
+          if (sql.includes('FROM account_settings')) {
+            const value = settings[String(bound[0])];
+            return value === undefined ? null : { value };
+          }
           return null;
         },
       };
@@ -57,6 +62,7 @@ describe('processDueReminders', () => {
         starts_at: '2026-05-10T05:00:00Z',
         menu_name: 'カット',
         staff_name: '山田',
+        line_account_id: 'acc1',
         channel_access_token: 'tok',
         line_user_id: 'U_xyz',
       },
@@ -102,6 +108,7 @@ describe('processDueReminders', () => {
         starts_at: '2026-05-10T05:00:00Z',
         menu_name: 'カット',
         staff_name: '山田',
+        line_account_id: 'acc1',
         channel_access_token: 'tok',
         line_user_id: 'U',
       },
@@ -130,6 +137,7 @@ describe('processDueReminders', () => {
         starts_at: '2026-05-10T05:00:00Z',
         menu_name: 'カット',
         staff_name: '山田',
+        line_account_id: 'acc1',
         channel_access_token: 'tok',
         line_user_id: 'U',
       },
@@ -144,5 +152,55 @@ describe('processDueReminders', () => {
     const u = updates.find((x) => x.sql.includes('UPDATE booking_reminders SET status'));
     expect(u!.bound[0]).toBe('failed_permanent');
     expect(u!.bound[1]).toBe(3);
+  });
+
+  test('行ごとのアカウント設定テンプレートを sender に渡す', async () => {
+    const due: DueRow[] = [
+      {
+        id: 'R1',
+        booking_id: 'B1',
+        kind: 'day_before',
+        retry_count: 0,
+        starts_at: '2026-05-10T05:00:00Z',
+        menu_name: 'カット',
+        staff_name: '山田',
+        line_account_id: 'acc1',
+        channel_access_token: 'tok1',
+        line_user_id: 'U1',
+      },
+      {
+        id: 'R2',
+        booking_id: 'B2',
+        kind: 'day_before',
+        retry_count: 0,
+        starts_at: '2026-05-10T06:00:00Z',
+        menu_name: 'カラー',
+        staff_name: '佐藤',
+        line_account_id: 'acc2',
+        channel_access_token: 'tok2',
+        line_user_id: 'U2',
+      },
+    ];
+    const { db } = stubDB(due, {
+      acc1: JSON.stringify({ day_before: 'acc1 {menu}' }),
+      acc2: JSON.stringify({ day_before: 'acc2 {staff}' }),
+    });
+    const sender = vi.fn().mockResolvedValue(undefined);
+
+    const result = await processDueReminders(db, {
+      now: NOW,
+      sender,
+      reminderHoursBefore: REMINDER_HOURS_BEFORE,
+    });
+
+    expect(result).toEqual({ sent: 2, failed: 0 });
+    expect(sender).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ templates: { day_before: 'acc1 {menu}' } }),
+    );
+    expect(sender).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ templates: { day_before: 'acc2 {staff}' } }),
+    );
   });
 });

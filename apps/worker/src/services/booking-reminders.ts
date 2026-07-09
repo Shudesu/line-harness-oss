@@ -2,7 +2,11 @@
 // Joined with bookings/menus/staff/line_accounts/friends for everything
 // the notification text renderer needs in one query.
 
-import type { BookingNotificationSender, NotificationKind } from './booking-notifier.js';
+import {
+  getBookingTemplates,
+  type BookingNotificationSender,
+  type NotificationKind,
+} from './booking-notifier.js';
 import { REMINDER_MAX_RETRY } from './booking-types.js';
 
 interface DueRow {
@@ -13,6 +17,7 @@ interface DueRow {
   starts_at: string;
   menu_name: string;
   staff_name: string;
+  line_account_id: string;
   channel_access_token: string;
   line_user_id: string;
 }
@@ -42,6 +47,7 @@ export async function processDueReminders(
               b.starts_at,
               m.name AS menu_name,
               s.display_name AS staff_name,
+              la.id AS line_account_id,
               la.channel_access_token,
               f.line_user_id
          FROM booking_reminders r
@@ -64,10 +70,12 @@ export async function processDueReminders(
   for (const row of due.results) {
     const kind: NotificationKind = row.kind;
     try {
+      const templates = await getBookingTemplates(db, row.line_account_id);
       await params.sender({
         channelAccessToken: row.channel_access_token,
         toLineUserId: row.line_user_id,
         kind,
+        templates,
         ctx: {
           menuName: row.menu_name,
           staffName: row.staff_name,

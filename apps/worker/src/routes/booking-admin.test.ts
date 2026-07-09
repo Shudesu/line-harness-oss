@@ -9,8 +9,11 @@ const availabilityMocks = {
 };
 vi.mock('../services/availability.js', () => availabilityMocks);
 
-const notifierMocks = { sendBookingNotification: vi.fn() };
-vi.mock('../services/booking-notifier.js', () => notifierMocks);
+const notifierMocks = vi.hoisted(() => ({ sendBookingNotification: vi.fn() }));
+vi.mock('../services/booking-notifier.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/booking-notifier.js')>();
+  return { ...actual, sendBookingNotification: notifierMocks.sendBookingNotification };
+});
 
 const { default: booking } = await import('./booking.js');
 
@@ -118,10 +121,144 @@ function scriptedDb(handlers: [string, Handler][]) {
   };
 }
 
+function settingsDb(initialValue: string | null = null) {
+  let storedValue = initialValue;
+  const calls: { sql: string; params: unknown[] }[] = [];
+  return {
+    calls,
+    get storedValue() {
+      return storedValue;
+    },
+    prepare(sql: string) {
+      let params: unknown[] = [];
+      const stmt = {
+        bind(...args: unknown[]) {
+          params = args;
+          calls.push({ sql, params });
+          return stmt;
+        },
+        first: async () => {
+          if (sql.includes('FROM account_settings')) {
+            return storedValue === null ? null : { value: storedValue };
+          }
+          return null;
+        },
+        all: async () => ({ results: [] }),
+        run: async () => {
+          if (sql.includes('INSERT INTO account_settings')) {
+            storedValue = String(params[3]);
+          }
+          return { meta: { changes: 1 } };
+        },
+      };
+      return stmt;
+    },
+  };
+}
+
 const execCtx = {
   waitUntil: () => undefined,
   passThroughOnException: () => undefined,
 } as unknown as ExecutionContext;
+
+describe('GET/PUT /api/booking/admin/notification-templates', () => {
+  test('GET は保存テンプレート・既定文言・プレースホルダを返す', async () => {
+    const db = settingsDb(JSON.stringify({ requested: '受付 {menu}' }));
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/notification-templates?account_id=acc1',
+      {},
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      templates: Record<string, string | null>;
+      defaults: Record<string, string>;
+      placeholders: string[];
+    };
+    expect(body.templates.requested).toBe('受付 {menu}');
+    expect(body.templates.approved).toBeNull();
+    expect(body.defaults.requested).toContain('{menu}');
+    expect(body.placeholders).toEqual(['{menu}', '{staff}', '{datetime}', '{hours}']);
+  });
+
+  test('PUT は未知キーを拒否する', async () => {
+    const db = settingsDb();
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/notification-templates?account_id=acc1',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templates: { requested: 'ok', unknown: 'ng' } }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'unknown_template_key', key: 'unknown' });
+  });
+
+  test('PUT はnull以外の非文字列値を拒否する', async () => {
+    const db = settingsDb();
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/notification-templates?account_id=acc1',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templates: { requested: 123 } }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_template_value', key: 'requested' });
+  });
+
+  test('PUT は1000文字超の値を拒否する', async () => {
+    const db = settingsDb();
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/notification-templates?account_id=acc1',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templates: { requested: 'あ'.repeat(1001) } }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'template_too_long', key: 'requested' });
+  });
+
+  test('PUT は空文字/nullでその種類だけ既定に戻す', async () => {
+    const db = settingsDb(JSON.stringify({
+      requested: 'old requested',
+      approved: 'old approved',
+      rejected: 'keep rejected',
+    }));
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/notification-templates?account_id=acc1',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templates: { requested: '', approved: null } }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { templates: Record<string, string | null> };
+    expect(body.templates.requested).toBeNull();
+    expect(body.templates.approved).toBeNull();
+    expect(body.templates.rejected).toBe('keep rejected');
+    expect(JSON.parse(db.storedValue ?? '{}')).toEqual({ rejected: 'keep rejected' });
+  });
+});
 
 describe('POST /api/booking/admin/bookings', () => {
   const validBody = {

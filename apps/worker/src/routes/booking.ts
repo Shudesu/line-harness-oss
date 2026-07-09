@@ -19,7 +19,16 @@ import {
   findIdempotencyResponse,
   saveIdempotencyResponse,
 } from '../services/booking-idempotency.js';
-import { sendBookingNotification } from '../services/booking-notifier.js';
+import {
+  BOOKING_NOTIFICATION_DEFAULT_TEMPLATES,
+  BOOKING_NOTIFICATION_KINDS,
+  BOOKING_NOTIFICATION_PLACEHOLDERS,
+  BOOKING_NOTIFICATION_SETTINGS_KEY,
+  getBookingTemplates,
+  sendBookingNotification,
+  type BookingNotificationTemplates,
+  type NotificationKind,
+} from '../services/booking-notifier.js';
 import { insertConfirmationReminders } from '../services/booking-confirm.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import {
@@ -138,6 +147,50 @@ async function resolveAccountIdAdmin(c: Context<Env>): Promise<string | null> {
   return c.req.query('account_id') ?? null;
 }
 
+function isNotificationKind(value: string): value is NotificationKind {
+  return (BOOKING_NOTIFICATION_KINDS as readonly string[]).includes(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function notificationTemplatesResponse(
+  templates: BookingNotificationTemplates,
+): Record<NotificationKind, string | null> {
+  const response = {} as Record<NotificationKind, string | null>;
+  for (const kind of BOOKING_NOTIFICATION_KINDS) {
+    response[kind] = templates[kind] ?? null;
+  }
+  return response;
+}
+
+async function upsertBookingTemplates(
+  db: D1Database,
+  accountId: string,
+  templates: BookingNotificationTemplates,
+): Promise<void> {
+  const value = JSON.stringify(templates);
+  const now = new Date(Date.now() + JST_OFFSET_MS).toISOString().replace('Z', '+09:00');
+  await db
+    .prepare(
+      `INSERT INTO account_settings (id, line_account_id, key, value, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (line_account_id, key) DO UPDATE SET value = ?, updated_at = ?`,
+    )
+    .bind(
+      crypto.randomUUID(),
+      accountId,
+      BOOKING_NOTIFICATION_SETTINGS_KEY,
+      value,
+      now,
+      now,
+      value,
+      now,
+    )
+    .run();
+}
+
 // staff が指定 account に属することを保証する。属していなければ null を返す。
 async function assertStaffInAccount(
   db: D1Database,
@@ -180,6 +233,7 @@ async function notifyForBooking(
       `SELECT b.starts_at,
               m.name AS menu_name,
               s.display_name AS staff_name,
+              la.id AS line_account_id,
               la.channel_access_token,
               f.line_user_id
          FROM bookings b
@@ -194,14 +248,17 @@ async function notifyForBooking(
       starts_at: string;
       menu_name: string;
       staff_name: string;
+      line_account_id: string;
       channel_access_token: string;
       line_user_id: string;
     }>();
   if (!row) return;
+  const templates = await getBookingTemplates(db, row.line_account_id);
   await sendBookingNotification({
     channelAccessToken: row.channel_access_token,
     toLineUserId: row.line_user_id,
     kind,
+    templates,
     ctx: {
       menuName: row.menu_name,
       staffName: row.staff_name,
@@ -525,6 +582,56 @@ booking.get('/api/liff/booking/me', async (c) => {
 // ================================================================
 
 // ---- Menus CRUD ----
+
+booking.get('/api/booking/admin/notification-templates', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const templates = await getBookingTemplates(c.env.DB, accountId);
+  return c.json({
+    templates: notificationTemplatesResponse(templates),
+    defaults: BOOKING_NOTIFICATION_DEFAULT_TEMPLATES,
+    placeholders: BOOKING_NOTIFICATION_PLACEHOLDERS,
+  });
+});
+
+booking.put('/api/booking/admin/notification-templates', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+
+  const body = await c.req.json().catch((): unknown => null);
+  if (!isRecord(body) || !isRecord(body.templates)) {
+    return c.json({ error: 'invalid_templates' }, 400);
+  }
+
+  for (const key of Object.keys(body.templates)) {
+    if (!isNotificationKind(key)) {
+      return c.json({ error: 'unknown_template_key', key }, 400);
+    }
+  }
+
+  const next = await getBookingTemplates(c.env.DB, accountId);
+  for (const [key, value] of Object.entries(body.templates)) {
+    const kind = key as NotificationKind;
+    if (value === null || value === '') {
+      delete next[kind];
+      continue;
+    }
+    if (typeof value !== 'string') {
+      return c.json({ error: 'invalid_template_value', key }, 400);
+    }
+    if (value.length > 1000) {
+      return c.json({ error: 'template_too_long', key }, 400);
+    }
+    next[kind] = value;
+  }
+
+  await upsertBookingTemplates(c.env.DB, accountId, next);
+  return c.json({
+    templates: notificationTemplatesResponse(next),
+    defaults: BOOKING_NOTIFICATION_DEFAULT_TEMPLATES,
+    placeholders: BOOKING_NOTIFICATION_PLACEHOLDERS,
+  });
+});
 
 booking.get('/api/booking/admin/menus', async (c) => {
   const accountId = await resolveAccountIdAdmin(c);

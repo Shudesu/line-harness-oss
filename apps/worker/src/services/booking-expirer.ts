@@ -1,6 +1,9 @@
 // Cron handler: expire 24h-old request bookings + purge idempotency rows.
 
-import type { BookingNotificationSender } from './booking-notifier.js';
+import {
+  getBookingTemplates,
+  type BookingNotificationSender,
+} from './booking-notifier.js';
 import { purgeExpiredIdempotency } from './booking-idempotency.js';
 import { REQUEST_TTL_HOURS } from './booking-types.js';
 
@@ -9,6 +12,7 @@ interface StaleRow {
   starts_at: string;
   menu_name: string;
   staff_name: string;
+  line_account_id: string;
   channel_access_token: string;
   line_user_id: string;
 }
@@ -35,6 +39,7 @@ export async function runExpirer(
       `SELECT b.id, b.starts_at,
               m.name AS menu_name,
               s.display_name AS staff_name,
+              la.id AS line_account_id,
               la.channel_access_token,
               f.line_user_id
          FROM bookings b
@@ -66,10 +71,12 @@ export async function runExpirer(
       .bind(row.id)
       .run();
     try {
+      const templates = await getBookingTemplates(db, row.line_account_id);
       await params.sender({
         channelAccessToken: row.channel_access_token,
         toLineUserId: row.line_user_id,
         kind: 'expired',
+        templates,
         ctx: {
           menuName: row.menu_name,
           staffName: row.staff_name,

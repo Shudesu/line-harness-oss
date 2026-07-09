@@ -6,11 +6,12 @@ interface StaleRow {
   starts_at: string;
   menu_name: string;
   staff_name: string;
+  line_account_id: string;
   channel_access_token: string;
   line_user_id: string;
 }
 
-function stubDB(stale: StaleRow[], idempotencyPurged = 0) {
+function stubDB(stale: StaleRow[], idempotencyPurged = 0, settings: Record<string, string> = {}) {
   const updates: Array<{ sql: string; bound: unknown[] }> = [];
   const db = {
     prepare(sql: string) {
@@ -34,6 +35,10 @@ function stubDB(stale: StaleRow[], idempotencyPurged = 0) {
           return { success: true, meta: { changes: 1 } };
         },
         async first() {
+          if (sql.includes('FROM account_settings')) {
+            const value = settings[String(bound[0])];
+            return value === undefined ? null : { value };
+          }
           return null;
         },
       };
@@ -53,17 +58,24 @@ describe('runExpirer', () => {
         starts_at: '2026-05-12T05:00:00Z',
         menu_name: 'カット',
         staff_name: '山田',
+        line_account_id: 'acc1',
         channel_access_token: 'tok',
         line_user_id: 'U',
       },
     ];
-    const { db, updates } = stubDB(stale);
+    const { db, updates } = stubDB(stale, 0, {
+      acc1: JSON.stringify({ expired: '期限切れ {menu}' }),
+    });
     const sender = vi.fn().mockResolvedValue(undefined);
     const result = await runExpirer(db, { now: NOW, sender });
     expect(result.expired).toBe(1);
     expect(sender).toHaveBeenCalledTimes(1);
     expect(sender).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'expired', toLineUserId: 'U' }),
+      expect.objectContaining({
+        kind: 'expired',
+        toLineUserId: 'U',
+        templates: { expired: '期限切れ {menu}' },
+      }),
     );
     // bookings UPDATE expired + reminders UPDATE cancelled が発行されている
     expect(updates.some((u) => u.sql.includes("status='expired'"))).toBe(true);
@@ -84,6 +96,7 @@ describe('runExpirer', () => {
         starts_at: '2026-05-12T05:00:00Z',
         menu_name: 'カット',
         staff_name: '山田',
+        line_account_id: 'acc1',
         channel_access_token: 'tok',
         line_user_id: 'U',
       },
