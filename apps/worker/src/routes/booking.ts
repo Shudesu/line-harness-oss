@@ -32,6 +32,17 @@ import {
 import { insertConfirmationReminders } from '../services/booking-confirm.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import {
+  exchangeAuthorizationCode,
+  getStaffCalendarConnection,
+  isGoogleCalendarConfigured,
+  signCalendarState,
+  syncBookingEventCreate,
+  syncBookingEventDelete,
+  upsertStaffCalendarConnection,
+  verifyCalendarState,
+  type GoogleOAuthEnv,
+} from '../services/staff-calendar.js';
+import {
   DEFAULT_ACCOUNT_SETTINGS,
   IDEMPOTENCY_TTL_MINUTES,
   type BookingStatus,
@@ -43,6 +54,8 @@ const booking = new Hono<Env>();
 // Helpers
 
 const JST_OFFSET_MS = 9 * 3600_000;
+const GCAL_AUTH_SCOPE =
+  'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
 
 function startsAtJst(utcIso: string): string {
   const jst = new Date(new Date(utcIso).getTime() + JST_OFFSET_MS).toISOString();
@@ -227,6 +240,30 @@ async function verifyCallerLineUserId(c: Context<Env>): Promise<string | null> {
 
 async function resolveAccountIdAdmin(c: Context<Env>): Promise<string | null> {
   return c.req.query('account_id') ?? null;
+}
+
+function googleOAuthEnv(c: Context<Env>): GoogleOAuthEnv {
+  return {
+    GOOGLE_CLIENT_ID: c.env.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: c.env.GOOGLE_CLIENT_SECRET,
+  };
+}
+
+function gcalNotConfigured(c: Context<Env>): Response {
+  return c.json({ error: 'gcal_not_configured' }, 503);
+}
+
+function workerPublicUrl(c: Context<Env>): string {
+  return (c.env.WORKER_PUBLIC_URL || new URL(c.req.url).origin).replace(/\/+$/g, '');
+}
+
+function gcalRedirectUri(c: Context<Env>): string {
+  return `${workerPublicUrl(c)}/api/booking/gcal/callback`;
+}
+
+function tokenExpiresAt(expiresIn: number | undefined): string | null {
+  if (typeof expiresIn !== 'number') return null;
+  return new Date(Date.now() + expiresIn * 1000).toISOString();
 }
 
 function isNotificationKind(value: string): value is NotificationKind {
@@ -447,6 +484,7 @@ booking.get('/api/liff/booking/availability', async (c) => {
     to,
     now: new Date(),
     minLeadTimeMinutes: DEFAULT_ACCOUNT_SETTINGS.min_lead_time_minutes,
+    googleOAuth: googleOAuthEnv(c),
   });
   return c.json(result);
 });
@@ -709,6 +747,40 @@ booking.get('/api/liff/booking/me', async (c) => {
     .all();
 
   return c.json({ upcoming: upcoming.results, past: past.results });
+});
+
+// ================================================================
+// Google Calendar OAuth callback
+// authMiddleware bypasses only this callback endpoint.
+// ================================================================
+
+booking.get('/api/booking/gcal/callback', async (c) => {
+  const env = googleOAuthEnv(c);
+  if (!isGoogleCalendarConfigured(env)) return gcalNotConfigured(c);
+  const requiredEnv = env as Required<GoogleOAuthEnv>;
+
+  const code = c.req.query('code');
+  const state = c.req.query('state');
+  if (!code || !state) return c.text('missing code or state', 400);
+
+  const payload = await verifyCalendarState(state, requiredEnv.GOOGLE_CLIENT_SECRET);
+  if (!payload) return c.text('invalid state', 400);
+  if (!(await assertStaffInAccount(c.env.DB, payload.staffId, payload.accountId))) {
+    return c.text('staff not found', 404);
+  }
+
+  const token = await exchangeAuthorizationCode(requiredEnv, code, gcalRedirectUri(c));
+  if (!token.refresh_token) return c.text('refresh token missing', 400);
+
+  await upsertStaffCalendarConnection(c.env.DB, {
+    staffId: payload.staffId,
+    refreshToken: token.refresh_token,
+    accessToken: token.access_token ?? null,
+    accessTokenExpiresAt: tokenExpiresAt(token.expires_in),
+    calendarId: 'primary',
+  });
+
+  return c.html('<!doctype html><html><body>接続が完了しました。この画面は閉じてください</body></html>');
 });
 
 // ================================================================
@@ -977,6 +1049,7 @@ booking.get('/api/booking/admin/availability', async (c) => {
     to,
     now: new Date(),
     minLeadTimeMinutes: 0,
+    googleOAuth: googleOAuthEnv(c),
   });
   return c.json(result);
 });
@@ -1130,6 +1203,11 @@ booking.post('/api/booking/admin/bookings', async (c) => {
     now: new Date(),
   });
   c.executionCtx.waitUntil(
+    syncBookingEventCreate(c.env.DB, bookingId, googleOAuthEnv(c)).catch((err) =>
+      console.error('booking gcal create (proxy-create) failed:', err),
+    ),
+  );
+  c.executionCtx.waitUntil(
     notifyForBooking(c.env.DB, bookingId, 'approved').catch((err) =>
       console.error('booking notify (proxy-create) failed:', err),
     ),
@@ -1237,6 +1315,75 @@ booking.delete('/api/booking/admin/staff/:id', async (c) => {
         WHERE id = ? AND line_account_id = ?`,
     )
     .bind(id, accountId)
+    .run();
+  return c.json({ ok: true });
+});
+
+// ---- Staff Google Calendar connection ----
+
+booking.get('/api/booking/admin/staff/:id/gcal/connect', async (c) => {
+  const env = googleOAuthEnv(c);
+  if (!isGoogleCalendarConfigured(env)) return gcalNotConfigured(c);
+  const requiredEnv = env as Required<GoogleOAuthEnv>;
+
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', requiredEnv.GOOGLE_CLIENT_ID);
+  url.searchParams.set('redirect_uri', gcalRedirectUri(c));
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', GCAL_AUTH_SCOPE);
+  url.searchParams.set('access_type', 'offline');
+  url.searchParams.set('prompt', 'consent');
+  url.searchParams.set(
+    'state',
+    await signCalendarState(
+      { staffId, accountId },
+      requiredEnv.GOOGLE_CLIENT_SECRET,
+    ),
+  );
+
+  return c.json({ url: url.toString() });
+});
+
+booking.get('/api/booking/admin/staff/:id/gcal', async (c) => {
+  const env = googleOAuthEnv(c);
+  if (!isGoogleCalendarConfigured(env)) return gcalNotConfigured(c);
+
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+
+  const row = await getStaffCalendarConnection(c.env.DB, staffId);
+  return c.json({
+    connected: Boolean(row),
+    calendarId: row?.google_calendar_id ?? null,
+    syncEvents: row ? row.sync_events === 1 : false,
+  });
+});
+
+booking.delete('/api/booking/admin/staff/:id/gcal', async (c) => {
+  const env = googleOAuthEnv(c);
+  if (!isGoogleCalendarConfigured(env)) return gcalNotConfigured(c);
+
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+
+  await c.env.DB
+    .prepare(`DELETE FROM staff_calendar_connections WHERE staff_id = ?`)
+    .bind(staffId)
     .run();
   return c.json({ ok: true });
 });
@@ -1567,11 +1714,21 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
       now: new Date(),
     });
     c.executionCtx.waitUntil(
+      syncBookingEventCreate(c.env.DB, id, googleOAuthEnv(c)).catch((err) =>
+        console.error('booking gcal create (approved) failed:', err),
+      ),
+    );
+    c.executionCtx.waitUntil(
       notifyForBooking(c.env.DB, id, 'approved').catch((err) =>
         console.error('booking notify (approved) failed:', err),
       ),
     );
   } else if (next === 'rejected') {
+    c.executionCtx.waitUntil(
+      syncBookingEventDelete(c.env.DB, id, googleOAuthEnv(c)).catch((err) =>
+        console.error('booking gcal delete (rejected) failed:', err),
+      ),
+    );
     c.executionCtx.waitUntil(
       notifyForBooking(c.env.DB, id, 'rejected').catch((err) =>
         console.error('booking notify (rejected) failed:', err),
@@ -1584,6 +1741,13 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
       )
       .bind(id)
       .run();
+    if (next === 'cancelled') {
+      c.executionCtx.waitUntil(
+        syncBookingEventDelete(c.env.DB, id, googleOAuthEnv(c)).catch((err) =>
+          console.error('booking gcal delete (cancelled) failed:', err),
+        ),
+      );
+    }
   }
 
   return c.json({ status: next });

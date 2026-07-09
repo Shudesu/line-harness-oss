@@ -5,6 +5,12 @@
 
 import type { AvailabilityByStaff } from './booking-types.js';
 import { SLOT_GRANULARITY_MINUTES } from './booking-types.js';
+import { GoogleCalendarClient, type BusyInterval } from './google-calendar.js';
+import {
+  getValidAccessToken,
+  isGoogleCalendarConfigured,
+  type GoogleOAuthEnv,
+} from './staff-calendar.js';
 
 export interface Interval {
   start: string; // HH:MM
@@ -79,6 +85,16 @@ function jstHHMM(d: Date): string {
   return new Date(d.getTime() + JST_OFFSET_MS).toISOString().slice(11, 16);
 }
 
+function jstDayStartUtc(date: string): Date {
+  return new Date(`${date}T00:00:00+09:00`);
+}
+
+function nextJstDayStartUtc(date: string): Date {
+  const d = jstDayStartUtc(date);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d;
+}
+
 function eachDate(from: string, to: string): string[] {
   const out: string[] = [];
   const cur = new Date(`${from}T00:00:00Z`);
@@ -98,6 +114,91 @@ export interface GetAvailabilityParams {
   to: string;
   now: Date;
   minLeadTimeMinutes: number;
+  googleOAuth?: GoogleOAuthEnv;
+}
+
+type StaffDateBusyMap = Map<string, Map<string, Interval[]>>;
+
+function pushBusyInterval(
+  map: StaffDateBusyMap,
+  staffId: string,
+  date: string,
+  interval: Interval,
+): void {
+  let byDate = map.get(staffId);
+  if (!byDate) {
+    byDate = new Map();
+    map.set(staffId, byDate);
+  }
+  const list = byDate.get(date) ?? [];
+  list.push(interval);
+  byDate.set(date, list);
+}
+
+function addGoogleBusyIntervals(
+  map: StaffDateBusyMap,
+  staffId: string,
+  dates: string[],
+  busy: BusyInterval[],
+): void {
+  for (const b of busy) {
+    const busyStart = new Date(b.start);
+    const busyEnd = new Date(b.end);
+    if (Number.isNaN(busyStart.getTime()) || Number.isNaN(busyEnd.getTime())) continue;
+
+    for (const date of dates) {
+      const dayStart = jstDayStartUtc(date);
+      const dayEnd = nextJstDayStartUtc(date);
+      const startMs = Math.max(busyStart.getTime(), dayStart.getTime());
+      const endMs = Math.min(busyEnd.getTime(), dayEnd.getTime());
+      if (startMs >= endMs) continue;
+
+      pushBusyInterval(map, staffId, date, {
+        start: startMs === dayStart.getTime() ? '00:00' : jstHHMM(new Date(startMs)),
+        end: endMs === dayEnd.getTime() ? '24:00' : jstHHMM(new Date(endMs)),
+      });
+    }
+  }
+}
+
+async function loadGoogleBusyByStaffDate(
+  db: D1Database,
+  staffIds: string[],
+  dates: string[],
+  params: GetAvailabilityParams,
+): Promise<StaffDateBusyMap> {
+  const out: StaffDateBusyMap = new Map();
+  if (!params.googleOAuth || !isGoogleCalendarConfigured(params.googleOAuth)) return out;
+  if (staffIds.length === 0 || dates.length === 0) return out;
+
+  const placeholders = staffIds.map(() => '?').join(',');
+  const connected = await db
+    .prepare(
+      `SELECT staff_id
+         FROM staff_calendar_connections
+        WHERE staff_id IN (${placeholders})`,
+    )
+    .bind(...staffIds)
+    .all<{ staff_id: string }>();
+  if (connected.results.length === 0) return out;
+
+  const timeMin = jstDayStartUtc(params.from).toISOString();
+  const timeMax = nextJstDayStartUtc(params.to).toISOString();
+  for (const row of connected.results) {
+    try {
+      const token = await getValidAccessToken(db, row.staff_id, params.googleOAuth, params.now);
+      if (!token) continue;
+      const client = new GoogleCalendarClient({
+        calendarId: token.calendarId,
+        accessToken: token.accessToken,
+      });
+      const busy = await client.getFreeBusy(timeMin, timeMax);
+      addGoogleBusyIntervals(out, row.staff_id, dates, busy);
+    } catch (err) {
+      console.error('booking gcal freebusy failed:', err);
+    }
+  }
+  return out;
 }
 
 export async function getAvailability(
@@ -194,6 +295,13 @@ export async function getAvailability(
     .bind(...staffIds, rangeEnd.toISOString(), rangeStart.toISOString())
     .all<{ staff_id: string; starts_at: string; block_ends_at: string }>();
 
+  const googleBusyByStaffDate = await loadGoogleBusyByStaffDate(
+    db,
+    staffIds,
+    dates,
+    params,
+  );
+
   const menuForCalc = {
     duration_minutes: menu.override_duration ?? menu.duration_minutes,
     buffer_after_minutes: menu.buffer_after_minutes,
@@ -219,9 +327,10 @@ export async function getAvailability(
           start: b.start_time || '00:00',
           end: b.end_time || '24:00',
         }));
+      const googleBusy = googleBusyByStaffDate.get(s.id)?.get(date) ?? [];
       const daySlots = computeSlots({
         working: [{ start: shift.start_time, end: shift.end_time }],
-        busy: [...dayBookings, ...dayBlocks],
+        busy: [...dayBookings, ...dayBlocks, ...googleBusy],
         menu: menuForCalc,
         granularityMinutes: SLOT_GRANULARITY_MINUTES,
       });

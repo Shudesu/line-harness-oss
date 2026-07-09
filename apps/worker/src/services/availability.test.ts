@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { computeSlots, getAvailability, type Interval } from './availability.js';
 
 const MENU_60 = { duration_minutes: 60, buffer_after_minutes: 0 };
@@ -137,6 +137,17 @@ interface StubData {
   shifts?: Array<{ staff_id: string; work_date: string; start_time: string; end_time: string }>;
   bookings?: Array<{ staff_id: string; starts_at: string; block_ends_at: string }>;
   blocks?: Array<{ staff_id: string; block_date: string; start_time: string; end_time: string }>;
+  calendarConnection?: {
+    id: string;
+    staff_id: string;
+    google_calendar_id: string;
+    refresh_token: string;
+    access_token: string | null;
+    access_token_expires_at: string | null;
+    sync_events: number;
+    created_at: string;
+    updated_at: string;
+  };
 }
 
 function stubDB(data: StubData): D1Database {
@@ -146,6 +157,9 @@ function stubDB(data: StubData): D1Database {
         bind() { return this; },
         async first() {
           if (sql.includes('FROM menus')) return data.menu ?? null;
+          if (sql.includes('FROM staff_calendar_connections')) {
+            return data.calendarConnection ?? null;
+          }
           return null;
         },
         async all() {
@@ -161,6 +175,13 @@ function stubDB(data: StubData): D1Database {
           if (sql.includes('FROM bookings')) {
             return { results: data.bookings ?? [] };
           }
+          if (sql.includes('FROM staff_calendar_connections')) {
+            return {
+              results: data.calendarConnection
+                ? [{ staff_id: data.calendarConnection.staff_id }]
+                : [],
+            };
+          }
           return { results: [] };
         },
         async run() { return { success: true, meta: {} }; },
@@ -168,6 +189,11 @@ function stubDB(data: StubData): D1Database {
     },
   } as unknown as D1Database;
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe('getAvailability', () => {
   test('指名なしで 1 スタッフ 1 日、シフト内で空き', async () => {
@@ -270,6 +296,108 @@ describe('getAvailability', () => {
       minLeadTimeMinutes: 60,
     });
     expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['10:00', '12:00']);
+  });
+
+  test('Google FreeBusy のbusy区間を合流してスロットを除外する', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          calendars: {
+            primary: {
+              // 11:00-12:00 JST
+              busy: [{ start: '2026-05-09T02:00:00.000Z', end: '2026-05-09T03:00:00.000Z' }],
+            },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const db = stubDB({
+      menu: {
+        duration_minutes: 60,
+        buffer_after_minutes: 0,
+        override_duration: null,
+        override_price: null,
+      },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '13:00' }],
+      bookings: [],
+      calendarConnection: {
+        id: 'C1',
+        staff_id: 'S1',
+        google_calendar_id: 'primary',
+        refresh_token: 'refresh-token',
+        access_token: 'valid-access',
+        access_token_expires_at: '2026-05-10T00:00:00.000Z',
+        sync_events: 1,
+        created_at: '2026-05-08T00:00:00.000Z',
+        updated_at: '2026-05-08T00:00:00.000Z',
+      },
+    });
+
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1',
+      menuId: 'M1',
+      from: '2026-05-09',
+      to: '2026-05-09',
+      now: new Date('2026-05-08T00:00:00Z'),
+      minLeadTimeMinutes: 60,
+      googleOAuth: {
+        GOOGLE_CLIENT_ID: 'google-client',
+        GOOGLE_CLIENT_SECRET: 'google-secret',
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['10:00', '12:00']);
+  });
+
+  test('Google FreeBusy が失敗してもfail-openで既存スロットを返す', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('google down');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const db = stubDB({
+      menu: {
+        duration_minutes: 60,
+        buffer_after_minutes: 0,
+        override_duration: null,
+        override_price: null,
+      },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '12:00' }],
+      bookings: [],
+      calendarConnection: {
+        id: 'C1',
+        staff_id: 'S1',
+        google_calendar_id: 'primary',
+        refresh_token: 'refresh-token',
+        access_token: 'valid-access',
+        access_token_expires_at: '2026-05-10T00:00:00.000Z',
+        sync_events: 1,
+        created_at: '2026-05-08T00:00:00.000Z',
+        updated_at: '2026-05-08T00:00:00.000Z',
+      },
+    });
+
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1',
+      menuId: 'M1',
+      from: '2026-05-09',
+      to: '2026-05-09',
+      now: new Date('2026-05-08T00:00:00Z'),
+      minLeadTimeMinutes: 60,
+      googleOAuth: {
+        GOOGLE_CLIENT_ID: 'google-client',
+        GOOGLE_CLIENT_SECRET: 'google-secret',
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalled();
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['10:00', '10:30', '11:00']);
   });
 
   test('staff_blocks と隣接する非重複スロットは残る', async () => {
