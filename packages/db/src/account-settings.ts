@@ -45,20 +45,17 @@ export async function setAccountSetting(
     .run();
 }
 
-// ── link_base_url ─────────────────────────────────────────────────────────────
+// ── URL settings (link_base_url / tracked_link_base_url) ─────────────────────
 
 const LINK_BASE_URL_KEY = 'link_base_url';
+const TRACKED_LINK_BASE_URL_KEY = 'tracked_link_base_url';
 
-/**
- * Get the configured short-link base URL for an account.
- * Returns null when not set (caller should fall back to WORKER_URL/r).
- * The stored value has no trailing slash.
- */
-export async function getLinkBaseUrl(
+async function getUrlSetting(
   db: D1Database,
   accountId: string,
+  key: string,
 ): Promise<string | null> {
-  const raw = await getAccountSetting(db, accountId, LINK_BASE_URL_KEY);
+  const raw = await getAccountSetting(db, accountId, key);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as string;
@@ -68,7 +65,7 @@ export async function getLinkBaseUrl(
 }
 
 /**
- * Validate and persist a link_base_url value for an account.
+ * Validate and persist an https URL setting.
  *
  * Rules:
  *  - Empty string clears the setting (returns without storing).
@@ -77,9 +74,10 @@ export async function getLinkBaseUrl(
  *
  * Throws a descriptive Error on validation failure.
  */
-export async function setLinkBaseUrl(
+async function setUrlSetting(
   db: D1Database,
   accountId: string,
+  key: string,
   value: string,
 ): Promise<void> {
   const trimmed = value.trim();
@@ -90,15 +88,60 @@ export async function setLinkBaseUrl(
       .prepare(
         `DELETE FROM account_settings WHERE line_account_id = ? AND key = ?`,
       )
-      .bind(accountId, LINK_BASE_URL_KEY)
+      .bind(accountId, key)
       .run();
     return;
   }
 
   if (!trimmed.startsWith('https://')) {
-    throw new Error('link_base_url must start with https://');
+    throw new Error(`${key} must start with https://`);
   }
 
   const normalized = trimmed.replace(/\/$/, '');
-  await setAccountSetting(db, accountId, LINK_BASE_URL_KEY, JSON.stringify(normalized));
+  await setAccountSetting(db, accountId, key, JSON.stringify(normalized));
+}
+
+/**
+ * Get the configured short-link base URL for an account (affiliate links).
+ * Returns null when not set (caller should fall back to WORKER_URL/r).
+ * The stored value has no trailing slash.
+ */
+export async function getLinkBaseUrl(
+  db: D1Database,
+  accountId: string,
+): Promise<string | null> {
+  return getUrlSetting(db, accountId, LINK_BASE_URL_KEY);
+}
+
+export async function setLinkBaseUrl(
+  db: D1Database,
+  accountId: string,
+  value: string,
+): Promise<void> {
+  return setUrlSetting(db, accountId, LINK_BASE_URL_KEY, value);
+}
+
+/**
+ * Get the configured base URL for message tracked links (/t/...).
+ * When set, auto-tracked message URLs are built as `${base}/t/<code>` instead
+ * of `${WORKER_URL}/t/<code>`. The domain must route /t/* to the Worker
+ * (Redirect Rule or Custom Domain). Returns null when not set.
+ *
+ * Kept separate from link_base_url on purpose: existing deployments map that
+ * domain's root paths to /r/ (affiliate), so silently reusing it for /t/
+ * would emit broken URLs on upgrade.
+ */
+export async function getTrackedLinkBaseUrl(
+  db: D1Database,
+  accountId: string,
+): Promise<string | null> {
+  return getUrlSetting(db, accountId, TRACKED_LINK_BASE_URL_KEY);
+}
+
+export async function setTrackedLinkBaseUrl(
+  db: D1Database,
+  accountId: string,
+  value: string,
+): Promise<void> {
+  return setUrlSetting(db, accountId, TRACKED_LINK_BASE_URL_KEY, value);
 }

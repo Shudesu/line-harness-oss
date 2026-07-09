@@ -426,6 +426,13 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ value }),
       }),
+    getTrackedLinkBaseUrl: () =>
+      fetchApi<{ success: boolean; data: string | null }>('/api/account-settings/tracked-link-base-url'),
+    updateTrackedLinkBaseUrl: (value: string) =>
+      fetchApi<{ success: boolean; error?: string }>('/api/account-settings/tracked-link-base-url', {
+        method: 'PUT',
+        body: JSON.stringify({ value }),
+      }),
   },
 
   // ── Round 2 APIs ─────────────────────────────────────────────────────────

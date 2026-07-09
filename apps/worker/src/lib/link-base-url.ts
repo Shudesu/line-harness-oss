@@ -1,4 +1,4 @@
-import { getLinkBaseUrl } from '@line-crm/db';
+import { getLinkBaseUrl, getTrackedLinkBaseUrl } from '@line-crm/db';
 
 /**
  * Resolve the base URL used to build affiliate link click URLs.
@@ -41,4 +41,25 @@ export async function resolveLinkBaseUrl(
     );
   }
   return workerUrl.replace(/\/$/, '') + '/r';
+}
+
+/**
+ * Resolve the base URL used to build message tracked-link URLs (/t/<code>).
+ *
+ * Priority:
+ *  1. DB-configured `tracked_link_base_url` global setting — a short branded
+ *     domain that routes /t/* to the Worker (Redirect Rule or Custom Domain).
+ *  2. `fallback` — the Worker's own URL (WORKER_URL or request origin).
+ *
+ * Unlike the affiliate base above, no path segment is appended here: callers
+ * always build `${base}/t/${code}` themselves so both branches produce the
+ * same URL shape.
+ */
+export async function resolveTrackedLinkBaseUrl(
+  db: D1Database,
+  fallback: string,
+): Promise<string> {
+  const stored = await getTrackedLinkBaseUrl(db, '__global__');
+  if (stored) return stored;
+  return fallback.replace(/\/$/, '');
 }

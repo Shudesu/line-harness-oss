@@ -54,7 +54,8 @@
     "046_affiliate_links.sql",
     "046_link_tracking_controls.sql",
     "047_affiliate_offers.sql",
-    "048_chats_friend_unique.sql"
+    "048_chats_friend_unique.sql",
+    "049_tracked_links_short_code.sql"
   ],
-  "migrationCount": 55
+  "migrationCount": 56
 }

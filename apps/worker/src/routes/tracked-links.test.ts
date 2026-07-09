@@ -5,6 +5,7 @@ import { describe, expect, test, beforeEach, vi } from 'vitest';
 const dbMocks = {
   getTrackedLinks: vi.fn(),
   getTrackedLinkById: vi.fn(),
+  getTrackedLinkByIdOrShortCode: vi.fn(),
   createTrackedLink: vi.fn(),
   updateTrackedLink: vi.fn(),
   deleteTrackedLink: vi.fn(),
@@ -13,6 +14,8 @@ const dbMocks = {
   getFriendByLineUserId: vi.fn(),
   addTagToFriend: vi.fn(),
   enrollFriendInScenario: vi.fn(),
+  getTrackedLinkBaseUrl: vi.fn(),
+  getLinkBaseUrl: vi.fn(),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -75,6 +78,7 @@ function makeLink(overrides: Record<string, unknown> = {}) {
     intro_template_id: null,
     reward_template_id: null,
     line_account_id: null,
+    short_code: null,
     is_active: 1,
     click_count: 0,
     og_title: null,
@@ -91,9 +95,9 @@ const executionCtx = {
   passThroughOnException: () => {},
 } as unknown as ExecutionContext;
 
-function request(env: Record<string, unknown>, ua: string) {
+function request(env: Record<string, unknown>, ua: string, path = '/t/link-1') {
   return trackedLinks.request(
-    'https://worker.example.com/t/link-1',
+    `https://worker.example.com${path}`,
     { headers: { 'user-agent': ua }, redirect: 'manual' },
     env,
     executionCtx,
@@ -103,11 +107,12 @@ function request(env: Record<string, unknown>, ua: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   dbMocks.recordLinkClick.mockResolvedValue({});
+  dbMocks.getTrackedLinkBaseUrl.mockResolvedValue(null);
 });
 
 describe('GET /t/:linkId — per-account LIFF resolution', () => {
   test('link owned by an account redirects LINE in-app clicks to that account LIFF', async () => {
-    dbMocks.getTrackedLinkById.mockResolvedValue(makeLink({ line_account_id: 'acc-1b' }));
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-1b' }));
     const env = {
       DB: makeDb({ accounts: [{ id: 'acc-1b', liff_id: '2009668520-YghzbHx9' }] }),
       LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
@@ -121,7 +126,7 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
   });
 
   test('falls back to scenario account when link has no line_account_id', async () => {
-    dbMocks.getTrackedLinkById.mockResolvedValue(makeLink({ scenario_id: 'scn-1' }));
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ scenario_id: 'scn-1' }));
     const env = {
       DB: makeDb({
         scenarios: [{ id: 'scn-1', line_account_id: 'acc-2' }],
@@ -136,7 +141,7 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
   });
 
   test('falls back to env.LIFF_URL when no owning account is resolvable', async () => {
-    dbMocks.getTrackedLinkById.mockResolvedValue(makeLink());
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink());
     const env = {
       DB: makeDb({}),
       LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
@@ -148,7 +153,7 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
   });
 
   test('account without liff_id falls back to env.LIFF_URL', async () => {
-    dbMocks.getTrackedLinkById.mockResolvedValue(makeLink({ line_account_id: 'acc-x' }));
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-x' }));
     const env = {
       DB: makeDb({ accounts: [{ id: 'acc-x', liff_id: null }] }),
       LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
@@ -160,7 +165,7 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
   });
 
   test('non-LINE browsers redirect straight to the original URL', async () => {
-    dbMocks.getTrackedLinkById.mockResolvedValue(makeLink({ line_account_id: 'acc-1b' }));
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-1b' }));
     const env = {
       DB: makeDb({ accounts: [{ id: 'acc-1b', liff_id: '2009668520-YghzbHx9' }] }),
       LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
@@ -169,5 +174,51 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
     const res = await request(env, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15');
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('https://example.com/lp');
+  });
+});
+
+describe('GET /t/:linkId — short codes', () => {
+  test('short-code URLs resolve and record the click against the link UUID', async () => {
+    const waits: Promise<unknown>[] = [];
+    const collectingCtx = {
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+      passThroughOnException: () => {},
+    } as unknown as ExecutionContext;
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(
+      makeLink({ id: 'uuid-link-1', short_code: 'Ab3xY9k' }),
+    );
+    const env = {
+      DB: makeDb({}),
+      LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await trackedLinks.request(
+      'https://worker.example.com/t/Ab3xY9k',
+      { headers: { 'user-agent': 'Mozilla/5.0 Safari/605.1.15' }, redirect: 'manual' },
+      env,
+      collectingCtx,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+    expect(dbMocks.getTrackedLinkByIdOrShortCode).toHaveBeenCalledWith(env.DB, 'Ab3xY9k');
+    await Promise.allSettled(waits);
+    // Click must be recorded against the UUID, not the short code
+    expect(dbMocks.recordLinkClick).toHaveBeenCalledWith(env.DB, 'uuid-link-1', null);
+  });
+
+  test('LINE in-app LIFF round-trip keeps the same /t identifier', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(
+      makeLink({ id: 'uuid-link-1', short_code: 'Ab3xY9k', line_account_id: 'acc-1b' }),
+    );
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-1b', liff_id: '2009668520-YghzbHx9' }] }),
+      LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA, '/t/Ab3xY9k');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain(
+      encodeURIComponent('https://worker.example.com/t/Ab3xY9k'),
+    );
   });
 });

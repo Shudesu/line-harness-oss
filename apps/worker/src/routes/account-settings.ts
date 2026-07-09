@@ -1,5 +1,10 @@
 import { Hono } from 'hono';
-import { getLinkBaseUrl, setLinkBaseUrl } from '@line-crm/db';
+import {
+  getLinkBaseUrl,
+  setLinkBaseUrl,
+  getTrackedLinkBaseUrl,
+  setTrackedLinkBaseUrl,
+} from '@line-crm/db';
 import type { Env } from '../index.js';
 
 const accountSettings = new Hono<Env>();
@@ -79,6 +84,30 @@ accountSettings.put('/api/account-settings/link-base-url', async (c) => {
 
   try {
     await setLinkBaseUrl(c.env.DB, '__global__', value);
+    return c.json({ success: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Validation error';
+    return c.json({ success: false, error: message }, 400);
+  }
+});
+
+// ── tracked_link_base_url (global setting) ────────────────────────────────────
+// Base domain for message tracked links (/t/<code>). The domain must route
+// /t/* to the Worker (Redirect Rule or Custom Domain). Unset → WORKER_URL.
+
+accountSettings.get('/api/account-settings/tracked-link-base-url', async (c) => {
+  const value = await getTrackedLinkBaseUrl(c.env.DB, '__global__');
+  return c.json({ success: true, data: value });
+});
+
+accountSettings.put('/api/account-settings/tracked-link-base-url', async (c) => {
+  const body = await c.req
+    .json<{ value?: string }>()
+    .catch((): { value?: string } => ({}));
+  const value = typeof body.value === 'string' ? body.value : '';
+
+  try {
+    await setTrackedLinkBaseUrl(c.env.DB, '__global__', value);
     return c.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Validation error';

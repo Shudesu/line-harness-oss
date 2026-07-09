@@ -12,6 +12,7 @@ export interface TrackedLink {
   intro_template_id: string | null;
   reward_template_id: string | null;
   line_account_id: string | null;
+  short_code: string | null;
   is_active: number;
   click_count: number;
   og_title: string | null;
@@ -47,6 +48,48 @@ export async function getTrackedLinkById(
     .first<TrackedLink>();
 }
 
+/**
+ * Resolve a tracked link by either its UUID (legacy links) or its 7-char
+ * short code. UUIDs are 36 chars with dashes so the two namespaces never
+ * collide; try the cheap discriminator first, then fall back to the other
+ * column to be safe against unexpected identifier shapes.
+ */
+export async function getTrackedLinkByIdOrShortCode(
+  db: D1Database,
+  idOrCode: string,
+): Promise<TrackedLink | null> {
+  const looksLikeUuid = idOrCode.length === 36 && idOrCode.includes('-');
+  const first = looksLikeUuid
+    ? await getTrackedLinkById(db, idOrCode)
+    : await db
+        .prepare(`SELECT * FROM tracked_links WHERE short_code = ?`)
+        .bind(idOrCode)
+        .first<TrackedLink>();
+  if (first) return first;
+  return looksLikeUuid
+    ? db
+        .prepare(`SELECT * FROM tracked_links WHERE short_code = ?`)
+        .bind(idOrCode)
+        .first<TrackedLink>()
+    : getTrackedLinkById(db, idOrCode);
+}
+
+// Base62 alphabet — no ambiguity issues matter here (codes are copy-pasted,
+// not hand-typed), so keep the full 62-char space: 62^7 ≈ 3.5 trillion.
+const SHORT_CODE_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+const SHORT_CODE_LENGTH = 7;
+
+export function generateShortCode(): string {
+  const bytes = new Uint8Array(SHORT_CODE_LENGTH);
+  crypto.getRandomValues(bytes);
+  let code = '';
+  for (const b of bytes) {
+    code += SHORT_CODE_ALPHABET[b % SHORT_CODE_ALPHABET.length];
+  }
+  return code;
+}
+
 export interface CreateTrackedLinkInput {
   name: string;
   originalUrl: string;
@@ -67,27 +110,40 @@ export async function createTrackedLink(
   const id = crypto.randomUUID();
   const now = jstNow();
 
-  await db
-    .prepare(
-      `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, line_account_id, is_active, click_count, og_title, og_description, og_image_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      id,
-      input.name,
-      input.originalUrl,
-      input.tagId ?? null,
-      input.scenarioId ?? null,
-      input.introTemplateId ?? null,
-      input.rewardTemplateId ?? null,
-      input.lineAccountId ?? null,
-      input.ogTitle ?? null,
-      input.ogDescription ?? null,
-      input.ogImageUrl ?? null,
-      now,
-      now,
-    )
-    .run();
+  // Retry on the (astronomically unlikely) short-code UNIQUE collision.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    const shortCode = generateShortCode();
+    try {
+      await db
+        .prepare(
+          `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, line_account_id, short_code, is_active, click_count, og_title, og_description, og_image_url, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          id,
+          input.name,
+          input.originalUrl,
+          input.tagId ?? null,
+          input.scenarioId ?? null,
+          input.introTemplateId ?? null,
+          input.rewardTemplateId ?? null,
+          input.lineAccountId ?? null,
+          shortCode,
+          input.ogTitle ?? null,
+          input.ogDescription ?? null,
+          input.ogImageUrl ?? null,
+          now,
+          now,
+        )
+        .run();
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < MAX_ATTEMPTS && /UNIQUE.*short_code/i.test(msg)) continue;
+      throw err;
+    }
+  }
 
   return (await getTrackedLinkById(db, id))!;
 }

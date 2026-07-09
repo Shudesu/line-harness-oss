@@ -800,7 +800,7 @@ CREATE TABLE tracked_links (
   click_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-, intro_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, reward_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, og_title TEXT, og_description TEXT, og_image_url TEXT, line_account_id TEXT REFERENCES line_accounts(id) ON DELETE SET NULL);
+, intro_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, reward_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, og_title TEXT, og_description TEXT, og_image_url TEXT, line_account_id TEXT REFERENCES line_accounts(id) ON DELETE SET NULL, short_code TEXT);
 
 CREATE TABLE traffic_pools (
   id TEXT PRIMARY KEY,
@@ -999,6 +999,9 @@ CREATE INDEX idx_stripe_events_friend ON stripe_events (friend_id);
 CREATE INDEX idx_stripe_events_type ON stripe_events (event_type);
 
 CREATE INDEX idx_templates_category ON templates (category);
+
+CREATE UNIQUE INDEX idx_tracked_links_short_code
+  ON tracked_links (short_code) WHERE short_code IS NOT NULL;
 
 CREATE INDEX idx_update_history_started ON update_history(started_at DESC);
 

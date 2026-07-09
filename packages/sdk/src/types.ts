@@ -328,6 +328,8 @@ export interface TrackedLink {
   name: string
   originalUrl: string
   trackingUrl: string
+  /** 7文字の短縮コード（/t/<code>）。旧リンクは null（UUID URL のみ）。 */
+  shortCode?: string | null
   tagId: string | null
   scenarioId: string | null
   introTemplateId: string | null

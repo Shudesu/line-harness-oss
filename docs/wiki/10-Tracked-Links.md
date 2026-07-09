@@ -52,6 +52,15 @@ CREATE TABLE tracked_links (
 );
 ```
 
+後続マイグレーションで追加された主なカラム:
+
+| カラム | 追加 | 用途 |
+|--------|------|------|
+| `intro_template_id` / `reward_template_id` | 020/021 | キャンペーン intro / 特典メッセージ |
+| `og_title` / `og_description` / `og_image_url` | 042 | リンクプレビュー OGP 上書き |
+| `line_account_id` | 046 | リンク所有アカウント（/t の LIFF 解決・OGP に使用） |
+| `short_code` | 049 | 7文字ショートコード（短縮ドメイン用、UNIQUE） |
+
 ### link_clicks テーブル
 
 ```sql
@@ -71,11 +80,13 @@ CREATE INDEX idx_link_clicks_friend ON link_clicks (friend_id);
 ### トラッキングURL形式
 
 ```
-https://your-worker.your-subdomain.workers.dev/t/{linkId}?f={friendId}
+https://<your-worker>/t/{code}?f={friendId}
+https://go.example.com/t/{code}          ← 短縮ドメイン設定時（v0.18.0+）
 ```
 
-- `linkId`: tracked_linksのID（UUID）
+- `code`: 7文字のショートコード（`short_code`、v0.18.0以降の新規リンク）または tracked_links の ID（UUID、旧リンク）。`/t/:linkId` は両方を解決する
 - `f`: friendsテーブルのID（オプション。メッセージ内で動的に埋め込む）
+- 過去に配信済みの UUID 形式 URL は短縮ドメイン設定後もそのまま有効
 
 ### 処理フロー
 
@@ -96,6 +107,55 @@ https://your-worker.your-subdomain.workers.dev/t/{linkId}?f={friendId}
 |---|---|---|---|---|
 | 匿名 | なし | `friend_id=NULL` で記録 | なし | なし |
 | 友だち特定 | あり | `friend_id` 付きで記録 | 実行 | 実行 |
+
+## 短縮ドメイン設定（メッセージ内リンク）
+
+自動短縮で生成される `/t/` リンクを、Worker のデフォルト URL ではなく独自の短いドメインで配信できる。
+
+```
+未設定:  https://<your-worker>.workers.dev/t/<36文字UUID>   （約90文字）
+設定後:  https://go.example.com/t/Ab3xY9k                   （約35文字）
+```
+
+### 設定方法
+
+管理画面 → アカウント管理 → 「メッセージ内リンクの短縮ドメイン」に `https://go.example.com` を入力して保存。API では:
+
+```
+PUT /api/account-settings/tracked-link-base-url
+{ "value": "https://go.example.com" }
+```
+
+グローバル設定（`account_settings` の `tracked_link_base_url`、accountId=`'__global__'`）。空文字で解除（Worker URL に戻る）。
+
+**アフィリリンク用の `link_base_url` とは別の設定**。既存環境がアフィリ用に設定しているドメインは全パスを `/r/` に転送しているため、同じ値を流用すると /t リンクが壊れる。同じドメインを両方に使いたい場合は下のパターンAで Redirect Rule を追加する。
+
+### ドメイン側の設定パターン
+
+ドメインの `/t/*` を**パスそのまま** Worker に届ける必要がある。
+
+**パターンA: アフィリリンクと同一ドメインで同居**
+
+Cloudflare Redirect Rules を2本、この順序で設定（ゾーンと Worker のアカウントが違ってもよい）:
+
+| 順序 | If (条件) | Then (転送先) | 備考 |
+|------|-----------|---------------|------|
+| 1 | URI Path starts with `/t/` | `concat("https://<your-worker>", http.request.uri.path)` | **「Preserve query string」を必ず ON**（`openExternalBrowser=1` 等が消えると挙動が壊れる） |
+| 2 | URI Path matches `/*` | `https://<your-worker>/r/${path}` | 既存のアフィリ用ルール |
+
+**パターンB: 専用サブドメインを新設**
+
+`t.example.com` 等を用意し、Redirect Rule 1本: `/*` → `concat("https://<your-worker>", http.request.uri.path)`（クエリ保持 ON）。アフィリ設定には触れない。
+
+**パターンC: Custom Domain 直結（ゾーンと Worker が同一 CF アカウントの場合のみ）**
+
+ドメインを Worker の Custom Domain として直接アタッチ。転送ホップが無くなり最速。ただし Workers の Custom Domain は同一アカウントのゾーンにしか張れない。
+
+### 挙動の詳細
+
+- ショートコードは作成時に自動生成される7文字の base62（62^7 ≈ 3.5兆通り、UNIQUE 制約 + 衝突時リトライ）
+- 管理画面・API の `trackingUrl` も短縮ドメイン + ショートコードで返る
+- LINE アプリ内クリック時の LIFF 識別リダイレクトや OGP 生成は従来どおり Worker 側で処理（短縮ドメインは入り口だけ）
 
 ## APIレスポンス形式
 
@@ -380,4 +440,4 @@ manage_tracked_links action=update linkId=<id> introTemplateId=<msg-template-id>
 - reward メッセージ生成 (Flex 描画): `apps/worker/src/services/reward-message.ts`
 - DB クエリ: `packages/db/src/tracked-links.ts`
 - SDK リソース: `packages/sdk/src/resources/tracked-links.ts`
-- マイグレーション: `packages/db/migrations/006_tracked_links.sql`, `020_tracked_link_intro.sql`, `021_tracked_link_reward.sql`, `022_friend_first_tracked_link.sql`
+- マイグレーション: `packages/db/migrations/006_tracked_links.sql`, `020_tracked_link_intro.sql`, `021_tracked_link_reward.sql`, `022_friend_first_tracked_link.sql`, `046_link_tracking_controls.sql`, `049_tracked_links_short_code.sql`
