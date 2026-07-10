@@ -170,6 +170,45 @@ export interface AutoTrackOptions {
 }
 
 /**
+ * Append `f=<friendId>` to every /t/ tracked-link URL in per-friend message
+ * content. With f= present, /t skips the LIFF identification hop entirely
+ * (no consent screen, no extra tap) and still attributes the click — the
+ * friend is already known because the message was pushed 1:1.
+ *
+ * Only valid for per-friend sends (scenario step delivery, manual DM,
+ * OAuth immediate push). NEVER use for multicast/broadcast content: the same
+ * body goes to many users, so a baked f= would attribute everyone's clicks
+ * to one friend.
+ */
+export async function appendFriendToTrackedLinks(
+  db: D1Database,
+  content: string,
+  workerUrl: string,
+  friendId: string | null | undefined,
+): Promise<string> {
+  if (!friendId) return content;
+  const workerBase = workerUrl.replace(/\/$/, '');
+  const linkBase = await resolveTrackedLinkBaseUrl(db, workerUrl);
+  const bases = [...new Set([workerBase, linkBase])];
+  return content.replace(URL_REGEX, (match) => {
+    // URL_REGEX greedily captures trailing sentence punctuation and even
+    // full-width Japanese text glued to the URL (「…/t/abc。続き」等)。
+    // URL は ASCII のみなので、まず ASCII 境界で切り、さらに extractUrls と
+    // 同じ末尾記号を URL の外として扱う。f= はその手前に挿す。
+    const ascii = match.match(/^[\x21-\x7E]+/)?.[0] ?? '';
+    const punct = ascii.match(/[.,;:!?)]+$/)?.[0] ?? '';
+    const url = punct ? ascii.slice(0, -punct.length) : ascii;
+    const trailing = match.slice(url.length);
+    const isTrackedLink = bases.some((b) => url.startsWith(`${b}/t/`));
+    if (!isTrackedLink) return match;
+    if (/[?&]f=/.test(url)) return match;
+    // /t links never carry fragments, so appending at the end is safe.
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}f=${encodeURIComponent(friendId)}${trailing}`;
+  });
+}
+
+/**
  * Auto-wrap URLs in message content with tracking links.
  * For text messages with URLs, converts to Flex with button.
  * For flex messages, replaces URLs inline.

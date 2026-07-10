@@ -1019,7 +1019,12 @@ liffRoutes.get('/auth/callback', async (c) => {
                   c.env.WORKER_URL,
                   resolved.messageType,
                 );
-                const pushedMessage = buildMessage(resolved.messageType, expandedContent);
+                // 1:1 push → /t リンクに f=<friendId> を焼き込み (LIFF 識別ホップ回避)
+                const { appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+                const decoratedContent = await appendFriendToTrackedLinks(
+                  db, expandedContent, c.env.WORKER_URL, friend.id,
+                );
+                const pushedMessage = buildMessage(resolved.messageType, decoratedContent);
                 await lineClient.pushMessage(lineUserId, [pushedMessage]);
 
                 // messages_log への記録 (到達率分母に含めるため)

@@ -571,14 +571,24 @@ friends.post('/api/friends/:id/messages', async (c) => {
 
     // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
     // trackLinks=false で明示的に短縮 OFF (URL をそのまま送る)
+    const sendWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
     let tracked = { messageType, content: body.content };
     if (body.trackLinks !== false) {
       const { autoTrackContent } = await import('../services/auto-track.js');
       tracked = await autoTrackContent(
         db, messageType, body.content,
-        c.env.WORKER_URL || new URL(c.req.url).origin,
+        sendWorkerUrl,
         { lineAccountId: friendAccountId },
       );
+    }
+    // 1:1 送信なので /t リンクに f=<friendId> を焼き込み、LIFF 識別ホップなしで
+    // クリック帰属できるようにする（既存 /t リンクにも効くので trackLinks に関わらず実施）
+    {
+      const { appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+      tracked = {
+        ...tracked,
+        content: await appendFriendToTrackedLinks(db, tracked.content, sendWorkerUrl, friend.id),
+      };
     }
 
     const message = buildMessage(tracked.messageType, tracked.content, body.altText);

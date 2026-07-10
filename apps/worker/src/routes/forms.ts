@@ -588,7 +588,10 @@ forms.post('/api/forms/:id/submit', async (c) => {
           } else if (form.on_submit_message_type && form.on_submit_message_content) {
             // Custom form message replaces default diagnostic result
             const expanded = expandVariables(form.on_submit_message_content, friendData, apiOrigin, form.on_submit_message_type);
-            messages.push(buildMessage(form.on_submit_message_type, expanded));
+            // 1:1 push → /t リンクに f=<friendId> を焼き込み (LIFF 識別ホップ回避)
+            const { appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+            const decorated = await appendFriendToTrackedLinks(db, expanded, apiOrigin, friend.id);
+            messages.push(buildMessage(form.on_submit_message_type, decorated));
           } else {
             // Default: send diagnostic result Flex
             messages.push(buildMessage('flex', JSON.stringify(resultFlex)));

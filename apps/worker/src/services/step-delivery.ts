@@ -229,12 +229,14 @@ async function processSingleDelivery(
   let trackedType: string = resolved.messageType;
   let trackedContent = expandedContent;
   if (workerUrl) {
-    const { autoTrackContent } = await import('./auto-track.js');
+    const { autoTrackContent, appendFriendToTrackedLinks } = await import('./auto-track.js');
     const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl, {
       lineAccountId: friendAccountId ?? null,
     });
     trackedType = tracked.messageType;
-    trackedContent = tracked.content;
+    // Per-friend push → bake f=<friendId> into /t links so clicks attribute
+    // without the LIFF identification hop (no consent screen on first tap).
+    trackedContent = await appendFriendToTrackedLinks(db, tracked.content, workerUrl, friend.id);
   }
   const message = buildMessage(trackedType, trackedContent);
   // Resolve the correct LINE client for this friend's account
