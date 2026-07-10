@@ -25,6 +25,7 @@ import { runEventBookingExpirer } from './services/event-booking-expirer.js';
 import { sendEventBookingNotification } from './services/event-booking-notifier.js';
 import { sendBookingNotification } from './services/booking-notifier.js';
 import { DEFAULT_ACCOUNT_SETTINGS } from './services/booking-types.js';
+import { reconcileBookingCalendarEvents } from './services/staff-calendar.js';
 import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { webhook } from './routes/webhook.js';
@@ -900,6 +901,24 @@ async function scheduled(
     }
   } catch (e) {
     console.error('event-booking-reminders error:', e);
+  }
+
+  // Google Calendar同期は外部API失敗時に予約処理をfail-openするため、5分cronで補完する。
+  if (event.cron === '*/5 * * * *') {
+    try {
+      const result = await reconcileBookingCalendarEvents(env.DB, {
+        GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID,
+        GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET,
+      });
+      if (result.createAttempts + result.deleteAttempts > 0 || result.failed > 0) {
+        console.log(
+          `[booking-gcal-reconcile] create=${result.createSucceeded}/${result.createAttempts} ` +
+          `delete=${result.deleteSucceeded}/${result.deleteAttempts} failed=${result.failed}`,
+        );
+      }
+    } catch (e) {
+      console.error('booking-gcal-reconcile error:', e);
+    }
   }
 
   // Phase 2: 配信系と定期ジョブを並列実行する。processScheduledBroadcasts は tag/all の

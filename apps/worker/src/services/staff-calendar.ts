@@ -3,6 +3,12 @@ import { GoogleCalendarClient } from './google-calendar.js';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const STATE_SEPARATOR = '.';
 const EXPIRY_SKEW_MS = 5 * 60_000;
+const RECONCILIATION_LIMIT = 20;
+
+export const BOOKING_CALENDAR_EVENT_SUMMARY_SETTINGS_KEY =
+  'booking_calendar_event_summary';
+export const DEFAULT_BOOKING_CALENDAR_EVENT_SUMMARY = '{menu}: {friend}';
+export const BOOKING_CALENDAR_EVENT_SUMMARY_PLACEHOLDERS = ['{friend}', '{menu}'] as const;
 
 export interface GoogleOAuthEnv {
   GOOGLE_CLIENT_ID?: string;
@@ -12,6 +18,8 @@ export interface GoogleOAuthEnv {
 export interface SignedCalendarStatePayload {
   staffId: string;
   accountId: string;
+  exp: number;
+  nonce: string;
 }
 
 export interface StaffCalendarConnectionRow {
@@ -42,7 +50,9 @@ type TokenResponse = {
 
 type BookingForCalendar = {
   id: string;
+  line_account_id: string;
   staff_id: string;
+  status: string;
   starts_at: string;
   ends_at: string;
   customer_note: string | null;
@@ -123,11 +133,44 @@ export async function verifyCalendarState(
 
   try {
     const parsed = JSON.parse(base64UrlDecodeText(body)) as Record<string, unknown>;
-    if (typeof parsed.staffId !== 'string' || typeof parsed.accountId !== 'string') return null;
-    return { staffId: parsed.staffId, accountId: parsed.accountId };
+    if (
+      typeof parsed.staffId !== 'string' ||
+      typeof parsed.accountId !== 'string' ||
+      typeof parsed.exp !== 'number' ||
+      !Number.isFinite(parsed.exp) ||
+      typeof parsed.nonce !== 'string' ||
+      parsed.nonce.length === 0
+    ) {
+      return null;
+    }
+    return {
+      staffId: parsed.staffId,
+      accountId: parsed.accountId,
+      exp: parsed.exp,
+      nonce: parsed.nonce,
+    };
   } catch {
     return null;
   }
+}
+
+export async function consumeCalendarOAuthState(
+  db: D1Database,
+  payload: SignedCalendarStatePayload,
+  now: Date = new Date(),
+): Promise<boolean> {
+  if (payload.exp <= Math.floor(now.getTime() / 1000)) return false;
+  const nowIso = now.toISOString();
+  const result = await db
+    .prepare(
+      `UPDATE oauth_states
+          SET consumed_at = ?
+        WHERE nonce = ? AND staff_id = ?
+          AND consumed_at IS NULL AND expires_at > ?`,
+    )
+    .bind(nowIso, payload.nonce, payload.staffId, nowIso)
+    .run();
+  return (result.meta?.changes ?? 0) === 1;
 }
 
 export async function getStaffCalendarConnection(
@@ -265,13 +308,49 @@ export async function getValidAccessToken(
   };
 }
 
+export async function hasGoogleCalendarBusyConflict(
+  db: D1Database,
+  staffId: string,
+  startsAt: Date,
+  endsAt: Date,
+  env: GoogleOAuthEnv,
+): Promise<boolean> {
+  if (!isGoogleCalendarConfigured(env)) return false;
+  try {
+    // 一覧取得と同じく、接続行があるスタッフだけGoogleへ問い合わせる。
+    if (!(await getStaffCalendarConnection(db, staffId))) return false;
+    const token = await getValidAccessToken(db, staffId, env);
+    if (!token) return false;
+    const client = new GoogleCalendarClient({
+      calendarId: token.calendarId,
+      accessToken: token.accessToken,
+    });
+    const busy = await client.getFreeBusy(startsAt.toISOString(), endsAt.toISOString());
+    return busy.some((interval) => {
+      const busyStart = new Date(interval.start).getTime();
+      const busyEnd = new Date(interval.end).getTime();
+      return (
+        Number.isFinite(busyStart) &&
+        Number.isFinite(busyEnd) &&
+        busyStart < endsAt.getTime() &&
+        busyEnd > startsAt.getTime()
+      );
+    });
+  } catch (err) {
+    // Google障害で予約自体を止めない。availability取得時と同じfail-open方針。
+    console.error('booking gcal freebusy revalidation failed:', err);
+    return false;
+  }
+}
+
 async function getBookingForCalendar(
   db: D1Database,
   bookingId: string,
 ): Promise<BookingForCalendar | null> {
   return db
     .prepare(
-      `SELECT b.id, b.staff_id, b.starts_at, b.ends_at, b.customer_note, b.external_event_id,
+      `SELECT b.id, b.line_account_id, b.staff_id, b.status,
+              b.starts_at, b.ends_at, b.customer_note, b.external_event_id,
               m.name AS menu_name,
               f.display_name AS friend_name
          FROM bookings b
@@ -281,6 +360,38 @@ async function getBookingForCalendar(
     )
     .bind(bookingId)
     .first<BookingForCalendar>();
+}
+
+async function getBookingStatus(db: D1Database, bookingId: string): Promise<string | null> {
+  const row = await db
+    .prepare(`SELECT status FROM bookings WHERE id = ?`)
+    .bind(bookingId)
+    .first<{ status: string }>();
+  return row?.status ?? null;
+}
+
+export async function getBookingCalendarEventSummaryTemplate(
+  db: D1Database,
+  lineAccountId: string,
+): Promise<string> {
+  try {
+    const row = await db
+      .prepare(`SELECT value FROM account_settings WHERE line_account_id = ? AND key = ?`)
+      .bind(lineAccountId, BOOKING_CALENDAR_EVENT_SUMMARY_SETTINGS_KEY)
+      .first<{ value: string }>();
+    return row?.value || DEFAULT_BOOKING_CALENDAR_EVENT_SUMMARY;
+  } catch {
+    return DEFAULT_BOOKING_CALENDAR_EVENT_SUMMARY;
+  }
+}
+
+function renderBookingCalendarEventSummary(
+  template: string,
+  row: BookingForCalendar,
+): string {
+  return template
+    .replaceAll('{friend}', row.friend_name || 'お客様')
+    .replaceAll('{menu}', row.menu_name);
 }
 
 function eventDescription(row: BookingForCalendar): string {
@@ -299,6 +410,7 @@ export async function syncBookingEventCreate(
   const row = await getBookingForCalendar(db, bookingId);
   if (!row || row.external_event_id) return;
 
+  const summaryTemplate = await getBookingCalendarEventSummaryTemplate(db, row.line_account_id);
   const token = await getValidAccessToken(db, row.staff_id, env);
   if (!token || !token.syncEvents) return;
 
@@ -306,22 +418,59 @@ export async function syncBookingEventCreate(
     calendarId: token.calendarId,
     accessToken: token.accessToken,
   });
+
+  // 外部API呼び出しの直前に再読込し、承認後すぐキャンセルされた予約を作らない。
+  if ((await getBookingStatus(db, bookingId)) !== 'confirmed') return;
   const created = await client.createEvent({
-    summary: `面接: ${row.friend_name || 'お客様'}`,
+    summary: renderBookingCalendarEventSummary(summaryTemplate, row),
     description: eventDescription(row),
     start: row.starts_at,
     end: row.ends_at,
   });
 
-  await db
+  // createEvent中に取消・却下へ変わった場合は、作成直後のeventを消す。
+  const statusAfterCreate = await getBookingStatus(db, bookingId);
+  if (statusAfterCreate !== 'confirmed') {
+    try {
+      await client.deleteEvent(created.eventId);
+    } catch (err) {
+      console.error('booking gcal cleanup after status change failed:', err);
+      // 削除失敗時はcronが再試行できるようevent idを残す。
+      if (statusAfterCreate === 'cancelled' || statusAfterCreate === 'rejected') {
+        await db
+          .prepare(
+            `UPDATE bookings
+                SET external_event_id = ?, external_calendar_id = ?,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+              WHERE id = ? AND status IN ('cancelled','rejected')
+                AND (external_event_id IS NULL OR external_event_id = '')`,
+          )
+          .bind(created.eventId, token.calendarId, bookingId)
+          .run();
+      }
+    }
+    return;
+  }
+
+  const updateResult = await db
     .prepare(
       `UPDATE bookings
           SET external_event_id = ?, external_calendar_id = ?,
               updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
-        WHERE id = ? AND (external_event_id IS NULL OR external_event_id = '')`,
+        WHERE id = ? AND status = 'confirmed'
+          AND (external_event_id IS NULL OR external_event_id = '')`,
     )
     .bind(created.eventId, token.calendarId, bookingId)
     .run();
+
+  // 同時cron等が先に別eventを保存した場合、自分が作った重複eventを残さない。
+  if ((updateResult.meta?.changes ?? 0) === 0) {
+    try {
+      await client.deleteEvent(created.eventId);
+    } catch (err) {
+      console.error('booking gcal duplicate cleanup failed:', err);
+    }
+  }
 }
 
 export async function syncBookingEventDelete(
@@ -354,8 +503,111 @@ export async function syncBookingEventDelete(
       `UPDATE bookings
           SET external_event_id = NULL, external_calendar_id = NULL,
               updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
-        WHERE id = ?`,
+        WHERE id = ? AND external_event_id = ?`,
     )
-    .bind(bookingId)
+    .bind(bookingId, row.external_event_id)
     .run();
+}
+
+type ReconciliationDependency = (
+  db: D1Database,
+  bookingId: string,
+  env: GoogleOAuthEnv,
+) => Promise<void>;
+
+export interface CalendarReconciliationResult {
+  createAttempts: number;
+  createSucceeded: number;
+  deleteAttempts: number;
+  deleteSucceeded: number;
+  failed: number;
+}
+
+export async function reconcileBookingCalendarEvents(
+  db: D1Database,
+  env: GoogleOAuthEnv,
+  options: {
+    now?: Date;
+    createEvent?: ReconciliationDependency;
+    deleteEvent?: ReconciliationDependency;
+  } = {},
+): Promise<CalendarReconciliationResult> {
+  const result: CalendarReconciliationResult = {
+    createAttempts: 0,
+    createSucceeded: 0,
+    deleteAttempts: 0,
+    deleteSucceeded: 0,
+    failed: 0,
+  };
+  if (!isGoogleCalendarConfigured(env)) return result;
+
+  const now = options.now ?? new Date();
+  const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60_000).toISOString();
+  const createEvent = options.createEvent ?? syncBookingEventCreate;
+  const deleteEvent = options.deleteEvent ?? syncBookingEventDelete;
+
+  let missingEvents: Array<{ id: string }> = [];
+  try {
+    const rows = await db
+      .prepare(
+        `SELECT b.id
+           FROM bookings b
+           INNER JOIN staff_calendar_connections sc ON sc.staff_id = b.staff_id
+          WHERE b.status = 'confirmed'
+            AND b.external_event_id IS NULL
+            AND sc.sync_events = 1
+            AND b.created_at >= strftime('%Y-%m-%dT%H:%M:%f', ?, '+9 hours')
+          ORDER BY b.created_at ASC
+          LIMIT 20`,
+      )
+      .bind(cutoff)
+      .all<{ id: string }>();
+    missingEvents = rows.results.slice(0, RECONCILIATION_LIMIT);
+  } catch (err) {
+    console.error('[booking-gcal-reconcile] create sweep query failed:', err);
+    result.failed += 1;
+  }
+
+  for (const row of missingEvents) {
+    result.createAttempts += 1;
+    try {
+      await createEvent(db, row.id, env);
+      result.createSucceeded += 1;
+    } catch (err) {
+      result.failed += 1;
+      console.error(`[booking-gcal-reconcile] create failed booking=${row.id}:`, err);
+    }
+  }
+
+  let orphanedEvents: Array<{ id: string }> = [];
+  try {
+    const rows = await db
+      .prepare(
+        `SELECT b.id
+           FROM bookings b
+          WHERE b.status IN ('cancelled','rejected','expired')
+            AND b.external_event_id IS NOT NULL
+          ORDER BY b.updated_at ASC
+          LIMIT 20`,
+      )
+      .bind()
+      .all<{ id: string }>();
+    orphanedEvents = rows.results.slice(0, RECONCILIATION_LIMIT);
+  } catch (err) {
+    console.error('[booking-gcal-reconcile] delete sweep query failed:', err);
+    result.failed += 1;
+  }
+
+  for (const row of orphanedEvents) {
+    result.deleteAttempts += 1;
+    try {
+      await deleteEvent(db, row.id, env);
+      result.deleteSucceeded += 1;
+    } catch (err) {
+      result.failed += 1;
+      console.error(`[booking-gcal-reconcile] delete failed booking=${row.id}:`, err);
+    }
+  }
+
+  return result;
 }

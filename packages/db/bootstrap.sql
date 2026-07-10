@@ -575,6 +575,15 @@ CREATE TABLE notifications (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE oauth_states (
+  id TEXT PRIMARY KEY,
+  nonce TEXT NOT NULL UNIQUE,
+  staff_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+
 CREATE TABLE operators (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
@@ -989,6 +998,8 @@ CREATE INDEX idx_messages_log_friend_source ON messages_log (friend_id, source);
 CREATE INDEX idx_notifications_created ON notifications (created_at);
 
 CREATE INDEX idx_notifications_status ON notifications (status);
+
+CREATE INDEX idx_oauth_states_expires_at ON oauth_states(expires_at);
 
 CREATE INDEX idx_ref_tracking_friend ON ref_tracking (friend_id);
 

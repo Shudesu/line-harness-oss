@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
+import { signCalendarState, verifyCalendarState } from '../services/staff-calendar.js';
 
 const availabilityMocks = {
   computeSlots: vi.fn(() => [] as { start: string; end: string }[]),
@@ -17,10 +18,10 @@ vi.mock('../services/booking-notifier.js', async (importOriginal) => {
 
 const { default: booking } = await import('./booking.js');
 
-function makeApp(db: unknown) {
+function makeApp(db: unknown, envOverrides: Record<string, unknown> = {}) {
   const app = new Hono();
   app.route('/', booking);
-  return { app, env: { DB: db } };
+  return { app, env: { DB: db, ...envOverrides } };
 }
 
 const emptyDb = {
@@ -136,13 +137,20 @@ function scriptedDb(handlers: [string, Handler][]) {
   };
 }
 
-function settingsDb(initialValue: string | null = null) {
-  let storedValue = initialValue;
+function settingsDb(initialValue: string | null = null, initialCalendarSummary: string | null = null) {
+  const values = new Map<string, string>();
+  if (initialValue !== null) values.set('booking_notification_templates', initialValue);
+  if (initialCalendarSummary !== null) {
+    values.set('booking_calendar_event_summary', initialCalendarSummary);
+  }
   const calls: { sql: string; params: unknown[] }[] = [];
   return {
     calls,
     get storedValue() {
-      return storedValue;
+      return values.get('booking_notification_templates') ?? null;
+    },
+    get calendarSummary() {
+      return values.get('booking_calendar_event_summary') ?? null;
     },
     prepare(sql: string) {
       let params: unknown[] = [];
@@ -154,14 +162,18 @@ function settingsDb(initialValue: string | null = null) {
         },
         first: async () => {
           if (sql.includes('FROM account_settings')) {
-            return storedValue === null ? null : { value: storedValue };
+            const value = values.get(String(params[1]));
+            return value === undefined ? null : { value };
           }
           return null;
         },
         all: async () => ({ results: [] }),
         run: async () => {
           if (sql.includes('INSERT INTO account_settings')) {
-            storedValue = String(params[3]);
+            values.set(String(params[2]), String(params[3]));
+          }
+          if (sql.includes('DELETE FROM account_settings')) {
+            values.delete(String(params[1]));
           }
           return { meta: { changes: 1 } };
         },
@@ -175,6 +187,23 @@ const execCtx = {
   waitUntil: () => undefined,
   passThroughOnException: () => undefined,
 } as unknown as ExecutionContext;
+
+const googleEnv = {
+  GOOGLE_CLIENT_ID: 'google-client',
+  GOOGLE_CLIENT_SECRET: 'google-secret',
+};
+
+const connectedCalendar = {
+  id: 'cal-1',
+  staff_id: 's1',
+  google_calendar_id: 'primary',
+  refresh_token: 'refresh-token',
+  access_token: 'valid-access-token',
+  access_token_expires_at: '2100-01-01T00:00:00.000Z',
+  sync_events: 1,
+  created_at: '2026-07-01T00:00:00.000Z',
+  updated_at: '2026-07-01T00:00:00.000Z',
+};
 
 type StaffBlockRow = {
   id: string;
@@ -246,7 +275,7 @@ function staffBlocksDb() {
 
 describe('GET/PUT /api/booking/admin/notification-templates', () => {
   test('GET は保存テンプレート・既定文言・プレースホルダを返す', async () => {
-    const db = settingsDb(JSON.stringify({ requested: '受付 {menu}' }));
+    const db = settingsDb(JSON.stringify({ requested: '受付 {menu}' }), '{friend} / {menu}');
     const { app, env } = makeApp(db);
     const res = await app.request(
       '/api/booking/admin/notification-templates?account_id=acc1',
@@ -259,11 +288,17 @@ describe('GET/PUT /api/booking/admin/notification-templates', () => {
       templates: Record<string, string | null>;
       defaults: Record<string, string>;
       placeholders: string[];
+      calendar_event_summary: string;
+      calendar_event_summary_default: string;
+      calendar_event_summary_placeholders: string[];
     };
     expect(body.templates.requested).toBe('受付 {menu}');
     expect(body.templates.approved).toBeNull();
     expect(body.defaults.requested).toContain('{menu}');
     expect(body.placeholders).toEqual(['{menu}', '{staff}', '{datetime}', '{hours}']);
+    expect(body.calendar_event_summary).toBe('{friend} / {menu}');
+    expect(body.calendar_event_summary_default).toBe('{menu}: {friend}');
+    expect(body.calendar_event_summary_placeholders).toEqual(['{friend}', '{menu}']);
   });
 
   test('PUT は未知キーを拒否する', async () => {
@@ -341,6 +376,28 @@ describe('GET/PUT /api/booking/admin/notification-templates', () => {
     expect(body.templates.rejected).toBe('keep rejected');
     expect(JSON.parse(db.storedValue ?? '{}')).toEqual({ rejected: 'keep rejected' });
   });
+
+  test('PUT はGoogle Calendar件名テンプレートを兄弟設定として保存する', async () => {
+    const db = settingsDb();
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/notification-templates?account_id=acc1',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templates: {},
+          calendar_event_summary: '{friend} 様 - {menu}',
+        }),
+      },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(db.calendarSummary).toBe('{friend} 様 - {menu}');
+    expect((await res.json() as { calendar_event_summary: string }).calendar_event_summary)
+      .toBe('{friend} 様 - {menu}');
+  });
 });
 
 describe('POST /api/booking/admin/bookings', () => {
@@ -348,7 +405,7 @@ describe('POST /api/booking/admin/bookings', () => {
     friend_id: 'f1',
     menu_id: 'm1',
     staff_id: 's1',
-    starts_at: '2026-07-10T02:00:00.000Z', // JST 11:00
+    starts_at: '2099-07-10T02:00:00.000Z', // JST 11:00
   };
 
   function happyDb(insertChanges = 1) {
@@ -426,6 +483,90 @@ describe('POST /api/booking/admin/bookings', () => {
     // booking_reminders INSERT が走っている(未来の予約なので day_before + hours_before)
     const reminders = db.calls.filter((c) => c.sql.includes('INSERT INTO booking_reminders'));
     expect(reminders.length).toBeGreaterThan(0);
+  });
+
+  test('Google FreeBusyが予約区間と重なると409 slot_conflictを返す', async () => {
+    availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
+    const db = scriptedDb([
+      ['FROM friends', { first: { id: 'f1', is_following: 1 } }],
+      ['FROM staff WHERE', { first: { ok: 1 } }],
+      ['FROM menus m', { first: {
+        duration_minutes: 60,
+        buffer_after_minutes: 10,
+        dur: 60,
+        price: 8000,
+        is_offered: 1,
+      } }],
+      ['FROM staff_shifts', { first: { start_time: '10:00', end_time: '19:00' } }],
+      ['SELECT starts_at, block_ends_at FROM bookings', { all: { results: [] } }],
+      ['FROM staff_calendar_connections', { first: connectedCalendar }],
+      ['INSERT INTO bookings', { run: { meta: { changes: 1 } } }],
+    ]);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      calendars: {
+        primary: { busy: [{ start: '2099-07-10T02:30:00.000Z', end: '2099-07-10T03:30:00.000Z' }] },
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { app, env } = makeApp(db, googleEnv);
+      const res = await app.request(
+        '/api/booking/admin/bookings?account_id=acc1',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ...validBody, starts_at: '2099-07-10T02:00:00.000Z' }),
+          headers: { 'Content-Type': 'application/json' },
+        },
+        env,
+        execCtx,
+      );
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: 'slot_conflict' });
+      expect(db.calls.some((c) => c.sql.includes('INSERT INTO bookings'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('Google FreeBusy APIエラー時はfail-openで予約を作成する', async () => {
+    availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
+    const db = scriptedDb([
+      ['FROM friends', { first: { id: 'f1', is_following: 1 } }],
+      ['FROM staff WHERE', { first: { ok: 1 } }],
+      ['FROM menus m', { first: {
+        duration_minutes: 60,
+        buffer_after_minutes: 10,
+        dur: 60,
+        price: 8000,
+        is_offered: 1,
+      } }],
+      ['FROM staff_shifts', { first: { start_time: '10:00', end_time: '19:00' } }],
+      ['SELECT starts_at, block_ends_at FROM bookings', { all: { results: [] } }],
+      ['FROM staff_calendar_connections', { first: connectedCalendar }],
+      ['INSERT INTO bookings', { run: { meta: { changes: 1 } } }],
+    ]);
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Google unavailable'); }));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { app, env } = makeApp(db, googleEnv);
+      const res = await app.request(
+        '/api/booking/admin/bookings?account_id=acc1',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ...validBody, starts_at: '2099-07-10T02:00:00.000Z' }),
+          headers: { 'Content-Type': 'application/json' },
+        },
+        env,
+        execCtx,
+      );
+
+      expect(res.status).toBe(201);
+      expect(db.calls.some((c) => c.sql.includes('INSERT INTO bookings'))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   test('409 on slot conflict (atomic insert 0 rows)', async () => {
@@ -624,6 +765,99 @@ describe('POST /api/liff/booking/requests staff blocks', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  function liffCalendarDb() {
+    return scriptedDb([
+      ['FROM line_accounts WHERE liff_id', { first: { id: 'acc1' } }],
+      ['FROM line_accounts ORDER BY', { all: { results: [] } }],
+      ['line_user_id = ? AND line_account_id', { first: { id: 'f1' } }],
+      ['SELECT is_following FROM friends', { first: { is_following: 1 } }],
+      ['FROM menus m', { first: {
+        duration_minutes: 60,
+        buffer_after_minutes: 10,
+        auto_tag_id: null,
+        dur: 60,
+        price: 8000,
+        is_offered: 1,
+      } }],
+      ['FROM staff_shifts', { first: { start_time: '10:00', end_time: '19:00' } }],
+      ['SELECT starts_at, block_ends_at FROM bookings', { all: { results: [] } }],
+      ['FROM staff_calendar_connections', { first: connectedCalendar }],
+      ['INSERT INTO bookings', { run: { meta: { changes: 1 } } }],
+      ['INSERT INTO booking_idempotency_keys', { run: { meta: { changes: 1 } } }],
+    ]);
+  }
+
+  test('LIFF作成でもGoogle FreeBusy競合を409 slot_conflictにする', async () => {
+    availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
+    const db = liffCalendarDb();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('api.line.me')) return new Response(JSON.stringify({ sub: 'U1' }), { status: 200 });
+      return new Response(JSON.stringify({
+        calendars: {
+          primary: { busy: [{ start: '2099-07-10T02:30:00.000Z', end: '2099-07-10T03:30:00.000Z' }] },
+        },
+      }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { app, env } = makeApp(db, { ...googleEnv, LINE_LOGIN_CHANNEL_ID: 'login-channel' });
+      const res = await app.request(
+        '/api/liff/booking/requests?liffId=liff1',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ...validBody, starts_at: '2099-07-10T02:00:00.000Z' }),
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': 'idem-freebusy-conflict',
+            Authorization: 'Bearer token',
+          },
+        },
+        env,
+        execCtx,
+      );
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: 'slot_conflict' });
+      expect(db.calls.some((c) => c.sql.includes('INSERT INTO bookings'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('LIFF作成でもGoogle FreeBusy APIエラーはfail-openにする', async () => {
+    availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
+    const db = liffCalendarDb();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('api.line.me')) return new Response(JSON.stringify({ sub: 'U1' }), { status: 200 });
+      throw new Error('Google unavailable');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { app, env } = makeApp(db, { ...googleEnv, LINE_LOGIN_CHANNEL_ID: 'login-channel' });
+      const res = await app.request(
+        '/api/liff/booking/requests?liffId=liff1',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ...validBody, starts_at: '2099-07-10T02:00:00.000Z' }),
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': 'idem-freebusy-open',
+            Authorization: 'Bearer token',
+          },
+        },
+        env,
+        execCtx,
+      );
+
+      expect(res.status).toBe(201);
+      expect(db.calls.some((c) => c.sql.includes('INSERT INTO bookings'))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('GET/POST/DELETE /api/booking/admin/staff/:id/blocks', () => {
@@ -698,6 +932,172 @@ describe('GET/POST/DELETE /api/booking/admin/staff/:id/blocks', () => {
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid_time_range' });
+  });
+});
+
+type OAuthStateTestRow = {
+  nonce: string;
+  staffId: string;
+  expiresAt: string;
+  consumedAt: string | null;
+};
+
+function oauthStateDb(initial: OAuthStateTestRow[] = []) {
+  const states = new Map(initial.map((row) => [row.nonce, { ...row }]));
+  let connectionUpserts = 0;
+  return {
+    states,
+    get connectionUpserts() {
+      return connectionUpserts;
+    },
+    prepare(sql: string) {
+      let params: unknown[] = [];
+      const stmt = {
+        bind(...args: unknown[]) {
+          params = args;
+          return stmt;
+        },
+        first: async () => {
+          if (sql.includes('FROM staff WHERE')) return { ok: 1 };
+          return null;
+        },
+        all: async () => ({ results: [] }),
+        run: async () => {
+          if (sql.includes('INSERT INTO oauth_states')) {
+            const [, nonce, staffId, expiresAt] = params as [string, string, string, string];
+            states.set(nonce, { nonce, staffId, expiresAt, consumedAt: null });
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes('UPDATE oauth_states')) {
+            const [consumedAt, nonce, staffId, nowIso] = params as [string, string, string, string];
+            const row = states.get(nonce);
+            if (
+              !row ||
+              row.staffId !== staffId ||
+              row.consumedAt !== null ||
+              row.expiresAt <= nowIso
+            ) {
+              return { meta: { changes: 0 } };
+            }
+            row.consumedAt = consumedAt;
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes('INSERT INTO staff_calendar_connections')) {
+            connectionUpserts += 1;
+            return { meta: { changes: 1 } };
+          }
+          return { meta: { changes: 1 } };
+        },
+      };
+      return stmt;
+    },
+  };
+}
+
+describe('Google Calendar OAuth callback state', () => {
+  const oauthEnv = { ...googleEnv, WORKER_PUBLIC_URL: 'https://worker.example.com' };
+
+  test('connectで10分有効のnonceを発行しoauth_statesへ保存する', async () => {
+    const db = oauthStateDb();
+    const { app, env } = makeApp(db, oauthEnv);
+    const before = Math.floor(Date.now() / 1000);
+    const res = await app.request(
+      '/api/booking/admin/staff/s1/gcal/connect?account_id=acc1',
+      {},
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    const { url } = await res.json() as { url: string };
+    const state = new URL(url).searchParams.get('state');
+    expect(state).toBeTruthy();
+    const payload = await verifyCalendarState(state!, googleEnv.GOOGLE_CLIENT_SECRET);
+    expect(payload?.exp).toBeGreaterThanOrEqual(before + 599);
+    expect(payload?.exp).toBeLessThanOrEqual(before + 601);
+    expect(payload?.nonce).toEqual(expect.any(String));
+    expect(db.states.get(payload!.nonce)?.staffId).toBe('s1');
+  });
+
+  test('期限切れstateを拒否する', async () => {
+    const exp = Math.floor(Date.now() / 1000) - 1;
+    const state = await signCalendarState(
+      { staffId: 's1', accountId: 'acc1', exp, nonce: 'expired-nonce' },
+      googleEnv.GOOGLE_CLIENT_SECRET,
+    );
+    const db = oauthStateDb([{
+      nonce: 'expired-nonce',
+      staffId: 's1',
+      expiresAt: new Date((exp + 3600) * 1000).toISOString(),
+      consumedAt: null,
+    }]);
+    const { app, env } = makeApp(db, oauthEnv);
+    const res = await app.request(`/api/booking/gcal/callback?code=code&state=${encodeURIComponent(state)}`, {}, env);
+
+    expect(res.status).toBe(400);
+  });
+
+  test('消費済みstateを拒否する', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 600;
+    const state = await signCalendarState(
+      { staffId: 's1', accountId: 'acc1', exp, nonce: 'consumed-nonce' },
+      googleEnv.GOOGLE_CLIENT_SECRET,
+    );
+    const db = oauthStateDb([{
+      nonce: 'consumed-nonce',
+      staffId: 's1',
+      expiresAt: new Date(exp * 1000).toISOString(),
+      consumedAt: new Date().toISOString(),
+    }]);
+    const { app, env } = makeApp(db, oauthEnv);
+    const res = await app.request(`/api/booking/gcal/callback?code=code&state=${encodeURIComponent(state)}`, {}, env);
+
+    expect(res.status).toBe(400);
+  });
+
+  test('oauth_statesに存在しないstateを拒否する', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 600;
+    const state = await signCalendarState(
+      { staffId: 's1', accountId: 'acc1', exp, nonce: 'unknown-nonce' },
+      googleEnv.GOOGLE_CLIENT_SECRET,
+    );
+    const db = oauthStateDb();
+    const { app, env } = makeApp(db, oauthEnv);
+    const res = await app.request(`/api/booking/gcal/callback?code=code&state=${encodeURIComponent(state)}`, {}, env);
+
+    expect(res.status).toBe(400);
+  });
+
+  test('有効なstateは1回だけ受理する', async () => {
+    const exp = Math.floor(Date.now() / 1000) + 600;
+    const state = await signCalendarState(
+      { staffId: 's1', accountId: 'acc1', exp, nonce: 'valid-nonce' },
+      googleEnv.GOOGLE_CLIENT_SECRET,
+    );
+    const db = oauthStateDb([{
+      nonce: 'valid-nonce',
+      staffId: 's1',
+      expiresAt: new Date(exp * 1000).toISOString(),
+      consumedAt: null,
+    }]);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      access_token: 'access-token',
+      refresh_token: 'refresh-token',
+      expires_in: 3600,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { app, env } = makeApp(db, oauthEnv);
+      const url = `/api/booking/gcal/callback?code=code&state=${encodeURIComponent(state)}`;
+      const first = await app.request(url, {}, env);
+      const replay = await app.request(url, {}, env);
+
+      expect(first.status).toBe(200);
+      expect(replay.status).toBe(400);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(db.connectionUpserts).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

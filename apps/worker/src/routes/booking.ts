@@ -32,8 +32,14 @@ import {
 import { insertConfirmationReminders } from '../services/booking-confirm.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import {
+  BOOKING_CALENDAR_EVENT_SUMMARY_PLACEHOLDERS,
+  BOOKING_CALENDAR_EVENT_SUMMARY_SETTINGS_KEY,
+  DEFAULT_BOOKING_CALENDAR_EVENT_SUMMARY,
+  consumeCalendarOAuthState,
   exchangeAuthorizationCode,
+  getBookingCalendarEventSummaryTemplate,
   getStaffCalendarConnection,
+  hasGoogleCalendarBusyConflict,
   isGoogleCalendarConfigured,
   signCalendarState,
   syncBookingEventCreate,
@@ -56,6 +62,7 @@ const booking = new Hono<Env>();
 const JST_OFFSET_MS = 9 * 3600_000;
 const GCAL_AUTH_SCOPE =
   'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
+const GCAL_STATE_TTL_MS = 10 * 60_000;
 
 function startsAtJst(utcIso: string): string {
   const jst = new Date(new Date(utcIso).getTime() + JST_OFFSET_MS).toISOString();
@@ -342,6 +349,39 @@ async function upsertBookingTemplates(
     .run();
 }
 
+async function updateCalendarEventSummarySetting(
+  db: D1Database,
+  accountId: string,
+  template: string | null,
+): Promise<void> {
+  if (template === null) {
+    await db
+      .prepare(`DELETE FROM account_settings WHERE line_account_id = ? AND key = ?`)
+      .bind(accountId, BOOKING_CALENDAR_EVENT_SUMMARY_SETTINGS_KEY)
+      .run();
+    return;
+  }
+
+  const now = new Date(Date.now() + JST_OFFSET_MS).toISOString().replace('Z', '+09:00');
+  await db
+    .prepare(
+      `INSERT INTO account_settings (id, line_account_id, key, value, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (line_account_id, key) DO UPDATE SET value = ?, updated_at = ?`,
+    )
+    .bind(
+      crypto.randomUUID(),
+      accountId,
+      BOOKING_CALENDAR_EVENT_SUMMARY_SETTINGS_KEY,
+      template,
+      now,
+      now,
+      template,
+      now,
+    )
+    .run();
+}
+
 // staff が指定 account に属することを保証する。属していなければ null を返す。
 async function assertStaffInAccount(
   db: D1Database,
@@ -601,6 +641,27 @@ booking.post('/api/liff/booking/requests', async (c) => {
     });
     return c.json(err, 409);
   }
+  if (
+    await hasGoogleCalendarBusyConflict(
+      c.env.DB,
+      body.staff_id,
+      startsAt,
+      blockEndsAt,
+      googleOAuthEnv(c),
+    )
+  ) {
+    const err = { error: 'slot_conflict' };
+    await saveIdempotencyResponse(c.env.DB, {
+      key: idemKey,
+      lineAccountId: accountId,
+      friendId,
+      status: 409,
+      body: err,
+      ttlMinutes: IDEMPOTENCY_TTL_MINUTES,
+      now: new Date(),
+    });
+    return c.json(err, 409);
+  }
   const slotsToday = computeSlots({
     working: [{ start: shift.start_time, end: shift.end_time }],
     busy: [
@@ -765,6 +826,9 @@ booking.get('/api/booking/gcal/callback', async (c) => {
 
   const payload = await verifyCalendarState(state, requiredEnv.GOOGLE_CLIENT_SECRET);
   if (!payload) return c.text('invalid state', 400);
+  if (!(await consumeCalendarOAuthState(c.env.DB, payload))) {
+    return c.text('invalid state', 400);
+  }
   if (!(await assertStaffInAccount(c.env.DB, payload.staffId, payload.accountId))) {
     return c.text('staff not found', 404);
   }
@@ -795,10 +859,14 @@ booking.get('/api/booking/admin/notification-templates', async (c) => {
   const accountId = await resolveAccountIdAdmin(c);
   if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
   const templates = await getBookingTemplates(c.env.DB, accountId);
+  const calendarEventSummary = await getBookingCalendarEventSummaryTemplate(c.env.DB, accountId);
   return c.json({
     templates: notificationTemplatesResponse(templates),
     defaults: BOOKING_NOTIFICATION_DEFAULT_TEMPLATES,
     placeholders: BOOKING_NOTIFICATION_PLACEHOLDERS,
+    calendar_event_summary: calendarEventSummary,
+    calendar_event_summary_default: DEFAULT_BOOKING_CALENDAR_EVENT_SUMMARY,
+    calendar_event_summary_placeholders: BOOKING_CALENDAR_EVENT_SUMMARY_PLACEHOLDERS,
   });
 });
 
@@ -833,11 +901,36 @@ booking.put('/api/booking/admin/notification-templates', async (c) => {
     next[kind] = value;
   }
 
+  // 通知テンプレートと同じaccount_settings管理なので、別APIを増やさず兄弟キーで公開する。
+  let calendarEventSummary: string | null | undefined;
+  if ('calendar_event_summary' in body) {
+    const value = body.calendar_event_summary;
+    if (value === null || value === '') {
+      calendarEventSummary = null;
+    } else if (typeof value !== 'string') {
+      return c.json({ error: 'invalid_calendar_event_summary' }, 400);
+    } else if (value.length > 1000) {
+      return c.json({ error: 'calendar_event_summary_too_long' }, 400);
+    } else {
+      calendarEventSummary = value;
+    }
+  }
+
   await upsertBookingTemplates(c.env.DB, accountId, next);
+  if (calendarEventSummary !== undefined) {
+    await updateCalendarEventSummarySetting(c.env.DB, accountId, calendarEventSummary);
+  }
+  const effectiveCalendarEventSummary = await getBookingCalendarEventSummaryTemplate(
+    c.env.DB,
+    accountId,
+  );
   return c.json({
     templates: notificationTemplatesResponse(next),
     defaults: BOOKING_NOTIFICATION_DEFAULT_TEMPLATES,
     placeholders: BOOKING_NOTIFICATION_PLACEHOLDERS,
+    calendar_event_summary: effectiveCalendarEventSummary,
+    calendar_event_summary_default: DEFAULT_BOOKING_CALENDAR_EVENT_SUMMARY,
+    calendar_event_summary_placeholders: BOOKING_CALENDAR_EVENT_SUMMARY_PLACEHOLDERS,
   });
 });
 
@@ -1140,6 +1233,17 @@ booking.post('/api/booking/admin/bookings', async (c) => {
   if (hasStaffBlockConflict(staffBlocks, startJstHHMM, requestBlockEndHHMM)) {
     return c.json({ error: 'slot_conflict' }, 409);
   }
+  if (
+    await hasGoogleCalendarBusyConflict(
+      c.env.DB,
+      body.staff_id,
+      startsAt,
+      blockEndsAt,
+      googleOAuthEnv(c),
+    )
+  ) {
+    return c.json({ error: 'slot_conflict' }, 409);
+  }
   const slotsToday = computeSlots({
     working: [{ start: shift.start_time, end: shift.end_time }],
     busy: [
@@ -1340,10 +1444,24 @@ booking.get('/api/booking/admin/staff/:id/gcal/connect', async (c) => {
   url.searchParams.set('scope', GCAL_AUTH_SCOPE);
   url.searchParams.set('access_type', 'offline');
   url.searchParams.set('prompt', 'consent');
+  const nonce = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + GCAL_STATE_TTL_MS);
+  await c.env.DB
+    .prepare(
+      `INSERT INTO oauth_states (id, nonce, staff_id, expires_at, consumed_at)
+       VALUES (?, ?, ?, ?, NULL)`,
+    )
+    .bind(crypto.randomUUID(), nonce, staffId, expiresAt.toISOString())
+    .run();
   url.searchParams.set(
     'state',
     await signCalendarState(
-      { staffId, accountId },
+      {
+        staffId,
+        accountId,
+        exp: Math.floor(expiresAt.getTime() / 1000),
+        nonce,
+      },
       requiredEnv.GOOGLE_CLIENT_SECRET,
     ),
   );

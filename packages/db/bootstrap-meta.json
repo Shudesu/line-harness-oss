@@ -56,7 +56,8 @@
     "047_affiliate_offers.sql",
     "048_chats_friend_unique.sql",
     "049_staff_blocks.sql",
-    "050_staff_calendar_connections.sql"
+    "050_staff_calendar_connections.sql",
+    "051_oauth_states.sql"
   ],
-  "migrationCount": 57
+  "migrationCount": 58
 }
