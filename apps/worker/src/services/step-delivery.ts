@@ -457,6 +457,14 @@ export function buildMessage(messageType: string, messageContent: string, altTex
   }
 
   if (messageType === 'image') {
+    if (/^https?:\/\//.test(messageContent)) {
+      return {
+        type: 'image',
+        originalContentUrl: messageContent,
+        previewImageUrl: messageContent,
+      };
+    }
+
     // messageContent is expected to be JSON: { originalContentUrl, previewImageUrl }
     try {
       const parsed = JSON.parse(messageContent) as {

@@ -45,14 +45,18 @@ images.post('/api/images', async (c) => {
       return c.json({ success: false, error: 'Image too large (max 10MB)' }, 400);
     }
 
-    const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf'];
     if (!allowedTypes.includes(mimeType)) {
       return c.json({ success: false, error: `Unsupported image type: ${mimeType}. Allowed: ${allowedTypes.join(', ')}` }, 400);
     }
 
-    const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : mimeType.split('/')[1];
+    const ext = mimeType === 'application/pdf'
+      ? 'pdf'
+      : mimeType.split('/')[1] === 'jpeg'
+        ? 'jpg'
+        : mimeType.split('/')[1];
     const id = crypto.randomUUID();
-    const key = `${id}.${ext}`;
+    const key = `outgoing-${id}.${ext}`;
 
     await c.env.IMAGES.put(key, data, {
       httpMetadata: { contentType: mimeType },
