@@ -1319,6 +1319,42 @@ booking.post('/api/booking/admin/bookings', async (c) => {
   return c.json({ booking_id: bookingId, status: 'confirmed' }, 201);
 });
 
+booking.post('/api/booking/admin/bookings/:id/complete', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const id = c.req.param('id');
+  const row = await c.env.DB
+    .prepare(`SELECT id, status FROM bookings WHERE id = ? AND line_account_id = ?`)
+    .bind(id, accountId)
+    .first<{ id: string; status: BookingStatus }>();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (row.status !== 'confirmed') {
+    return c.json({ error: 'invalid_status' }, 409);
+  }
+
+  const updateResult = await c.env.DB
+    .prepare(
+      `UPDATE bookings SET status = 'completed',
+                           updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+        WHERE id = ? AND line_account_id = ? AND status = 'confirmed'`,
+    )
+    .bind(id, accountId)
+    .run();
+  if ((updateResult.meta?.changes ?? 0) === 0) {
+    return c.json({ error: 'invalid_status' }, 409);
+  }
+
+  await c.env.DB
+    .prepare(
+      `UPDATE booking_reminders SET status = 'cancelled'
+        WHERE booking_id = ? AND status IN ('pending','failed')`,
+    )
+    .bind(id)
+    .run();
+
+  return c.json({ status: 'completed' });
+});
+
 booking.get('/api/booking/admin/staff', async (c) => {
   const accountId = await resolveAccountIdAdmin(c);
   if (!accountId) return c.json({ error: 'missing_account_id' }, 400);

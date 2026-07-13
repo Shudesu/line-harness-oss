@@ -692,6 +692,68 @@ describe('POST /api/booking/admin/bookings', () => {
   });
 });
 
+describe('POST /api/booking/admin/bookings/:id/complete', () => {
+  test('confirmed を completed に更新し、未送信 reminder を cancelled にする', async () => {
+    const db = scriptedDb([
+      ['SELECT id, status FROM bookings', { first: { id: 'b1', status: 'confirmed' } }],
+      ['UPDATE bookings SET status =', { run: { meta: { changes: 1 } } }],
+      ['UPDATE booking_reminders SET status', { run: { meta: { changes: 2 } } }],
+    ]);
+    const { app, env } = makeApp(db);
+
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/complete?account_id=acc1',
+      { method: 'POST' },
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'completed' });
+    const bookingUpdate = db.calls.find((c) => c.sql.includes('UPDATE bookings SET status ='));
+    expect(bookingUpdate?.params).toEqual(['b1', 'acc1']);
+    expect(bookingUpdate?.sql).toContain("status = 'completed'");
+    expect(bookingUpdate?.sql).toContain("status = 'confirmed'");
+    expect(bookingUpdate?.sql).toContain('updated_at');
+    const reminderUpdate = db.calls.find((c) =>
+      c.sql.includes('UPDATE booking_reminders SET status'),
+    );
+    expect(reminderUpdate?.params).toEqual(['b1']);
+    expect(reminderUpdate?.sql).toContain("status = 'cancelled'");
+    expect(reminderUpdate?.sql).toContain("status IN ('pending','failed')");
+  });
+
+  test('confirmed 以外は 409 invalid_status を返す', async () => {
+    const db = scriptedDb([
+      ['SELECT id, status FROM bookings', { first: { id: 'b1', status: 'requested' } }],
+    ]);
+    const { app, env } = makeApp(db);
+
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/complete?account_id=acc1',
+      { method: 'POST' },
+      env,
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'invalid_status' });
+    expect(db.calls.some((c) => c.sql.includes('UPDATE bookings SET status ='))).toBe(false);
+  });
+
+  test('存在しない booking は 404 を返す', async () => {
+    const db = scriptedDb([['SELECT id, status FROM bookings', { first: null }]]);
+    const { app, env } = makeApp(db);
+
+    const res = await app.request(
+      '/api/booking/admin/bookings/missing/complete?account_id=acc1',
+      { method: 'POST' },
+      env,
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'not_found' });
+  });
+});
+
 describe('POST /api/liff/booking/requests staff blocks', () => {
   const validBody = {
     menu_id: 'm1',
