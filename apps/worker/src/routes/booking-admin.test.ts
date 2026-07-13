@@ -696,7 +696,7 @@ describe('POST /api/liff/booking/requests staff blocks', () => {
   const validBody = {
     menu_id: 'm1',
     staff_id: 's1',
-    starts_at: '2026-07-10T02:00:00.000Z',
+    starts_at: '2099-07-10T02:00:00.000Z', // JST 11:00
   };
 
   test('409 slot_conflict when requested interval overlaps a staff block', async () => {
