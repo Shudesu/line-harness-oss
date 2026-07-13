@@ -417,7 +417,7 @@ async function resolveFriendId(
 async function notifyForBooking(
   db: D1Database,
   bookingId: string,
-  kind: 'requested' | 'approved' | 'rejected',
+  kind: 'requested' | 'approved' | 'rejected' | 'rescheduled' | 'cancelled',
 ): Promise<void> {
   const row = await db
     .prepare(
@@ -1353,6 +1353,139 @@ booking.post('/api/booking/admin/bookings/:id/complete', async (c) => {
     .run();
 
   return c.json({ status: 'completed' });
+});
+
+// 管理側リスケ: 確定予約の日時変更（検証→更新→リマインダー再登録→gcal差替→候補者通知）
+booking.post('/api/booking/admin/bookings/:id/reschedule', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const id = c.req.param('id');
+  const body = await c.req.json<{ starts_at?: string }>().catch(() => ({} as { starts_at?: string }));
+  if (!body.starts_at) return c.json({ error: 'missing_params' }, 400);
+  const startsAt = new Date(body.starts_at);
+  if (Number.isNaN(startsAt.getTime())) return c.json({ error: 'invalid_starts_at' }, 422);
+  if (startsAt < new Date()) return c.json({ error: 'past_datetime' }, 422);
+
+  const row = await c.env.DB
+    .prepare(
+      `SELECT b.id, b.status, b.staff_id, b.menu_id, b.starts_at, b.block_ends_at,
+              COALESCE(sm.override_duration_minutes, m.duration_minutes) AS dur,
+              m.buffer_after_minutes
+         FROM bookings b
+         JOIN menus m ON m.id = b.menu_id
+         LEFT JOIN staff_menus sm ON sm.menu_id = b.menu_id AND sm.staff_id = b.staff_id
+        WHERE b.id = ? AND b.line_account_id = ?`,
+    )
+    .bind(id, accountId)
+    .first<{ id: string; status: BookingStatus; staff_id: string; menu_id: string; starts_at: string; block_ends_at: string; dur: number; buffer_after_minutes: number }>();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (row.status !== 'confirmed') return c.json({ error: 'invalid_status' }, 409);
+
+  const endsAt = new Date(startsAt.getTime() + row.dur * 60_000);
+  const blockEndsAt = new Date(endsAt.getTime() + row.buffer_after_minutes * 60_000);
+  const startJstDate = toJstDate(startsAt);
+  const startJstHHMM = toJstHHMM(startsAt);
+
+  const shift = await c.env.DB
+    .prepare(`SELECT start_time, end_time FROM staff_shifts WHERE staff_id = ? AND work_date = ?`)
+    .bind(row.staff_id, startJstDate)
+    .first<{ start_time: string; end_time: string }>();
+  if (!shift) return c.json({ error: 'out_of_shift' }, 422);
+  const requestBlockEndHHMM = bookingBlockEndHHMM(startJstHHMM, row.dur, row.buffer_after_minutes);
+  if (startJstHHMM < shift.start_time || requestBlockEndHHMM > shift.end_time) {
+    return c.json({ error: 'out_of_shift' }, 422);
+  }
+
+  // 自分自身を除いた重複チェック
+  const dayWindow = jstDayWindowUtc(startJstDate);
+  const overlapping = await c.env.DB
+    .prepare(
+      `SELECT 1 FROM bookings
+        WHERE staff_id = ? AND id != ? AND status IN ('requested','confirmed')
+          AND starts_at < ? AND block_ends_at > ?`,
+    )
+    .bind(row.staff_id, id, blockEndsAt.toISOString(), startsAt.toISOString())
+    .first();
+  if (overlapping) return c.json({ error: 'slot_conflict' }, 409);
+  const staffBlocks = await listStaffBlocksForDate(c.env.DB, row.staff_id, startJstDate);
+  if (hasStaffBlockConflict(staffBlocks, startJstHHMM, requestBlockEndHHMM)) {
+    return c.json({ error: 'slot_conflict' }, 409);
+  }
+  // gcal busy（fail-open）。旧予約自身のイベントと重なる時間帯は自己影として許容する
+  const oldStart = new Date(row.starts_at).getTime();
+  const oldBlockEnd = new Date(row.block_ends_at).getTime();
+  const selfShadow = startsAt.getTime() < oldBlockEnd && blockEndsAt.getTime() > oldStart;
+  if (!selfShadow && (await hasGoogleCalendarBusyConflict(c.env.DB, row.staff_id, startsAt, blockEndsAt, googleOAuthEnv(c)))) {
+    return c.json({ error: 'slot_conflict' }, 409);
+  }
+
+  const updateResult = await c.env.DB
+    .prepare(
+      `UPDATE bookings SET starts_at = ?, ends_at = ?, block_ends_at = ?,
+                           updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+        WHERE id = ? AND line_account_id = ? AND status = 'confirmed'`,
+    )
+    .bind(startsAt.toISOString(), endsAt.toISOString(), blockEndsAt.toISOString(), id, accountId)
+    .run();
+  if ((updateResult.meta?.changes ?? 0) === 0) return c.json({ error: 'invalid_status' }, 409);
+
+  await c.env.DB
+    .prepare(`UPDATE booking_reminders SET status = 'cancelled' WHERE booking_id = ? AND status IN ('pending','failed')`)
+    .bind(id)
+    .run();
+  await insertConfirmationReminders(c.env.DB, { bookingId: id, startsAt, now: new Date() });
+
+  const oauthEnv = googleOAuthEnv(c);
+  c.executionCtx.waitUntil(
+    syncBookingEventDelete(c.env.DB, id, oauthEnv)
+      .then(() => syncBookingEventCreate(c.env.DB, id, oauthEnv))
+      .catch((err) => console.error('booking gcal update (rescheduled) failed:', err)),
+  );
+  c.executionCtx.waitUntil(
+    notifyForBooking(c.env.DB, id, 'rescheduled').catch((err) =>
+      console.error('booking notify (rescheduled) failed:', err),
+    ),
+  );
+  return c.json({ status: 'confirmed', starts_at: startsAt.toISOString() });
+});
+
+// 管理側キャンセル: 確定予約の取消（リマインダー取消→gcal削除→候補者通知）
+booking.post('/api/booking/admin/bookings/:id/cancel', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const id = c.req.param('id');
+  const row = await c.env.DB
+    .prepare(`SELECT id, status FROM bookings WHERE id = ? AND line_account_id = ?`)
+    .bind(id, accountId)
+    .first<{ id: string; status: BookingStatus }>();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (row.status !== 'confirmed') return c.json({ error: 'invalid_status' }, 409);
+
+  const updateResult = await c.env.DB
+    .prepare(
+      `UPDATE bookings SET status = 'cancelled',
+                           updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+        WHERE id = ? AND line_account_id = ? AND status = 'confirmed'`,
+    )
+    .bind(id, accountId)
+    .run();
+  if ((updateResult.meta?.changes ?? 0) === 0) return c.json({ error: 'invalid_status' }, 409);
+
+  await c.env.DB
+    .prepare(`UPDATE booking_reminders SET status = 'cancelled' WHERE booking_id = ? AND status IN ('pending','failed')`)
+    .bind(id)
+    .run();
+  c.executionCtx.waitUntil(
+    syncBookingEventDelete(c.env.DB, id, googleOAuthEnv(c)).catch((err) =>
+      console.error('booking gcal delete (admin cancel) failed:', err),
+    ),
+  );
+  c.executionCtx.waitUntil(
+    notifyForBooking(c.env.DB, id, 'cancelled').catch((err) =>
+      console.error('booking notify (cancelled) failed:', err),
+    ),
+  );
+  return c.json({ status: 'cancelled' });
 });
 
 booking.get('/api/booking/admin/staff', async (c) => {

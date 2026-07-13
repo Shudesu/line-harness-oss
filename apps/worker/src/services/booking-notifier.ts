@@ -6,7 +6,9 @@ export type NotificationKind =
   | 'rejected'
   | 'expired'
   | 'day_before'
-  | 'hours_before';
+  | 'hours_before'
+  | 'rescheduled'
+  | 'cancelled';
 
 export const BOOKING_NOTIFICATION_KINDS = [
   'requested',
@@ -15,6 +17,8 @@ export const BOOKING_NOTIFICATION_KINDS = [
   'expired',
   'day_before',
   'hours_before',
+  'rescheduled',
+  'cancelled',
 ] as const satisfies readonly NotificationKind[];
 
 export const BOOKING_NOTIFICATION_PLACEHOLDERS = [
@@ -48,6 +52,10 @@ export const BOOKING_NOTIFICATION_DEFAULT_TEMPLATES: Record<NotificationKind, st
     '明日のご予約のお知らせです。\nメニュー: {menu}\n担当: {staff}\n日時: {datetime}',
   hours_before:
     '本日のご予約まであと {hours} 時間です。\nメニュー: {menu}\n担当: {staff}\n日時: {datetime}',
+  rescheduled:
+    '予約の日時が変更になりました。\nメニュー: {menu}\n担当: {staff}\n新しい日時: {datetime}\n\nご都合が悪い場合はこのトークにご連絡ください。',
+  cancelled:
+    '予約をキャンセルしました。\nメニュー: {menu}\n日時: {datetime}\n\n再度ご希望の場合はお手数ですが予約し直してください。',
 };
 
 function applyNotificationPlaceholders(template: string, ctx: NotificationContext): string {

@@ -754,6 +754,130 @@ describe('POST /api/booking/admin/bookings/:id/complete', () => {
   });
 });
 
+describe('POST /api/booking/admin/bookings/:id/cancel', () => {
+  test('confirmed を cancelled に更新し、reminder を取消する', async () => {
+    const db = scriptedDb([
+      ['SELECT id, status FROM bookings', { first: { id: 'b1', status: 'confirmed' } }],
+      ['UPDATE bookings SET status =', { run: { meta: { changes: 1 } } }],
+      ['UPDATE booking_reminders SET status', { run: { meta: { changes: 1 } } }],
+    ]);
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/cancel?account_id=acc1',
+      { method: 'POST' },
+      env,
+      execCtx as never,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'cancelled' });
+    const bookingUpdate = db.calls.find((c) => c.sql.includes('UPDATE bookings SET status ='));
+    expect(bookingUpdate?.sql).toContain("status = 'cancelled'");
+    expect(bookingUpdate?.sql).toContain("status = 'confirmed'");
+  });
+
+  test('confirmed 以外は 409 を返す', async () => {
+    const db = scriptedDb([
+      ['SELECT id, status FROM bookings', { first: { id: 'b1', status: 'completed' } }],
+    ]);
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/cancel?account_id=acc1',
+      { method: 'POST' },
+      env,
+      execCtx as never,
+    );
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /api/booking/admin/bookings/:id/reschedule', () => {
+  const future = new Date(Date.now() + 7 * 86_400_000);
+  const futureJstNoon = (() => {
+    const jst = new Date(future.getTime() + 9 * 3_600_000);
+    const utcMidnight = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()) - 9 * 3_600_000;
+    return new Date(utcMidnight + 12 * 3_600_000); // 12:00 JST
+  })();
+  const bookingRow = {
+    id: 'b1', status: 'confirmed', staff_id: 's1', menu_id: 'm1',
+    starts_at: new Date(futureJstNoon.getTime() + 3_600_000).toISOString(),
+    block_ends_at: new Date(futureJstNoon.getTime() + 3_600_000 + 1_800_000).toISOString(),
+    dur: 30, buffer_after_minutes: 0,
+  };
+
+  test('confirmed 予約を新時刻へ更新しリマインダーを再登録する', async () => {
+    const db = scriptedDb([
+      ['SELECT b.id, b.status, b.staff_id, b.menu_id', { first: bookingRow }],
+      ['SELECT start_time, end_time FROM staff_shifts', { first: { start_time: '09:00', end_time: '19:00' } }],
+      ['SELECT 1 FROM bookings', { first: null }],
+      ['FROM staff_blocks', { all: { results: [] } }],
+      ['UPDATE bookings SET starts_at', { run: { meta: { changes: 1 } } }],
+      ['UPDATE booking_reminders SET status', { run: { meta: { changes: 1 } } }],
+      ['INSERT INTO booking_reminders', { run: { meta: { changes: 1 } } }],
+    ]);
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/reschedule?account_id=acc1',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starts_at: futureJstNoon.toISOString() }) },
+      env,
+      execCtx as never,
+    );
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as { status: string; starts_at: string };
+    expect(payload.status).toBe('confirmed');
+    expect(payload.starts_at).toBe(futureJstNoon.toISOString());
+    const update = db.calls.find((c) => c.sql.includes('UPDATE bookings SET starts_at'));
+    expect(update?.sql).toContain("status = 'confirmed'");
+  });
+
+  test('シフト外は 422 を返す', async () => {
+    const db = scriptedDb([
+      ['SELECT b.id, b.status, b.staff_id, b.menu_id', { first: bookingRow }],
+      ['SELECT start_time, end_time FROM staff_shifts', { first: null }],
+    ]);
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/reschedule?account_id=acc1',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starts_at: futureJstNoon.toISOString() }) },
+      env,
+      execCtx as never,
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: 'out_of_shift' });
+  });
+
+  test('他予約と重複する場合は 409 を返す', async () => {
+    const db = scriptedDb([
+      ['SELECT b.id, b.status, b.staff_id, b.menu_id', { first: bookingRow }],
+      ['SELECT start_time, end_time FROM staff_shifts', { first: { start_time: '09:00', end_time: '19:00' } }],
+      ['SELECT 1 FROM bookings', { first: { 1: 1 } }],
+    ]);
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/reschedule?account_id=acc1',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starts_at: futureJstNoon.toISOString() }) },
+      env,
+      execCtx as never,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'slot_conflict' });
+  });
+
+  test('confirmed 以外は 409 invalid_status', async () => {
+    const db = scriptedDb([
+      ['SELECT b.id, b.status, b.staff_id, b.menu_id', { first: { ...bookingRow, status: 'cancelled' } }],
+    ]);
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      '/api/booking/admin/bookings/b1/reschedule?account_id=acc1',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starts_at: futureJstNoon.toISOString() }) },
+      env,
+      execCtx as never,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'invalid_status' });
+  });
+});
+
 describe('POST /api/liff/booking/requests staff blocks', () => {
   const validBody = {
     menu_id: 'm1',
