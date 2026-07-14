@@ -23,6 +23,9 @@ import {
 import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { generateLlmReply, switchToHumanMode } from '../services/llm-reply.js';
+import { runGroqSupportPipeline } from '../services/groq-pipeline.js';
+import { resolveBotProject } from '../services/bot-project.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -164,7 +167,18 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES);
+        await handleEvent(
+          db,
+          lineClient,
+          event,
+          channelAccessToken,
+          matchedAccountId,
+          c.env.WORKER_URL || new URL(c.req.url).origin,
+          c.env.LIFF_URL,
+          c.env.IMAGES,
+          c.env.ANTHROPIC_API_KEY,
+          c.env.GROQ_API_KEY,
+        );
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -185,6 +199,8 @@ async function handleEvent(
   workerUrl?: string,
   liffUrl?: string,
   r2?: R2Bucket,
+  anthropicApiKey?: string,
+  groqApiKey?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -667,16 +683,110 @@ async function handleEvent(
       }
     }
 
-    // auto_replies にマッチしなかった = 自発メッセージ → unread にする
-    if (!matched) {
+    // auto_replies にマッチしなかった = 自発メッセージ
+    // オペレーターが引き継ぎ済み(ai_reply_mode='human')でなければ、LLM フォールバックを試みる。
+    // llmHandled=true は「人間の unread 対応が不要になった」ことを意味する
+    // （エスカレーション自体は unread が必要なので false のまま扱う）。
+    let llmHandled = false;
+    const aiReplyMode = (friend as unknown as { ai_reply_mode?: string }).ai_reply_mode;
+    if (!matched && aiReplyMode !== 'human') {
+      const logOutgoingGroq = async (text: string, source: 'groq_reply' | 'groq_canned') => {
+        await db
+          .prepare(
+            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+             VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'reply', ?, ?)`,
+          )
+          .bind(crypto.randomUUID(), friend.id, text, source, jstNow())
+          .run();
+      };
+
+      if (groqApiKey) {
+        try {
+          const project = await resolveBotProject(db, friend);
+          const groqResult = await runGroqSupportPipeline({
+            db,
+            apiKey: groqApiKey,
+            lineAccountId,
+            friendId: friend.id,
+            incomingText,
+            project,
+          });
+
+          if (groqResult.kind === 'canned' || groqResult.kind === 'reply') {
+            const replyText = groqResult.text;
+            await lineClient.replyMessage(event.replyToken, [{ type: 'text', text: replyText }]);
+            replyTokenConsumed = true;
+            await logOutgoingGroq(replyText, groqResult.kind === 'canned' ? 'groq_canned' : 'groq_reply');
+            llmHandled = true;
+          } else if (groqResult.kind === 'escalate') {
+            await switchToHumanMode(db, friend.id);
+            if (groqResult.text) {
+              await lineClient.replyMessage(event.replyToken, [{ type: 'text', text: groqResult.text }]);
+              replyTokenConsumed = true;
+              await logOutgoingGroq(groqResult.text, 'groq_reply');
+            }
+          } else if (groqResult.kind === 'fail_closed') {
+            await lineClient.replyMessage(event.replyToken, [
+              { type: 'text', text: groqResult.escalationText },
+            ]);
+            replyTokenConsumed = true;
+            await logOutgoingGroq(groqResult.escalationText, 'groq_reply');
+          }
+        } catch (err) {
+          console.error('Groq support pipeline failed', err);
+        }
+      } else if (anthropicApiKey) {
+        try {
+          const llmResult = await generateLlmReply({
+            db,
+            apiKey: anthropicApiKey,
+            lineAccountId,
+            friendId: friend.id,
+            incomingText,
+          });
+
+          if (llmResult.kind === 'reply' && llmResult.text) {
+            await lineClient.replyMessage(event.replyToken, [{ type: 'text', text: llmResult.text }]);
+            replyTokenConsumed = true;
+            await db
+              .prepare(
+                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+                 VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'reply', 'llm_reply', ?)`,
+              )
+              .bind(crypto.randomUUID(), friend.id, llmResult.text, jstNow())
+              .run();
+            llmHandled = true;
+          } else if (llmResult.kind === 'escalate') {
+            await switchToHumanMode(db, friend.id);
+            if (llmResult.text) {
+              await lineClient.replyMessage(event.replyToken, [{ type: 'text', text: llmResult.text }]);
+              replyTokenConsumed = true;
+              await db
+                .prepare(
+                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+                   VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'reply', 'llm_reply', ?)`,
+                )
+                .bind(crypto.randomUUID(), friend.id, llmResult.text, jstNow())
+                .run();
+            }
+          }
+        } catch (err) {
+          console.error('LLM reply failed', err);
+        }
+      }
+    }
+
+    // auto_replies にも LLM 通常応答にもマッチ/対応しなかった = 人間対応が必要 → unread にする
+    // (LLM がエスカレーションした場合もここを通る。upsertChatOnMessage は冪等なので二重呼び出し安全)
+    if (!matched && !llmHandled) {
       await upsertChatOnMessage(db, friend.id);
     }
 
     // イベントバス発火: message_received
-    // Pass replyToken only when auto_reply didn't actually consume it
+    // Pass replyToken only when auto_reply / LLM reply didn't actually consume it
     await fireEvent(db, 'message_received', {
       friendId: friend.id,
-      eventData: { text: incomingText, matched },
+      eventData: { text: incomingText, matched: matched || llmHandled },
       replyToken: replyTokenConsumed ? undefined : event.replyToken,
     }, lineAccessToken, lineAccountId);
 

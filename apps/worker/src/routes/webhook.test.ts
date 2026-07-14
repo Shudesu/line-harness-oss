@@ -205,6 +205,8 @@ describe('POST /webhook — first-contact existing friends', () => {
       line_account_id: null,
       metadata: '{}',
       first_tracked_link_id: null,
+      ai_reply_mode: 'bot',
+      ref_code: null,
       created_at: '2026-06-18T12:00:00.000+09:00',
       updated_at: '2026-06-18T12:00:00.000+09:00',
     });

@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "project": { "type": "string" },
+    "defaultProject": { "type": "string" },
+    "llm": {
+      "type": "object",
+      "required": ["provider", "model", "maxOutputTokens", "timeoutMs", "dailyCallBudget"],
+      "properties": {
+        "provider": { "enum": ["groq"] },
+        "model": { "type": "string" },
+        "apiKeySecretName": { "type": "string" },
+        "maxOutputTokens": { "type": "integer", "minimum": 64, "maximum": 4096 },
+        "timeoutMs": { "type": "integer", "minimum": 1000 },
+        "dailyCallBudget": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "line": {
+      "type": "object",
+      "properties": {
+        "channelSecretName": { "type": "string" },
+        "channelAccessTokenSecretName": { "type": "string" }
+      }
+    },
+    "knowledgePack": { "type": "string" },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string" }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ttlHours": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "properties": {
+        "topK": { "type": "integer", "minimum": 1 },
+        "minScore": { "type": "number" }
+      }
+    },
+    "projects": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["knowledgePack"],
+        "properties": {
+          "knowledgePack": { "type": "string" }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "required": ["project", "llm", "knowledgePack"] },
+    { "required": ["defaultProject", "llm", "projects"] }
+  ]
+}

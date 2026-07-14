@@ -24,6 +24,7 @@ function serialize(row: EntryRoute) {
     introTemplateId: row.intro_template_id,
     runAccountFriendAddScenarios: row.run_account_friend_add_scenarios === 1,
     isActive: row.is_active === 1,
+    project: row.project,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -66,6 +67,7 @@ entryRoutes.post('/api/entry-routes', async (c) => {
       introTemplateId?: string | null;
       runAccountFriendAddScenarios?: boolean;
       isActive?: boolean;
+      project?: string | null;
     }>();
     if (!body.refCode || !body.name) {
       return c.json({ success: false, error: 'refCode and name are required' }, 400);
@@ -93,6 +95,7 @@ entryRoutes.patch('/api/entry-routes/:id', async (c) => {
         introTemplateId: string | null;
         runAccountFriendAddScenarios: boolean;
         isActive: boolean;
+        project: string | null;
       }>
     >();
     const row = await updateEntryRoute(c.env.DB, id, body);

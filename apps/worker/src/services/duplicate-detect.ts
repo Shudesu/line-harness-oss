@@ -88,7 +88,7 @@ export async function processDuplicateDetection(db: D1Database): Promise<void> {
       AND picture_url IS NOT NULL
       AND LENGTH(picture_url) > 50
       AND (created_at > ? OR updated_at > ?)
-  `).bind(lastRun, lastRun).all<{ id: string; line_account_id: string; url_token: string | null }>();
+  `).bind(lastRun, lastRun).all<{ id: string; line_account_id: string | null; url_token: string | null }>();
 
   if (!candidates.results || candidates.results.length === 0) {
     return; // Nothing new to process
@@ -104,17 +104,25 @@ export async function processDuplicateDetection(db: D1Database): Promise<void> {
   for (const friend of newFriends) {
     if (!friend.url_token || !friend.line_account_id) continue;
 
-    // Find matching friends in OTHER accounts
+    // Find matching friends in OTHER accounts within the SAME organization.
+    // Accounts with organization_id = NULL never match each other (or anything
+    // else) — cross-tenant matching before an operator has explicitly grouped
+    // accounts under one organization would risk leaking one customer's
+    // identity into an unrelated org's friend list.
     const matches = await db.prepare(`
-      SELECT id, line_account_id
-      FROM friends
-      WHERE is_following = 1
-        AND id != ?
-        AND line_account_id != ?
-        AND (${URL_TOKEN_SQL}) = ?
-        AND picture_url IS NOT NULL
-        AND LENGTH(picture_url) > 50
-    `).bind(friend.id, friend.line_account_id, friend.url_token)
+      SELECT f.id, f.line_account_id
+      FROM friends f
+      JOIN line_accounts la_other ON la_other.id = f.line_account_id
+      JOIN line_accounts la_self ON la_self.id = ?
+      WHERE f.is_following = 1
+        AND f.id != ?
+        AND f.line_account_id != ?
+        AND la_other.organization_id IS NOT NULL
+        AND la_other.organization_id = la_self.organization_id
+        AND (${URL_TOKEN_SQL.replace(/picture_url/g, 'f.picture_url')}) = ?
+        AND f.picture_url IS NOT NULL
+        AND LENGTH(f.picture_url) > 50
+    `).bind(friend.line_account_id, friend.id, friend.line_account_id, friend.url_token)
       .all<{ id: string; line_account_id: string }>();
 
     if (!matches.results || matches.results.length === 0) continue;

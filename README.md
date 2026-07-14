@@ -111,6 +111,13 @@ CLI が以下を全部やる:
   - `create_scenario` / `update_step` — シナリオを AI に作らせる
   - `broadcast` / `send_message` — メッセージ送信（要ユーザー確認）
 - **公式 SDK** (`@line-harness/sdk`) — TypeScript の型付き SDK、ESM + CJS、ゼロ依存
+- **Groq 自由文サポート Bot**（オプション）— `auto_replies` 未マッチ時に Groq 無料枠で応答。設定は `bot.config.json` + `knowledge-packs/`。有効化手順:
+  1. `wrangler secret put GROQ_API_KEY`
+  2. D1 マイグレーション 051–053 を適用
+  3. `tsx scripts/seed-kb-articles.ts` で KB を投入
+  4. 管理画面の `account_settings` に `groq_reply_enabled=true` を設定
+  5. **LINE 公式アカウントマネージャーの「AIチャットボット(β)」は必ずオフ**（二重返信防止）
+  - fail-closed 時は Claude にはフォールバックせず Conversation Inbox へエスカレーション（コスト優先）
 
 ### iOS アプリ対応
 - **`GET /api/capabilities`** — iOS 公式アプリ (the-harness-ios) との互換判定エンドポイント

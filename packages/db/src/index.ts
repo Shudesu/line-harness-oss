@@ -7,6 +7,7 @@ export * from './scenario-resolve';
 export * from './broadcasts';
 export * from './users';
 export * from './line-accounts';
+export * from './organizations';
 export * from './conversions';
 export * from './affiliates';
 export * from './webhooks';

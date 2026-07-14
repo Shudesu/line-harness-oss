@@ -10,6 +10,8 @@ export interface EntryRoute {
   intro_template_id: string | null;
   run_account_friend_add_scenarios: number;
   is_active: number;
+  /** Multi-product bot routing. NULL = default project (see bot-project.ts). */
+  project: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -42,6 +44,7 @@ export interface CreateEntryRouteInput {
   introTemplateId?: string | null;
   runAccountFriendAddScenarios?: boolean;
   isActive?: boolean;
+  project?: string | null;
 }
 
 export interface EntryRouteFunnel {
@@ -83,8 +86,8 @@ export async function createEntryRoute(
       `INSERT INTO entry_routes
          (id, ref_code, name, tag_id, scenario_id, redirect_url,
           pool_id, intro_template_id, run_account_friend_add_scenarios,
-          is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          is_active, project, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -97,6 +100,7 @@ export async function createEntryRoute(
       input.introTemplateId ?? null,
       runAccount,
       isActive,
+      input.project ?? null,
       now,
       now,
     )
@@ -146,6 +150,7 @@ export async function updateEntryRoute(
     values.push(input.runAccountFriendAddScenarios ? 1 : 0);
   }
   if (input.isActive !== undefined) { fields.push('is_active = ?'); values.push(input.isActive ? 1 : 0); }
+  if (input.project !== undefined) { fields.push('project = ?'); values.push(input.project ?? null); }
 
   values.push(id);
 

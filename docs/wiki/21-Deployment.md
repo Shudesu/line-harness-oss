@@ -270,6 +270,7 @@ wrangler d1 create line-crm
 | 変数名 | 説明 | 設定方法 |
 |--------|------|----------|
 | `STRIPE_WEBHOOK_SECRET` | Stripe Webhook 署名検証キー | `wrangler secret put` |
+| `ANTHROPIC_API_KEY` | LLM フォールバック応答（自由文への AI 回答）を使う場合の Claude API キー。未設定なら自動的に無効。account_settings（key=`llm_reply_enabled`）でアカウントごとにも opt-in が必要 | `wrangler secret put` |
 
 ---
 

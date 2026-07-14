@@ -1,0 +1,32 @@
+{
+  "$schema": "./bot.config.schema.json",
+  "defaultProject": "ai-shain-link",
+  "llm": {
+    "provider": "groq",
+    "model": "llama-3.3-70b-versatile",
+    "apiKeySecretName": "GROQ_API_KEY",
+    "maxOutputTokens": 500,
+    "timeoutMs": 10000,
+    "dailyCallBudget": 800
+  },
+  "line": {
+    "channelSecretName": "LINE_CHANNEL_SECRET",
+    "channelAccessTokenSecretName": "LINE_CHANNEL_ACCESS_TOKEN"
+  },
+  "escalation": {
+    "mode": "conversation-inbox"
+  },
+  "cache": {
+    "enabled": true,
+    "ttlHours": 72
+  },
+  "retrieval": {
+    "topK": 3,
+    "minScore": 0.0
+  },
+  "projects": {
+    "ai-shain-link": { "knowledgePack": "./knowledge-packs/ai-shain" },
+    "soushin-suggest": { "knowledgePack": "./knowledge-packs/soushin-suggest" },
+    "henshin-hisho": { "knowledgePack": "./knowledge-packs/henshin-hisho" }
+  }
+}

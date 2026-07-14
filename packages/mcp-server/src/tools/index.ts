@@ -25,6 +25,7 @@ import { registerManageForms } from "./manage-forms.js";
 import { registerManageTrackedLinks } from "./manage-tracked-links.js";
 import { registerManageAutoReplies } from "./manage-auto-replies.js";
 import { registerManageTrafficPools } from "./manage-traffic-pools.js";
+import { registerManageOrganizations } from "./manage-organizations.js";
 import { registerManageMessageTemplates } from "./manage-message-templates.js";
 import { registerListConversations } from "./list-conversations.js";
 import { registerGetConversation } from "./get-conversation.js";
@@ -56,6 +57,7 @@ export function registerAllTools(server: McpServer): void {
   registerManageTrackedLinks(server);
   registerManageAutoReplies(server);
   registerManageTrafficPools(server);
+  registerManageOrganizations(server);
   registerManageMessageTemplates(server);
   registerListConversations(server);
   registerGetConversation(server);
