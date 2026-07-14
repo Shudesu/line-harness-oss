@@ -10,7 +10,7 @@ import {
   createFormSubmission,
   jstNow,
 } from '@line-crm/db';
-import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
+import { getFriendByLineUserId, getFriendById, getLineAccounts } from '@line-crm/db';
 import { enrollFriendInScenario } from '@line-crm/db';
 import type {
   Form as DbForm,
@@ -21,6 +21,58 @@ import type { Env } from '../index.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 
 const forms = new Hono<Env>();
+
+async function fetchBotBasicId(accessToken: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    try {
+      const res = await fetch('https://api.line.me/v2/bot/info', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = await res.json() as { basicId?: string };
+        return data.basicId ?? null;
+      }
+      if (res.status < 500) return null;
+    } catch {
+      // Retry transient network and timeout failures.
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)));
+    }
+  }
+  return null;
+}
+
+async function resolveAddFriendUrl(
+  db: D1Database,
+  liffId: string | undefined,
+): Promise<string | undefined> {
+  if (!liffId) return undefined;
+  try {
+    const accounts = await getLineAccounts(db);
+    const account = accounts.find(
+      (candidate) => candidate.is_active === 1 && candidate.liff_id === liffId,
+    );
+    if (!account?.channel_access_token) return undefined;
+    const basicId = await fetchBotBasicId(account.channel_access_token);
+    return basicId ? `https://line.me/R/ti/p/${basicId}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeSubmissionData(data: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(data).filter(
+      ([key]) => key !== '_webhookVerified' && key !== '_skipWebhook',
+    ),
+  );
+}
 
 function serializeForm(
   row: DbForm,
@@ -308,12 +360,13 @@ forms.post('/api/forms/:id/submit', async (c) => {
     const body = await c.req.json<{
       lineUserId?: string;
       friendId?: string;
+      liffId?: string;
       data?: Record<string, unknown>;
       _skipWebhook?: boolean;
       trackedLinkId?: string;
     }>();
 
-    const submissionData = body.data ?? {};
+    const submissionData = sanitizeSubmissionData(body.data ?? {});
 
     // Validate required fields
     const fields = JSON.parse(form.fields || '[]') as Array<{
@@ -335,19 +388,30 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
     }
 
-    // Resolve friend by lineUserId or friendId
-    let friendId: string | null = body.friendId ?? null;
-    if (!friendId && body.lineUserId) {
-      const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
-      if (friend) {
-        friendId = friend.id;
-      }
+    // Resolve friend by friendId or lineUserId. Never trust a client-provided ID
+    // without confirming that the friend row exists.
+    const friend = body.friendId
+      ? await getFriendById(c.env.DB, body.friendId)
+      : body.lineUserId
+        ? await getFriendByLineUserId(c.env.DB, body.lineUserId)
+        : null;
+    const friendId = friend?.id ?? null;
+
+    // ATS-connected forms are wired either via per-form webhook or via the
+    // on-submit tag whose tag event relays the submission downstream. A
+    // friendless submission on a tag-wired form would silently never reach
+    // the ATS, so both wiring styles require a resolvable friend.
+    if ((form.on_submit_webhook_url || form.on_submit_tag_id) && !friendId) {
+      const addFriendUrl = await resolveAddFriendUrl(c.env.DB, body.liffId);
+      return c.json({
+        success: false,
+        error: 'friend_required',
+        ...(addFriendUrl ? { addFriendUrl } : {}),
+      }, 422);
     }
 
     // Webhook gate — skip if client pre-verified via repliers endpoint
-    delete submissionData._webhookVerified;
     const skipWebhook = Boolean(body._skipWebhook);
-    delete submissionData._skipWebhook;
     let webhookData: Record<string, unknown> | null = null;
     if (form.on_submit_webhook_url && !skipWebhook) {
       const webhookResult = await callFormWebhook(form, submissionData);

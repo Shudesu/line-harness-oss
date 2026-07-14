@@ -596,7 +596,10 @@ async function main() {
     } else if (page === 'form') {
       const params = new URLSearchParams(window.location.search);
       const formId = params.get('id');
-      await initForm(formId);
+      const addFriendUrl = BOT_BASIC_ID
+        ? `https://line.me/R/ti/p/${BOT_BASIC_ID}`
+        : undefined;
+      await initForm(formId, addFriendUrl);
     } else if (!page) {
       await linkAndAddFlow();
     } else {

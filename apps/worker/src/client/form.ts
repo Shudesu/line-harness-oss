@@ -10,13 +10,14 @@
  * URL format: https://liff.line.me/{LIFF_ID}?page=form&id={FORM_ID}
  */
 
-import { shouldUseWebhookGate } from './form-gate.js';
+import { parseFriendRequiredResponse, shouldUseWebhookGate } from './form-gate.js';
 
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
   isLoggedIn(): boolean;
   login(opts?: { redirectUri?: string }): void;
   getProfile(): Promise<{ userId: string; displayName: string; pictureUrl?: string }>;
+  getFriendship(): Promise<{ friendFlag: boolean }>;
   getIDToken(): string | null;
   isInClient(): boolean;
   closeWindow(): void;
@@ -100,6 +101,11 @@ function apiCall(path: string, options?: RequestInit): Promise<Response> {
 
 function getApp(): HTMLElement {
   return document.getElementById('app')!;
+}
+
+function getCurrentLiffId(): string | undefined {
+  const fromParam = new URLSearchParams(window.location.search).get('liffId');
+  return fromParam || import.meta.env?.VITE_LIFF_ID || undefined;
 }
 
 // ========== Field Rendering ==========
@@ -364,6 +370,11 @@ function injectStyles(): void {
     .form-success .check { width: 64px; height: 64px; border-radius: 50%; background: #06C755; color: #fff; font-size: 32px; line-height: 64px; margin: 0 auto 16px; }
     .form-success h2 { font-size: 20px; color: #06C755; margin-bottom: 12px; }
     .form-success p { font-size: 14px; color: #666; line-height: 1.6; }
+    .friend-required-card { background: #fff; border-radius: 12px; padding: 32px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); text-align: center; }
+    .friend-required-icon { width: 64px; height: 64px; border-radius: 50%; background: #e8faf0; color: #06C755; font-size: 15px; font-weight: 700; line-height: 64px; margin: 0 auto 16px; }
+    .friend-required-card h2 { font-size: 20px; color: #333; margin-bottom: 12px; }
+    .friend-required-message { font-size: 14px; color: #666; line-height: 1.7; margin: 0; }
+    .friend-required-button { display: block; margin-top: 24px; padding: 14px; border-radius: 8px; background: #06C755; color: #fff; font-size: 16px; font-weight: 700; text-decoration: none; }
   `;
   document.head.appendChild(style);
 }
@@ -620,6 +631,32 @@ function renderSuccess(): void {
   }
 }
 
+function renderFriendRequiredGate(addFriendUrl?: string): void {
+  injectStyles();
+  const button = addFriendUrl
+    ? `<a class="friend-required-button" href="${escapeHtml(addFriendUrl)}">友だち追加する</a>`
+    : '';
+  getApp().innerHTML = `
+    <div class="form-page">
+      <div class="friend-required-card">
+        <div class="friend-required-icon">LINE</div>
+        <h2>友だち追加が必要です</h2>
+        <p class="friend-required-message">回答には公式アカウントの友だち追加が必要です。友だち追加すると、LINEに応募フォームが届きます。</p>
+        ${button}
+      </div>
+    </div>
+  `;
+}
+
+async function handleFriendRequiredResponse(res: Response): Promise<boolean> {
+  if (res.status !== 422) return false;
+  const payload = await res.clone().json().catch(() => null) as unknown;
+  const friendRequired = parseFriendRequiredResponse(payload);
+  if (!friendRequired) return false;
+  renderFriendRequiredGate(friendRequired.addFriendUrl);
+  return true;
+}
+
 function renderFormError(message: string): void {
   const app = getApp();
   app.innerHTML = `
@@ -776,15 +813,21 @@ async function submitForm(): Promise<void> {
       const rawMsg = state.formDef.onSubmitMessageContent || '条件をクリアしました！';
       const successMsg = rawMsg.trimStart().startsWith('{') ? '特典をLINEでお送りしました！' : rawMsg;
       // Fall through to submit below, then show webhook success
-      const webhookBody: Record<string, unknown> = { data: { ...data }, _skipWebhook: true };
-      if (state.profile?.userId) webhookBody.lineUserId = state.profile.userId;
-      if (state.refTrackedLinkId) webhookBody.trackedLinkId = state.refTrackedLinkId;
+      const liffId = getCurrentLiffId();
+      const webhookBody: Record<string, unknown> = {
+        data: { ...data },
+        _skipWebhook: true,
+        ...(state.profile?.userId ? { lineUserId: state.profile.userId } : {}),
+        ...(state.refTrackedLinkId ? { trackedLinkId: state.refTrackedLinkId } : {}),
+        ...(liffId ? { liffId } : {}),
+      };
 
       const webhookSubmitRes = await apiCall(`/api/forms/${state.formDef.id}/submit`, {
         method: 'POST',
         body: JSON.stringify(webhookBody),
       });
       if (!webhookSubmitRes.ok) {
+        if (await handleFriendRequiredResponse(webhookSubmitRes)) return;
         const errText = await webhookSubmitRes.text().catch(() => '');
         let errMsg = '送信に失敗しました';
         try { const errData = JSON.parse(errText); errMsg = errData.error || errMsg; } catch { errMsg = errText || errMsg; }
@@ -799,9 +842,13 @@ async function submitForm(): Promise<void> {
       return;
     }
 
-    const body: Record<string, unknown> = { data };
-    if (state.profile?.userId) body.lineUserId = state.profile.userId;
-    if (state.refTrackedLinkId) body.trackedLinkId = state.refTrackedLinkId;
+    const liffId = getCurrentLiffId();
+    const body: Record<string, unknown> = {
+      data: { ...data },
+      ...(state.profile?.userId ? { lineUserId: state.profile.userId } : {}),
+      ...(state.refTrackedLinkId ? { trackedLinkId: state.refTrackedLinkId } : {}),
+      ...(liffId ? { liffId } : {}),
+    };
     // Note: state.friendId is users.id (UUID), not friends.id — don't send as friendId
 
     const res = await apiCall(`/api/forms/${state.formDef.id}/submit`, {
@@ -810,6 +857,7 @@ async function submitForm(): Promise<void> {
     });
 
     if (!res.ok) {
+      if (await handleFriendRequiredResponse(res)) return;
       const errText = await res.text().catch(() => '');
       let errMsg = '送信に失敗しました';
       try { const errData = JSON.parse(errText); errMsg = errData.error || errMsg; } catch { errMsg = errText || errMsg; }
@@ -1157,7 +1205,10 @@ function attachFormEvents(): void {
 
 // ========== Init ==========
 
-export async function initForm(formId: string | null): Promise<void> {
+export async function initForm(
+  formId: string | null,
+  initialAddFriendUrl?: string,
+): Promise<void> {
   if (!formId) {
     renderFormError('フォームIDが指定されていません');
     return;
@@ -1167,9 +1218,10 @@ export async function initForm(formId: string | null): Promise<void> {
 
   try {
     // Fetch profile and form definition in parallel
-    const [profile, res] = await Promise.all([
+    const [profile, res, friendship] = await Promise.all([
       liff.getProfile(),
       apiCall(`/api/forms/${formId}`),
+      liff.getFriendship().catch(() => null),
     ]);
 
     state.profile = profile;
@@ -1225,6 +1277,9 @@ export async function initForm(formId: string | null): Promise<void> {
     }
 
     state.formDef = json.data;
+    const requiresFriendGate = Boolean(
+      json.data.onSubmitWebhookUrl && friendship?.friendFlag === false,
+    );
 
     // Extract X Harness base URL: from URL param (priority) or webhook URL
     const urlParams = new URLSearchParams(window.location.search);
@@ -1244,7 +1299,11 @@ export async function initForm(formId: string | null): Promise<void> {
       state.refTrackedLinkId = refParam;
     }
 
-    render();
+    if (requiresFriendGate) {
+      renderFriendRequiredGate(initialAddFriendUrl);
+    } else {
+      render();
+    }
 
     // Record form open event (fire-and-forget)
     apiCall(`/api/forms/${state.formDef!.id}/opened`, {
