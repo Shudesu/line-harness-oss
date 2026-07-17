@@ -316,9 +316,14 @@ async function handleEvent(
                 }
 
                 // 到達タグ付与 (advance / complete の後)
+                // tag_change をイベントバスへ発火し、手動タグ付与と同じく automation を動かす。
                 if (firstStep.on_reach_tag_id) {
                   try {
                     await addTagToFriend(db, friend.id, firstStep.on_reach_tag_id);
+                    await fireEvent(db, 'tag_change', {
+                      friendId: friend.id,
+                      eventData: { tagId: firstStep.on_reach_tag_id, action: 'add' },
+                    });
                   } catch (err) {
                     console.error(`[scenario] tag attach failed step=${firstStep.id}:`, err);
                   }

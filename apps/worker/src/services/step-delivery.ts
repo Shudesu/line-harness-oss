@@ -15,6 +15,7 @@ import {
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
+import { fireEvent } from './event-bus.js';
 
 /**
  * Replace template variables in message content.
@@ -278,9 +279,15 @@ async function processSingleDelivery(
 
   // 到達タグ付与 (advance / complete の後 = 再送が起きてもタグ付与は影響しない順序)
   // 失敗してもログに残すだけで配信フローは止めない。
+  // tag_change をイベントバスへ発火し、手動タグ付与 (routes/friends.ts) と同じく
+  // automation (switch_rich_menu 等) が到達タグでも動くようにする。
   if (currentStep.on_reach_tag_id) {
     try {
       await addTagToFriend(db, friend.id, currentStep.on_reach_tag_id);
+      await fireEvent(db, 'tag_change', {
+        friendId: friend.id,
+        eventData: { tagId: currentStep.on_reach_tag_id, action: 'add' },
+      });
     } catch (err) {
       console.error(`[scenario] tag attach failed step=${currentStep.id}:`, err);
     }

@@ -25,6 +25,7 @@ import {
 import { buildIntroMessage } from '../services/intro-message.js';
 import { notifyAffiliateFriendAdd } from '../services/affiliate-notifier.js';
 import { safeRedirectTarget } from '../lib/safe-redirect.js';
+import { fireEvent } from '../services/event-bus.js';
 import type { Env } from '../index.js';
 
 const liffRoutes = new Hono<Env>();
@@ -372,9 +373,14 @@ async function applyRefAttribution(
           await completeFriendScenario(db, enrollmentRow.id);
         }
         // 到達タグ付与 (advance / complete の後)
+        // tag_change をイベントバスへ発火し、手動タグ付与と同じく automation を動かす。
         if (firstStep.on_reach_tag_id) {
           try {
             await addTagToFriend(db, friend.id, firstStep.on_reach_tag_id);
+            await fireEvent(db, 'tag_change', {
+              friendId: friend.id,
+              eventData: { tagId: firstStep.on_reach_tag_id, action: 'add' },
+            });
           } catch (err) {
             console.error(`[scenario] tag attach failed step=${firstStep.id}:`, err);
           }

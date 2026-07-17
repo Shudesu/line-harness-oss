@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { evaluateCondition, isSupportedConditionType, SUPPORTED_CONDITION_TYPES, processStepDeliveries, expandVariables } from './step-delivery.js';
+import { fireEvent } from './event-bus.js';
 import type { LineClient } from '@line-crm/line-sdk';
+
+vi.mock('./event-bus.js', () => ({
+  fireEvent: vi.fn().mockResolvedValue(undefined),
+}));
 
 /**
  * Regression coverage for OSS issue #120 — scenario step
@@ -380,6 +385,140 @@ describe('condition-false jump (next_step_on_false)', () => {
 
     expect(advances).toHaveLength(1);
     expect(advances[0].nextStepOrder).toBe(2); // no step 99 → sequential path
+  });
+});
+
+/**
+ * Regression coverage: reaching a scenario step with `on_reach_tag_id` set
+ * must fire a `tag_change` event on the event bus, the same way manual
+ * tagging (routes/friends.ts POST /api/friends/:id/tags) and the booking
+ * auto-tag path (services/friend-tag-attach.ts) already do. Pre-fix, the
+ * on_reach tag attach in step-delivery.ts called `addTagToFriend()` directly
+ * against the DB with no event fired, so automations (e.g. switch_rich_menu)
+ * configured on `tag_change` never triggered for scenario-reached tags — only
+ * for manually-applied tags.
+ */
+describe('on_reach_tag_id fires tag_change on the event bus', () => {
+  const fireEventMock = vi.mocked(fireEvent);
+
+  beforeEach(() => {
+    fireEventMock.mockClear();
+  });
+
+  /**
+   * Fake D1 driving processStepDeliveries through the full success path for a
+   * single-step scenario (no condition) whose only step has on_reach_tag_id set.
+   */
+  function successDeliveryMockDb(opts: { onReachTagId: string | null }): {
+    db: D1Database;
+    tagAttachCalls: Array<{ friendId: string; tagId: string }>;
+  } {
+    const tagAttachCalls: Array<{ friendId: string; tagId: string }> = [];
+    const stepRow = {
+      id: 'step-1',
+      scenario_id: 'sc1',
+      step_order: 1,
+      message_type: 'text',
+      message_content: 'hello',
+      template_id: null,
+      delay_minutes: 10,
+      offset_days: null,
+      offset_minutes: null,
+      delivery_time: null,
+      condition_type: null,
+      condition_value: null,
+      next_step_on_false: null,
+      on_reach_tag_id: opts.onReachTagId,
+    };
+
+    const db = {
+      prepare: (sql: string) => {
+        const stmt = (args: unknown[]) => ({
+          first: async () => {
+            if (sql.includes('FROM friends')) {
+              return {
+                id: 'f1',
+                line_user_id: 'U1',
+                display_name: 'Test',
+                is_following: 1,
+                user_id: null,
+                metadata: null,
+                line_account_id: null,
+              };
+            }
+            if (sql.includes('delivery_mode FROM scenarios')) {
+              return { delivery_mode: 'relative' };
+            }
+            return null;
+          },
+          all: async () => {
+            if (sql.includes('FROM friend_scenarios')) {
+              return {
+                results: [
+                  {
+                    id: 'fs1',
+                    friend_id: 'f1',
+                    scenario_id: 'sc1',
+                    current_step_order: 0,
+                    status: 'active',
+                    next_delivery_at: '2026-01-01T00:00:00+09:00',
+                    started_at: '2026-01-01T00:00:00+09:00',
+                  },
+                ],
+              };
+            }
+            if (sql.includes('FROM scenario_steps')) {
+              return { results: [stepRow] };
+            }
+            return { results: [] };
+          },
+          run: async () => {
+            if (sql.includes('INSERT OR IGNORE INTO friend_tags')) {
+              tagAttachCalls.push({ friendId: args[0] as string, tagId: args[1] as string });
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 1 } }; // claim / advance / complete / messages_log — all succeed
+          },
+        });
+        return {
+          bind: (...args: unknown[]) => stmt(args),
+          ...stmt([]),
+        };
+      },
+    } as unknown as D1Database;
+
+    return { db, tagAttachCalls };
+  }
+
+  function mockLineClient(): { client: LineClient; push: ReturnType<typeof vi.fn> } {
+    const push = vi.fn(async () => ({}));
+    return { client: { pushMessage: push } as unknown as LineClient, push };
+  }
+
+  it('attaches the tag AND fires tag_change when on_reach_tag_id is set', async () => {
+    const { db, tagAttachCalls } = successDeliveryMockDb({ onReachTagId: 'tag-Z' });
+    const { client, push } = mockLineClient();
+
+    await processStepDeliveries(db, client);
+
+    expect(push).toHaveBeenCalledTimes(1); // step was actually delivered
+    expect(tagAttachCalls).toEqual([{ friendId: 'f1', tagId: 'tag-Z' }]);
+    expect(fireEventMock).toHaveBeenCalledTimes(1);
+    expect(fireEventMock).toHaveBeenCalledWith(db, 'tag_change', {
+      friendId: 'f1',
+      eventData: { tagId: 'tag-Z', action: 'add' },
+    });
+  });
+
+  it('does not fire tag_change when the step has no on_reach_tag_id', async () => {
+    const { db, tagAttachCalls } = successDeliveryMockDb({ onReachTagId: null });
+    const { client, push } = mockLineClient();
+
+    await processStepDeliveries(db, client);
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(tagAttachCalls).toEqual([]);
+    expect(fireEventMock).not.toHaveBeenCalled();
   });
 });
 
