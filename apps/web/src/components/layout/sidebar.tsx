@@ -284,23 +284,27 @@ export default function Sidebar() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  className={`relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                     active
-                      ? 'text-white'
+                      ? isDanger
+                        ? 'bg-red-50 text-red-600 font-semibold'
+                        : 'bg-green-50 font-semibold'
                       : isDanger
-                        ? 'text-red-500 hover:bg-red-50'
-                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                        ? 'text-red-500 font-medium hover:bg-red-50'
+                        : 'text-gray-600 font-medium hover:bg-gray-100 hover:text-gray-900'
                   }`}
-                  style={active ? { backgroundColor: isDanger ? '#EF4444' : '#06C755' } : {}}
+                  style={active && !isDanger ? { color: '#059212' } : {}}
                 >
+                  {active && (
+                    <span
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full"
+                      style={{ backgroundColor: isDanger ? '#EF4444' : '#06C755' }}
+                    />
+                  )}
                   <NavIcon d={item.icon} />
                   <span className="flex-1">{item.label}</span>
                   {item.href === '/notifications' && unansweredCount > 0 && (
-                    <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-                        active ? 'bg-white text-rose-600' : 'bg-rose-500 text-white'
-                      }`}
-                    >
+                    <span className="rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums bg-rose-500 text-white">
                       {unansweredCount > 99 ? '99+' : unansweredCount}
                     </span>
                   )}

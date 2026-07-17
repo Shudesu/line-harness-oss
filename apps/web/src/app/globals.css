@@ -1,1 +1,7 @@
 @import "tailwindcss";
+
+/* 文字をなめらかに描画（モダン SaaS 標準） */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
