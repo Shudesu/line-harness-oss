@@ -225,3 +225,87 @@ describe('fireEvent — send_message action logging', () => {
     expect(String(captured[0].binds[3])).toContain('from-template');
   });
 });
+
+describe('fireEvent — tag_change action conditions', () => {
+  const tagId = 'tag-apply';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('action=add はタグ追加時だけ自動化を実行する', async () => {
+    const db = await import('@line-crm/db');
+    (db.getActiveAutomationsByEvent as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      {
+        id: 'auto-tag-add',
+        line_account_id: 'acc-1',
+        conditions: JSON.stringify({ tag_id: tagId, action: 'add' }),
+        actions: JSON.stringify([
+          {
+            type: 'add_tag',
+            params: { tagId: 'tag-thanks-sent' },
+          },
+        ]),
+      },
+    ]);
+    const dbFake = fakeDb({ capturedInserts: [] });
+
+    await fireEvent(
+      dbFake,
+      'tag_change',
+      { friendId: 'friend-1', eventData: { tagId, action: 'add' } },
+      undefined,
+      'acc-1',
+    );
+    expect(db.addTagToFriend).toHaveBeenCalledTimes(1);
+
+    vi.mocked(db.addTagToFriend).mockClear();
+    await fireEvent(
+      dbFake,
+      'tag_change',
+      { friendId: 'friend-1', eventData: { tagId, action: 'remove' } },
+      undefined,
+      'acc-1',
+    );
+    expect(db.addTagToFriend).not.toHaveBeenCalled();
+  });
+
+  it('action 未指定ならタグ追加・削除の両方で自動化を実行する', async () => {
+    const db = await import('@line-crm/db');
+    (db.getActiveAutomationsByEvent as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      {
+        id: 'auto-tag-any-action',
+        line_account_id: 'acc-1',
+        conditions: JSON.stringify({ tag_id: tagId }),
+        actions: JSON.stringify([
+          {
+            type: 'add_tag',
+            params: { tagId: 'tag-thanks-sent' },
+          },
+        ]),
+      },
+    ]);
+    const dbFake = fakeDb({ capturedInserts: [] });
+
+    await fireEvent(
+      dbFake,
+      'tag_change',
+      { friendId: 'friend-1', eventData: { tagId, action: 'add' } },
+      undefined,
+      'acc-1',
+    );
+    await fireEvent(
+      dbFake,
+      'tag_change',
+      { friendId: 'friend-1', eventData: { tagId, action: 'remove' } },
+      undefined,
+      'acc-1',
+    );
+
+    expect(db.addTagToFriend).toHaveBeenCalledTimes(2);
+  });
+});

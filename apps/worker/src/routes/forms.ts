@@ -633,8 +633,8 @@ forms.post('/api/forms/:id/submit', async (c) => {
             header: {
               type: 'box', layout: 'vertical',
               contents: [
-                { type: 'text', text: '診断結果', size: 'lg', weight: 'bold', color: '#1e293b' },
-                { type: 'text', text: `${friend.display_name || ''}さんの回答`, size: 'xs', color: '#64748b', margin: 'sm' },
+                { type: 'text', text: 'ご応募内容の確認', size: 'lg', weight: 'bold', color: '#1e293b' },
+                { type: 'text', text: '以下の内容で受け付けました', size: 'xs', color: '#64748b', margin: 'sm' },
               ],
               paddingAll: '20px', backgroundColor: '#f0fdf4',
             },
@@ -642,8 +642,6 @@ forms.post('/api/forms/:id/submit', async (c) => {
               type: 'box', layout: 'vertical',
               contents: [
                 ...answerRows,
-                { type: 'separator', margin: 'lg' },
-                { type: 'text', text: '他社サービスでは、フォームの回答内容に合わせたリアルタイム返信はできません。LINE Harnessだからこそ可能な体験です。', size: 'xs', color: '#06C755', weight: 'bold', wrap: true, margin: 'lg' },
               ],
               paddingAll: '20px',
             },

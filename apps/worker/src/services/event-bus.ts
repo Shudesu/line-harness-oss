@@ -205,6 +205,11 @@ function matchConditions(
     if (payload.eventData.tagId !== conditions.tag_id) return false;
   }
 
+  // action チェック
+  if (conditions.action !== undefined && payload.eventData) {
+    if (payload.eventData.action !== conditions.action) return false;
+  }
+
   // keyword チェック（message_received イベント用）
   if (conditions.keyword !== undefined && payload.eventData) {
     const text = payload.eventData.text as string | undefined;
