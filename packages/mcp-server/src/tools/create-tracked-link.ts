@@ -41,8 +41,29 @@ export function registerCreateTrackedLink(server: McpServer): void {
       ogTitle: z.string().nullable().optional().describe("OGP title override for the tracking link preview (overrides the destination page's og:title)"),
       ogDescription: z.string().nullable().optional().describe("OGP description override for the tracking link preview"),
       ogImageUrl: z.string().nullable().optional().describe("OGP image URL override for the tracking link preview"),
+      expiresAt: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          "Absolute deadline as ISO-8601 JST (e.g. 2026-08-01T23:59:00+09:00). Clicks after this land on expiredRedirectUrl.",
+        ),
+      expiresMinutesAfterSend: z
+        .number()
+        .int()
+        .positive()
+        .nullable()
+        .optional()
+        .describe(
+          "Per-friend deadline in minutes counted from when THAT friend received the message containing this link (UTAGE-style campaign deadline). Anonymous clicks can't be evaluated and only honor expiresAt.",
+        ),
+      expiredRedirectUrl: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("Where expired clicks are redirected. Omit to show a plain 'link expired' page."),
     },
-    async ({ name, originalUrl, tagId, scenarioId, introTemplateId, rewardTemplateId, accountId, ogTitle, ogDescription, ogImageUrl }) => {
+    async ({ name, originalUrl, tagId, scenarioId, introTemplateId, rewardTemplateId, accountId, ogTitle, ogDescription, ogImageUrl, expiresAt, expiresMinutesAfterSend, expiredRedirectUrl }) => {
       try {
         const client = getClient();
         const link = await client.trackedLinks.create({
@@ -56,6 +77,9 @@ export function registerCreateTrackedLink(server: McpServer): void {
           ogTitle,
           ogDescription,
           ogImageUrl,
+          expiresAt,
+          expiresMinutesAfterSend,
+          expiredRedirectUrl,
         });
         return {
           content: [

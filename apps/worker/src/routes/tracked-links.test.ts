@@ -16,6 +16,7 @@ const dbMocks = {
   enrollFriendInScenario: vi.fn(),
   getTrackedLinkBaseUrl: vi.fn(),
   getLinkBaseUrl: vi.fn(),
+  isTrackedLinkExpired: vi.fn(),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -84,6 +85,9 @@ function makeLink(overrides: Record<string, unknown> = {}) {
     og_title: null,
     og_description: null,
     og_image_url: null,
+    expires_at: null,
+    expires_minutes_after_send: null,
+    expired_redirect_url: null,
     created_at: '2026-01-01T00:00:00+09:00',
     updated_at: '2026-01-01T00:00:00+09:00',
     ...overrides,
@@ -220,5 +224,102 @@ describe('GET /t/:linkId — short codes', () => {
     expect(res.headers.get('location')).toContain(
       encodeURIComponent('https://worker.example.com/t/Ab3xY9k'),
     );
+  });
+});
+
+describe('GET /t/:linkId — expiration', () => {
+  const SAFARI_UA = 'Mozilla/5.0 Safari/605.1.15';
+
+  function collectingCtx(waits: Promise<unknown>[]): ExecutionContext {
+    return {
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+      passThroughOnException: () => {},
+    } as unknown as ExecutionContext;
+  }
+
+  test('expired link redirects to expired_redirect_url and skips tag/scenario actions', async () => {
+    const waits: Promise<unknown>[] = [];
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(
+      makeLink({
+        expires_at: '2026-01-01T00:00:00+09:00',
+        expired_redirect_url: 'https://example.com/closed',
+        tag_id: 'tag-1',
+        scenario_id: 'sc-1',
+      }),
+    );
+    dbMocks.isTrackedLinkExpired.mockResolvedValue(true);
+    const env = { DB: makeDb({}), WORKER_URL: 'https://worker.example.com' };
+    const res = await trackedLinks.request(
+      'https://worker.example.com/t/link-1?f=friend-1',
+      { headers: { 'user-agent': SAFARI_UA }, redirect: 'manual' },
+      env,
+      collectingCtx(waits),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/closed');
+    await Promise.allSettled(waits);
+    // Click is still recorded for stats, but no automation side-effects fire.
+    expect(dbMocks.recordLinkClick).toHaveBeenCalledWith(env.DB, 'link-1', 'friend-1');
+    expect(dbMocks.addTagToFriend).not.toHaveBeenCalled();
+    expect(dbMocks.enrollFriendInScenario).not.toHaveBeenCalled();
+  });
+
+  test('expired link without redirect URL returns the 410 expired page', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(
+      makeLink({ expires_at: '2026-01-01T00:00:00+09:00' }),
+    );
+    dbMocks.isTrackedLinkExpired.mockResolvedValue(true);
+    const env = { DB: makeDb({}), WORKER_URL: 'https://worker.example.com' };
+    const res = await request(env, SAFARI_UA);
+    expect(res.status).toBe(410);
+    expect(await res.text()).toContain('有効期限');
+  });
+
+  test('non-expired deadline link redirects normally and fires actions', async () => {
+    const waits: Promise<unknown>[] = [];
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(
+      makeLink({ expires_at: '2099-12-31T23:59:00+09:00', tag_id: 'tag-1' }),
+    );
+    dbMocks.isTrackedLinkExpired.mockResolvedValue(false);
+    const env = { DB: makeDb({}), WORKER_URL: 'https://worker.example.com' };
+    const res = await trackedLinks.request(
+      'https://worker.example.com/t/link-1?f=friend-1',
+      { headers: { 'user-agent': SAFARI_UA }, redirect: 'manual' },
+      env,
+      collectingCtx(waits),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+    await Promise.allSettled(waits);
+    expect(dbMocks.addTagToFriend).toHaveBeenCalledWith(env.DB, 'friend-1', 'tag-1');
+  });
+
+  test('links without deadlines never call the expiration check', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink());
+    const env = { DB: makeDb({}), WORKER_URL: 'https://worker.example.com' };
+    const res = await request(env, SAFARI_UA);
+    expect(res.status).toBe(302);
+    expect(dbMocks.isTrackedLinkExpired).not.toHaveBeenCalled();
+  });
+
+  test('POST rejects a non-positive expiresMinutesAfterSend', async () => {
+    const env = { DB: makeDb({}), WORKER_URL: 'https://worker.example.com' };
+    const res = await trackedLinks.request(
+      'https://worker.example.com/api/tracked-links',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'x',
+          originalUrl: 'https://example.com',
+          expiresMinutesAfterSend: -5,
+        }),
+      },
+      env,
+      executionCtx,
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toContain('expiresMinutesAfterSend');
   });
 });
