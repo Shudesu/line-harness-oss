@@ -31,6 +31,7 @@ import {
 } from '../services/booking-notifier.js';
 import { insertConfirmationReminders } from '../services/booking-confirm.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
+import { fireEvent } from '../services/event-bus.js';
 import {
   BOOKING_CALENDAR_EVENT_SUMMARY_PLACEHOLDERS,
   BOOKING_CALENDAR_EVENT_SUMMARY_SETTINGS_KEY,
@@ -1307,6 +1308,12 @@ booking.post('/api/booking/admin/bookings', async (c) => {
     now: new Date(),
   });
   c.executionCtx.waitUntil(
+    fireEvent(c.env.DB, 'calendar_booked', {
+      friendId: body.friend_id,
+      eventData: { bookingId },
+    }).catch((err) => console.error('booking event (calendar_booked) failed:', err)),
+  );
+  c.executionCtx.waitUntil(
     syncBookingEventCreate(c.env.DB, bookingId, googleOAuthEnv(c)).catch((err) =>
       console.error('booking gcal create (proxy-create) failed:', err),
     ),
@@ -1972,9 +1979,9 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
   const id = c.req.param('id');
   const b = await c.req.json<{ action: BookingAction }>();
   const row = await c.env.DB
-    .prepare(`SELECT id, status, starts_at FROM bookings WHERE id = ? AND line_account_id = ?`)
+    .prepare(`SELECT id, status, starts_at, friend_id FROM bookings WHERE id = ? AND line_account_id = ?`)
     .bind(id, accountId)
-    .first<{ id: string; status: BookingStatus; starts_at: string }>();
+    .first<{ id: string; status: BookingStatus; starts_at: string; friend_id: string | null }>();
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!canTransition(row.status, b.action)) {
     return c.json({ error: 'invalid_transition' }, 409);
@@ -2000,6 +2007,14 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
       startsAt: new Date(row.starts_at),
       now: new Date(),
     });
+    if (row.friend_id) {
+      c.executionCtx.waitUntil(
+        fireEvent(c.env.DB, 'calendar_booked', {
+          friendId: row.friend_id,
+          eventData: { bookingId: id },
+        }).catch((err) => console.error('booking event (calendar_booked) failed:', err)),
+      );
+    }
     c.executionCtx.waitUntil(
       syncBookingEventCreate(c.env.DB, id, googleOAuthEnv(c)).catch((err) =>
         console.error('booking gcal create (approved) failed:', err),

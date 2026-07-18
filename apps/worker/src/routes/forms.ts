@@ -19,6 +19,7 @@ import type {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
+import { fireEvent } from '../services/event-bus.js';
 
 const forms = new Hono<Env>();
 
@@ -495,6 +496,11 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
 
       let sideEffects: Promise<unknown>[] = [];
+
+      sideEffects = [
+        ...sideEffects,
+        fireEvent(db, 'form_submit', { friendId, eventData: { formId } }),
+      ];
 
       // Save response data to friend's metadata
       if (form.save_to_metadata) {

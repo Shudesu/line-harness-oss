@@ -26,6 +26,11 @@ const tagAttachMocks = {
 };
 vi.mock('../services/friend-tag-attach.js', () => tagAttachMocks);
 
+const eventBusMocks = {
+  fireEvent: vi.fn(),
+};
+vi.mock('../services/event-bus.js', () => eventBusMocks);
+
 const { forms } = await import('./forms.js');
 
 function setupApp() {
@@ -61,6 +66,7 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   for (const fn of Object.values(dbMocks)) fn.mockReset();
   tagAttachMocks.attachTagAndFireSideEffects.mockReset();
+  eventBusMocks.fireEvent.mockReset();
 
   dbMocks.getFormById.mockResolvedValue(activeForm);
   dbMocks.getFriendByLineUserId.mockResolvedValue({
@@ -89,6 +95,7 @@ beforeEach(() => {
     created_at: '2026-07-08T00:00:00.000+09:00',
   });
   tagAttachMocks.attachTagAndFireSideEffects.mockResolvedValue({ added: true });
+  eventBusMocks.fireEvent.mockResolvedValue(undefined);
 });
 
 describe('POST /api/forms/:id/submit', () => {
@@ -182,6 +189,10 @@ describe('POST /api/forms/:id/submit', () => {
       formId: 'form-1',
       friendId: 'friend-1',
       data: JSON.stringify({ email: 'test@example.com' }),
+    });
+    expect(eventBusMocks.fireEvent).toHaveBeenCalledWith(db, 'form_submit', {
+      friendId: 'friend-1',
+      eventData: { formId: 'form-1' },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

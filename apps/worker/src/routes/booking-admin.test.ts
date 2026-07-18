@@ -16,6 +16,9 @@ vi.mock('../services/booking-notifier.js', async (importOriginal) => {
   return { ...actual, sendBookingNotification: notifierMocks.sendBookingNotification };
 });
 
+const eventBusMocks = vi.hoisted(() => ({ fireEvent: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../services/event-bus.js', () => eventBusMocks);
+
 const { default: booking } = await import('./booking.js');
 
 function makeApp(db: unknown, envOverrides: Record<string, unknown> = {}) {
@@ -462,6 +465,7 @@ describe('POST /api/booking/admin/bookings', () => {
   });
 
   test('201 creates confirmed booking and inserts reminders', async () => {
+    eventBusMocks.fireEvent.mockClear();
     availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
     const db = happyDb();
     const { app, env } = makeApp(db);
@@ -483,6 +487,10 @@ describe('POST /api/booking/admin/bookings', () => {
     // booking_reminders INSERT が走っている(未来の予約なので day_before + hours_before)
     const reminders = db.calls.filter((c) => c.sql.includes('INSERT INTO booking_reminders'));
     expect(reminders.length).toBeGreaterThan(0);
+    expect(eventBusMocks.fireEvent).toHaveBeenCalledWith(db, 'calendar_booked', {
+      friendId: 'f1',
+      eventData: { bookingId: body.booking_id },
+    });
   });
 
   test('Google FreeBusyが予約区間と重なると409 slot_conflictを返す', async () => {
@@ -689,6 +697,42 @@ describe('POST /api/booking/admin/bookings', () => {
     const [, endUtc, startUtc] = windowQuery!.params as [string, string, string];
     expect(startUtc).toBe('2026-09-09T15:00:00.000Z'); // JST 2026-09-10 00:00 = prev-day 15:00Z
     expect(endUtc).toBe('2026-09-10T15:00:00Z'); // JST 2026-09-11 00:00 = 2026-09-10 15:00Z
+  });
+});
+
+describe('PATCH /api/booking/admin/requests/:id', () => {
+  test('requested booking approval fires calendar_booked', async () => {
+    eventBusMocks.fireEvent.mockClear();
+    const db = scriptedDb([
+      ['FROM bookings WHERE id = ? AND line_account_id = ?', {
+        first: {
+          id: 'b1',
+          status: 'requested',
+          starts_at: '2099-07-10T02:00:00.000Z',
+          friend_id: 'f1',
+        },
+      }],
+      ['UPDATE bookings SET status = ?', { run: { meta: { changes: 1 } } }],
+    ]);
+    const { app, env } = makeApp(db);
+
+    const res = await app.request(
+      '/api/booking/admin/requests/b1?account_id=acc1',
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ action: 'approve' }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      env,
+      execCtx,
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ status: 'confirmed' });
+    expect(eventBusMocks.fireEvent).toHaveBeenCalledWith(db, 'calendar_booked', {
+      friendId: 'f1',
+      eventData: { bookingId: 'b1' },
+    });
   });
 });
 
