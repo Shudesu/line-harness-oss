@@ -73,4 +73,18 @@ describe('FriendsResource', () => {
     await resource.removeTag('friend-1', 'tag-1')
     expect(http.delete).toHaveBeenCalledWith('/api/friends/friend-1/tags/tag-1')
   })
+
+  it('sendMessage() forwards sender in options', async () => {
+    const http = mockHttp({ post: vi.fn().mockResolvedValue({ success: true, data: { messageId: 'msg-1' } }) })
+    const resource = new FriendsResource(http)
+    const sender = { name: '採用担当', iconUrl: 'https://example.com/operator.png' }
+
+    await resource.sendMessage('friend-1', 'hello', 'text', undefined, { sender })
+
+    expect(http.post).toHaveBeenCalledWith('/api/friends/friend-1/messages', {
+      messageType: 'text',
+      content: 'hello',
+      sender,
+    })
+  })
 })

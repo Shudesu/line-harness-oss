@@ -1,0 +1,37 @@
+# ワークビジョン協同組合 本番harness用の明示デプロイ設定（EntryHub対応版へのインプレース昇格）
+# 既存Worker workvision-line-harness を同名上書き（URL・Webhook・シークレット・D1データ保持）
+name = "workvision-line-harness"
+main = "dist-release/index.js"
+no_bundle = true
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+account_id = "5d5615bbe729d9eddeb80a65781dec7b"
+
+[assets]
+directory = "dist/client"
+binding = "ASSETS"
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "workvision-line-harness"
+database_id = "1187b6f3-99c1-4c1e-860f-edcd35e58ba2"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "workvision-line-harness-images"
+
+[triggers]
+crons = ["*/5 * * * *", "0 */6 * * *"]
+
+[vars]
+WORKER_NAME = "workvision-line-harness"
+ADMIN_PAGES_PROJECT = ""
+LIFF_PAGES_PROJECT = ""
+D1_DATABASE_ID = "1187b6f3-99c1-4c1e-860f-edcd35e58ba2"
+MANIFEST_URL = "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json"
+WORKER_PUBLIC_URL = "https://workvision-line-harness.divine-cherry-e9b1.workers.dev"
+ADMIN_PUBLIC_URL = "https://workvision-line-harness.divine-cherry-e9b1.workers.dev"
+LIFF_PUBLIC_URL = "https://workvision-line-harness.divine-cherry-e9b1.workers.dev"
+CF_ACCOUNT_ID = "5d5615bbe729d9eddeb80a65781dec7b"

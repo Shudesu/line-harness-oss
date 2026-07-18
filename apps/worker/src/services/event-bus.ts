@@ -23,6 +23,7 @@ import {
 import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
+import { validateMessageSender, withMessageSender } from './message-sender.js';
 
 export interface EventPayload {
   friendId?: string;
@@ -279,26 +280,31 @@ async function executeAction(
         }
       }
 
-      let msg: Message;
+      let baseMessage: Message;
       let logContent: string;
       if (resolvedType === 'flex') {
         const contents = JSON.parse(resolvedContent);
-        msg = { type: 'flex', altText: action.params.altText || extractFlexAltText(contents), contents };
+        baseMessage = { type: 'flex', altText: action.params.altText || extractFlexAltText(contents), contents };
         logContent = JSON.stringify(contents);
       } else if (resolvedType === 'image') {
         // template に "originalContentUrl" / "previewImageUrl" を持つ JSON が入る前提。
         // parse 失敗時は text fallback ではなく throw → automation 側で partial 扱いにする。
         const parsed = JSON.parse(resolvedContent) as { originalContentUrl: string; previewImageUrl: string };
-        msg = {
+        baseMessage = {
           type: 'image',
           originalContentUrl: parsed.originalContentUrl,
           previewImageUrl: parsed.previewImageUrl,
         };
         logContent = JSON.stringify(parsed);
       } else {
-        msg = { type: 'text', text: resolvedContent };
+        baseMessage = { type: 'text', text: resolvedContent };
         logContent = resolvedContent;
       }
+      const senderResult = validateMessageSender(action.params.sender);
+      const msg = withMessageSender(
+        baseMessage,
+        senderResult.valid ? senderResult.sender : undefined,
+      );
 
       let deliveryType: 'reply' | 'push';
       if (payload.replyToken) {

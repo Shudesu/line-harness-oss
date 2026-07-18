@@ -13,6 +13,7 @@ import {
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage } from '../services/step-delivery.js';
+import { validateMessageSender, withMessageSender } from '../services/message-sender.js';
 import type { Env } from '../index.js';
 
 const friends = new Hono<Env>();
@@ -544,10 +545,15 @@ friends.post('/api/friends/:id/messages', async (c) => {
       content: string;
       altText?: string;
       trackLinks?: boolean;
+      sender?: unknown;
     }>();
 
     if (!body.content) {
       return c.json({ success: false, error: 'content is required' }, 400);
+    }
+    const senderResult = validateMessageSender(body.sender);
+    if (!senderResult.valid) {
+      return c.json({ success: false, error: 'invalid sender' }, 400);
     }
 
     const db = c.env.DB;
@@ -581,7 +587,10 @@ friends.post('/api/friends/:id/messages', async (c) => {
       );
     }
 
-    const message = buildMessage(tracked.messageType, tracked.content, body.altText);
+    const message = withMessageSender(
+      buildMessage(tracked.messageType, tracked.content, body.altText),
+      senderResult.sender,
+    );
     await lineClient.pushMessage(friend.line_user_id, [message]);
 
     // Log outgoing message

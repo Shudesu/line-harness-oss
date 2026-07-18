@@ -1,6 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent } from './event-bus.js';
 
+const lineClientMocks = vi.hoisted(() => ({
+  replyMessage: vi.fn().mockResolvedValue(undefined),
+  pushMessage: vi.fn().mockResolvedValue(undefined),
+}));
+
 interface CapturedInsert {
   sql: string;
   binds: unknown[];
@@ -58,8 +63,8 @@ vi.mock('@line-crm/db', async () => {
 vi.mock('@line-crm/line-sdk', () => {
   return {
     LineClient: vi.fn().mockImplementation(() => ({
-      replyMessage: vi.fn().mockResolvedValue(undefined),
-      pushMessage: vi.fn().mockResolvedValue(undefined),
+      replyMessage: lineClientMocks.replyMessage,
+      pushMessage: lineClientMocks.pushMessage,
     })),
   };
 });
@@ -177,6 +182,69 @@ describe('fireEvent — send_message action logging', () => {
     expect(captured[0].binds[2]).toBe('text');
     expect(captured[0].binds[3]).toBe('hello');
     expect(captured[0].binds[6]).toBe(null);
+  });
+
+  it('attaches action.params.sender to the automation message', async () => {
+    const db = await import('@line-crm/db');
+    const sender = { name: '自動案内', iconUrl: 'https://example.com/automation.png' };
+    (db.getActiveAutomationsByEvent as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      {
+        id: 'auto-sender',
+        line_account_id: null,
+        conditions: JSON.stringify({}),
+        actions: JSON.stringify([
+          {
+            type: 'send_message',
+            params: { messageType: 'text', content: 'hello', sender },
+          },
+        ]),
+      },
+    ]);
+
+    await fireEvent(
+      fakeDb({ friend: { line_user_id: 'U_test' }, capturedInserts: captured }),
+      'manual_test',
+      { friendId: 'friend-1', eventData: {} },
+      'channel-token',
+      null,
+    );
+
+    expect(lineClientMocks.pushMessage).toHaveBeenCalledWith('U_test', [
+      { type: 'text', text: 'hello', sender },
+    ]);
+  });
+
+  it('ignores an invalid action.params.sender and sends without it', async () => {
+    const db = await import('@line-crm/db');
+    (db.getActiveAutomationsByEvent as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      {
+        id: 'auto-invalid-sender',
+        line_account_id: null,
+        conditions: JSON.stringify({}),
+        actions: JSON.stringify([
+          {
+            type: 'send_message',
+            params: {
+              messageType: 'text',
+              content: 'hello',
+              sender: 'invalid',
+            },
+          },
+        ]),
+      },
+    ]);
+
+    await expect(fireEvent(
+      fakeDb({ friend: { line_user_id: 'U_test' }, capturedInserts: captured }),
+      'manual_test',
+      { friendId: 'friend-1', eventData: {} },
+      'channel-token',
+      null,
+    )).resolves.toBeUndefined();
+
+    expect(lineClientMocks.pushMessage).toHaveBeenCalledWith('U_test', [
+      { type: 'text', text: 'hello' },
+    ]);
   });
 
   it('resolves params.template_id via templates table when set', async () => {

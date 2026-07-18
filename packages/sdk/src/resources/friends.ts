@@ -1,5 +1,5 @@
 import type { HttpClient } from '../http.js'
-import type { ApiResponse, PaginatedData, Friend, FriendListParams, MessageType } from '../types.js'
+import type { ApiResponse, PaginatedData, Friend, FriendListParams, MessageType, SendMessageOptions } from '../types.js'
 
 export class FriendsResource {
   constructor(
@@ -49,13 +49,14 @@ export class FriendsResource {
     content: string,
     messageType: MessageType = 'text',
     altText?: string,
-    options?: { trackLinks?: boolean },
+    options?: SendMessageOptions,
   ): Promise<{ messageId: string }> {
     const res = await this.http.post<ApiResponse<{ messageId: string }>>(`/api/friends/${friendId}/messages`, {
       messageType,
       content,
       ...(altText ? { altText } : {}),
       ...(options?.trackLinks !== undefined ? { trackLinks: options.trackLinks } : {}),
+      ...(options?.sender ? { sender: options.sender } : {}),
     })
     return res.data
   }

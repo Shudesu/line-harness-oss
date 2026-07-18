@@ -23,6 +23,8 @@ export type {
   PaginatedData,
   ScenarioTriggerType,
   MessageType,
+  MessageSender,
+  SendMessageOptions,
   BroadcastStatus,
   Friend,
   FriendListParams,

@@ -34,6 +34,7 @@ export type {
   ImageMapMessageType,
   LocationEventMessage,
   Message,
+  MessageSender,
   MessageEvent,
   MulticastRequest,
   PostbackEvent,

@@ -27,6 +27,16 @@ export type ScenarioTriggerType = 'friend_add' | 'tag_added' | 'manual'
 export type MessageType = 'text' | 'image' | 'flex'
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent'
 
+export interface MessageSender {
+  name?: string
+  iconUrl?: string
+}
+
+export interface SendMessageOptions {
+  trackLinks?: boolean
+  sender?: MessageSender
+}
+
 // ─── Friend ─────────────────────────────────────────────
 export interface Friend {
   id: string

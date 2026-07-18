@@ -153,36 +153,45 @@ export interface UserProfile {
 
 export type FlexContainer = object;
 
-export interface TextMessage {
+export interface MessageSender {
+  name?: string;
+  iconUrl?: string;
+}
+
+interface MessageSenderOverride {
+  sender?: MessageSender;
+}
+
+export interface TextMessage extends MessageSenderOverride {
   type: 'text';
   text: string;
 }
 
-export interface ImageMessage {
+export interface ImageMessage extends MessageSenderOverride {
   type: 'image';
   originalContentUrl: string;
   previewImageUrl: string;
 }
 
-export interface FlexMessage {
+export interface FlexMessage extends MessageSenderOverride {
   type: 'flex';
   altText: string;
   contents: FlexContainer;
 }
 
-export interface VideoMessage {
+export interface VideoMessage extends MessageSenderOverride {
   type: 'video';
   originalContentUrl: string;
   previewImageUrl: string;
 }
 
-export interface TemplateMessage {
+export interface TemplateMessage extends MessageSenderOverride {
   type: 'template';
   altText: string;
   template: Record<string, unknown>;
 }
 
-export interface ImageMapMessageType {
+export interface ImageMapMessageType extends MessageSenderOverride {
   type: 'imagemap';
   baseUrl: string;
   altText: string;
