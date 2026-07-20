@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { resolveState } from '../src/commands/update.js';
+import {
+  findReleaseForAdminRepair,
+  resolveState,
+} from '../src/commands/update.js';
+import type { ReleaseEntry } from '@line-harness/update-engine';
 
 const WORKER_URL = 'https://line-harness.acc.workers.dev';
 
@@ -161,5 +165,34 @@ describe('normalizeInstallBindings', () => {
   it('does not mutate the input array', () => {
     normalizeInstallBindings(bindings, OPTS);
     expect(bindings.find((b) => b.name === 'LIFF_PAGES_PROJECT')?.text).toBe('line-harness-liff');
+  });
+});
+
+function release(version: string): ReleaseEntry {
+  return {
+    version,
+    released_at: '2026-07-08T00:00:00Z',
+    worker_hash: `worker-${version}`,
+    admin_hash: `admin-${version}`,
+    liff_hash: `liff-${version}`,
+    worker_bundle_hash: `bundle-${version}`,
+    bundle_url: `https://example.test/${version}.tar.gz`,
+    bundle_size_bytes: 123,
+    required_secrets: [],
+    new_required_secrets: [],
+    migrations: [],
+    changelog_url: 'https://example.test/changelog',
+    min_from_version: '0.0.0',
+  };
+}
+
+describe('findReleaseForAdminRepair', () => {
+  it('selects the artifact matching the live Worker, not the latest release', () => {
+    const releases = [release('0.17.0'), release('0.18.0')];
+    expect(findReleaseForAdminRepair(releases, '0.17.0')?.version).toBe('0.17.0');
+  });
+
+  it('returns undefined instead of deploying a mismatched Admin artifact', () => {
+    expect(findReleaseForAdminRepair([release('0.18.0')], '0.17.0')).toBeUndefined();
   });
 });

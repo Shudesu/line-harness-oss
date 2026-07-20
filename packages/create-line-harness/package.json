@@ -1,6 +1,6 @@
 {
   "name": "create-line-harness",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Set up LINE Harness — AI-operated LINE CRM — with one command",
   "type": "module",
   "bin": {
@@ -32,7 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^0.9.1",
-    "@line-harness/update-engine": "workspace:^0.0.6",
+    "@line-harness/update-engine": "workspace:^0.0.7",
     "execa": "^9.5.2",
     "picocolors": "^1.1.1"
   },

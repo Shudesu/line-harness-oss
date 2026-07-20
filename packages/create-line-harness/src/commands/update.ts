@@ -451,7 +451,19 @@ async function promptForMissingFields(
   return updated;
 }
 
-export async function runUpdate(repoDir: string): Promise<void> {
+export interface RunUpdateOptions {
+  /**
+   * Re-deploy only the Admin Pages artifact that matches the currently
+   * deployed Worker. Used to recover from a partial update without touching
+   * D1, the Worker script, bindings, assets, or LIFF.
+   */
+  repairAdmin?: boolean;
+}
+
+export async function runUpdate(
+  repoDir: string,
+  options: RunUpdateOptions = {},
+): Promise<void> {
   p.intro(pc.bgCyan(pc.black(" LINE Harness アップデート ")));
 
   const configPath = join(repoDir, ".line-harness-config.json");
@@ -584,6 +596,38 @@ export async function runUpdate(repoDir: string): Promise<void> {
     process.exit(0);
   }
 
+  // Recovery mode intentionally runs before the "already latest" gate. A
+  // partial update has already stamped the Worker with the target version,
+  // so the ordinary upgrade lookup returns no work even though Admin Pages
+  // is still on the previous release.
+  if (options.repairAdmin) {
+    const release = findReleaseForAdminRepair(manifest.releases, current.version);
+    if (!release) {
+      p.cancel(
+        `現在の Worker v${current.version} に一致する公式リリースが manifest にありません。Admin のみの復旧は安全に実行できません。`,
+      );
+      process.exit(1);
+    }
+
+    p.log.info(
+      `復旧モード: Worker / D1 は変更せず、Admin UI v${release.version} のみ再デプロイします。`,
+    );
+    const creds: CfApiCreds = {
+      accountId: cfg.cfAccountId,
+      apiToken: cfg.cfApiToken,
+    };
+    const bundle = await downloadAndVerifyBundle(release, s);
+    await deployAdminFromBundle(creds, cfg, bundle, s);
+    await configureAdminAuth({
+      workerName: cfg.workerName,
+      workerUrl: cfg.workerPublicUrl,
+      adminUrl: cfg.adminPublicUrl,
+    });
+
+    p.outro(pc.green(`Admin UI v${release.version} の復旧が完了しました`));
+    return;
+  }
+
   // 4) Find upgrade target
   const upgrade = findLatestUpgrade(manifest, current.version);
   if (!upgrade) {
@@ -680,6 +724,14 @@ export async function runUpdate(repoDir: string): Promise<void> {
   persistBundleMode(repoDir, upgrade.version);
 
   p.outro(pc.green(`🎉 v${upgrade.version} にアップデート完了`));
+}
+
+/** Pick the artifact matching the live Worker; never deploy a newer Admin. */
+export function findReleaseForAdminRepair(
+  releases: ReleaseEntry[],
+  currentVersion: string,
+): ReleaseEntry | undefined {
+  return releases.find((release) => release.version === currentVersion);
 }
 
 // ─── Shared deploy steps (normal update + adoption) ──────────────────────────

@@ -1,6 +1,6 @@
 {
   "name": "@line-harness/update-engine",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Self-update engine for LINE Harness — shared between Worker (cloud-side self-update) and CLI (npx create-line-harness update)",
   "type": "module",
   "exports": {

@@ -191,6 +191,83 @@ describe('deployPagesProject', () => {
     expect(entry.metadata.contentType).toBe('application/octet-stream');
   });
 
+  it('uploads missing assets in batches of at most 50', async () => {
+    const files = new Map<string, Buffer>();
+    const hashes: string[] = [];
+    for (let i = 0; i < 51; i++) {
+      const content = Buffer.from(`file-${i}`);
+      files.set(`asset-${i}.txt`, content);
+      hashes.push(sha256Hex(content));
+    }
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ result: { jwt: 'JWT' } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ result: hashes }),
+      } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200 } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200 } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ result: { id: 'D', url: 'https://x.pages.dev' } }),
+      } as Response);
+
+    await deployPagesProject({ creds, projectName: 'p', files });
+
+    const [, firstUpload] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const [, secondUpload] = fetchMock.mock.calls[3] as [string, RequestInit];
+    expect(JSON.parse(firstUpload.body as string).payload).toHaveLength(50);
+    expect(JSON.parse(secondUpload.body as string).payload).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('retries a transient Pages asset upload 5xx', async () => {
+    const content = Buffer.from('retry me');
+    const hash = sha256Hex(content);
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ result: { jwt: 'JWT' } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ result: [hash] }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => 'temporary failure',
+      } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200 } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ result: { id: 'D', url: 'https://x.pages.dev' } }),
+      } as Response);
+
+    await deployPagesProject({
+      creds,
+      projectName: 'p',
+      files: new Map([['index.html', content]]),
+    });
+
+    const uploadCalls = fetchMock.mock.calls.filter(
+      ([url]) => url === 'https://api.cloudflare.com/client/v4/pages/assets/upload',
+    );
+    expect(uploadCalls).toHaveLength(2);
+  });
+
   it('sends manifest with /{path} → hash mapping in final FormData', async () => {
     const indexHtml = Buffer.from('<html/>');
     const appJs = Buffer.from('x');

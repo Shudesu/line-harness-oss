@@ -11,10 +11,12 @@ function parseArgs(): {
   command: string;
   repoDir: string | null;
   fromSource: boolean;
+  repairAdmin: boolean;
 } {
   let command = "setup";
   let repoDir: string | null = null;
   let fromSource = false;
+  let repairAdmin = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--repo-dir" && args[i + 1]) {
@@ -25,12 +27,17 @@ function parseArgs(): {
       // the official release bundle. The install reports 0.0.0-dev and is
       // excluded from automatic updates.
       fromSource = true;
+    } else if (args[i] === "--repair-admin") {
+      // Recovery path for a partial update where D1 + Worker succeeded but
+      // the Admin Pages upload failed. This deliberately does not force a
+      // full update or replay migrations.
+      repairAdmin = true;
     } else if (!args[i].startsWith("-")) {
       command = args[i];
     }
   }
 
-  return { command, repoDir, fromSource };
+  return { command, repoDir, fromSource, repairAdmin };
 }
 
 /**
@@ -60,7 +67,20 @@ function getConfigDir(explicitRepoDir: string | null): string {
 }
 
 async function main(): Promise<void> {
-  const { command, repoDir: explicitRepoDir, fromSource } = parseArgs();
+  const {
+    command,
+    repoDir: explicitRepoDir,
+    fromSource,
+    repairAdmin,
+  } = parseArgs();
+
+  if (repairAdmin && command !== "update") {
+    console.error("--repair-admin は update コマンドでのみ使用できます。");
+    console.error(
+      "Usage: create-line-harness update --repair-admin [--repo-dir <path>]",
+    );
+    process.exit(1);
+  }
 
   let repoDir: string;
   if (command === "update") {
@@ -76,11 +96,11 @@ async function main(): Promise<void> {
   if (command === "setup") {
     await runSetup(repoDir, { fromSource });
   } else if (command === "update") {
-    await runUpdate(repoDir);
+    await runUpdate(repoDir, { repairAdmin });
   } else {
     console.error(`Unknown command: ${command}`);
     console.error(
-      "Usage: create-line-harness [setup|update] [--repo-dir <path>] [--from-source]",
+      "Usage: create-line-harness [setup|update] [--repo-dir <path>] [--from-source] [--repair-admin]",
     );
     process.exit(1);
   }

@@ -112,6 +112,18 @@ interface UploadEntry {
   base64: true;
 }
 
+const ASSET_UPLOAD_BATCH_SIZE = 50;
+const ASSET_UPLOAD_MAX_ATTEMPTS = 3;
+const ASSET_UPLOAD_RETRY_BASE_MS = 250;
+
+function isRetryableUploadStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Push a batch of missing assets to CF. The payload is `key → base64
  * content` plus a small metadata blob (just the Content-Type for now).
@@ -122,19 +134,31 @@ async function uploadAssets(
   jwt: string,
   entries: UploadEntry[],
 ): Promise<void> {
-  const res = await fetch(
-    'https://api.cloudflare.com/client/v4/pages/assets/upload',
-    {
-      method: 'POST',
-      headers: {
-        ...authHeader(jwt),
-        'Content-Type': 'application/json',
+  for (let attempt = 1; attempt <= ASSET_UPLOAD_MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(
+      'https://api.cloudflare.com/client/v4/pages/assets/upload',
+      {
+        method: 'POST',
+        headers: {
+          ...authHeader(jwt),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ payload: entries }),
       },
-      body: JSON.stringify({ payload: entries }),
-    },
-  );
-  if (!res.ok) {
-    await throwHttpError('POST pages assets upload failed', res);
+    );
+    if (res.ok) return;
+    if (
+      !isRetryableUploadStatus(res.status) ||
+      attempt === ASSET_UPLOAD_MAX_ATTEMPTS
+    ) {
+      await throwHttpError('POST pages assets upload failed', res);
+    }
+    try {
+      await res.text();
+    } catch {
+      /* ignore */
+    }
+    await delay(ASSET_UPLOAD_RETRY_BASE_MS * 2 ** (attempt - 1));
   }
 }
 
@@ -205,7 +229,9 @@ export async function deployPagesProject(opts: {
         base64: true,
       });
     }
-    await uploadAssets(jwt, entries);
+    for (let i = 0; i < entries.length; i += ASSET_UPLOAD_BATCH_SIZE) {
+      await uploadAssets(jwt, entries.slice(i, i + ASSET_UPLOAD_BATCH_SIZE));
+    }
   }
 
   // Step 5: create the deployment with a manifest of "/{path}" → hash
