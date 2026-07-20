@@ -1,6 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient } from "../client.js";
+import {
+  buildAccountSyncWarnings,
+  evaluateSyncHealth,
+  type SyncBaseline,
+} from "./sync-health.js";
 
 interface AccountInfo {
   id: string;
@@ -18,7 +23,10 @@ interface AccountStat {
   lineFollowersStatus: string | null;
   dbCountStatus: "ready" | "error";
   lineCountStatus: "ready" | "unready" | "error";
+  syncBaseline: SyncBaseline | null;
+  syncBaselineValue: number | null;
   syncDifference: number | null;
+  syncTolerance: number | null;
   syncRiskLevel: "ok" | "warning" | "unknown";
   riskLevel?: string;
   targetedReaches?: number | null;
@@ -134,24 +142,24 @@ export function registerAccountSummary(server: McpServer): void {
           const friendsFromLine = lineData.success && lineData.data?.status === "ready"
             ? lineData.data.followers
             : null;
-          const warnings: string[] = [];
-          if (!countData.success) {
-            warnings.push(`DB friend count unavailable: ${countData.error ?? "unknown error"}`);
-          }
-          if (!lineData.success) {
-            warnings.push(`LINE follower insight unavailable: ${lineData.error ?? "unknown error"}`);
-          } else if (lineData.data?.status !== "ready") {
-            warnings.push(`LINE follower insight is not ready for ${lineFollowersDate}`);
-          }
-          const syncDifference =
-            friendsInDb !== null && friendsFromLine !== null
-              ? friendsInDb - friendsFromLine
-              : null;
-          if (syncDifference !== null && syncDifference !== 0) {
-            warnings.push(
-              `DB friends (${friendsInDb}) differ from LINE followers (${friendsFromLine}) by ${syncDifference}. Check webhook sync and channel tokens.`,
-            );
-          }
+          const targetedReaches = lineData.success ? lineData.data?.targetedReaches ?? null : null;
+          const blocks = lineData.success ? lineData.data?.blocks ?? null : null;
+          // followers はブロック済みを含む累計なので比較基準に使わない（sync-health.ts 参照）。
+          const sync = evaluateSyncHealth({
+            friendsInDb,
+            followers: friendsFromLine,
+            targetedReaches,
+            blocks,
+          });
+          const warnings = buildAccountSyncWarnings({
+            dbCountAvailable: countData.success,
+            dbCountError: countData.error,
+            insightAvailable: lineData.success,
+            insightError: lineData.error,
+            insightStatus: lineData.success ? lineData.data?.status ?? null : null,
+            insightDate: lineFollowersDate,
+            sync,
+          });
           accountStats.push({
             id: acc.id,
             name: acc.name,
@@ -166,14 +174,13 @@ export function registerAccountSummary(server: McpServer): void {
               : lineData.data?.status === "ready"
                 ? "ready"
                 : "unready",
-            syncDifference,
-            syncRiskLevel: syncDifference === null
-              ? "unknown"
-              : syncDifference === 0
-                ? "ok"
-                : "warning",
-            targetedReaches: lineData.success ? lineData.data?.targetedReaches ?? null : null,
-            blocks: lineData.success ? lineData.data?.blocks ?? null : null,
+            syncBaseline: sync.syncBaseline,
+            syncBaselineValue: sync.syncBaselineValue,
+            syncDifference: sync.syncDifference,
+            syncTolerance: sync.syncTolerance,
+            syncRiskLevel: sync.syncRiskLevel,
+            targetedReaches,
+            blocks,
             warnings,
           });
         }
@@ -215,7 +222,7 @@ export function registerAccountSummary(server: McpServer): void {
         const summary = {
           friends: {
             totalDbRecords: totalFriends,
-            note: "totalDbRecords is the DB count. perAccount[].friendsFromLine is the LINE official follower insight for the previous JST date. If these differ, webhook sync or channel token health may be broken.",
+            note: "totalDbRecords is the DB count. perAccount[].friendsFromLine is LINE's cumulative follower count for the previous JST date and INCLUDES blocked users, so it is expected to exceed friendsInDb — do not compare them directly. Sync health is judged against the reachable baseline (perAccount[].syncBaseline / syncBaselineValue); check syncRiskLevel, not the raw follower gap.",
             warningCount: accountStats.reduce((sum, acc) => sum + acc.warnings.length, 0),
             perAccount: accountStats,
           },
