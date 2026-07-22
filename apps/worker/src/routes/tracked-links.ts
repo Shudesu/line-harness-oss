@@ -9,6 +9,7 @@ import {
   recordLinkClick,
   getLinkClicks,
   getFriendByLineUserId,
+  isTrackedLinkExpired,
 } from '@line-crm/db';
 import { enrollFriendInScenario } from '@line-crm/db';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
@@ -40,9 +41,59 @@ function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
     ogTitle: row.og_title,
     ogDescription: row.og_description,
     ogImageUrl: row.og_image_url,
+    expiresAt: row.expires_at,
+    expiresMinutesAfterSend: row.expires_minutes_after_send,
+    expiredRedirectUrl: row.expired_redirect_url,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Validate expiration fields shared by POST/PATCH.
+ * Returns an error message, or null when valid.
+ */
+function validateExpirationFields(body: {
+  expiresAt?: string | null;
+  expiresMinutesAfterSend?: number | null;
+  expiredRedirectUrl?: string | null;
+}): string | null {
+  if (body.expiresAt != null) {
+    if (typeof body.expiresAt !== 'string' || Number.isNaN(new Date(body.expiresAt).getTime())) {
+      return 'expiresAt must be an ISO-8601 datetime string (e.g. 2026-08-01T23:59:00+09:00)';
+    }
+  }
+  if (body.expiresMinutesAfterSend != null) {
+    if (
+      typeof body.expiresMinutesAfterSend !== 'number' ||
+      !Number.isInteger(body.expiresMinutesAfterSend) ||
+      body.expiresMinutesAfterSend <= 0
+    ) {
+      return 'expiresMinutesAfterSend must be a positive integer (minutes)';
+    }
+  }
+  if (body.expiredRedirectUrl != null) {
+    if (
+      typeof body.expiredRedirectUrl !== 'string' ||
+      !/^https?:\/\//.test(body.expiredRedirectUrl)
+    ) {
+      return 'expiredRedirectUrl must be an http(s) URL';
+    }
+  }
+  return null;
+}
+
+/** Plain fallback page for expired links without an expired_redirect_url. */
+function buildExpiredHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>リンクの有効期限が切れています</title>
+<style>body{display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui;color:#334155;background:#f8fafc;text-align:center}p{font-size:15px;line-height:2}</style>
+</head><body>
+<p>このリンクの有効期限は終了しました。<br>お手数ですが、配信元のメッセージをご確認ください。</p>
+</body></html>`;
 }
 
 function getBaseUrl(c: { req: { url: string } }): string {
@@ -133,10 +184,18 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       ogTitle?: string | null;
       ogDescription?: string | null;
       ogImageUrl?: string | null;
+      expiresAt?: string | null;
+      expiresMinutesAfterSend?: number | null;
+      expiredRedirectUrl?: string | null;
     }>();
 
     if (!body.name || !body.originalUrl) {
       return c.json({ success: false, error: 'name and originalUrl are required' }, 400);
+    }
+
+    const expirationError = validateExpirationFields(body);
+    if (expirationError) {
+      return c.json({ success: false, error: expirationError }, 400);
     }
 
     const link = await createTrackedLink(c.env.DB, {
@@ -150,6 +209,9 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       ogTitle: body.ogTitle ?? null,
       ogDescription: body.ogDescription ?? null,
       ogImageUrl: body.ogImageUrl ?? null,
+      expiresAt: body.expiresAt ?? null,
+      expiresMinutesAfterSend: body.expiresMinutesAfterSend ?? null,
+      expiredRedirectUrl: body.expiredRedirectUrl ?? null,
     });
 
     const base = await resolveApiLinkBase(c);
@@ -175,7 +237,15 @@ trackedLinks.patch('/api/tracked-links/:id', async (c) => {
       ogTitle?: string | null;
       ogDescription?: string | null;
       ogImageUrl?: string | null;
+      expiresAt?: string | null;
+      expiresMinutesAfterSend?: number | null;
+      expiredRedirectUrl?: string | null;
     }>();
+
+    const expirationError = validateExpirationFields(body);
+    if (expirationError) {
+      return c.json({ success: false, error: expirationError }, 400);
+    }
 
     const link = await updateTrackedLink(c.env.DB, id, body);
     if (!link) {
@@ -330,6 +400,26 @@ trackedLinks.get('/t/:linkId', async (c) => {
     const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
     if (friend) {
       friendId = friend.id;
+    }
+  }
+
+  // Expiration gate — evaluated after friend resolution so the per-friend
+  // relative deadline (expires_minutes_after_send) can be computed. Expired
+  // clicks are still recorded (for funnel stats) but never fire tag/scenario
+  // side-effects, and land on the expired redirect instead of the offer.
+  if (link.expires_at || link.expires_minutes_after_send != null) {
+    const expired = await isTrackedLinkExpired(c.env.DB, link, friendId);
+    if (expired) {
+      const ctx = c.executionCtx as ExecutionContext;
+      ctx.waitUntil(
+        recordLinkClick(c.env.DB, link.id, friendId).catch((err) =>
+          console.error(`/t/${linkId} expired-click recording error:`, err),
+        ),
+      );
+      if (link.expired_redirect_url) {
+        return c.redirect(link.expired_redirect_url, 302);
+      }
+      return c.html(buildExpiredHtml(), 410);
     }
   }
 

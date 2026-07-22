@@ -18,6 +18,9 @@ export interface TrackedLink {
   og_title: string | null;
   og_description: string | null;
   og_image_url: string | null;
+  expires_at: string | null;
+  expires_minutes_after_send: number | null;
+  expired_redirect_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -101,6 +104,9 @@ export interface CreateTrackedLinkInput {
   ogTitle?: string | null;
   ogDescription?: string | null;
   ogImageUrl?: string | null;
+  expiresAt?: string | null;
+  expiresMinutesAfterSend?: number | null;
+  expiredRedirectUrl?: string | null;
 }
 
 export async function createTrackedLink(
@@ -117,8 +123,8 @@ export async function createTrackedLink(
     try {
       await db
         .prepare(
-          `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, line_account_id, short_code, is_active, click_count, og_title, og_description, og_image_url, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, line_account_id, short_code, is_active, click_count, og_title, og_description, og_image_url, expires_at, expires_minutes_after_send, expired_redirect_url, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id,
@@ -133,6 +139,9 @@ export async function createTrackedLink(
           input.ogTitle ?? null,
           input.ogDescription ?? null,
           input.ogImageUrl ?? null,
+          input.expiresAt ?? null,
+          input.expiresMinutesAfterSend ?? null,
+          input.expiredRedirectUrl ?? null,
           now,
           now,
         )
@@ -159,6 +168,9 @@ export interface UpdateTrackedLinkInput {
   ogTitle?: string | null;
   ogDescription?: string | null;
   ogImageUrl?: string | null;
+  expiresAt?: string | null;
+  expiresMinutesAfterSend?: number | null;
+  expiredRedirectUrl?: string | null;
 }
 
 export async function updateTrackedLink(
@@ -185,14 +197,23 @@ export async function updateTrackedLink(
     input.ogDescription === undefined ? existing.og_description : input.ogDescription;
   const ogImageUrl =
     input.ogImageUrl === undefined ? existing.og_image_url : input.ogImageUrl;
+  const expiresAt = input.expiresAt === undefined ? existing.expires_at : input.expiresAt;
+  const expiresMinutesAfterSend =
+    input.expiresMinutesAfterSend === undefined
+      ? existing.expires_minutes_after_send
+      : input.expiresMinutesAfterSend;
+  const expiredRedirectUrl =
+    input.expiredRedirectUrl === undefined
+      ? existing.expired_redirect_url
+      : input.expiredRedirectUrl;
 
   await db
     .prepare(
       `UPDATE tracked_links
-         SET name = ?, tag_id = ?, scenario_id = ?, intro_template_id = ?, reward_template_id = ?, line_account_id = ?, is_active = ?, og_title = ?, og_description = ?, og_image_url = ?, updated_at = ?
+         SET name = ?, tag_id = ?, scenario_id = ?, intro_template_id = ?, reward_template_id = ?, line_account_id = ?, is_active = ?, og_title = ?, og_description = ?, og_image_url = ?, expires_at = ?, expires_minutes_after_send = ?, expired_redirect_url = ?, updated_at = ?
        WHERE id = ?`,
     )
-    .bind(name, tagId, scenarioId, introTemplateId, rewardTemplateId, lineAccountId, isActive, ogTitle, ogDescription, ogImageUrl, now, id)
+    .bind(name, tagId, scenarioId, introTemplateId, rewardTemplateId, lineAccountId, isActive, ogTitle, ogDescription, ogImageUrl, expiresAt, expiresMinutesAfterSend, expiredRedirectUrl, now, id)
     .run();
 
   return getTrackedLinkById(db, id);
@@ -231,6 +252,68 @@ export async function recordLinkClick(
     .prepare(`SELECT * FROM link_clicks WHERE id = ?`)
     .bind(id)
     .first<LinkClick>())!;
+}
+
+// ── Expiration ────────────────────────────────────────────────────────────────
+
+/**
+ * When the given friend last received a message containing this link.
+ * Matches by tracked-link UUID or short code inside outgoing messages_log
+ * content (scenario steps / broadcasts embed the /t/ URL verbatim).
+ * Returns the JST ISO timestamp, or null if no delivery is recorded.
+ */
+export async function getLinkLastSentAt(
+  db: D1Database,
+  friendId: string,
+  link: Pick<TrackedLink, 'id' | 'short_code'>,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT created_at FROM messages_log
+        WHERE friend_id = ?
+          AND direction = 'outgoing'
+          AND (content LIKE '%' || ? || '%' OR (? IS NOT NULL AND content LIKE '%/t/' || ? || '%'))
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    )
+    .bind(friendId, link.id, link.short_code, link.short_code)
+    .first<{ created_at: string }>();
+  return row?.created_at ?? null;
+}
+
+/**
+ * Whether a tracked link is expired for this click.
+ *
+ * Two independent deadlines; the earlier one wins:
+ * - expires_at: absolute JST deadline for everyone.
+ * - expires_minutes_after_send: relative per-friend deadline counted from the
+ *   friend's last recorded delivery of this link. Anonymous clicks (no friend)
+ *   cannot be evaluated against it and are treated as not-expired — the
+ *   absolute deadline still applies to them.
+ */
+export async function isTrackedLinkExpired(
+  db: D1Database,
+  link: TrackedLink,
+  friendId: string | null,
+  now: Date = new Date(),
+): Promise<boolean> {
+  if (link.expires_at) {
+    const deadline = new Date(link.expires_at);
+    if (!Number.isNaN(deadline.getTime()) && now.getTime() > deadline.getTime()) {
+      return true;
+    }
+  }
+  if (link.expires_minutes_after_send != null && friendId) {
+    const sentAt = await getLinkLastSentAt(db, friendId, link);
+    if (sentAt) {
+      const sent = new Date(sentAt);
+      if (!Number.isNaN(sent.getTime())) {
+        const deadlineMs = sent.getTime() + link.expires_minutes_after_send * 60_000;
+        if (now.getTime() > deadlineMs) return true;
+      }
+    }
+  }
+  return false;
 }
 
 export interface LinkClickWithFriend extends LinkClick {

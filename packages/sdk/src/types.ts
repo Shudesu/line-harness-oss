@@ -340,6 +340,12 @@ export interface TrackedLink {
   ogTitle: string | null
   ogDescription: string | null
   ogImageUrl: string | null
+  /** 絶対期限（ISO-8601 JST）。これ以降のクリックは expiredRedirectUrl へ。 */
+  expiresAt?: string | null
+  /** 友だちごとの相対期限（そのリンクを含むメッセージの受信から n 分）。 */
+  expiresMinutesAfterSend?: number | null
+  /** 期限切れクリックのリダイレクト先。null は既定の期限切れページ。 */
+  expiredRedirectUrl?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -367,6 +373,9 @@ export interface CreateTrackedLinkInput {
   ogTitle?: string | null
   ogDescription?: string | null
   ogImageUrl?: string | null
+  expiresAt?: string | null
+  expiresMinutesAfterSend?: number | null
+  expiredRedirectUrl?: string | null
 }
 
 export interface UpdateTrackedLinkInput {
@@ -380,6 +389,9 @@ export interface UpdateTrackedLinkInput {
   ogTitle?: string | null
   ogDescription?: string | null
   ogImageUrl?: string | null
+  expiresAt?: string | null
+  expiresMinutesAfterSend?: number | null
+  expiredRedirectUrl?: string | null
 }
 
 // ─── Forms ──────────────────────────────────────────────
