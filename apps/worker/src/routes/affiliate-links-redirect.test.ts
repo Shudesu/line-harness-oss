@@ -184,4 +184,17 @@ describe('/r/:ref — affiliate_links fallback', () => {
     expect(html).toContain('liff.line.me/1000000000-DefaultAA');
     expect(html).toContain('ref=unknown');
   });
+
+  it('forwards the external redirect target into the LIFF URL', async () => {
+    dbMocks.getEntryRouteByRefCode.mockResolvedValue(null);
+    dbMocks.getAffiliateLinkByRefCode.mockResolvedValue(null);
+    dbMocks.getTrafficPoolBySlug.mockResolvedValue(null);
+
+    const redirect = 'https://bridge.example.com/t/link?shop=example.myshopify.com';
+    const res = await get(`/r/shopify-link?redirect=${encodeURIComponent(redirect)}`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    expect(html).toContain(`redirect=${encodeURIComponent(redirect)}`);
+  });
 });

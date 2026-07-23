@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { evaluateCondition, isSupportedConditionType, SUPPORTED_CONDITION_TYPES, processStepDeliveries, expandVariables } from './step-delivery.js';
+import { buildMessage, evaluateCondition, isSupportedConditionType, SUPPORTED_CONDITION_TYPES, processStepDeliveries, expandVariables } from './step-delivery.js';
 import type { LineClient } from '@line-crm/line-sdk';
 
 /**
@@ -474,5 +474,29 @@ describe('processStepDeliveries crash recovery', () => {
     expect(recoveryIdx).toBeGreaterThanOrEqual(0); // recovery ran
     expect(dueQueryIdx).toBeGreaterThanOrEqual(0);
     expect(recoveryIdx).toBeLessThan(dueQueryIdx); // and ran first
+  });
+});
+
+describe('buildMessage flex compatibility', () => {
+  it('accepts a complete LINE Flex message without nesting the wrapper in contents', () => {
+    const message = buildMessage('flex', JSON.stringify({
+      type: 'flex',
+      altText: '会員連携のご案内',
+      contents: {
+        type: 'bubble',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [{ type: 'text', text: 'LINEと会員を連携する' }],
+        },
+      },
+    }));
+
+    expect(message).toMatchObject({
+      type: 'flex',
+      altText: '会員連携のご案内',
+      contents: { type: 'bubble' },
+    });
+    expect((message as { contents: { type: string } }).contents.type).not.toBe('flex');
   });
 });

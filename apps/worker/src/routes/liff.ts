@@ -27,6 +27,7 @@ import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import { pushImmediateFirstStep } from '../services/immediate-first-step.js';
 import { notifyAffiliateFriendAdd } from '../services/affiliate-notifier.js';
 import { safeRedirectTarget } from '../lib/safe-redirect.js';
+import { createExternalLinkTicket } from '../lib/external-link-ticket.js';
 import type { Env } from '../index.js';
 
 const liffRoutes = new Hono<Env>();
@@ -1144,6 +1145,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
       ig?: string;
       iga?: string;
       igan?: string;
+      redirect?: string;
     }>();
 
     if (!body.idToken) {
@@ -1239,9 +1241,15 @@ liffRoutes.post('/api/liff/link', async (c) => {
           console.error('X Harness token resolution error (non-blocking):', err);
         }
       }
+      const linkedUserId = (friend as unknown as Record<string, unknown>).user_id as string;
+      const linkTicket = await createExternalLinkTicket(c.env, body.redirect, {
+        friendId: friend.id,
+        lineUserId,
+        userId: linkedUserId,
+      });
       return c.json({
         success: true,
-        data: { userId: (friend as unknown as Record<string, unknown>).user_id, alreadyLinked: true },
+        data: { userId: linkedUserId, friendId: friend.id, linkTicket, alreadyLinked: true },
       });
     }
 
@@ -1308,9 +1316,14 @@ liffRoutes.post('/api/liff/link', async (c) => {
       }
     }
 
+    const linkTicket = await createExternalLinkTicket(c.env, body.redirect, {
+      friendId: friend.id,
+      lineUserId,
+      userId,
+    });
     return c.json({
       success: true,
-      data: { userId, alreadyLinked: false },
+      data: { userId, friendId: friend.id, linkTicket, alreadyLinked: false },
     });
   } catch (err) {
     console.error('POST /api/liff/link error:', err);

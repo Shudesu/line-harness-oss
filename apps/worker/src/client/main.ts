@@ -251,6 +251,7 @@ async function linkAndAddFlow() {
 
     // 1. UUID linking (always, regardless of friendship)
     const linkParams = new URLSearchParams(window.location.search);
+    let linkTicket: string | null = null;
     const linkPromise = apiCall('/api/liff/link', {
       method: 'POST',
       body: JSON.stringify({
@@ -261,13 +262,15 @@ async function linkAndAddFlow() {
         ig: linkParams.get('ig') || '',
         iga: linkParams.get('iga') || '',
         igan: linkParams.get('igan') || '',
+        redirect: redirectUrl || undefined,
       }),
     }).then(async (res) => {
       if (res.ok) {
-        const data = await res.json() as { success: boolean; data?: { userId?: string } };
+        const data = await res.json() as { success: boolean; data?: { userId?: string; linkTicket?: string | null } };
         if (data?.data?.userId) {
           saveUuid(data.data.userId);
         }
+        linkTicket = data?.data?.linkTicket || null;
       }
       return res;
     }).catch(() => {
@@ -284,10 +287,13 @@ async function linkAndAddFlow() {
 
     // 3. Redirect flow (for wrapped URLs)
     if (redirectUrl) {
-      await Promise.race([
-        linkPromise,
-        new Promise((r) => setTimeout(r, 500)),
-      ]);
+      await linkPromise;
+      if (linkTicket) {
+        const ticketTarget = new URL(redirectUrl, window.location.origin);
+        ticketTarget.searchParams.set('lh_ticket', linkTicket);
+        window.location.href = ticketTarget.toString();
+        return;
+      }
       // Append LINE userId to tracking links so clicks are attributed
       if (redirectUrl.includes('/t/')) {
         const sep = redirectUrl.includes('?') ? '&' : '?';

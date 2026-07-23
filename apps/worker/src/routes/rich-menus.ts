@@ -28,6 +28,24 @@ richMenus.get('/api/rich-menus', async (c) => {
   }
 });
 
+// GET /api/rich-menus/default — resolve the effective default menu from LINE
+richMenus.get('/api/rich-menus/default', async (c) => {
+  try {
+    const lineClient = await resolveLineClient(c);
+    const richMenuId = await lineClient.getDefaultRichMenuId();
+    if (!richMenuId) {
+      return c.json({ success: true, data: { richMenuId: null, name: null } });
+    }
+    const list = await lineClient.getRichMenuList();
+    const menu = (list.richmenus ?? []).find((item) => item.richMenuId === richMenuId);
+    return c.json({ success: true, data: { richMenuId, name: menu?.name ?? null } });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('GET /api/rich-menus/default error:', message);
+    return c.json({ success: false, error: `Failed to fetch default rich menu: ${message}` }, 500);
+  }
+});
+
 // POST /api/rich-menus — create a rich menu via LINE API
 richMenus.post('/api/rich-menus', async (c) => {
   try {

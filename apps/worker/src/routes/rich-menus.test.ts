@@ -3,10 +3,14 @@ import { Hono } from 'hono';
 import { richMenus } from './rich-menus.js';
 
 const uploadRichMenuImage = vi.fn();
+const getDefaultRichMenuId = vi.fn();
+const getRichMenuList = vi.fn();
 
 vi.mock('@line-crm/line-sdk', () => ({
   LineClient: vi.fn().mockImplementation(() => ({
     uploadRichMenuImage,
+    getDefaultRichMenuId,
+    getRichMenuList,
   })),
 }));
 
@@ -69,5 +73,38 @@ describe('POST /api/rich-menus/:id/image', () => {
     expect(richMenuId).toBe('richmenu-2');
     expect(contentType).toBe('image/jpeg');
     expect(new TextDecoder().decode(imageData as ArrayBuffer)).toBe('hello');
+  });
+});
+
+describe('GET /api/rich-menus/default', () => {
+  function setupApp() {
+    const app = new Hono<{
+      Bindings: {
+        DB: D1Database;
+        LINE_CHANNEL_ACCESS_TOKEN: string;
+      };
+    }>();
+    app.route('/', richMenus);
+    return app;
+  }
+
+  beforeEach(() => {
+    getDefaultRichMenuId.mockReset();
+    getRichMenuList.mockReset();
+  });
+
+  test('returns the current default id and menu name', async () => {
+    getDefaultRichMenuId.mockResolvedValue('richmenu-live');
+    getRichMenuList.mockResolvedValue({ richmenus: [{ richMenuId: 'richmenu-live', name: '祝果メニュー' }] });
+    const res = await setupApp().request('/api/rich-menus/default', {}, {
+      LINE_CHANNEL_ACCESS_TOKEN: 'token',
+      DB: {} as D1Database,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      success: true,
+      data: { richMenuId: 'richmenu-live', name: '祝果メニュー' },
+    });
   });
 });
