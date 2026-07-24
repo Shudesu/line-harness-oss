@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
+import { BUNDLE_VERSION, WORKER_HASH } from '../_version.js';
 
-export const HARNESS_VERSION = '0.12.0';
-export const API_VERSION = 1;
+export const HARNESS_VERSION = BUNDLE_VERSION === '0.0.0-dev'
+  ? '0.17.0'
+  : BUNDLE_VERSION;
+export const API_VERSION = 2;
 export const CONNECTOR_VERSION = '2026-05-20';
 export const MIN_APP_VERSION = '1.0.0';
 export const FEATURES = [
@@ -28,6 +31,9 @@ export const FEATURES = [
   'line-cross-link',
   'x-cross-link',
   'ig-cross-link',
+  'provider_receipt_v1',
+  'dispatch_readback_v1',
+  'push_retry_key_v1',
 ] as const;
 
 export const capabilities = new Hono<Env>();
@@ -45,6 +51,13 @@ capabilities.get('/api/capabilities', async (c) => {
       platform: 'line',
       version: HARNESS_VERSION,
       connectorVersion: CONNECTOR_VERSION,
+      release: {
+        version: BUNDLE_VERSION,
+        workerHash: WORKER_HASH,
+      },
+      external_writes: {
+        message_send: 'provider_receipt_v1',
+      },
       identity: {
         primaryKey: 'line_friend_id',
         supportedLinks: ['x_user_id', 'ig_igsid'],
@@ -61,6 +74,8 @@ capabilities.get('/api/capabilities', async (c) => {
         forms: '/api/forms',
         tags: '/api/tags',
         chats: '/api/chats',
+        runtimeMessageSend: '/api/runtime/messages:send',
+        runtimeDispatchReadback: '/api/runtime/dispatches/:clientRequestId',
         liff: '/liff',
       },
     },

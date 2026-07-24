@@ -1,4 +1,5 @@
 export { LineClient } from './client.js';
+export type { LineProviderReceipt } from './client.js';
 export { verifySignature } from './webhook.js';
 export {
   textMessage,

@@ -46,6 +46,7 @@ function app() {
   }));
   a.use('*', authMiddleware);
   a.route('/', adminAuth);
+  a.get('/api/health', (c) => c.json({ status: 'ok' }));
   a.get('/api/protected', (c) => c.json({ success: true, data: c.get('staff') }));
   a.post('/api/protected', (c) => c.json({ success: true, data: c.get('staff') }));
   return a;
@@ -127,6 +128,12 @@ describe('topology guard', () => {
 });
 
 describe('protected API access', () => {
+  test('keeps the public liveness endpoint unauthenticated', async () => {
+    const res = await app().request('/api/health', {}, crossSiteEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok' });
+  });
+
   test('accepts the admin session cookie (GET, no CSRF needed)', async () => {
     const res = await app().request('/api/protected', {
       headers: { Cookie: 'lh_admin_session=staff-key' },
