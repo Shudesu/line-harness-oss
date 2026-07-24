@@ -35,6 +35,16 @@ const notifierMocks = {
 };
 vi.mock('../services/event-booking-notifier.js', () => notifierMocks);
 
+const tagAttachMocks = {
+  attachTagAndFireSideEffects: vi.fn(),
+};
+vi.mock('../services/friend-tag-attach.js', () => tagAttachMocks);
+
+const eventBusMocks = {
+  fireEvent: vi.fn(),
+};
+vi.mock('../services/event-bus.js', () => eventBusMocks);
+
 const { default: events } = await import('./events.js');
 
 type TestEnv = {
@@ -57,6 +67,7 @@ interface EventRow {
   reminder_day_before_enabled: number;
   reminder_hours_before: number | null;
   is_published: number;
+  auto_tag_id: string | null;
   folder_id: string | null;
   sort_order: number;
   deleted_at: string | null;
@@ -102,6 +113,7 @@ interface FriendRow {
   line_user_id: string;
   user_id?: string | null;
   picture_url?: string | null;
+  display_name?: string | null;
 }
 
 function makeEventDb(state: {
@@ -501,6 +513,50 @@ function makeEventDb(state: {
               );
             return { results: items as unknown as T[] };
           }
+          // cross-event admin bookings list
+          if (
+            sql.includes('e.name AS event_name') &&
+            sql.includes('b.line_account_id = ?') &&
+            sql.includes('LIMIT ?')
+          ) {
+            let paramIndex = 0;
+            const accountId = bound[paramIndex++] as string;
+            const friendId = sql.includes('b.friend_id = ?') ? bound[paramIndex++] as string : null;
+            const status = sql.includes('b.status = ?') ? bound[paramIndex++] as string : null;
+            const since = sql.includes('b.requested_at >= ?') ? bound[paramIndex++] as string : null;
+            const limit = bound[paramIndex] as number;
+            const items = (state.bookings ?? [])
+              .filter((booking) => (booking as Record<string, unknown>).line_account_id === accountId)
+              .filter((booking) => (friendId ? booking.friend_id === friendId : true))
+              .filter((booking) => (status ? booking.status === status : true))
+              .filter((booking) => (
+                since ? String((booking as Record<string, unknown>).requested_at) >= since : true
+              ))
+              .map((booking) => {
+                const event = state.events.find((item) => item.id === booking.event_id);
+                const slot = (state.slots ?? []).find((item) => item.id === booking.slot_id);
+                const friend = (state.friends ?? []).find((item) => item.id === booking.friend_id);
+                return {
+                  id: booking.id,
+                  event_id: booking.event_id,
+                  event_name: event?.name ?? null,
+                  slot_id: booking.slot_id,
+                  slot_starts_at: slot?.starts_at ?? null,
+                  slot_ends_at: slot?.ends_at ?? null,
+                  friend_id: booking.friend_id,
+                  friend_display_name: friend?.display_name ?? null,
+                  friend_line_user_id: friend?.line_user_id ?? null,
+                  status: booking.status,
+                  requested_at: booking.requested_at,
+                  decided_at: booking.decided_at ?? null,
+                  cancelled_at: booking.cancelled_at ?? null,
+                  internal_note: booking.internal_note ?? null,
+                };
+              })
+              .sort((a, b) => String(b.requested_at).localeCompare(String(a.requested_at)))
+              .slice(0, limit);
+            return { results: items as unknown as T[] };
+          }
           // admin bookings list: SELECT b.*, s.starts_at, ..., friends.display_name FROM event_bookings b JOIN event_slots s ...
           if (sql.includes('FROM event_bookings b') && sql.includes('friend_display_name')) {
             const event_id = bound[0] as string;
@@ -705,6 +761,7 @@ function makeEventDb(state: {
               number, number,
               string, string | null, string | null,
             ];
+            const auto_tag_id = (bound[23] as string | null | undefined) ?? null;
             const now = new Date().toISOString();
             state.events.push({
               id,
@@ -729,6 +786,7 @@ function makeEventDb(state: {
               target_type: target_type as 'single' | 'multi-account-dedup',
               account_ids,
               dedup_priority,
+              auto_tag_id,
             });
             return { success: true, meta: { changes: 1 } };
           }
@@ -789,6 +847,12 @@ function setupApp(state: { events: EventRow[]; slots?: SlotRow[]; bookings?: Boo
   return app;
 }
 
+const waitUntilMock = vi.fn();
+const executionCtx = {
+  waitUntil: waitUntilMock,
+  passThroughOnException: vi.fn(),
+} as unknown as ExecutionContext;
+
 beforeEach(() => {
   for (const fn of Object.values(availabilityMocks)) fn.mockReset();
   for (const fn of Object.values(liffAuthMocks)) fn.mockReset();
@@ -796,7 +860,12 @@ beforeEach(() => {
   for (const fn of Object.values(idempotencyMocks)) fn.mockReset();
   for (const fn of Object.values(reminderMocks)) fn.mockReset();
   for (const fn of Object.values(notifierMocks)) fn.mockReset();
+  for (const fn of Object.values(tagAttachMocks)) fn.mockReset();
+  for (const fn of Object.values(eventBusMocks)) fn.mockReset();
+  waitUntilMock.mockReset();
   reminderMocks.computeRemindersForBooking.mockReturnValue([]);
+  tagAttachMocks.attachTagAndFireSideEffects.mockResolvedValue({ added: true });
+  eventBusMocks.fireEvent.mockResolvedValue(undefined);
 });
 
 describe('POST /api/events/admin/events', () => {
@@ -837,6 +906,7 @@ describe('POST /api/events/admin/events', () => {
         reminder_hours_before: 2,
         is_published: 1,
         sort_order: 5,
+        auto_tag_id: 'tag-1',
       }),
     });
     expect(res.status).toBe(201);
@@ -844,6 +914,7 @@ describe('POST /api/events/admin/events', () => {
     expect(body.requires_approval).toBe(1);
     expect(body.cancel_deadline_hours_before).toBe(12);
     expect(body.is_published).toBe(1);
+    expect(body.auto_tag_id).toBe('tag-1');
   });
 
   test('400 when account_id missing', async () => {
@@ -968,6 +1039,7 @@ describe('GET /api/events/admin/events', () => {
     const body = (await res.json()) as { items: EventRow[] };
     expect(body.items).toHaveLength(2);
     expect(body.items.map((e) => e.id).sort()).toEqual(['e1', 'e2']);
+    expect(body.items.find((event) => event.id === 'e1')?.auto_tag_id).toBeNull();
   });
 
   test('lists includes multi-account event when account in account_ids', async () => {
@@ -1039,10 +1111,12 @@ describe('GET /api/events/admin/events', () => {
 
 describe('GET /api/events/admin/events/:id', () => {
   test('returns event when account matches', async () => {
-    const state = { events: [baseEvent({ id: 'e1', line_account_id: 'la1' })] };
+    const state = { events: [baseEvent({ id: 'e1', line_account_id: 'la1', auto_tag_id: 'tag-1' })] };
     const app = setupApp(state);
     const res = await app.request('/api/events/admin/events/e1?account_id=la1');
     expect(res.status).toBe(200);
+    const body = (await res.json()) as EventRow;
+    expect(body.auto_tag_id).toBe('tag-1');
   });
 
   test('404 when event belongs to other account', async () => {
@@ -1062,11 +1136,12 @@ describe('PUT /api/events/admin/events/:id', () => {
     const res = await app.request('/api/events/admin/events/e1?account_id=la1', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'new', requires_approval: 1 }),
+      body: JSON.stringify({ name: 'new', requires_approval: 1, auto_tag_id: 'tag-1' }),
     });
     expect(res.status).toBe(200);
     expect(state.events[0].name).toBe('new');
     expect(state.events[0].requires_approval).toBe(1);
+    expect(state.events[0].auto_tag_id).toBe('tag-1');
   });
 
   test('404 for cross-account update', async () => {
@@ -1441,7 +1516,13 @@ describe('LIFF event slots', () => {
 describe('LIFF POST /api/liff/events/:id/bookings', () => {
   test('creates confirmed booking when requires_approval=0', async () => {
     const state = {
-      events: [baseEvent({ id: 'e1', line_account_id: 'la1', is_published: 1, requires_approval: 0 })],
+      events: [baseEvent({
+        id: 'e1',
+        line_account_id: 'la1',
+        is_published: 1,
+        requires_approval: 0,
+        auto_tag_id: 'tag-1',
+      })],
       slots: [{ id: 's1', event_id: 'e1', starts_at: '2099-06-01T10:00:00Z', ends_at: '2099-06-01T12:00:00Z', capacity: 5, is_active: 1, sort_order: 0, deleted_at: null }],
       bookings: [],
       accounts: [{ id: 'la1', liff_id: 'L1', is_active: 1, channel_access_token: 'tok' }],
@@ -1450,11 +1531,16 @@ describe('LIFF POST /api/liff/events/:id/bookings', () => {
     liffAuthMocks.verifyCallerLineUserId.mockResolvedValue('U1');
     idempotencyMocks.reserveEventIdempotency.mockResolvedValue({ kind: 'inserted' });
     const app = setupApp(state);
-    const res = await app.request('/api/liff/events/e1/bookings?liffId=L1', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'Idempotency-Key': 'k1', 'Authorization': 'Bearer t' },
-      body: JSON.stringify({ slot_id: 's1' }),
-    });
+    const res = await app.request(
+      '/api/liff/events/e1/bookings?liffId=L1',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'Idempotency-Key': 'k1', 'Authorization': 'Bearer t' },
+        body: JSON.stringify({ slot_id: 's1' }),
+      },
+      undefined,
+      executionCtx,
+    );
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; status: string };
     expect(body.status).toBe('confirmed');
@@ -1462,6 +1548,22 @@ describe('LIFF POST /api/liff/events/:id/bookings', () => {
     expect(reminderMocks.computeRemindersForBooking).toHaveBeenCalled();
     expect(notifierMocks.sendEventBookingNotification).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'received_confirmed' }),
+    );
+    expect(tagAttachMocks.attachTagAndFireSideEffects).toHaveBeenCalledWith(
+      expect.anything(),
+      'f1',
+      'tag-1',
+    );
+    expect(eventBusMocks.fireEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      'event_booked',
+      {
+        friend_id: 'f1',
+        event_id: 'e1',
+        slot_id: 's1',
+        booking_id: body.id,
+        status: 'confirmed',
+      },
     );
     expect(idempotencyMocks.finalizeEventIdempotencyResponse).toHaveBeenCalled();
   });
@@ -1477,17 +1579,27 @@ describe('LIFF POST /api/liff/events/:id/bookings', () => {
     liffAuthMocks.verifyCallerLineUserId.mockResolvedValue('U1');
     idempotencyMocks.reserveEventIdempotency.mockResolvedValue({ kind: 'inserted' });
     const app = setupApp(state);
-    const res = await app.request('/api/liff/events/e1/bookings?liffId=L1', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'Idempotency-Key': 'k1', 'Authorization': 'Bearer t' },
-      body: JSON.stringify({ slot_id: 's1' }),
-    });
+    const res = await app.request(
+      '/api/liff/events/e1/bookings?liffId=L1',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'Idempotency-Key': 'k1', 'Authorization': 'Bearer t' },
+        body: JSON.stringify({ slot_id: 's1' }),
+      },
+      undefined,
+      executionCtx,
+    );
     expect(res.status).toBe(201);
     const body = (await res.json()) as { status: string };
     expect(body.status).toBe('requested');
     expect(reminderMocks.computeRemindersForBooking).not.toHaveBeenCalled();
     expect(notifierMocks.sendEventBookingNotification).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'received_pending' }),
+    );
+    expect(eventBusMocks.fireEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      'event_booked',
+      expect.objectContaining({ status: 'requested' }),
     );
   });
 
@@ -1509,6 +1621,8 @@ describe('LIFF POST /api/liff/events/:id/bookings', () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
     expect(body.id).toBe('cached');
+    expect(tagAttachMocks.attachTagAndFireSideEffects).not.toHaveBeenCalled();
+    expect(eventBusMocks.fireEvent).not.toHaveBeenCalled();
   });
 
   test('401 when Authorization missing', async () => {
@@ -1895,6 +2009,84 @@ describe('LIFF POST /api/liff/events/me/:bookingId/cancel', () => {
 });
 
 describe('admin bookings management', () => {
+  test('GET /admin/bookings filters by account, friend_id, and status without tenant leakage', async () => {
+    const state = {
+      events: [
+        baseEvent({ id: 'e1', line_account_id: 'la1', name: '自社説明会' }),
+        baseEvent({ id: 'e2', line_account_id: 'la2', name: '他社説明会' }),
+      ],
+      slots: [
+        { id: 's1', event_id: 'e1', starts_at: '2099-06-01T10:00:00Z', ends_at: '2099-06-01T12:00:00Z', capacity: null, is_active: 1, sort_order: 0, deleted_at: null },
+        { id: 's2', event_id: 'e2', starts_at: '2099-06-02T10:00:00Z', ends_at: '2099-06-02T12:00:00Z', capacity: null, is_active: 1, sort_order: 0, deleted_at: null },
+      ],
+      bookings: [
+        { id: 'b1', event_id: 'e1', slot_id: 's1', friend_id: 'f1', line_account_id: 'la1', status: 'confirmed', requested_at: '2026-07-03T00:00:00.000Z' },
+        { id: 'b2', event_id: 'e1', slot_id: 's1', friend_id: 'f2', line_account_id: 'la1', status: 'requested', requested_at: '2026-07-02T00:00:00.000Z' },
+        { id: 'b3', event_id: 'e2', slot_id: 's2', friend_id: 'f1', line_account_id: 'la2', status: 'confirmed', requested_at: '2026-07-04T00:00:00.000Z' },
+      ] as Array<BookingRow & Record<string, unknown>>,
+      friends: [
+        { id: 'f1', line_account_id: 'la1', line_user_id: 'U1', display_name: '田中' },
+        { id: 'f2', line_account_id: 'la1', line_user_id: 'U2', display_name: '佐藤' },
+      ],
+    };
+    const app = setupApp(state);
+    const res = await app.request(
+      '/api/events/admin/bookings?account_id=la1&friend_id=f1&status=confirmed',
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      success: boolean;
+      data: { bookings: Array<{ id: string; event_name: string; friend_display_name: string }> };
+    };
+    expect(body).toEqual({
+      success: true,
+      data: {
+        bookings: [
+          expect.objectContaining({
+            id: 'b1',
+            event_name: '自社説明会',
+            friend_display_name: '田中',
+          }),
+        ],
+      },
+    });
+  });
+
+  test('GET /admin/bookings applies since and limit after newest-first ordering', async () => {
+    const state = {
+      events: [baseEvent({ id: 'e1', line_account_id: 'la1' })],
+      slots: [
+        { id: 's1', event_id: 'e1', starts_at: '2099-06-01T10:00:00Z', ends_at: '2099-06-01T12:00:00Z', capacity: null, is_active: 1, sort_order: 0, deleted_at: null },
+      ],
+      bookings: [
+        { id: 'old', event_id: 'e1', slot_id: 's1', friend_id: 'f1', line_account_id: 'la1', status: 'confirmed', requested_at: '2026-07-01T00:00:00.000Z' },
+        { id: 'middle', event_id: 'e1', slot_id: 's1', friend_id: 'f1', line_account_id: 'la1', status: 'confirmed', requested_at: '2026-07-02T00:00:00.000Z' },
+        { id: 'new', event_id: 'e1', slot_id: 's1', friend_id: 'f1', line_account_id: 'la1', status: 'confirmed', requested_at: '2026-07-03T00:00:00.000Z' },
+      ] as Array<BookingRow & Record<string, unknown>>,
+    };
+    const app = setupApp(state);
+    const res = await app.request(
+      '/api/events/admin/bookings?account_id=la1&since=2026-07-02T00%3A00%3A00.000Z&limit=1',
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { bookings: Array<{ id: string }> } };
+    expect(body.data.bookings.map((booking) => booking.id)).toEqual(['new']);
+  });
+
+  test('GET /admin/bookings validates required account_id and query values', async () => {
+    const app = setupApp({ events: [] });
+    const missingAccount = await app.request('/api/events/admin/bookings');
+    const invalidSince = await app.request(
+      '/api/events/admin/bookings?account_id=la1&since=not-a-date',
+    );
+    const invalidLimit = await app.request(
+      '/api/events/admin/bookings?account_id=la1&limit=0',
+    );
+    expect(missingAccount.status).toBe(400);
+    expect(invalidSince.status).toBe(422);
+    expect(invalidLimit.status).toBe(422);
+  });
+
   test('GET /:id/bookings aggregates multi-account bookings with line_account_id', async () => {
     const state = {
       events: [
@@ -2117,6 +2309,7 @@ function baseEvent(over: Partial<EventRow>): EventRow {
     reminder_day_before_enabled: 1,
     reminder_hours_before: null,
     is_published: 0,
+    auto_tag_id: null,
     folder_id: null,
     sort_order: 0,
     deleted_at: null,

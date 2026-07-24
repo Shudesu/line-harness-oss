@@ -16,6 +16,7 @@ import {
   EVENT_DESCRIPTION_MAX,
   CUSTOMER_NOTE_MAX,
   EVENT_IDEMPOTENCY_TTL_MINUTES,
+  type EventBookingStatus,
   type EventTargetType,
 } from '../services/event-booking-types.js';
 import { getSlotsWithRemaining } from '../services/event-availability.js';
@@ -39,6 +40,8 @@ import {
   nextStatus,
   type EventBookingAction,
 } from '../services/event-booking-state.js';
+import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
+import { fireEvent, type EventPayload } from '../services/event-bus.js';
 
 const events = new Hono<Env>();
 
@@ -77,6 +80,7 @@ interface EventInput {
   reminder_hours_before?: number | null;
   is_published?: number;
   sort_order?: number;
+  auto_tag_id?: string | null;
   confirmation_message_extra?: string | null;
   reminder_message_extra?: string | null;
 }
@@ -123,6 +127,9 @@ function validateEventInput(
   if (has('sort_order') && body.sort_order != null) {
     if (!Number.isInteger(body.sort_order)) return { ok: false, code: 'invalid_sort_order' };
   }
+  if (has('auto_tag_id') && body.auto_tag_id != null && typeof body.auto_tag_id !== 'string') {
+    return { ok: false, code: 'invalid_auto_tag_id' };
+  }
   if (has('target_type') && body.target_type != null) {
     if (body.target_type !== 'single' && body.target_type !== 'multi-account-dedup') {
       return { ok: false, code: 'invalid_target_type' };
@@ -144,6 +151,12 @@ function validateEventInput(
     }
   }
   return { ok: true };
+}
+
+function normalizeAutoTagId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 // ============================================================
@@ -175,8 +188,9 @@ events.post('/api/events/admin/events', async (c) => {
          is_published, sort_order,
          target_type, account_ids, dedup_priority,
          confirmation_message_extra, reminder_message_extra,
-         og_title, og_description, og_image_url
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         og_title, og_description, og_image_url,
+         auto_tag_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -202,6 +216,7 @@ events.post('/api/events/admin/events', async (c) => {
       (body.og_title as string | null | undefined) ?? null,
       (body.og_description as string | null | undefined) ?? null,
       (body.og_image_url as string | null | undefined) ?? null,
+      normalizeAutoTagId(body.auto_tag_id),
     )
     .run();
   const row = await c.env.DB
@@ -302,6 +317,7 @@ events.put('/api/events/admin/events/:id', async (c) => {
     'reminder_hours_before',
     'is_published',
     'sort_order',
+    'auto_tag_id',
     'target_type',
     'confirmation_message_extra',
     'reminder_message_extra',
@@ -314,7 +330,7 @@ events.put('/api/events/admin/events/:id', async (c) => {
   for (const k of updatable) {
     if (Object.prototype.hasOwnProperty.call(body, k)) {
       setClauses.push(`${k} = ?`);
-      setValues.push(body[k]);
+      setValues.push(k === 'auto_tag_id' ? normalizeAutoTagId(body[k]) : body[k]);
     }
   }
   // JSON-encoded columns (broadcasts と同じ扱い): account_ids / dedup_priority
@@ -834,6 +850,7 @@ interface EventDbRow {
   max_bookings_per_friend: number | null;
   reminder_day_before_enabled: number;
   reminder_hours_before: number | null;
+  auto_tag_id: string | null;
 }
 
 interface SlotDbRow {
@@ -849,6 +866,40 @@ const JST_OFFSET_MS = 9 * 3600_000;
 function startsAtJst(utcIso: string): string {
   const jst = new Date(new Date(utcIso).getTime() + JST_OFFSET_MS).toISOString();
   return `${jst.slice(0, 10)} ${jst.slice(11, 16)}`;
+}
+
+interface EventBookingSideEffectInput {
+  friendId: string;
+  eventId: string;
+  slotId: string;
+  bookingId: string;
+  status: 'requested' | 'confirmed';
+  autoTagId: string | null;
+}
+
+function scheduleEventBookingSideEffects(
+  c: Context<Env>,
+  input: EventBookingSideEffectInput,
+): void {
+  if (input.autoTagId) {
+    const tagId = input.autoTagId;
+    c.executionCtx.waitUntil(
+      attachTagAndFireSideEffects(c.env.DB, input.friendId, tagId)
+        .then(() => undefined)
+        .catch((err) => console.error('event booking auto-tag failed:', err)),
+    );
+  }
+  const payload = {
+    friend_id: input.friendId,
+    event_id: input.eventId,
+    slot_id: input.slotId,
+    booking_id: input.bookingId,
+    status: input.status,
+  };
+  c.executionCtx.waitUntil(
+    fireEvent(c.env.DB, 'event_booked', payload as unknown as EventPayload)
+      .catch((err) => console.error('event booking event (event_booked) failed:', err)),
+  );
 }
 
 events.post('/api/liff/events/:id/bookings', async (c) => {
@@ -921,7 +972,7 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   const event = await c.env.DB
     .prepare(
       `SELECT id, name, venue_name, venue_url, requires_approval, max_bookings_per_friend,
-              reminder_day_before_enabled, reminder_hours_before
+              reminder_day_before_enabled, reminder_hours_before, auto_tag_id
          FROM events
         WHERE id = ? AND deleted_at IS NULL AND is_published = 1 AND (
           (target_type = 'single' AND line_account_id = ?)
@@ -1134,6 +1185,15 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
     console.error('[event-booking] notify failed', e);
   }
 
+  scheduleEventBookingSideEffects(c, {
+    friendId: friend.id,
+    eventId: event.id,
+    slotId: slot.id,
+    bookingId: id,
+    status,
+    autoTagId: event.auto_tag_id,
+  });
+
   return finalize(201, { id, status });
   } // close runBookingFlow
 });
@@ -1166,6 +1226,99 @@ events.delete('/api/events/admin/events/:id/slots/:slotId', async (c) => {
 // ============================================================
 // Admin: bookings management
 // ============================================================
+
+const EVENT_BOOKING_STATUSES: ReadonlySet<string> = new Set<EventBookingStatus>([
+  'requested',
+  'confirmed',
+  'rejected',
+  'cancelled',
+  'expired',
+  'no_show',
+  'attended',
+]);
+
+interface AdminBookingsQuery {
+  friendId: string | null;
+  status: string | null;
+  since: string | null;
+  limit: number;
+}
+
+function parseAdminBookingsQuery(
+  c: Context<Env>,
+): { ok: true; value: AdminBookingsQuery } | { ok: false; code: string } {
+  const friendId = c.req.query('friend_id') ?? null;
+  if (friendId !== null && (friendId.length === 0 || friendId.length > 255)) {
+    return { ok: false, code: 'invalid_friend_id' };
+  }
+  const status = c.req.query('status') ?? null;
+  if (status !== null && !EVENT_BOOKING_STATUSES.has(status)) {
+    return { ok: false, code: 'invalid_status' };
+  }
+  const sinceInput = c.req.query('since') ?? null;
+  const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+  if (sinceInput !== null && (!isoPattern.test(sinceInput) || Number.isNaN(Date.parse(sinceInput)))) {
+    return { ok: false, code: 'invalid_since' };
+  }
+  const limitInput = c.req.query('limit');
+  if (limitInput !== undefined && !/^\d+$/.test(limitInput)) {
+    return { ok: false, code: 'invalid_limit' };
+  }
+  const parsedLimit = limitInput === undefined ? 50 : Number(limitInput);
+  if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1) {
+    return { ok: false, code: 'invalid_limit' };
+  }
+  return {
+    ok: true,
+    value: {
+      friendId,
+      status,
+      since: sinceInput === null ? null : new Date(sinceInput).toISOString(),
+      limit: Math.min(parsedLimit, 200),
+    },
+  };
+}
+
+events.get('/api/events/admin/bookings', async (c) => {
+  const accountId = getAccountId(c);
+  if (!accountId) return bad(c, 'account_id_required', 400);
+  const parsed = parseAdminBookingsQuery(c);
+  if (!parsed.ok) return bad(c, parsed.code, 422);
+  const { friendId, status, since, limit } = parsed.value;
+  const conditions = [
+    'b.line_account_id = ?',
+    ...(friendId ? ['b.friend_id = ?'] : []),
+    ...(status ? ['b.status = ?'] : []),
+    ...(since ? ['b.requested_at >= ?'] : []),
+  ];
+  const params: unknown[] = [
+    accountId,
+    ...(friendId ? [friendId] : []),
+    ...(status ? [status] : []),
+    ...(since ? [since] : []),
+    limit,
+  ];
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT b.id, b.event_id, e.name AS event_name,
+              b.slot_id, s.starts_at AS slot_starts_at, s.ends_at AS slot_ends_at,
+              b.friend_id, f.display_name AS friend_display_name,
+              f.line_user_id AS friend_line_user_id,
+              b.status, b.requested_at, b.decided_at, b.cancelled_at, b.internal_note
+         FROM event_bookings b
+         JOIN events e ON e.id = b.event_id
+         JOIN event_slots s ON s.id = b.slot_id
+         LEFT JOIN friends f ON f.id = b.friend_id
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY b.requested_at DESC
+        LIMIT ?`,
+    ).bind(...params).all();
+    return c.json({ success: true, data: { bookings: results ?? [] } });
+  } catch (err) {
+    console.error('[event-bookings] list failed', err);
+    return c.json({ error: 'internal_error' }, 500);
+  }
+});
 
 events.get('/api/events/admin/events/notifications/pending', async (c) => {
   const account_id = getAccountId(c);
