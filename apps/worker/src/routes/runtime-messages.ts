@@ -52,6 +52,7 @@ type RuntimeSendRequest = {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const OPAQUE_REF_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 function validRequest(value: unknown): value is RuntimeSendRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -65,8 +66,7 @@ function validRequest(value: unknown): value is RuntimeSendRequest {
     || typeof body.accountScopeFingerprint !== 'string'
     || !SHA256_PATTERN.test(body.accountScopeFingerprint)
     || typeof body.conversationRef !== 'string'
-    || body.conversationRef.length < 1
-    || body.conversationRef.length > 128
+    || !OPAQUE_REF_PATTERN.test(body.conversationRef)
     || !body.release
     || typeof body.release.version !== 'string'
     || typeof body.release.workerHash !== 'string'
@@ -183,6 +183,34 @@ async function buildReceiptHash(
 }
 
 export const runtimeMessages = new Hono<Env>();
+
+runtimeMessages.get('/api/runtime/conversations/:conversationRef/account-scope', async (c) => {
+  if (c.get('staff')?.role !== 'owner') {
+    return c.json({ success: false, error: 'Owner access required' }, 403);
+  }
+  const conversationRef = c.req.param('conversationRef');
+  if (!OPAQUE_REF_PATTERN.test(conversationRef)) {
+    return c.json({ success: false, error: 'Invalid conversation reference' }, 400);
+  }
+  const recipient = await resolveRecipient(c.env.DB, conversationRef);
+  if (!recipient) {
+    return c.json({ success: false, error: 'Conversation not found' }, 404);
+  }
+  return c.json({
+    success: true,
+    data: {
+      schemaVersion: 1,
+      conversationRef,
+      accountScopeFingerprint: await sha256(
+        recipient.account_channel_id ?? c.env.LINE_CHANNEL_ID,
+      ),
+      release: {
+        version: BUNDLE_VERSION,
+        workerHash: WORKER_HASH,
+      },
+    },
+  });
+});
 
 runtimeMessages.post('/api/runtime/messages:send', async (c) => {
   if (c.get('staff')?.role !== 'owner') {

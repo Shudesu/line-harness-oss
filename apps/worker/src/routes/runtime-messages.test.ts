@@ -202,6 +202,26 @@ beforeEach(() => {
 });
 
 describe('runtime message dispatch receipt contract', () => {
+  test('returns the opaque conversation account scope without provider identity', async () => {
+    const db = new FakeDb();
+    const { app, env } = setup(db);
+
+    const response = await app.request(
+      '/api/runtime/conversations/chat-1/account-scope',
+      undefined,
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      data: Record<string, unknown>;
+    };
+    expect(body.data.accountScopeFingerprint).toBe(await expectedFingerprint());
+    expect(body.data.conversationRef).toBe('chat-1');
+    expect(body.data).not.toHaveProperty('lineUserId');
+    expect(body.data).not.toHaveProperty('channelId');
+  });
+
   test('persists a provider receipt and returns it through readback', async () => {
     const db = new FakeDb();
     const { app, env } = setup(db);

@@ -34,6 +34,7 @@ export const FEATURES = [
   'provider_receipt_v1',
   'dispatch_readback_v1',
   'push_retry_key_v1',
+  'account_scope_fingerprint_v1',
 ] as const;
 
 export const capabilities = new Hono<Env>();
@@ -75,6 +76,7 @@ capabilities.get('/api/capabilities', async (c) => {
         tags: '/api/tags',
         chats: '/api/chats',
         runtimeMessageSend: '/api/runtime/messages:send',
+        runtimeAccountScope: '/api/runtime/conversations/:conversationRef/account-scope',
         runtimeDispatchReadback: '/api/runtime/dispatches/:clientRequestId',
         liff: '/liff',
       },
