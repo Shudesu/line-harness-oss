@@ -8,16 +8,26 @@ import {
   updateAccountMigration,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { BUNDLE_VERSION, WORKER_HASH } from '../_version.js';
+import { API_VERSION } from './capabilities.js';
 
 const health = new Hono<Env>();
 
 // ========== Liveness ==========
 // Public (no auth, see middleware/auth.ts skip list): probed by
 // `create-line-harness update` and by the self-update verify phase
-// (capabilities advertises `/api/health`). Deliberately dependency-free —
-// it exists only to prove the Worker booted and is routing requests.
+// (capabilities advertises `/api/health`). Tenant, binding, D1 and credential
+// details are intentionally excluded.
 
-const LIVENESS_BODY = { success: true, data: { status: 'ok' } } as const;
+const LIVENESS_BODY = {
+  success: true,
+  data: {
+    status: 'ok',
+    releaseVersion: BUNDLE_VERSION,
+    workerHash: WORKER_HASH,
+    apiVersion: API_VERSION,
+  },
+} as const;
 
 health.get('/health', (c) => c.json(LIVENESS_BODY));
 health.get('/api/health', (c) => c.json(LIVENESS_BODY));

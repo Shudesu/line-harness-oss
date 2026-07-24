@@ -22,11 +22,11 @@ name: Release
 #
 # Required secrets for downstream installs (documented here so create-line-harness
 # stays in sync):
-#   - LINE_CHANNEL_TOKEN
+#   - LINE_CHANNEL_ACCESS_TOKEN
 #   - LINE_CHANNEL_SECRET
 #   - LINE_LOGIN_CHANNEL_ID
-#   - ADMIN_API_KEY
 #   - LIFF_URL
+#   - API_KEY
 #
 # This workflow itself only needs the default `GITHUB_TOKEN` to create a
 # draft Release — no Cloudflare credentials are required. Deploy workflows
@@ -210,11 +210,11 @@ jobs:
             "bundle_url": "${bundle_url}",
             "bundle_size_bytes": ${{ steps.bundle.outputs.size }},
             "required_secrets": [
-              "LINE_CHANNEL_TOKEN",
+              "LINE_CHANNEL_ACCESS_TOKEN",
               "LINE_CHANNEL_SECRET",
               "LINE_LOGIN_CHANNEL_ID",
-              "ADMIN_API_KEY",
-              "LIFF_URL"
+              "LIFF_URL",
+              "API_KEY"
             ],
             "new_required_secrets": [],
             "migrations": ${{ steps.migrations.outputs.list }},

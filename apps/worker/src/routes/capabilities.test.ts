@@ -22,6 +22,7 @@ type CapabilitiesResponse = {
       supportedLinks: string[];
     };
     endpoints: Record<string, string>;
+    external_writes: Record<string, string>;
   };
 };
 
@@ -44,10 +45,14 @@ describe('GET /api/capabilities', () => {
     expect(body.success).toBe(true);
     expect(body.data.harness_kind).toBe('line');
     expect(body.data.harness_version).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(body.data.api_version).toBe(1);
+    expect(body.data.api_version).toBe(2);
     expect(body.data.features).toContain('friends');
     expect(body.data.features).toContain('broadcasts');
     expect(body.data.features).toContain('staff');
+    expect(body.data.features).toContain('provider_receipt_v1');
+    expect(body.data.features).toContain('dispatch_readback_v1');
+    expect(body.data.features).toContain('push_retry_key_v1');
+    expect(body.data.features).toContain('account_scope_fingerprint_v1');
     expect(body.data.min_app_version).toBeDefined();
     expect(body.data.product).toBe('line-harness');
     expect(body.data.platform).toBe('line');
@@ -57,6 +62,12 @@ describe('GET /api/capabilities', () => {
     expect(body.data.identity.supportedLinks).toContain('ig_igsid');
     expect(body.data.endpoints.staffMe).toBe('/api/staff/me');
     expect(body.data.endpoints.trackedLinks).toBe('/api/tracked-links');
+    expect(body.data.endpoints.runtimeMessageSend).toBe('/api/runtime/messages:send');
+    expect(body.data.endpoints.runtimeAccountScope)
+      .toBe('/api/runtime/conversations/:conversationRef/account-scope');
+    expect(body.data.endpoints.runtimeDispatchReadback)
+      .toBe('/api/runtime/dispatches/:clientRequestId');
+    expect(body.data.external_writes.message_send).toBe('provider_receipt_v1');
   });
 
   test('accessible to any authenticated role', async () => {

@@ -18,6 +18,13 @@ export interface FollowersInsight {
   blocks?: number;
 }
 
+export interface LineProviderReceipt {
+  httpStatus: 200 | 409;
+  providerRequestId: string;
+  acceptedRequestId: string | null;
+  providerMessageIds: string[];
+}
+
 export class LineClient {
   constructor(private readonly channelAccessToken: string) {}
 
@@ -79,6 +86,63 @@ export class LineClient {
     const body: PushMessageRequest = { to, messages };
     const { data } = await this.request('POST', '/v2/bot/message/push', body);
     return data;
+  }
+
+  /**
+   * Push a message with LINE's retry-key contract and retain the provider
+   * receipt required for durable readback. A 409 response is successful only
+   * when LINE proves the original request was accepted.
+   */
+  async pushMessageWithReceipt(
+    to: string,
+    messages: Message[],
+    retryKey: string,
+  ): Promise<LineProviderReceipt> {
+    const url = `${LINE_API_BASE}/v2/bot/message/push`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.channelAccessToken}`,
+        'X-Line-Retry-Key': retryKey,
+      },
+      body: JSON.stringify({ to, messages } satisfies PushMessageRequest),
+    });
+
+    const text = await res.text().catch(() => '');
+    let data: { sentMessages?: Array<{ id?: unknown }> } = {};
+    if (text) {
+      try {
+        data = JSON.parse(text) as typeof data;
+      } catch {
+        data = {};
+      }
+    }
+
+    if (res.status !== 200 && res.status !== 409) {
+      throw new Error(`LINE API error: ${res.status} ${res.statusText}`);
+    }
+
+    const providerRequestId = res.headers.get('x-line-request-id');
+    const acceptedRequestId = res.headers.get('x-line-accepted-request-id');
+    const providerMessageIds = (data.sentMessages ?? [])
+      .map((message) => message.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+
+    if (
+      !providerRequestId
+      || providerMessageIds.length === 0
+      || (res.status === 409 && !acceptedRequestId)
+    ) {
+      throw new Error('LINE provider receipt is incomplete');
+    }
+
+    return {
+      httpStatus: res.status,
+      providerRequestId,
+      acceptedRequestId,
+      providerMessageIds,
+    };
   }
 
   async multicast(
