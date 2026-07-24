@@ -7,6 +7,7 @@ compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 account_id = "5d5615bbe729d9eddeb80a65781dec7b"
+routes = [{ pattern = "wv.entryhub.jp", custom_domain = true }]
 
 [assets]
 directory = "dist/client"
