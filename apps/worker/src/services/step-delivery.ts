@@ -488,11 +488,26 @@ export function buildMessage(messageType: string, messageContent: string, altTex
 
   if (messageType === 'flex') {
     try {
-      const contents = JSON.parse(messageContent);
+      const parsed = JSON.parse(messageContent);
+      const isCompleteFlexMessage =
+        parsed !== null
+        && typeof parsed === 'object'
+        && parsed.type === 'flex'
+        && parsed.contents !== null
+        && typeof parsed.contents === 'object';
+      const contents = isCompleteFlexMessage ? parsed.contents : parsed;
+      const embeddedAltText =
+        isCompleteFlexMessage && typeof parsed.altText === 'string'
+          ? parsed.altText
+          : undefined;
       // Remove empty text nodes (from {{#if_ref}} conditional blocks)
       cleanEmptyNodes(contents);
       // Extract first text element for altText (shown in notifications)
-      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
+      return {
+        type: 'flex',
+        altText: altText || embeddedAltText || extractFlexAltText(contents),
+        contents,
+      };
     } catch {
       return { type: 'text', text: messageContent };
     }

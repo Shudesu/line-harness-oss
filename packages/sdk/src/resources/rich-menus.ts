@@ -9,6 +9,13 @@ export class RichMenusResource {
     return res.data
   }
 
+  async getDefault(): Promise<{ richMenuId: string | null; name: string | null }> {
+    const res = await this.http.get<ApiResponse<{ richMenuId: string | null; name: string | null }>>(
+      '/api/rich-menus/default',
+    )
+    return res.data
+  }
+
   async create(menu: CreateRichMenuInput): Promise<{ richMenuId: string }> {
     const res = await this.http.post<ApiResponse<{ richMenuId: string }>>('/api/rich-menus', menu)
     return res.data
