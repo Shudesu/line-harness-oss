@@ -44,6 +44,8 @@ vi.mock('../services/event-bus.js', () => ({
 vi.mock('../services/step-delivery.js', () => ({
   buildMessage: vi.fn(),
   expandVariables: vi.fn(),
+  resolveMetadata: vi.fn().mockResolvedValue({}),
+  messageToLogPayload: vi.fn().mockReturnValue({ messageType: 'text', content: 'logged' }),
 }));
 
 import { verifySignature } from '@line-crm/line-sdk';
@@ -295,5 +297,131 @@ describe('POST /webhook — first-contact existing friends', () => {
     expect(addTagToFriend).not.toHaveBeenCalled();
     expect(getEntryRouteByRefCode).not.toHaveBeenCalled();
     expect(getMessageTemplateById).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — auto-reply keyword NFKC normalization', () => {
+  const knownFriend = {
+    id: 'friend-1',
+    line_user_id: 'U-existing',
+    display_name: 'Existing Friend',
+    picture_url: null,
+    status_message: null,
+    is_following: 1,
+    user_id: null,
+    line_account_id: null,
+    metadata: '{}',
+    first_tracked_link_id: null,
+    created_at: '2026-06-18T12:00:00.000+09:00',
+    updated_at: '2026-06-18T12:00:00.000+09:00',
+  };
+
+  function setupDbWithAutoReply(rule: { keyword: string; match_type: 'exact' | 'contains' }) {
+    const genericStmt = {
+      bind: vi.fn(),
+      run: vi.fn().mockResolvedValue({}),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+      first: vi.fn().mockResolvedValue(null),
+    };
+    genericStmt.bind.mockReturnValue(genericStmt);
+    const autoReplyStmt = {
+      bind: vi.fn(),
+      run: vi.fn().mockResolvedValue({}),
+      all: vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: 'rule-1',
+            keyword: rule.keyword,
+            match_type: rule.match_type,
+            response_type: 'text',
+            response_content: 'ご予約はこちら',
+            template_id: null,
+            is_active: 1,
+            created_at: '2026-06-18T12:00:00.000+09:00',
+          },
+        ],
+      }),
+      first: vi.fn().mockResolvedValue(null),
+    };
+    autoReplyStmt.bind.mockReturnValue(autoReplyStmt);
+    const db = {
+      prepare: vi.fn().mockImplementation((sql: string) =>
+        sql.includes('FROM auto_replies') ? autoReplyStmt : genericStmt,
+      ),
+    } as unknown as D1Database;
+    return db;
+  }
+
+  async function postTextMessage(db: D1Database, text: string) {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(getFriendByLineUserId).mockResolvedValue(knownFriend as never);
+    vi.mocked(jstNow).mockReturnValue('2026-06-18T12:00:00.000+09:00');
+
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+
+    const app = setupApp();
+    const validShapedSignature = 'A'.repeat(43) + '=';
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': validShapedSignature,
+        },
+        body: JSON.stringify({
+          destination: 'bot',
+          events: [
+            {
+              type: 'message',
+              replyToken: 'reply-token',
+              message: { type: 'text', id: 'message-1', text },
+              timestamp: Date.now(),
+              source: { type: 'user', userId: 'U-existing' },
+              webhookEventId: 'event-1',
+              deliveryContext: { isRedelivery: false },
+              mode: 'active',
+            },
+          ],
+        }),
+      },
+      { ...baseEnv, DB: db },
+      executionCtx,
+    );
+    expect(res.status).toBe(200);
+    const processing = vi.mocked(executionCtx.waitUntil).mock.calls[0]?.[0] as Promise<unknown>;
+    await processing;
+  }
+
+  test('contains rule with half-width keyword matches full-width message text', async () => {
+    // 「0627」(半角) の包含ルールに「０６２７お願いします」(全角+後続文) がマッチする
+    const db = setupDbWithAutoReply({ keyword: '0627', match_type: 'contains' });
+    await postTextMessage(db, '０６２７お願いします');
+
+    expect(lineClientMocks.replyMessage).toHaveBeenCalledTimes(1);
+    // matched=true なので unread 化 (upsertChatOnMessage) は起きない
+    expect(upsertChatOnMessage).not.toHaveBeenCalled();
+  });
+
+  test('exact rule matches mixed-width text with surrounding whitespace', async () => {
+    // 「0627」(半角・完全一致) に「 06２７ 」(混在全角+前後空白) がマッチする
+    const db = setupDbWithAutoReply({ keyword: '0627', match_type: 'exact' });
+    await postTextMessage(db, ' 06２７ ');
+
+    expect(lineClientMocks.replyMessage).toHaveBeenCalledTimes(1);
+    expect(upsertChatOnMessage).not.toHaveBeenCalled();
+  });
+
+  test('exact rule still rejects text that merely contains the keyword', async () => {
+    // 正規化しても exact の意味は変えない: 「０６２７お願いします」は完全一致にはならない
+    const db = setupDbWithAutoReply({ keyword: '0627', match_type: 'exact' });
+    await postTextMessage(db, '０６２７お願いします');
+
+    expect(lineClientMocks.replyMessage).not.toHaveBeenCalled();
+    expect(upsertChatOnMessage).toHaveBeenCalledWith(db, 'friend-1');
   });
 });
