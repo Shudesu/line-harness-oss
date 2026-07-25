@@ -578,11 +578,13 @@ async function handleEvent(
 
     let matched = false;
     let replyTokenConsumed = false;
+    const normalizedIncomingText = normalizeForKeywordMatch(incomingText);
     for (const rule of autoReplies.results) {
+      const normalizedKeyword = normalizeForKeywordMatch(rule.keyword);
       const isMatch =
         rule.match_type === 'exact'
-          ? incomingText === rule.keyword
-          : incomingText.includes(rule.keyword);
+          ? normalizedIncomingText === normalizedKeyword
+          : normalizedIncomingText.includes(normalizedKeyword);
 
       if (isMatch) {
         // silent タイプ: 返信しないが matched=true にして unread / push を抑止する
@@ -641,6 +643,16 @@ async function handleEvent(
 
     return;
   }
+}
+
+/**
+ * auto_replies の keyword マッチ用正規化。NFKC で全角英数字→半角・半角カナ→
+ * 全角に揃え、前後の空白を落とす。ユーザーが「０６２７」「062７」「0627 」の
+ * ように全角/半角ゆらぎで入力してもルール1本('0627')でマッチさせるため。
+ * postback data は開発者定義の機械的な値なので正規化しない(テキスト入力のみ)。
+ */
+function normalizeForKeywordMatch(s: string): string {
+  return s.normalize('NFKC').trim();
 }
 
 /**
