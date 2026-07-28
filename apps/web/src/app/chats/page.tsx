@@ -308,6 +308,10 @@ export default function ChatsPage() {
     if (typeof window === 'undefined') return false
     return new URLSearchParams(window.location.search).get('unanswered') === '1'
   })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [friendResults, setFriendResults] = useState<FriendItem[]>([])
+  const [searchingFriends, setSearchingFriends] = useState(false)
+  const friendSearchSeqRef = useRef(0)
 
   // unansweredOnly 変更時に URL を書き戻す
   useEffect(() => {
@@ -577,10 +581,44 @@ export default function ChatsPage() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [messageContent])
 
+  // 友だち検索はサーバー側で実行する。一覧に読み込み済みの友だちだけを対象に
+  // すると、まだ返信が無い人（＝チャット一覧に出てこない人）を取りこぼすため。
+  useEffect(() => {
+    const query = searchQuery.trim()
+    if (!query) {
+      setFriendResults([])
+      setSearchingFriends(false)
+      return
+    }
+    const seq = ++friendSearchSeqRef.current
+    setSearchingFriends(true)
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.friends.list({
+          search: query,
+          accountId: selectedAccountId || undefined,
+          limit: 50,
+        })
+        if (seq !== friendSearchSeqRef.current) return // 新しい検索が始まっているので破棄
+        setFriendResults(res.success ? (res.data.items as unknown as FriendItem[]) : [])
+      } catch {
+        if (seq === friendSearchSeqRef.current) setFriendResults([])
+      } finally {
+        if (seq === friendSearchSeqRef.current) setSearchingFriends(false)
+      }
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [searchQuery, selectedAccountId])
+
   const handleSelectChat = (chatId: string) => {
     setSelectedChatId(chatId)
     setMessageContent('')
     setPendingImage(null)
+  }
+
+  const handleSelectFriend = (friendId: string) => {
+    setSelectedChatId(null)
+    setSelectedFriendId(friendId)
   }
 
   const triggerLoadingAnimation = useCallback(async (chatId: string) => {
@@ -768,6 +806,21 @@ export default function ChatsPage() {
     }
   }
 
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const filteredChats = normalizedQuery
+    ? chats.filter((chat) => chat.friendName.toLowerCase().includes(normalizedQuery))
+    : chats
+  // 読み込み済みのチャットに出てこない友だち。まだ一度も返信していない相手が
+  // ここに現れるので、返信を待たずにこちらから送れる。
+  const friendsNotInList = friendResults.filter(
+    (friend) => !chats.some((chat) => chat.friendId === friend.id),
+  )
+  const noSearchResult =
+    normalizedQuery !== '' &&
+    !searchingFriends &&
+    filteredChats.length === 0 &&
+    friendsNotInList.length === 0
+
   return (
     <div>
       <Header title="オペレーターチャット" />
@@ -781,8 +834,41 @@ export default function ChatsPage() {
 
       <div className="flex gap-4 h-[calc(100vh-120px)] lg:h-[calc(100vh-180px)]">
         {/* Left Panel: Chat List */}
-        <div className={`w-full lg:w-96 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
+        <div className={`w-full lg:w-96 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId || selectedFriendId ? 'hidden lg:flex' : 'flex'}`}>
           {/* タブ (全て / 未読 / 対応中 / 解決済) は意図的に削除。直近メッセージが見やすい LINE 風一覧を優先。 */}
+
+          {/* User search */}
+          <div className="p-3 border-b border-gray-100">
+            <div className="relative">
+              <svg
+                className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
+              </svg>
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="名前でユーザーを検索..."
+                aria-label="ユーザー検索"
+                className="w-full text-sm border border-gray-300 rounded-lg pl-9 pr-8 py-2 min-h-[40px] bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  aria-label="検索条件をクリア"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
 
           {/* Filter row */}
           <div className="px-3 py-2 border-b border-gray-100 flex flex-wrap items-center gap-2">
@@ -829,7 +915,7 @@ export default function ChatsPage() {
               </div>
             ) : (
               <>
-                {chats.map((chat) => {
+                {filteredChats.map((chat) => {
                   const isSelected = selectedChatId === chat.id
                   // 「真の自発（要対応）」= chat.status='unread'。webhook 側で auto_reply に
                   // マッチしなかった incoming のみ unread に設定される。auto_reply trigger
@@ -893,7 +979,7 @@ export default function ChatsPage() {
                     </button>
                   )
                 })}
-                {hasMoreChats && !unansweredOnly && (
+                {hasMoreChats && !unansweredOnly && !normalizedQuery && (
                   <button
                     onClick={() => { void loadMoreChats() }}
                     disabled={loadingMore}
@@ -901,6 +987,54 @@ export default function ChatsPage() {
                   >
                     {loadingMore ? '読み込み中...' : 'さらに読み込む'}
                   </button>
+                )}
+
+                {searchingFriends && (
+                  <p className="px-4 py-3 text-xs text-gray-400">検索中...</p>
+                )}
+
+                {/* 一覧に出てこない友だち。まだ一度も返信していない相手はチャットが
+                    作られないため、ここからでないと連絡できない。 */}
+                {friendsNotInList.length > 0 && (
+                  <>
+                    <p className="px-4 py-2 text-xs font-medium text-gray-500 bg-gray-50 border-b border-gray-100">
+                      友だち（チャット一覧に無い相手）
+                    </p>
+                    {friendsNotInList.map((friend) => (
+                      <button
+                        key={friend.id}
+                        onClick={() => handleSelectFriend(friend.id)}
+                        className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors ${
+                          selectedFriendId === friend.id ? 'bg-green-50' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          {friend.pictureUrl ? (
+                            <img src={friend.pictureUrl} alt="" className="w-10 h-10 rounded-full flex-shrink-0" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                              <span className="text-gray-500 text-sm">{(friend.displayName || '?').charAt(0)}</span>
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-900 truncate">{friend.displayName || '名前なし'}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">メッセージ履歴を開く</p>
+                          </div>
+                          {!friend.isFollowing && (
+                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 bg-gray-100 text-gray-500">
+                              ブロック中
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {noSearchResult && (
+                  <p className="px-4 py-6 text-center text-sm text-gray-400">
+                    「{searchQuery.trim()}」に一致するユーザーは見つかりませんでした
+                  </p>
                 )}
               </>
             )}
@@ -913,9 +1047,13 @@ export default function ChatsPage() {
             /* Direct message to friend without existing chat */
             <DirectMessagePanel
               friendId={selectedFriendId}
-              friend={allFriends.find((f) => f.id === selectedFriendId) || null}
+              friend={
+                friendResults.find((f) => f.id === selectedFriendId)
+                ?? allFriends.find((f) => f.id === selectedFriendId)
+                ?? null
+              }
               onBack={() => setSelectedFriendId(null)}
-              onSent={() => { setSelectedFriendId(null); loadChats(); }}
+              onSent={loadChats}
             />
           ) : !selectedChatId ? (
             <div className="flex-1 flex items-center justify-center">
