@@ -107,7 +107,7 @@ export async function authenticateApiToken(
   }
 
   // Fallback: env API_KEY acts as owner (current rotation slot)
-  if (token === c.env.API_KEY) {
+  if (c.env.API_KEY && timingSafeEqual(token, c.env.API_KEY)) {
     return { id: 'env-owner', name: 'Owner', role: 'owner' };
   }
 
@@ -119,13 +119,29 @@ export async function authenticateApiToken(
   if (
     c.env.LEGACY_API_KEY &&
     c.env.LEGACY_API_KEY !== c.env.API_KEY &&
-    token === c.env.LEGACY_API_KEY
+    timingSafeEqual(token, c.env.LEGACY_API_KEY)
   ) {
     console.log('[auth] accept_via=LEGACY_API_KEY');
     return { id: 'env-owner', name: 'Owner', role: 'owner' };
   }
 
   return null;
+}
+
+/**
+ * Constant-time string equality.
+ *
+ * The bearer token is attacker-controlled, so comparing it with `===` leaks how
+ * many leading characters matched through response timing. Length is not secret
+ * (it is fixed per key format), so an early length check is fine.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 export async function authMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
