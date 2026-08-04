@@ -40,6 +40,10 @@ crons = ["* * * * *", "0 */6 * * *"]
 # 不活性になる (本番挙動を変えないための判断, 2026-07-07)。
 # ═══════════════════════════════════════════════════════════════
 [vars]
+# Worker 自身の公開 URL。Env 型では必須 (WORKER_URL: string) で、短縮リンク /t/、
+# LIFF、フォーム、予約通知、画像 proxy が参照する。未設定のままだと
+# test-send が 500 になるため、デプロイ先の URL に書き換えて使う。
+WORKER_URL = "https://line-harness.workers.dev"
 WORKER_NAME = "line-harness"
 ADMIN_PAGES_PROJECT = "line-harness-admin"
 LIFF_PAGES_PROJECT = "line-harness-liff"

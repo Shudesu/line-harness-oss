@@ -844,10 +844,17 @@ broadcasts.post('/api/broadcasts/:id/test-send', async (c) => {
     }
 
     // Auto-track URLs (track_links=0 なら本番送信と同様に短縮せず raw のまま)
+    // WORKER_URL が未設定でも request origin にフォールバックする。API route を
+    // 処理している時点で origin は Worker 自身なので同じ値になる。素で渡すと
+    // autoTrackContent 内の `workerUrl.replace(...)` が undefined で TypeError に
+    // なり、test-send だけが 500 で死ぬ (本番送信側は processBroadcastSend の
+    // `if (workerUrl && ...)` で守られている)。DM 送信 (routes/friends.ts) は
+    // 既にこのフォールバックを使っているので、そちらに揃える。
+    const trackWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
     let tracked = { messageType: broadcast.message_type as string, content: messageContent };
     if (broadcast.track_links !== 0) {
       const { autoTrackContent } = await import('../services/auto-track.js');
-      tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, c.env.WORKER_URL, {
+      tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, trackWorkerUrl, {
         lineAccountId: accountId,
       });
     }
