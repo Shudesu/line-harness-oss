@@ -14,6 +14,7 @@
  *   ?page=book        — booking page (calendar slot picker, Google Calendar)
  *   ?page=salon-book  — salon booking flow (React, dynamic-imported)
  *   ?page=affiliate   — affiliate self-serve page (React, dynamic-imported)
+ *   ?page=webinar     — auto-webinar pseudo-live viewer (React, dynamic-imported; &slug=)
  */
 
 import { initBooking } from './booking.js';
@@ -493,6 +494,65 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
   mountEventBooking(container, ctx, initial);
 }
 
+// ─── Auto-webinar (React, dynamic-imported) ──────────────
+
+async function initWebinar(): Promise<void> {
+  // event-booking と同じ初期化シーケンス: profile/idToken/friendship 取得、
+  // 未友達なら friend-add gate、友達なら React mount。
+  const [profile, idToken, friendship] = await Promise.all([
+    liff.getProfile(),
+    Promise.resolve(liff.getIDToken()),
+    liff.getFriendship(),
+  ]);
+  if (!idToken) {
+    showError('LINE 認証情報の取得に失敗しました。LINE アプリ内で再度開いてください。');
+    return;
+  }
+
+  const existingUuid = getSavedUuid();
+  const ref = getRef();
+  const wbParams = new URLSearchParams(window.location.search);
+
+  // UUID linking (best-effort) — 視聴 API は friends 行を要求するので、
+  // 初見ユーザーでも friend-add gate 通過後に行が存在するようにする。
+  apiCall('/api/liff/link', {
+    method: 'POST',
+    body: JSON.stringify({
+      idToken,
+      displayName: profile.displayName,
+      existingUuid,
+      ref: ref || undefined,
+    }),
+  })
+    .then(async (res) => {
+      if (res.ok) {
+        const data = (await res.json()) as { success: boolean; data?: { userId?: string } };
+        if (data?.data?.userId) saveUuid(data.data.userId);
+      }
+    })
+    .catch(() => {
+      /* silent */
+    });
+
+  if (!friendship.friendFlag) {
+    showFriendAdd(profile);
+    return;
+  }
+
+  const container = document.getElementById('app');
+  if (!container) {
+    showError('mount target #app が見つかりません');
+    return;
+  }
+  const slug = wbParams.get('slug') ?? '';
+  if (!slug) {
+    showError('slug クエリパラメータが必要です（?page=webinar&slug=<slug>）');
+    return;
+  }
+  const { mountWebinar } = await import('./webinar/main.js');
+  mountWebinar(container, { liffId: LIFF_ID, lineUserId: profile.userId, idToken }, slug);
+}
+
 // ─── Affiliate self-serve (React, dynamic-imported) ──────
 
 async function initAffiliate(): Promise<void> {
@@ -591,6 +651,8 @@ async function main() {
       await initEventBooking('detail');
     } else if (page === 'event-me') {
       await initEventBooking('history');
+    } else if (page === 'webinar') {
+      await initWebinar();
     } else if (page === 'affiliate') {
       await initAffiliate();
     } else if (page === 'form') {

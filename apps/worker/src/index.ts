@@ -79,6 +79,7 @@ import dedupPreview from './routes/dedup-preview.js';
 import { profileRefresh } from './routes/profile-refresh.js';
 import { richMenuGroups } from './routes/rich-menu-groups.js';
 import { lineProxy } from './routes/line-proxy.js';
+import { webinarRoutes } from './routes/webinars.js';
 import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
@@ -201,6 +202,7 @@ app.route('/', messageTemplates);
 app.route('/', dedupPreview);
 app.route('/', profileRefresh);
 app.route('/', richMenuGroups);
+app.route('/', webinarRoutes);
 // LINE Messaging API 互換プロキシ — 外部エージェントの直接送信を messages_log に残す
 app.route('/', lineProxy);
 
@@ -327,7 +329,7 @@ app.get('/r/:ref', async (c) => {
   // friend-add gate (initSalonBooking, initEventBooking); page=book/form
   // would bypass that gate and bypass ref-based attribution, so they are
   // intentionally excluded until those initializers are unified.
-  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me']);
+  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar']);
   const page = c.req.query('page');
   if (page && PAGE_PASSTHROUGH_ALLOWED.has(page)) liffParams.set('page', page);
   const id = c.req.query('id');
@@ -626,7 +628,7 @@ app.get('/o', async (c) => {
 
   const liffParams = new URLSearchParams();
   liffParams.set('liffId', liffId);
-  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me']);
+  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar']);
   const page = c.req.query('page');
   if (page && PAGE_PASSTHROUGH_ALLOWED.has(page)) liffParams.set('page', page);
   const id = c.req.query('id');
@@ -846,7 +848,7 @@ export async function notFoundHandler(
   const assetRes = await c.env.ASSETS.fetch(c.req.raw);
   if (assetRes.status !== 404) return assetRes;
 
-  // SPA fallback: LIFF deep links (/events/:id など) は
+  // SPA fallback: LIFF deep links (/webinar/:slug, /events/:id など) は
   // アセットストアに実ファイルが無く 404 で返る。HTML を要求する GET
   // ナビゲーションに限り index.html を返してクライアントルーターに任せる。
   // それ以外 (存在しない .js/.png への参照など) は 404 のまま透過する。

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@line/liff": "^2.24.0",
+    "hls.js": "^1.6.16",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0"

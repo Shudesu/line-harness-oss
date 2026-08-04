@@ -1,0 +1,19 @@
+/* webinar 専用 CSS。event-booking と同じパターン。
+ * Tailwind v4: theme + utilities を取り込み、preflight (base reset) は除外。
+ * webinar namespace (body.wb-active 配下) にだけ手動 reset を当てる。
+ */
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+/* index.html の friend-add 用 inline (body flex センタリング + #app 幅制限) を
+ * フルスクリーンのライブビューアでは解除する。 */
+body.wb-active {
+  display: block !important;
+  align-items: stretch !important;
+  background: #111827 !important;
+}
+body.wb-active #app {
+  max-width: none !important;
+  width: 100% !important;
+  padding: 0 !important;
+}

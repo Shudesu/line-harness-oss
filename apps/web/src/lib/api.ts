@@ -1816,3 +1816,67 @@ export const eventsApi = {
       withAccount('/api/events/admin/events/notifications/pending', accountId),
     ),
 };
+
+// ===== Webinars =====
+
+export type WebinarScheduleRule = {
+  type: 'daily' | 'weekly' | 'once'
+  time?: string
+  days?: number[]
+  at?: string
+}
+
+export type Webinar = {
+  id: string
+  accountId: string | null
+  title: string
+  slug: string
+  status: 'draft' | 'active' | 'archived'
+  videoPrefix: string | null
+  durationSeconds: number
+  schedule: WebinarScheduleRule[]
+  cta: { label: string; url: string; showAtSeconds: number } | null
+  tagOnAttend: string | null
+  tagOnCtaClick: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type WebinarInput = Partial<Omit<Webinar, 'id' | 'createdAt' | 'updatedAt'>>
+
+export type WebinarSakuraComment = { id?: string; atSeconds: number; authorName: string; body: string }
+
+export type WebinarAnalytics = {
+  sessions: Array<{ sessionStartAt: number; viewers: number; avgWatchedSeconds: number; ctaClicks: number }>
+  dropoff: Array<{ bucketStart: number; viewers: number }>
+}
+
+export type WebinarUserComment = {
+  id: string
+  friendId: string
+  friendName: string | null
+  sessionStartAt: number
+  atSeconds: number
+  body: string
+  createdAt: string
+}
+
+export const webinarApi = {
+  list: () => fetchApi<{ data: Webinar[] }>('/api/webinars'),
+  get: (id: string) => fetchApi<{ data: Webinar }>(`/api/webinars/${id}`),
+  create: (input: WebinarInput) =>
+    fetchApi<{ data: Webinar }>('/api/webinars', { method: 'POST', body: JSON.stringify(input) }),
+  update: (id: string, input: WebinarInput) =>
+    fetchApi<{ data: Webinar }>(`/api/webinars/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  remove: (id: string) => fetchApi<{ data: null }>(`/api/webinars/${id}`, { method: 'DELETE' }),
+  comments: (id: string) =>
+    fetchApi<{ data: WebinarSakuraComment[] }>(`/api/webinars/${id}/comments`),
+  saveComments: (id: string, comments: WebinarSakuraComment[]) =>
+    fetchApi<{ data: { count: number } }>(`/api/webinars/${id}/comments`, {
+      method: 'PUT',
+      body: JSON.stringify({ comments: comments.map(({ atSeconds, authorName, body }) => ({ atSeconds, authorName, body })) }),
+    }),
+  analytics: (id: string) => fetchApi<{ data: WebinarAnalytics }>(`/api/webinars/${id}/analytics`),
+  userComments: (id: string) =>
+    fetchApi<{ data: WebinarUserComment[] }>(`/api/webinars/${id}/user-comments`),
+}

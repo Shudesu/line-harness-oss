@@ -13,6 +13,7 @@ import {
 import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
 import { enrollFriendInScenario } from '@line-crm/db';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
+import { verifyCallerLineUserId } from '../services/liff-auth.js';
 import type {
   Form as DbForm,
   FormSubmission as DbFormSubmission,
@@ -48,6 +49,43 @@ function serializeForm(
     updatedAt: row.updated_at,
     lastSubmittedAt: extra?.lastSubmittedAt ?? null,
     usedByAccounts: extra?.usedByAccounts ?? [],
+  };
+}
+
+function publicWebhookConfig(row: DbForm): {
+  hasSubmitWebhook: boolean;
+  webhookOrigin: string | null;
+  webhookGateId: string | null;
+} {
+  if (!row.on_submit_webhook_url) {
+    return { hasSubmitWebhook: false, webhookOrigin: null, webhookGateId: null };
+  }
+
+  try {
+    const url = new URL(row.on_submit_webhook_url);
+    const gateMatch = url.pathname.match(/\/engagement-gates\/([^/]+)\/verify\/?$/);
+    return {
+      hasSubmitWebhook: true,
+      // The LIFF client needs the service origin for its public replier/verify
+      // UX. Never expose the stored path, query string, or secret headers.
+      webhookOrigin: url.origin,
+      webhookGateId: gateMatch ? decodeURIComponent(gateMatch[1]) : null,
+    };
+  } catch {
+    return { hasSubmitWebhook: true, webhookOrigin: null, webhookGateId: null };
+  }
+}
+
+function serializePublicForm(row: DbForm) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    fields: JSON.parse(row.fields || '[]') as unknown[],
+    isActive: Boolean(row.is_active),
+    onSubmitMessageContent: row.on_submit_message_content,
+    onSubmitWebhookFailMessage: row.on_submit_webhook_fail_message,
+    ...publicWebhookConfig(row),
   };
 }
 
@@ -89,7 +127,8 @@ forms.get('/api/forms/:id', async (c) => {
     if (!form) {
       return c.json({ success: false, error: 'Form not found' }, 404);
     }
-    return c.json({ success: true, data: serializeForm(form) });
+    const data = c.get('staff') ? serializeForm(form) : serializePublicForm(form);
+    return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/forms/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -233,16 +272,13 @@ forms.get('/api/forms/:id/submissions', async (c) => {
 forms.post('/api/forms/:id/opened', async (c) => {
   try {
     const formId = c.req.param('id');
-    const body = await c.req.json<{ lineUserId?: string; friendId?: string }>();
-    const lineUserId = body.lineUserId;
-    const friendId = body.friendId;
-
-    // Resolve friend
-    let friend = friendId
-      ? await getFriendById(c.env.DB, friendId)
-      : lineUserId
-        ? await getFriendByLineUserId(c.env.DB, lineUserId)
-        : null;
+    // Open analytics may remain anonymous, but a caller can only attribute an
+    // open to the LINE identity proven by its ID token. Body-supplied customer
+    // IDs are intentionally ignored.
+    const lineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+    const friend = lineUserId
+      ? await getFriendByLineUserId(c.env.DB, lineUserId)
+      : null;
 
     const now = jstNow();
     await c.env.DB.prepare(
@@ -265,15 +301,13 @@ forms.post('/api/forms/:id/opened', async (c) => {
 // POST /api/forms/:id/partial — save survey answers without x_username (public, used by LIFF page 1)
 forms.post('/api/forms/:id/partial', async (c) => {
   try {
-    const formId = c.req.param('id');
-    const body = await c.req.json<{ lineUserId?: string; friendId?: string; data?: Record<string, unknown> }>();
+    const body = await c.req.json<{ data?: Record<string, unknown> }>();
+    const lineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+    if (!lineUserId) {
+      return c.json({ success: false, error: 'Unauthorized' }, 401);
+    }
 
-    // Resolve friend
-    let friend = body.friendId
-      ? await getFriendById(c.env.DB, body.friendId)
-      : body.lineUserId
-        ? await getFriendByLineUserId(c.env.DB, body.lineUserId)
-        : null;
+    const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
 
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
@@ -306,14 +340,21 @@ forms.post('/api/forms/:id/submit', async (c) => {
     }
 
     const body = await c.req.json<{
-      lineUserId?: string;
-      friendId?: string;
       data?: Record<string, unknown>;
-      _skipWebhook?: boolean;
       trackedLinkId?: string;
     }>();
 
     const submissionData = body.data ?? {};
+
+    const lineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+    if (!lineUserId) {
+      return c.json({ success: false, error: 'Unauthorized' }, 401);
+    }
+    const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
+    if (!friend) {
+      return c.json({ success: false, error: 'Friend not found' }, 404);
+    }
+    const friendId = friend.id;
 
     // Validate required fields
     const fields = JSON.parse(form.fields || '[]') as Array<{
@@ -335,28 +376,18 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
     }
 
-    // Resolve friend by lineUserId or friendId
-    let friendId: string | null = body.friendId ?? null;
-    if (!friendId && body.lineUserId) {
-      const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
-      if (friend) {
-        friendId = friend.id;
-      }
-    }
-
-    // Webhook gate — skip if client pre-verified via repliers endpoint
+    // Browser-side verification is UX only. The server always performs the
+    // authoritative webhook check; client-supplied skip flags are discarded.
     delete submissionData._webhookVerified;
-    const skipWebhook = Boolean(body._skipWebhook);
     delete submissionData._skipWebhook;
     let webhookData: Record<string, unknown> | null = null;
-    if (form.on_submit_webhook_url && !skipWebhook) {
+    if (form.on_submit_webhook_url) {
       const webhookResult = await callFormWebhook(form, submissionData);
       webhookData = webhookResult.data as Record<string, unknown> | null;
       if (!webhookResult.passed) {
         // Webhook rejected — send fail message and stop
-        if (form.on_submit_webhook_fail_message && friendId) {
-          const friend = await getFriendById(c.env.DB, friendId);
-          if (friend?.line_user_id) {
+        if (form.on_submit_webhook_fail_message) {
+          if (friend.line_user_id) {
             try {
               const { LineClient } = await import('@line-crm/line-sdk');
               let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -382,22 +413,22 @@ forms.post('/api/forms/:id/submit', async (c) => {
         // Still save the submission for records
         const submission = await createFormSubmission(c.env.DB, {
           formId,
-          friendId: friendId || null,
+          friendId,
           data: JSON.stringify({ ...submissionData, _webhookResult: webhookResult.data }),
         });
         return c.json({ success: true, data: { ...serializeSubmission(submission), webhookPassed: false, webhookData: webhookResult.data } }, 201);
       }
     }
 
-    // Save submission (friendId null if not resolved — avoids FK constraint)
+    // Save submission against the authenticated caller only.
     const submission = await createFormSubmission(c.env.DB, {
       formId,
-      friendId: friendId || null,
+      friendId,
       data: JSON.stringify(submissionData),
     });
 
     // Side effects (best-effort, don't fail the request)
-    if (friendId) {
+    {
       const db = c.env.DB;
       const now = jstNow();
 
