@@ -423,6 +423,51 @@ async function processQueuedBroadcastBatches(
   await updateBroadcastStatus(db, broadcast.id, 'sent');
 }
 
+/**
+ * imagemap (LINE 公式アカウントマネージャーでいう「リッチメッセージ」) の payload か
+ * どうかを message_content の形で判定する。
+ *
+ * 専用の message_type を足さないのは意図的:
+ * `broadcasts.message_type` は CHECK (message_type IN ('text','image','flex')) で
+ * 固定されていて、SQLite/D1 で CHECK を変えるにはテーブル再作成 = DROP TABLE +
+ * ALTER TABLE ... RENAME TO が必要になる。どちらも additive-only のマイグレーション
+ * 方針 (scripts/check-migrations.ts) で禁止されている。'image' のまま payload の形で
+ * 分岐すれば、マイグレーションも既存行の移行もなしで済む。
+ *
+ * 画像メッセージの payload は { originalContentUrl, previewImageUrl }、imagemap は
+ * { baseUrl, baseSize } なのでキーが衝突せず、後方互換に判別できる。
+ */
+function isImagemapContent(parsed: Record<string, unknown>): boolean {
+  const baseSize = parsed.baseSize as { width?: unknown; height?: unknown } | undefined;
+  return (
+    typeof parsed.baseUrl === 'string' &&
+    parsed.baseUrl.length > 0 &&
+    typeof baseSize === 'object' &&
+    baseSize !== null &&
+    typeof baseSize.width === 'number' &&
+    typeof baseSize.height === 'number'
+  );
+}
+
+/**
+ * imagemap payload を LINE の imagemap message に変換する。
+ *
+ * baseUrl は拡張子を含まないプレフィックスで、LINE 側が `{baseUrl}/240` のように
+ * 幅 (240 / 300 / 460 / 700 / 1040) を足して取得する。配信側はその 5 サイズを
+ * image/jpeg か image/png で返せる場所に置いておく必要がある。
+ */
+function toImagemapMessage(parsed: Record<string, unknown>, altText?: string): Message {
+  const actions = Array.isArray(parsed.actions) ? (parsed.actions as Record<string, unknown>[]) : [];
+  return {
+    type: 'imagemap',
+    baseUrl: parsed.baseUrl as string,
+    // altText は LINE の必須項目。未指定なら flex と同じ既定値に揃える。
+    altText: altText || (typeof parsed.altText === 'string' ? parsed.altText : '') || 'お知らせ',
+    baseSize: parsed.baseSize as { width: number; height: number },
+    actions,
+  };
+}
+
 export function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
   if (messageType === 'text') {
     return { type: 'text', text: messageContent };
@@ -430,15 +475,13 @@ export function buildMessage(messageType: string, messageContent: string, altTex
 
   if (messageType === 'image') {
     try {
-      const parsed = JSON.parse(messageContent) as {
+      const parsed = JSON.parse(messageContent) as Record<string, unknown>;
+      if (isImagemapContent(parsed)) return toImagemapMessage(parsed, altText);
+      const { originalContentUrl, previewImageUrl } = parsed as unknown as {
         originalContentUrl: string;
         previewImageUrl: string;
       };
-      return {
-        type: 'image',
-        originalContentUrl: parsed.originalContentUrl,
-        previewImageUrl: parsed.previewImageUrl,
-      };
+      return { type: 'image', originalContentUrl, previewImageUrl };
     } catch {
       return { type: 'text', text: messageContent };
     }
