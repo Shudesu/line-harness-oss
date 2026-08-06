@@ -12,6 +12,14 @@ interface FriendDetail {
   refCode: string | null
   createdAt: string
   tags: Array<{ id: string; name: string; color: string }>
+  formSubmissions: Array<{
+    id: string
+    formId: string
+    formName: string
+    fields: Array<{ name: string; label: string }>
+    data: Record<string, unknown>
+    createdAt: string
+  }>
 }
 
 interface ChatStatusInfo {
@@ -238,6 +246,39 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
                     </div>
                   ))}
                 </dl>
+              </div>
+            )}
+
+            {/* Form answers — save_to_metadata の設定に関係なく回答履歴を表示 */}
+            {friend.formSubmissions?.length > 0 && (
+              <div className="p-4">
+                <h4 className="text-[11px] font-medium text-gray-500 mb-2">フォーム回答</h4>
+                <div className="space-y-3">
+                  {friend.formSubmissions.map((submission) => {
+                    const labels = new Map(submission.fields.map((field) => [field.name, field.label]))
+                    const answers = Object.entries(submission.data).filter(([key]) => !key.startsWith('_'))
+                    return (
+                      <div key={submission.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs font-medium text-gray-700 break-words">{submission.formName}</p>
+                          <time className="shrink-0 text-[10px] text-gray-400">
+                            {formatDate(submission.createdAt)}
+                          </time>
+                        </div>
+                        <dl className="mt-2 space-y-2">
+                          {answers.map(([key, value]) => (
+                            <div key={key}>
+                              <dt className="text-[10px] text-gray-400">{labels.get(key) ?? key}</dt>
+                              <dd className="mt-0.5 whitespace-pre-wrap break-words text-xs text-gray-700">
+                                {renderValue(value)}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
 

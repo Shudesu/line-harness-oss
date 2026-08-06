@@ -6,6 +6,7 @@ import {
   addTagToFriend,
   removeTagFromFriend,
   getFriendTags,
+  getFormSubmissionsByFriend,
   getScenarios,
   enrollFriendInScenario,
   jstNow,
@@ -396,9 +397,10 @@ friends.get('/api/friends/:id', async (c) => {
     const id = c.req.param('id');
     const db = c.env.DB;
 
-    const [friend, tags] = await Promise.all([
+    const [friend, tags, formSubmissions] = await Promise.all([
       getFriendById(db, id),
       getFriendTags(db, id),
+      getFormSubmissionsByFriend(db, id, 10),
     ]);
 
     if (!friend) {
@@ -410,6 +412,14 @@ friends.get('/api/friends/:id', async (c) => {
       data: {
         ...serializeFriend(friend),
         tags: tags.map(serializeTag),
+        formSubmissions: formSubmissions.map((submission) => ({
+          id: submission.id,
+          formId: submission.form_id,
+          formName: submission.form_name,
+          fields: JSON.parse(submission.form_fields || '[]') as unknown[],
+          data: JSON.parse(submission.data || '{}') as Record<string, unknown>,
+          createdAt: submission.created_at,
+        })),
       },
     });
   } catch (err) {

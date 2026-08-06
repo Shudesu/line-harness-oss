@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import {
   getForms,
   getFormsWithStats,
@@ -8,20 +8,45 @@ import {
   deleteForm,
   getFormSubmissions,
   createFormSubmission,
+  getFriendByLineUserId,
+  getFriendById,
+  getLineAccountById,
   jstNow,
 } from '@line-crm/db';
-import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
 import { enrollFriendInScenario } from '@line-crm/db';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import { verifyCallerLineUserId } from '../services/liff-auth.js';
+import { pushViaHarnessProxy } from '../services/line-proxy-send.js';
+import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
 import type {
   Form as DbForm,
   FormSubmission as DbFormSubmission,
   FormUsedByAccount,
+  Friend as DbFriend,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
 const forms = new Hono<Env>();
+
+function optionalExecutionCtx(c: Context<Env>): ExecutionContext | undefined {
+  try {
+    return c.executionCtx;
+  } catch {
+    // Hono unit tests do not provide a Workers ExecutionContext.
+    return undefined;
+  }
+}
+
+async function resolveFriendAccessToken(
+  db: D1Database,
+  friend: DbFriend,
+  defaultAccessToken: string,
+): Promise<string> {
+  const accountId = friend.line_account_id ?? null;
+  if (!accountId) return defaultAccessToken;
+  const account = await getLineAccountById(db, accountId);
+  return account?.channel_access_token ?? defaultAccessToken;
+}
 
 function serializeForm(
   row: DbForm,
@@ -389,22 +414,19 @@ forms.post('/api/forms/:id/submit', async (c) => {
         if (form.on_submit_webhook_fail_message) {
           if (friend.line_user_id) {
             try {
-              const { LineClient } = await import('@line-crm/line-sdk');
-              let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
-              if ((friend as unknown as Record<string, unknown>).line_account_id) {
-                const { getLineAccountById } = await import('@line-crm/db');
-                const account = await getLineAccountById(c.env.DB, (friend as unknown as Record<string, unknown>).line_account_id as string);
-                if (account) accessToken = account.channel_access_token;
-              }
-              const lineClient = new LineClient(accessToken);
-              await lineClient.pushMessage(friend.line_user_id, [{ type: 'text', text: form.on_submit_webhook_fail_message }]);
-              await c.env.DB
-                .prepare(
-                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-                   VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'auto_reply', ?)`,
-                )
-                .bind(crypto.randomUUID(), friend.id, form.on_submit_webhook_fail_message, jstNow())
-                .run();
+              const accessToken = await resolveFriendAccessToken(
+                c.env.DB,
+                friend,
+                c.env.LINE_CHANNEL_ACCESS_TOKEN,
+              );
+              await pushViaHarnessProxy(
+                new URL(c.req.url).origin,
+                accessToken,
+                friend.line_user_id,
+                [{ type: 'text', text: form.on_submit_webhook_fail_message }],
+                crypto.randomUUID(),
+                (request) => dispatchLineProxyLocally(request, c.env, optionalExecutionCtx(c)),
+              );
             } catch (e) {
               console.error('Failed to send webhook fail message:', e);
             }
@@ -499,14 +521,11 @@ forms.post('/api/forms/:id/submit', async (c) => {
           (async () => {
             const friend = await getFriendById(db, friendId!);
             if (!friend?.line_user_id) return;
-            const { LineClient } = await import('@line-crm/line-sdk');
-            let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
-            if ((friend as unknown as Record<string, unknown>).line_account_id) {
-              const { getLineAccountById } = await import('@line-crm/db');
-              const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-              if (account) accessToken = account.channel_access_token;
-            }
-            const lineClient = new LineClient(accessToken);
+            const accessToken = await resolveFriendAccessToken(
+              db,
+              friend,
+              c.env.LINE_CHANNEL_ACCESS_TOKEN,
+            );
             const joinUrl = String(webhookData!.join_url);
             const meetFlex = {
               type: 'bubble',
@@ -535,16 +554,14 @@ forms.post('/api/forms/:id/submit', async (c) => {
                 paddingAll: '16px',
               },
             };
-            await lineClient.pushMessage(friend.line_user_id, [
-              { type: 'flex', altText: 'ヒアリングの準備ができました', contents: meetFlex },
-            ]);
-            await db
-              .prepare(
-                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-                 VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'auto_reply', ?)`,
-              )
-              .bind(crypto.randomUUID(), friend.id, JSON.stringify(meetFlex), jstNow())
-              .run();
+            await pushViaHarnessProxy(
+              new URL(c.req.url).origin,
+              accessToken,
+              friend.line_user_id,
+              [{ type: 'flex', altText: 'ヒアリングの準備ができました', contents: meetFlex }],
+              crypto.randomUUID(),
+              (request) => dispatchLineProxyLocally(request, c.env, optionalExecutionCtx(c)),
+            );
           })(),
         );
       }
@@ -556,15 +573,11 @@ forms.post('/api/forms/:id/submit', async (c) => {
           const friend = await getFriendById(db, friendId!);
           if (!friend?.line_user_id) { console.log('Form reply: no line_user_id'); return; }
           console.log('Form reply: sending to', friend.line_user_id);
-          const { LineClient } = await import('@line-crm/line-sdk');
-          // Resolve access token from friend's account (multi-account support)
-          let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
-          if ((friend as unknown as Record<string, unknown>).line_account_id) {
-            const { getLineAccountById } = await import('@line-crm/db');
-            const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-            if (account) accessToken = account.channel_access_token;
-          }
-          const lineClient = new LineClient(accessToken);
+          const accessToken = await resolveFriendAccessToken(
+            db,
+            friend,
+            c.env.LINE_CHANNEL_ACCESS_TOKEN,
+          );
           const { buildMessage, expandVariables } = await import('../services/step-delivery.js');
           const apiOrigin = new URL(c.req.url).origin;
           const { resolveMetadata } = await import('../services/step-delivery.js');
@@ -633,23 +646,15 @@ forms.post('/api/forms/:id/submit', async (c) => {
             messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
           }
 
-          await lineClient.pushMessage(friend.line_user_id, messages);
-
-          // Mirror every pushed message into messages_log so the dashboard chat
-          // view stays consistent with what the user actually receives in LINE.
-          // Without this the form's auto-reply is invisible to operators.
-          const { messageToLogPayload } = await import('../services/step-delivery.js');
-          const sentAt = jstNow();
-          for (const m of messages) {
-            const payload = messageToLogPayload(m);
-            await db
-              .prepare(
-                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-                 VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'auto_reply', ?)`,
-              )
-              .bind(crypto.randomUUID(), friend.id, payload.messageType, payload.content, sentAt)
-              .run();
-          }
+          // プロキシが LINE 送信と messages_log 記録を一体で行う。
+          await pushViaHarnessProxy(
+            new URL(c.req.url).origin,
+            accessToken,
+            friend.line_user_id,
+            messages,
+            crypto.randomUUID(),
+            (request) => dispatchLineProxyLocally(request, c.env, optionalExecutionCtx(c)),
+          );
         })(),
       );
 

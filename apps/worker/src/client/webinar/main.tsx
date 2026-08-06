@@ -10,6 +10,7 @@
 
 import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { buildMeetingDateOptions } from './date-options.js';
 import './styles.css';
 
 // LIFF SDK は index.html の script タグでグローバル注入される
@@ -42,6 +43,38 @@ interface WebinarCta {
   showAtSeconds: number;
 }
 
+// チャット欄に流れる CTA カード (webinar_ctas)。kind='form' は既存フォームを
+// ボトムシートで開いて離脱なしで回答させる。kind='url' は外部 URL。
+interface WebinarCtaCard {
+  id: string;
+  atSeconds: number;
+  kind: 'form' | 'url';
+  title: string;
+  body: string | null;
+  buttonLabel: string;
+  autoOpen: boolean;
+  formId: string | null;
+  url: string | null;
+}
+
+interface FormField {
+  name: string;
+  label: string;
+  type: 'text' | 'email' | 'tel' | 'number' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'date';
+  required?: boolean;
+  options?: string[];
+  placeholder?: string;
+}
+
+interface FormDef {
+  id: string;
+  name: string;
+  description: string | null;
+  fields: FormField[];
+  isActive: boolean;
+  onSubmitMessageContent?: string | null;
+}
+
 interface WebinarSakuraComment {
   atSeconds: number;
   authorName: string;
@@ -51,6 +84,7 @@ interface WebinarSakuraComment {
 type WebinarState =
   | {
       live: true;
+      replay?: boolean;
       title: string;
       durationSeconds: number;
       sessionStartAt: number;
@@ -58,14 +92,37 @@ type WebinarState =
       playlistUrl: string;
       cta: WebinarCta | null;
       comments: WebinarSakuraComment[];
+      ctas: WebinarCtaCard[];
+      // 参加ゲート用: 今後の回と自分の予約
+      upcoming?: number[];
+      registeredSessionAt?: number | null;
+      registeredForThisSession?: boolean;
     }
-  | { live: false; title: string; nextSessionAt: number | null };
+  // 待機ルーム (開始10分前〜): 開始前サクラコメント (負の atSeconds) が流れる
+  | {
+      live: false;
+      waiting: true;
+      title: string;
+      nextSessionAt: number;
+      offsetSeconds: number;
+      comments: WebinarSakuraComment[];
+    }
+  | {
+      live: false;
+      waiting?: undefined;
+      title: string;
+      nextSessionAt: number | null;
+      // セッション選択メニュー: 今後の開催回 (epoch 秒) と自分の予約
+      upcoming?: number[];
+      registeredSessionAt?: number | null;
+    };
 
 interface ChatItem {
   key: string;
   authorName: string;
   body: string;
   mine?: boolean;
+  ctaCard?: WebinarCtaCard;
 }
 
 function buildAuthHeaders(ctx: WebinarContext, extra: Record<string, string> = {}): Record<string, string> {
@@ -112,18 +169,33 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
   const [ended, setEnded] = useState(false);
   const [needsTap, setNeedsTap] = useState(false);
   const [countdown, setCountdown] = useState('');
+  // ライブ参加ゲート: 予約した回だけ再生する。未予約なら開始直後でも予約画面。
+  const [joined, setJoined] = useState(false);
+  const joinedRef = useRef(false);
+  joinedRef.current = joined;
   const [chat, setChat] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [ctaVisible, setCtaVisible] = useState(false);
   const [muted, setMuted] = useState(true);
   const [rate, setRate] = useState(1);
+  const [activeCta, setActiveCta] = useState<WebinarCtaCard | null>(null);
+  const [formSheet, setFormSheet] = useState<
+    | null
+    | { cta: WebinarCtaCard; phase: 'loading' }
+    | { cta: WebinarCtaCard; phase: 'form'; def: FormDef }
+    | { cta: WebinarCtaCard; phase: 'done'; def: FormDef }
+    | { cta: WebinarCtaCard; phase: 'error'; message: string }
+  >(null);
   const rateRef = useRef(1);
   rateRef.current = rate;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const t0Ref = useRef(0);            // state 受信時の performance.now()
+  const waitT0Ref = useRef(0);        // 待機ルーム受信時の Date.now()
   const baseOffsetRef = useRef(0);    // state.offsetSeconds
   const commentIdxRef = useRef(0);    // 次に表示するサクラコメント index
+  const ctaIdxRef = useRef(0);        // 次に表示する CTA カード index
+  const openCtaRef = useRef<(card: WebinarCtaCard) => void>(() => undefined);
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef<WebinarState | null>(null);
   stateRef.current = state;
@@ -135,13 +207,28 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
 
   const load = useCallback(async () => {
     try {
-      const s = await apiGet<WebinarState>(`/api/liff/webinars/${encodeURIComponent(slug)}`, ctx);
+      const admissionSession = new URLSearchParams(window.location.search).get('sessionStartAt');
+      const path = `/api/liff/webinars/${encodeURIComponent(slug)}` +
+        (admissionSession ? `?sessionStartAt=${encodeURIComponent(admissionSession)}` : '');
+      const s = await apiGet<WebinarState>(path, ctx);
       if (s.live) {
         t0Ref.current = performance.now();
         baseOffsetRef.current = s.offsetSeconds;
         commentIdxRef.current = 0;
+        ctaIdxRef.current = 0;
         setChat([]);
         setCtaVisible(false);
+        setActiveCta(null);
+        // 入場できるのはプレビューか、この回を予約していた本人のみ。
+        // 「開始直後なら未予約でも自動再生」の例外は、予約画面を飛ばすため禁止。
+        setJoined(IS_PREVIEW || s.registeredForThisSession === true);
+      } else if (s.waiting) {
+        // 待機ルーム: 位置は壁時計基準 (バックグラウンドで performance.now が
+        // 止まる端末でもカウントダウンとズレない)
+        waitT0Ref.current = Date.now();
+        baseOffsetRef.current = s.offsetSeconds;
+        commentIdxRef.current = 0;
+        setChat([]);
       }
       setState(s);
     } catch (err) {
@@ -156,6 +243,14 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // ライブ/待機ルームだけページスクロールをロックする。セッション選択
+  // メニューはボタンが縦に並ぶためスクロール可能なままにする。
+  useEffect(() => {
+    const lock = state ? (state.live ? joined : state.waiting === true) : false;
+    document.body.classList.toggle('wb-lock', lock);
+    return () => document.body.classList.remove('wb-lock');
+  }, [state, joined]);
 
   // 待機画面: カウントダウン + 開始時刻到達で自動リロード
   useEffect(() => {
@@ -180,17 +275,23 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
 
   // ライブ画面: プレーヤー初期化
   useEffect(() => {
-    if (!state?.live) return;
+    if (!state?.live || !joined) return;
     const video = videoRef.current;
     if (!video) return;
     let hls: { destroy: () => void } | null = null;
     let cancelled = false;
+    let cleanupVerify: (() => void) | null = null;
 
     async function setup() {
       const v = video!;
       const src = state as Extract<WebinarState, { live: true }>;
+      // 途中参加位置はプレイリスト側の #EXT-X-START で宣言する (?at=)。
+      // iOS native HLS はクライアント側シークが 0 に巻き戻ることがあるため、
+      // currentTime のシークはあくまでフォールバック。プレビューは常に頭から。
+      const liveAt = src.replay ? 0 : Math.max(0, Math.floor(expectedPosition()));
+      const playlistUrl = IS_PREVIEW ? src.playlistUrl : `${src.playlistUrl}?at=${liveAt}`;
       if (v.canPlayType('application/vnd.apple.mpegurl')) {
-        v.src = src.playlistUrl;
+        v.src = playlistUrl;
       } else {
         const { default: Hls } = await import('hls.js');
         if (cancelled) return;
@@ -199,7 +300,7 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
           return;
         }
         const instance = new Hls();
-        instance.loadSource(src.playlistUrl);
+        instance.loadSource(playlistUrl);
         instance.attachMedia(v);
         hls = instance;
       }
@@ -207,24 +308,57 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
       setMuted(true);
       if (IS_PREVIEW) v.controls = true;
       const seekAndPlay = () => {
-        v.currentTime = IS_PREVIEW ? 0 : expectedPosition();
+        v.currentTime = IS_PREVIEW || src.replay ? 0 : expectedPosition();
         v.play().then(() => setNeedsTap(true)).catch(() => setNeedsTap(true));
       };
       if (v.readyState >= 1) seekAndPlay();
       else v.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+      // iOS Safari (LINE in-app) の native HLS は loadedmetadata 直後の
+      // currentTime 代入が 0 に巻き戻ることがある。実際に再生が立ち上がる
+      // イベントで位置を検証し、ズレていたら再シークして途中参加を保証する。
+      const verifyLivePosition = () => {
+        if (IS_PREVIEW || src.replay) return;
+        const pos = expectedPosition();
+        if (pos > DRIFT_TOLERANCE && Math.abs(v.currentTime - pos) >= DRIFT_TOLERANCE) {
+          v.currentTime = pos;
+        }
+      };
+      v.addEventListener('canplay', verifyLivePosition);
+      v.addEventListener('playing', verifyLivePosition);
+      // ライブに一時停止は存在しない: AirPods の耳外し・ルート変更などシステム
+      // 起因の pause は自動で再生復帰させる (復帰後はドリフト補正がライブ位置へ
+      // 追いつかせる)。配信終了後・バックグラウンド・プレビュー (controls あり)
+      // は対象外。
+      const onPause = () => {
+        if (IS_PREVIEW || src.replay) return;
+        if (document.visibilityState !== 'visible') return;
+        if (expectedPosition() >= src.durationSeconds) return;
+        setTimeout(() => {
+          if (!v.paused || document.visibilityState !== 'visible') return;
+          if (expectedPosition() >= src.durationSeconds) return;
+          void v.play().catch(() => undefined);
+        }, 300);
+      };
+      v.addEventListener('pause', onPause);
+      cleanupVerify = () => {
+        v.removeEventListener('canplay', verifyLivePosition);
+        v.removeEventListener('playing', verifyLivePosition);
+        v.removeEventListener('pause', onPause);
+      };
     }
     void setup();
     return () => {
       cancelled = true;
+      cleanupVerify?.();
       hls?.destroy();
     };
-  }, [state, expectedPosition]);
+  }, [state, joined, expectedPosition]);
 
   // ライブ進行: ドリフト補正・サクラコメント・CTA・終了判定 (1秒 tick)
   // プレビューは video.currentTime を位置の真とし、巻き戻しシークにも追従する
   const lastTickPosRef = useRef(0);
   useEffect(() => {
-    if (!state?.live) return;
+    if (!state?.live || !joined) return;
     const src = state;
     const timer = setInterval(() => {
       const video = videoRef.current;
@@ -232,8 +366,10 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
       if (IS_PREVIEW && pos < lastTickPosRef.current - 1) {
         // 巻き戻された: コメントを頭から再構築
         commentIdxRef.current = 0;
+        ctaIdxRef.current = 0;
         setChat([]);
         setCtaVisible(false);
+        setActiveCta(null);
       }
       lastTickPosRef.current = pos;
       if (IS_PREVIEW && video && video.playbackRate !== rateRef.current) {
@@ -245,9 +381,11 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
         clearInterval(timer);
         return;
       }
+      // readyState >= 1 (metadata あり) から補正する。iOS で初期シークが
+      // 巻き戻された場合も、この 1 秒 tick が毎回ライブ位置へ戻す。
       if (
         !IS_PREVIEW &&
-        video && video.readyState >= 2 && Math.abs(video.currentTime - pos) >= DRIFT_TOLERANCE
+        video && video.readyState >= 1 && Math.abs(video.currentTime - pos) >= DRIFT_TOLERANCE
       ) {
         video.currentTime = pos;
       }
@@ -266,11 +404,48 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
         });
         commentIdxRef.current += 1;
       }
+      // CTA カード流し込み (カードは通常コメントと同じくチャットに積む)
+      const cards = src.ctas ?? [];
+      while (ctaIdxRef.current < cards.length && cards[ctaIdxRef.current].atSeconds <= pos) {
+        const card = cards[ctaIdxRef.current];
+        items.push({
+          key: `c-${card.id}`,
+          authorName: '',
+          body: '',
+          ctaCard: card,
+        });
+        setActiveCta(card);
+        ctaIdxRef.current += 1;
+        // autoOpen: カード出現と同時にチャット欄をフォームへ切り替える
+        if (card.autoOpen && card.kind === 'form') openCtaRef.current(card);
+      }
       if (items.length > 0) setChat((prev) => [...prev.slice(-200), ...items]);
-      if (src.cta && pos >= src.cta.showAtSeconds) setCtaVisible(true);
+      // レガシー下部 CTA (cta_json) はカード未設定のウェビナーでのみ使用
+      if (cards.length === 0 && src.cta && pos >= src.cta.showAtSeconds) setCtaVisible(true);
     }, 1000);
     return () => clearInterval(timer);
-  }, [state, expectedPosition]);
+  }, [state, joined, expectedPosition]);
+
+  // 待機ルーム: 開始前サクラコメント (負の atSeconds) の流し込み (1秒 tick)
+  useEffect(() => {
+    if (!state || state.live || !state.waiting) return;
+    const src = state;
+    const timer = setInterval(() => {
+      const pos = baseOffsetRef.current + (Date.now() - waitT0Ref.current) / 1000;
+      const comments = src.comments;
+      const items: ChatItem[] = [];
+      while (
+        commentIdxRef.current < comments.length &&
+        comments[commentIdxRef.current].atSeconds <= pos
+      ) {
+        const cm = comments[commentIdxRef.current];
+        items.push({ key: `w-${commentIdxRef.current}`, authorName: cm.authorName, body: cm.body });
+        commentIdxRef.current += 1;
+      }
+      if (items.length > 0) setChat((prev) => [...prev.slice(-200), ...items]);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [state]);
 
   // チャット自動スクロール
   useEffect(() => {
@@ -281,7 +456,7 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
   useEffect(() => {
     const onVisible = () => {
       const video = videoRef.current;
-      if (!IS_PREVIEW && document.visibilityState === 'visible' && video && stateRef.current?.live && !ended) {
+      if (!IS_PREVIEW && document.visibilityState === 'visible' && video && stateRef.current?.live && joinedRef.current && !ended) {
         video.currentTime = expectedPosition();
         // バックグラウンド復帰でブラウザが muted に戻すことがあるので状態を同期
         void video.play().catch(() => undefined);
@@ -294,7 +469,7 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
 
   // ハートビート (配信終了後は送らない)
   useEffect(() => {
-    if (!state?.live || ended || IS_PREVIEW) return;
+    if (!state?.live || !joined || ended || IS_PREVIEW) return;
     const src = state;
     const timer = setInterval(() => {
       const pos = Math.min(Math.floor(expectedPosition()), src.durationSeconds);
@@ -304,10 +479,22 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
       }, ctx).catch(() => undefined);
     }, HEARTBEAT_MS);
     return () => clearInterval(timer);
-  }, [state, slug, ctx, expectedPosition, ended]);
+  }, [state, joined, slug, ctx, expectedPosition, ended]);
 
   const sendComment = async () => {
-    if (!state?.live) return;
+    if (!state) return;
+    // ライブ中は現在位置、待機ルーム中は次回セッション帰属の負の位置で投稿する
+    let sessionStartAt: number;
+    let atSeconds: number;
+    if (state.live) {
+      sessionStartAt = state.sessionStartAt;
+      atSeconds = Math.floor(expectedPosition());
+    } else if (state.waiting) {
+      sessionStartAt = state.nextSessionAt;
+      atSeconds = Math.floor(baseOffsetRef.current + (Date.now() - waitT0Ref.current) / 1000);
+    } else {
+      return;
+    }
     const text = input.trim();
     if (!text) return;
     setInput('');
@@ -317,14 +504,67 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
     ]);
     try {
       await apiPost(`/api/liff/webinars/${encodeURIComponent(slug)}/comments`, {
-        sessionStartAt: state.sessionStartAt,
-        atSeconds: Math.floor(expectedPosition()),
+        sessionStartAt,
+        atSeconds,
         body: text,
       }, ctx);
     } catch (err) {
       console.warn('comment post failed:', err);
     }
   };
+
+  const openCta = (card: WebinarCtaCard) => {
+    if (!state?.live) return;
+    // クリック記録 (fire-and-forget、プレビューでは送らない)
+    if (!IS_PREVIEW) {
+      void apiPost(`/api/liff/webinars/${encodeURIComponent(slug)}/cta-click`, {
+        sessionStartAt: state.sessionStartAt,
+      }, ctx).catch(() => undefined);
+    }
+    if (card.kind === 'url' && card.url) {
+      if (typeof liff !== 'undefined' && liff.isInClient()) {
+        liff.openWindow({ url: card.url, external: true });
+      } else {
+        window.open(card.url, '_blank', 'noopener');
+      }
+      return;
+    }
+    if (card.kind === 'form' && card.formId) {
+      setFormSheet({ cta: card, phase: 'loading' });
+      // 開封記録 (フォーム機能側のファネル計測に乗せる)
+      if (!IS_PREVIEW) {
+        // 帰属は Authorization の LINE ID トークンで判定される (body の ID は無視)
+        void fetch(`/api/forms/${encodeURIComponent(card.formId)}/opened`, {
+          method: 'POST',
+          headers: buildAuthHeaders(ctx, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({}),
+        }).catch(() => undefined);
+      }
+      void fetch(`/api/forms/${encodeURIComponent(card.formId)}`)
+        .then(async (r) => {
+          const json = (await r.json()) as { success: boolean; data?: FormDef };
+          if (!r.ok || !json.success || !json.data) throw new Error('form fetch failed');
+          // シートが閉じられた/別カードに切り替わった後の遅延解決で上書きしない
+          setFormSheet((prev) =>
+            prev && prev.phase === 'loading' && prev.cta.id === card.id
+              ? { cta: card, phase: 'form', def: json.data! }
+              : prev,
+          );
+        })
+        .catch(() => {
+          setFormSheet((prev) =>
+            prev && prev.phase === 'loading' && prev.cta.id === card.id
+              ? {
+                  cta: card, phase: 'error',
+                  message: 'フォームを読み込めませんでした。もう一度お試しください。',
+                }
+              : prev,
+          );
+        });
+    }
+  };
+
+  openCtaRef.current = openCta;
 
   const toggleMute = () => {
     const v = videoRef.current;
@@ -348,6 +588,24 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
     }
   };
 
+  const [registering, setRegistering] = useState(false);
+  // 24時間分48枠を最初から見せず、直近3時間（6枠）から段階的に開く。
+  const [visibleSessionCount, setVisibleSessionCount] = useState(6);
+  const registerSession = async (sessionStartAt: number) => {
+    if (registering) return;
+    setRegistering(true);
+    try {
+      await apiPost(`/api/liff/webinars/${encodeURIComponent(slug)}/register`, { sessionStartAt }, ctx);
+      // 現在回を開始5分以内に予約した場合、その場でサーバーの予約判定を通して
+      // 再生画面へ切り替える。未来回なら予約済み表示／待機ルームへ更新される。
+      await load();
+    } catch (err) {
+      console.warn('register failed:', err);
+    } finally {
+      setRegistering(false);
+    }
+  };
+
   if (error) {
     return <div className="p-8 text-center text-gray-300">{error}</div>;
   }
@@ -355,10 +613,113 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
     return <div className="p-8 text-center text-gray-500">読み込み中...</div>;
   }
 
-  // ---- 待機画面 ----
+  // ---- 待機ルーム (開始10分前〜): カウントダウン + 開始前チャット ----
+  if (!state.live && state.waiting) {
+    return (
+      <div className="flex h-dvh justify-center bg-gray-900 text-white">
+        <div className="flex h-full w-full max-w-md flex-col">
+          <div className="relative flex aspect-video w-full shrink-0 flex-col items-center justify-center bg-gray-800 px-4">
+            <span className="absolute left-2 top-2 rounded bg-gray-600 px-2 py-0.5 text-xs font-bold">
+              まもなく開始
+            </span>
+            <p className="text-center text-sm font-bold text-gray-200">{state.title}</p>
+            <p className="mt-3 font-mono text-4xl font-bold">{countdown}</p>
+            <p className="mt-1 text-sm text-gray-400">で配信が始まります</p>
+          </div>
+
+          <div ref={chatBoxRef} className="flex-1 overflow-y-auto p-3 text-sm">
+            {chat.map((item) => (
+              <div key={item.key} className="mb-2">
+                <span className={item.mine ? 'font-medium text-[#06C755]' : 'font-medium text-gray-400'}>
+                  {item.authorName}
+                </span>{' '}
+                <span className="text-gray-100">{item.body}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2 border-t border-gray-700 p-2">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void sendComment();
+              }}
+              placeholder="コメントを入力..."
+              maxLength={500}
+              className="flex-1 rounded-full bg-gray-800 px-4 py-2 text-base text-white placeholder-gray-500"
+            />
+            <button
+              onClick={() => void sendComment()}
+              className="rounded-full bg-[#06C755] px-4 py-2 text-sm font-bold active:opacity-80"
+            >
+              送信
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- セッション選択メニュー (開催回を選んで予約) ----
+  if (!state.live && (state.upcoming?.length ?? 0) > 0) {
+    const upcoming = state.upcoming!;
+    const visibleUpcoming = upcoming.slice(0, visibleSessionCount);
+    const registered = state.registeredSessionAt ?? null;
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center bg-gray-900 p-6 text-white">
+        <p className="mb-2 text-sm text-gray-400">ライブ配信</p>
+        <h1 className="mb-1 text-center text-xl font-bold">{state.title}</h1>
+        {registered !== null ? (
+          <div className="mt-5 w-full max-w-sm rounded-2xl bg-gray-800 p-5 text-center">
+            <p className="text-sm text-[#06C755]">✅ 予約済み</p>
+            <p className="mt-2 text-lg font-bold">{formatJp(registered)} の回</p>
+            <p className="mt-3 text-xs leading-relaxed text-gray-400">
+              開始前にLINEで視聴リンクをお送りします。
+              <br />
+              時間になったらこのページも自動で配信に切り替わります
+            </p>
+            <p className="mt-4 text-xs text-gray-500">別の回に変更する場合はもう一度選んでください</p>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-gray-400">参加する回を選んでください</p>
+        )}
+        <div className="mt-5 flex w-full max-w-sm flex-col gap-2">
+          {visibleUpcoming.map((t) => (
+            <button
+              key={t}
+              disabled={registering}
+              onClick={() => void registerSession(t)}
+              className={`rounded-full py-3 text-center font-bold active:opacity-80 disabled:opacity-50 ${
+                registered === t
+                  ? 'bg-[#06C755] text-white'
+                  : 'bg-gray-800 text-gray-100'
+              }`}
+            >
+              {t <= Math.floor(Date.now() / 1000)
+                ? `${formatJp(t)} の回（今すぐ途中参加）`
+                : `${formatJp(t)} の回`}
+              {registered === t ? ' ✅' : ''}
+            </button>
+          ))}
+          {visibleUpcoming.length < upcoming.length && (
+            <button
+              type="button"
+              onClick={() => setVisibleSessionCount((count) => Math.min(count + 6, upcoming.length))}
+              className="mt-1 rounded-full border border-gray-700 py-3 text-sm font-bold text-gray-300 active:opacity-80"
+            >
+              もっと先の時間を見る
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- 待機画面 (スケジュール未設定・開催予定なし) ----
   if (!state.live) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-900 p-6 text-white">
+      <div className="flex min-h-dvh flex-col items-center justify-center bg-gray-900 p-6 text-white">
         <p className="mb-2 text-sm text-gray-400">次回のライブ配信</p>
         <h1 className="mb-6 text-center text-xl font-bold">{state.title}</h1>
         {state.nextSessionAt !== null ? (
@@ -374,14 +735,77 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
     );
   }
 
+  // ---- ライブ参加ゲート (途中参加の強制再生を防ぐ) ----
+  if (state.live && !joined) {
+    const elapsedMin = Math.max(1, Math.floor(expectedPosition() / 60));
+    const upcoming = state.upcoming ?? [];
+    const visibleUpcoming = upcoming.slice(0, visibleSessionCount);
+    const registered = state.registeredSessionAt ?? null;
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center bg-gray-900 p-6 text-white">
+        <span className="rounded bg-red-600 px-2 py-0.5 text-xs font-bold">● LIVE</span>
+        <h1 className="mt-3 text-center text-xl font-bold">{state.title}</h1>
+        <div className="mt-5 w-full max-w-sm rounded-2xl bg-gray-800/60 p-5 text-center">
+          <p className="text-sm font-bold text-gray-400">🔴 いま配信中です（{elapsedMin}分経過）</p>
+          <p className="mt-2 text-xs leading-relaxed text-gray-500">
+            この回への途中からの参加はできません。
+            <br />
+            次の回のスタートからご参加ください
+          </p>
+        </div>
+        {upcoming.length > 0 && (
+          <>
+            <p className="mt-6 text-sm text-gray-300">
+              {registered !== null
+                ? `✅ ${formatJp(registered)} の回を予約済み`
+                : '次の回を最初から予約する'}
+            </p>
+            <div className="mt-3 flex w-full max-w-sm flex-col gap-2">
+              {visibleUpcoming.map((t) => (
+                <button
+                  key={t}
+                  disabled={registering}
+                  onClick={() => void registerSession(t)}
+                  className={`rounded-full py-3 text-center font-bold active:opacity-80 disabled:opacity-50 ${
+                    registered === t ? 'bg-[#06C755] text-white' : 'bg-gray-800 text-gray-100'
+                  }`}
+                >
+                  {formatJp(t)} の回{registered === t ? ' ✅' : ''}
+                </button>
+              ))}
+              {visibleUpcoming.length < upcoming.length && (
+                <button
+                  type="button"
+                  onClick={() => setVisibleSessionCount((count) => Math.min(count + 6, upcoming.length))}
+                  className="mt-1 rounded-full border border-gray-700 py-3 text-sm font-bold text-gray-300 active:opacity-80"
+                >
+                  もっと先の時間を見る
+                </button>
+              )}
+            </div>
+            {registered !== null && (
+              <p className="mt-3 text-xs text-gray-500">
+                開始5分前にLINEでお知らせします。このページは閉じてOKです
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
   // ---- ライブ / 終了画面 ----
+  // PC の横長ウィンドウで video (w-full) が画面高を食い尽くしてチャット欄が
+  // 潰れないよう、全体をスマホ幅カラム (max-w-md) に閉じ込めて中央寄せする。
+  // スマホでは max-w-md は効かないので挙動不変。
   return (
-    <div className="flex h-screen flex-col bg-gray-900 text-white">
-      <div className="relative">
+    <div className="flex h-dvh justify-center bg-gray-900 text-white">
+      <div className="flex h-full w-full max-w-md flex-col">
+      <div className="relative shrink-0">
         <video ref={videoRef} className="w-full" playsInline />
         {!ended && (
-          <span className={`absolute left-2 top-2 rounded px-2 py-0.5 text-xs font-bold ${IS_PREVIEW ? 'bg-gray-600' : 'bg-red-600'}`}>
-            {IS_PREVIEW ? 'PREVIEW' : '● LIVE'}
+          <span className={`absolute left-2 top-2 rounded px-2 py-0.5 text-xs font-bold ${IS_PREVIEW || state.replay ? 'bg-gray-600' : 'bg-red-600'}`}>
+            {IS_PREVIEW ? 'PREVIEW' : state.replay ? 'REPLAY' : '● LIVE'}
           </span>
         )}
         {!ended && (
@@ -430,7 +854,7 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
                 if (v) v.playbackRate = r;
                 setRate(r);
               }}
-              className={`rounded px-2 py-1 font-bold ${rate === r ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'}`}
+              className={`rounded-full px-2.5 py-1 font-bold ${rate === r ? 'bg-white text-gray-900' : 'bg-gray-800 text-gray-400'}`}
             >
               {r}x
             </button>
@@ -439,26 +863,51 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
       )}
 
       <div ref={chatBoxRef} className="flex-1 overflow-y-auto p-3 text-sm">
-        {chat.map((item) => (
-          <div key={item.key} className="mb-2">
-            <span className={item.mine ? 'font-bold text-green-400' : 'font-bold text-blue-300'}>
-              {item.authorName}
-            </span>{' '}
-            <span className="text-gray-100">{item.body}</span>
-          </div>
-        ))}
+        {chat.map((item) =>
+          item.ctaCard ? (
+            <div
+              key={item.key}
+              className="cta-card wb-card mb-3 p-4"
+            >
+              <p className="text-base font-bold text-gray-900">{item.ctaCard.title}</p>
+              {item.ctaCard.body && (
+                <p className="mt-1 text-sm leading-relaxed text-gray-600">{item.ctaCard.body}</p>
+              )}
+              <button
+                onClick={() => openCta(item.ctaCard!)}
+                className="mt-3 w-full rounded-full bg-[#06C755] py-3 text-center text-base font-bold text-white active:opacity-80"
+              >
+                {item.ctaCard.buttonLabel}
+              </button>
+            </div>
+          ) : (
+            <div key={item.key} className="mb-2">
+              <span className={item.mine ? 'font-medium text-[#06C755]' : 'font-medium text-gray-400'}>
+                {item.authorName}
+              </span>{' '}
+              <span className="text-gray-100">{item.body}</span>
+            </div>
+          ),
+        )}
       </div>
 
-      {ctaVisible && state.cta && (
+      {activeCta ? (
+        <button
+          onClick={() => openCta(activeCta)}
+          className="mx-3 mb-2 rounded-full bg-[#06C755] py-3 text-center font-bold text-white active:opacity-80"
+        >
+          {activeCta.buttonLabel}
+        </button>
+      ) : ctaVisible && state.cta ? (
         <button
           onClick={clickCta}
-          className="mx-3 mb-2 rounded-lg bg-orange-500 py-3 text-center font-bold text-white shadow-lg"
+          className="mx-3 mb-2 rounded-full bg-[#06C755] py-3 text-center font-bold text-white active:opacity-80"
         >
           {state.cta.label}
         </button>
-      )}
+      ) : null}
 
-      {!ended && (
+      {!ended && !state.replay && (
         <div className="flex gap-2 border-t border-gray-700 p-2">
           <input
             value={input}
@@ -468,16 +917,298 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
             }}
             placeholder="コメントを入力..."
             maxLength={500}
-            className="flex-1 rounded bg-gray-800 px-3 py-2 text-base text-white placeholder-gray-500"
+            className="flex-1 rounded-full bg-gray-800 px-4 py-2 text-base text-white placeholder-gray-500"
           />
           <button
             onClick={() => void sendComment()}
-            className="rounded bg-blue-600 px-4 py-2 text-sm font-bold"
+            className="rounded-full bg-[#06C755] px-4 py-2 text-sm font-bold active:opacity-80"
           >
             送信
           </button>
         </div>
       )}
+
+      {formSheet && (
+        <FormSheet
+          sheet={formSheet}
+          ctx={ctx}
+          onClose={() => setFormSheet(null)}
+          onSubmitted={(def) => setFormSheet({ cta: formSheet.cta, phase: 'done', def })}
+        />
+      )}
+      </div>
+    </div>
+  );
+}
+
+// ─── インラインフォームシート ─────────────────────────────
+// 動画は上部で再生継続したまま、下からせり上がるシートでフォーム回答を完結させる。
+// 送信は既存 POST /api/forms/:id/submit — タグ付与・シナリオ発火・回答保存が
+// フォーム機能側でそのまま動く。
+
+function FormSheet({
+  sheet,
+  ctx,
+  onClose,
+  onSubmitted,
+}: {
+  sheet:
+    | { cta: WebinarCtaCard; phase: 'loading' }
+    | { cta: WebinarCtaCard; phase: 'form'; def: FormDef }
+    | { cta: WebinarCtaCard; phase: 'done'; def: FormDef }
+    | { cta: WebinarCtaCard; phase: 'error'; message: string };
+  ctx: WebinarContext;
+  onClose: () => void;
+  onSubmitted: (def: FormDef) => void;
+}) {
+  const [values, setValues] = useState<Record<string, string | string[]>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const setValue = (name: string, v: string | string[]) =>
+    setValues((prev) => ({ ...prev, [name]: v }));
+
+  const submit = async () => {
+    if (sheet.phase !== 'form' || submitting) return;
+    const def = sheet.def;
+    for (const f of def.fields) {
+      const v = values[f.name];
+      const empty = v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
+      if (f.required && empty) {
+        setError(`「${f.label}」は必須項目です`);
+        return;
+      }
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/forms/${encodeURIComponent(def.id)}/submit`, {
+        method: 'POST',
+        headers: buildAuthHeaders(ctx, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ data: values }),
+      });
+      const json = (await r.json()) as { success: boolean; error?: string };
+      if (!r.ok || !json.success) {
+        setError(json.error || '送信に失敗しました。もう一度お試しください。');
+        setSubmitting(false);
+        return;
+      }
+      onSubmitted(def);
+    } catch {
+      setError('送信に失敗しました。通信環境をご確認ください。');
+      setSubmitting(false);
+    }
+  };
+
+  const inputCls =
+    'w-full min-w-0 rounded border border-gray-300 bg-white px-3 py-2 text-base text-gray-900';
+  const todayJst = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const meetingDateOptions = buildMeetingDateOptions(todayJst);
+
+  const completionUrl = sheet.phase === 'done'
+    ? sheet.def.onSubmitMessageContent?.match(/https?:\/\/[^\s]+/)?.[0] ?? null
+    : null;
+
+  const openCompletionUrl = () => {
+    if (!completionUrl) return;
+    if (typeof liff !== 'undefined' && liff.isInClient()) {
+      liff.openWindow({ url: completionUrl, external: false });
+    } else {
+      window.open(completionUrl, '_blank', 'noopener');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end">
+      <button
+        aria-label="閉じる"
+        className="flex-1 bg-black/40"
+        onClick={onClose}
+      />
+      <div className="mx-auto w-full max-w-md max-h-[75vh] overflow-y-auto rounded-t-2xl bg-white p-5 text-gray-900">
+        <div className="mx-auto mb-3 h-1 w-10 rounded bg-gray-300" />
+        {sheet.phase === 'loading' && (
+          <p className="py-8 text-center text-gray-500">読み込み中...</p>
+        )}
+        {sheet.phase === 'error' && (
+          <div className="py-6 text-center">
+            <p className="text-gray-700">{sheet.message}</p>
+            <button onClick={onClose} className="mt-4 rounded bg-gray-200 px-6 py-2 font-bold">
+              閉じる
+            </button>
+          </div>
+        )}
+        {sheet.phase === 'done' && (
+          <div className="py-6 text-center">
+            <p className="text-2xl">🎉</p>
+            <p className="mt-2 text-lg font-bold">あと1ステップで予約完了です</p>
+            <p className="mt-1 text-sm text-gray-500">
+              空いている15分枠を選んでください。
+            </p>
+            {completionUrl && (
+              <button
+                onClick={openCompletionUrl}
+                className="mt-5 w-full rounded-full bg-[#06C755] px-6 py-3 font-bold text-white active:opacity-80"
+              >
+                日程を選んで予約を完了する
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="mt-4 rounded-full border border-gray-300 px-8 py-2.5 font-bold text-gray-600 active:opacity-80"
+            >
+              あとで予約する
+            </button>
+          </div>
+        )}
+        {sheet.phase === 'form' && (
+          <>
+            <h2 className="text-lg font-bold">{sheet.def.name}</h2>
+            {sheet.def.description && (
+              <p className="mt-1 text-sm text-gray-500">{sheet.def.description}</p>
+            )}
+            <div className="mt-4 space-y-4 pb-2">
+              {sheet.def.fields.map((f) => {
+                const dateMatch = /^meeting_date_(\d+)$/.exec(f.name);
+                const timeMatch = /^meeting_time_(\d+)$/.exec(f.name);
+                if (
+                  timeMatch &&
+                  sheet.def.fields.some((candidate) => candidate.name === `meeting_date_${timeMatch[1]}`)
+                ) {
+                  return null;
+                }
+                if (dateMatch) {
+                  const order = dateMatch[1];
+                  const timeField = sheet.def.fields.find(
+                    (candidate) => candidate.name === `meeting_time_${order}`,
+                  );
+                  if (timeField) {
+                    return (
+                      <fieldset key={f.name} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                        <legend className="px-1 text-sm font-bold text-gray-700">
+                          第{order}希望
+                          {(f.required || timeField.required) && (
+                            <span className="ml-1 text-red-500">*</span>
+                          )}
+                        </legend>
+                        <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-2">
+                          <label className="block text-xs font-medium text-gray-600">
+                            日付
+                            <select
+                              value={(values[f.name] as string) ?? ''}
+                              onChange={(e) => setValue(f.name, e.target.value)}
+                              className={`mt-1 ${inputCls}`}
+                            >
+                              <option value="">日付を選択</option>
+                              {meetingDateOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block text-xs font-medium text-gray-600">
+                            開始時刻
+                            <select
+                              value={(values[timeField.name] as string) ?? ''}
+                              onChange={(e) => setValue(timeField.name, e.target.value)}
+                              className={`mt-1 ${inputCls}`}
+                            >
+                              <option value="">選択</option>
+                              {(timeField.options ?? []).map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      </fieldset>
+                    );
+                  }
+                }
+                return (
+                <label key={f.name} className="block text-sm">
+                  <span className="font-medium">
+                    {f.label}
+                    {f.required && <span className="ml-1 text-red-500">*</span>}
+                  </span>
+                  {f.type === 'textarea' ? (
+                    <textarea
+                      rows={3}
+                      placeholder={f.placeholder}
+                      value={(values[f.name] as string) ?? ''}
+                      onChange={(e) => setValue(f.name, e.target.value)}
+                      className={`mt-1 ${inputCls}`}
+                    />
+                  ) : f.type === 'select' ? (
+                    <select
+                      value={(values[f.name] as string) ?? ''}
+                      onChange={(e) => setValue(f.name, e.target.value)}
+                      className={`mt-1 ${inputCls}`}
+                    >
+                      <option value="">選択してください</option>
+                      {(f.options ?? []).map((o) => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  ) : f.type === 'radio' ? (
+                    <div className="mt-1 space-y-1.5">
+                      {(f.options ?? []).map((o) => (
+                        <label key={o} className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name={f.name}
+                            checked={values[f.name] === o}
+                            onChange={() => setValue(f.name, o)}
+                          />
+                          <span>{o}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : f.type === 'checkbox' ? (
+                    <div className="mt-1 space-y-1.5">
+                      {(f.options ?? []).map((o) => {
+                        const cur = (values[f.name] as string[]) ?? [];
+                        return (
+                          <label key={o} className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={cur.includes(o)}
+                              onChange={(e) =>
+                                setValue(
+                                  f.name,
+                                  e.target.checked ? [...cur, o] : cur.filter((x) => x !== o),
+                                )
+                              }
+                            />
+                            <span>{o}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <input
+                      type={f.type}
+                      placeholder={f.placeholder}
+                      value={(values[f.name] as string) ?? ''}
+                      onChange={(e) => setValue(f.name, e.target.value)}
+                      className={`mt-1 ${inputCls}`}
+                    />
+                  )}
+                </label>
+                );
+              })}
+            </div>
+            {error && <p className="mt-2 text-sm font-bold text-red-600">{error}</p>}
+            <button
+              onClick={() => void submit()}
+              disabled={submitting}
+              className="mt-4 w-full rounded-full bg-[#06C755] py-3 text-base font-bold text-white shadow disabled:opacity-50 active:opacity-80"
+            >
+              {submitting ? '送信中...' : '送信する'}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

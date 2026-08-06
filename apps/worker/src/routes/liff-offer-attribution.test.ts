@@ -16,6 +16,7 @@ const dbMocks = {
   recoverStuckDeliveries: vi.fn(),
   // /api/liff/link + applyRefAttribution helpers
   getFriendByLineUserId: vi.fn(),
+  getFriendByLineUserIdForAccount: vi.fn(),
   getEntryRouteByRefCode: vi.fn().mockResolvedValue(null),
   getTrackedLinkById: vi.fn().mockResolvedValue(null),
   getAffiliateLinkByRefCode: vi.fn().mockResolvedValue(null),
@@ -93,6 +94,9 @@ function link(ref: string) {
 
 describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend add', () => {
   beforeEach(() => {
+  dbMocks.getFriendByLineUserIdForAccount.mockImplementation(
+    (...args: unknown[]) => dbMocks.getFriendByLineUserId(...(args as [unknown, unknown])),
+  );
     vi.clearAllMocks();
     installVerifyMock();
     // Already-linked friend: user_id set so applyRefAttribution runs without

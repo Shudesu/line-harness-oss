@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   getFriendByLineUserId: vi.fn(),
   createFormSubmission: vi.fn(),
   verifyCallerLineUserId: vi.fn(),
+  getLineAccountById: vi.fn(),
+  dispatchLineProxyLocally: vi.fn(),
 }));
 
 vi.mock('@line-crm/db', () => ({
@@ -20,6 +22,9 @@ vi.mock('@line-crm/db', () => ({
   createFormSubmission: mocks.createFormSubmission,
   getFriendByLineUserId: mocks.getFriendByLineUserId,
   getFriendById: vi.fn(),
+  getTrackedLinkById: vi.fn(),
+  getMessageTemplateById: vi.fn(),
+  getLineAccountById: mocks.getLineAccountById,
   enrollFriendInScenario: vi.fn(),
   jstNow: vi.fn(() => '2026-08-04T12:00:00+09:00'),
 }));
@@ -30,6 +35,10 @@ vi.mock('../services/liff-auth.js', () => ({
 
 vi.mock('../services/friend-tag-attach.js', () => ({
   attachTagAndFireSideEffects: vi.fn(),
+}));
+
+vi.mock('../services/local-line-proxy.js', () => ({
+  dispatchLineProxyLocally: mocks.dispatchLineProxyLocally,
 }));
 
 import { forms } from './forms.js';
@@ -96,6 +105,7 @@ beforeEach(() => {
     data: input.data,
     created_at: '2026-08-04T12:00:00+09:00',
   }));
+  mocks.dispatchLineProxyLocally.mockResolvedValue(new Response(null, { status: 200 }));
 });
 
 afterEach(() => {
@@ -137,6 +147,62 @@ describe('public form representation', () => {
 });
 
 describe('LIFF identity enforcement', () => {
+  test('stores every required AI consultation field including the selected meeting slot', async () => {
+    mocks.getFormById.mockResolvedValue({
+      ...baseForm,
+      fields: JSON.stringify([
+        { name: 'name', label: 'お名前', type: 'text', required: true },
+        { name: 'company', label: '会社名・屋号', type: 'text', required: true },
+        { name: 'annual_revenue', label: '年商規模', type: 'select', required: true },
+        { name: 'budget', label: '予算感', type: 'select', required: true },
+        { name: 'ai_goal', label: '改善したいこと', type: 'textarea', required: true },
+        { name: 'meeting_date_1', label: '第1希望日', type: 'date', required: true },
+        { name: 'meeting_time_1', label: '第1希望開始時刻', type: 'select', required: true },
+      ]),
+      on_submit_tag_id: null,
+      on_submit_scenario_id: null,
+      on_submit_message_type: null,
+      on_submit_message_content: null,
+      on_submit_webhook_url: null,
+      on_submit_webhook_headers: null,
+      on_submit_webhook_fail_message: null,
+      save_to_metadata: 0,
+    });
+    mocks.verifyCallerLineUserId.mockResolvedValue('line-real');
+    mocks.getFriendByLineUserId.mockResolvedValue({
+      id: 'friend-real',
+      line_user_id: null,
+      display_name: 'Real User',
+      metadata: '{}',
+    });
+    const { bindings } = env();
+    const data = {
+      name: '山田太郎',
+      company: '株式会社テスト',
+      annual_revenue: '3,000万〜1億円',
+      budget: '10万〜30万円',
+      ai_goal: '問い合わせ対応を自動化したい',
+      meeting_date_1: '2026-08-12',
+      meeting_time_1: '14:30',
+    };
+
+    const res = await app().request('/api/forms/form-1/submit', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer valid-line-id-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ data }),
+    }, bindings);
+
+    expect(res.status).toBe(201);
+    expect(mocks.createFormSubmission).toHaveBeenCalledWith(bindings.DB, {
+      formId: 'form-1',
+      friendId: 'friend-real',
+      data: JSON.stringify(data),
+    });
+  });
+
   test('rejects partial metadata writes without a valid LINE ID token', async () => {
     const { bindings, prepare } = env();
     const res = await app().request('/api/forms/form-1/partial', {
@@ -240,5 +306,51 @@ describe('LIFF identity enforcement', () => {
       expect.objectContaining({ friendId: 'victim-friend' }),
     );
     expect((await res.json() as { data: { webhookPassed: boolean } }).data.webhookPassed).toBe(false);
+  });
+
+  test('webhook rejection reply goes through the Harness proxy', async () => {
+    mocks.verifyCallerLineUserId.mockResolvedValue('line-real');
+    mocks.getFriendByLineUserId.mockResolvedValue({
+      id: 'friend-real',
+      line_user_id: 'U-real',
+      line_account_id: null,
+      display_name: 'Real User',
+      metadata: '{}',
+    });
+    const fetchMock = vi.fn<
+      (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    >(async (input) => {
+      const url = String(input);
+      if (url.startsWith('https://verify.example.test/')) {
+        return new Response(JSON.stringify({ eligible: false }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(null, { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { bindings } = env();
+
+    const res = await app().request('/api/forms/form-1/submit', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer valid-line-id-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ data: { x_username: 'alice' } }),
+    }, bindings);
+
+    expect(res.status).toBe(201);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.dispatchLineProxyLocally).toHaveBeenCalledTimes(1);
+    const proxyRequest = mocks.dispatchLineProxyLocally.mock.calls[0][0] as Request;
+    expect(proxyRequest.url).toBe('http://localhost/line-api/v2/bot/message/push');
+    expect(proxyRequest.headers.get('Authorization')).toBe('Bearer line-token');
+    expect(await proxyRequest.json()).toEqual({
+      to: 'U-real',
+      messages: [{ type: 'text', text: '条件を満たしていません' }],
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('api.line.me'))).toBe(false);
   });
 });

@@ -173,6 +173,15 @@ export type FriendListParams = {
 }
 
 export type FriendWithTags = Friend & { tags: Tag[] }
+export type FriendFormSubmission = {
+  id: string
+  formId: string
+  formName: string
+  fields: Array<{ name: string; label: string }>
+  data: Record<string, unknown>
+  createdAt: string
+}
+export type FriendDetail = FriendWithTags & { formSubmissions: FriendFormSubmission[] }
 /** Friend list items, optionally hydrated with chat status (when ?includeChatStatus=true) */
 export type FriendListItem = FriendWithTags & Partial<{
   latestIncomingMessage: { content: string; messageType: string; createdAt: string } | null
@@ -199,7 +208,7 @@ export const api = {
       )
     },
     get: (id: string) =>
-      fetchApi<ApiResponse<FriendWithTags>>(`/api/friends/${id}`),
+      fetchApi<ApiResponse<FriendDetail>>(`/api/friends/${id}`),
     count: (params?: { accountId?: string }) => {
       const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
       return fetchApi<ApiResponse<{ count: number }>>('/api/friends/count' + query)
@@ -1847,6 +1856,36 @@ export type WebinarInput = Partial<Omit<Webinar, 'id' | 'createdAt' | 'updatedAt
 export type WebinarSakuraComment = { id?: string; atSeconds: number; authorName: string; body: string }
 
 export type WebinarAnalytics = {
+  summary: {
+    reservations: number
+    viewers: number
+    registeredAndJoined: number
+    watched5m: number
+    watched15m: number
+    completed: number
+    avgWatchedSeconds: number
+    ctaClicks: number
+    formSubmissions: number
+  }
+  daily: Array<{
+    date: string
+    reservations: number
+    viewers: number
+    ctaClicks: number
+    formSubmissions: number
+  }>
+  participants: Array<{
+    friendId: string
+    friendName: string | null
+    pictureUrl: string | null
+    sessions: number
+    firstJoinedAt: string
+    latestJoinedAt: string
+    maxWatchedSeconds: number
+    ctaClickedAt: string | null
+    registered: boolean
+    formSubmittedAt: string | null
+  }>
   sessions: Array<{ sessionStartAt: number; viewers: number; avgWatchedSeconds: number; ctaClicks: number }>
   dropoff: Array<{ bucketStart: number; viewers: number }>
 }
@@ -1855,10 +1894,23 @@ export type WebinarUserComment = {
   id: string
   friendId: string
   friendName: string | null
+  pictureUrl: string | null
   sessionStartAt: number
   atSeconds: number
   body: string
   createdAt: string
+}
+
+export type WebinarCtaCard = {
+  id?: string
+  atSeconds: number
+  kind: 'form' | 'url'
+  title: string
+  body: string | null
+  buttonLabel: string
+  autoOpen: boolean
+  formId: string | null
+  url: string | null
 }
 
 export const webinarApi = {
@@ -1875,6 +1927,16 @@ export const webinarApi = {
     fetchApi<{ data: { count: number } }>(`/api/webinars/${id}/comments`, {
       method: 'PUT',
       body: JSON.stringify({ comments: comments.map(({ atSeconds, authorName, body }) => ({ atSeconds, authorName, body })) }),
+    }),
+  ctas: (id: string) => fetchApi<{ data: WebinarCtaCard[] }>(`/api/webinars/${id}/ctas`),
+  saveCtas: (id: string, ctas: WebinarCtaCard[]) =>
+    fetchApi<{ data: { count: number } }>(`/api/webinars/${id}/ctas`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        ctas: ctas.map(({ atSeconds, kind, title, body, buttonLabel, autoOpen, formId, url }) => ({
+          atSeconds, kind, title, body, buttonLabel, autoOpen, formId, url,
+        })),
+      }),
     }),
   analytics: (id: string) => fetchApi<{ data: WebinarAnalytics }>(`/api/webinars/${id}/analytics`),
   userComments: (id: string) =>

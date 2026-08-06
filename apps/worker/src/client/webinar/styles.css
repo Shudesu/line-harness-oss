@@ -17,3 +17,134 @@ body.wb-active #app {
   width: 100% !important;
   padding: 0 !important;
 }
+
+/* ─── 必要最低限の preflight (event-booking と同一パターン) ──────
+ * これが無いと iOS Safari 等で button/input の UA デフォルト装飾
+ * (ベベル・枠線・光沢) がそのまま出てしまう。 */
+:where(body.wb-active),
+:where(body.wb-active) *,
+:where(body.wb-active) *::before,
+:where(body.wb-active) *::after {
+  box-sizing: border-box;
+}
+:where(body.wb-active) h1,
+:where(body.wb-active) h2,
+:where(body.wb-active) h3,
+:where(body.wb-active) h4,
+:where(body.wb-active) h5,
+:where(body.wb-active) h6 {
+  font-size: inherit;
+  font-weight: inherit;
+  margin: 0;
+}
+:where(body.wb-active) p,
+:where(body.wb-active) dl,
+:where(body.wb-active) dd,
+:where(body.wb-active) dt,
+:where(body.wb-active) ol,
+:where(body.wb-active) ul,
+:where(body.wb-active) figure,
+:where(body.wb-active) blockquote {
+  margin: 0;
+}
+:where(body.wb-active) ol,
+:where(body.wb-active) ul {
+  list-style: none;
+  padding: 0;
+}
+:where(body.wb-active) button {
+  -webkit-appearance: none;
+  appearance: none;
+  font-family: inherit;
+  font-size: 100%;
+  font-weight: inherit;
+  line-height: inherit;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+  background-color: transparent;
+  background-image: none;
+  border: 0;
+  cursor: pointer;
+}
+:where(body.wb-active) button:disabled {
+  cursor: not-allowed;
+}
+:where(body.wb-active) input,
+:where(body.wb-active) textarea,
+:where(body.wb-active) select {
+  font-family: inherit;
+  font-size: 100%;
+  line-height: inherit;
+  color: inherit;
+  margin: 0;
+}
+/* テキスト系入力だけ UA 装飾 (ベベル・枠線) を除去。
+ * radio / checkbox は native 描画を残して accent-color で揃える (form.ts と同じ)。
+ * select は appearance を消すと矢印が消えるので残す。 */
+:where(body.wb-active) input:not([type='radio']):not([type='checkbox']),
+:where(body.wb-active) textarea {
+  -webkit-appearance: none;
+  appearance: none;
+  /* border: 0 (style が none になる) にすると Tailwind の .border 系
+   * (幅・色のみ指定) が描画されなくなる。Tailwind preflight と同じく
+   * 幅 0 + style solid でリセットする。 */
+  border-width: 0;
+  border-style: solid;
+  border-color: currentColor;
+  border-radius: 0;
+  background-color: transparent;
+}
+:where(body.wb-active) input[type='radio'],
+:where(body.wb-active) input[type='checkbox'] {
+  accent-color: #06c755;
+  width: 18px;
+  height: 18px;
+}
+:where(body.wb-active) textarea {
+  resize: vertical;
+}
+:where(body.wb-active) img,
+:where(body.wb-active) svg,
+:where(body.wb-active) video,
+:where(body.wb-active) canvas {
+  display: block;
+  max-width: 100%;
+}
+:where(body.wb-active) a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+/* ハウススタイルのカード (eb-card と同じトーン) */
+.wb-card {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* CTA カードの登場モーメント: チャットに滑り込むフェード+リフト。
+ * 「ボタン出ました」の瞬間だけ動きで注意を引く。 */
+.cta-card {
+  animation: wb-cta-in 0.35s ease-out;
+}
+@keyframes wb-cta-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cta-card { animation: none; }
+}
+
+/* ライブ視聴・待機ルーム中だけページの縦スクロールを禁止する (wb-lock は
+ * クライアントが state に応じて付け外し)。高さは dvh 基準 (モバイルの URL
+ * バー分 100vh が実画面より高くなる問題の回避)。スクロールはチャット欄の
+ * 内部のみ。セッション選択メニュー等の通常ページはスクロール可能なまま。 */
+body.wb-active.wb-lock {
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+body.wb-active.wb-lock #app {
+  height: 100%;
+}

@@ -866,7 +866,7 @@ app.notFound(notFoundHandler);
 async function scheduled(
   event: ScheduledEvent,
   env: Env['Bindings'],
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
 ): Promise<void> {
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);
@@ -929,6 +929,28 @@ async function scheduled(
     }
   } catch (e) {
     console.error('event-booking-reminders error:', e);
+  }
+
+  // ウェビナー予約リマインド (セッション選択メニュー)。時刻厳守・軽量なので
+  // booking 系リマインドと同じく重いジョブより先に実行する。
+  try {
+    const { processWebinarReminders } = await import('./services/webinar-reminders.js');
+    const liffMatch = /liff\.line\.me\/([^/?]+)/.exec(env.LIFF_URL ?? '');
+    const result = await processWebinarReminders(
+      env.DB,
+      {
+        proxyBaseUrl:
+          env.WORKER_PUBLIC_URL ?? 'https://your-worker.your-subdomain.workers.dev',
+        defaultAccessToken: env.LINE_CHANNEL_ACCESS_TOKEN,
+        defaultLiffId: liffMatch?.[1] ?? null,
+        proxyDispatch: (request) => Promise.resolve(lineProxy.fetch(request, env, ctx)),
+      },
+    );
+    if (result.sent + result.failed > 0) {
+      console.log(`[webinar-reminders] sent=${result.sent} failed=${result.failed}`);
+    }
+  } catch (e) {
+    console.error('webinar-reminders error:', e);
   }
 
   // Phase 2: 配信系と定期ジョブを並列実行する。processScheduledBroadcasts は tag/all の

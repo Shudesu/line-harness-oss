@@ -90,6 +90,27 @@ export async function getFollowingLineUserIdsByTag(
   return (result.results ?? []).map((r) => r.line_user_id);
 }
 
+/**
+ * アカウントスコープ優先の friend 解決。同一プロバイダー配下の複数アカウント
+ * では line_user_id が同一になるため、無指定の先頭一致だと別アカウントの
+ * friend 行に吸われて通知アカウントがズレる。指定アカウントの行を優先し、
+ * 無ければ従来どおり先頭一致にフォールバックする。
+ */
+export async function getFriendByLineUserIdForAccount(
+  db: D1Database,
+  lineUserId: string,
+  lineAccountId: string | null,
+): Promise<Friend | null> {
+  if (lineAccountId) {
+    const scoped = await db
+      .prepare(`SELECT * FROM friends WHERE line_user_id = ? AND line_account_id = ?`)
+      .bind(lineUserId, lineAccountId)
+      .first<Friend>();
+    if (scoped) return scoped;
+  }
+  return getFriendByLineUserId(db, lineUserId);
+}
+
 export async function getFriendByLineUserId(
   db: D1Database,
   lineUserId: string,

@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import {
   getFriendByLineUserId,
+  getFriendByLineUserIdForAccount,
   createUser,
   getUserByEmail,
   linkFriendToUser,
@@ -1142,13 +1143,17 @@ liffRoutes.post('/api/liff/link', async (c) => {
     }
 
     let verifyRes: Response | null = null;
+    let matchedLoginChannelId: string | null = null;
     for (const channelId of loginChannelIds) {
       verifyRes = await fetch('https://api.line.me/oauth2/v2.1/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ id_token: body.idToken, client_id: channelId }),
       });
-      if (verifyRes.ok) break;
+      if (verifyRes.ok) {
+        matchedLoginChannelId = channelId;
+        break;
+      }
     }
 
     if (!verifyRes?.ok) {
@@ -1160,7 +1165,15 @@ liffRoutes.post('/api/liff/link', async (c) => {
     const email = verified.email || null;
 
     const db = c.env.DB;
-    const friend = await getFriendByLineUserId(db, lineUserId);
+    // id_token を検証できたログインチャネル = ユーザーが開いている LIFF のアカウント。
+    // friend 行とプッシュ先をそのアカウントに揃える (同一プロバイダーの兄弟アカウント
+    // では line_user_id が同一で、無指定の先頭一致だと別アカウントに吸われるため)。
+    const matchedAccount = matchedLoginChannelId
+      ? dbAccounts.find((a) => a.login_channel_id === matchedLoginChannelId) ?? null
+      : null;
+    const friend = await getFriendByLineUserIdForAccount(
+      db, lineUserId, matchedAccount?.id ?? null,
+    );
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
@@ -1194,7 +1207,9 @@ liffRoutes.post('/api/liff/link', async (c) => {
         } catch { /* silent */ }
       }
       if (body.ref) {
-        await applyRefAttribution(c, body.ref, friend, lineUserId);
+        await applyRefAttribution(c, body.ref, friend, lineUserId, {
+          accountChannelId: matchedAccount?.channel_id ?? null,
+        });
       }
       // X Harness token resolution for already-linked friends
       if (body.ref && body.ref.startsWith('xh:')) {
@@ -1261,7 +1276,9 @@ liffRoutes.post('/api/liff/link', async (c) => {
       } catch { /* silent */ }
 
       // Apply ref attribution (tag + scenario push) for newly-linked friends
-      await applyRefAttribution(c, body.ref, friend, lineUserId);
+      await applyRefAttribution(c, body.ref, friend, lineUserId, {
+        accountChannelId: matchedAccount?.channel_id ?? null,
+      });
     }
 
     // X Harness token resolution: ref starting with "xh:" links X account to LINE friend

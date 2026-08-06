@@ -13,6 +13,9 @@ dist-mcp/
 *.toml.bak
 .env.production
 .env.staging
+# Wrangler local secrets — matches apps/worker/.dev.vars and any other worker's copy at any depth
+.dev.vars
+.dev.vars.*
 apps/web/out/
 apps/worker/dist/
 .worktrees/

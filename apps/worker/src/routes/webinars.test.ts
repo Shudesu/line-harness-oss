@@ -8,6 +8,9 @@ const dbMocks = {
   updateWebinar: vi.fn(),
   deleteWebinar: vi.fn(),
   getWebinarComments: vi.fn(),
+  getWebinarCtas: vi.fn(),
+  replaceWebinarCtas: vi.fn(),
+  getFormById: vi.fn(),
   replaceWebinarComments: vi.fn(),
   upsertWebinarViewer: vi.fn(),
   updateWebinarViewerPosition: vi.fn(),
@@ -17,7 +20,18 @@ const dbMocks = {
   getWebinarUserComments: vi.fn(),
   getWebinarSessionStats: vi.fn(),
   getWebinarDropoff: vi.fn(),
+  getWebinarParticipantStats: vi.fn(),
+  getWebinarAnalyticsSummary: vi.fn(),
+  getWebinarDailyStats: vi.fn(),
   getFriendByLineUserId: vi.fn(),
+  getFriendByLineUserIdForAccount: vi.fn(),
+  getFriendById: vi.fn(),
+  getLineAccountById: vi.fn(),
+  upsertWebinarRegistration: vi.fn(),
+  getUpcomingWebinarRegistration: vi.fn(),
+  getWebinarRegistration: vi.fn(),
+  getDueWebinarRegistrations: vi.fn(),
+  markWebinarRegistrationNotified: vi.fn(),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -26,6 +40,9 @@ vi.mock('../services/liff-auth.js', () => authMock);
 
 const tagMock = { attachTagAndFireSideEffects: vi.fn() };
 vi.mock('../services/friend-tag-attach.js', () => tagMock);
+
+const localProxyMock = { dispatchLineProxyLocally: vi.fn() };
+vi.mock('../services/local-line-proxy.js', () => localProxyMock);
 
 const { webinarRoutes } = await import('./webinars.js');
 const { signWebinarToken } = await import('../lib/webinar-token.js');
@@ -53,7 +70,10 @@ function makeWebinar(over: Record<string, unknown> = {}) {
   };
 }
 
-const env = { DB: {} as D1Database, LINE_CHANNEL_SECRET: SECRET, IMAGES: {} as R2Bucket };
+const env = {
+  DB: {} as D1Database, LINE_CHANNEL_SECRET: SECRET, IMAGES: {} as R2Bucket,
+  LINE_CHANNEL_ACCESS_TOKEN: 'test-token', LIFF_URL: 'https://liff.line.me/999-test',
+};
 const execCtx = { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext;
 
 function req(path: string, init?: RequestInit) {
@@ -63,15 +83,23 @@ function req(path: string, init?: RequestInit) {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.useFakeTimers();
-  // ライブ開始30分後
-  vi.setSystemTime(new Date((SESSION_START + 1800) * 1000));
+  // ライブ開始3分後（予約済み本人が途中参加できる5分窓内）
+  vi.setSystemTime(new Date((SESSION_START + 180) * 1000));
   authMock.verifyCallerLineUserId.mockResolvedValue('U123');
   dbMocks.getFriendByLineUserId.mockResolvedValue({ id: 'friend-1' });
+  dbMocks.getFriendByLineUserIdForAccount.mockResolvedValue({ id: 'friend-1' });
   dbMocks.getWebinarBySlug.mockResolvedValue(makeWebinar());
   dbMocks.getWebinarComments.mockResolvedValue([
     { id: 'c1', webinar_id: 'w1', at_seconds: 10, author_name: '田中', body: '楽しみ!', created_at: 'x' },
   ]);
   dbMocks.upsertWebinarViewer.mockResolvedValue({ firstJoin: true });
+  dbMocks.getWebinarCtas.mockResolvedValue([]);
+  dbMocks.getUpcomingWebinarRegistration.mockResolvedValue(null);
+  dbMocks.getWebinarRegistration.mockResolvedValue({
+    id: 'reg-current', webinar_id: 'w1', friend_id: 'friend-1',
+    session_start_at: SESSION_START, notified_at: 'x', created_at: 'x',
+  });
+  localProxyMock.dispatchLineProxyLocally.mockResolvedValue(new Response(null, { status: 200 }));
 });
 
 describe('GET /api/liff/webinars/:slug', () => {
@@ -82,13 +110,131 @@ describe('GET /api/liff/webinars/:slug', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.live).toBe(true);
-    expect(body.offsetSeconds).toBe(1800);
+    expect(body.offsetSeconds).toBe(180);
     expect(body.sessionStartAt).toBe(SESSION_START);
     expect(body.playlistUrl).toMatch(
       /^\/webinar-assets\/\d+\.[A-Za-z0-9_-]+\/test-webinar\/master\.m3u8$/,
     );
     expect(body.comments).toEqual([{ atSeconds: 10, authorName: '田中', body: '楽しみ!' }]);
+    // 予約済み本人だけが動画 URL を受け取る
+    expect(body.upcoming).toEqual([]);
+    expect(body.registeredSessionAt).toBeNull();
+    expect(body.registeredForThisSession).toBe(true);
     expect(dbMocks.upsertWebinarViewer).toHaveBeenCalledWith({}, 'w1', 'friend-1', SESSION_START);
+  });
+
+  test('friend はウェビナーのアカウント配下の行を優先解決する', async () => {
+    dbMocks.getWebinarBySlug.mockResolvedValue(makeWebinar({ account_id: 'acc-b' }));
+    await req('/api/liff/webinars/test-webinar', { headers: { Authorization: 'Bearer t' } });
+    expect(dbMocks.getFriendByLineUserIdForAccount).toHaveBeenCalledWith(
+      expect.anything(), 'U123', 'acc-b',
+    );
+  });
+
+  test('この回を予約済みの本人には registeredForThisSession=true を返す', async () => {
+    dbMocks.getWebinarRegistration.mockResolvedValue({
+      id: 'reg-1', webinar_id: 'w1', friend_id: 'friend-1',
+      session_start_at: SESSION_START, notified_at: 'x', created_at: 'x',
+    });
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.registeredForThisSession).toBe(true);
+    expect(dbMocks.getWebinarRegistration).toHaveBeenCalledWith(
+      expect.anything(), 'w1', 'friend-1', SESSION_START,
+    );
+  });
+
+  test('開始ぴったりでも未予約者には動画URLを返さず、現在回を予約候補にする', async () => {
+    vi.setSystemTime(new Date(SESSION_START * 1000));
+    dbMocks.getWebinarRegistration.mockResolvedValue(null);
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(false);
+    expect(body.upcoming).toEqual([SESSION_START]);
+    expect(body.playlistUrl).toBeUndefined();
+    expect(dbMocks.upsertWebinarViewer).not.toHaveBeenCalled();
+    expect(execCtx.waitUntil).not.toHaveBeenCalled();
+  });
+
+  test('開始5分ちょうどまでは、未予約者に現在回を予約候補として出す', async () => {
+    vi.setSystemTime(new Date((SESSION_START + 300) * 1000));
+    dbMocks.getWebinarRegistration.mockResolvedValue(null);
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(false);
+    expect(body.upcoming).toEqual([SESSION_START]);
+    expect(body.playlistUrl).toBeUndefined();
+  });
+
+  test('開始5分を過ぎても、その回の予約済み本人は再入場できる', async () => {
+    vi.setSystemTime(new Date((SESSION_START + 301) * 1000));
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(true);
+    expect(body.sessionStartAt).toBe(SESSION_START);
+    expect(body.offsetSeconds).toBe(301);
+    expect(body.registeredForThisSession).toBe(true);
+    expect(body.playlistUrl).toBeDefined();
+    expect(dbMocks.upsertWebinarViewer).toHaveBeenCalledWith(
+      expect.anything(), 'w1', 'friend-1', SESSION_START,
+    );
+  });
+
+  test('開始5分を過ぎた未予約者は、現在回に入れず次回選択に戻る', async () => {
+    vi.setSystemTime(new Date((SESSION_START + 301) * 1000));
+    dbMocks.getWebinarRegistration.mockResolvedValue(null);
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(false);
+    expect(body.upcoming).toEqual([]);
+    expect(body.playlistUrl).toBeUndefined();
+    expect(dbMocks.upsertWebinarViewer).not.toHaveBeenCalled();
+  });
+
+  test('専用入場リンクは配信終了後も予約した回を再生できる', async () => {
+    vi.setSystemTime(new Date((SESSION_START + 7200 + 3600) * 1000));
+    dbMocks.getWebinarRegistration.mockResolvedValue({
+      id: 'reg-past', webinar_id: 'w1', friend_id: 'friend-1',
+      session_start_at: SESSION_START, notified_at: 'x', created_at: 'x',
+    });
+    const res = await req(
+      `/api/liff/webinars/test-webinar?sessionStartAt=${SESSION_START}`,
+      { headers: { Authorization: 'Bearer t' } },
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(true);
+    expect(body.replay).toBe(true);
+    expect(body.sessionStartAt).toBe(SESSION_START);
+    expect(body.offsetSeconds).toBe(0);
+    expect(body.registeredForThisSession).toBe(true);
+    expect(body.playlistUrl).toBeDefined();
+    expect(dbMocks.upsertWebinarViewer).toHaveBeenCalledWith(
+      expect.anything(), 'w1', 'friend-1', SESSION_START,
+    );
+  });
+
+  test('専用リンクの時刻を推測しても、本人の予約がなければ再生できない', async () => {
+    vi.setSystemTime(new Date((SESSION_START + 7200 + 3600) * 1000));
+    dbMocks.getWebinarRegistration.mockResolvedValue(null);
+    const res = await req(
+      `/api/liff/webinars/test-webinar?sessionStartAt=${SESSION_START}`,
+      { headers: { Authorization: 'Bearer t' } },
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(false);
+    expect(body.replay).toBeUndefined();
+    expect(body.playlistUrl).toBeUndefined();
+    expect(dbMocks.upsertWebinarViewer).not.toHaveBeenCalled();
   });
 
   test('tag_on_attend が waitUntil 経由で付与される', async () => {
@@ -96,15 +242,67 @@ describe('GET /api/liff/webinars/:slug', () => {
     expect(execCtx.waitUntil).toHaveBeenCalled();
   });
 
-  test('時間外は live:false と nextSessionAt', async () => {
-    vi.setSystemTime(new Date((SESSION_START - 600) * 1000));
+  test('開始10分より前は live:false と nextSessionAt のみ (待機ルームなし)', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 3600) * 1000));
     const res = await req('/api/liff/webinars/test-webinar', {
       headers: { Authorization: 'Bearer t' },
     });
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.live).toBe(false);
+    expect(body.waiting).toBeUndefined();
     expect(body.nextSessionAt).toBe(SESSION_START);
+    expect(body.upcoming).toEqual([SESSION_START]);
+    expect(body.registeredSessionAt).toBeNull();
     expect(dbMocks.upsertWebinarViewer).not.toHaveBeenCalled();
+  });
+
+  test('開始10分前でも未予約者は待機ルームへ直行せず、予約画面を出す', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 300) * 1000));
+    dbMocks.getUpcomingWebinarRegistration.mockResolvedValue(null);
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(false);
+    expect(body.waiting).toBeUndefined();
+    expect(body.upcoming).toEqual([SESSION_START]);
+  });
+
+  test('開始10分前から予約済み本人だけ待機ルームに入る', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 300) * 1000));
+    dbMocks.getUpcomingWebinarRegistration.mockResolvedValue({
+      id: 'reg-next', webinar_id: 'w1', friend_id: 'friend-1',
+      session_start_at: SESSION_START, notified_at: null, created_at: 'x',
+    });
+    dbMocks.getWebinarComments.mockResolvedValue([
+      { id: 'c0', webinar_id: 'w1', at_seconds: -120, author_name: 'みお', body: '楽しみ', created_at: 'x' },
+    ]);
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.live).toBe(false);
+    expect(body.waiting).toBe(true);
+    expect(body.offsetSeconds).toBe(-300);
+    expect(body.nextSessionAt).toBe(SESSION_START);
+    expect(body.comments).toEqual([{ atSeconds: -120, authorName: 'みお', body: '楽しみ' }]);
+    expect(body.playlistUrl).toBeUndefined();
+    // 待機中は視聴ログを作らない
+    expect(dbMocks.upsertWebinarViewer).not.toHaveBeenCalled();
+    expect(execCtx.waitUntil).not.toHaveBeenCalled();
+  });
+
+  test('待機窓の境界 (ちょうど600秒前) は待機ルーム', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 600) * 1000));
+    dbMocks.getUpcomingWebinarRegistration.mockResolvedValue({
+      id: 'reg-next', webinar_id: 'w1', friend_id: 'friend-1',
+      session_start_at: SESSION_START, notified_at: null, created_at: 'x',
+    });
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.waiting).toBe(true);
   });
 
   test('id_token 検証失敗は 401', async () => {
@@ -122,7 +320,7 @@ describe('GET /api/liff/webinars/:slug', () => {
   });
 
   test('friend 未登録は 403', async () => {
-    dbMocks.getFriendByLineUserId.mockResolvedValue(null);
+    dbMocks.getFriendByLineUserIdForAccount.mockResolvedValue(null);
     const res = await req('/api/liff/webinars/test-webinar', {
       headers: { Authorization: 'Bearer t' },
     });
@@ -143,7 +341,10 @@ describe('GET /webinar-assets/:token/:slug/*', () => {
     return {
       get: vi.fn(async (key: string) =>
         objects[key] !== undefined
-          ? { body: objects[key], etag: 'etag1', httpMetadata: {} }
+          ? {
+              body: objects[key], etag: 'etag1', httpMetadata: {},
+              text: async () => objects[key],
+            }
           : null,
       ),
     };
@@ -174,6 +375,60 @@ describe('GET /webinar-assets/:token/:slug/*', () => {
     );
     expect(res.headers.get('Content-Type')).toBe('application/vnd.apple.mpegurl');
     expect(res.headers.get('Cache-Control')).toContain('max-age=3600');
+  });
+
+  test('?at= 付き master は EXT-X-START 注入 + variant URI へ at 伝播 + no-store', async () => {
+    const master = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=3506325\n0/index.m3u8\n\n#EXT-X-STREAM-INF:BANDWIDTH=1842400\n1/index.m3u8\n';
+    const r2 = makeR2({ 'webinars/test-webinar/master.m3u8': master });
+    const token = await signWebinarToken(SECRET, 'test-webinar', SESSION_START + 99999);
+    const res = await webinarRoutes.request(
+      `/webinar-assets/${token}/test-webinar/master.m3u8?at=571`,
+      undefined, { ...env, IMAGES: r2 as unknown as R2Bucket }, execCtx,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('#EXT-X-START:TIME-OFFSET=571,PRECISE=YES');
+    expect(body).toContain('0/index.m3u8?at=571');
+    expect(body).toContain('1/index.m3u8?at=571');
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+  });
+
+  test('?at= 付き variant (media playlist) はタグ注入のみでセグメント URI は不変', async () => {
+    const media = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:6.0,\nseg_00000.ts\n#EXT-X-ENDLIST\n';
+    const r2 = makeR2({ 'webinars/test-webinar/0/index.m3u8': media });
+    const token = await signWebinarToken(SECRET, 'test-webinar', SESSION_START + 99999);
+    const res = await webinarRoutes.request(
+      `/webinar-assets/${token}/test-webinar/0/index.m3u8?at=571`,
+      undefined, { ...env, IMAGES: r2 as unknown as R2Bucket }, execCtx,
+    );
+    const body = await res.text();
+    expect(body).toContain('#EXT-X-START:TIME-OFFSET=571,PRECISE=YES');
+    expect(body).toContain('\nseg_00000.ts\n');
+    expect(body).not.toContain('seg_00000.ts?at');
+  });
+
+  test('?at= が範囲外 (負・動画長超) は 400、セグメントの at は無視', async () => {
+    const r2 = makeR2({
+      'webinars/test-webinar/master.m3u8': '#EXTM3U',
+      'webinars/test-webinar/0/seg_0001.ts': 'DATA',
+    });
+    const token = await signWebinarToken(SECRET, 'test-webinar', SESSION_START + 99999);
+    const over = await webinarRoutes.request(
+      `/webinar-assets/${token}/test-webinar/master.m3u8?at=999999`,
+      undefined, { ...env, IMAGES: r2 as unknown as R2Bucket }, execCtx,
+    );
+    expect(over.status).toBe(400);
+    const neg = await webinarRoutes.request(
+      `/webinar-assets/${token}/test-webinar/master.m3u8?at=-5`,
+      undefined, { ...env, IMAGES: r2 as unknown as R2Bucket }, execCtx,
+    );
+    expect(neg.status).toBe(400);
+    const seg = await webinarRoutes.request(
+      `/webinar-assets/${token}/test-webinar/0/seg_0001.ts?at=571`,
+      undefined, { ...env, IMAGES: r2 as unknown as R2Bucket }, execCtx,
+    );
+    expect(seg.status).toBe(200);
+    expect(await seg.text()).toBe('DATA');
   });
 
   test('不正トークンは 403、存在しないキーは 404、パストラバーサルは 400', async () => {
@@ -268,14 +523,40 @@ describe('POST /api/liff/webinars/:slug/comments', () => {
     expect(res.status).toBe(429);
   });
 
-  test('ライブ外・偽セッションの投稿は 409', async () => {
-    // ライブ時間外（開始前）にサーバー時刻をセットし、sessionStartAt を偽装しても弾かれることを確認
-    vi.setSystemTime(new Date((SESSION_START - 600) * 1000));
+  test('待機窓より前の投稿は 409', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 3600) * 1000));
     const res = await postJson('/api/liff/webinars/test-webinar/comments', {
       sessionStartAt: SESSION_START, atSeconds: 1, body: 'x',
     });
     expect(res.status).toBe(409);
     expect(dbMocks.insertWebinarUserComment).not.toHaveBeenCalled();
+  });
+
+  test('待機ルーム中は次回セッション帰属で負の atSeconds を保存する', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 300) * 1000));
+    const res = await postJson('/api/liff/webinars/test-webinar/comments', {
+      sessionStartAt: SESSION_START, atSeconds: -300, body: '待機中です',
+    });
+    expect(res.status).toBe(200);
+    expect(dbMocks.insertWebinarUserComment).toHaveBeenCalledWith(expect.anything(), {
+      webinarId: 'w1', friendId: 'friend-1', sessionStartAt: SESSION_START,
+      atSeconds: -300, body: '待機中です',
+    });
+  });
+
+  test('待機ルーム中でも偽 sessionStartAt は 409', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 300) * 1000));
+    const res = await postJson('/api/liff/webinars/test-webinar/comments', {
+      sessionStartAt: SESSION_START - 86400, atSeconds: -300, body: 'x',
+    });
+    expect(res.status).toBe(409);
+  });
+
+  test('-3600 を下回る atSeconds は 422', async () => {
+    const res = await postJson('/api/liff/webinars/test-webinar/comments', {
+      sessionStartAt: SESSION_START, atSeconds: -4000, body: 'x',
+    });
+    expect(res.status).toBe(422);
   });
 });
 
@@ -297,6 +578,45 @@ describe('POST /api/liff/webinars/:slug/cta-click', () => {
       sessionStartAt: SESSION_START,
     });
     expect(execCtx.waitUntil).toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/liff/webinars/:slug/register', () => {
+  test('実在する未来セッションを予約し確認プッシュを waitUntil で送る', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 3600) * 1000));
+    const res = await postJson('/api/liff/webinars/test-webinar/register', {
+      sessionStartAt: SESSION_START,
+    });
+    expect(res.status).toBe(200);
+    expect(dbMocks.upsertWebinarRegistration).toHaveBeenCalledWith(
+      expect.anything(), 'w1', 'friend-1', SESSION_START,
+    );
+    expect(execCtx.waitUntil).toHaveBeenCalled();
+  });
+
+  test('スケジュール上に存在しない時刻は 400', async () => {
+    vi.setSystemTime(new Date((SESSION_START - 3600) * 1000));
+    const res = await postJson('/api/liff/webinars/test-webinar/register', {
+      sessionStartAt: SESSION_START + 123,
+    });
+    expect(res.status).toBe(400);
+    expect(dbMocks.upsertWebinarRegistration).not.toHaveBeenCalled();
+  });
+
+  test('開始5分ちょうどまでは現在セッションを予約できる', async () => {
+    vi.setSystemTime(new Date((SESSION_START + 300) * 1000));
+    const res = await postJson('/api/liff/webinars/test-webinar/register', {
+      sessionStartAt: SESSION_START,
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test('開始5分を1秒でも過ぎた現在セッションは 400', async () => {
+    vi.setSystemTime(new Date((SESSION_START + 301) * 1000));
+    const res = await postJson('/api/liff/webinars/test-webinar/register', {
+      sessionStartAt: SESSION_START,
+    });
+    expect(res.status).toBe(400);
   });
 });
 
@@ -357,6 +677,28 @@ describe('admin CRUD', () => {
     ]);
   });
 
+  test('PUT comments — 負の atSeconds (待機ルーム) は -3600 まで許容', async () => {
+    dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+    dbMocks.replaceWebinarComments.mockResolvedValue(1);
+    const ok = await req('/api/webinars/w1/comments', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        comments: [{ atSeconds: -300, authorName: 'みお', body: '楽しみです' }],
+      }),
+    });
+    expect(ok.status).toBe(200);
+    expect(dbMocks.replaceWebinarComments).toHaveBeenCalledWith(expect.anything(), 'w1', [
+      { atSeconds: -300, authorName: 'みお', body: '楽しみです' },
+    ]);
+    const tooEarly = await req('/api/webinars/w1/comments', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        comments: [{ atSeconds: -4000, authorName: 'みお', body: 'x' }],
+      }),
+    });
+    expect(tooEarly.status).toBe(400);
+  });
+
   test('PUT comments — 不正要素があれば 400 で何も書かない', async () => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
     const res = await req('/api/webinars/w1/comments', {
@@ -367,18 +709,74 @@ describe('admin CRUD', () => {
     expect(dbMocks.replaceWebinarComments).not.toHaveBeenCalled();
   });
 
-  test('GET /api/webinars/:id/analytics — sessions + dropoff', async () => {
+  test('GET /api/webinars/:id/analytics — summary + trend + participants', async () => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
     dbMocks.getWebinarSessionStats.mockResolvedValue([
       { session_start_at: SESSION_START, viewers: 10, avg_watched_seconds: 3600, cta_clicks: 3 },
     ]);
     dbMocks.getWebinarDropoff.mockResolvedValue([{ bucket_start: 0, viewers: 4 }]);
+    dbMocks.getWebinarAnalyticsSummary.mockResolvedValue({
+      reservations: 12,
+      viewers: 2,
+      registered_and_joined: 1,
+      watched_5m: 2,
+      watched_15m: 1,
+      completed: 1,
+      avg_watched_seconds: 3550,
+      cta_clicks: 1,
+      form_submissions: 1,
+    });
+    dbMocks.getWebinarParticipantStats.mockResolvedValue([
+      {
+        friend_id: 'friend-1', friend_name: '山田太郎', picture_url: 'https://example.com/u.jpg',
+        sessions: 2, first_joined_at: '2026-08-05T10:00:00+09:00',
+        latest_joined_at: '2026-08-06T10:00:00+09:00', max_watched_seconds: 6500,
+        cta_clicked_at: '2026-08-06T11:00:00+09:00', registered: 1,
+        form_submitted_at: '2026-08-06T11:01:00+09:00',
+      },
+      {
+        friend_id: 'friend-2', friend_name: '佐藤花子', picture_url: null,
+        sessions: 1, first_joined_at: '2026-08-06T10:00:00+09:00',
+        latest_joined_at: '2026-08-06T10:00:00+09:00', max_watched_seconds: 600,
+        cta_clicked_at: null, registered: 0, form_submitted_at: null,
+      },
+    ]);
+    dbMocks.getWebinarDailyStats.mockResolvedValue([
+      { stat_date: '2026-08-06', reservations: 5, viewers: 4, cta_clicks: 2, form_submissions: 1 },
+    ]);
     const res = await req('/api/webinars/w1/analytics');
-    const body = (await res.json()) as { data: Record<string, unknown> };
+    const body = (await res.json()) as {
+      data: {
+        sessions: unknown;
+        dropoff: unknown;
+        summary: unknown;
+        daily: unknown;
+        participants: Array<Record<string, unknown>>;
+      };
+    };
     expect(body.data.sessions).toEqual([
       { sessionStartAt: SESSION_START, viewers: 10, avgWatchedSeconds: 3600, ctaClicks: 3 },
     ]);
     expect(body.data.dropoff).toEqual([{ bucketStart: 0, viewers: 4 }]);
+    expect(body.data.summary).toEqual({
+      reservations: 12,
+      viewers: 2,
+      registeredAndJoined: 1,
+      watched5m: 2,
+      watched15m: 1,
+      completed: 1,
+      avgWatchedSeconds: 3550,
+      ctaClicks: 1,
+      formSubmissions: 1,
+    });
+    expect(body.data.daily).toEqual([
+      { date: '2026-08-06', reservations: 5, viewers: 4, ctaClicks: 2, formSubmissions: 1 },
+    ]);
+    expect(body.data.participants).toHaveLength(2);
+    expect(body.data.participants[0]).toMatchObject({
+      friendId: 'friend-1', friendName: '山田太郎', registered: true,
+      pictureUrl: 'https://example.com/u.jpg', formSubmittedAt: '2026-08-06T11:01:00+09:00',
+    });
   });
 
   test('DELETE /api/webinars/:id', async () => {
@@ -396,5 +794,100 @@ describe('admin CRUD', () => {
     });
     expect(res.status).toBe(400);
     expect(dbMocks.updateWebinar).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('webinar CTA cards', () => {
+  const CTA_ROW = {
+    id: 'cta1', webinar_id: 'w1', at_seconds: 300, kind: 'form',
+    title: '個別導入診断', body: '限定枠です', button_label: '診断を受ける',
+    auto_open: 1, form_id: 'form-1', url: null, created_at: 'x', updated_at: 'x',
+  };
+
+  test('LIFF state に ctas が camelCase で含まれる', async () => {
+    dbMocks.getWebinarCtas.mockResolvedValue([CTA_ROW]);
+    const res = await req('/api/liff/webinars/test-webinar', {
+      headers: { Authorization: 'Bearer t' },
+    });
+    const body = (await res.json()) as { ctas: unknown[] };
+    expect(body.ctas).toEqual([{
+      id: 'cta1', atSeconds: 300, kind: 'form', title: '個別導入診断',
+      body: '限定枠です', buttonLabel: '診断を受ける', autoOpen: true, formId: 'form-1', url: null,
+    }]);
+  });
+
+  test('PUT /api/webinars/:id/ctas — form kind は forms 実在チェック後に置換', async () => {
+    dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+    dbMocks.getFormById.mockResolvedValue({ id: 'form-1', is_active: 1 });
+    dbMocks.replaceWebinarCtas.mockResolvedValue(1);
+    const res = await req('/api/webinars/w1/ctas', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ctas: [{
+        atSeconds: 300, kind: 'form', title: '個別導入診断',
+        body: '限定枠です', buttonLabel: '診断を受ける', autoOpen: true, formId: 'form-1',
+      }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(dbMocks.replaceWebinarCtas).toHaveBeenCalledWith(expect.anything(), 'w1', [{
+      atSeconds: 300, kind: 'form', title: '個別導入診断', body: '限定枠です',
+      buttonLabel: '診断を受ける', autoOpen: true, formId: 'form-1', url: null,
+    }]);
+  });
+
+  test('PUT ctas — 存在しない form は 400 で何も書かない', async () => {
+    dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+    dbMocks.getFormById.mockResolvedValue(null);
+    const res = await req('/api/webinars/w1/ctas', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ctas: [{
+        atSeconds: 0, kind: 'form', title: 't', buttonLabel: 'b', formId: 'nope',
+      }] }),
+    });
+    expect(res.status).toBe(400);
+    expect(dbMocks.replaceWebinarCtas).not.toHaveBeenCalled();
+  });
+
+  test('PUT ctas — url kind は https 必須', async () => {
+    dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+    const bad = await req('/api/webinars/w1/ctas', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ctas: [{
+        atSeconds: 0, kind: 'url', title: 't', buttonLabel: 'b', url: 'javascript:alert(1)',
+      }] }),
+    });
+    expect(bad.status).toBe(400);
+    dbMocks.replaceWebinarCtas.mockResolvedValue(1);
+    const ok = await req('/api/webinars/w1/ctas', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ctas: [{
+        atSeconds: 0, kind: 'url', title: 't', buttonLabel: 'b', url: 'https://example.com/pay',
+      }] }),
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  test('PUT ctas — 無効化されたフォームは 400', async () => {
+    dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+    dbMocks.getFormById.mockResolvedValue({ id: 'form-1', is_active: 0 });
+    const res = await req('/api/webinars/w1/ctas', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ctas: [{
+        atSeconds: 0, kind: 'form', title: 't', buttonLabel: 'b', formId: 'form-1',
+      }] }),
+    });
+    expect(res.status).toBe(400);
+    expect(dbMocks.replaceWebinarCtas).not.toHaveBeenCalled();
+  });
+
+  test('GET /api/webinars/:id/ctas — serialize して返す', async () => {
+    dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+    dbMocks.getWebinarCtas.mockResolvedValue([CTA_ROW]);
+    const res = await req('/api/webinars/w1/ctas');
+    const body = (await res.json()) as { data: unknown[] };
+    expect(body.data).toEqual([{
+      id: 'cta1', atSeconds: 300, kind: 'form', title: '個別導入診断',
+      body: '限定枠です', buttonLabel: '診断を受ける', autoOpen: true, formId: 'form-1', url: null,
+    }]);
   });
 });

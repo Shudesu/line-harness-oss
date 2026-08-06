@@ -18,13 +18,30 @@ const STATUS_BADGE: Record<Webinar['status'], string> = {
 function scheduleSummary(w: Webinar): string {
   if (w.schedule.length === 0) return '未設定'
   const DAYS = ['日', '月', '火', '水', '木', '金', '土']
-  return w.schedule
-    .map((r) => {
-      if (r.type === 'daily') return `毎日 ${r.time}`
-      if (r.type === 'weekly') return `毎週${(r.days ?? []).map((d) => DAYS[d]).join('・')} ${r.time}`
-      return r.at ? new Date(r.at).toLocaleString('ja-JP') : ''
-    })
-    .join(' / ')
+  const dailyTimes = w.schedule
+    .filter((rule) => rule.type === 'daily' && rule.time)
+    .map((rule) => rule.time as string)
+    .sort()
+  const otherRules = w.schedule.filter((rule) => rule.type !== 'daily')
+  const parts: string[] = []
+  if (dailyTimes.length > 0) {
+    const toMinutes = (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number)
+      return hours * 60 + minutes
+    }
+    const intervals = dailyTimes.slice(1).map((time, index) => toMinutes(time) - toMinutes(dailyTimes[index]))
+    const interval = intervals.length > 0 && intervals.every((value) => value === intervals[0]) ? intervals[0] : null
+    parts.push(
+      dailyTimes.length === 1
+        ? `毎日 ${dailyTimes[0]}`
+        : `毎日 ${dailyTimes[0]}〜${dailyTimes[dailyTimes.length - 1]}${interval ? `・${interval}分間隔` : ''}（${dailyTimes.length}枠）`,
+    )
+  }
+  otherRules.forEach((rule) => {
+    if (rule.type === 'weekly') parts.push(`毎週${(rule.days ?? []).map((day) => DAYS[day]).join('・')} ${rule.time}`)
+    if (rule.type === 'once') parts.push(rule.at ? new Date(rule.at).toLocaleString('ja-JP') : '単発・日時未設定')
+  })
+  return parts.join(' / ')
 }
 
 export default function WebinarsPage() {
@@ -88,37 +105,31 @@ export default function WebinarsPage() {
             </Link>
           </div>
         ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 text-left text-gray-500">
-                  <th className="py-3 px-4 font-medium">タイトル</th>
-                  <th className="font-medium">slug</th>
-                  <th className="font-medium">スケジュール</th>
-                  <th className="font-medium">状態</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((w) => (
-                  <tr key={w.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                    <td className="py-3 px-4 font-medium text-gray-900">{w.title}</td>
-                    <td className="text-gray-500 font-mono text-xs">{w.slug}</td>
-                    <td className="text-gray-600">{scheduleSummary(w)}</td>
-                    <td>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_BADGE[w.status]}`}>
-                        {STATUS_LABEL[w.status]}
-                      </span>
-                    </td>
-                    <td className="text-right px-4">
-                      <Link href={`/webinars/edit?id=${w.id}`} className="text-blue-600 hover:underline">
-                        編集
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {items.map((w) => (
+              <Link
+                key={w.id}
+                href={`/webinars/edit?id=${w.id}`}
+                className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+              >
+                <div className="flex items-start gap-4 p-5">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
+                    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="2"><path d="M15 10l4.55-2.28A1 1 0 0 1 21 8.62v6.76a1 1 0 0 1-1.45.9L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2Z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <h2 className="line-clamp-2 font-bold leading-6 text-slate-900 group-hover:text-blue-700">{w.title}</h2>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_BADGE[w.status]}`}>{STATUS_LABEL[w.status]}</span>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-slate-600">{scheduleSummary(w)}</p>
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                      <span className="font-mono text-[11px] text-slate-400">/{w.slug}</span>
+                      <span className="text-xs font-semibold text-blue-600">概要・分析を見る →</span>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
           </div>
         )}
       </div>

@@ -106,3 +106,15 @@ export function resolveSession(
   }
   return { live: false, sessionStartAt: null, offsetSeconds: null, nextSessionAt: next };
 }
+
+/** now より未来のセッション開始時刻を昇順で最大 count 件返す (セッション選択メニュー用) */
+export function upcomingSessions(
+  rules: ScheduleRule[],
+  durationSeconds: number,
+  nowEpochSeconds: number,
+  count: number,
+): number[] {
+  return candidateStarts(rules, nowEpochSeconds, durationSeconds)
+    .filter((s) => s > nowEpochSeconds)
+    .slice(0, count);
+}
