@@ -97,18 +97,19 @@ function fakeDb(opts: {
   return { db: db as unknown as D1Database, executed };
 }
 
-/** Flatten multi-row messages_log INSERTs into logical rows (7 params each). */
+/** Flatten multi-row messages_log INSERTs into logical rows (8 params each). */
 function loggedRows(executed: Exec[]) {
-  const rows: { friendId: unknown; messageType: unknown; content: unknown; deliveryType: unknown; lineAccountId: unknown }[] = [];
+  const rows: { friendId: unknown; messageType: unknown; content: unknown; deliveryType: unknown; source: unknown; lineAccountId: unknown }[] = [];
   for (const e of executed) {
     if (!e.sql.includes('INSERT INTO messages_log')) continue;
-    for (let i = 0; i < e.params.length; i += 7) {
+    for (let i = 0; i < e.params.length; i += 8) {
       rows.push({
         friendId: e.params[i + 1],
         messageType: e.params[i + 2],
         content: e.params[i + 3],
         deliveryType: e.params[i + 4],
-        lineAccountId: e.params[i + 5],
+        source: e.params[i + 5],
+        lineAccountId: e.params[i + 6],
       });
     }
   }
@@ -302,6 +303,7 @@ describe('push', () => {
       messageType: 'text',
       content: 'hello',
       deliveryType: 'push',
+      source: 'external',
       lineAccountId: 'acc-1',
     });
 
@@ -310,6 +312,53 @@ describe('push', () => {
       'chat-1',
       expect.objectContaining({ status: 'in_progress' }),
     );
+  });
+
+  test('manual header logs a 1:1 operator reply as source=manual and is not forwarded', async () => {
+    const { db, executed } = fakeDb();
+    const res = await setupApp().request(
+      pushRequest('acc-token', undefined, { 'X-Line-Harness-Source': 'manual' }),
+      {},
+      env(db),
+    );
+
+    expect(res.status).toBe(200);
+    expect(loggedRows(executed)).toHaveLength(1);
+    expect(loggedRows(executed)[0].source).toBe('manual');
+    const [, init] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }];
+    expect(init.headers).not.toHaveProperty('X-Line-Harness-Source');
+  });
+
+  test('unknown source header is rejected before upstream send', async () => {
+    const { db } = fakeDb();
+    const res = await setupApp().request(
+      pushRequest('acc-token', undefined, { 'X-Line-Harness-Source': 'operator' }),
+      {},
+      env(db),
+    );
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('manual source cannot be used for multicast', async () => {
+    const { db } = fakeDb();
+    const res = await setupApp().request(
+      new Request('http://worker.test/line-api/v2/bot/message/multicast', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer acc-token',
+          'Content-Type': 'application/json',
+          'X-Line-Harness-Source': 'manual',
+        },
+        body: JSON.stringify({ to: [USER_A], messages: [{ type: 'text', text: 'hello' }] }),
+      }),
+      {},
+      env(db),
+    );
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test('percent-encoded path still logs (no log-dodging)', async () => {

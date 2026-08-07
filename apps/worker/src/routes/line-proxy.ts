@@ -22,7 +22,9 @@ import type { Env } from '../index.js';
  * 外部エージェント (Codex / Claude Code / スクリプト等) が LINE API を直接叩くと
  * messages_log に残らず admin UI のチャット履歴から欠落する。このプロキシは
  * ベースURLを `https://api.line.me` → `https://<worker>/line-api` に差し替える
- * だけで送信を messages_log (source='external') に記録する drop-in 経路を提供する。
+ * だけで送信を messages_log に記録する drop-in 経路を提供する。
+ * 通常は source='external'、人間が個別返信する push は
+ * X-Line-Harness-Source: manual を付けると source='manual' で記録する。
  *
  * 認証は2系統:
  * 1. チャネルアクセストークン (drop-in 移行用) — line_accounts /
@@ -63,10 +65,10 @@ const MESSAGE_SEND_PATHS = new Set([
 // budget. Overflow is skipped WITH a console.warn — never silently.
 const MAX_FRIEND_CREATIONS = 20;
 
-// D1 caps bound parameters at ~100 per statement. 7 params per row → 14 rows
-// per INSERT keeps each statement legal while packing ~350 rows per db.batch
+// D1 caps bound parameters at ~100 per statement. 8 params per row → 12 rows
+// per INSERT keeps each statement legal while packing ~300 rows per db.batch
 // subrequest (25 statements), so even large broadcasts stay in budget.
-const ROWS_PER_INSERT = 14;
+const ROWS_PER_INSERT = 12;
 const STATEMENTS_PER_BATCH = 25;
 
 // Chunk size for friend lookups via IN (...) — same 100-bind ceiling.
@@ -82,6 +84,8 @@ const AUTH_FAILED = {
 const LINE_USER_ID_RE = /^U[0-9a-f]{32}$/;
 
 type ParsedSend = { to?: unknown; messages?: unknown };
+
+type ProxyLogSource = 'external' | 'manual';
 
 type LogRow = {
   friendId: string;
@@ -232,14 +236,18 @@ async function createFriendForRecipient(
 }
 
 /** Multi-row INSERT keeps large broadcasts within the D1 subrequest budget. */
-async function insertLogRows(db: D1Database, rows: LogRow[]): Promise<void> {
+async function insertLogRows(
+  db: D1Database,
+  rows: LogRow[],
+  source: ProxyLogSource,
+): Promise<void> {
   if (rows.length === 0) return;
   const now = jstNow();
   const statements: D1PreparedStatement[] = [];
   for (let i = 0; i < rows.length; i += ROWS_PER_INSERT) {
     const chunk = rows.slice(i, i + ROWS_PER_INSERT);
     const values = chunk
-      .map(() => `(?, ?, 'outgoing', ?, ?, NULL, NULL, ?, 'external', ?, ?)`)
+      .map(() => `(?, ?, 'outgoing', ?, ?, NULL, NULL, ?, ?, ?, ?)`)
       .join(', ');
     const params = chunk.flatMap((row) => [
       crypto.randomUUID(),
@@ -247,6 +255,7 @@ async function insertLogRows(db: D1Database, rows: LogRow[]): Promise<void> {
       row.messageType,
       row.content,
       row.deliveryType,
+      source,
       row.lineAccountId,
       now,
     ]);
@@ -275,11 +284,12 @@ async function touchChat(db: D1Database, friendId: string): Promise<void> {
  * upstream send already happened, so a logging failure must not turn the
  * caller's 200 into an error (it would trigger client retries = double sends).
  */
-async function logExternalSend(
+async function logProxySend(
   db: D1Database,
   caller: ResolvedCaller,
   path: string,
   rawBody: string,
+  source: ProxyLogSource,
 ): Promise<void> {
   try {
     const parsed = JSON.parse(rawBody) as ParsedSend;
@@ -306,7 +316,7 @@ async function logExternalSend(
         (await getFriendByLineUserId(db, parsed.to)) ??
         (await createFriendForRecipient(db, lineClient, parsed.to, lineAccountId));
       if (!friend) return;
-      await insertLogRows(db, rowsFor(friend.id, 'push'));
+      await insertLogRows(db, rowsFor(friend.id, 'push'), source);
       await touchChat(db, friend.id);
       return;
     }
@@ -338,7 +348,7 @@ async function logExternalSend(
           `[line-proxy] multicast: ${skipped} unknown recipients not logged (friend-creation cap ${MAX_FRIEND_CREATIONS})`,
         );
       }
-      await insertLogRows(db, rows);
+      await insertLogRows(db, rows, source);
       return;
     }
 
@@ -378,7 +388,7 @@ async function logExternalSend(
         return;
       }
       const rows = friendIds.flatMap((friendId) => rowsFor(friendId, null));
-      await insertLogRows(db, rows);
+      await insertLogRows(db, rows, source);
       console.log(`[line-proxy] broadcast logged for ${friendIds.length} friends`);
       return;
     }
@@ -389,7 +399,7 @@ async function logExternalSend(
       );
     }
   } catch (err) {
-    console.error('[line-proxy] logExternalSend failed:', err);
+    console.error('[line-proxy] logProxySend failed:', err);
   }
 }
 
@@ -419,6 +429,24 @@ function proxyHandler(prefix: string, upstreamBase: string, logSends: boolean) {
 
     const method = c.req.method.toUpperCase();
     const isMessageSend = logSends && method === 'POST' && MESSAGE_SEND_PATHS.has(path);
+
+    // Proxy 経由の自動送信と、人間が行う個別返信を区別する。未指定は従来どおり
+    // external。manual は 1:1 push だけに限定し、一斉配信で未対応をまとめて消す
+    // 事故を防ぐ。独自ヘッダーは上流 LINE API には転送しない。
+    const requestedSource = c.req.header('X-Line-Harness-Source');
+    let logSource: ProxyLogSource = 'external';
+    if (isMessageSend && requestedSource) {
+      if (requestedSource !== 'manual') {
+        return c.json({ message: 'X-Line-Harness-Source must be manual' }, 400);
+      }
+      if (path !== '/v2/bot/message/push') {
+        return c.json(
+          { message: 'X-Line-Harness-Source: manual is only supported for push messages' },
+          400,
+        );
+      }
+      logSource = 'manual';
+    }
 
     // Message sends are buffered as text (needed for log parsing). Everything
     // else is buffered as raw bytes — e.g. rich menu image upload is binary
@@ -468,7 +496,7 @@ function proxyHandler(prefix: string, upstreamBase: string, logSends: boolean) {
       // Log in the background where possible: a multicast to hundreds of
       // friends must not delay the client response (timeout → client retry →
       // double send). Falls back to inline await outside a Workers runtime.
-      const logging = logExternalSend(c.env.DB, caller, path, rawBody);
+      const logging = logProxySend(c.env.DB, caller, path, rawBody, logSource);
       try {
         c.executionCtx.waitUntil(logging);
       } catch {

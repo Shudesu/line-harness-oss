@@ -1,6 +1,6 @@
 # LINE API 互換プロキシ (`/line-api`)
 
-外部エージェント (Codex / Claude Code / 各種スクリプト) が LINE Messaging API を直接叩くと、送信メッセージが `messages_log` に残らず admin UI のチャット履歴から欠落する。このプロキシは **ベースURLを差し替えるだけ** で送信を `messages_log` (`source='external'`) に記録する drop-in 経路を提供する。
+外部エージェント (Codex / Claude Code / 各種スクリプト) が LINE Messaging API を直接叩くと、送信メッセージが `messages_log` に残らず admin UI のチャット履歴から欠落する。このプロキシは **ベースURLを差し替えるだけ** で送信を `messages_log` に記録する drop-in 経路を提供する。通常の自動送信は `source='external'`、人間が個別に返信する場合は下記ヘッダーを付けて `source='manual'` として記録する。
 
 ## 使い方
 
@@ -21,6 +21,16 @@ curl -X POST "https://<WORKER_URL>/line-api/v2/bot/message/push" \
   -H "Content-Type: application/json" \
   -d '{"to":"U...","messages":[{"type":"text","text":"hello"}]}'
 ```
+
+### 人間が個別返信するとき（未対応インボックス連動）
+
+担当者・エージェントが会話への返信として1対1 pushを送る場合は、必ず次のヘッダーを追加する。
+
+```bash
+-H "X-Line-Harness-Source: manual"
+```
+
+これにより `messages_log.source='manual'` で記録され、その返信より前の受信メッセージは `/notifications` の未対応一覧から消える。ヘッダーなしは `external` のままなので、予約通知などの自動送信を人間の返信と誤判定しない。`manual` は `POST /v2/bot/message/push` のみ使用可能で、multicast / broadcast への指定や別の値は 400 になる。
 
 - アカウントが1つなら自動でそのアカウントから送信
 - 複数アカウント構成では `X-Line-Account-Id: <line_accounts.id または channel_id>` ヘッダーで送信元を指定(未指定は 400)
