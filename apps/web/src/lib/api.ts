@@ -175,6 +175,26 @@ export type FriendListParams = {
 }
 
 export type FriendWithTags = Friend & { tags: Tag[] }
+export type FollowerImportState = {
+  version: 1
+  capability: 'unknown' | 'available' | 'unavailable'
+  phase: 'not_started' | 'importing_ids' | 'hydrating_profiles' | 'completed'
+  eligibilityCheckedAt: string | null
+  startedAt: string | null
+  completedAt: string | null
+  updatedAt: string
+  received: number
+  imported: number
+  reactivated: number
+  claimedUnassigned: number
+  alreadyPresent: number
+  conflicts: number
+  invalid: number
+  profilesProcessed: number
+  profilesUpdated: number
+  profileErrors: number
+  lastError: string | null
+}
 export type FriendFormSubmission = {
   id: string
   formId: string
@@ -640,6 +660,23 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ ordered }),
       }),
+    followerImportState: (id: string) =>
+      fetchApi<ApiResponse<FollowerImportState>>(`/api/line-accounts/${id}/follower-import`),
+    detectFollowerImport: (id: string) =>
+      fetchApi<ApiResponse<FollowerImportState>>(
+        `/api/line-accounts/${id}/follower-import/detect`,
+        { method: 'POST' },
+      ),
+    startFollowerImport: (id: string) =>
+      fetchApi<ApiResponse<FollowerImportState>>(
+        `/api/line-accounts/${id}/follower-import/start`,
+        { method: 'POST' },
+      ),
+    stepFollowerImport: (id: string) =>
+      fetchApi<ApiResponse<{ state: FollowerImportState; busy: boolean }>>(
+        `/api/line-accounts/${id}/follower-import/step`,
+        { method: 'POST' },
+      ),
   },
   conversions: {
     points: () =>

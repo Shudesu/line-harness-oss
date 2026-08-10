@@ -131,6 +131,7 @@ async function candidates(
              ORDER BY wc.at_seconds ASC LIMIT 1) AS form_id
      FROM clicks c
      JOIN webinars w ON w.id = c.webinar_id
+     JOIN friends f ON f.id = c.friend_id AND f.is_following = 1
      JOIN webinar_followup_configs cfg ON cfg.webinar_id = w.id AND cfg.is_active = 1
      WHERE datetime(c.cta_clicked_at) >= datetime(cfg.enabled_at)
        AND datetime(c.cta_clicked_at, '+' || cfg.${delayColumn} || ' minutes') <= datetime(?)
@@ -398,7 +399,18 @@ export async function processWebinarFollowups(
     if (followup.status === 'sent') continue;
     try {
       const friend = await getFriendById(db, candidate.friend_id);
-      if (!friend?.is_following) continue;
+      if (!friend?.is_following) {
+        // Candidate selection and delivery are separate operations. A friend can
+        // block the account between them, so consume the row as a terminal
+        // non-delivery instead of leaving it pending forever. If they follow
+        // again later, candidates() can select this failed row for a retry.
+        const skippedAt = jstNow();
+        await db.prepare(
+          `UPDATE webinar_followups
+           SET status = 'failed', last_error = 'not_following', updated_at = ? WHERE id = ?`,
+        ).bind(skippedAt, followup.id).run();
+        continue;
+      }
       const delivery = await deliveryConfig(db, candidate.account_id, options);
       if (!delivery.liffId) throw new Error('LIFF ID not configured');
       const url = formUrl(delivery.liffId, candidate.form_id);

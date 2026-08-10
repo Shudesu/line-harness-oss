@@ -18,6 +18,11 @@ export interface FollowersInsight {
   blocks?: number;
 }
 
+export interface FollowerIdsPage {
+  userIds: string[];
+  next?: string;
+}
+
 export class LineClient {
   constructor(private readonly channelAccessToken: string) {}
 
@@ -281,5 +286,23 @@ export class LineClient {
       `/v2/bot/insight/followers?date=${encodeURIComponent(date)}`,
     );
     return data as FollowersInsight;
+  }
+
+  /**
+   * Get one page of users who currently follow the LINE Official Account.
+   * Verified/premium accounts only. Pass the returned `next` value as
+   * `start` until `next` is absent to retrieve the full audience.
+   */
+  async getFollowerIds(
+    limit = 1000,
+    start?: string,
+  ): Promise<FollowerIdsPage> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (start) params.set('start', start);
+    const { data } = await this.request(
+      'GET',
+      `/v2/bot/followers/ids?${params.toString()}`,
+    );
+    return data as FollowerIdsPage;
   }
 }

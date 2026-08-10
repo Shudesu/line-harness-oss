@@ -994,35 +994,50 @@ function FormSheet({
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const completedFieldsRef = useRef(new Set<string>());
+  const bookingRedirectTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (bookingRedirectTimerRef.current !== null) {
+      window.clearTimeout(bookingRedirectTimerRef.current);
+    }
+  }, []);
+
+  const hasValue = (value: string | string[] | undefined) =>
+    Array.isArray(value) ? value.length > 0 : typeof value === 'string' && value.trim() !== '';
+
+  const requiredFields = sheet.phase === 'form'
+    ? sheet.def.fields.filter((field) => field.required)
+    : [];
+  const completedRequiredCount = requiredFields.filter((field) => hasValue(values[field.name])).length;
+  const remainingRequiredCount = requiredFields.length - completedRequiredCount;
+  const canSubmit = sheet.phase === 'form' && remainingRequiredCount === 0;
 
   const setValue = (name: string, v: string | string[]) => {
     if (!startedRef.current) {
       startedRef.current = true;
       onFunnelEvent('form_start');
     }
+    setError(null);
     setValues((prev) => ({ ...prev, [name]: v }));
   };
 
   const markFieldComplete = (name: string, value: string | string[]) => {
-    const hasValue = Array.isArray(value) ? value.length > 0 : value.trim() !== '';
-    if (!hasValue || completedFieldsRef.current.has(name)) return;
+    if (!hasValue(value) || completedFieldsRef.current.has(name)) return;
     completedFieldsRef.current.add(name);
     onFunnelEvent('field_complete', name);
   };
 
   const submit = async () => {
     if (sheet.phase !== 'form' || submitting) return;
-    onFunnelEvent('submit_attempt');
     const def = sheet.def;
     for (const f of def.fields) {
       const v = values[f.name];
-      const empty = v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
-      if (f.required && empty) {
-        onFunnelEvent('submit_error');
+      if (f.required && !hasValue(v)) {
         setError(`「${f.label}」は必須項目です`);
         return;
       }
     }
+    onFunnelEvent('submit_attempt');
     setSubmitting(true);
     setError(null);
     try {
@@ -1040,6 +1055,16 @@ function FormSheet({
       }
       onFunnelEvent('submit_success');
       onSubmitted(def);
+      const bookingUrl = def.onSubmitMessageContent?.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
+      if (bookingUrl) {
+        // フォーム送信後にもう一度ボタンを押させると、予約画面へ進む前に
+        // 離脱しやすい。同一の in-app browser で予約画面へ自動遷移し、
+        // 完了画面のボタンは自動遷移できなかった場合のフォールバックにする。
+        bookingRedirectTimerRef.current = window.setTimeout(
+          () => window.location.assign(bookingUrl),
+          900,
+        );
+      }
     } catch {
       onFunnelEvent('submit_error');
       setError('送信に失敗しました。通信環境をご確認ください。');
@@ -1058,11 +1083,11 @@ function FormSheet({
 
   const openCompletionUrl = () => {
     if (!completionUrl) return;
-    if (typeof liff !== 'undefined' && liff.isInClient()) {
-      liff.openWindow({ url: completionUrl, external: false });
-    } else {
-      window.open(completionUrl, '_blank', 'noopener');
+    if (bookingRedirectTimerRef.current !== null) {
+      window.clearTimeout(bookingRedirectTimerRef.current);
+      bookingRedirectTimerRef.current = null;
     }
+    window.location.assign(completionUrl);
   };
 
   return (
@@ -1072,7 +1097,7 @@ function FormSheet({
         className="flex-1 bg-black/40"
         onClick={onClose}
       />
-      <div className="mx-auto w-full max-w-md max-h-[75vh] overflow-y-auto rounded-t-2xl bg-white p-5 text-gray-900">
+      <div className="mx-auto flex w-full max-w-md max-h-[75vh] flex-col overflow-hidden rounded-t-2xl bg-white p-5 text-gray-900">
         <div className="mx-auto mb-3 h-1 w-10 rounded bg-gray-300" />
         {sheet.phase === 'loading' && (
           <p className="py-8 text-center text-gray-500">読み込み中...</p>
@@ -1088,16 +1113,16 @@ function FormSheet({
         {sheet.phase === 'done' && (
           <div className="py-6 text-center">
             <p className="text-2xl">🎉</p>
-            <p className="mt-2 text-lg font-bold">あと1ステップで予約完了です</p>
+            <p className="mt-2 text-lg font-bold">回答を送信しました</p>
             <p className="mt-1 text-sm text-gray-500">
-              空いている15分枠を選んでください。
+              予約画面へ移動しています。空いている15分枠を1つ選んでください。
             </p>
             {completionUrl && (
               <button
                 onClick={openCompletionUrl}
                 className="mt-5 w-full rounded-full bg-[#06C755] px-6 py-3 font-bold text-white active:opacity-80"
               >
-                日程を選んで予約を完了する
+                予約画面をすぐ開く
               </button>
             )}
             <button
@@ -1109,13 +1134,14 @@ function FormSheet({
           </div>
         )}
         {sheet.phase === 'form' && (
-          <>
-            <h2 className="text-lg font-bold">{sheet.def.name}</h2>
-            {sheet.def.description && (
-              <p className="mt-1 text-sm text-gray-500">{sheet.def.description}</p>
-            )}
-            <div className="mt-4 space-y-4 pb-2">
-              {sheet.def.fields.map((f) => {
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+              <h2 className="text-lg font-bold">{sheet.def.name}</h2>
+              {sheet.def.description && (
+                <p className="mt-1 text-sm text-gray-500">{sheet.def.description}</p>
+              )}
+              <div className="mt-4 space-y-4 pb-2">
+                {sheet.def.fields.map((f) => {
                 const dateMatch = /^meeting_date_(\d+)$/.exec(f.name);
                 const timeMatch = /^meeting_time_(\d+)$/.exec(f.name);
                 if (
@@ -1258,17 +1284,32 @@ function FormSheet({
                   )}
                 </label>
                 );
-              })}
+                })}
+              </div>
+              {error && <p className="mt-2 text-sm font-bold text-red-600">{error}</p>}
             </div>
-            {error && <p className="mt-2 text-sm font-bold text-red-600">{error}</p>}
-            <button
-              onClick={() => void submit()}
-              disabled={submitting}
-              className="mt-4 w-full rounded-full bg-[#06C755] py-3 text-base font-bold text-white shadow disabled:opacity-50 active:opacity-80"
-            >
-              {submitting ? '送信中...' : '送信する'}
-            </button>
-          </>
+            <div className="-mx-5 -mb-5 shrink-0 border-t border-gray-200 bg-white px-5 pb-4 pt-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]">
+              <p className="mb-2 text-center text-xs font-bold text-gray-600" aria-live="polite">
+                {canSubmit
+                  ? `${requiredFields.length}項目の回答が完了しました`
+                  : `入力完了 ${completedRequiredCount}/${requiredFields.length}`}
+              </p>
+              <button
+                onClick={() => void submit()}
+                disabled={submitting || !canSubmit}
+                className="w-full rounded-full bg-[#06C755] py-3 text-base font-bold text-white shadow disabled:bg-gray-300 disabled:text-gray-500 disabled:opacity-100 active:opacity-80"
+              >
+                {submitting
+                  ? '送信中...'
+                  : canSubmit
+                    ? '回答を送信して相談日時を選ぶ'
+                    : `あと${remainingRequiredCount}項目を選択`}
+              </button>
+              <p className="mt-2 text-center text-xs text-gray-500">
+                送信後、空いている15分枠を選べます
+              </p>
+            </div>
+          </div>
         )}
       </div>
     </div>
