@@ -737,6 +737,42 @@
     pointer-events: none;
     opacity: 0.15;
   }
+
+  /* ===== UPDATE BANNER ===== */
+  .update-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: linear-gradient(90deg, rgba(6,199,85,0.12), rgba(0,229,255,0.08), rgba(6,199,85,0.12));
+    border-bottom: 1px solid rgba(6, 199, 85, 0.25);
+    padding: 10px 16px;
+    text-decoration: none;
+    position: relative;
+    z-index: 2;
+  }
+  .update-banner:hover { background: linear-gradient(90deg, rgba(6,199,85,0.18), rgba(0,229,255,0.1), rgba(6,199,85,0.18)); }
+  .update-banner .ub-badge {
+    font-size: 10px;
+    font-weight: 800;
+    color: #fff;
+    background: linear-gradient(135deg, var(--green), #00e676);
+    border-radius: 10px;
+    padding: 2px 10px;
+    letter-spacing: 0.08em;
+    animation: ubPulse 2s ease infinite;
+    font-family: "Inter", sans-serif;
+  }
+  @keyframes ubPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(6, 199, 85, 0.5); }
+    50% { box-shadow: 0 0 0 6px rgba(6, 199, 85, 0); }
+  }
+  .update-banner .ub-text { font-size: 12.5px; color: var(--text); font-weight: 600; }
+  .update-banner .ub-more { font-size: 12px; color: var(--green); font-weight: 700; white-space: nowrap; }
+  @media (max-width: 640px) {
+    .update-banner .ub-text { font-size: 11.5px; }
+  }
 </style>
 </head>
 <body>
@@ -748,6 +784,14 @@
     全機能を使う（0円）
   </a>
 </div>
+
+
+<!-- ===== UPDATE BANNER ===== -->
+<a href="#whats-new" class="update-banner">
+  <span class="ub-badge">UPDATE</span>
+  <span class="ub-text">v0.21.2：オートウェビナー・マイレージ・ASP が追加されました</span>
+  <span class="ub-more">詳細 →</span>
+</a>
 
 
 <!-- ===== SECTION 1: HERO ===== -->
@@ -762,7 +806,7 @@
     <div style="display:inline-flex;align-items:center;gap:8px;margin-top:16px;font-size:12px;font-weight:700;color:var(--green);border:1px solid rgba(6,199,85,0.25);border-radius:20px;padding:4px 14px;background:var(--green-dim);font-family:'Inter',sans-serif;">v0.21.2<span style="color:var(--text-dim);font-weight:600;">2026.08 最新</span></div>
 
     <h1 class="hero-headline">
-      L社やU社の上位互換を、<br>なぜ無料で公開するのか。
+      L社やU社の上位互換は、<br>0円のまま、進化し続ける。
     </h1>
 
     <div class="mt-32">
@@ -770,8 +814,9 @@
     </div>
 
     <p class="hero-sub">
-      LINE公式アカウントの運用に必要な<strong style="color:var(--text)">全機能</strong>を、<br>
-      オープンソースで完全無料提供。<br>
+      ステップ配信から<strong style="color:var(--text)">オートウェビナー、</strong><br>
+      <strong style="color:var(--text)">マイレージ、アフィリエイト（ASP）</strong>まで。<br>
+      LINE公式アカウント運用の<strong style="color:var(--text)">全機能</strong>を、オープンソースで完全無料提供。<br>
       何十万円もかける時代は、終わりました。
     </p>
 
@@ -1214,6 +1259,23 @@
 </section>
 
 
+
+
+<!-- ===== BUZZ: 開発者の発信 ===== -->
+<section class="section" id="buzz">
+  <div class="container fade-up">
+    <div class="text-center">
+      <span class="sec-label">Buzz</span>
+      <h2 class="sec-title">発表のたびに、<br>Xでバズり続けています。</h2>
+      <p class="sec-subtitle">公開告知は<strong style="color:var(--text);">75万インプレッション超</strong>。新機能の発表も毎回数十万インプレッションを記録しています。</p>
+    </div>
+    <div class="tweet-embed-list">
+      <div><blockquote class="twitter-tweet"><p lang="ja" dir="ltr">LINE公式アカウントの配信ツールを、Claude Codeから操作できるようにしてOSSにした。</p>&mdash; 野田修一 | AIエンジニア (@ai_shunoda) <a href="https://twitter.com/ai_shunoda/status/2035893609703383455?ref_src=twsrc%5Etfw">March 23, 2026</a></blockquote></div>
+      <div><blockquote class="twitter-tweet"><p lang="ja" dir="ltr">LINE配信ツールに課金する時代、終わりました。ステップ配信、セグメント、リッチメニュー、決済連携、AI自動化。全機能、0円。オープンソース。</p>&mdash; 野田修一 | AIエンジニア (@ai_shunoda) <a href="https://twitter.com/ai_shunoda/status/2036730784799969466?ref_src=twsrc%5Etfw">March 25, 2026</a></blockquote></div>
+      <div><blockquote class="twitter-tweet"><p lang="ja" dir="ltr">ついに最強のウェビナーシステムが完成しました。「最強」と言い切れる理由を並べます。✅ LINEから一切離脱しない</p>&mdash; 野田修一 | AIエンジニア (@ai_shunoda) <a href="https://twitter.com/ai_shunoda/status/2085295896229810613?ref_src=twsrc%5Etfw">August 6, 2026</a></blockquote></div>
+    </div>
+  </div>
+</section>
 
 
 <!-- ===== SECTION 8: SNS社会的証明 ===== -->
