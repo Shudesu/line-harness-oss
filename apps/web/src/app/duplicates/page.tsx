@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Header from '@/components/layout/header'
 import { api } from '@/lib/api'
+import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 
 interface PerAccountStat {
   accountId: string
@@ -76,12 +77,10 @@ export default function DuplicatesPage() {
 
   // Tick once a minute so the "○分前に計算" label keeps refreshing while
   // the operator leaves the page open. setNow reads Date.now() implicitly
-  // on the next render via formatRelative.
+  // on the next render via formatRelative. (タブ非表示中は止まり、復帰時に
+  // 即時 tick するのでラベルが古いまま見えることはない)
   const [, setTick] = useState(0)
-  useEffect(() => {
-    const interval = setInterval(() => setTick((t) => t + 1), 60_000)
-    return () => clearInterval(interval)
-  }, [])
+  useAutoRefresh(() => setTick((t) => t + 1), { intervalMs: 60_000 })
 
   return (
     <div className="space-y-8">

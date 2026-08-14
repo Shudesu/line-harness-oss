@@ -10,6 +10,7 @@ import TestSendSection from '@/components/broadcasts/test-send-section'
 import ProgressBar from '@/components/broadcasts/progress-bar'
 import SendConfirmDialog from '@/components/broadcasts/send-confirm-dialog'
 import SegmentBuilder from '@/components/broadcasts/segment-builder'
+import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 import type { Tag } from '@line-crm/shared'
 
 interface BroadcastDetailProps {
@@ -88,26 +89,21 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
 
   useEffect(() => { load() }, [load])
 
-  // Poll progress while sending
-  useEffect(() => {
-    if (broadcast?.status !== 'sending') return
-    const interval = setInterval(async () => {
-      const res = await api.broadcasts.getProgress(id)
-      if (res.success && res.data) {
-        setBroadcast(prev => prev ? {
-          ...prev,
-          status: res.data!.status as ApiBroadcast['status'],
-          totalCount: res.data!.totalCount,
-          successCount: res.data!.successCount,
-        } : prev)
-        if (res.data.status === 'sent') {
-          clearInterval(interval)
-          load()
-        }
-      }
-    }, 3000)
-    return () => clearInterval(interval)
-  }, [broadcast?.status, id, load])
+  // Poll progress while sending — status が 'sent' になると enabled が false に
+  // なり自動停止する。MCP / API 経由で開始された配信でも、この画面を開いて
+  // いれば進捗が追従する。
+  useAutoRefresh(async () => {
+    const res = await api.broadcasts.getProgress(id)
+    if (res.success && res.data) {
+      setBroadcast(prev => prev ? {
+        ...prev,
+        status: res.data!.status as ApiBroadcast['status'],
+        totalCount: res.data!.totalCount,
+        successCount: res.data!.successCount,
+      } : prev)
+      if (res.data.status === 'sent') load()
+    }
+  }, { intervalMs: 3000, enabled: broadcast?.status === 'sending' })
 
   // Load insight for sent broadcasts
   useEffect(() => {
@@ -121,34 +117,27 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
   // multi-account-dedup 以外の broadcast でも 1 行返るので最終的にテーブル表示するかは
   // 描画側で targetType チェックして判断する。送信完了時は LINE Insight が
   // each account token で fetch されるので時間かかる (3-5 秒/アカ) — fire-and-forget。
+  const fetchPerAccountStats = useCallback(() => {
+    const requestId = id
+    return api.broadcasts.perAccountStats(requestId).then((r) => {
+      // race guard: 別 broadcast に navigate していたら捨てる (response の遅延上書きを防止)
+      if (requestId !== latestIdRef.current) return
+      if (r.success && r.data) setPerAccountStats(r.data)
+    }).catch(() => {/* ignore */})
+  }, [id])
+
   useEffect(() => {
     const status = broadcast?.status
     if (status !== 'sending' && status !== 'sent') return
+    void fetchPerAccountStats()
+  }, [broadcast?.status, fetchPerAccountStats])
 
-    let cancelled = false
-    const requestId = id
-
-    const fetchStats = () => {
-      api.broadcasts.perAccountStats(requestId).then((r) => {
-        // race guard: 別 broadcast に navigate していたら捨てる (response の遅延上書きを防止)
-        if (cancelled || requestId !== latestIdRef.current) return
-        if (r.success && r.data) setPerAccountStats(r.data)
-      }).catch(() => {/* ignore */})
-    }
-
-    fetchStats()
-
-    // 送信中は 3s ごとに再 fetch して per-account 進捗を更新する。
-    // 既存の successCount poll と同期させる目的。送信完了 (sent) では再 fetch 不要。
-    if (status === 'sending') {
-      const interval = setInterval(fetchStats, 3000)
-      return () => {
-        cancelled = true
-        clearInterval(interval)
-      }
-    }
-    return () => { cancelled = true }
-  }, [broadcast?.status, id])
+  // 送信中は 3s ごとに再 fetch して per-account 進捗を更新する。
+  // 既存の successCount poll と同期させる目的。送信完了 (sent) では再 fetch 不要。
+  useAutoRefresh(fetchPerAccountStats, {
+    intervalMs: 3000,
+    enabled: broadcast?.status === 'sending',
+  })
 
   const handleSend = async () => {
     setShowConfirm(false)

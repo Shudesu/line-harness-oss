@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
+import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 
 const appVersion = process.env.APP_VERSION || '0.0.0'
 const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
@@ -214,31 +215,30 @@ export default function Sidebar() {
   // チャット画面での status 変更・手動返信直後は UNANSWERED_REFRESH_EVENT で
   // 即時再取得する (ポーリング待ちだと操作してもバッジが減らないと感じるため)。
   const [unansweredCount, setUnansweredCount] = useState<number>(0)
-  useEffect(() => {
-    let cancelled = false
-    // 連続操作で fetch が並走した際、遅い古いレスポンスが新しい値を上書きしない
-    // ように発行順 seq でガードする。
-    let seq = 0
-    const fetchCount = async () => {
-      const mySeq = ++seq
-      try {
-        const { api } = await import('@/lib/api')
-        const res = await api.inbox.unanswered.count()
-        if (!cancelled && mySeq === seq && res.success) setUnansweredCount(res.data.total)
-      } catch {
-        // サイレント失敗
-      }
-    }
-    fetchCount()
-    const id = setInterval(fetchCount, 5 * 60_000)
-    const onRefresh = () => { void fetchCount() }
-    window.addEventListener(UNANSWERED_REFRESH_EVENT, onRefresh)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-      window.removeEventListener(UNANSWERED_REFRESH_EVENT, onRefresh)
+  // 連続操作で fetch が並走した際、遅い古いレスポンスが新しい値を上書きしない
+  // ように発行順 seq でガードする。
+  const unansweredSeqRef = useRef(0)
+  const fetchCount = useCallback(async () => {
+    const mySeq = ++unansweredSeqRef.current
+    try {
+      const { api } = await import('@/lib/api')
+      const res = await api.inbox.unanswered.count()
+      if (mySeq === unansweredSeqRef.current && res.success) setUnansweredCount(res.data.total)
+    } catch {
+      // サイレント失敗
     }
   }, [])
+
+  useEffect(() => { void fetchCount() }, [fetchCount])
+  const { refresh: refreshUnanswered } = useAutoRefresh(fetchCount, { intervalMs: 5 * 60_000 })
+
+  // チャット画面での status 変更・手動返信直後は即時再取得する
+  // (ポーリング待ちだと操作してもバッジが減らないと感じるため)。
+  useEffect(() => {
+    const onRefresh = () => { void refreshUnanswered() }
+    window.addEventListener(UNANSWERED_REFRESH_EVENT, onRefresh)
+    return () => window.removeEventListener(UNANSWERED_REFRESH_EVENT, onRefresh)
+  }, [refreshUnanswered])
 
   useEffect(() => { setIsOpen(false) }, [pathname])
   useEffect(() => {
