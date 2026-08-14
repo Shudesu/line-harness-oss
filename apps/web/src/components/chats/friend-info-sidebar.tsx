@@ -33,6 +33,11 @@ interface Props {
   chatStatus?: ChatStatusInfo
   /** 担当者名 (ChatDetail で operatorId → name 変換済を渡す想定) */
   operatorName?: string | null
+  /** 編集可能メモ (OAMのノート相当)。onSaveNotes が渡された時のみ編集UIを出す */
+  notesValue?: string
+  onNotesChange?: (value: string) => void
+  onSaveNotes?: () => void
+  savingNotes?: boolean
 }
 
 function formatDate(iso: string | null): string {
@@ -59,7 +64,7 @@ function renderValue(value: unknown): string {
   }
 }
 
-export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }: Props) {
+export default function FriendInfoSidebar({ friendId, chatStatus, operatorName, notesValue, onNotesChange, onSaveNotes, savingNotes }: Props) {
   const [friend, setFriend] = useState<FriendDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -145,7 +150,7 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
   if (!friendId) return null
 
   return (
-    <div className="w-full lg:w-80 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col overflow-hidden">
+    <div className="w-full lg:w-72 xl:w-80 2xl:w-96 lg:flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
         <h3 className="text-sm font-semibold text-gray-700">友だち詳細</h3>
       </div>
@@ -252,13 +257,33 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
               </div>
             )}
 
-            {/* Notes */}
-            {chatStatus?.notes && (
+            {/* Notes — OAMのノート相当。編集ハンドラが渡された時は編集UI、なければ従来の読み取り表示 */}
+            {onSaveNotes ? (
+              <div className="p-4">
+                <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">個別メモ</h4>
+                <textarea
+                  rows={3}
+                  value={notesValue ?? ''}
+                  onChange={(e) => onNotesChange?.(e.target.value)}
+                  placeholder="メモを入力..."
+                  className="w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-green-500 resize-none"
+                />
+                <div className="mt-1.5 flex justify-end">
+                  <button
+                    onClick={onSaveNotes}
+                    disabled={savingNotes}
+                    className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors disabled:opacity-50"
+                  >
+                    {savingNotes ? '保存中...' : 'メモ保存'}
+                  </button>
+                </div>
+              </div>
+            ) : chatStatus?.notes ? (
               <div className="p-4">
                 <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">個別メモ</h4>
                 <p className="text-xs text-gray-700 whitespace-pre-wrap break-words">{chatStatus.notes}</p>
               </div>
-            )}
+            ) : null}
 
             {/* Tags */}
             <div className="p-4">

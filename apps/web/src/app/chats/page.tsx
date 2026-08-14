@@ -5,7 +5,6 @@ import { parseStickerMessageContent, stickerFallback } from '@line-crm/shared'
 import { api, fetchApi } from '@/lib/api'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
 import { useAccount } from '@/contexts/account-context'
-import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
@@ -339,6 +338,11 @@ export default function ChatsPage() {
   const isComposingRef = useRef(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // OAM(公式LINEマネージャー)風レイアウト: 添付・設定・メモは折りたたみ、
+  // メッセージ表示領域を最大化する
+  const [showImagePicker, setShowImagePicker] = useState(false)
+  const [showComposerSettings, setShowComposerSettings] = useState(false)
+  const [showMobileMemo, setShowMobileMemo] = useState(false)
 
   useEffect(() => {
     try {
@@ -581,6 +585,9 @@ export default function ChatsPage() {
     setSelectedChatId(chatId)
     setMessageContent('')
     setPendingImage(null)
+    setShowImagePicker(false)
+    setShowComposerSettings(false)
+    setShowMobileMemo(false)
   }
 
   const triggerLoadingAnimation = useCallback(async (chatId: string) => {
@@ -768,19 +775,20 @@ export default function ChatsPage() {
   }
 
   return (
-    <div>
-      <Header title="オペレーターチャット" />
-
+    // OAM(公式LINEマネージャー)風フルスクリーンレイアウト:
+    // app-shell 側の余白 (px-4〜lg:px-8 / pb / lg:pt-8) を負マージンで打ち消して
+    // 3カラムを画面いっぱいに広げる。ページタイトル行も廃止してチャット領域を最大化。
+    <div className="-mx-4 sm:-mx-6 lg:-mx-8 -mb-6 lg:-mb-8 lg:-mt-8 flex flex-col h-[calc(100vh-72px)] lg:h-screen bg-white">
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <div className="m-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
           {error}
         </div>
       )}
 
-      <div className="flex gap-4 h-[calc(100vh-120px)] lg:h-[calc(100vh-180px)]">
+      <div className="flex flex-1 min-h-0">
         {/* Left Panel: Chat List */}
-        <div className={`w-full lg:w-96 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
+        <div className={`w-full lg:w-80 xl:w-96 lg:flex-shrink-0 bg-white border-r border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
           {/* タブ (全て / 未読 / 対応中 / 解決済) は意図的に削除。直近メッセージが見やすい LINE 風一覧を優先。 */}
 
           {/* Filter row */}
@@ -906,8 +914,8 @@ export default function ChatsPage() {
           </div>
         </div>
 
-        {/* Right Panel: Chat Detail */}
-        <div className={`flex-1 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId || selectedFriendId ? 'flex' : 'hidden lg:flex'}`}>
+        {/* Center Panel: Chat Detail */}
+        <div className={`flex-1 min-w-0 bg-white flex-col overflow-hidden ${selectedChatId || selectedFriendId ? 'flex' : 'hidden lg:flex'}`}>
           {selectedFriendId && !selectedChatId ? (
             /* Direct message to friend without existing chat */
             <DirectMessagePanel
@@ -927,7 +935,7 @@ export default function ChatsPage() {
           ) : chatDetail ? (
             <>
               {/* Chat Header */}
-              <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between gap-2">
+              <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <button
                     onClick={() => setSelectedChatId(null)}
@@ -953,6 +961,16 @@ export default function ChatsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* メモはPC(lg+)では右サイドバーに常設。狭い画面のみトグルで表示する */}
+                  <button
+                    onClick={() => setShowMobileMemo((v) => !v)}
+                    className={`lg:hidden px-3 py-1 min-h-[44px] text-xs font-medium rounded-md transition-colors ${
+                      showMobileMemo ? 'text-green-700 bg-green-50' : 'text-gray-600 bg-gray-50 hover:bg-gray-100'
+                    }`}
+                    title="メモを表示"
+                  >
+                    📝 メモ
+                  </button>
                   {unansweredOnly && chats.length > 1 && (
                     <button
                       type="button"
@@ -1058,7 +1076,7 @@ export default function ChatsPage() {
                           <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
                             {/* メッセージバブル */}
                             <div
-                              className={`max-w-[320px] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                              className={`max-w-[75%] lg:max-w-[60%] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
                                 isOutgoing
                                   ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
                                   : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
@@ -1079,77 +1097,118 @@ export default function ChatsPage() {
                 )}
               </div>
 
-              {/* Notes */}
-              <div className="px-4 py-2 border-t border-gray-200 bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="メモを入力..."
-                    className="flex-1 text-xs border border-gray-300 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-green-500"
-                  />
-                  <button
-                    onClick={handleSaveNotes}
-                    disabled={savingNotes}
-                    className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors disabled:opacity-50"
-                  >
-                    {savingNotes ? '保存中...' : 'メモ保存'}
-                  </button>
+              {/* Notes — PC(lg+)は右サイドバーに常設。狭い画面のみトグル表示 */}
+              {showMobileMemo && (
+                <div className="lg:hidden px-4 py-2 border-t border-gray-200 bg-gray-50">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="メモを入力..."
+                      className="flex-1 text-xs border border-gray-300 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-green-500"
+                    />
+                    <button
+                      onClick={handleSaveNotes}
+                      disabled={savingNotes}
+                      className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors disabled:opacity-50"
+                    >
+                      {savingNotes ? '保存中...' : 'メモ保存'}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Send Message Form */}
-              <div className="px-4 py-3 border-t border-gray-200">
-                <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-600">
-                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={showLoadingIndicator}
-                      onChange={(e) => setShowLoadingIndicator(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+              {/* Send Message Form — OAM風コンパクト構成。
+                  画像添付は 📎、ローディング/送信キー設定は ⚙ に格納し、
+                  通常時は入力欄1行だけにしてメッセージ表示領域を最大化する */}
+              <div className="relative px-4 py-3 border-t border-gray-200">
+                {showComposerSettings && (
+                  <div className="absolute bottom-full left-2 z-20 mb-1 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg space-y-3 text-xs text-gray-600">
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={showLoadingIndicator}
+                          onChange={(e) => setShowLoadingIndicator(e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                        />
+                        入力中ローディングを表示
+                      </label>
+                      <select
+                        value={loadingSeconds}
+                        onChange={(e) => setLoadingSeconds(Number.parseInt(e.target.value, 10))}
+                        disabled={!showLoadingIndicator}
+                        className="border border-gray-300 rounded-md px-2 py-1 bg-white disabled:bg-gray-100 disabled:text-gray-400"
+                      >
+                        {[5, 10, 15, 20, 30, 45, 60].map((sec) => (
+                          <option key={sec} value={sec}>{sec}秒</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-gray-500">送信キー:</span>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={sendMode === 'enter'}
+                          onChange={() => setSendMode('enter')}
+                          className="accent-green-600"
+                        />
+                        <span>Enter</span>
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={sendMode === 'shift-enter'}
+                          onChange={() => setSendMode('shift-enter')}
+                          className="accent-green-600"
+                        />
+                        <span>Shift+Enter</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+                {(showImagePicker || pendingImage) && (
+                  <div className="mb-2">
+                    <ImageUploader
+                      mode="line-image"
+                      value={pendingImage}
+                      onChange={setPendingImage}
+                      label="画像を送る (任意)"
                     />
-                    入力中ローディングを表示
-                  </label>
-                  <select
-                    value={loadingSeconds}
-                    onChange={(e) => setLoadingSeconds(Number.parseInt(e.target.value, 10))}
-                    disabled={!showLoadingIndicator}
-                    className="border border-gray-300 rounded-md px-2 py-1 bg-white disabled:bg-gray-100 disabled:text-gray-400"
+                  </div>
+                )}
+                <div className="flex items-end gap-1.5">
+                  <button
+                    onClick={() => setShowImagePicker((v) => !v)}
+                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                      showImagePicker || pendingImage
+                        ? 'text-green-600 bg-green-50'
+                        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                    }`}
+                    title="画像を添付"
+                    aria-label="画像を添付"
                   >
-                    {[5, 10, 15, 20, 30, 45, 60].map((sec) => (
-                      <option key={sec} value={sec}>{sec}秒</option>
-                    ))}
-                  </select>
-                  <span className="text-gray-500">送信キー:</span>
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={sendMode === 'enter'}
-                      onChange={() => setSendMode('enter')}
-                      className="accent-green-600"
-                    />
-                    <span>Enter</span>
-                  </label>
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={sendMode === 'shift-enter'}
-                      onChange={() => setSendMode('shift-enter')}
-                      className="accent-green-600"
-                    />
-                    <span>Shift+Enter</span>
-                  </label>
-                </div>
-                <div className="mb-2">
-                  <ImageUploader
-                    mode="line-image"
-                    value={pendingImage}
-                    onChange={setPendingImage}
-                    label="画像を送る (任意)"
-                  />
-                </div>
-                <div className="flex items-end gap-2">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setShowComposerSettings((v) => !v)}
+                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                      showComposerSettings
+                        ? 'text-green-600 bg-green-50'
+                        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                    }`}
+                    title="送信設定 (ローディング表示・送信キー)"
+                    aria-label="送信設定"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </button>
                   <textarea
                     ref={textareaRef}
                     rows={2}
@@ -1197,7 +1256,7 @@ export default function ChatsPage() {
           直接渡せる (chat list SQL が `id: f.id` で friend_id を返す)。
         */}
         {(selectedChatId || selectedFriendId) && (
-          <div className="hidden xl:flex">
+          <div className="hidden lg:flex">
             <FriendInfoSidebar
               friendId={selectedFriendId || selectedChatId}
               chatStatus={
@@ -1205,6 +1264,14 @@ export default function ChatsPage() {
                   ? { status: chatDetail.status, notes: chatDetail.notes }
                   : undefined
               }
+              {...(selectedChatId && chatDetail && chatDetail.id === selectedChatId
+                ? {
+                    notesValue: notes,
+                    onNotesChange: setNotes,
+                    onSaveNotes: handleSaveNotes,
+                    savingNotes,
+                  }
+                : {})}
             />
           </div>
         )}
