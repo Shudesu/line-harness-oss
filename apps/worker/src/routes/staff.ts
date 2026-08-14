@@ -9,6 +9,7 @@ import {
   countActiveStaffByRole,
 } from '@line-crm/db';
 import type { StaffMember } from '@line-crm/db';
+import { validateSender } from '@line-crm/line-sdk';
 import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
@@ -26,9 +27,27 @@ function serializeStaff(row: StaffMember, masked = true) {
     role: row.role,
     apiKey: masked ? maskApiKey(row.api_key) : row.api_key,
     isActive: Boolean(row.is_active),
+    senderName: row.sender_name,
+    senderIconUrl: row.sender_icon_url,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Reject a sender profile that LINE would refuse, so the operator finds out
+ * here instead of when a reply fails with an opaque 400 mid-conversation.
+ * Returns an error message, or null when acceptable.
+ */
+function validateSenderFields(input: {
+  senderName?: string | null;
+  senderIconUrl?: string | null;
+}): string | null {
+  const errors = validateSender({
+    name: input.senderName ?? undefined,
+    iconUrl: input.senderIconUrl ?? undefined,
+  });
+  return errors.length > 0 ? errors.join(', ') : null;
 }
 
 // GET /api/staff/me — any authenticated user (MUST be before /:id)
@@ -98,7 +117,13 @@ staff.get('/api/staff/:id', requireRole('owner'), async (c) => {
 // POST /api/staff — owner only. Create staff. Returns full API key (one-time visible).
 staff.post('/api/staff', requireRole('owner'), async (c) => {
   try {
-    const body = await c.req.json<{ name: string; email?: string; role: string }>();
+    const body = await c.req.json<{
+      name: string;
+      email?: string;
+      role: string;
+      senderName?: string | null;
+      senderIconUrl?: string | null;
+    }>();
 
     if (!body.name) {
       return c.json({ success: false, error: 'name is required' }, 400);
@@ -109,10 +134,17 @@ staff.post('/api/staff', requireRole('owner'), async (c) => {
       return c.json({ success: false, error: 'role must be owner, admin, or staff' }, 400);
     }
 
+    const senderError = validateSenderFields(body);
+    if (senderError) {
+      return c.json({ success: false, error: senderError }, 400);
+    }
+
     const member = await createStaffMember(c.env.DB, {
       name: body.name,
       email: body.email ?? null,
       role: body.role as 'owner' | 'admin' | 'staff',
+      sender_name: body.senderName ?? null,
+      sender_icon_url: body.senderIconUrl ?? null,
     });
 
     // Return full (unmasked) API key one-time
@@ -132,11 +164,18 @@ staff.patch('/api/staff/:id', requireRole('owner'), async (c) => {
       email?: string | null;
       role?: string;
       isActive?: boolean;
+      senderName?: string | null;
+      senderIconUrl?: string | null;
     }>();
 
     const validRoles = ['owner', 'admin', 'staff'] as const;
     if (body.role !== undefined && !validRoles.includes(body.role as (typeof validRoles)[number])) {
       return c.json({ success: false, error: 'role must be owner, admin, or staff' }, 400);
+    }
+
+    const senderError = validateSenderFields(body);
+    if (senderError) {
+      return c.json({ success: false, error: senderError }, 400);
     }
 
     // Prevent removing the last active owner
@@ -161,6 +200,8 @@ staff.patch('/api/staff/:id', requireRole('owner'), async (c) => {
       email: body.email,
       role: body.role as 'owner' | 'admin' | 'staff' | undefined,
       is_active: body.isActive !== undefined ? (body.isActive ? 1 : 0) : undefined,
+      sender_name: body.senderName,
+      sender_icon_url: body.senderIconUrl,
     });
 
     if (!updated) {

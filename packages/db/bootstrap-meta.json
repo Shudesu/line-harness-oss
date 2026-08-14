@@ -73,7 +73,8 @@
     "066_referral_quality_mileage.sql",
     "067_mileage_keyword_auto_reply.sql",
     "068_media_inquiries.sql",
-    "069_rich_menu_selected.sql"
+    "069_rich_menu_selected.sql",
+    "070_staff_sender_profile.sql"
   ],
-  "migrationCount": 74
+  "migrationCount": 75
 }

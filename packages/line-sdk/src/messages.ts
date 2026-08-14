@@ -2,7 +2,7 @@
 // Rich Message Builders — LINE Messaging API message type builders
 // =============================================================================
 
-import type { Message, FlexContainer } from './types.js';
+import type { Message, FlexContainer, Sender } from './types.js';
 
 // ── Text Message ────────────────────────────────────────────────────────────
 
@@ -196,6 +196,75 @@ export function withQuickReply<T extends object>(
   reply: QuickReply,
 ): T & { quickReply: QuickReply } {
   return { ...message, quickReply: reply };
+}
+
+// ── Sender (per-message icon / display name) ────────────────────────────────
+
+/** `sender.name` is capped at 20 characters by the Messaging API. */
+export const SENDER_NAME_MAX_LENGTH = 20;
+/** `sender.iconUrl` is capped at 2000 characters by the Messaging API. */
+export const SENDER_ICON_URL_MAX_LENGTH = 2000;
+
+/**
+ * Validate a sender override. Returns the problems found, empty when valid.
+ * Callers should surface these instead of letting LINE reject the whole send
+ * with an opaque 400.
+ */
+export function validateSender(sender: Sender): string[] {
+  const errors: string[] = [];
+
+  if (sender.name !== undefined) {
+    if (sender.name.length === 0) {
+      errors.push('sender.name must not be empty');
+    } else if (sender.name.length > SENDER_NAME_MAX_LENGTH) {
+      errors.push(
+        `sender.name must be ${SENDER_NAME_MAX_LENGTH} characters or fewer (got ${sender.name.length})`,
+      );
+    }
+    // LINE rejects names containing "LINE" to prevent impersonation.
+    if (/line/i.test(sender.name)) {
+      errors.push('sender.name must not contain "LINE"');
+    }
+  }
+
+  if (sender.iconUrl !== undefined) {
+    if (!sender.iconUrl.startsWith('https://')) {
+      errors.push('sender.iconUrl must be an https URL');
+    }
+    if (sender.iconUrl.length > SENDER_ICON_URL_MAX_LENGTH) {
+      errors.push(
+        `sender.iconUrl must be ${SENDER_ICON_URL_MAX_LENGTH} characters or fewer (got ${sender.iconUrl.length})`,
+      );
+    }
+  }
+
+  return errors;
+}
+
+/** Attach a sender override to a single message. */
+export function withSender<T extends object>(
+  message: T,
+  sender: Sender,
+): T & { sender: Sender } {
+  return { ...message, sender };
+}
+
+/**
+ * Attach a sender override to every message in a batch.
+ *
+ * Messages that already carry their own `sender` are left untouched, so a
+ * caller can override one bubble in an otherwise uniform batch. Passing an
+ * empty sender (no name and no icon) is a no-op — sending `sender: {}` would
+ * make LINE fall back to the account profile anyway.
+ */
+export function withSenderAll<T extends object>(
+  messages: T[],
+  sender: Sender | null | undefined,
+): T[] {
+  if (!sender || (!sender.name && !sender.iconUrl)) return messages;
+  return messages.map((m) =>
+    'sender' in m && (m as { sender?: Sender }).sender ? m : { ...m, sender },
+  );
 }
 
 // ── Flex Builders ───────────────────────────────────────────────────────────

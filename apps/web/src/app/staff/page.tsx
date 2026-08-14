@@ -42,6 +42,8 @@ export default function StaffPage() {
   const [formName, setFormName] = useState('')
   const [formEmail, setFormEmail] = useState('')
   const [formRole, setFormRole] = useState<'admin' | 'staff'>('staff')
+  const [formSenderName, setFormSenderName] = useState('')
+  const [formSenderIconUrl, setFormSenderIconUrl] = useState('')
   const [formLoading, setFormLoading] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -71,11 +73,19 @@ export default function StaffPage() {
     setFormLoading(true)
     setFormError('')
     try {
-      const body: { name: string; role: 'admin' | 'staff'; email?: string } = {
+      const body: {
+        name: string
+        role: 'admin' | 'staff'
+        email?: string
+        senderName?: string
+        senderIconUrl?: string
+      } = {
         name: formName,
         role: formRole,
       }
       if (formEmail) body.email = formEmail
+      if (formSenderName) body.senderName = formSenderName
+      if (formSenderIconUrl) body.senderIconUrl = formSenderIconUrl
 
       const res = await fetchApi<ApiResponse<StaffMember & { apiKey?: string }>>('/api/staff', {
         method: 'POST',
@@ -88,6 +98,8 @@ export default function StaffPage() {
         setFormName('')
         setFormEmail('')
         setFormRole('staff')
+        setFormSenderName('')
+        setFormSenderIconUrl('')
         setShowForm(false)
         await loadMembers()
       } else {
@@ -223,6 +235,44 @@ export default function StaffPage() {
                   <option value="staff">スタッフ</option>
                   <option value="admin">管理者</option>
                 </select>
+              </div>
+            </div>
+            {/* 返信時の送信者プロフィール（未設定ならアカウント名義で送信） */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-2 border-t border-gray-100">
+              <div className="sm:col-span-2">
+                <p className="text-xs font-medium text-gray-700">
+                  チャット返信時の送信者（任意）
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  設定すると、この担当者の返信が本人のアイコン・表示名で届きます。表示名の後ろにはLINEが自動で
+                  {' '}from &apos;アカウント名&apos;{' '}
+                  を付けます。未設定の場合はアカウント名義のままです。
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  表示名（20文字以内・「LINE」不可）
+                </label>
+                <input
+                  type="text"
+                  value={formSenderName}
+                  onChange={(e) => setFormSenderName(e.target.value)}
+                  maxLength={20}
+                  placeholder="田中 太郎"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  アイコンURL（https・JPEG/PNG）
+                </label>
+                <input
+                  type="url"
+                  value={formSenderIconUrl}
+                  onChange={(e) => setFormSenderIconUrl(e.target.value)}
+                  placeholder="https://example.com/icon.png"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
               </div>
             </div>
             {formError && (

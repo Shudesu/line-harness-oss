@@ -864,6 +864,10 @@ export interface StaffMember {
   role: 'owner' | 'admin' | 'staff';
   apiKey: string;
   isActive: boolean;
+  /** チャット返信時に表示する名前。null = アカウント名義で送信 */
+  senderName: string | null;
+  /** チャット返信時に表示するアイコン。null = アカウント名義で送信 */
+  senderIconUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
