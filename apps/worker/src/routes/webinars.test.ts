@@ -885,14 +885,14 @@ describe('admin CRUD', () => {
       {
         friend_id: 'friend-1', friend_name: '山田太郎', picture_url: 'https://example.com/u.jpg',
         sessions: 2, first_joined_at: '2026-08-05T10:00:00+09:00',
-        latest_joined_at: '2026-08-06T10:00:00+09:00', max_watched_seconds: 6500,
+        latest_joined_at: '2026-08-06T10:00:00+09:00', latest_watched_seconds: 6500,
         cta_clicked_at: '2026-08-06T11:00:00+09:00', registered: 1,
         form_submitted_at: '2026-08-06T11:01:00+09:00',
       },
       {
         friend_id: 'friend-2', friend_name: '佐藤花子', picture_url: null,
         sessions: 1, first_joined_at: '2026-08-06T10:00:00+09:00',
-        latest_joined_at: '2026-08-06T10:00:00+09:00', max_watched_seconds: 600,
+        latest_joined_at: '2026-08-06T10:00:00+09:00', latest_watched_seconds: 600,
         cta_clicked_at: null, registered: 0, form_submitted_at: null,
       },
     ]);
@@ -942,6 +942,7 @@ describe('admin CRUD', () => {
     expect(body.data.participants[0]).toMatchObject({
       friendId: 'friend-1', friendName: '山田太郎', registered: true,
       pictureUrl: 'https://example.com/u.jpg', formSubmittedAt: '2026-08-06T11:01:00+09:00',
+      latestWatchedSeconds: 6500, maxWatchedSeconds: 6500,
     });
     expect(body.data.formFunnel).toEqual({
       ctaImpressions: 10,

@@ -1058,7 +1058,9 @@ webinarRoutes.get('/api/webinars/:id/analytics', async (c) => {
           sessions: p.sessions,
           firstJoinedAt: p.first_joined_at,
           latestJoinedAt: p.latest_joined_at,
-          maxWatchedSeconds: p.max_watched_seconds,
+          latestWatchedSeconds: p.latest_watched_seconds,
+          // デプロイ中に旧管理画面が残っていても NaN にしない互換フィールド。
+          maxWatchedSeconds: p.latest_watched_seconds,
           ctaClickedAt: p.cta_clicked_at,
           registered: Boolean(p.registered),
           formSubmittedAt: p.form_submitted_at,

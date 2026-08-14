@@ -102,7 +102,10 @@ function publicWebhookConfig(row: DbForm): {
   }
 }
 
-function serializePublicForm(row: DbForm) {
+function serializePublicForm(
+  row: DbForm,
+  consultationWebinarSlug: string | null = null,
+) {
   return {
     id: row.id,
     name: row.name,
@@ -111,8 +114,37 @@ function serializePublicForm(row: DbForm) {
     isActive: Boolean(row.is_active),
     onSubmitMessageContent: row.on_submit_message_content,
     onSubmitWebhookFailMessage: row.on_submit_webhook_fail_message,
+    // When this form belongs to an active webinar consultation funnel, the
+    // LIFF form can switch directly to the same slot picker used by the live
+    // CTA. The slug is public routing information; menu/staff IDs remain
+    // server-side authorities and are never accepted from the browser.
+    consultationWebinarSlug,
     ...publicWebhookConfig(row),
   };
+}
+
+async function consultationWebinarSlugForForm(
+  db: D1Database,
+  formId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT w.slug
+         FROM webinar_ctas wc
+         INNER JOIN webinars w
+           ON w.id = wc.webinar_id AND w.status = 'active'
+         INNER JOIN webinar_followup_configs cfg
+           ON cfg.webinar_id = w.id
+          AND cfg.is_active = 1
+          AND cfg.booking_menu_id IS NOT NULL
+        WHERE wc.form_id = ?
+        ORDER BY datetime(COALESCE(cfg.stage_enabled_at, cfg.enabled_at)) DESC,
+                 datetime(w.updated_at) DESC
+        LIMIT 1`,
+    )
+    .bind(formId)
+    .first<{ slug: string }>();
+  return row?.slug ?? null;
 }
 
 function serializeSubmission(row: DbFormSubmission & { friend_name?: string | null }) {
@@ -153,7 +185,12 @@ forms.get('/api/forms/:id', async (c) => {
     if (!form) {
       return c.json({ success: false, error: 'Form not found' }, 404);
     }
-    const data = c.get('staff') ? serializeForm(form) : serializePublicForm(form);
+    const data = c.get('staff')
+      ? serializeForm(form)
+      : serializePublicForm(
+          form,
+          await consultationWebinarSlugForForm(c.env.DB, id),
+        );
     return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/forms/:id error:', err);

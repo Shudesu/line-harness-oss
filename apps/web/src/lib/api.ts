@@ -2093,7 +2093,9 @@ export type WebinarAnalytics = {
     sessions: number
     firstJoinedAt: string
     latestJoinedAt: string
-    maxWatchedSeconds: number
+    latestWatchedSeconds?: number
+    /** 旧Worker/旧管理画面とのローリングデプロイ互換。 */
+    maxWatchedSeconds?: number
     ctaClickedAt: string | null
     registered: boolean
     formSubmittedAt: string | null

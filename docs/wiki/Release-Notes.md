@@ -1,5 +1,18 @@
 # Release Notes
 
+## v0.21.1 (2026-08-14)
+
+### Fixed — Webinar analytics and registration delivery
+
+- The recent-participants table now keeps the all-time session count while showing watch progress, CTA activity, and form completion from the participant's latest session only.
+- Worker and Admin remain compatible during rolling updates, preventing `NaN:NaN` and `NaN%` when either side still uses the previous analytics field name.
+- Repeated taps or retried requests for the same webinar session no longer send duplicate LINE registration confirmations.
+- Added regression coverage for latest-session analytics and idempotent registration delivery.
+
+### Database
+
+- No migration required.
+
 ## v0.21.0 (2026-08-14)
 
 ### Added — Live CTA consultation booking

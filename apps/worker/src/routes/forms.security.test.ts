@@ -68,7 +68,8 @@ const baseForm = {
 
 function env() {
   const run = vi.fn(async () => ({ success: true }));
-  const bind = vi.fn((..._args: unknown[]) => ({ run }));
+  const first = vi.fn(async () => null as { slug: string } | null);
+  const bind = vi.fn((..._args: unknown[]) => ({ run, first }));
   const prepare = vi.fn((_sql: string) => ({ bind }));
   return {
     bindings: {
@@ -79,6 +80,7 @@ function env() {
     } as Env['Bindings'],
     prepare,
     bind,
+    first,
   };
 }
 
@@ -131,6 +133,16 @@ describe('public form representation', () => {
     expect(body.data).not.toHaveProperty('onSubmitTagId');
     expect(body.data).not.toHaveProperty('onSubmitScenarioId');
     expect(JSON.stringify(body.data)).not.toContain('Bearer secret');
+  });
+
+  test('returns the active webinar consultation route for the LIFF form', async () => {
+    const { bindings, first } = env();
+    first.mockResolvedValue({ slug: 'ritz-voice-1-l1b' });
+    const res = await app().request('/api/forms/form-1', {}, bindings);
+    expect(res.status).toBe(200);
+
+    const body = await res.json() as { data: Record<string, unknown> };
+    expect(body.data.consultationWebinarSlug).toBe('ritz-voice-1-l1b');
   });
 
   test('keeps the full representation for an authenticated admin', async () => {

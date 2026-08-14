@@ -516,7 +516,12 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
                 <tbody className="divide-y divide-slate-100">
                   {recentParticipants.map((p) => {
                     const name = p.friendName ?? `友だち ${p.friendId.slice(0, 6)}`
-                    const watchedRate = Math.min(100, Math.round((p.maxWatchedSeconds / Math.max(1, durationSeconds)) * 100))
+                    const watchedSeconds = typeof p.latestWatchedSeconds === 'number'
+                      ? p.latestWatchedSeconds
+                      : typeof p.maxWatchedSeconds === 'number'
+                        ? p.maxWatchedSeconds
+                        : 0
+                    const watchedRate = Math.min(100, Math.round((watchedSeconds / Math.max(1, durationSeconds)) * 100))
                     return (
                       <tr key={p.friendId} className="hover:bg-blue-50/30">
                         <td className="px-5 py-3.5">
@@ -531,7 +536,7 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
                         <td className="px-4 py-3.5 text-xs text-slate-600">{compactDateTime(p.latestJoinedAt)}</td>
                         <td className="w-48 px-4 py-3.5">
                           <div className="flex items-center justify-between text-[11px] text-slate-500">
-                            <span>{fmtSec(p.maxWatchedSeconds)}</span><span>{watchedRate}%</span>
+                            <span>{fmtSec(watchedSeconds)}</span><span>{watchedRate}%</span>
                           </div>
                           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
                             <div className="h-full rounded-full bg-blue-500" style={{ width: `${watchedRate}%` }} />
@@ -560,12 +565,17 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
             <div className="divide-y divide-slate-100 md:hidden">
               {recentParticipants.map((p) => {
                 const name = p.friendName ?? `友だち ${p.friendId.slice(0, 6)}`
+                const watchedSeconds = typeof p.latestWatchedSeconds === 'number'
+                  ? p.latestWatchedSeconds
+                  : typeof p.maxWatchedSeconds === 'number'
+                    ? p.maxWatchedSeconds
+                    : 0
                 return (
                   <Link key={p.friendId} href={`/chats?friend=${p.friendId}`} className="flex items-center gap-3 p-4 active:bg-slate-50">
                     <ParticipantAvatar name={name} pictureUrl={p.pictureUrl} size="lg" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-slate-900">{name}</div>
-                      <div className="mt-1 text-[11px] text-slate-500">{compactDateTime(p.latestJoinedAt)} · {fmtSec(p.maxWatchedSeconds)}視聴</div>
+                      <div className="mt-1 text-[11px] text-slate-500">{compactDateTime(p.latestJoinedAt)} · {fmtSec(watchedSeconds)}視聴</div>
                     </div>
                     <span className={`h-2.5 w-2.5 rounded-full ${p.formSubmittedAt ? 'bg-emerald-500' : p.ctaClickedAt ? 'bg-violet-500' : 'bg-slate-300'}`} />
                   </Link>
