@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LINE Harness — L社やU社の上位互換を、なぜ0円で公開するのか</title>
-<meta name="description" content="LINE公式アカウント運用の全機能を完全無料で。ステップ配信・セグメント・リッチメニュー・決済・自動化をオープンソースで提供。">
+<meta name="description" content="LINE公式アカウント運用の全機能を完全無料で。ステップ配信・セグメント・リッチメニュー・決済・オートウェビナー・マイレージ・アフィリエイト・自動化をオープンソースで提供。">
 <link rel="canonical" href="https://the-harness.com/line-harness/">
 
 <!-- OGP / Open Graph -->
@@ -759,6 +759,7 @@
     <div style="font-size:clamp(13px,2.5vw,16px);letter-spacing:0.12em;color:var(--text);margin-bottom:8px;">あらゆるSaaSの上位互換を0円で。<br>オープンソースプロジェクト<br>「The Harness」第一弾</div>
     <div class="product-name" style="font-size:clamp(36px,8vw,60px);">LINE Harness</div>
     <div style="font-size:clamp(11px,2vw,13px);letter-spacing:0.3em;color:var(--text-muted);margin-top:-14px;">ライン ハーネス</div>
+    <div style="display:inline-flex;align-items:center;gap:8px;margin-top:16px;font-size:12px;font-weight:700;color:var(--green);border:1px solid rgba(6,199,85,0.25);border-radius:20px;padding:4px 14px;background:var(--green-dim);font-family:'Inter',sans-serif;">v0.21.2<span style="color:var(--text-dim);font-weight:600;">2026.08 最新</span></div>
 
     <h1 class="hero-headline">
       L社やU社の上位互換を、<br>なぜ無料で公開するのか。
@@ -849,6 +850,9 @@
         <tr><td>フォーム</td><td class="check">✅</td><td class="check">✅</td><td class="col-h">✅</td></tr>
         <tr><td>スコアリング</td><td class="check">✅</td><td class="cross">❌</td><td class="col-h">✅</td></tr>
         <tr><td>IF-THEN 自動化</td><td class="partial">一部</td><td class="partial">一部</td><td class="col-h">✅</td></tr>
+        <tr class="row-highlight"><td>オートウェビナー</td><td class="cross">❌</td><td class="cross">❌</td><td class="col-h" style="font-weight:900;">✅</td></tr>
+        <tr class="row-highlight"><td>マイレージ（ポイント）</td><td class="cross">❌</td><td class="cross">❌</td><td class="col-h" style="font-weight:900;">✅</td></tr>
+        <tr class="row-highlight"><td>アフィリエイト（ASP）</td><td class="cross">❌</td><td class="cross">❌</td><td class="col-h" style="font-weight:900;">✅</td></tr>
         <tr class="row-highlight"><td>API 公開</td><td class="cross">❌</td><td class="cross">❌</td><td class="col-h" style="font-weight:900;">全機能</td></tr>
         <tr class="row-highlight"><td>AI（Claude Code）対応</td><td class="cross">❌</td><td class="cross">❌</td><td class="col-h" style="font-weight:900;">✅</td></tr>
         <tr class="row-highlight"><td>BAN 検知＆自動移行</td><td class="cross">❌</td><td class="cross">❌</td><td class="col-h" style="font-weight:900;">✅</td></tr>
@@ -940,6 +944,10 @@
       <div class="feature-card"><div class="feature-card-icon">🤖</div><h4>AI / API連携</h4><p>REST API全機能公開。Claude Codeからフル制御可能。</p></div>
       <div class="feature-card"><div class="feature-card-icon">🛡️</div><h4>BAN検知＆自動移行</h4><p>アカウント健全性を監視し、異常時は自動フェイルオーバー。</p></div>
       <div class="feature-card"><div class="feature-card-icon">👥</div><h4>マルチアカウント</h4><p>複数LINE公式を一元管理。クロスアカウントUUID搭載。</p></div>
+      <div class="feature-card"><div class="feature-card-icon">🎥</div><h4>オートウェビナー</h4><p>録画を「ライブ」として自動開催。待機室・CTA・視聴分析まで一気通貫。</p></div>
+      <div class="feature-card"><div class="feature-card-icon">🎁</div><h4>マイレージ</h4><p>友だちの行動にマイルを自動付与。アカウント横断のポイント経済圏を構築。</p></div>
+      <div class="feature-card"><div class="feature-card-icon">🤝</div><h4>アフィリエイト（ASP）</h4><p>紹介リンク発行から成果承認・報酬管理まで。自前のASPを0円で運営。</p></div>
+      <div class="feature-card"><div class="feature-card-icon">📅</div><h4>相談予約（Meet連携）</h4><p>Googleカレンダー同期で空き枠を自動提示。Meetリンク発行も全自動。</p></div>
     </div>
 
     <!-- 全機能図解マップ -->
@@ -970,8 +978,10 @@
         <div class="fmap-category">🎨 UI/UX</div>
         <div class="fmap-items">
           <span class="fmap-item">リッチメニュー切替</span>
+          <span class="fmap-item">リッチメニュー初期表示設定</span>
           <span class="fmap-item">LIFF フォーム</span>
           <span class="fmap-item">パーソナライズ変数</span>
+          <span class="fmap-item">マイレージウォレット（LIFF）</span>
         </div>
       </div>
       <div class="fmap-row">
@@ -985,11 +995,26 @@
         </div>
       </div>
       <div class="fmap-row">
+        <div class="fmap-category">🎥 ウェビナー</div>
+        <div class="fmap-items">
+          <span class="fmap-item">オートウェビナー（疑似ライブ）</span>
+          <span class="fmap-item">待機室</span>
+          <span class="fmap-item">CTAカード</span>
+          <span class="fmap-item">インラインフォーム</span>
+          <span class="fmap-item">視聴分析</span>
+          <span class="fmap-item">開催リマインダー</span>
+          <span class="fmap-item">ライブ内相談予約</span>
+        </div>
+      </div>
+      <div class="fmap-row">
         <div class="fmap-category">💰 収益化</div>
         <div class="fmap-items">
           <span class="fmap-item">Stripe決済</span>
-          <span class="fmap-item">アフィリエイト追跡</span>
+          <span class="fmap-item">アフィリエイト（ASP）</span>
+          <span class="fmap-item">マイレージ</span>
+          <span class="fmap-item">紹介マイル</span>
           <span class="fmap-item">Google Calendar予約</span>
+          <span class="fmap-item">Google Meet自動発行</span>
         </div>
       </div>
       <div class="fmap-row">
@@ -997,9 +1022,12 @@
         <div class="fmap-items">
           <span class="fmap-item">REST API（全機能）</span>
           <span class="fmap-item">TypeScript SDK</span>
+          <span class="fmap-item">MCPサーバー</span>
           <span class="fmap-item">OpenAPI docs</span>
           <span class="fmap-item">Claude Code対応</span>
           <span class="fmap-item">Webhook</span>
+          <span class="fmap-item">ワンコマンド導入（npx）</span>
+          <span class="fmap-item">自動アップデート</span>
         </div>
       </div>
       <div class="fmap-row">
@@ -1015,6 +1043,66 @@
     </div>
   </div>
 </section>
+
+
+<!-- ===== WHAT'S NEW (v0.20〜v0.21) ===== -->
+<section class="section" id="whats-new">
+  <div class="container fade-up">
+    <div class="text-center">
+      <span class="sec-label">What's New — v0.21.2</span>
+      <h2 class="sec-title">進化は、止まりません。</h2>
+      <p class="sec-subtitle">直近のアップデートだけでも、これだけの機能が0円で追加されました。</p>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:20px;margin-top:32px;">
+
+      <div style="background:var(--dark-card);border:1px solid rgba(6,199,85,0.3);border-radius:16px;padding:28px;position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--green),var(--cyan),var(--green));"></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+          <span style="font-size:24px;">🎥</span>
+          <h3 style="font-size:18px;font-weight:800;">オートウェビナー</h3>
+          <span style="font-size:10px;font-weight:700;color:var(--green);border:1px solid rgba(6,199,85,0.3);border-radius:12px;padding:2px 10px;background:var(--green-dim);">NEW</span>
+        </div>
+        <p style="font-size:14px;color:var(--text-muted);line-height:1.9;">録画した動画を「ライブ」として自動開催。待機室・本編・CTAカード・インラインフォームまでLINE内で完結し、視聴進捗やCTAクリックはすべて分析画面へ。開催前のLINEリマインダーも自動送信されます。</p>
+        <p style="font-size:14px;color:var(--text-muted);line-height:1.9;margin-top:12px;">さらに、<strong style="color:var(--text);">ライブ画面からそのまま個別相談を予約</strong>可能に。空き枠はGoogleカレンダーと自動同期し、予約が入るとGoogle Meetリンクの発行、前日＆1時間前のLINEリマインドまで全自動です。</p>
+      </div>
+
+      <div style="background:var(--dark-card);border:1px solid rgba(6,199,85,0.3);border-radius:16px;padding:28px;position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--green),var(--cyan),var(--green));"></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+          <span style="font-size:24px;">🎁</span>
+          <h3 style="font-size:18px;font-weight:800;">マイレージ経済圏</h3>
+          <span style="font-size:10px;font-weight:700;color:var(--green);border:1px solid rgba(6,199,85,0.3);border-radius:12px;padding:2px 10px;background:var(--green-dim);">NEW</span>
+        </div>
+        <p style="font-size:14px;color:var(--text-muted);line-height:1.9;">友だちの行動——フォーム回答、リンククリック、購入、ウェビナー視聴、長期フォロー——に応じてマイルを自動付与。<strong style="color:var(--text);">複数のLINE公式アカウントを横断する自分だけのポイント経済圏</strong>を構築できます。</p>
+        <p style="font-size:14px;color:var(--text-muted);line-height:1.9;margin-top:12px;">友だちは専用のLIFFウォレットで残高・獲得履歴・特典をいつでも確認。トークに「マイル」と送るだけで残高が返信されます。紹介された友だちの行動の質で報酬が決まる<strong style="color:var(--text);">紹介マイル</strong>も搭載。</p>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;" class="whatsnew-2col">
+        <div style="background:var(--dark-card);border:1px solid var(--dark-border);border-radius:16px;padding:24px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="font-size:20px;">🤝</span>
+            <h3 style="font-size:16px;font-weight:800;">アフィリエイト（ASP）</h3>
+          </div>
+          <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">紹介リンクのセルフ発行、クリック→友だち追加→成約までのファネル計測、成果承認と報酬管理まで。<strong style="color:var(--text);">自前のASPを0円で運営</strong>できます。</p>
+        </div>
+        <div style="background:var(--dark-card);border:1px solid var(--dark-border);border-radius:16px;padding:24px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="font-size:20px;">🚀</span>
+            <h3 style="font-size:16px;font-weight:800;">ワンコマンド導入＆自動更新</h3>
+          </div>
+          <p style="font-size:13px;color:var(--text-muted);line-height:1.8;"><code style="background:rgba(255,255,255,0.06);border-radius:4px;padding:2px 6px;font-size:12px;">npx create-line-harness</code> の1コマンドでセットアップ完了。新バージョンは管理画面からワンクリックで更新でき、データはすべて引き継がれます。</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+<style>
+  @media (max-width: 640px) {
+    .whatsnew-2col { grid-template-columns: 1fr !important; }
+  }
+</style>
 
 
 <!-- ===== AI DEMO: 実例 ===== -->
@@ -1172,7 +1260,7 @@
     <div class="mt-32">
       <div class="faq-item"><div class="faq-q">本当に無料ですか？後から課金されませんか？</div><div class="faq-a">LINE Harnessが課金することは一切ありません。永久に0円です。サーバーはCloudflareを利用しており、Cloudflareの無料枠で5,000人まで運用可能です。5,000人を超えた場合はCloudflare側で1万人につき約$10/月が発生しますが、これはCloudflareへの支払いであり、LINE Harnessへの課金ではありません。</div></div>
       <div class="faq-item"><div class="faq-q">エンジニアじゃなくても使えますか？</div><div class="faq-a">管理画面はブラウザで操作できる直感的なUIです。初期セットアップにはCloudflareアカウントの作成など技術的な手順がありますが、GitHubのWikiに詳細ガイドを用意しています。Claude Codeと連携すれば、対話形式で設定を進めることも可能です。</div></div>
-      <div class="faq-item"><div class="faq-q">他社ツールから乗り換えられますか？</div><div class="faq-a">はい。ステップ配信・セグメント・リッチメニュー切替など主要機能をすべてカバーし、さらに決済連携・予約・AI連携・BAN検知など、既存ツールにはない機能も搭載しています。</div></div>
+      <div class="faq-item"><div class="faq-q">他社ツールから乗り換えられますか？</div><div class="faq-a">はい。ステップ配信・セグメント・リッチメニュー切替など主要機能をすべてカバーし、さらに決済連携・オートウェビナー・マイレージ・アフィリエイト（ASP）・相談予約・AI連携・BAN検知など、既存ツールにはない機能も搭載しています。</div></div>
       <div class="faq-item"><div class="faq-q">セキュリティは大丈夫ですか？</div><div class="faq-a">データはあなた自身のCloudflare D1データベースに保存されます。第三者サーバーを経由しないため、むしろ既存SaaSよりもデータ管理権限は強固です。オープンソースなのでコードの透明性も保証されています。</div></div>
       <div class="faq-item"><div class="faq-q">どれくらいの規模まで対応できますか？</div><div class="faq-a">Cloudflare Workersはグローバルエッジで動作し、スケーラビリティは極めて高いです。5,000人まで無料、1万人で約$10/月、5万人以上でも約$25/月。これらはすべてCloudflareへの支払いであり、LINE Harnessへの課金ではありません。</div></div>
       <div class="faq-item"><div class="faq-q">サポートはありますか？</div><div class="faq-a">GitHubのIssueやDiscussionでコミュニティサポートを受けられます。LINE登録いただければ、最新アップデートや活用ノウハウも定期的にお届けします。</div></div>
