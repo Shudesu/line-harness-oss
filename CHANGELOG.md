@@ -7,6 +7,8 @@
 - Cloudflare Workers Assets APIへ送るmanifestキーを必須の`/`始まりへ修正
 - migration完了後、Assets upload session作成時にHTTP 400（code 10304）で停止する問題を解消
 - 修正版CLI `create-line-harness@0.2.8` / update engine `0.0.10`を公開
+- Cloudflare Pagesのasset keyをWrangler互換BLAKE3へ修正し、deploy成功後に全パスHTTP 500となる問題を解消
+- Adminのみを安全に再同期する修正版CLI `create-line-harness@0.2.9` / update engine `0.0.11`を公開
 
 ### 安全なアップデート経路
 

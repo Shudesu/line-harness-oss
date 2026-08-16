@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash } from 'node:crypto';
 import { runApply } from '../../src/phases/apply.js';
 import { createEventEmitter } from '../../src/events.js';
+import { hashWorkerAsset } from '../../src/cf-api/assets.js';
 import type { ParsedBundle } from '../../src/bundle.js';
 import type {
   UpdateContext,
@@ -213,17 +213,17 @@ function makeRouter(routes: RouterRoutes): ReturnType<typeof vi.fn> {
   }) as unknown as ReturnType<typeof vi.fn>;
 }
 
-function sha256Hex(buf: Buffer): string {
-  return createHash('sha256').update(buf).digest('hex');
-}
-
 /**
  * Reasonable defaults that let the entire apply phase pass. Individual
  * tests can spread + override only what they need.
  */
 function defaultRoutes(bundle: ParsedBundle): RouterRoutes {
-  const adminHashes = Array.from(bundle.adminFiles.values()).map(sha256Hex);
-  const liffHashes = Array.from(bundle.liffFiles.values()).map(sha256Hex);
+  const adminHashes = Array.from(bundle.adminFiles).map(([path, content]) =>
+    hashWorkerAsset(path, content),
+  );
+  const liffHashes = Array.from(bundle.liffFiles).map(([path, content]) =>
+    hashWorkerAsset(path, content),
+  );
   return {
     d1: { defaults: { ok: true, status: 200, body: { success: true, result: [] } } },
     bindings: {

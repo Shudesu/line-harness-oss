@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import type { CfApiCreds } from '../types.js';
 import { authHeader, pagesProjectApiBase, throwHttpError } from './_shared.js';
+import { hashWorkerAsset } from './assets.js';
 
 /**
  * Cloudflare Pages Direct Upload API.
@@ -16,16 +16,14 @@ import { authHeader, pagesProjectApiBase, throwHttpError } from './_shared.js';
  * Step 3 is skipped entirely when the server already has every file hash —
  * common for incremental redeploys where only a handful of bundles changed.
  *
- * CF docs reference blake3 for the missing-files check, but SHA-256 works
- * too and is available in every JS runtime we care about (Node, Workers).
- * We pick SHA-256 for portability.
+ * Pages asset keys must match Wrangler byte-for-byte: the first 32 hex
+ * characters of BLAKE3(base64(file bytes) + extension). The API can accept a
+ * deployment manifest containing other-looking hashes and still mark the
+ * deploy stage successful, but the resulting deployment returns HTTP 500
+ * because those keys do not resolve to uploaded assets.
  */
 
 import type { Buffer as NodeBuffer } from 'node:buffer';
-
-function sha256Hex(buf: NodeBuffer): string {
-  return createHash('sha256').update(buf).digest('hex');
-}
 
 /**
  * Map a file path to a sensible Content-Type for upload metadata. CF uses
@@ -121,6 +119,8 @@ const ASSET_UPLOAD_BATCH_SIZE = 50;
 const ASSET_UPLOAD_MAX_RAW_BYTES = 40 * 1024 * 1024;
 const ASSET_UPLOAD_MAX_ATTEMPTS = 5;
 const ASSET_UPLOAD_RETRY_BASE_MS = 1000;
+const DEPLOYMENT_VERIFY_ATTEMPTS = 3;
+const DEPLOYMENT_VERIFY_DELAY_MS = 3000;
 
 function isRetryableUploadStatus(status: number): boolean {
   return status === 429 || status >= 500;
@@ -128,6 +128,40 @@ function isRetryableUploadStatus(status: number): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Confirm that a newly-created Pages deployment actually serves files.
+ *
+ * The Pages deployment API can report a successful deploy stage even when
+ * the manifest refers to asset keys that were never stored; that deployment
+ * then returns HTTP 500 for every path. CLI callers use this before reporting
+ * Admin/LIFF success to the operator.
+ */
+export async function verifyPagesDeploymentUrl(
+  url: string,
+  options: { attempts?: number; delayMs?: number } = {},
+): Promise<void> {
+  const attempts = options.attempts ?? DEPLOYMENT_VERIFY_ATTEMPTS;
+  const delayMs = options.delayMs ?? DEPLOYMENT_VERIFY_DELAY_MS;
+  let last: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        redirect: 'follow',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+      if (response.ok) return;
+      last = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      last = error;
+    }
+    if (attempt < attempts) await delay(delayMs);
+  }
+
+  const reason = last instanceof Error ? last.message : String(last);
+  throw new Error(`Pages deployment health check failed: ${reason} (${url})`);
 }
 
 /**
@@ -210,7 +244,10 @@ export async function deployPagesProject(opts: {
   const byHash = new Map<string, { path: string; content: NodeBuffer }>();
   const pathToHash = new Map<string, string>();
   for (const [path, content] of files) {
-    const hash = sha256Hex(content);
+    // Pages and Workers Assets deliberately share Wrangler's asset-key
+    // algorithm. The extension is part of the hash input, so the path must be
+    // provided even when two files have identical bytes.
+    const hash = hashWorkerAsset(path, content);
     pathToHash.set(path, hash);
     // First-write wins if two files share a hash — same content, doesn't matter which we pick.
     if (!byHash.has(hash)) {
