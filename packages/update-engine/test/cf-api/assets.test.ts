@@ -43,10 +43,38 @@ describe('Workers Assets upload', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/workers/scripts/worker/assets-upload-session');
     const body = JSON.parse(init.body as string);
-    expect(body.manifest['index.html']).toEqual({
+    expect(body.manifest['/index.html']).toEqual({
       hash: 'a2b82584e50075886b08927390f2f573',
       size: 5,
     });
+    expect(body.manifest['index.html']).toBeUndefined();
+  });
+
+  it('normalizes every manifest key to a slash-prefixed URL path', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ result: { buckets: [], jwt: 'session-jwt' } }),
+    } as Response);
+
+    await uploadWorkerAssets({
+      creds,
+      scriptName: 'worker',
+      files: new Map([
+        ['./index.html', Buffer.from('index')],
+        ['assets\\app.js', Buffer.from('app')],
+        ['/assets/app.css', Buffer.from('css')],
+      ]),
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(Object.keys(body.manifest).sort()).toEqual([
+      '/assets/app.css',
+      '/assets/app.js',
+      '/index.html',
+    ]);
   });
 
   it('uploads requested hashes as base64 and returns the completion JWT', async () => {

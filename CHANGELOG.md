@@ -2,6 +2,12 @@
 
 ## v0.21.3 (2026-08-15)
 
+### Worker Assetsアップロードの修正（2026-08-16）
+
+- Cloudflare Workers Assets APIへ送るmanifestキーを必須の`/`始まりへ修正
+- migration完了後、Assets upload session作成時にHTTP 400（code 10304）で停止する問題を解消
+- 修正版CLI `create-line-harness@0.2.8` / update engine `0.0.10`を公開
+
 ### 安全なアップデート経路
 
 - Worker本体と `apps/worker/dist/client` のWorker Assetsを同じリリースbundleに同梱し、一体で更新

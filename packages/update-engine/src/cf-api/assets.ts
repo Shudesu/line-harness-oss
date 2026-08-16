@@ -109,7 +109,10 @@ function normalizeAssetPath(path: string): string {
   if (!normalized || normalized.split('/').includes('..')) {
     throw new Error(`invalid Workers Asset path: ${path}`);
   }
-  return normalized;
+  // Cloudflare's Workers Assets upload-session API requires every manifest
+  // key to be an absolute URL path. Bundle entries are stored relative to
+  // worker-assets/, so add the leading slash only at the API boundary.
+  return `/${normalized}`;
 }
 
 function contentTypeFor(path: string): string {

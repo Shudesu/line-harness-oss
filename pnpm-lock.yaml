@@ -189,7 +189,7 @@ importers:
         specifier: ^0.9.1
         version: 0.9.1
       '@line-harness/update-engine':
-        specifier: workspace:^0.0.9
+        specifier: workspace:^0.0.10
         version: link:../update-engine
       execa:
         specifier: ^9.5.2
