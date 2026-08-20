@@ -72,14 +72,41 @@ L Harness のスタッフ管理機能。APIキーごとにロール（owner / ad
 
 ```json
 // Request
-{ "name": "田中太郎", "email": "tanaka@example.com", "role": "staff" }
+{
+  "name": "田中太郎",
+  "email": "tanaka@example.com",
+  "role": "staff",
+  "senderName": "田中 太郎",
+  "senderIconUrl": "https://example.com/tanaka.png"
+}
 
 // Response
 { "success": true, "data": { "id": "xxx", "name": "田中太郎", "role": "staff", "apiKey": "lh_a1b2c3d4..." } }
 ```
 
 ### `PATCH /api/staff/:id` (owner only)
-名前・メール・ロール・有効/無効を更新。
+名前・メール・ロール・有効/無効・送信者プロフィールを更新。
+
+## 送信者プロフィール（チャット返信のアイコン・表示名）
+
+`senderName` / `senderIconUrl` を設定すると、**そのスタッフがチャット画面から返信したメッセージが、本人のアイコンと表示名で相手に届く**。自動返信ではなく担当者から直接届いたように見えるため、1:1のやりとりで反応率が上がる。
+
+未設定のスタッフはこれまでどおりアカウント名義で送信される（後方互換）。
+
+| 項目 | 制約 |
+|---|---|
+| `senderName` | 20文字以内。`LINE` を含む名前は使用不可（なりすまし防止のためLINE側が拒否する） |
+| `senderIconUrl` | 2000文字以内の **https** URL。JPEG または PNG |
+
+不正な値は `POST` / `PATCH` の時点で 400 を返すので、返信時に不可解な失敗が起きることはない。
+
+**仕様上の注意**
+
+- 表示名の後ろに **`from 'アカウント名'` がLINEによって自動付加される**。消せないので、他社を装う用途には使えない。
+- **トークルーム上部のアカウント名は変わらない**。変わるのは吹き出し横のアイコンと名前だけ。
+- 効くのは Messaging API 経由の送信のみ。**LINE公式アカウントマネージャー側のあいさつメッセージ・応答メッセージには適用されない**。
+
+参考: [アイコンと表示名をカスタマイズする | LINE Developers](https://developers.line.biz/ja/docs/messaging-api/icon-nickname-switch/)
 
 ### `DELETE /api/staff/:id` (owner only)
 スタッフ削除。自分自身の削除、最後のアクティブownerの削除は不可。
@@ -141,7 +168,7 @@ await lh.staff.delete(member.id)
 
 サイドバーの「設定」→「スタッフ管理」から操作可能（owner のみ表示）。
 
-- スタッフ追加フォーム（名前・メール・ロール選択）
+- スタッフ追加フォーム（名前・メール・ロール選択・送信者プロフィール）
 - APIキーのワンタイム表示 + コピーボタン
 - 一覧テーブル（ロールバッジ・有効/無効トグル・キー再生成・削除）
 - サイドバーにログイン中のスタッフ名とロールバッジを表示
@@ -152,14 +179,16 @@ await lh.staff.delete(member.id)
 
 ```sql
 CREATE TABLE staff_members (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  email      TEXT,
-  role       TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff')),
-  api_key    TEXT UNIQUE NOT NULL,
-  is_active  INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  email           TEXT,
+  role            TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff')),
+  api_key         TEXT UNIQUE NOT NULL,
+  is_active       INTEGER NOT NULL DEFAULT 1,
+  sender_name     TEXT,  -- チャット返信時の表示名（NULL = アカウント名義）
+  sender_icon_url TEXT,  -- チャット返信時のアイコン（NULL = アカウント名義）
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
 );
 ```
 

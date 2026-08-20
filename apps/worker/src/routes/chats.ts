@@ -15,8 +15,34 @@ import {
   jstNow,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import type { Message, Sender } from '@line-crm/line-sdk';
 
 const chats = new Hono<Env>();
+
+/**
+ * Per-message icon and display name for the operator who is replying.
+ * Returns null when the staff member has no profile set (or is the env-owner
+ * fallback, which has no DB row) — the reply then goes out as the account
+ * itself, which is the behaviour before this feature existed.
+ */
+async function getStaffSender(
+  db: D1Database,
+  staffId: string | undefined,
+): Promise<Sender | null> {
+  if (!staffId || staffId === 'env-owner') return null;
+
+  const row = await db
+    .prepare('SELECT sender_name, sender_icon_url FROM staff_members WHERE id = ?')
+    .bind(staffId)
+    .first<{ sender_name: string | null; sender_icon_url: string | null }>();
+
+  if (!row?.sender_name && !row?.sender_icon_url) return null;
+
+  const sender: Sender = {};
+  if (row.sender_name) sender.name = row.sender_name;
+  if (row.sender_icon_url) sender.iconUrl = row.sender_icon_url;
+  return sender;
+}
 
 function clampLoadingSeconds(value: number | undefined): number {
   const n = Number.isFinite(value) ? Math.floor(value as number) : 5;
@@ -562,24 +588,39 @@ chats.post('/api/chats/:id/send', async (c) => {
     if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
 
     // LINE APIでメッセージ送信
-    const { LineClient } = await import('@line-crm/line-sdk');
+    const { LineClient, withSenderAll } = await import('@line-crm/line-sdk');
     const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';
 
+    // 担当者のアイコン・表示名で送る（未設定ならアカウント既定のまま）
+    const sender = await getStaffSender(c.env.DB, c.get('staff')?.id);
+
+    const messages: Message[] = [];
     if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
+      messages.push({ type: 'text', text: body.content });
     } else if (messageType === 'flex') {
       const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
+      messages.push({
+        type: 'flex',
+        altText: extractFlexAltText(contents),
+        contents,
+      });
     } else if (messageType === 'image') {
       const parsed = JSON.parse(body.content) as {
         originalContentUrl: string;
         previewImageUrl: string;
       };
-      await lineClient.pushImageMessage(
+      messages.push({
+        type: 'image',
+        originalContentUrl: parsed.originalContentUrl,
+        previewImageUrl: parsed.previewImageUrl,
+      });
+    }
+
+    if (messages.length > 0) {
+      await lineClient.pushMessage(
         friend.line_user_id,
-        parsed.originalContentUrl,
-        parsed.previewImageUrl,
+        withSenderAll(messages, sender),
       );
     }
 

@@ -153,36 +153,56 @@ export interface UserProfile {
 
 export type FlexContainer = object;
 
-export interface TextMessage {
+/**
+ * Per-message sender override — changes the icon and display name shown on the
+ * bubble. LINE appends `from '<account name>'` to the display name and the name
+ * at the top of the talk room is unchanged.
+ *
+ * https://developers.line.biz/en/docs/messaging-api/icon-nickname-switch/
+ * Constraints (Messaging API reference, `Sender` schema):
+ *   name    — max 20 characters. Certain words such as `LINE` may not be used.
+ *   iconUrl — max 2000 characters, HTTPS URL of a JPEG/PNG image.
+ */
+export interface Sender {
+  name?: string;
+  iconUrl?: string;
+}
+
+/** Properties every send-message object accepts. */
+export interface MessageCommonProperties {
+  sender?: Sender;
+}
+
+export interface TextMessage extends MessageCommonProperties {
   type: 'text';
   text: string;
 }
 
-export interface ImageMessage {
+export interface ImageMessage extends MessageCommonProperties {
   type: 'image';
   originalContentUrl: string;
   previewImageUrl: string;
 }
 
-export interface FlexMessage {
+export interface FlexMessage extends MessageCommonProperties {
   type: 'flex';
   altText: string;
   contents: FlexContainer;
 }
 
-export interface VideoMessage {
+export interface VideoMessage extends MessageCommonProperties {
   type: 'video';
   originalContentUrl: string;
   previewImageUrl: string;
 }
 
-export interface TemplateMessage {
+export interface TemplateMessage extends MessageCommonProperties {
   type: 'template';
   altText: string;
   template: Record<string, unknown>;
 }
 
-export interface ImageMapMessageType {
+export interface ImageMapMessageType extends MessageCommonProperties {
   type: 'imagemap';
   baseUrl: string;
   altText: string;
