@@ -201,8 +201,12 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path === '/api/integrations/stripe/webhook' ||
     path.match(/^\/api\/webhooks\/incoming\/[^/]+\/receive$/) ||
     path === '/api/meet-callback' || // Meet Harness completion callback
+    // Google OAuth redirects without admin headers. Route verifies a signed, expiring state.
+    (path === '/api/booking/google-calendar/oauth/callback' && method === 'GET') ||
     path === '/api/qr' || // Public QR proxy — used by desktop landing pages
-    path === '/api/health' // Liveness probe (update CLI / self-update verify)
+    path === '/api/health' || // Liveness probe (update CLI / self-update verify)
+    // Public lead form. Origin validation and field validation happen in-route.
+    (path === '/api/public/media-inquiries' && method === 'POST')
   ) {
     return next();
   }

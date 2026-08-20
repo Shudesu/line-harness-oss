@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Tag } from '@line-crm/shared'
 import { api, eventsApi, type ApiBroadcast, type EventListItem } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
@@ -35,6 +35,8 @@ interface FormState {
 
 export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFormProps) {
   const { selectedAccountId } = useAccount()
+  // Network timeout後の再クリックでも同じ作成要求として扱い、二重予約を防ぐ。
+  const createIdempotencyKey = useRef(crypto.randomUUID())
   // 「リンクするイベント」セレクタ用: 公開中の events を取得して
   // 選択された event の LIFF URL (テンプレ) を message に挿入する。
   const [linkableEvents, setLinkableEvents] = useState<EventListItem[]>([])
@@ -101,7 +103,7 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
         scheduledAt: form.sendNow || !form.scheduledAt
           ? null
           : form.scheduledAt + ':00.000+09:00',
-      })
+      }, { idempotencyKey: createIdempotencyKey.current })
       if (res.success) {
         onSuccess()
       } else {

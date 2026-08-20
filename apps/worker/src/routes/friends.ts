@@ -9,6 +9,8 @@ import {
   getFormSubmissionsByFriend,
   getScenarios,
   enrollFriendInScenario,
+  getMileageSummaryForFriend,
+  getMileageHistoryForFriend,
   jstNow,
 } from '@line-crm/db';
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
@@ -387,6 +389,30 @@ friends.get('/api/friends/ref-stats', async (c) => {
     });
   } catch (err) {
     console.error('GET /api/friends/ref-stats error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/friends/:id/mileage - admin wallet summary + recent ledger history
+friends.get('/api/friends/:id/mileage', async (c) => {
+  try {
+    const friendId = c.req.param('id');
+    const friend = await getFriendById(c.env.DB, friendId);
+    if (!friend) {
+      return c.json({ success: false, error: 'Friend not found' }, 404);
+    }
+
+    const requestedLimit = Number.parseInt(c.req.query('limit') ?? '', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 10;
+    const [summary, history] = await Promise.all([
+      getMileageSummaryForFriend(c.env.DB, friendId),
+      getMileageHistoryForFriend(c.env.DB, friendId, { limit }),
+    ]);
+    return c.json({ success: true, data: { summary, history } });
+  } catch (err) {
+    console.error('GET /api/friends/:id/mileage error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

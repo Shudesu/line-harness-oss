@@ -13,6 +13,7 @@ export default function NewRichMenuPage() {
   const { selectedAccount } = useAccount()
   const [name, setName] = useState('')
   const [chatBarText, setChatBarText] = useState('メニュー')
+  const [selected, setSelected] = useState(true)
   const [templateKey, setTemplateKey] = useState(TEMPLATES[0].key)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,6 +38,7 @@ export default function NewRichMenuPage() {
         name: name.trim(),
         chatBarText: chatBarText.trim(),
         size: tmpl.size,
+        selected,
         pages: [
           { name: 'ページ 1', orderIndex: 0, areas: templateToAreas(tmpl) },
         ],
@@ -90,6 +92,25 @@ export default function NewRichMenuPage() {
           <p className="mt-1 text-xs text-gray-500">
             ユーザーがトーク画面でメニューを開く前に表示される文言。
           </p>
+        </div>
+
+        <div>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={(e) => setSelected(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-700">
+                トークを開いたときにメニューを表示する
+              </span>
+              <span className="block mt-1 text-xs text-gray-500">
+                ON にすると、友だちがトーク画面を開いた直後からリッチメニューを展開します。
+              </span>
+            </span>
+          </label>
         </div>
 
         <div>

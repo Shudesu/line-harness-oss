@@ -62,6 +62,41 @@ describe('putWorkerScript metadata', () => {
     expect(metadata.compatibility_flags).toEqual(['nodejs_compat']);
   });
 
+  it('attaches a new assets JWT and adds the ASSETS binding when absent', async () => {
+    await putWorkerScript({
+      creds,
+      scriptName: 'w',
+      scriptContent: Buffer.from('export default {}'),
+      bindings: [{ type: 'd1', name: 'DB', database_id: 'd1id' }],
+      assets: { jwt: 'assets-jwt', binding: 'ASSETS', runWorkerFirst: true },
+    });
+
+    const metadata = await capturedMetadata(fetchMock);
+    expect(metadata.assets).toEqual({
+      jwt: 'assets-jwt',
+      config: { run_worker_first: true },
+    });
+    expect(metadata.bindings).toEqual([
+      { type: 'd1', name: 'DB', database_id: 'd1id' },
+      { type: 'assets', name: 'ASSETS' },
+    ]);
+    expect(metadata).not.toHaveProperty('keep_assets');
+  });
+
+  it('rejects contradictory keepAssets + assets options', async () => {
+    await expect(
+      putWorkerScript({
+        creds,
+        scriptName: 'w',
+        scriptContent: Buffer.from('export default {}'),
+        bindings: BINDINGS,
+        keepAssets: true,
+        assets: { jwt: 'assets-jwt' },
+      }),
+    ).rejects.toThrow(/cannot be used together/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('omits compatibility_flags when the list is empty', async () => {
     await putWorkerScript({
       creds,

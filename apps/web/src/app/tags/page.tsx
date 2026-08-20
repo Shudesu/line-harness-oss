@@ -17,6 +17,102 @@ const PRESET_COLORS = [
   '#6B7280', // gray
 ]
 
+function TagMileageEditor({ tag, onSaved }: { tag: Tag; onSaved: () => void }) {
+  const [reward, setReward] = useState(String(tag.mileageReward ?? 0))
+  const [referralReward, setReferralReward] = useState(String(tag.referralMileageReward ?? 0))
+  const [multiplier, setMultiplier] = useState(
+    tag.mileageMultiplierBps == null ? '' : String(tag.mileageMultiplierBps / 10000),
+  )
+  const [priority, setPriority] = useState(String(tag.mileageMultiplierPriority ?? 0))
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    const rewardMiles = Number(reward)
+    const referralRewardMiles = Number(referralReward)
+    const multiplierBps = multiplier.trim() === '' ? null : Math.round(Number(multiplier) * 10000)
+    const multiplierPriority = Number(priority)
+    if (!Number.isInteger(rewardMiles) || rewardMiles < 0) return
+    if (!Number.isInteger(referralRewardMiles) || referralRewardMiles < 0) return
+    if (multiplierBps !== null && (!Number.isInteger(multiplierBps) || multiplierBps < 1000 || multiplierBps > 100000)) return
+    if (!Number.isInteger(multiplierPriority) || multiplierPriority < 0) return
+    setSaving(true)
+    try {
+      await api.tags.updateMileage(tag.id, {
+        rewardMiles,
+        referralRewardMiles,
+        multiplierBps,
+        multiplierPriority,
+      })
+      onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <td className="px-3 py-3">
+        <input
+          aria-label={`${tag.name}の獲得マイル`}
+          type="number"
+          min={0}
+          step={1}
+          value={reward}
+          onChange={(e) => setReward(e.target.value)}
+          className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+        />
+      </td>
+      <td className="px-3 py-3">
+        <input
+          aria-label={`${tag.name}の紹介者マイル`}
+          type="number"
+          min={0}
+          step={1}
+          value={referralReward}
+          onChange={(e) => setReferralReward(e.target.value)}
+          className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+        />
+      </td>
+      <td className="px-3 py-3">
+        <div className="flex items-center gap-1">
+          <input
+            aria-label={`${tag.name}の還元倍率`}
+            type="number"
+            min={0.1}
+            max={10}
+            step={0.1}
+            placeholder="なし"
+            value={multiplier}
+            onChange={(e) => setMultiplier(e.target.value)}
+            className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+          />
+          <span className="text-xs text-gray-400">倍</span>
+        </div>
+      </td>
+      <td className="px-3 py-3">
+        <input
+          aria-label={`${tag.name}の倍率優先度`}
+          type="number"
+          min={0}
+          max={1000}
+          value={priority}
+          onChange={(e) => setPriority(e.target.value)}
+          className="w-16 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+        />
+      </td>
+      <td className="px-3 py-3 text-right whitespace-nowrap">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 rounded-md disabled:opacity-40"
+        >
+          {saving ? '保存中' : 'マイル保存'}
+        </button>
+      </td>
+    </>
+  )
+}
+
 export default function TagsPage() {
   const [items, setItems] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
@@ -92,7 +188,7 @@ export default function TagsPage() {
     <div>
       <Header
         title="タグ管理"
-        description="友だちに付与するタグの作成・削除。削除すると全友だちからそのタグが外れます。"
+        description="本人のタグ獲得マイル、紹介した友だちがタグを獲得した時の紹介者マイル、今後の行動倍率を設定できます。反映は非同期です。"
         action={
           <button
             onClick={() => { setCreating(!creating); setError('') }}
@@ -168,20 +264,25 @@ export default function TagsPage() {
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px]">
+          <table className="w-full min-w-[1020px]">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">タグ</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">友だち数</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">作成日</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">獲得マイル</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">紹介者マイル</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">行動倍率</th>
+                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">優先度</th>
+                <th className="px-3 py-3" />
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400 text-sm">読み込み中...</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">読み込み中...</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400 text-sm">タグがありません</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">タグがありません</td></tr>
               ) : (
                 items.map((t) => (
                   <tr key={t.id} className="hover:bg-gray-50">
@@ -195,6 +296,7 @@ export default function TagsPage() {
                     <td className="px-4 py-3 text-xs text-gray-500">
                       {t.createdAt ? new Date(t.createdAt).toLocaleDateString('ja-JP') : ''}
                     </td>
+                    <TagMileageEditor tag={t} onSaved={load} />
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       <button
                         onClick={() => handleDelete(t)}

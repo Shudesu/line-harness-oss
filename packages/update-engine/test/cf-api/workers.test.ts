@@ -3,6 +3,8 @@ import {
   putWorkerScript,
   getWorkerScriptContent,
   listWorkerBindings,
+  getLatestWorkerDeployment,
+  deployWorkerVersion,
   type WorkerBinding,
 } from '../../src/cf-api/workers.js';
 import type { CfApiCreds } from '../../src/types.js';
@@ -250,5 +252,71 @@ describe('listWorkerBindings', () => {
     await expect(
       listWorkerBindings({ creds, scriptName: 'myname' }),
     ).rejects.toThrow(/HTTP 500/);
+  });
+});
+
+describe('Worker version snapshots', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('selects the newest deployment returned by Cloudflare', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        result: {
+          deployments: [
+            {
+              id: 'older',
+              created_on: '2026-08-01T00:00:00Z',
+              versions: [{ version_id: 'v1', percentage: 100 }],
+            },
+            {
+              id: 'newer',
+              created_on: '2026-08-02T00:00:00Z',
+              versions: [
+                { version_id: 'canary', percentage: 20 },
+                { version_id: 'stable', percentage: 80 },
+              ],
+            },
+          ],
+        },
+      }),
+    } as Response));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const deployment = await getLatestWorkerDeployment({
+      creds,
+      scriptName: 'myname',
+    });
+    expect(deployment.id).toBe('newer');
+    expect(deployment.versions[0].version_id).toBe('stable');
+  });
+
+  it('redeploys a saved version at 100 percent traffic', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true }),
+    } as Response));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await deployWorkerVersion({
+      creds,
+      scriptName: 'myname',
+      versionId: 'version-123',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/workers/scripts/myname/deployments');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      strategy: 'percentage',
+      versions: [{ version_id: 'version-123', percentage: 100 }],
+    });
   });
 });

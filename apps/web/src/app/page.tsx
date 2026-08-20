@@ -77,7 +77,6 @@ function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }
 function FriendAddLinkCard() {
   const { selectedAccount } = useAccount()
   const [copied, setCopied] = useState(false)
-  const [showQr, setShowQr] = useState(false)
   const base = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '')
   const link = selectedAccount
     ? `${base}/auth/line?account=${encodeURIComponent(selectedAccount.channelId)}`
@@ -104,13 +103,6 @@ function FriendAddLinkCard() {
               : 'デフォルトアカウントへの追加リンク (UUID計測つき)'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowQr((v) => !v)}
-          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 font-medium text-gray-600"
-        >
-          {showQr ? 'QRを隠す' : 'QR表示'}
-        </button>
       </div>
       <div className="flex items-stretch gap-2">
         <input
@@ -128,18 +120,6 @@ function FriendAddLinkCard() {
           {copied ? 'コピーしました ✓' : 'コピー'}
         </button>
       </div>
-      {showQr && (
-        <div className="mt-3 flex justify-center">
-          {/* eslint-disable-next-line @next/next/no-img-element -- worker QR proxy, not a static asset */}
-          <img
-            src={`${base}/api/qr?data=${encodeURIComponent(link)}&size=240x240`}
-            alt="友だち追加QRコード"
-            width={240}
-            height={240}
-            className="border border-gray-200 rounded-lg"
-          />
-        </div>
-      )}
     </div>
   )
 }
@@ -168,7 +148,7 @@ export default function DashboardPage() {
           api.broadcasts.list(),
           api.templates.list(),
           api.automations.list(),
-          api.scoring.rules(),
+          api.mileage.rules(),
         ])
 
         setStats({
@@ -315,7 +295,7 @@ export default function DashboardPage() {
           }
         />
         <StatCard
-          title="スコアリングルール数"
+          title="マイル付与ルール数"
           value={stats.scoringRuleCount}
           loading={loading}
           href="/scoring"

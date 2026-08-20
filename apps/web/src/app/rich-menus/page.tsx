@@ -14,6 +14,7 @@ type RichMenuGroupListItem = {
   size: 'large' | 'compact'
   status: 'draft' | 'published'
   isDefaultForAll: boolean
+  selected: boolean
   thumbnailR2Key: string | null
   updatedAt: string
 }
@@ -34,6 +35,7 @@ type LineMenu = {
   richMenuId: string
   name: string
   chatBarText: string
+  selected: boolean
   size: { width: number; height: number }
   areasCount: number
   isCurrentDefault: boolean
@@ -271,6 +273,7 @@ export default function RichMenusListPage() {
                     {g.isDefaultForAll && (
                       <span className="text-blue-600 font-medium">★ 全員のデフォルト</span>
                     )}
+                    <span>{g.selected ? '初期表示: 開く' : '初期表示: 閉じる'}</span>
                   </div>
                 </div>
               </Link>

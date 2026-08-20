@@ -15,6 +15,7 @@ import {
 import AccountSetupUrls from '@/components/accounts/account-setup-urls'
 import AccountEditModal from '@/components/accounts/account-edit-modal'
 import LinkBaseUrlSetting from '@/components/accounts/link-base-url-setting'
+import FollowerImportButton from '@/components/accounts/follower-import-button'
 
 interface LineAccountListItem {
   id: string
@@ -319,6 +320,7 @@ export default function AccountsPage() {
                 onUpdated={load}
               />
               <TestRecipientsSetting accountId={account.id} />
+              <FollowerImportButton accountId={account.id} onImported={load} />
 
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
                 <p className="text-xs text-gray-400">

@@ -4,11 +4,15 @@ import { jstNow } from './utils.js';
 export interface GoogleCalendarConnectionRow {
   id: string;
   calendar_id: string;
+  line_account_id: string | null;
+  staff_id: string | null;
   access_token: string | null;
   refresh_token: string | null;
   api_key: string | null;
   auth_type: string;
   is_active: number;
+  last_verified_at: string | null;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,14 +44,35 @@ export async function getCalendarConnectionById(db: D1Database, id: string): Pro
 
 export async function createCalendarConnection(
   db: D1Database,
-  input: { calendarId: string; authType: string; accessToken?: string; refreshToken?: string; apiKey?: string },
+  input: {
+    calendarId: string;
+    authType: string;
+    lineAccountId?: string;
+    staffId?: string;
+    accessToken?: string;
+    refreshToken?: string;
+    apiKey?: string;
+  },
 ): Promise<GoogleCalendarConnectionRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
   await db
-    .prepare(`INSERT INTO google_calendar_connections (id, calendar_id, auth_type, access_token, refresh_token, api_key, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.calendarId, input.authType, input.accessToken ?? null, input.refreshToken ?? null, input.apiKey ?? null, now, now)
+    .prepare(`INSERT INTO google_calendar_connections
+              (id, calendar_id, line_account_id, staff_id, auth_type,
+               access_token, refresh_token, api_key, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(
+      id,
+      input.calendarId,
+      input.lineAccountId ?? null,
+      input.staffId ?? null,
+      input.authType,
+      input.accessToken ?? null,
+      input.refreshToken ?? null,
+      input.apiKey ?? null,
+      now,
+      now,
+    )
     .run();
   return (await getCalendarConnectionById(db, id))!;
 }

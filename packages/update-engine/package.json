@@ -1,6 +1,6 @@
 {
   "name": "@line-harness/update-engine",
-  "version": "0.0.7",
+  "version": "0.0.9",
   "description": "Self-update engine for LINE Harness — shared between Worker (cloud-side self-update) and CLI (npx create-line-harness update)",
   "type": "module",
   "exports": {
@@ -40,6 +40,7 @@
     "vitest": "^2.0.0"
   },
   "dependencies": {
+    "@noble/hashes": "^2.0.1",
     "tar-stream": "^3.2.0"
   }
 }

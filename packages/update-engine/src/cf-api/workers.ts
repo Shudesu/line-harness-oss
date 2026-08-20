@@ -60,6 +60,11 @@ export async function putWorkerScript(opts: {
   compatibilityDate?: string;
   compatibilityFlags?: string[];
   keepAssets?: boolean;
+  assets?: {
+    jwt: string;
+    binding?: string;
+    runWorkerFirst?: boolean;
+  };
 }): Promise<void> {
   const { creds, scriptName, scriptContent, bindings } = opts;
   const compatibility_date = opts.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE;
@@ -72,9 +77,18 @@ export async function putWorkerScript(opts: {
   // secret_text binding WITH a text value is a caller explicitly setting
   // a new secret — sent as-is, and it takes precedence over the
   // inherited one.
-  const sendableBindings = bindings.filter(
+  let sendableBindings = bindings.filter(
     (b) => !SECRET_BINDING_TYPES.includes(b.type) || typeof b.text === 'string',
   );
+  if (opts.assets) {
+    if (opts.keepAssets) {
+      throw new Error('keepAssets and assets cannot be used together');
+    }
+    const bindingName = opts.assets.binding ?? 'ASSETS';
+    if (!sendableBindings.some((binding) => binding.type === 'assets')) {
+      sendableBindings = [...sendableBindings, { type: 'assets', name: bindingName }];
+    }
+  }
 
   const metadata: Record<string, unknown> = {
     main_module: 'worker.js',
@@ -87,6 +101,14 @@ export async function putWorkerScript(opts: {
   }
   if (opts.keepAssets) {
     metadata.keep_assets = true;
+  }
+  if (opts.assets) {
+    metadata.assets = {
+      jwt: opts.assets.jwt,
+      config: {
+        run_worker_first: opts.assets.runWorkerFirst ?? true,
+      },
+    };
   }
 
   const fd = new FormData();
@@ -160,4 +182,68 @@ export async function listWorkerBindings(opts: {
   }
   const body = (await res.json()) as { result: WorkerBinding[] };
   return body.result;
+}
+
+export interface WorkerDeployment {
+  id: string;
+  created_on: string;
+  versions: Array<{ version_id: string; percentage: number }>;
+}
+
+/** Return the active Worker's 100%-traffic version for rollback snapshots. */
+export async function getLatestWorkerDeployment(opts: {
+  creds: CfApiCreds;
+  scriptName: string;
+}): Promise<WorkerDeployment> {
+  const { creds, scriptName } = opts;
+  const res = await fetch(
+    `${workersApiBase(creds.accountId)}/${scriptName}/deployments`,
+    { headers: authHeader(creds.apiToken) },
+  );
+  if (!res.ok) await throwHttpError('GET worker deployments failed', res);
+  const body = (await res.json()) as {
+    result?: { deployments?: WorkerDeployment[] };
+  };
+  const deployments = body.result?.deployments ?? [];
+  const latest = deployments
+    .slice()
+    .sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))[0];
+  if (!latest?.versions?.[0]?.version_id) {
+    throw new Error(`Worker '${scriptName}' has no deployable version snapshot`);
+  }
+  return {
+    ...latest,
+    // A gradual deployment can list multiple versions. If an update is
+    // started during one, snapshot the version currently serving the most
+    // traffic instead of relying on array ordering.
+    versions: latest.versions.slice().sort((a, b) => b.percentage - a.percentage),
+  };
+}
+
+/** Roll back code and Workers Assets together by redeploying a saved version. */
+export async function deployWorkerVersion(opts: {
+  creds: CfApiCreds;
+  scriptName: string;
+  versionId: string;
+}): Promise<void> {
+  const { creds, scriptName, versionId } = opts;
+  const res = await fetch(
+    `${workersApiBase(creds.accountId)}/${scriptName}/deployments`,
+    {
+      method: 'POST',
+      headers: {
+        ...authHeader(creds.apiToken),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        strategy: 'percentage',
+        versions: [{ version_id: versionId, percentage: 100 }],
+        annotations: {
+          'workers/message': 'LINE Harness automatic update rollback',
+          'workers/triggered_by': 'line-harness-update-engine',
+        },
+      }),
+    },
+  );
+  if (!res.ok) await throwHttpError('POST worker rollback deployment failed', res);
 }

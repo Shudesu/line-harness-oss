@@ -19,14 +19,18 @@ import { runPreflight } from './phases/preflight.js';
 import { runApply } from './phases/apply.js';
 import { runVerify } from './phases/verify.js';
 import { runRollback } from './phases/rollback.js';
+import { encodeWorkerSnapshot } from './phases/rollback.js';
+import { getLatestWorkerDeployment } from './cf-api/workers.js';
 
 export * from './types.js';
 export * from './manifest.js';
 export * from './fork-detect.js';
 export * from './bundle.js';
 export * from './materialize.js';
+export * from './migrations.js';
 export * from './snapshot.js';
 export * from './cf-api/workers.js';
+export * from './cf-api/assets.js';
 export * from './cf-api/pages.js';
 export * from './cf-api/d1.js';
 export * from './cf-api/subdomain.js';
@@ -138,7 +142,11 @@ export async function runUpdate(opts: RunUpdateOpts): Promise<UpdateHandle> {
   // Worker-assets installs have no LIFF Pages project (empty string) —
   // their LIFF is served by the Worker script, whose pre-update bytes are
   // already captured via currentWorkerBundleUrl.
-  const [adminLatest, liffLatest] = await Promise.all([
+  const [workerLatest, adminLatest, liffLatest] = await Promise.all([
+    getLatestWorkerDeployment({
+      creds: ctx.creds,
+      scriptName: ctx.workerName,
+    }),
     getLatestDeployment({ creds: ctx.creds, projectName: ctx.adminPagesProject }),
     ctx.liffPagesProject
       ? getLatestDeployment({ creds: ctx.creds, projectName: ctx.liffPagesProject })
@@ -151,7 +159,10 @@ export async function runUpdate(opts: RunUpdateOpts): Promise<UpdateHandle> {
   const updateId = await createSnapshot(d1, {
     from: ctx.current.version,
     to: ctx.target.version,
-    snapshotWorkerUrl: currentWorkerBundleUrl,
+    snapshotWorkerUrl: encodeWorkerSnapshot({
+      bundleUrl: currentWorkerBundleUrl,
+      versionId: workerLatest.versions[0].version_id,
+    }),
     snapshotAdminDeployment: adminLatest.id,
     snapshotLiffDeployment: liffLatest.id,
   });

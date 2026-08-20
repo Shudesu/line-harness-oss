@@ -272,6 +272,28 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
     ...daily.flatMap((d) => [d.reservations, d.viewers, d.ctaClicks, d.formSubmissions]),
   )
   const recentParticipants = analytics.participants.slice(0, 16)
+  const formFunnelStages = [
+    { label: 'CTA表示', value: analytics.formFunnel.ctaImpressions },
+    { label: 'CTAクリック', value: analytics.formFunnel.ctaClicks },
+    { label: 'フォーム表示', value: analytics.formFunnel.formOpens },
+    { label: '入力開始', value: analytics.formFunnel.formStarts },
+    { label: '送信操作', value: analytics.formFunnel.submitAttempts },
+    { label: '送信完了', value: analytics.formFunnel.submitSuccesses },
+  ]
+  const maxFormFunnel = Math.max(1, ...formFunnelStages.map((stage) => stage.value))
+  const fieldLabels: Record<string, string> = {
+    name: 'お名前',
+    company: '会社名・屋号',
+    annual_revenue: '年商規模',
+    budget: '予算感',
+    ai_goal: '改善したいこと',
+    meeting_date_1: '第1希望日',
+    meeting_time_1: '第1希望時刻',
+    meeting_date_2: '第2希望日',
+    meeting_time_2: '第2希望時刻',
+    meeting_date_3: '第3希望日',
+    meeting_time_3: '第3希望時刻',
+  }
   const funnel = [
     { label: '参加', value: summary.viewers, color: 'bg-blue-500', note: 'ユニーク' },
     { label: '5分視聴', value: summary.watched5m, color: 'bg-cyan-500', note: percent(summary.watched5m, summary.viewers) },
@@ -345,6 +367,57 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
             <div className="mt-1 text-xs text-slate-500">{metric.detail}</div>
           </div>
         ))}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h3 className="font-bold text-slate-900">CTAから相談完了まで</h3>
+            <p className="mt-1 text-xs text-slate-500">計測開始後のユニーク人数。どの操作で離脱したかを確認できます。</p>
+          </div>
+          <span className="text-xs text-slate-500">
+            送信エラー {analytics.formFunnel.submitErrors.toLocaleString('ja-JP')}人
+          </span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          {formFunnelStages.map((stage, index) => {
+            const previous = index === 0 ? stage.value : formFunnelStages[index - 1].value
+            return (
+              <div key={stage.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-600">{stage.label}</span>
+                  <span className="text-[11px] text-slate-400">
+                    {index === 0 ? '起点' : percent(stage.value, previous)}
+                  </span>
+                </div>
+                <div className="mt-2 text-2xl font-bold text-slate-950">
+                  {stage.value.toLocaleString('ja-JP')}
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-full rounded-full bg-violet-500"
+                    style={{ width: `${Math.max(0, Math.min(100, (stage.value / maxFormFunnel) * 100))}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        {analytics.formFunnel.fieldCompletions.length > 0 && (
+          <details className="mt-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+              項目ごとの到達人数を見る
+            </summary>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {analytics.formFunnel.fieldCompletions.map((field) => (
+                <div key={field.fieldName} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs">
+                  <span className="text-slate-600">{fieldLabels[field.fieldName] ?? field.fieldName}</span>
+                  <span className="font-bold text-slate-900">{field.users.toLocaleString('ja-JP')}人</span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)]">
@@ -443,7 +516,12 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
                 <tbody className="divide-y divide-slate-100">
                   {recentParticipants.map((p) => {
                     const name = p.friendName ?? `友だち ${p.friendId.slice(0, 6)}`
-                    const watchedRate = Math.min(100, Math.round((p.maxWatchedSeconds / Math.max(1, durationSeconds)) * 100))
+                    const watchedSeconds = typeof p.latestWatchedSeconds === 'number'
+                      ? p.latestWatchedSeconds
+                      : typeof p.maxWatchedSeconds === 'number'
+                        ? p.maxWatchedSeconds
+                        : 0
+                    const watchedRate = Math.min(100, Math.round((watchedSeconds / Math.max(1, durationSeconds)) * 100))
                     return (
                       <tr key={p.friendId} className="hover:bg-blue-50/30">
                         <td className="px-5 py-3.5">
@@ -458,7 +536,7 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
                         <td className="px-4 py-3.5 text-xs text-slate-600">{compactDateTime(p.latestJoinedAt)}</td>
                         <td className="w-48 px-4 py-3.5">
                           <div className="flex items-center justify-between text-[11px] text-slate-500">
-                            <span>{fmtSec(p.maxWatchedSeconds)}</span><span>{watchedRate}%</span>
+                            <span>{fmtSec(watchedSeconds)}</span><span>{watchedRate}%</span>
                           </div>
                           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
                             <div className="h-full rounded-full bg-blue-500" style={{ width: `${watchedRate}%` }} />
@@ -487,12 +565,17 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
             <div className="divide-y divide-slate-100 md:hidden">
               {recentParticipants.map((p) => {
                 const name = p.friendName ?? `友だち ${p.friendId.slice(0, 6)}`
+                const watchedSeconds = typeof p.latestWatchedSeconds === 'number'
+                  ? p.latestWatchedSeconds
+                  : typeof p.maxWatchedSeconds === 'number'
+                    ? p.maxWatchedSeconds
+                    : 0
                 return (
                   <Link key={p.friendId} href={`/chats?friend=${p.friendId}`} className="flex items-center gap-3 p-4 active:bg-slate-50">
                     <ParticipantAvatar name={name} pictureUrl={p.pictureUrl} size="lg" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-slate-900">{name}</div>
-                      <div className="mt-1 text-[11px] text-slate-500">{compactDateTime(p.latestJoinedAt)} · {fmtSec(p.maxWatchedSeconds)}視聴</div>
+                      <div className="mt-1 text-[11px] text-slate-500">{compactDateTime(p.latestJoinedAt)} · {fmtSec(watchedSeconds)}視聴</div>
                     </div>
                     <span className={`h-2.5 w-2.5 rounded-full ${p.formSubmittedAt ? 'bg-emerald-500' : p.ctaClickedAt ? 'bg-violet-500' : 'bg-slate-300'}`} />
                   </Link>

@@ -22,6 +22,8 @@ export interface Broadcast {
   dedup_progress: string | null;
   batch_lock_at: string | null;
   track_links: number;
+  line_account_id?: string | null;
+  alt_text?: string | null;
 }
 
 export async function getBroadcasts(db: D1Database, accountId?: string): Promise<Broadcast[]> {
@@ -76,6 +78,7 @@ WHERE b.id = ?`,
 }
 
 export interface CreateBroadcastInput {
+  id?: string;
   title: string;
   messageType: BroadcastMessageType;
   messageContent: string;
@@ -85,13 +88,15 @@ export interface CreateBroadcastInput {
   accountIds?: string[];
   dedupPriority?: string[];
   trackLinks?: boolean;
+  lineAccountId?: string | null;
+  altText?: string | null;
 }
 
 export async function createBroadcast(
   db: D1Database,
   input: CreateBroadcastInput,
 ): Promise<Broadcast> {
-  const id = crypto.randomUUID();
+  const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
 
   const initialStatus: BroadcastStatus = input.scheduledAt ? 'scheduled' : 'draft';
@@ -99,8 +104,8 @@ export async function createBroadcast(
   await db
     .prepare(
       `INSERT INTO broadcasts
-         (id, title, message_type, message_content, target_type, target_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, track_links, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?, ?)`,
+         (id, title, message_type, message_content, target_type, target_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, track_links, line_account_id, alt_text, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -114,6 +119,8 @@ export async function createBroadcast(
       input.accountIds ? JSON.stringify(input.accountIds) : null,
       input.dedupPriority ? JSON.stringify(input.dedupPriority) : null,
       input.trackLinks === false ? 0 : 1,
+      input.lineAccountId ?? null,
+      input.altText ?? null,
       now,
     )
     .run();
@@ -408,6 +415,24 @@ export async function recoverStalledBroadcasts(db: D1Database): Promise<void> {
        AND sent_at IS NULL
        AND target_type = 'multi-account-dedup'
        AND success_count > 0 AND dedup_progress IS NOT NULL
+       AND batch_lock_at IS NOT NULL
+       AND julianday('now', '+9 hours') - julianday(batch_lock_at) > ${STALL_LOCK_REVOKE_DAYS_RESUMABLE}`,
+    )
+    .run();
+
+  // 3) Personalized standard broadcasts are also safely resumable. They use
+  // one stable LINE retry key per broadcast+friend+rendered content and check
+  // messages_log before each push. Restarting from offset 0 is intentional:
+  // logged recipients are skipped, while a push accepted just before a crash
+  // is acknowledged by LINE as retry-key 409 and then logged once.
+  await db
+    .prepare(
+      `UPDATE broadcasts SET batch_offset = 0, batch_lock_at = NULL
+       WHERE status = 'sending' AND batch_offset = -1
+       AND sent_at IS NULL
+       AND target_type != 'multi-account-dedup'
+       AND segment_conditions IS NOT NULL
+       AND instr(replace(message_content, ' ', ''), '{{name}}') > 0
        AND batch_lock_at IS NOT NULL
        AND julianday('now', '+9 hours') - julianday(batch_lock_at) > ${STALL_LOCK_REVOKE_DAYS_RESUMABLE}`,
     )

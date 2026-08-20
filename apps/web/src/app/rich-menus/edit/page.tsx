@@ -27,6 +27,7 @@ type Group = {
   size: 'large' | 'compact'
   defaultPageId: string | null
   isDefaultForAll: boolean
+  selected: boolean
   status: 'draft' | 'published'
   publishingAt: string | null
   pages: Page[]
@@ -90,6 +91,7 @@ function Editor({
   // isDefaultForAll はこの画面では編集しない (ON/OFF は「友だちに表示」モーダルから)。
   // ただし persistDraft で送信値を一致させるため、現在値を保持する。
   const [isDefaultForAll, setIsDefaultForAll] = useState(false)
+  const [selected, setSelected] = useState(false)
 
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -110,6 +112,7 @@ function Editor({
       setName(g.name)
       setChatBarText(g.chatBarText)
       setIsDefaultForAll(g.isDefaultForAll)
+      setSelected(g.selected)
       setPages(g.pages)
       setActivePageId((prev) =>
         prev && g.pages.some((p) => p.id === prev) ? prev : (g.pages[0]?.id ?? null),
@@ -218,6 +221,7 @@ function Editor({
       name,
       chatBarText,
       isDefaultForAll,
+      selected,
       pages: pages.map((p, i) => ({
         // 既存 page (UUID) は id を渡す。新規 page (`tmp-*` プレフィックス) は
         // id を渡さず Worker 側で新 UUID を発行させる。
@@ -516,6 +520,22 @@ function Editor({
                 className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />
               <p className="mt-1 text-[11px] text-gray-500">14 文字以内 (友だちのトーク画面でメニューを開く前に表示)</p>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selected}
+                onChange={(e) => setSelected(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-xs font-medium text-gray-700">
+                  トークを開いたときにメニューを表示する
+                </span>
+                <span className="block mt-1 text-[11px] text-gray-500">
+                  変更後は「LINE に登録」をやり直すと反映されます。
+                </span>
+              </span>
             </label>
           </section>
 

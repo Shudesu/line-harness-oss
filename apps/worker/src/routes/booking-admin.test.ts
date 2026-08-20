@@ -3,8 +3,12 @@ import { Hono } from 'hono';
 
 const availabilityMocks = {
   computeSlots: vi.fn(() => [] as { start: string; end: string }[]),
-  getAvailability: vi.fn(async () => ({
-    by_staff: [{ staff_id: 's1', display_name: 'A', slots: [] }],
+  getAvailability: vi.fn(async (_db: unknown, params: { from: string }) => ({
+    by_staff: [{
+      staff_id: 's1',
+      display_name: 'A',
+      slots: availabilityMocks.computeSlots().map((slot) => ({ date: params.from, ...slot })),
+    }],
   })),
 };
 vi.mock('../services/availability.js', () => availabilityMocks);
@@ -274,7 +278,7 @@ describe('POST /api/booking/admin/bookings', () => {
     expect(body.error).toBe('staff_not_found');
   });
 
-  test('existing-bookings window uses correct JST bounds for a September date', async () => {
+  test('server-side availability recheck receives the correct September JST date', async () => {
     availabilityMocks.computeSlots.mockReturnValue([{ start: '11:00', end: '12:00' }]);
     const db = happyDb();
     const { app, env } = makeApp(db);
@@ -297,14 +301,10 @@ describe('POST /api/booking/admin/bookings', () => {
       execCtx,
     );
     expect(res.status).toBe(201);
-    // The busy-window query must bind real ISO timestamps, never a corrupted
-    // string from the old `.replace('-09', ...)` (which mangled September dates).
-    const windowQuery = db.calls.find(
-      (c) => c.sql.includes('SELECT starts_at, block_ends_at FROM bookings'),
+    expect(availabilityMocks.getAvailability).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ from: `${sepYear}-09-10`, to: `${sepYear}-09-10` }),
     );
-    const [, endUtc, startUtc] = windowQuery!.params as [string, string, string];
-    expect(startUtc).toBe(`${sepYear}-09-09T15:00:00.000Z`); // JST Sep 10 00:00 = prev-day 15:00Z
-    expect(endUtc).toBe(`${sepYear}-09-10T15:00:00Z`); // JST Sep 11 00:00 = Sep 10 15:00Z
   });
 });
 

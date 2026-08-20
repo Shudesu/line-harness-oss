@@ -1,4 +1,4 @@
-import { getScenarios, enrollFriendInScenario, jstNow } from '@line-crm/db';
+import { getScenarios, enrollFriendInScenario, jstNow, enqueueMileageEvent } from '@line-crm/db';
 import { fireEvent } from './event-bus.js';
 import { pushImmediateFirstStep, type ImmediatePushContext } from './immediate-first-step.js';
 
@@ -21,15 +21,30 @@ export async function attachTagAndFireSideEffects(
   tagId: string,
   push?: ImmediatePushContext,
 ): Promise<{ added: boolean }> {
+  const assignedAt = jstNow();
   const result = await db
     .prepare(
       `INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at)
        VALUES (?, ?, ?)`,
     )
-    .bind(friendId, tagId, jstNow())
+    .bind(friendId, tagId, assignedAt)
     .run();
   const added = (result.meta?.changes ?? 0) > 0;
   if (!added) return { added: false };
+
+  try {
+    await enqueueMileageEvent(db, {
+      eventType: 'tag_added',
+      source: 'tag',
+      sourceEventId: `${friendId}:${tagId}:${assignedAt}`,
+      friendId,
+      subjectKey: tagId,
+      metadata: { tagId },
+      occurredAt: assignedAt,
+    });
+  } catch (error) {
+    console.error('tag mileage enqueue failed:', error);
+  }
 
   const scenarios = await getScenarios(db);
   for (const scenario of scenarios) {

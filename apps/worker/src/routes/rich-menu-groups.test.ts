@@ -103,7 +103,7 @@ describe('GET /api/rich-menu-groups', () => {
     dbMocks.getRichMenuGroups.mockResolvedValue([
       {
         id: 'g1', account_id: 'acc-1', name: 'メイン', chat_bar_text: 'メニュー',
-        size: 'large', default_page_id: 'p1', is_default_for_all: 1,
+        size: 'large', default_page_id: 'p1', is_default_for_all: 1, selected: 1,
         status: 'published', publishing_at: null,
         created_at: '2026-05-08T00:00:00.000', updated_at: '2026-05-08T01:00:00.000',
       },
@@ -113,7 +113,7 @@ describe('GET /api/rich-menu-groups', () => {
     const body = (await res.json()) as { data: any[] };
     expect(body.data[0]).toMatchObject({
       id: 'g1', accountId: 'acc-1', chatBarText: 'メニュー',
-      isDefaultForAll: true, status: 'published',
+      isDefaultForAll: true, selected: true, status: 'published',
     });
   });
 });
@@ -269,7 +269,7 @@ describe('POST /api/rich-menu-groups', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large',
+        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large', selected: true,
         pages: [{ name: 'p1', orderIndex: 0, areas: [] }],
       }),
     });
@@ -277,7 +277,7 @@ describe('POST /api/rich-menu-groups', () => {
     expect(dbMocks.createRichMenuGroup).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large',
+        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large', selected: true,
         pages: [expect.objectContaining({ name: 'p1', orderIndex: 0 })],
       }),
     );
@@ -309,11 +309,11 @@ describe('PATCH /api/rich-menu-groups/:groupId', () => {
     const res = await app.request('/api/rich-menu-groups/g1', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'new', isDefaultForAll: true }),
+      body: JSON.stringify({ name: 'new', isDefaultForAll: true, selected: true }),
     });
     expect(res.status).toBe(200);
     expect(dbMocks.updateRichMenuGroupMeta).toHaveBeenCalledWith(expect.anything(), 'g1', {
-      name: 'new', isDefaultForAll: true,
+      name: 'new', isDefaultForAll: true, selected: true,
     });
     expect(dbMocks.replaceRichMenuPages).not.toHaveBeenCalled();
   });

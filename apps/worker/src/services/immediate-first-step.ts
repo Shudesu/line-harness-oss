@@ -19,6 +19,7 @@ import {
   expandVariables,
   resolveMetadata,
   messageToLogPayload,
+  evaluateCondition,
 } from './step-delivery.js';
 import { decorateForFriendPush } from './auto-track.js';
 
@@ -132,20 +133,43 @@ export async function pushImmediateFirstStep(
     // instant-push its first step.
     if (!scenarioRow.is_active) return false;
     const steps = scenarioRow.steps;
-    const firstStep = steps[0];
-    if (!firstStep) return false;
+    if (!steps[0]) return false;
 
     // Immediate only: delay-0 relative steps schedule at-or-before "now".
     // elapsed/absolute_time modes have offset/clock-time semantics — cron
     // owns those. Checked BEFORE claiming/enrolling so non-immediate
     // enrollments are left untouched.
+    //
+    // Conditions are evaluated here exactly like the cron's delivery path
+    // (evaluateCondition). Previously the instant path pushed step 1
+    // unconditionally, which leaked condition-gated steps (e.g. a tag_exists
+    // "already answered → reward" step) to every friend on click. Now the
+    // leading run of immediate steps is walked in order and the FIRST one
+    // whose condition passes is delivered; steps it skips are the cron's
+    // skip semantics (no message, no on_reach tag). If none passes, nothing
+    // is claimed — the cron sweeps the skips on its own schedule.
     const enrolledAtJst = new Date(Date.now() + 9 * 60 * 60_000);
-    const firstScheduledAt = computeNextDeliveryAt(
-      { delivery_mode: scenarioRow.delivery_mode ?? 'relative' },
-      firstStep,
-      { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
-    );
-    if (firstScheduledAt.getTime() > enrolledAtJst.getTime()) return false;
+    const immediateSteps: typeof steps = [];
+    for (const step of steps) {
+      const scheduledAt = computeNextDeliveryAt(
+        { delivery_mode: scenarioRow.delivery_mode ?? 'relative' },
+        step,
+        { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
+      );
+      if (scheduledAt.getTime() > enrolledAtJst.getTime()) break;
+      immediateSteps.push(step);
+    }
+    if (immediateSteps.length === 0) return false;
+
+    let picked: (typeof steps)[number] | null = null;
+    for (const candidate of immediateSteps) {
+      if (await evaluateCondition(db, friendId, candidate)) {
+        picked = candidate;
+        break;
+      }
+    }
+    if (!picked) return false;
+    const firstStep = picked;
 
     // Cooldown probe: a racing sender the claim protocol can't see may have
     // just pushed this exact step (click campaign vs follow webhook, double
@@ -175,7 +199,9 @@ export async function pushImmediateFirstStep(
         .first<EnrollmentRef>();
 
     const advancePastFirstStep = async (enrollmentId: string) => {
-      const nextStep = steps[1];
+      // The step AFTER the delivered one — firstStep may not be steps[0] when
+      // condition evaluation skipped ahead.
+      const nextStep = steps[steps.indexOf(firstStep) + 1];
       if (nextStep) {
         const next = computeNextDeliveryAt(
           { delivery_mode: scenarioRow.delivery_mode ?? 'relative' },

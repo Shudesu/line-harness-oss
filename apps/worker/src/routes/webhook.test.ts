@@ -43,6 +43,10 @@ vi.mock('../services/event-bus.js', () => ({
   logOutgoingMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../services/local-line-proxy.js', () => ({
+  dispatchLineProxyLocally: vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
+}));
+
 vi.mock('../services/step-delivery.js', () => ({
   buildMessage: vi.fn(),
   expandVariables: vi.fn(),

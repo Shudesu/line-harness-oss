@@ -54,6 +54,8 @@ function app() {
   a.post('/api/forms/:id/submit', (c) => c.json({ success: true }));
   a.post('/api/forms/:id/partial', (c) => c.json({ success: true }));
   a.post('/api/forms/:id/opened', (c) => c.json({ success: true }));
+  a.get('/api/booking/google-calendar/oauth/callback', (c) => c.text('oauth-callback'));
+  a.post('/api/booking/google-calendar/oauth/callback', (c) => c.text('wrong-method'));
   return a;
 }
 
@@ -200,6 +202,23 @@ describe('public form method boundaries', () => {
       method: 'DELETE',
     }, crossSiteEnv());
     expect(res.status).toBe(401);
+  });
+});
+
+describe('Google OAuth callback boundary', () => {
+  test('allows only unauthenticated GET callback through to signed-state validation', async () => {
+    const get = await app().request(
+      '/api/booking/google-calendar/oauth/callback?state=signed&code=code',
+      {},
+      crossSiteEnv(),
+    );
+    expect(get.status).toBe(200);
+    expect(await get.text()).toBe('oauth-callback');
+
+    const post = await app().request('/api/booking/google-calendar/oauth/callback', {
+      method: 'POST',
+    }, crossSiteEnv());
+    expect(post.status).toBe(401);
   });
 });
 

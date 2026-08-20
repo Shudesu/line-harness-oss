@@ -14,6 +14,13 @@ import {
   getConversionApprovalNotifyInfo,
 } from '../src/affiliate-offers.js';
 import { trackConversion } from '../src/conversions.js';
+import {
+  getMileageHistoryForFriend,
+  getMileageSummaryForFriend,
+  postMileageEntry,
+  recordEngagementEvent,
+  syncAffiliateConversionMileage,
+} from '../src/mileage.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = join(__dirname, '..');
@@ -439,6 +446,131 @@ describe('getConversionApprovalNotifyInfo', () => {
 
   test('returns null for a missing event', async () => {
     expect(await getConversionApprovalNotifyInfo(db, 'nope')).toBeNull();
+  });
+});
+
+// ── generic mileage foundation + ASP projection ────────────────────────────
+
+describe('mileage foundation', () => {
+  let sqlite: Database.Database;
+  let db: D1Database;
+
+  beforeEach(() => {
+    sqlite = setupDb();
+    db = asD1(sqlite);
+    sqlite
+      .prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES ('user-aff', 'Affiliate User', '2026-01-01', '2026-01-01')`,
+      )
+      .run();
+    insertFriend(sqlite, 'friend-aff', 'U-AFF');
+    insertFriend(sqlite, 'friend-customer', 'U-CUSTOMER');
+    sqlite.prepare(`UPDATE friends SET user_id = 'user-aff' WHERE id = 'friend-aff'`).run();
+    insertAffiliate(sqlite, 'aff-mile', 'friend-aff');
+    insertConversionPoint(sqlite, 'cp-mile');
+  });
+
+  test('an approved referral grants once and rejection appends one reversal', async () => {
+    const offer = await createAffiliateOffer(db, {
+      name: '紹介キャンペーン',
+      rewardAmount: 5000,
+      rewardMiles: 750,
+    });
+    const { link } = await enrollAffiliateInOffer(db, {
+      affiliateId: 'aff-mile',
+      offerId: offer.id,
+    });
+    sqlite
+      .prepare(
+        `INSERT INTO conversion_events
+           (id, conversion_point_id, friend_id, affiliate_id,
+            attributed_ref_code, approval_status, created_at)
+         VALUES ('ce-mile', 'cp-mile', 'friend-customer', 'aff-mile', ?, 'pending', '2026-01-01')`,
+      )
+      .run(link.ref_code);
+
+    expect(await setConversionApproval(db, 'ce-mile', 'approved')).toBe(true);
+    sqlite.prepare(`UPDATE conversion_events SET approved_at = '2026-01-02' WHERE id = 'ce-mile'`).run();
+    await syncAffiliateConversionMileage(db, 'ce-mile', 'approved');
+    await syncAffiliateConversionMileage(db, 'ce-mile', 'approved');
+
+    expect(await getMileageSummaryForFriend(db, 'friend-aff')).toMatchObject({
+      available: 750,
+      lifetimeEarned: 750,
+    });
+    expect(await getMileageHistoryForFriend(db, 'friend-aff')).toHaveLength(1);
+    expect(
+      (sqlite.prepare(`SELECT COUNT(*) AS count FROM engagement_events`).get() as { count: number }).count,
+    ).toBe(1);
+
+    expect(await setConversionApproval(db, 'ce-mile', 'rejected')).toBe(true);
+    sqlite.prepare(`UPDATE conversion_events SET approved_at = '2026-01-03' WHERE id = 'ce-mile'`).run();
+    await syncAffiliateConversionMileage(db, 'ce-mile', 'rejected');
+    await syncAffiliateConversionMileage(db, 'ce-mile', 'rejected');
+
+    expect(await getMileageSummaryForFriend(db, 'friend-aff')).toMatchObject({
+      available: 0,
+      lifetimeEarned: 750,
+    });
+    const history = await getMileageHistoryForFriend(db, 'friend-aff');
+    expect(history.map((item) => item.amount).sort((a, b) => a - b)).toEqual([-750, 750]);
+  });
+
+  test('generic events and ledger entries are idempotent', async () => {
+    const eventA = await recordEngagementEvent(db, {
+      idempotencyKey: 'webinar:view:abc:50-percent',
+      eventType: 'webinar_progress',
+      source: 'webinar',
+      sourceEventId: 'abc',
+      actorFriendId: 'friend-aff',
+    });
+    const eventB = await recordEngagementEvent(db, {
+      idempotencyKey: 'webinar:view:abc:50-percent',
+      eventType: 'webinar_progress',
+      source: 'webinar',
+      sourceEventId: 'abc',
+      actorFriendId: 'friend-aff',
+    });
+    expect(eventB.id).toBe(eventA.id);
+
+    const grantA = await postMileageEntry(db, {
+      beneficiaryFriendId: 'friend-aff',
+      engagementEventId: eventA.id,
+      entryType: 'grant',
+      amount: 100,
+      reason: 'ウェビナー50%視聴',
+      source: 'webinar',
+      sourceEventId: 'abc',
+      idempotencyKey: 'webinar:grant:abc:50-percent',
+    });
+    const grantB = await postMileageEntry(db, {
+      beneficiaryFriendId: 'friend-aff',
+      engagementEventId: eventA.id,
+      entryType: 'grant',
+      amount: 100,
+      reason: 'ウェビナー50%視聴',
+      source: 'webinar',
+      sourceEventId: 'abc',
+      idempotencyKey: 'webinar:grant:abc:50-percent',
+    });
+    expect(grantB.id).toBe(grantA.id);
+    expect((await getMileageSummaryForFriend(db, 'friend-aff')).available).toBe(100);
+  });
+
+  test('a linked user sees mileage earned from another LINE-account friend row', async () => {
+    insertFriend(sqlite, 'friend-aff-2', 'U-AFF-SECOND');
+    sqlite.prepare(`UPDATE friends SET user_id = 'user-aff' WHERE id = 'friend-aff-2'`).run();
+    await postMileageEntry(db, {
+      beneficiaryUserId: 'user-aff',
+      beneficiaryFriendId: 'friend-aff',
+      entryType: 'grant',
+      amount: 300,
+      reason: '共通ユーザー付与',
+      source: 'manual_test',
+      idempotencyKey: 'cross-account-grant-1',
+    });
+    expect((await getMileageSummaryForFriend(db, 'friend-aff-2')).available).toBe(300);
   });
 });
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { api } from '@/lib/api'
+import { api, type MileageHistoryItem, type MileageSummary } from '@/lib/api'
 
 interface FriendDetail {
   id: string
@@ -63,6 +63,11 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
   const [friend, setFriend] = useState<FriendDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  type MileageState =
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'data'; summary: MileageSummary; history: MileageHistoryItem[] }
+  const [mileage, setMileage] = useState<MileageState>({ kind: 'loading' })
 
   useEffect(() => {
     if (!friendId) {
@@ -84,6 +89,26 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
       setError(err instanceof Error ? err.message : String(err))
     }).finally(() => {
       if (!cancelled) setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [friendId])
+
+  useEffect(() => {
+    if (!friendId) {
+      setMileage({ kind: 'loading' })
+      return
+    }
+    let cancelled = false
+    setMileage({ kind: 'loading' })
+    api.friends.mileage(friendId, 10).then((res) => {
+      if (cancelled) return
+      if (res.success && res.data) {
+        setMileage({ kind: 'data', ...res.data })
+      } else {
+        setMileage({ kind: 'error' })
+      }
+    }).catch(() => {
+      if (!cancelled) setMileage({ kind: 'error' })
     })
     return () => { cancelled = true }
   }, [friendId])
@@ -160,6 +185,51 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
                   </span>
                 )}
               </div>
+            </div>
+
+            {/* Harness Mileage — canonical user identity across LINE accounts */}
+            <div className="p-4">
+              <h4 className="text-[11px] font-medium text-gray-500 mb-2">マイル</h4>
+              {mileage.kind === 'loading' ? (
+                <div className="h-24 animate-pulse rounded-xl bg-gray-100" />
+              ) : mileage.kind === 'error' ? (
+                <p className="text-[11px] text-red-500 italic">マイルの取得に失敗しました</p>
+              ) : (
+                <div className="overflow-hidden rounded-xl bg-gradient-to-br from-gray-900 via-gray-700 to-amber-800 p-3.5 text-white shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] font-semibold text-white/70">{mileage.summary.programName}</p>
+                      <p className="mt-0.5 text-2xl font-bold tabular-nums">
+                        {mileage.summary.available.toLocaleString('ja-JP')}
+                        <span className="ml-1 text-[11px] font-semibold text-white/70">mile</span>
+                      </p>
+                      <p className="text-[10px] text-white/60">利用可能</p>
+                    </div>
+                    {mileage.summary.pending > 0 && (
+                      <span className="rounded-full bg-white/15 px-2 py-1 text-[10px] font-medium">
+                        確定待ち {mileage.summary.pending.toLocaleString('ja-JP')}
+                      </span>
+                    )}
+                  </div>
+
+                  {mileage.history.length > 0 ? (
+                    <div className="mt-3 space-y-1.5 border-t border-white/15 pt-2.5">
+                      {mileage.history.slice(0, 3).map((item) => (
+                        <div key={item.id} className="flex items-center justify-between gap-2 text-[10px]">
+                          <span className="min-w-0 truncate text-white/75">{item.reason}</span>
+                          <span className={`shrink-0 font-semibold tabular-nums ${item.amount > 0 ? 'text-amber-200' : 'text-white/80'}`}>
+                            {item.amount > 0 ? '+' : ''}{item.amount.toLocaleString('ja-JP')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 border-t border-white/15 pt-2.5 text-[10px] text-white/50">
+                      まだマイル履歴はありません
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Status / Operator */}

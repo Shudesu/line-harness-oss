@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import {
@@ -11,13 +11,13 @@ import {
   parseBundleStream,
   verifyBundleHashes,
   verifyBundleIntegrity,
-  executeD1Query,
   putWorkerScript,
   listWorkerBindings,
   deployPagesProject,
   materializeAdminFiles,
   findResidualPlaceholders,
-  isBenignSchemaErrorText,
+  applyD1Migrations,
+  uploadWorkerAssets,
   type CfApiCreds,
   type CurrentVersion,
   type ParsedBundle,
@@ -635,14 +635,22 @@ export async function runUpdate(
   // 4) Find upgrade target
   const upgrade = findLatestUpgrade(manifest, current.version);
   if (!upgrade) {
-    if (workerUrlRenamed) {
-      // The config now points at the new hostname, but the running
-      // Worker's WORKER_PUBLIC_URL binding and the Admin bundle's baked-in
-      // API origin still reference the dead one — redeploy the CURRENT
-      // release so everything points at the new URL.
+    const currentRelease = manifest.releases.find(
+      (release) => release.version === current.version,
+    );
+    if (workerUrlRenamed || currentRelease?.worker_assets_hash) {
+      // Reconcile the complete current release even when the Worker already
+      // carries the latest version stamp. A previous CLI run can fail after
+      // the atomic Worker+Assets deploy but before Admin/LIFF Pages finish;
+      // in that state a plain "already latest" return would make recovery
+      // impossible without a special flag. Re-deployment is idempotent.
       await redeployCurrentBundle({ repoDir, cfg, manifest, current });
       p.outro(
-        pc.green(`既に最新版です (v${current.version}) — 新しい Worker URL で再デプロイしました`),
+        pc.green(
+          workerUrlRenamed
+            ? `既に最新版です (v${current.version}) — 新しい Worker URL で再デプロイしました`
+            : `既に最新版です (v${current.version}) — 全構成を検証・再デプロイしました`,
+        ),
       );
       return;
     }
@@ -689,7 +697,7 @@ export async function runUpdate(
     s,
   });
 
-  // 9) Worker — preserve existing bindings + assets
+  // 9) Worker — deploy the release script and its matching Worker Assets
   await deployWorkerFromBundle(creds, cfg, bundle, s);
 
   // 10) Admin Pages — materialize the placeholder API origin first
@@ -724,7 +732,7 @@ export async function runUpdate(
   // 14) Refresh the local release artifact + record bundle mode so a later
   // manual `wrangler deploy` from the clone re-deploys THIS version instead
   // of silently downgrading to whatever was on disk. Best-effort.
-  writeLocalWorkerArtifact(repoDir, bundle);
+  writeLocalWorkerArtifacts(repoDir, bundle);
   persistBundleMode(repoDir, upgrade.version);
 
   p.outro(pc.green(`🎉 v${upgrade.version} にアップデート完了`));
@@ -845,32 +853,34 @@ async function applyMigrations(opts: {
   s: Spinner;
 }): Promise<void> {
   const { creds, d1DatabaseId, names, bundle, s } = opts;
-  for (const name of names) {
-    const sql = bundle.migrations.get(name);
-    if (!sql) {
-      p.cancel(`migration ${name} が bundle にありません`);
-      process.exit(1);
-    }
-    s.start(`Migration ${name} 実行中`);
-    try {
-      await executeD1Query({
-        creds,
-        databaseId: d1DatabaseId,
-        sql: sql.toString("utf-8"),
-      });
-      s.stop(`Migration ${name} 完了`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (isBenignSchemaErrorText(msg)) {
-        s.stop(pc.dim(`Migration ${name}: 適用済みのためスキップ`));
-        continue;
-      }
-      s.stop(pc.red(`Migration ${name} 失敗: ${msg}`));
-      p.cancel(
-        "先に手動で migration を確認してください。Worker/Pages はまだ更新されていません。",
-      );
-      process.exit(1);
-    }
+  try {
+    await applyD1Migrations({
+      creds,
+      databaseId: d1DatabaseId,
+      names,
+      migrations: bundle.migrations,
+      onMigrationStart(name) {
+        s.start(`Migration ${name} 確認中`);
+      },
+      onMigrationDone(result) {
+        if (result.alreadyApplied) {
+          s.stop(pc.dim(`Migration ${result.name}: 適用済み`));
+        } else if (result.skippedStatements > 0) {
+          s.stop(
+            `Migration ${result.name} 完了 (${result.executedStatements}文実行・${result.skippedStatements}文適用済み)`,
+          );
+        } else {
+          s.stop(`Migration ${result.name} 完了`);
+        }
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    s.stop(pc.red(`Migration 失敗: ${msg}`));
+    p.cancel(
+      "Worker/Pages はまだ更新されていません。DBを確認してから同じコマンドを再実行できます。",
+    );
+    process.exit(1);
   }
 }
 
@@ -911,6 +921,18 @@ async function deployWorkerFromBundle(
       creds,
       scriptName: cfg.workerName,
     });
+    if (bundle.workerAssetFiles.size === 0 && !cfg.liffProject) {
+      throw new Error(
+        "release bundle に Worker Assets がないため、安全に更新できません",
+      );
+    }
+    const assetsJwt = bundle.workerAssetFiles.size > 0
+      ? await uploadWorkerAssets({
+          creds,
+          scriptName: cfg.workerName,
+          files: bundle.workerAssetFiles,
+        })
+      : null;
     await putWorkerScript({
       creds,
       scriptName: cfg.workerName,
@@ -920,9 +942,15 @@ async function deployWorkerFromBundle(
         workerPublicUrl: cfg.workerPublicUrl,
       }),
       compatibilityFlags: WORKER_COMPATIBILITY_FLAGS,
-      // Bundle carries no Worker assets — keep the ones deployed at setup
-      // (they serve the LIFF SPA on worker-assets installs).
-      keepAssets: true,
+      ...(assetsJwt
+        ? {
+            assets: {
+              jwt: assetsJwt,
+              binding: "ASSETS",
+              runWorkerFirst: true,
+            },
+          }
+        : { keepAssets: true }),
     });
     s.stop("Worker デプロイ完了");
   } catch (e) {
@@ -999,13 +1027,28 @@ async function deployLiffFromBundle(
  * downgrading/unstamping the install. Best-effort: `repoDir` may be a bare
  * config directory (no clone), in which case this is a silent no-op.
  */
-function writeLocalWorkerArtifact(repoDir: string, bundle: ParsedBundle): void {
+function writeLocalWorkerArtifacts(repoDir: string, bundle: ParsedBundle): void {
   const workerDir = join(repoDir, "apps/worker");
   if (!existsSync(workerDir)) return;
   try {
     const artifactPath = join(workerDir, "dist/release/index.js");
     mkdirSync(dirname(artifactPath), { recursive: true });
     writeFileSync(artifactPath, bundle.workerJs);
+    if (bundle.workerAssetFiles.size > 0) {
+      const clientDir = join(workerDir, "dist/client");
+      rmSync(clientDir, { recursive: true, force: true });
+      for (const [relativePath, content] of bundle.workerAssetFiles) {
+        if (
+          relativePath.startsWith("/") ||
+          relativePath.split(/[\\/]/).includes("..")
+        ) {
+          throw new Error(`unsafe Worker Asset path: ${relativePath}`);
+        }
+        const outputPath = join(clientDir, relativePath);
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, content);
+      }
+    }
   } catch {
     // Non-critical — the next update/setup run rewrites it.
   }
@@ -1101,7 +1144,7 @@ async function redeployCurrentBundle(opts: {
     "再デプロイ自体は完了しています。workers.dev サブドメイン登録直後は DNS 反映に数分かかるため、数分待ってから同じコマンドを再実行してください",
   );
 
-  writeLocalWorkerArtifact(repoDir, bundle);
+  writeLocalWorkerArtifacts(repoDir, bundle);
   persistBundleMode(repoDir, current.version);
 }
 
@@ -1209,7 +1252,7 @@ async function runAdoption(opts: {
       : "導入自体は完了しています",
   );
 
-  writeLocalWorkerArtifact(repoDir, bundle);
+  writeLocalWorkerArtifacts(repoDir, bundle);
   persistBundleMode(repoDir, target.version);
 
   p.outro(

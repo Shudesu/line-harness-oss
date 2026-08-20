@@ -695,9 +695,8 @@ export default function ChatsPage() {
             ...c,
             lastMessageAt: now,
             status: 'in_progress' as const,
-            // 一覧の preview も即時更新する。incoming 優先ロジックで上書きされ得るが、
-            // 楽観 UI では「operator が今送った文面」が一瞬見えるのが期待動作。
-            // 次回 loadChats() で server 側の真の最新 (incoming 優先) に reconcile される。
+            // 一覧の preview も即時更新する。server 側も direction/source を問わず
+            // 実際の最新メッセージを返すため、次回 loadChats() 後も同じ表示になる。
             lastMessageContent: content,
             lastMessageDirection: 'outgoing' as const,
             lastMessageType: 'text' as const,

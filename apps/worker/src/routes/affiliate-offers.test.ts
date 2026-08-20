@@ -47,6 +47,8 @@ const OFFER_ROW = {
   name: 'キャンペーンA',
   description: '説明',
   reward_amount: 1000,
+  reward_miles: 500,
+  mileage_program_id: 'default',
   line_account_id: null,
   tag_id: null,
   scenario_id: null,
@@ -66,6 +68,7 @@ describe('POST /api/affiliate-offers', () => {
       name: 'キャンペーンA',
       description: '説明',
       rewardAmount: 1000,
+      rewardMiles: 500,
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { success: boolean; data: Record<string, unknown> };
@@ -74,11 +77,12 @@ describe('POST /api/affiliate-offers', () => {
       id: 'off-1',
       name: 'キャンペーンA',
       rewardAmount: 1000,
+      rewardMiles: 500,
       isActive: true,
     });
     expect(dbMocks.createAffiliateOffer).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ name: 'キャンペーンA', rewardAmount: 1000 }),
+      expect.objectContaining({ name: 'キャンペーンA', rewardAmount: 1000, rewardMiles: 500 }),
     );
   });
 
@@ -104,6 +108,12 @@ describe('POST /api/affiliate-offers', () => {
     dbMocks.createAffiliateOffer.mockResolvedValue({ ...OFFER_ROW, reward_amount: 0 });
     const res = await req('POST', '/api/affiliate-offers', { name: 'x' });
     expect(res.status).toBe(201);
+  });
+
+  it('rejects a negative rewardMiles with 400', async () => {
+    const res = await req('POST', '/api/affiliate-offers', { name: 'x', rewardMiles: -1 });
+    expect(res.status).toBe(400);
+    expect(dbMocks.createAffiliateOffer).not.toHaveBeenCalled();
   });
 });
 
@@ -170,5 +180,17 @@ describe('PUT /api/affiliate-offers/:id', () => {
   it('rejects a negative rewardAmount with 400', async () => {
     const res = await req('PUT', '/api/affiliate-offers/off-1', { rewardAmount: -5 });
     expect(res.status).toBe(400);
+  });
+
+  it('passes rewardMiles through on update', async () => {
+    dbMocks.getAffiliateOfferById.mockResolvedValue(OFFER_ROW);
+    dbMocks.updateAffiliateOffer.mockResolvedValue({ ...OFFER_ROW, reward_miles: 750 });
+    const res = await req('PUT', '/api/affiliate-offers/off-1', { rewardMiles: 750 });
+    expect(res.status).toBe(200);
+    expect(dbMocks.updateAffiliateOffer).toHaveBeenCalledWith(
+      expect.anything(),
+      'off-1',
+      expect.objectContaining({ reward_miles: 750 }),
+    );
   });
 });

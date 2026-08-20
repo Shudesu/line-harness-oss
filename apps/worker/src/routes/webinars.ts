@@ -27,6 +27,7 @@ import {
   upsertWebinarViewer,
   updateWebinarViewerPosition,
   recordWebinarCtaClick,
+  recordWebinarFunnelEvent,
   insertWebinarUserComment,
   countSessionUserComments,
   getWebinarUserComments,
@@ -35,6 +36,7 @@ import {
   getWebinarParticipantStats,
   getWebinarAnalyticsSummary,
   getWebinarDailyStats,
+  getWebinarFormFunnelStats,
   getFriendByLineUserId,
   getFriendByLineUserIdForAccount,
   getFormById,
@@ -42,13 +44,23 @@ import {
   upsertWebinarRegistration,
   getUpcomingWebinarRegistration,
   getWebinarRegistration,
+  recordWebinarPickerOpen,
 } from '@line-crm/db';
 import { verifyCallerLineUserId } from '../services/liff-auth.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import { resolveSession, parseScheduleRules, upcomingSessions } from '../services/webinar-schedule.js';
 import { sendWebinarRegistrationConfirmation } from '../services/webinar-reminders.js';
 import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
+import {
+  bookWebinarConsultation,
+  getWebinarConsultationAvailability,
+  WebinarConsultationError,
+} from '../services/webinar-consultation-booking.js';
 import { signWebinarToken, verifyWebinarToken } from '../lib/webinar-token.js';
+import {
+  awardWebinarCtaMileage,
+  awardWebinarPositionMileage,
+} from '../services/webinar-mileage.js';
 import type { Env } from '../index.js';
 
 const webinarRoutes = new Hono<Env>();
@@ -63,6 +75,15 @@ const CURRENT_SESSION_JOIN_GRACE_SECONDS = 5 * 60;
 // と視聴者コメントが動く。管理画面での編集余地を持たせて負方向は 1h まで許容。
 const WAITING_ROOM_SECONDS = 600;
 const COMMENT_MIN_AT_SECONDS = -3600;
+const FUNNEL_EVENT_TYPES = new Set([
+  'cta_impression',
+  'form_open',
+  'form_start',
+  'field_complete',
+  'submit_attempt',
+  'submit_success',
+  'submit_error',
+]);
 
 function nowEpoch(): number {
   return Math.floor(Date.now() / 1000);
@@ -214,6 +235,9 @@ webinarRoutes.get('/api/liff/webinars/:slug', async (c) => {
       // 30分間隔・24時間開催の1日分。クライアントは直近6件から段階表示し、
       // 48件を一度に並べて離脱を招かない。
       const upcoming = upcomingSessions(rules, webinar.duration_seconds, now, 48);
+      if (!reg && upcoming.length > 0) {
+        await recordWebinarPickerOpen(c.env.DB, webinar.id, auth.friendId);
+      }
       return c.json({
         live: false,
         title: webinar.title,
@@ -237,6 +261,9 @@ webinarRoutes.get('/api/liff/webinars/:slug', async (c) => {
       const bookable = withinJoinGrace
         ? [session.sessionStartAt!, ...liveUpcoming].slice(0, 48)
         : liveUpcoming;
+      if (!liveReg && bookable.length > 0) {
+        await recordWebinarPickerOpen(c.env.DB, webinar.id, auth.friendId);
+      }
       return c.json({
         live: false,
         title: webinar.title,
@@ -316,6 +343,13 @@ webinarRoutes.post('/api/liff/webinars/:slug/heartbeat', async (c) => {
     await updateWebinarViewerPosition(
       c.env.DB, loaded.webinar.id, auth.friendId, sessionStartAt, positionSeconds,
     );
+    c.executionCtx.waitUntil(awardWebinarPositionMileage(c.env.DB, {
+      webinarId: loaded.webinar.id,
+      friendId: auth.friendId,
+      sessionStartAt,
+      positionSeconds,
+      durationSeconds: loaded.webinar.duration_seconds,
+    }));
     return c.json({ ok: true });
   } catch (err) {
     console.error('POST heartbeat error:', err);
@@ -407,24 +441,29 @@ webinarRoutes.post('/api/liff/webinars/:slug/register', async (c) => {
     ) {
       return c.json({ error: 'invalid_session' }, 400);
     }
-    await upsertWebinarRegistration(c.env.DB, webinar.id, auth.friendId, sessionStartAt);
-    const liffMatch = /liff\.line\.me\/([^/?]+)/.exec(c.env.LIFF_URL ?? '');
-    c.executionCtx.waitUntil(
-      sendWebinarRegistrationConfirmation(
-        c.env.DB,
-        webinar,
-        auth.friendId,
-        sessionStartAt,
-        {
-          proxyBaseUrl: new URL(c.req.url).origin,
-          defaultAccessToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
-          defaultLiffId: liffMatch?.[1] ?? null,
-          proxyDispatch: (request) =>
-            dispatchLineProxyLocally(request, c.env, c.executionCtx),
-        },
-      ),
+    const created = await upsertWebinarRegistration(
+      c.env.DB, webinar.id, auth.friendId, sessionStartAt,
     );
-    return c.json({ ok: true, sessionStartAt });
+    // LIFF の二重タップや通信再試行でも、同一予約の受付確認は1通だけ送る。
+    if (created) {
+      const liffMatch = /liff\.line\.me\/([^/?]+)/.exec(c.env.LIFF_URL ?? '');
+      c.executionCtx.waitUntil(
+        sendWebinarRegistrationConfirmation(
+          c.env.DB,
+          webinar,
+          auth.friendId,
+          sessionStartAt,
+          {
+            proxyBaseUrl: new URL(c.req.url).origin,
+            defaultAccessToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
+            defaultLiffId: liffMatch?.[1] ?? null,
+            proxyDispatch: (request) =>
+              dispatchLineProxyLocally(request, c.env, c.executionCtx),
+          },
+        ),
+      );
+    }
+    return c.json({ ok: true, sessionStartAt, created });
   } catch (err) {
     console.error('POST webinar register error:', err);
     return c.json({ error: 'internal_error' }, 500);
@@ -437,11 +476,32 @@ webinarRoutes.post('/api/liff/webinars/:slug/cta-click', async (c) => {
     if (auth instanceof Response) return auth;
     const loaded = { webinar: auth.webinar };
 
-    const body = await c.req.json<{ sessionStartAt?: unknown }>();
+    const body = await c.req.json<{ sessionStartAt?: unknown; ctaId?: unknown }>();
     const sessionStartAt = Number(body.sessionStartAt);
+    const ctaId = typeof body.ctaId === 'string' ? body.ctaId.slice(0, 128) : '';
     if (!Number.isFinite(sessionStartAt)) return c.json({ error: 'invalid_body' }, 422);
 
+    if (ctaId) {
+      const ctas = await getWebinarCtas(c.env.DB, loaded.webinar.id);
+      if (!ctas.some((cta) => cta.id === ctaId)) {
+        return c.json({ error: 'invalid_cta' }, 422);
+      }
+    }
+
     await recordWebinarCtaClick(c.env.DB, loaded.webinar.id, auth.friendId, sessionStartAt);
+    await recordWebinarFunnelEvent(c.env.DB, {
+      webinarId: loaded.webinar.id,
+      friendId: auth.friendId,
+      sessionStartAt,
+      eventType: 'cta_click',
+      ctaId,
+    });
+    c.executionCtx.waitUntil(awardWebinarCtaMileage(c.env.DB, {
+      webinarId: loaded.webinar.id,
+      friendId: auth.friendId,
+      sessionStartAt,
+      ctaId,
+    }));
     if (loaded.webinar.tag_on_cta_click) {
       c.executionCtx.waitUntil(
         Promise.resolve(
@@ -455,6 +515,125 @@ webinarRoutes.post('/api/liff/webinars/:slug/cta-click', async (c) => {
   } catch (err) {
     console.error('POST cta-click error:', err);
     return c.json({ error: 'internal_error' }, 500);
+  }
+});
+
+// CTA表示→フォーム入力→送信の途中離脱を段階計測する。
+// 同一 friend・同一回・同一段階はDB側の一意制約で1件にまとめる。
+webinarRoutes.post('/api/liff/webinars/:slug/funnel-event', async (c) => {
+  try {
+    const auth = await resolveWebinarCaller(c, c.req.param('slug'));
+    if (auth instanceof Response) return auth;
+    const body = await c.req.json<{
+      sessionStartAt?: unknown;
+      eventType?: unknown;
+      ctaId?: unknown;
+      formId?: unknown;
+      fieldName?: unknown;
+    }>();
+    const sessionStartAt = Number(body.sessionStartAt);
+    const eventType = typeof body.eventType === 'string' ? body.eventType : '';
+    const ctaId = typeof body.ctaId === 'string' ? body.ctaId.slice(0, 128) : '';
+    const formId = typeof body.formId === 'string' ? body.formId.slice(0, 128) : '';
+    const fieldName = typeof body.fieldName === 'string' ? body.fieldName.slice(0, 64) : '';
+    if (!Number.isInteger(sessionStartAt) || !FUNNEL_EVENT_TYPES.has(eventType)) {
+      return c.json({ error: 'invalid_body' }, 422);
+    }
+    if (fieldName && !/^[A-Za-z0-9_]+$/.test(fieldName)) {
+      return c.json({ error: 'invalid_field_name' }, 422);
+    }
+    const registration = await getWebinarRegistration(
+      c.env.DB, auth.webinar.id, auth.friendId, sessionStartAt,
+    );
+    if (!registration) return c.json({ error: 'not_registered' }, 409);
+
+    const ctas = await getWebinarCtas(c.env.DB, auth.webinar.id);
+    if (ctaId && !ctas.some((cta) => cta.id === ctaId)) {
+      return c.json({ error: 'invalid_cta' }, 422);
+    }
+    if (formId && !ctas.some((cta) => cta.form_id === formId)) {
+      return c.json({ error: 'invalid_form' }, 422);
+    }
+
+    await recordWebinarFunnelEvent(c.env.DB, {
+      webinarId: auth.webinar.id,
+      friendId: auth.friendId,
+      sessionStartAt,
+      eventType: eventType as Parameters<typeof recordWebinarFunnelEvent>[1]['eventType'],
+      ctaId,
+      formId,
+      fieldName,
+    });
+    return c.json({ ok: true });
+  } catch (err) {
+    console.error('POST funnel-event error:', err);
+    return c.json({ error: 'internal_error' }, 500);
+  }
+});
+
+// ライブCTAのフォーム送信後、その画面を離れずに個別相談の空き枠を表示する。
+// 予約メニューは webinar_followup_configs.booking_menu_id を唯一の権威とし、
+// URL/body から任意の menu/staff を指定させない。
+webinarRoutes.get('/api/liff/webinars/:slug/consultation-slots', async (c) => {
+  try {
+    const auth = await resolveWebinarCaller(c, c.req.param('slug'));
+    if (auth instanceof Response) return auth;
+    const data = await getWebinarConsultationAvailability(c.env.DB, {
+      webinarId: auth.webinar.id,
+      accountId: auth.webinar.account_id,
+      friendId: auth.friendId,
+      now: new Date(),
+      credentials: {
+        email: c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        privateKey: c.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+        oauthClientId: c.env.GOOGLE_OAUTH_CLIENT_ID,
+        oauthClientSecret: c.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      },
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    if (error instanceof WebinarConsultationError) {
+      return c.json({ ok: false, error: error.code }, error.status);
+    }
+    console.error('GET webinar consultation slots error:', error);
+    return c.json({ ok: false, error: 'internal_error' }, 500);
+  }
+});
+
+// 空き枠をサーバー側で再検証し、即時確定→Google Meet発行→相談リマインド登録
+// →LINE確定通知まで一括処理する。Google接続/Meet発行が失敗した場合は、内部予約を
+// cancelled に戻して「日程だけ確定・Meetなし」の中途半端な状態を残さない。
+webinarRoutes.post('/api/liff/webinars/:slug/consultation-book', async (c) => {
+  try {
+    const auth = await resolveWebinarCaller(c, c.req.param('slug'));
+    if (auth instanceof Response) return auth;
+    const body = await c.req.json<{ startsAt?: unknown }>();
+    if (typeof body.startsAt !== 'string') {
+      return c.json({ ok: false, error: 'invalid_starts_at' }, 422);
+    }
+    const data = await bookWebinarConsultation(c.env.DB, {
+      webinarId: auth.webinar.id,
+      webinarTitle: auth.webinar.title,
+      accountId: auth.webinar.account_id,
+      friendId: auth.friendId,
+      startsAt: body.startsAt,
+      now: new Date(),
+      credentials: {
+        email: c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        privateKey: c.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+        oauthClientId: c.env.GOOGLE_OAUTH_CLIENT_ID,
+        oauthClientSecret: c.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      },
+      proxyBaseUrl: new URL(c.req.url).origin,
+      proxyDispatch: (request) => dispatchLineProxyLocally(request, c.env, c.executionCtx),
+    });
+    return c.json({ ok: true, data }, data.created ? 201 : 200);
+  } catch (error) {
+    if (error instanceof WebinarConsultationError) {
+      return c.json({ ok: false, error: error.code }, error.status);
+    }
+    console.error('POST webinar consultation book error:', error);
+    return c.json({ ok: false, error: 'internal_error' }, 500);
   }
 });
 
@@ -843,12 +1022,13 @@ webinarRoutes.get('/api/webinars/:id/analytics', async (c) => {
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     const completionThreshold = Math.max(1, Math.floor(row.duration_seconds * 0.9));
-    const [sessions, dropoff, participants, summary, daily] = await Promise.all([
+    const [sessions, dropoff, participants, summary, daily, formFunnel] = await Promise.all([
       getWebinarSessionStats(c.env.DB, id),
       getWebinarDropoff(c.env.DB, id),
       getWebinarParticipantStats(c.env.DB, id, 200),
       getWebinarAnalyticsSummary(c.env.DB, id, completionThreshold),
       getWebinarDailyStats(c.env.DB, id),
+      getWebinarFormFunnelStats(c.env.DB, id),
     ]);
     return c.json({
       success: true,
@@ -878,7 +1058,9 @@ webinarRoutes.get('/api/webinars/:id/analytics', async (c) => {
           sessions: p.sessions,
           firstJoinedAt: p.first_joined_at,
           latestJoinedAt: p.latest_joined_at,
-          maxWatchedSeconds: p.max_watched_seconds,
+          latestWatchedSeconds: p.latest_watched_seconds,
+          // デプロイ中に旧管理画面が残っていても NaN にしない互換フィールド。
+          maxWatchedSeconds: p.latest_watched_seconds,
           ctaClickedAt: p.cta_clicked_at,
           registered: Boolean(p.registered),
           formSubmittedAt: p.form_submitted_at,
@@ -890,6 +1072,19 @@ webinarRoutes.get('/api/webinars/:id/analytics', async (c) => {
           ctaClicks: s.cta_clicks,
         })),
         dropoff: dropoff.map((d) => ({ bucketStart: d.bucket_start, viewers: d.viewers })),
+        formFunnel: {
+          ctaImpressions: formFunnel.cta_impressions,
+          ctaClicks: formFunnel.cta_clicks,
+          formOpens: formFunnel.form_opens,
+          formStarts: formFunnel.form_starts,
+          submitAttempts: formFunnel.submit_attempts,
+          submitSuccesses: formFunnel.submit_successes,
+          submitErrors: formFunnel.submit_errors,
+          fieldCompletions: formFunnel.field_completions.map((field) => ({
+            fieldName: field.field_name,
+            users: field.users,
+          })),
+        },
       },
     });
   } catch (err) {

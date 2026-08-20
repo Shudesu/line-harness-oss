@@ -18,6 +18,7 @@ import { isLinkPreviewBot } from '../lib/og-bot.js';
 import { buildOgHtml } from '../lib/og-html.js';
 import { resolveOgForTrackedLink } from '../lib/og-resolver.js';
 import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const trackedLinks = new Hono<Env>();
 
@@ -339,7 +340,19 @@ trackedLinks.get('/t/:linkId', async (c) => {
     (async () => {
       try {
         // Record the click (link.id, not the raw param — it may be a short code)
-        await recordLinkClick(c.env.DB, link.id, friendId);
+        const click = await recordLinkClick(c.env.DB, link.id, friendId);
+
+        if (friendId) {
+          await awardActivityMileage(c.env.DB, {
+            eventType: 'link_clicked',
+            source: 'tracked_link',
+            sourceEventId: click.id,
+            friendId,
+            subjectKey: link.id,
+            metadata: { trackedLinkId: link.id, linkName: link.name },
+            occurredAt: click.clicked_at,
+          });
+        }
 
         // Run automatic actions if a friend is identified
         if (friendId) {

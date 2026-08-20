@@ -181,9 +181,9 @@ describe('deployPagesProject', () => {
 
     const [, uploadInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     const uploadBody = JSON.parse(uploadInit.body as string);
-    expect(Array.isArray(uploadBody.payload)).toBe(true);
-    expect(uploadBody.payload).toHaveLength(1);
-    const entry = uploadBody.payload[0];
+    expect(Array.isArray(uploadBody)).toBe(true);
+    expect(uploadBody).toHaveLength(1);
+    const entry = uploadBody[0];
     expect(entry.key).toBe(hash);
     expect(entry.value).toBe(content.toString('base64'));
     expect(entry.base64).toBe(true);
@@ -224,8 +224,8 @@ describe('deployPagesProject', () => {
 
     const [, firstUpload] = fetchMock.mock.calls[2] as [string, RequestInit];
     const [, secondUpload] = fetchMock.mock.calls[3] as [string, RequestInit];
-    expect(JSON.parse(firstUpload.body as string).payload).toHaveLength(50);
-    expect(JSON.parse(secondUpload.body as string).payload).toHaveLength(1);
+    expect(JSON.parse(firstUpload.body as string)).toHaveLength(50);
+    expect(JSON.parse(secondUpload.body as string)).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 

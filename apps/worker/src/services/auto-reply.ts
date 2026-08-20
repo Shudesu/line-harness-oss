@@ -1,7 +1,8 @@
-import type { LineClient } from '@line-crm/line-sdk';
-import { getTemplateById } from '@line-crm/db';
+import type { LineClient, Message } from '@line-crm/line-sdk';
+import { getLineAccountById, getTemplateById } from '@line-crm/db';
 import type { AutoReply, Friend } from '@line-crm/db';
 import { logOutgoingMessage } from './event-bus.js';
+import { renderBroadcastMessageContent } from './render-message.js';
 import {
   buildMessage,
   expandVariables,
@@ -45,6 +46,31 @@ export interface MatchAndReplyResult {
   replyTokenConsumed: boolean;
 }
 
+export type AutoReplySender = (replyToken: string, messages: Message[]) => Promise<void>;
+
+function liffIdFromUrl(liffUrl?: string): string | null {
+  if (!liffUrl) return null;
+  try {
+    const url = new URL(liffUrl);
+    if (url.hostname !== 'liff.line.me') return null;
+    return url.pathname.split('/').filter(Boolean)[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAutoReplyLiffId(
+  db: D1Database,
+  lineAccountId: string | null,
+  fallbackLiffUrl?: string,
+): Promise<string | null> {
+  if (lineAccountId) {
+    const account = await getLineAccountById(db, lineAccountId);
+    return account?.is_active && account.liff_id ? account.liff_id : null;
+  }
+  return liffIdFromUrl(fallbackLiffUrl);
+}
+
 /**
  * incomingText を auto_replies (このアカウントのルール + グローバルルール) に
  * マッチさせ、最初にマッチしたルールで replyMessage を送って messages_log に
@@ -64,15 +90,24 @@ export async function matchAndReply(
   friend: Friend,
   incomingText: string,
   replyToken: string,
-  opts: { lineAccountId?: string | null; workerUrl?: string; logContext?: string } = {},
+  opts: {
+    lineAccountId?: string | null;
+    workerUrl?: string;
+    liffUrl?: string;
+    logContext?: string;
+    replyMessage?: AutoReplySender;
+  } = {},
 ): Promise<MatchAndReplyResult> {
-  const { lineAccountId = null, workerUrl, logContext } = opts;
+  const { lineAccountId = null, workerUrl, liffUrl, logContext, replyMessage } = opts;
 
   // グローバルルール (line_account_id IS NULL) + このアカウントのルール。
   // lineAccountId が null のときは `= NULL` が偽になるのでグローバルのみ残る。
   const autoReplies = await db
     .prepare(
-      `SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?) ORDER BY created_at ASC`,
+      `SELECT * FROM auto_replies
+        WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?)
+        ORDER BY CASE WHEN id = 'builtin-mileage-wallet-keyword' THEN 0 ELSE 1 END,
+                 created_at ASC`,
     )
     .bind(lineAccountId)
     .all<AutoReply>();
@@ -85,14 +120,29 @@ export async function matchAndReply(
   try {
     const resolvedMeta = await resolveMetadata(db, friend);
     const resolved = await resolveAutoReplyContent(db, rule);
-    const expandedContent = expandVariables(
+    let expandedContent = expandVariables(
       resolved.content,
       { ...friend, metadata: resolvedMeta },
       workerUrl,
       resolved.messageType,
     );
+    if (/\{\{\s*liff_id\s*\}\}/.test(expandedContent)) {
+      const liffId = await resolveAutoReplyLiffId(db, lineAccountId, liffUrl);
+      if (!liffId) {
+        throw new Error('LIFF ID is not configured for the matched LINE account');
+      }
+      expandedContent = renderBroadcastMessageContent(
+        resolved.messageType,
+        expandedContent,
+        { liffId },
+      );
+    }
     const replyMsg = buildMessage(resolved.messageType, expandedContent);
-    await lineClient.replyMessage(replyToken, [replyMsg]);
+    if (replyMessage) {
+      await replyMessage(replyToken, [replyMsg]);
+    } else {
+      await lineClient.replyMessage(replyToken, [replyMsg]);
+    }
     replyTokenConsumed = true;
 
     // 送信ログ（replyMessage = 無料）— derive content from the built reply

@@ -11,6 +11,8 @@ import {
   getLineAccountById,
   getAffiliateLinkByRefCode,
   incrementAffiliateLinkClick,
+  enqueueFollowingMileageMilestones,
+  processPendingMileageEvents,
 } from '@line-crm/db';
 import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts, processQueuedBroadcasts } from './services/broadcast.js';
@@ -21,6 +23,7 @@ import { processInsightFetch } from './services/insight-fetcher.js';
 import { processDueReminders } from './services/booking-reminders.js';
 import { runExpirer } from './services/booking-expirer.js';
 import { processDueEventReminders } from './services/event-booking-reminders.js';
+import { processDueMeetConsultationReminders } from './services/meet-consultation-reminders.js';
 import { runEventBookingExpirer } from './services/event-booking-expirer.js';
 import { sendEventBookingNotification } from './services/event-booking-notifier.js';
 import { sendBookingNotification } from './services/booking-notifier.js';
@@ -46,6 +49,7 @@ import { affiliateSelfRoutes } from './routes/affiliate-self.js';
 // Round 3 ルート
 import { webhooks } from './routes/webhooks.js';
 import { calendar } from './routes/calendar.js';
+import { meetConsultations } from './routes/meet-consultations.js';
 import { reminders } from './routes/reminders.js';
 import { scoring } from './routes/scoring.js';
 import { templates } from './routes/templates.js';
@@ -80,10 +84,14 @@ import { profileRefresh } from './routes/profile-refresh.js';
 import { richMenuGroups } from './routes/rich-menu-groups.js';
 import { lineProxy } from './routes/line-proxy.js';
 import { webinarRoutes } from './routes/webinars.js';
+import { instagramEngagement } from './routes/instagram-engagement.js';
 import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
+import { adminSso } from './routes/admin-sso.js';
+import { mediaInquiries } from './routes/media-inquiries.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
 import { buildOgHtml } from './lib/og-html.js';
+import { loginUnconfiguredPage } from './lib/login-unconfigured.js';
 import {
   resolveOgForEvent,
   resolveOgForForm,
@@ -108,6 +116,11 @@ export type Env = {
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
     ADMIN_ALLOW_CROSS_SITE?: string; // 'true' opts into SameSite=None cross-site cookies
+    // External SSO into the admin session (GET /admin/sso). Optional: when the
+    // secret is unset the route answers like any unregistered path, so the
+    // feature is entirely absent unless an operator opts in. ≥32 chars, shared
+    // with the token issuer. See routes/admin-sso.ts and docs/ADMIN-AUTH.md.
+    ADMIN_SSO_SECRET?: string;
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
@@ -127,6 +140,14 @@ export type Env = {
     WORKER_PUBLIC_URL?: string;
     ADMIN_PUBLIC_URL?: string;
     LIFF_PUBLIC_URL?: string;
+    // Google Calendar booking sync. Store the private key as a Worker secret.
+    // Calendar owners only enter/share their Google Calendar ID in admin UI.
+    GOOGLE_SERVICE_ACCOUNT_EMAIL?: string;
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?: string;
+    // Keyless Google Calendar connection. User grants access once via OAuth;
+    // the Worker keeps a refresh token and never needs a service-account key.
+    GOOGLE_OAUTH_CLIENT_ID?: string;
+    GOOGLE_OAUTH_CLIENT_SECRET?: string;
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -134,6 +155,21 @@ export type Env = {
 };
 
 const app = new Hono<Env>();
+
+// Public form endpoint used by the-harness.com. Keep this allowlist separate
+// from credentialed admin CORS so the media origin gains access to this route
+// only, never to the admin API surface.
+app.use('/api/public/media-inquiries', cors({
+  origin: (origin) => [
+    'https://the-harness.com',
+    'https://www.the-harness.com',
+    'http://localhost:4321',
+    'http://127.0.0.1:4321',
+  ].includes(origin) ? origin : '',
+  allowMethods: ['POST', 'OPTIONS'],
+  allowHeaders: ['Content-Type'],
+  maxAge: 600,
+}));
 
 // CORS — credentialed cookie auth cannot use a wildcard origin. Reflect only
 // same-origin requests and origins on the ADMIN_ORIGIN allowlist; everything
@@ -170,10 +206,12 @@ app.route('/', inbox);
 app.route('/', openapi);
 app.route('/', liffRoutes);
 app.route('/', affiliateSelfRoutes);
+app.route('/', mediaInquiries);
 
 // Mount route groups — Round 3
 app.route('/', webhooks);
 app.route('/', calendar);
+app.route('/', meetConsultations);
 app.route('/', reminders);
 app.route('/', scoring);
 app.route('/', templates);
@@ -203,6 +241,7 @@ app.route('/', dedupPreview);
 app.route('/', profileRefresh);
 app.route('/', richMenuGroups);
 app.route('/', webinarRoutes);
+app.route('/', instagramEngagement);
 // LINE Messaging API 互換プロキシ — 外部エージェントの直接送信を messages_log に残す
 app.route('/', lineProxy);
 
@@ -215,6 +254,10 @@ app.route('/admin', adminVersion);
 // Phase 5 Task 18 — self-update endpoints guarded by x-admin-api-key.
 // authMiddleware skips non-/api/ paths so this router owns its own auth gate.
 app.route('/admin/update', adminUpdate);
+// External SSO — establishes the admin session from a signed, single-use token.
+// Inert (404) unless ADMIN_SSO_SECRET is configured. authMiddleware skips
+// non-/api/ paths, so this route owns its own verification.
+app.route('/', adminSso);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {
@@ -305,6 +348,13 @@ app.get('/r/:ref', async (c) => {
         if (pool.liff_id) liffUrl = `https://liff.line.me/${pool.liff_id}`;
       }
     }
+  }
+
+  // L Harness Cloud tenants are provisioned without LIFF config. When neither
+  // env LIFF_URL nor the resolved pool/affiliate account provides one,
+  // `liffUrl.match()` below throws on undefined (500) — return setup guidance.
+  if (!liffUrl) {
+    return c.html(loginUnconfiguredPage(), 503);
   }
 
   // Build LIFF URL with params (direct link for Universal Link)
@@ -931,6 +981,22 @@ async function scheduled(
     console.error('event-booking-reminders error:', e);
   }
 
+  // 外部Google Calendarで確定したMeet個別相談。前日・1時間前のLINE通知を
+  // D1で管理し、送信は必ずLINE Harness Proxyを通す。
+  try {
+    const result = await processDueMeetConsultationReminders(env.DB, {
+      now: new Date(),
+      proxyBaseUrl:
+        env.WORKER_PUBLIC_URL ?? 'https://your-worker.your-subdomain.workers.dev',
+      proxyDispatch: (request) => Promise.resolve(lineProxy.fetch(request, env, ctx)),
+    });
+    if (result.sent + result.failed > 0) {
+      console.log(`[meet-consultation-reminders] sent=${result.sent} failed=${result.failed}`);
+    }
+  } catch (e) {
+    console.error('meet-consultation-reminders error:', e);
+  }
+
   // ウェビナー予約リマインド (セッション選択メニュー)。時刻厳守・軽量なので
   // booking 系リマインドと同じく重いジョブより先に実行する。
   try {
@@ -953,6 +1019,25 @@ async function scheduled(
     console.error('webinar-reminders error:', e);
   }
 
+  // 予約画面の未予約、予約後の未視聴、フォーム途中離脱、回答後の相談未予約を
+  // 段階別に自動追客する。対象は followup config で有効化したウェビナーだけ。
+  try {
+    const { processWebinarFollowups } = await import('./services/webinar-followups.js');
+    const liffMatch = /liff\.line\.me\/([^/?]+)/.exec(env.LIFF_URL ?? '');
+    const result = await processWebinarFollowups(env.DB, {
+      proxyBaseUrl:
+        env.WORKER_PUBLIC_URL ?? 'https://your-worker.your-subdomain.workers.dev',
+      defaultAccessToken: env.LINE_CHANNEL_ACCESS_TOKEN,
+      defaultLiffId: liffMatch?.[1] ?? null,
+      proxyDispatch: (request) => Promise.resolve(lineProxy.fetch(request, env, ctx)),
+    });
+    if (result.sent + result.failed > 0) {
+      console.log(`[webinar-followups] sent=${result.sent} failed=${result.failed}`);
+    }
+  } catch (e) {
+    console.error('webinar-followups error:', e);
+  }
+
   // Phase 2: 配信系と定期ジョブを並列実行する。processScheduledBroadcasts は tag/all の
   // inline 送信を含み時間がかかり得るため、queue 処理と並列にして互いを block しない
   // (barrier 化すると長い scheduled 送信が queue 処理を待たせる)。scheduled dedup は
@@ -967,6 +1052,24 @@ async function scheduled(
   jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL));
   jobs.push(checkAccountHealth(env.DB));
 
+  // Mileage is an eventually-consistent projection. Reuse the existing
+  // minute cron invocation, but drain only every five minutes and at most 100
+  // actions per batch so it adds no extra Cron Trigger and keeps D1 load flat.
+  if (
+    event.cron === '* * * * *'
+    && new Date(event.scheduledTime).getUTCMinutes() % 5 === 0
+  ) {
+    jobs.push(
+      processPendingMileageEvents(env.DB, { limit: 100 }).then((result) => {
+        if (result.claimed > 0) {
+          console.log(
+            `[mileage-queue] processed=${result.processed} failed=${result.failed} granted=${result.granted}`,
+          );
+        }
+      }),
+    );
+  }
+
   await Promise.allSettled(jobs);
 
   // Fetch broadcast insights (runs daily, self-throttled)
@@ -978,6 +1081,19 @@ async function scheduled(
 
   // Booking expirer — runs only on the 6h cron tick.
   if (event.cron === '0 */6 * * *') {
+    try {
+      const result = await enqueueFollowingMileageMilestones(env.DB, {
+        limitPerMilestone: 1000,
+      });
+      if (result.eventsCreated + result.queued > 0) {
+        console.log(
+          `[following-mileage] events=${result.eventsCreated} queued=${result.queued}`,
+        );
+      }
+    } catch (e) {
+      console.error('following-mileage error:', e);
+    }
+
     try {
       const result = await runExpirer(env.DB, {
         now: new Date(),

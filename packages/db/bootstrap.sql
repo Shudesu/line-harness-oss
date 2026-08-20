@@ -88,6 +88,8 @@ CREATE TABLE affiliate_offers (
   name            TEXT NOT NULL,
   description     TEXT,
   reward_amount   INTEGER NOT NULL DEFAULT 0,
+  reward_miles    INTEGER NOT NULL DEFAULT 0,
+  mileage_program_id TEXT NOT NULL DEFAULT 'default' REFERENCES mileage_programs (id),
   line_account_id TEXT REFERENCES line_accounts (id),
   tag_id          TEXT REFERENCES tags (id),
   scenario_id     TEXT REFERENCES scenarios (id),
@@ -275,6 +277,25 @@ CREATE TABLE conversion_points (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE engagement_events (
+  id                TEXT PRIMARY KEY,
+  program_id        TEXT NOT NULL REFERENCES mileage_programs(id),
+  idempotency_key   TEXT NOT NULL,
+  event_type        TEXT NOT NULL,
+  source            TEXT NOT NULL,
+  source_event_id   TEXT,
+  actor_user_id     TEXT REFERENCES users(id),
+  actor_friend_id   TEXT REFERENCES friends(id),
+  subject_user_id   TEXT REFERENCES users(id),
+  subject_friend_id TEXT REFERENCES friends(id),
+  identity_provider TEXT,
+  identity_subject  TEXT,
+  metadata          TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+  occurred_at       TEXT NOT NULL,
+  created_at        TEXT NOT NULL,
+  UNIQUE (program_id, idempotency_key)
+);
+
 CREATE TABLE entry_routes (
   id          TEXT PRIMARY KEY,
   ref_code    TEXT UNIQUE NOT NULL,
@@ -459,6 +480,11 @@ CREATE TABLE friends (
   score            INTEGER NOT NULL DEFAULT 0,
   last_ref_code    TEXT,
   last_ref_at      TEXT,
+  first_followed_at TEXT,
+  current_follow_started_at TEXT,
+  last_followed_at TEXT,
+  last_unfollowed_at TEXT,
+  unfollow_count   INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , ref_code TEXT, metadata TEXT NOT NULL DEFAULT '{}', line_account_id TEXT REFERENCES line_accounts(id), first_tracked_link_id TEXT REFERENCES tracked_links (id) ON DELETE SET NULL);
@@ -466,11 +492,15 @@ CREATE TABLE friends (
 CREATE TABLE google_calendar_connections (
   id            TEXT PRIMARY KEY,
   calendar_id   TEXT NOT NULL,
+  line_account_id TEXT,
+  staff_id      TEXT,
   access_token  TEXT,
   refresh_token TEXT,
   api_key       TEXT,
   auth_type     TEXT NOT NULL DEFAULT 'api_key',
   is_active     INTEGER NOT NULL DEFAULT 1,
+  last_verified_at TEXT,
+  last_error    TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
@@ -507,6 +537,67 @@ CREATE TABLE link_clicks (
   tracked_link_id TEXT NOT NULL REFERENCES tracked_links (id) ON DELETE CASCADE,
   friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL,
   clicked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE media_inquiries (
+  id TEXT PRIMARY KEY,
+  inquiry_type TEXT NOT NULL,
+  company_name TEXT NOT NULL,
+  contact_name TEXT NOT NULL,
+  department TEXT,
+  position TEXT,
+  decision_role TEXT,
+  email TEXT NOT NULL,
+  phone TEXT,
+  company_size TEXT,
+  current_tools TEXT,
+  line_friend_count TEXT,
+  budget TEXT,
+  timeframe TEXT,
+  challenge TEXT NOT NULL,
+  desired_outcome TEXT,
+  preferred_contact TEXT,
+  source_article TEXT,
+  source_url TEXT,
+  referrer TEXT,
+  utm_source TEXT,
+  utm_medium TEXT,
+  utm_campaign TEXT,
+  country TEXT,
+  cf_ray TEXT,
+  mail_status TEXT NOT NULL DEFAULT 'pending',
+  mail_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE meet_consultation_reminders (
+  id               TEXT PRIMARY KEY,
+  consultation_id  TEXT NOT NULL REFERENCES meet_consultations (id) ON DELETE CASCADE,
+  kind             TEXT NOT NULL CHECK (kind IN ('day_before', 'hour_before')),
+  scheduled_at     TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending', 'failed', 'sent', 'cancelled')),
+  retry_count      INTEGER NOT NULL DEFAULT 0,
+  sent_at          TEXT,
+  last_error       TEXT,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE (consultation_id, kind)
+);
+
+CREATE TABLE meet_consultations (
+  id                TEXT PRIMARY KEY,
+  external_event_id TEXT NOT NULL UNIQUE,
+  friend_id         TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
+  title             TEXT NOT NULL,
+  starts_at         TEXT NOT NULL,
+  ends_at           TEXT NOT NULL,
+  meet_url          TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'confirmed'
+                    CHECK (status IN ('confirmed', 'cancelled', 'completed')),
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE TABLE menus (
@@ -550,6 +641,69 @@ CREATE TABLE messages_log (
   source           TEXT,
   line_account_id  TEXT,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE mileage_event_queue (
+  engagement_event_id   TEXT PRIMARY KEY REFERENCES engagement_events(id) ON DELETE CASCADE,
+  status                TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending','processing','processed','failed')),
+  attempts              INTEGER NOT NULL DEFAULT 0,
+  available_at          TEXT NOT NULL,
+  processing_started_at TEXT,
+  processed_at          TEXT,
+  last_error            TEXT,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL
+);
+
+CREATE TABLE mileage_ledger (
+  id                    TEXT PRIMARY KEY,
+  program_id            TEXT NOT NULL REFERENCES mileage_programs(id),
+  beneficiary_user_id   TEXT REFERENCES users(id),
+  beneficiary_friend_id TEXT REFERENCES friends(id),
+  engagement_event_id   TEXT REFERENCES engagement_events(id),
+  mileage_rule_id       TEXT REFERENCES mileage_rules(id),
+  entry_type            TEXT NOT NULL
+                        CHECK (entry_type IN ('grant','reversal','spend','expiration','adjustment')),
+  status                TEXT NOT NULL DEFAULT 'available'
+                        CHECK (status IN ('pending','available','void')),
+  amount                INTEGER NOT NULL CHECK (amount != 0),
+  reason                TEXT NOT NULL,
+  source                TEXT NOT NULL,
+  source_event_id       TEXT,
+  idempotency_key       TEXT NOT NULL,
+  reverses_entry_id     TEXT REFERENCES mileage_ledger(id),
+  metadata              TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+  occurred_at           TEXT NOT NULL,
+  created_at            TEXT NOT NULL,
+  UNIQUE (program_id, idempotency_key)
+);
+
+CREATE TABLE mileage_programs (
+  id         TEXT PRIMARY KEY,
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'active'
+             CHECK (status IN ('active','paused','archived')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE mileage_rules (
+  id             TEXT PRIMARY KEY,
+  program_id     TEXT NOT NULL REFERENCES mileage_programs(id),
+  name           TEXT NOT NULL,
+  event_type     TEXT NOT NULL,
+  source         TEXT,
+  amount         INTEGER NOT NULL CHECK (amount > 0),
+  initial_status TEXT NOT NULL DEFAULT 'available'
+                 CHECK (initial_status IN ('pending','available')),
+  conditions     TEXT CHECK (conditions IS NULL OR json_valid(conditions)),
+  is_active      INTEGER NOT NULL DEFAULT 1,
+  valid_from     TEXT,
+  valid_until    TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
 );
 
 CREATE TABLE notification_rules (
@@ -653,6 +807,7 @@ CREATE TABLE rich_menu_groups (
   size               TEXT NOT NULL CHECK (size IN ('large','compact')),
   default_page_id    TEXT,
   is_default_for_all INTEGER NOT NULL DEFAULT 0,
+  selected           INTEGER NOT NULL DEFAULT 0,
   status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
   publishing_at      TEXT,
   created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
@@ -711,6 +866,11 @@ CREATE TABLE scoring_rules (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE sso_jti (
+  jti TEXT PRIMARY KEY,
+  exp INTEGER NOT NULL
+);
+
 CREATE TABLE staff (
   id                       TEXT PRIMARY KEY,
   line_account_id          TEXT NOT NULL,
@@ -726,6 +886,19 @@ CREATE TABLE staff (
   created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
+);
+
+CREATE TABLE staff_availability_rules (
+  id          TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  weekday     INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+  start_time  TEXT NOT NULL,
+  end_time    TEXT NOT NULL,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE (staff_id, weekday),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
 );
 
 CREATE TABLE staff_members (
@@ -774,10 +947,14 @@ CREATE TABLE stripe_events (
 );
 
 CREATE TABLE tags (
-  id         TEXT PRIMARY KEY,
-  name       TEXT UNIQUE NOT NULL,
-  color      TEXT NOT NULL DEFAULT '#3B82F6',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id                          TEXT PRIMARY KEY,
+  name                        TEXT UNIQUE NOT NULL,
+  color                       TEXT NOT NULL DEFAULT '#3B82F6',
+  mileage_reward              INTEGER NOT NULL DEFAULT 0 CHECK (mileage_reward >= 0),
+  referral_mileage_reward     INTEGER NOT NULL DEFAULT 0 CHECK (referral_mileage_reward >= 0),
+  mileage_multiplier_bps      INTEGER CHECK (mileage_multiplier_bps IS NULL OR mileage_multiplier_bps BETWEEN 1000 AND 100000),
+  mileage_multiplier_priority INTEGER NOT NULL DEFAULT 0,
+  created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE TABLE templates (
@@ -838,6 +1015,148 @@ CREATE TABLE users (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE webinar_comments (
+  id TEXT PRIMARY KEY,
+  webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  at_seconds INTEGER NOT NULL,
+  author_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE webinar_ctas (
+  id TEXT PRIMARY KEY,
+  webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  at_seconds INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('form', 'url')),
+  title TEXT NOT NULL,
+  body TEXT,
+  button_label TEXT NOT NULL,
+  auto_open INTEGER NOT NULL DEFAULT 0,
+  form_id TEXT REFERENCES forms(id),
+  url TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE webinar_followup_configs (
+  webinar_id          TEXT PRIMARY KEY REFERENCES webinars(id) ON DELETE CASCADE,
+  enabled_at          TEXT NOT NULL,
+  first_delay_minutes INTEGER NOT NULL DEFAULT 30,
+  second_delay_minutes INTEGER NOT NULL DEFAULT 1440,
+  is_active           INTEGER NOT NULL DEFAULT 1
+, stage_enabled_at TEXT, picker_delay_minutes INTEGER NOT NULL DEFAULT 30, no_show_delay_minutes INTEGER NOT NULL DEFAULT 30, booking_delay_minutes INTEGER NOT NULL DEFAULT 30, booking_second_delay_minutes INTEGER NOT NULL DEFAULT 1440, booking_menu_id TEXT, booking_url TEXT);
+
+CREATE TABLE webinar_followups (
+  id             TEXT PRIMARY KEY,
+  webinar_id     TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  friend_id      TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  kind           TEXT NOT NULL CHECK (kind IN ('after_30m', 'after_24h')),
+  retry_key      TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
+  sent_at        TEXT,
+  last_error     TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  UNIQUE (webinar_id, friend_id, kind)
+);
+
+CREATE TABLE webinar_funnel_events (
+  id               TEXT PRIMARY KEY,
+  webinar_id       TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  friend_id        TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  session_start_at INTEGER NOT NULL,
+  event_type       TEXT NOT NULL CHECK (event_type IN (
+    'cta_impression',
+    'cta_click',
+    'form_open',
+    'form_start',
+    'field_complete',
+    'submit_attempt',
+    'submit_success',
+    'submit_error'
+  )),
+  cta_id           TEXT NOT NULL DEFAULT '',
+  form_id          TEXT NOT NULL DEFAULT '',
+  field_name       TEXT NOT NULL DEFAULT '',
+  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE webinar_journey_followups (
+  id          TEXT PRIMARY KEY,
+  webinar_id  TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  friend_id   TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN (
+    'picker_no_registration',
+    'registered_no_show',
+    'submitted_no_booking_30m',
+    'submitted_no_booking_24h'
+  )),
+  retry_key   TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending'
+              CHECK (status IN ('pending', 'sent', 'failed', 'skipped')),
+  sent_at     TEXT,
+  last_error  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  UNIQUE (webinar_id, friend_id, kind)
+);
+
+CREATE TABLE webinar_picker_opens (
+  id              TEXT PRIMARY KEY,
+  webinar_id      TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  friend_id       TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  opened_at       TEXT NOT NULL,
+  UNIQUE (webinar_id, friend_id)
+);
+
+CREATE TABLE webinar_registrations (
+  id TEXT PRIMARY KEY,
+  webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  friend_id TEXT NOT NULL REFERENCES friends(id),
+  session_start_at INTEGER NOT NULL,
+  notified_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (webinar_id, friend_id, session_start_at)
+);
+
+CREATE TABLE webinar_user_comments (
+  id TEXT PRIMARY KEY,
+  webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  friend_id TEXT NOT NULL REFERENCES friends(id),
+  session_start_at INTEGER NOT NULL,
+  at_seconds INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE webinar_viewers (
+  id TEXT PRIMARY KEY,
+  webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
+  friend_id TEXT NOT NULL REFERENCES friends(id),
+  session_start_at INTEGER NOT NULL,
+  joined_at TEXT NOT NULL,
+  last_position_seconds INTEGER NOT NULL DEFAULT 0,
+  cta_clicked_at TEXT,
+  UNIQUE (webinar_id, friend_id, session_start_at)
+);
+
+CREATE TABLE webinars (
+  id TEXT PRIMARY KEY,
+  account_id TEXT REFERENCES line_accounts(id),
+  title TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','archived')),
+  video_prefix TEXT,
+  duration_seconds INTEGER NOT NULL DEFAULT 0,
+  schedule_json TEXT NOT NULL DEFAULT '[]',
+  cta_json TEXT,
+  tag_on_attend TEXT,
+  tag_on_cta_click TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX idx_ad_conversion_logs_friend ON ad_conversion_logs (friend_id);
 
 CREATE INDEX idx_ad_conversion_logs_platform ON ad_conversion_logs (ad_platform_id);
@@ -888,6 +1207,15 @@ CREATE INDEX idx_conversion_events_friend ON conversion_events (friend_id);
 
 CREATE INDEX idx_conversion_events_point ON conversion_events (conversion_point_id);
 
+CREATE INDEX idx_engagement_events_actor_friend
+  ON engagement_events(program_id, actor_friend_id, occurred_at DESC);
+
+CREATE INDEX idx_engagement_events_actor_user
+  ON engagement_events(program_id, actor_user_id, occurred_at DESC);
+
+CREATE INDEX idx_engagement_events_source
+  ON engagement_events(source, source_event_id);
+
 CREATE INDEX idx_entry_routes_pool ON entry_routes (pool_id);
 
 CREATE INDEX idx_entry_routes_ref ON entry_routes (ref_code);
@@ -933,11 +1261,16 @@ CREATE INDEX idx_friend_scores_friend ON friend_scores (friend_id);
 
 CREATE INDEX idx_friend_tags_tag_id ON friend_tags (tag_id);
 
+CREATE INDEX idx_friends_follow_tenure ON friends(is_following, current_follow_started_at);
+
 CREATE INDEX idx_friends_ig_igsid ON friends (ig_igsid);
 
 CREATE INDEX idx_friends_line_user_id ON friends (line_user_id);
 
 CREATE INDEX idx_friends_user_id ON friends (user_id);
+
+CREATE INDEX idx_google_calendar_connections_staff
+  ON google_calendar_connections (line_account_id, staff_id, is_active);
 
 CREATE INDEX idx_health_logs_account ON account_health_logs (line_account_id);
 
@@ -950,6 +1283,19 @@ CREATE INDEX idx_link_clicks_friend ON link_clicks (friend_id);
 
 CREATE INDEX idx_link_clicks_link ON link_clicks (tracked_link_id);
 
+CREATE INDEX idx_media_inquiries_created
+  ON media_inquiries (created_at DESC);
+
+CREATE INDEX idx_media_inquiries_mail_status
+  ON media_inquiries (mail_status, created_at);
+
+CREATE INDEX idx_meet_consultation_reminders_due
+  ON meet_consultation_reminders (status, scheduled_at);
+
+CREATE INDEX idx_meet_consultations_friend ON meet_consultations (friend_id);
+
+CREATE INDEX idx_meet_consultations_start ON meet_consultations (status, starts_at);
+
 CREATE INDEX idx_menus_account_sort ON menus (line_account_id, sort_order);
 
 CREATE INDEX idx_messages_log_broadcast_id ON messages_log(broadcast_id);
@@ -961,6 +1307,28 @@ CREATE INDEX idx_messages_log_friend_direction_created ON messages_log (friend_i
 CREATE INDEX idx_messages_log_friend_id ON messages_log (friend_id);
 
 CREATE INDEX idx_messages_log_friend_source ON messages_log (friend_id, source);
+
+CREATE INDEX idx_mileage_event_queue_due
+  ON mileage_event_queue(status, available_at, created_at);
+
+CREATE INDEX idx_mileage_ledger_friend
+  ON mileage_ledger(program_id, beneficiary_friend_id, status, occurred_at DESC);
+
+CREATE UNIQUE INDEX idx_mileage_ledger_one_reversal
+  ON mileage_ledger(reverses_entry_id)
+  WHERE reverses_entry_id IS NOT NULL;
+
+CREATE INDEX idx_mileage_ledger_rule
+  ON mileage_ledger(program_id, mileage_rule_id, occurred_at DESC);
+
+CREATE INDEX idx_mileage_ledger_source
+  ON mileage_ledger(program_id, source, source_event_id);
+
+CREATE INDEX idx_mileage_ledger_user
+  ON mileage_ledger(program_id, beneficiary_user_id, status, occurred_at DESC);
+
+CREATE INDEX idx_mileage_rules_match
+  ON mileage_rules(program_id, event_type, source, is_active);
 
 CREATE INDEX idx_notifications_created ON notifications (created_at);
 
@@ -988,7 +1356,12 @@ CREATE INDEX idx_scenario_steps_scenario_id ON scenario_steps (scenario_id);
 
 CREATE INDEX idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
 
+CREATE INDEX idx_sso_jti_exp ON sso_jti(exp);
+
 CREATE INDEX idx_staff_account_sort ON staff (line_account_id, sort_order);
+
+CREATE INDEX idx_staff_availability_rules_staff
+  ON staff_availability_rules (staff_id, weekday, is_active);
 
 CREATE UNIQUE INDEX idx_staff_members_api_key ON staff_members(api_key);
 
@@ -1013,3 +1386,45 @@ CREATE INDEX idx_users_email ON users (email);
 CREATE INDEX idx_users_external_id ON users (external_id);
 
 CREATE INDEX idx_users_phone ON users (phone);
+
+CREATE INDEX idx_webinar_comments_webinar
+  ON webinar_comments (webinar_id, at_seconds);
+
+CREATE INDEX idx_webinar_ctas_webinar
+  ON webinar_ctas (webinar_id, at_seconds);
+
+CREATE INDEX idx_webinar_followups_status
+  ON webinar_followups (status, updated_at);
+
+CREATE UNIQUE INDEX idx_webinar_funnel_events_unique
+  ON webinar_funnel_events (
+    webinar_id, friend_id, session_start_at, event_type, cta_id, form_id, field_name
+  );
+
+CREATE INDEX idx_webinar_funnel_events_webinar_created
+  ON webinar_funnel_events (webinar_id, created_at);
+
+CREATE INDEX idx_webinar_journey_followups_status
+  ON webinar_journey_followups (status, updated_at);
+
+CREATE INDEX idx_webinar_picker_opens_opened
+  ON webinar_picker_opens (webinar_id, opened_at);
+
+CREATE INDEX idx_webinar_regs_due
+  ON webinar_registrations (notified_at, session_start_at);
+
+CREATE INDEX idx_webinar_regs_friend
+  ON webinar_registrations (webinar_id, friend_id);
+
+CREATE INDEX idx_webinar_user_comments_webinar
+  ON webinar_user_comments (webinar_id, created_at);
+
+CREATE INDEX idx_webinar_viewers_webinar
+  ON webinar_viewers (webinar_id, session_start_at);
+
+CREATE UNIQUE INDEX uq_google_calendar_connections_active_staff
+  ON google_calendar_connections (staff_id)
+  WHERE staff_id IS NOT NULL AND is_active = 1;
+
+INSERT INTO auto_replies (id, keyword, match_type, response_type, response_content, template_id, line_account_id, is_active, created_at)
+VALUES ('builtin-mileage-wallet-keyword', 'マイル', 'exact', 'flex', '{"type":"bubble","size":"kilo","body":{"type":"box","layout":"vertical","paddingAll":"20px","contents":[{"type":"text","text":"あなたのHarnessマイル","weight":"bold","size":"lg","color":"#1e293b"},{"type":"text","text":"現在のマイル、獲得履歴、登録済みアカウント、次にマイルを獲得できる行動を確認できます。","wrap":true,"size":"sm","color":"#64748b","margin":"md"}]},"footer":{"type":"box","layout":"vertical","paddingAll":"16px","contents":[{"type":"button","style":"primary","color":"#06C755","height":"sm","action":{"type":"uri","label":"マイルを確認する","uri":"https://liff.line.me/{{liff_id}}/?page=affiliate&liffId={{liff_id}}"}}]}}', NULL, NULL, 1, '2026-08-11T00:00:00.000+09:00');

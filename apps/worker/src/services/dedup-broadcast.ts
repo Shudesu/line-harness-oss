@@ -11,7 +11,12 @@ export interface DedupPreviewPerAccount {
   // resume 時の send 済判定に使う。lineUserId はプロバイダ単位のID なので、
   // 同じ論理人物が別 LINE 公式アカウント (別プロバイダ) にいる場合に二重配信
   // する事故を防ぐため、cross-account でユニークな identKey を採用する。
-  recipients: Array<{ friendId: string; lineUserId: string; identKey: string }>;
+  recipients: Array<{
+    friendId: string;
+    lineUserId: string;
+    identKey: string;
+    displayName: string | null;
+  }>;
 }
 
 export interface DedupPreviewResult {
@@ -27,6 +32,7 @@ interface RankedRow {
   line_user_id: string;
   line_account_id: string;
   ident_key: string;
+  display_name: string | null;
 }
 
 /**
@@ -103,6 +109,7 @@ export async function computeDedupBroadcastPreview(
       SELECT
         f.id            AS friend_id,
         f.line_user_id,
+        f.display_name,
         f.line_account_id,
         f.created_at,
         COALESCE(${URL_TOKEN_SQL}, 'uid:'||f.user_id, 'solo:'||f.id) AS ident_key
@@ -120,7 +127,7 @@ export async function computeDedupBroadcastPreview(
         ) AS rn
       FROM selected
     )
-    SELECT friend_id, line_user_id, line_account_id, ident_key
+    SELECT friend_id, line_user_id, line_account_id, ident_key, display_name
     FROM ranked
     WHERE rn = 1
     ORDER BY line_account_id, created_at
@@ -175,6 +182,7 @@ export async function computeDedupBroadcastPreview(
         friendId: w.friend_id,
         lineUserId: w.line_user_id,
         identKey: w.ident_key,
+        displayName: w.display_name ?? null,
       })),
     };
   });
@@ -185,10 +193,16 @@ export async function computeDedupBroadcastPreview(
 import { LineClient, type Message } from '@line-crm/line-sdk';
 import { getLineAccountById, jstNow, updateBroadcastLineRequestId } from '@line-crm/db';
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
-import { renderMessageContent } from './render-message.js';
+import {
+  assertNoUnresolvedBroadcastVariables,
+  hasRecipientVariables,
+  renderBroadcastMessageContent,
+} from './render-message.js';
 import { buildMessage } from './broadcast.js';
+import { createBroadcastRetryKey } from './broadcast-retry-key.js';
 
 const MULTICAST_BATCH_SIZE = 500;
+const PERSONALIZED_PUSH_BATCH_SIZE = 10;
 
 export interface ProcessMultiAccountDedupResult {
   totalCount: number;
@@ -354,21 +368,27 @@ export async function processMultiAccountDedupBroadcast(
     if (remaining.length === 0) continue; // このアカに残作業なし
 
     const client = lineClientFactory(account.channel_access_token);
-    const totalBatches = Math.ceil(remaining.length / MULTICAST_BATCH_SIZE);
+    const accountContent = renderBroadcastMessageContent(
+      broadcast.message_type,
+      broadcast.message_content,
+      { liffId: (account as unknown as { liff_id?: string | null }).liff_id ?? null },
+    );
+    const personalized = hasRecipientVariables(accountContent);
+    if (!personalized) assertNoUnresolvedBroadcastVariables(accountContent);
+    const deliveryBatchSize = personalized ? PERSONALIZED_PUSH_BATCH_SIZE : MULTICAST_BATCH_SIZE;
+    const totalBatches = Math.ceil(remaining.length / deliveryBatchSize);
 
     // Per-account の liff_id でテンプレ変数 ({{liff_id}}) を置換してから
     // buildMessage する。これで 1 broadcast から複数アカへ配信する際、
     // 友だちの所属アカに対応した LIFF URL が届く (events の運用要件)。
-    const renderedContent = renderMessageContent(
-      broadcast.message_content,
-      (account as unknown as { liff_id?: string | null }).liff_id ?? null,
-    );
-    const message = buildMessage(broadcast.message_type, renderedContent, broadcast.alt_text ?? undefined);
+    const message = personalized
+      ? null
+      : buildMessage(broadcast.message_type, accountContent, broadcast.alt_text ?? undefined);
 
     try {
-      for (let i = 0; i < remaining.length; i += MULTICAST_BATCH_SIZE) {
-        const batchIdx = Math.floor(i / MULTICAST_BATCH_SIZE);
-        const batch = remaining.slice(i, i + MULTICAST_BATCH_SIZE);
+      for (let i = 0; i < remaining.length; i += deliveryBatchSize) {
+        const batchIdx = Math.floor(i / deliveryBatchSize);
+        const batch = remaining.slice(i, i + deliveryBatchSize);
 
         // 時間バジェットを超えたら、残りは次の cron tick に回して yield する。
         // ただし最低 1 batch は必ず送る (sentAnyBatch ガード) ことで毎 tick 前進を保証。
@@ -381,15 +401,62 @@ export async function processMultiAccountDedupBroadcast(
           await sleep(calculateStaggerDelay(remaining.length, batchIdx));
         }
 
-        let batchMessage = message;
-        if (message.type === 'text' && totalBatches > 1) {
-          batchMessage = { ...message, text: addMessageVariation(message.text, batchIdx) } as Message;
+        const delivered = [] as Array<{
+          recipient: (typeof batch)[number];
+          messageType: string;
+          content: string;
+        }>;
+        let batchDeliveryError: unknown = null;
+        if (personalized) {
+          for (const recipient of batch) {
+            try {
+              const content = renderBroadcastMessageContent(broadcast.message_type, accountContent, {
+                displayName: recipient.displayName,
+              });
+              assertNoUnresolvedBroadcastVariables(content);
+              const recipientMessage = buildMessage(
+                broadcast.message_type,
+                content,
+                broadcast.alt_text ?? undefined,
+              );
+              const retryKey = await createBroadcastRetryKey(
+                broadcast.id,
+                'dedup-personalized-push',
+                recipient.friendId,
+                broadcast.message_type,
+                content,
+              );
+              await client.pushMessage(recipient.lineUserId, [recipientMessage], retryKey, [unit]);
+              delivered.push({ recipient, messageType: broadcast.message_type, content });
+            } catch (err) {
+              batchDeliveryError = err;
+              break;
+            }
+          }
+        } else {
+          let batchMessage = message!;
+          if (batchMessage.type === 'text' && totalBatches > 1) {
+            batchMessage = { ...batchMessage, text: addMessageVariation(batchMessage.text, batchIdx) } as Message;
+          }
+          const retryKey = await createBroadcastRetryKey(
+            broadcast.id,
+            'dedup-multicast',
+            account.id,
+            ...batch.map((r) => r.identKey),
+            JSON.stringify(batchMessage),
+          );
+          await client.multicast(batch.map((r) => r.lineUserId), [batchMessage], [unit], retryKey);
+          for (const recipient of batch) {
+            delivered.push({
+              recipient,
+              messageType: broadcast.message_type,
+              content: accountContent,
+            });
+          }
         }
 
-        await client.multicast(batch.map((r) => r.lineUserId), [batchMessage], [unit]);
-
         // multicast 成功直後に identKey を sent set へ追加。
-        for (const r of batch) {
+        for (const { recipient: r } of delivered) {
           progress.sentIdentKeys.push(r.identKey);
           sentSet.add(r.identKey);
         }
@@ -400,12 +467,12 @@ export async function processMultiAccountDedupBroadcast(
         // DB 進捗未更新」になって resume 時に同 batch を再送 → 重複配信事故が起きる。
         // db.batch は D1 で transaction として扱われ、まとめて成否が決まる。
         const stmts = [
-          ...batch.map((r) =>
+          ...delivered.map(({ recipient: r, messageType, content }) =>
             db.prepare(
               `INSERT INTO messages_log
                 (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
                VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, 'broadcast', ?, ?)`,
-            ).bind(crypto.randomUUID(), r.friendId, broadcast.message_type, broadcast.message_content, broadcast.id, account.id, now),
+            ).bind(crypto.randomUUID(), r.friendId, messageType, content, broadcast.id, account.id, now),
           ),
           // success_count は absolute (`= ?`) で書いて double-counting を防ぐ。
           db.prepare(
@@ -414,6 +481,7 @@ export async function processMultiAccountDedupBroadcast(
         ];
         await db.batch(stmts);
         sentAnyBatch = true; // 1 batch 以上 durable に記録した → 前進保証 & yield 可
+        if (batchDeliveryError) throw batchDeliveryError;
       }
     } catch (err) {
       console.error(`[multi-account-dedup] account ${account.id} failed:`, err);

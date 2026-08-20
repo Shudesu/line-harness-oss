@@ -86,7 +86,10 @@ export async function getFormsWithStats(db: D1Database): Promise<FormWithStats[]
             ) sub
             JOIN line_accounts la ON la.id = sub.line_account_id) AS used_by_accounts_json
        FROM forms f
-       ORDER BY f.created_at DESC`,
+       ORDER BY
+         CASE WHEN last_submitted_at IS NULL THEN 1 ELSE 0 END,
+         last_submitted_at DESC,
+         f.created_at DESC`,
     )
     .all<Form & { last_submitted_at: string | null; used_by_accounts_json: string | null }>();
 

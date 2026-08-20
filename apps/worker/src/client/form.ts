@@ -21,7 +21,7 @@ declare const liff: {
 };
 
 const UUID_STORAGE_KEY = 'lh_uuid';
-const FORM_VERSION = '2.0.0'; // cache buster
+const FORM_VERSION = '2.1.0'; // cache buster
 
 interface FormField {
   name: string;
@@ -45,6 +45,38 @@ interface FormDef {
   webhookGateId: string | null;
   onSubmitMessageContent?: string | null;
   onSubmitWebhookFailMessage?: string | null;
+  consultationWebinarSlug?: string | null;
+}
+
+interface ConsultationSlot {
+  date: string;
+  start: string;
+  end: string;
+  startsAt: string;
+}
+
+interface ConsultationAvailability {
+  calendarReady: boolean;
+  fallbackUrl: string | null;
+  menu: { id: string; name: string; durationMinutes: number };
+  staff: { id: string; name: string };
+  slots: ConsultationSlot[];
+  existingBooking: {
+    bookingId: string;
+    status: string;
+    startsAt: string;
+    meetUrl: string | null;
+  } | null;
+}
+
+interface BookedConsultation {
+  bookingId: string;
+  status: 'confirmed';
+  startsAt: string;
+  endsAt: string;
+  meetUrl: string;
+  externalEventId: string;
+  created: boolean;
 }
 
 interface XFollowerSuggestion {
@@ -371,6 +403,30 @@ function injectStyles(): void {
     .form-success .check { width: 64px; height: 64px; border-radius: 50%; background: #06C755; color: #fff; font-size: 32px; line-height: 64px; margin: 0 auto 16px; }
     .form-success h2 { font-size: 20px; color: #06C755; margin-bottom: 12px; }
     .form-success p { font-size: 14px; color: #666; line-height: 1.6; }
+    .consultation-card { background:#fff; border-radius:16px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+    .consultation-head { text-align:center; margin-bottom:20px; }
+    .consultation-head .calendar-icon { font-size:32px; line-height:1; }
+    .consultation-head h2 { margin:8px 0 6px; font-size:21px; color:#1f2937; }
+    .consultation-head p { margin:0; font-size:13px; line-height:1.6; color:#6b7280; }
+    .consultation-date { margin-top:18px; }
+    .consultation-date h3 { margin:0 0 8px; font-size:14px; color:#374151; }
+    .consultation-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+    .slot-btn { border:1.5px solid #06C755; border-radius:9px; padding:11px 4px; background:#fff; color:#049f45; font-size:14px; font-weight:700; cursor:pointer; }
+    .slot-btn:active { background:#ecfdf3; }
+    .slot-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .consultation-status { margin:14px 0 0; text-align:center; font-size:13px; color:#dc2626; font-weight:600; }
+    .consultation-loading { text-align:center; padding:44px 20px; }
+    .consultation-loading h2 { margin:14px 0 6px; font-size:20px; color:#1f2937; }
+    .consultation-loading p { margin:0; color:#6b7280; font-size:14px; }
+    .consultation-spinner { width:30px; height:30px; margin:0 auto; border:3px solid #d1fae5; border-top-color:#06C755; border-radius:50%; animation:x-spin .8s linear infinite; }
+    .consultation-empty { margin:16px 0 0; padding:18px; border-radius:12px; background:#f9fafb; text-align:center; color:#6b7280; font-size:14px; }
+    .consultation-primary { display:block; width:100%; box-sizing:border-box; margin-top:16px; padding:13px 16px; border:0; border-radius:999px; background:#06C755; color:#fff; text-align:center; text-decoration:none; font-size:15px; font-weight:700; cursor:pointer; }
+    .consultation-secondary { display:block; margin:14px auto 0; border:0; background:transparent; color:#6b7280; font-size:13px; text-decoration:underline; cursor:pointer; }
+    .consultation-confirmed { text-align:center; }
+    .consultation-confirmed .check { font-size:38px; }
+    .consultation-confirmed h2 { margin:8px 0; color:#1f2937; font-size:21px; }
+    .consultation-confirmed .time { margin:14px 0; padding:13px; border-radius:12px; background:#ecfdf3; color:#166534; font-size:17px; font-weight:700; }
+    .consultation-confirmed .note { color:#6b7280; font-size:12px; line-height:1.6; }
   `;
   document.head.appendChild(style);
 }
@@ -623,6 +679,221 @@ function renderSuccess(): void {
   }
 }
 
+function consultationDateTime(startsAt: string): string {
+  return new Date(startsAt).toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function consultationDateLabel(date: string): string {
+  return new Date(`${date}T00:00:00+09:00`).toLocaleDateString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  });
+}
+
+function safeHttpsUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function closeFormWindow(): void {
+  if (liff.isInClient()) {
+    liff.closeWindow();
+  } else {
+    window.close();
+  }
+}
+
+function renderConsultationConfirmed(booking: BookedConsultation): void {
+  const app = getApp();
+  const meetUrl = safeHttpsUrl(booking.meetUrl);
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card consultation-confirmed">
+        <div class="check">✅</div>
+        <h2>個別相談が確定しました</h2>
+        <div class="time">${escapeHtml(consultationDateTime(booking.startsAt))}</div>
+        ${meetUrl ? `<a class="consultation-primary" href="${escapeHtml(meetUrl)}" target="_blank" rel="noreferrer">Google Meetを確認する</a>` : ''}
+        <p class="note">LINEにも参加リンクを送りました。前日と開始1時間前にもお知らせします。</p>
+        <button class="consultation-secondary" id="closeConsultationBtn">閉じる</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+function renderConsultationFallback(
+  webinarSlug: string,
+  message: string,
+  fallbackUrl: string | null = null,
+): void {
+  const app = getApp();
+  const safeFallbackUrl = safeHttpsUrl(fallbackUrl);
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card">
+        <div class="consultation-head">
+          <div class="calendar-icon">📅</div>
+          <h2>回答を受け付けました</h2>
+          <p>${escapeHtml(message)}</p>
+        </div>
+        ${safeFallbackUrl ? `<a class="consultation-primary" href="${escapeHtml(safeFallbackUrl)}">予約カレンダーを開く</a>` : '<button class="consultation-primary" id="retryConsultationBtn">空き枠を再読み込み</button>'}
+        <button class="consultation-secondary" id="closeConsultationBtn">あとで予約する</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('retryConsultationBtn')?.addEventListener('click', () => {
+    void renderConsultationBooking(webinarSlug);
+  });
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+function renderConsultationSlots(
+  webinarSlug: string,
+  availability: ConsultationAvailability,
+): void {
+  const existing = availability.existingBooking;
+  if (existing?.status === 'confirmed' && existing.meetUrl) {
+    renderConsultationConfirmed({
+      bookingId: existing.bookingId,
+      status: 'confirmed',
+      startsAt: existing.startsAt,
+      endsAt: '',
+      meetUrl: existing.meetUrl,
+      externalEventId: '',
+      created: false,
+    });
+    return;
+  }
+
+  if (!availability.calendarReady) {
+    renderConsultationFallback(
+      webinarSlug,
+      '空き枠を自動取得できませんでした。予約カレンダーから日時を選んでください。',
+      availability.fallbackUrl,
+    );
+    return;
+  }
+
+  const grouped = availability.slots.reduce<Record<string, ConsultationSlot[]>>((all, slot) => {
+    (all[slot.date] ??= []).push(slot);
+    return all;
+  }, {});
+  const slotHtml = Object.entries(grouped).map(([date, slots]) => `
+    <section class="consultation-date">
+      <h3>${escapeHtml(consultationDateLabel(date))}</h3>
+      <div class="consultation-grid">
+        ${slots.map((slot) => `<button class="slot-btn" data-starts-at="${escapeHtml(slot.startsAt)}">${escapeHtml(slot.start)}</button>`).join('')}
+      </div>
+    </section>
+  `).join('');
+
+  const app = getApp();
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card">
+        <div class="consultation-head">
+          <div class="calendar-icon">📅</div>
+          <h2>このまま相談日時を確定</h2>
+          <p>空いている15分枠だけを表示しています。<br>選ぶとGoogle Meetまで自動発行されます。</p>
+        </div>
+        ${slotHtml || '<div class="consultation-empty">現在、選べる枠がありません。</div>'}
+        <p class="consultation-status" id="consultationStatus" hidden></p>
+        <button class="consultation-secondary" id="closeConsultationBtn">あとで予約する</button>
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll<HTMLButtonElement>('.slot-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const startsAt = button.dataset.startsAt;
+      if (!startsAt) return;
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.slot-btn'));
+      const status = document.getElementById('consultationStatus');
+      buttons.forEach((item) => { item.disabled = true; });
+      const original = button.textContent;
+      button.textContent = '確定中...';
+      if (status) status.hidden = true;
+      try {
+        const response = await apiCall(
+          `/api/liff/webinars/${encodeURIComponent(webinarSlug)}/consultation-book`,
+          { method: 'POST', body: JSON.stringify({ startsAt }) },
+        );
+        const json = await response.json() as {
+          ok?: boolean;
+          data?: BookedConsultation;
+          error?: string;
+        };
+        if (!response.ok || !json.ok || !json.data) {
+          if (response.status === 409) {
+            await renderConsultationBooking(webinarSlug);
+            return;
+          }
+          throw new Error(json.error || '日程を確定できませんでした');
+        }
+        renderConsultationConfirmed(json.data);
+      } catch {
+        buttons.forEach((item) => { item.disabled = false; });
+        button.textContent = original;
+        if (status) {
+          status.textContent = '日程を確定できませんでした。もう一度お試しください。';
+          status.hidden = false;
+        }
+      }
+    });
+  });
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+async function renderConsultationBooking(webinarSlug: string): Promise<void> {
+  const app = getApp();
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card consultation-loading">
+        <div class="consultation-spinner"></div>
+        <h2>回答を受け付けました</h2>
+        <p>実際の空き枠を確認しています...</p>
+      </div>
+    </div>
+  `;
+  window.scrollTo(0, 0);
+  try {
+    const response = await apiCall(
+      `/api/liff/webinars/${encodeURIComponent(webinarSlug)}/consultation-slots`,
+    );
+    const json = await response.json() as {
+      ok?: boolean;
+      data?: ConsultationAvailability;
+      error?: string;
+    };
+    if (!response.ok || !json.ok || !json.data) {
+      throw new Error(json.error || 'availability_failed');
+    }
+    renderConsultationSlots(webinarSlug, json.data);
+  } catch {
+    renderConsultationFallback(
+      webinarSlug,
+      '空き枠を読み込めませんでした。通信環境を確認して、もう一度お試しください。',
+    );
+  }
+}
+
 function renderFormError(message: string): void {
   const app = getApp();
   app.innerHTML = `
@@ -819,7 +1090,11 @@ async function submitForm(): Promise<void> {
       throw new Error(`${res.status}: ${errMsg}`);
     }
 
-    renderSuccess();
+    if (state.formDef.consultationWebinarSlug) {
+      await renderConsultationBooking(state.formDef.consultationWebinarSlug);
+    } else {
+      renderSuccess();
+    }
   } catch (err) {
     state.submitting = false;
     if (submitBtn) {

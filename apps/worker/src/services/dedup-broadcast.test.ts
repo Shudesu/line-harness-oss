@@ -287,7 +287,12 @@ describe('computeDedupBroadcastPreview', () => {
       ['acc1', 'acc2'], ['acc1', 'acc2'],
     );
     const acc1 = result.perAccount.find((p) => p.accountId === 'acc1')!;
-    expect(acc1.recipients).toEqual([{ friendId: 'f1', lineUserId: 'u1', identKey: 'f1' }]);
+    expect(acc1.recipients).toEqual([{
+      friendId: 'f1',
+      lineUserId: 'u1',
+      identKey: 'f1',
+      displayName: null,
+    }]);
   });
 });
 
@@ -329,6 +334,10 @@ class MockLineClient {
     }
     return { data: {}, requestId: 'mock-req' };
   }
+  async pushMessage(to: string, messages: unknown[], retryKey?: string, units?: string[]) {
+    this.calls.push({ method: 'push', args: [to, messages, retryKey, units, this.token] });
+    return {};
+  }
 }
 
 // fakeDb for send-side: handles `db.prepare(...).bind(...).run()` for the
@@ -338,7 +347,13 @@ class MockLineClient {
 // caller seeded).
 function makeSendDb(opts: {
   selectedCounts?: Array<{ line_account_id: string; cnt: number }>;
-  rankedRows?: Array<{ friend_id: string; line_user_id: string; line_account_id: string; ident_key?: string }>;
+  rankedRows?: Array<{
+    friend_id: string;
+    line_user_id: string;
+    line_account_id: string;
+    ident_key?: string;
+    display_name?: string | null;
+  }>;
   accountMeta?: Array<{ id: string; name: string; country: string | null }>;
 }) {
   const updates: Record<string, unknown> = {};
@@ -696,6 +711,43 @@ describe('processMultiAccountDedupBroadcast', () => {
     expect(last.sentIdentKeys[500]).toBe('f500');
   });
 
+  it('renders {{name}} per recipient and uses individual push requests', async () => {
+    const { db } = makeSendDb({
+      selectedCounts: [{ line_account_id: 'acc1', cnt: 2 }],
+      rankedRows: [
+        { friend_id: 'f1', line_user_id: 'u1', line_account_id: 'acc1', display_name: 'Alice' },
+        { friend_id: 'f2', line_user_id: 'u2', line_account_id: 'acc1', display_name: 'Bob' },
+      ],
+      accountMeta: [{ id: 'acc1', name: 'A1', country: 'JP' }],
+    });
+    vi.mocked(getLineAccountById).mockResolvedValue({
+      id: 'acc1', channel_access_token: 'tok1', is_active: 1, liff_id: 'LIFF-1',
+    } as never);
+    const client = new MockLineClient('tok1');
+
+    const result = await processMultiAccountDedupBroadcast(
+      db,
+      {
+        id: 'b-personalized',
+        account_ids: '["acc1"]',
+        dedup_priority: '["acc1"]',
+        message_type: 'text',
+        message_content: '{{name}}さん https://liff.line.me/{{liff_id}}',
+      },
+      () => client as unknown as LineClient,
+    );
+
+    expect(result.successCount).toBe(2);
+    expect(client.calls.map((call) => call.method)).toEqual(['push', 'push']);
+    expect(client.calls[0].args[1]).toEqual([{
+      type: 'text', text: 'Aliceさん https://liff.line.me/LIFF-1',
+    }]);
+    expect(client.calls[1].args[1]).toEqual([{
+      type: 'text', text: 'Bobさん https://liff.line.me/LIFF-1',
+    }]);
+    expect(client.calls[0].args[2]).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   // ---- 分割送信 (chunking) ----
   // 1 実行が時間バジェット(maxRunMs)を超えたら、残りは次の cron tick に回して yield する。
   // これで 5000 人配信でも 1 実行が短く終わり、Worker 時間制限で stall しなくなる。
@@ -743,7 +795,7 @@ describe('processMultiAccountDedupBroadcast', () => {
   });
 
   it('within time budget: sends all batches and reports complete=true', async () => {
-    const N = 1000; // 2 batches
+    const N = 1000; // 20 batches
     const { db } = makeSendDb({
       selectedCounts: [{ line_account_id: 'acc1', cnt: N }],
       rankedRows: Array.from({ length: N }, (_, i) => ({
@@ -770,7 +822,7 @@ describe('processMultiAccountDedupBroadcast', () => {
 
     expect(result.complete).toBe(true);
     const c = clients.find((x) => x.token === 'tok1');
-    expect(c?.calls.length).toBe(2); // 両 batch 送信
+    expect(c?.calls.length).toBe(2); // 500人ずつ全 batch を送信
     expect(result.successCount).toBe(1000);
   });
 });

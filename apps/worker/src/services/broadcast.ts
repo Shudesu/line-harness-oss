@@ -14,8 +14,16 @@ import type { Broadcast } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
+import {
+  assertNoUnresolvedBroadcastVariables,
+  getUnsupportedBroadcastVariables,
+  hasRecipientVariables,
+  renderBroadcastMessageContent,
+} from './render-message.js';
+import { createBroadcastRetryKey } from './broadcast-retry-key.js';
 
 const MULTICAST_BATCH_SIZE = 500;
+const PERSONALIZED_PUSH_BATCH_SIZE = 10;
 
 export async function processBroadcastSend(
   db: D1Database,
@@ -29,6 +37,53 @@ export async function processBroadcastSend(
   const broadcast = await getBroadcastById(db, broadcastId);
   if (!broadcast) {
     throw new Error(`Broadcast ${broadcastId} not found`);
+  }
+
+  const unsupportedVariables = getUnsupportedBroadcastVariables(broadcast.message_content);
+  if (unsupportedVariables.length > 0) {
+    throw new Error(
+      `Unsupported broadcast variables: ${unsupportedVariables.map((v) => `{{${v}}}`).join(', ')}`,
+    );
+  }
+
+  // A recipient variable cannot be delivered through LINE broadcast or
+  // multicast because those endpoints accept one shared Message object.
+  // Convert scheduled/direct sends into the resumable queue path.
+  if (hasRecipientVariables(broadcast.message_content)
+    && broadcast.target_type !== 'multi-account-dedup') {
+    const raw = broadcast as unknown as Record<string, unknown>;
+    const accountId = raw.line_account_id as string | null;
+    const where: string[] = ['f.is_following = 1'];
+    const binds: unknown[] = [];
+    if (accountId) {
+      where.push('f.line_account_id = ?');
+      binds.push(accountId);
+    }
+    if (broadcast.target_type === 'tag') {
+      if (!broadcast.target_tag_id) throw new Error('target_tag_id is required for personalized tag broadcast');
+      where.push('EXISTS (SELECT 1 FROM friend_tags ft WHERE ft.friend_id = f.id AND ft.tag_id = ?)');
+      binds.push(broadcast.target_tag_id);
+    }
+    const audience = await db.prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN f.display_name IS NULL OR trim(f.display_name) = '' THEN 1 ELSE 0 END) AS missing_name
+         FROM friends f WHERE ${where.join(' AND ')}`,
+    ).bind(...binds).first<{ total: number; missing_name: number | null }>();
+    if (Number(audience?.missing_name ?? 0) > 0) {
+      throw new Error(`Cannot personalize broadcast: ${audience!.missing_name} recipient(s) have no display name`);
+    }
+    const conditions = broadcast.target_type === 'tag'
+      ? { operator: 'AND', rules: [
+          { type: 'is_following', value: true },
+          { type: 'tag_exists', value: broadcast.target_tag_id },
+        ] }
+      : { operator: 'AND', rules: [{ type: 'is_following', value: true }] };
+    await db.prepare(
+      `UPDATE broadcasts
+          SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
+        WHERE id = ?`,
+    ).bind(Number(audience?.total ?? 0), JSON.stringify(conditions), broadcast.id).run();
+    return (await getBroadcastById(db, broadcastId))!;
   }
 
   // multi-account-dedup は inline 送信せず cron queue (processQueuedBroadcasts) に委譲する。
@@ -77,9 +132,9 @@ export async function processBroadcastSend(
     const { getLineAccountById: getLA } = await import('@line-crm/db');
     const acct = await getLA(db, broadcastAccountId);
     const liffId = (acct as unknown as { liff_id?: string | null } | null)?.liff_id ?? null;
-    const { renderMessageContent } = await import('./render-message.js');
-    finalContent = renderMessageContent(finalContent, liffId);
+    finalContent = renderBroadcastMessageContent(finalType, finalContent, { liffId });
   }
+  assertNoUnresolvedBroadcastVariables(finalContent);
   const altText = (broadcast as unknown as Record<string, unknown>).alt_text as string | undefined;
   const message = buildMessage(finalType, finalContent, altText || undefined);
   let totalCount = 0;
@@ -88,7 +143,13 @@ export async function processBroadcastSend(
   try {
     if (broadcast.target_type === 'all') {
       // Use LINE broadcast API (sends to all followers)
-      const { requestId } = await lineClient.broadcast([message]);
+      const retryKey = await createBroadcastRetryKey(
+        broadcast.id,
+        'broadcast',
+        finalType,
+        finalContent,
+      );
+      const { requestId } = await lineClient.broadcast([message], retryKey);
       await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
       // We don't have exact count for broadcast API, set as 0 (unknown)
       totalCount = 0;
@@ -124,7 +185,13 @@ export async function processBroadcastSend(
         }
 
         try {
-          await lineClient.multicast(lineUserIds, [batchMessage], [unit]);
+          const retryKey = await createBroadcastRetryKey(
+            broadcast.id,
+            'multicast',
+            ...batch.map((f) => f.id),
+            JSON.stringify(batchMessage),
+          );
+          await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
           successCount += batch.length;
 
           // Log only successfully sent messages (batch insert for performance)
@@ -295,8 +362,7 @@ async function processQueuedBroadcastBatches(
     const { getLineAccountById: getLA } = await import('@line-crm/db');
     const acct = await getLA(db, queuedAccountId);
     const liffId = (acct as unknown as { liff_id?: string | null } | null)?.liff_id ?? null;
-    const { renderMessageContent } = await import('./render-message.js');
-    finalContent = renderMessageContent(finalContent, liffId);
+    finalContent = renderBroadcastMessageContent(finalType, finalContent, { liffId });
   }
   const altText = raw.alt_text as string | undefined;
   const message = buildMessage(finalType, finalContent, altText || undefined);
@@ -329,7 +395,7 @@ async function processQueuedBroadcastBatches(
 
   // 対象ユーザーリストを取得（アカウントで絞り込む）
   const accountId = raw.line_account_id as string | null;
-  let friends: Array<{ id: string; line_user_id: string }>;
+  let friends: Array<{ id: string; line_user_id: string; display_name: string | null }>;
   if (segmentConditionsStr) {
     const { buildSegmentQuery } = await import('./segment-query.js');
     const condition = JSON.parse(segmentConditionsStr);
@@ -341,15 +407,29 @@ async function processQueuedBroadcastBatches(
       accountSql = sql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
       accountBindings.unshift(accountId);
     }
-    const result = await db.prepare(accountSql).bind(...accountBindings).all<{ id: string; line_user_id: string }>();
+    const result = await db.prepare(accountSql).bind(...accountBindings).all<{
+      id: string;
+      line_user_id: string;
+      display_name: string | null;
+    }>();
     friends = result.results ?? [];
   } else if (broadcast.target_tag_id) {
     const { getFriendsByTag } = await import('@line-crm/db');
     const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id);
-    friends = tagFriends.filter(f => f.is_following).map(f => ({ id: f.id, line_user_id: f.line_user_id }));
+    friends = tagFriends.filter(f => f.is_following).map(f => ({
+      id: f.id,
+      line_user_id: f.line_user_id,
+      display_name: f.display_name,
+    }));
   } else {
     // target_type='all' でキューに入ることはないが、念のため
-    const { requestId } = await lineClient.broadcast([message]);
+    const retryKey = await createBroadcastRetryKey(
+      broadcast.id,
+      'queued-broadcast',
+      finalType,
+      finalContent,
+    );
+    const { requestId } = await lineClient.broadcast([message], retryKey);
     await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
     await createBroadcastInsight(db, broadcast.id);
     await updateBroadcastStatus(db, broadcast.id, 'sent', { totalCount: 0, successCount: 0 });
@@ -363,15 +443,104 @@ async function processQueuedBroadcastBatches(
   }
 
   const now = jstNow();
-  const unit = `bcast_${broadcast.id.slice(0, 8)}`;
+  const unit = `bcast_${broadcast.id.slice(0, 8).replace(/[^a-zA-Z0-9_]/g, '_')}`;
   let currentOffset = batchOffset;
-  const totalBatches = Math.ceil(friends.length / MULTICAST_BATCH_SIZE);
+  const personalized = hasRecipientVariables(finalContent);
+  const unsupportedVariables = getUnsupportedBroadcastVariables(finalContent);
+  if (unsupportedVariables.length > 0) {
+    await updateBroadcastBatchProgress(db, broadcast.id, batchOffset, 0);
+    throw new Error(
+      `Unsupported broadcast variables: ${unsupportedVariables.map((v) => `{{${v}}}`).join(', ')}`,
+    );
+  }
+  if (!personalized) {
+    try {
+      assertNoUnresolvedBroadcastVariables(finalContent);
+    } catch (err) {
+      await updateBroadcastBatchProgress(db, broadcast.id, batchOffset, 0);
+      throw err;
+    }
+  }
+  const deliveryBatchSize = personalized ? PERSONALIZED_PUSH_BATCH_SIZE : MULTICAST_BATCH_SIZE;
+  const totalBatches = Math.ceil(friends.length / deliveryBatchSize);
 
   // 1回のCron実行で全バッチを処理（タイムアウトしない範囲で）
   while (currentOffset < friends.length) {
-    const batch = friends.slice(currentOffset, currentOffset + MULTICAST_BATCH_SIZE);
+    const batch = friends.slice(currentOffset, currentOffset + deliveryBatchSize);
     const lineUserIds = batch.map(f => f.line_user_id);
-    const batchIndex = Math.floor(currentOffset / MULTICAST_BATCH_SIZE);
+    const batchIndex = Math.floor(currentOffset / deliveryBatchSize);
+
+    if (personalized) {
+      for (const friend of batch) {
+        const alreadyLogged = await db.prepare(
+          `SELECT 1 FROM messages_log
+            WHERE broadcast_id = ? AND friend_id = ? AND direction = 'outgoing'
+              AND COALESCE(delivery_type, '') != 'test'
+            LIMIT 1`,
+        ).bind(broadcast.id, friend.id).first();
+        if (alreadyLogged) {
+          currentOffset++;
+          continue;
+        }
+
+        try {
+          const renderedContent = renderBroadcastMessageContent(finalType, finalContent, {
+            displayName: friend.display_name,
+          });
+          assertNoUnresolvedBroadcastVariables(renderedContent);
+          const personalizedMessage = buildMessage(finalType, renderedContent, altText || undefined);
+          const retryKey = await createBroadcastRetryKey(
+            broadcast.id,
+            'personalized-push',
+            friend.id,
+            finalType,
+            renderedContent,
+          );
+          await lineClient.pushMessage(friend.line_user_id, [personalizedMessage], retryKey, [unit]);
+
+          await db.prepare(
+            `INSERT INTO messages_log
+              (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
+             VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, 'broadcast', ?, ?)`,
+          ).bind(
+            crypto.randomUUID(),
+            friend.id,
+            finalType,
+            renderedContent,
+            broadcast.id,
+            accountId,
+            now,
+          ).run();
+          currentOffset++;
+        } catch (err) {
+          console.error(`Personalized broadcast recipient ${friend.id} failed:`, err);
+          await db.prepare(
+            `UPDATE broadcasts
+                SET batch_offset = ?, batch_lock_at = NULL,
+                    success_count = (
+                      SELECT COUNT(*) FROM messages_log
+                       WHERE broadcast_id = ? AND direction = 'outgoing'
+                         AND COALESCE(delivery_type, '') != 'test'
+                    )
+              WHERE id = ?`,
+          ).bind(currentOffset, broadcast.id, broadcast.id).run();
+          return;
+        }
+      }
+
+      await db.prepare(
+        `UPDATE broadcasts
+            SET batch_offset = ?, batch_lock_at = NULL,
+                success_count = (
+                  SELECT COUNT(*) FROM messages_log
+                   WHERE broadcast_id = ? AND direction = 'outgoing'
+                     AND COALESCE(delivery_type, '') != 'test'
+                )
+          WHERE id = ?`,
+      ).bind(currentOffset, broadcast.id, broadcast.id).run();
+      if (currentOffset < friends.length) return;
+      break;
+    }
 
     // ステルス遅延（最初のバッチ以外）
     if (batchIndex > 0) {
@@ -386,7 +555,13 @@ async function processQueuedBroadcastBatches(
     }
 
     try {
-      await lineClient.multicast(lineUserIds, [batchMessage], [unit]);
+      const retryKey = await createBroadcastRetryKey(
+        broadcast.id,
+        'queued-multicast',
+        ...batch.map((f) => f.id),
+        JSON.stringify(batchMessage),
+      );
+      await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
     } catch (err) {
       console.error(`Queued broadcast batch ${batchIndex} send failed:`, err);
       // 送信失敗: ロック解除 + offsetを保存して次のCronで再開
@@ -403,7 +578,7 @@ async function processQueuedBroadcastBatches(
         db.prepare(
           `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
            VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, 'broadcast', ?, ?)`,
-        ).bind(crypto.randomUUID(), friend.id, broadcast.message_type, broadcast.message_content, broadcast.id, queuedBroadcastAccount, now),
+        ).bind(crypto.randomUUID(), friend.id, finalType, finalContent, broadcast.id, queuedBroadcastAccount, now),
       );
       await db.batch(stmts);
     } catch (logErr) {

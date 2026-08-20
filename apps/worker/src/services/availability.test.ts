@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { computeSlots, getAvailability, type Interval } from './availability.js';
 
 const MENU_60 = { duration_minutes: 60, buffer_after_minutes: 0 };
@@ -135,7 +135,14 @@ interface StubData {
   };
   staff?: Array<{ id: string; display_name: string; is_designation_optional: number }>;
   shifts?: Array<{ staff_id: string; work_date: string; start_time: string; end_time: string }>;
+  rules?: Array<{ staff_id: string; weekday: number; start_time: string; end_time: string }>;
   bookings?: Array<{ staff_id: string; starts_at: string; block_ends_at: string }>;
+  calendarConnection?: {
+    id: string;
+    calendar_id: string;
+    auth_type: string;
+    access_token: string | null;
+  };
 }
 
 function stubDB(data: StubData): D1Database {
@@ -145,6 +152,7 @@ function stubDB(data: StubData): D1Database {
         bind() { return this; },
         async first() {
           if (sql.includes('FROM menus')) return data.menu ?? null;
+          if (sql.includes('FROM google_calendar_connections')) return data.calendarConnection ?? null;
           return null;
         },
         async all() {
@@ -153,6 +161,9 @@ function stubDB(data: StubData): D1Database {
           }
           if (sql.includes('FROM staff_shifts')) {
             return { results: data.shifts ?? [] };
+          }
+          if (sql.includes('FROM staff_availability_rules')) {
+            return { results: data.rules ?? [] };
           }
           if (sql.includes('FROM bookings')) {
             return { results: data.bookings ?? [] };
@@ -265,6 +276,44 @@ describe('getAvailability', () => {
       minLeadTimeMinutes: 60,
     });
     expect(result.by_staff[0].slots).toEqual([]);
+  });
+
+  test('曜日ルールは有限シフトなしでも将来の日付に適用される', async () => {
+    const db = stubDB({
+      menu: { duration_minutes: 60, buffer_after_minutes: 0, override_duration: null, override_price: null },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [],
+      // 2030-01-05 is Saturday. This verifies the rule does not expire.
+      rules: [{ staff_id: 'S1', weekday: 6, start_time: '10:00', end_time: '12:00' }],
+      bookings: [],
+    });
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1', menuId: 'M1', from: '2030-01-05', to: '2030-01-05',
+      now: new Date('2029-12-01T00:00:00Z'), minLeadTimeMinutes: 0,
+    });
+    expect(result.by_staff[0].slots.map((slot) => slot.start)).toEqual(['10:00', '10:30', '11:00']);
+  });
+
+  test('Googleカレンダーのbusy時間を予約候補から除外する', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      calendars: { 'cal@example.com': { busy: [{ start: '2026-05-09T02:00:00Z', end: '2026-05-09T03:00:00Z' }] } },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+    try {
+      const db = stubDB({
+        menu: { duration_minutes: 60, buffer_after_minutes: 0, override_duration: null, override_price: null },
+        staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+        shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '13:00' }],
+        bookings: [],
+        calendarConnection: { id: 'GC1', calendar_id: 'cal@example.com', auth_type: 'oauth', access_token: 'token' },
+      });
+      const result = await getAvailability(db, {
+        lineAccountId: 'A1', menuId: 'M1', from: '2026-05-09', to: '2026-05-09',
+        now: new Date('2026-05-08T00:00:00Z'), minLeadTimeMinutes: 0,
+      });
+      expect(result.by_staff[0].slots.map((slot) => slot.start)).toEqual(['10:00', '12:00']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test('staff_id 指定 → そのスタッフのみ', async () => {

@@ -907,6 +907,9 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
   const [rewardAmount, setRewardAmount] = useState(
     initial?.rewardAmount != null ? String(initial.rewardAmount) : '',
   )
+  const [rewardMiles, setRewardMiles] = useState(
+    initial?.rewardMiles != null ? String(initial.rewardMiles) : '',
+  )
   const [lineAccountId, setLineAccountId] = useState(initial?.lineAccountId ?? '')
   const [tagId, setTagId] = useState(initial?.tagId ?? '')
   const [scenarioId, setScenarioId] = useState(initial?.scenarioId ?? '')
@@ -929,6 +932,11 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
       setFormError('報酬額は0以上の整数で入力してください')
       return
     }
+    const miles = rewardMiles.trim() === '' ? undefined : Number(rewardMiles)
+    if (miles !== undefined && (!Number.isInteger(miles) || miles < 0)) {
+      setFormError('付与マイルは0以上の整数で入力してください')
+      return
+    }
 
     setSubmitting(true)
     try {
@@ -937,6 +945,7 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
           name: name.trim(),
           description: description.trim() || null,
           rewardAmount: reward,
+          rewardMiles: miles,
           lineAccountId: lineAccountId || null,
           tagId: tagId || null,
           scenarioId: scenarioId || null,
@@ -952,6 +961,7 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
           name: name.trim(),
           description: description.trim() || null,
           rewardAmount: reward,
+          rewardMiles: miles,
           lineAccountId: lineAccountId || null,
           tagId: tagId || null,
           scenarioId: scenarioId || null,
@@ -969,7 +979,7 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
     } finally {
       setSubmitting(false)
     }
-  }, [submitting, name, description, rewardAmount, lineAccountId, tagId, scenarioId, isActive, isEdit, initial, onSaved, onClose])
+  }, [submitting, name, description, rewardAmount, rewardMiles, lineAccountId, tagId, scenarioId, isActive, isEdit, initial, onSaved, onClose])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -1031,6 +1041,20 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
               placeholder="例: 3000"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">成果承認時の付与マイル</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={rewardMiles}
+              onChange={(e) => setRewardMiles(e.target.value)}
+              placeholder="例: 500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="mt-1 text-[11px] text-gray-400">承認された紹介1件ごとに紹介者へ付与します</p>
           </div>
 
           <div>
@@ -1349,6 +1373,7 @@ function OffersList({
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">案件名</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">説明</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">報酬額</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">付与マイル</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">LINEアカウント</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">タグ</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">シナリオ</th>
@@ -1365,6 +1390,9 @@ function OffersList({
                   </td>
                   <td className="px-4 py-3 text-sm text-right font-semibold text-emerald-700">
                     {formatYenNullable(offer.rewardAmount)}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-amber-600">
+                    {offer.rewardMiles.toLocaleString()} mile
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-700">
                     {offer.lineAccountId ? accountMap.get(offer.lineAccountId) ?? offer.lineAccountId : '—'}

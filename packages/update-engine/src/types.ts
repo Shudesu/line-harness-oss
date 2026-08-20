@@ -11,6 +11,8 @@ export interface ReleaseEntry {
   worker_hash: string;
   admin_hash: string;
   liff_hash: string;
+  /** Integrity hash of bundle.tar.gz's worker-assets/ tree. */
+  worker_assets_hash?: string;
   /**
    * Byte hash (sha256:<hex>) of the FINAL worker/index.js inside
    * bundle.tar.gz — the detached integrity hash download verification
@@ -38,6 +40,7 @@ export interface CurrentVersion {
   worker_hash: string;
   admin_hash: string;
   liff_hash: string;
+  worker_assets_hash?: string;
 }
 
 export type ForkStatus =

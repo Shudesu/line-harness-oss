@@ -66,6 +66,9 @@ importers:
       vite:
         specifier: ^6.0.0
         version: 6.4.1(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.23.0)
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@25.5.0)(lightningcss@1.32.0)
 
   apps/web:
     dependencies:
@@ -186,7 +189,7 @@ importers:
         specifier: ^0.9.1
         version: 0.9.1
       '@line-harness/update-engine':
-        specifier: workspace:^0.0.7
+        specifier: workspace:^0.0.9
         version: link:../update-engine
       execa:
         specifier: ^9.5.2
@@ -302,6 +305,9 @@ importers:
 
   packages/update-engine:
     dependencies:
+      '@noble/hashes':
+        specifier: ^2.0.1
+        version: 2.3.0
       tar-stream:
         specifier: ^3.2.0
         version: 3.2.0
@@ -2017,6 +2023,10 @@ packages:
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
+
+  '@noble/hashes@2.3.0':
+    resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
+    engines: {node: '>= 20.19.0'}
 
   '@poppinss/colors@4.1.6':
     resolution: {integrity: sha512-H9xkIdFswbS8n1d6vmRd8+c10t2Qe+rZITbbDHHkQixH5+2x1FDGmi/0K+WgWiqQFKPSlIYB7jlH6Kpfn6Fleg==}
@@ -5377,6 +5387,8 @@ snapshots:
   '@next/swc-win32-x64-msvc@15.5.14':
     optional: true
 
+  '@noble/hashes@2.3.0': {}
+
   '@poppinss/colors@4.1.6':
     dependencies:
       kleur: 4.1.5
@@ -5684,14 +5696,6 @@ snapshots:
       '@vitest/utils': 2.1.9
       chai: 5.3.3
       tinyrainbow: 1.2.0
-
-  '@vitest/mocker@2.1.9(vite@5.4.21(@types/node@22.19.15)(lightningcss@1.32.0))':
-    dependencies:
-      '@vitest/spy': 2.1.9
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 5.4.21(@types/node@22.19.15)(lightningcss@1.32.0)
 
   '@vitest/mocker@2.1.9(vite@5.4.21(@types/node@25.5.0)(lightningcss@1.32.0))':
     dependencies:
@@ -7279,7 +7283,7 @@ snapshots:
   vitest@2.1.9(@types/node@22.19.15)(lightningcss@1.32.0):
     dependencies:
       '@vitest/expect': 2.1.9
-      '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@22.19.15)(lightningcss@1.32.0))
+      '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@25.5.0)(lightningcss@1.32.0))
       '@vitest/pretty-format': 2.1.9
       '@vitest/runner': 2.1.9
       '@vitest/snapshot': 2.1.9

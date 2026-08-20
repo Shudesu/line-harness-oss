@@ -47,6 +47,7 @@ function serializeGroup(row: RichMenuGroup) {
     size: row.size,
     defaultPageId: row.default_page_id,
     isDefaultForAll: row.is_default_for_all === 1,
+    selected: row.selected === 1,
     status: row.status,
     publishingAt: row.publishing_at,
     createdAt: row.created_at,
@@ -196,6 +197,9 @@ function parseCreateBody(raw: unknown): Parsed<CreateRichMenuGroupInput> {
     return { ok: false, error: 'chatBarText required (1..14 chars)' };
   }
   if (typeof r.size !== 'string' || !VALID_SIZES.has(r.size)) return { ok: false, error: 'size must be large or compact' };
+  if (r.selected !== undefined && typeof r.selected !== 'boolean') {
+    return { ok: false, error: 'selected must be boolean' };
+  }
   const pages = parsePages(r.pages);
   if (!pages.ok) return pages;
   return {
@@ -205,6 +209,7 @@ function parseCreateBody(raw: unknown): Parsed<CreateRichMenuGroupInput> {
       name: r.name,
       chatBarText: r.chatBarText,
       size: r.size as 'large' | 'compact',
+      selected: r.selected === true,
       pages: pages.value,
     },
   };
@@ -227,6 +232,10 @@ function parsePatchBody(raw: unknown): Parsed<{ meta: UpdateRichMenuGroupMetaInp
   if (r.isDefaultForAll !== undefined) {
     if (typeof r.isDefaultForAll !== 'boolean') return { ok: false, error: 'isDefaultForAll must be boolean' };
     meta.isDefaultForAll = r.isDefaultForAll;
+  }
+  if (r.selected !== undefined) {
+    if (typeof r.selected !== 'boolean') return { ok: false, error: 'selected must be boolean' };
+    meta.selected = r.selected;
   }
   let pages: RichMenuPageInput[] | undefined;
   if (r.pages !== undefined) {
@@ -320,6 +329,7 @@ richMenuGroups.post('/api/rich-menu-groups/import', async (c) => {
   const detail = (await detailRes.json()) as {
     name: string;
     chatBarText: string;
+    selected: boolean;
     size: { width: number; height: number };
     areas: LineArea[];
   };
@@ -409,6 +419,7 @@ richMenuGroups.post('/api/rich-menu-groups/import', async (c) => {
     name: detail.name,
     chatBarText: detail.chatBarText,
     size,
+    selected: detail.selected,
     pages: [
       {
         name: 'ページ 1',
@@ -517,6 +528,7 @@ richMenuGroups.get('/api/rich-menu-groups/external', async (c) => {
           richMenuId: m.richMenuId,
           name: m.name,
           chatBarText: m.chatBarText,
+          selected: m.selected,
           size: m.size,
           areasCount: Array.isArray(m.areas) ? m.areas.length : 0,
           isCurrentDefault: currentDefault === m.richMenuId,
@@ -862,6 +874,7 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/publish', async (c) => {
       size: group.size,
       chatBarText: group.chat_bar_text,
       isDefaultForAll: group.is_default_for_all === 1,
+      selected: group.selected === 1,
       pages: group.pages.map((p) => ({
         id: p.id,
         orderIndex: p.order_index,
@@ -908,6 +921,7 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/unpublish', async (c) => {
     size: group.size,
     chatBarText: group.chat_bar_text,
     isDefaultForAll: group.is_default_for_all === 1,
+    selected: group.selected === 1,
     pages: group.pages.map((p) => ({
       id: p.id,
       orderIndex: p.order_index,

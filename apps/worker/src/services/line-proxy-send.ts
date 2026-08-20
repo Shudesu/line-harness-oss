@@ -41,3 +41,32 @@ export async function pushViaHarnessProxy(
     `LINE Harness proxy error: ${response.status} ${response.statusText} — ${body.slice(0, 500)}`,
   );
 }
+
+/**
+ * LINE の reply も Harness の互換プロキシを通す。
+ * replyToken から受信者を逆引きできないため、messages_log は呼び出し元が記録する。
+ */
+export async function replyViaHarnessProxy(
+  proxyBaseUrl: string,
+  accessToken: string,
+  replyToken: string,
+  messages: Message[],
+  dispatch?: HarnessProxyDispatch,
+): Promise<void> {
+  const url = `${proxyBaseUrl.replace(/\/$/, '')}/line-api/v2/bot/message/reply`;
+  const init: RequestInit = {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ replyToken, messages }),
+  };
+  const response = dispatch ? await dispatch(new Request(url, init)) : await fetch(url, init);
+  if (response.ok) return;
+
+  const body = await response.text().catch(() => '');
+  throw new Error(
+    `LINE Harness proxy error: ${response.status} ${response.statusText} — ${body.slice(0, 500)}`,
+  );
+}

@@ -13,6 +13,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
   },
 });

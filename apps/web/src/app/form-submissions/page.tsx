@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { fetchApi } from '@/lib/api'
 import { countryFlag } from '@/lib/country-flag'
 import Header from '@/components/layout/header'
+import { displayFormName, sortFormsByLatestAnswer } from './form-list'
 
 interface UsedByAccount {
   id: string
@@ -18,7 +19,10 @@ interface Form {
   id: string
   name: string
   description: string | null
+  fields: Array<{ name: string; label: string; type?: string }>
+  isActive: boolean
   submitCount?: number
+  createdAt: string
   lastSubmittedAt: string | null
   usedByAccounts: UsedByAccount[]
 }
@@ -37,6 +41,7 @@ interface Submission {
 }
 
 const PAGE_SIZE = 20
+type FormFilter = 'all' | 'answered' | 'unanswered'
 
 function formatRelative(iso: string | null): string {
   if (!iso) return '未回答'
@@ -77,6 +82,12 @@ export default function FormSubmissionsPage() {
   const [subLoading, setSubLoading] = useState(false)
   const [page, setPage] = useState(1)
   const [detailSubmission, setDetailSubmission] = useState<Submission | null>(null)
+  const [query, setQuery] = useState('')
+  const [formFilter, setFormFilter] = useState<FormFilter>('all')
+  const [editingForm, setEditingForm] = useState<Form | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [savingName, setSavingName] = useState(false)
+  const [renameError, setRenameError] = useState('')
 
   const loadForms = useCallback(async () => {
     setLoading(true)
@@ -132,6 +143,60 @@ export default function FormSubmissionsPage() {
     loadSubmissions(formId)
   }
 
+  const openRename = (form: Form) => {
+    setEditingForm(form)
+    setEditingName(displayFormName(form.name))
+    setRenameError('')
+  }
+
+  const saveName = async () => {
+    if (!editingForm || !editingName.trim() || savingName) return
+    const name = displayFormName(editingName)
+    setSavingName(true)
+    setRenameError('')
+    try {
+      const res = await fetchApi<{ success: boolean; data: Form }>(`/api/forms/${editingForm.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name }),
+      })
+      if (!res.success) throw new Error('rename_failed')
+      setForms((current) => current.map((form) => (
+        form.id === editingForm.id ? { ...form, name } : form
+      )))
+      setEditingForm(null)
+    } catch {
+      setRenameError('フォーム名を変更できませんでした。もう一度お試しください。')
+    } finally {
+      setSavingName(false)
+    }
+  }
+
+  const sortedForms = useMemo(() => sortFormsByLatestAnswer(forms), [forms])
+  const answeredCount = useMemo(
+    () => forms.filter((form) => form.lastSubmittedAt !== null).length,
+    [forms],
+  )
+  const filteredForms = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase('ja-JP')
+    return sortedForms.filter((form) => {
+      if (formFilter === 'answered' && !form.lastSubmittedAt) return false
+      if (formFilter === 'unanswered' && form.lastSubmittedAt) return false
+      if (!normalizedQuery) return true
+      return (
+        displayFormName(form.name).toLocaleLowerCase('ja-JP').includes(normalizedQuery)
+        || form.usedByAccounts.some((account) => account.name.toLocaleLowerCase('ja-JP').includes(normalizedQuery))
+      )
+    })
+  }, [formFilter, query, sortedForms])
+  const duplicateNameCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const form of forms) {
+      const name = displayFormName(form.name).toLocaleLowerCase('ja-JP')
+      counts.set(name, (counts.get(name) ?? 0) + 1)
+    }
+    return counts
+  }, [forms])
+
   const selectedForm = useMemo(
     () => forms.find((f) => f.id === selectedFormId) ?? null,
     [forms, selectedFormId],
@@ -154,6 +219,45 @@ export default function FormSubmissionsPage() {
 
       {/* Form cards */}
       <section className="mb-6">
+        {!loading && forms.length > 0 && (
+          <div className="mb-4 space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ['all', `すべて ${forms.length}`],
+                  ['answered', `回答あり ${answeredCount}`],
+                  ['unanswered', `未回答 ${forms.length - answeredCount}`],
+                ] as Array<[FormFilter, string]>).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFormFilter(value)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      formFilter === value
+                        ? 'bg-gray-900 text-white'
+                        : 'border border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="hidden text-[11px] text-gray-400 md:inline">最新回答順</span>
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="フォーム名・アカウントで検索"
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-gray-300 focus:border-[#06C755] sm:w-64"
+                />
+              </div>
+            </div>
+            {query && (
+              <p className="text-xs text-gray-400">{filteredForms.length}件見つかりました</p>
+            )}
+          </div>
+        )}
         {loading ? (
           <div className="text-sm text-gray-400">読み込み中...</div>
         ) : forms.length === 0 ? (
@@ -161,28 +265,37 @@ export default function FormSubmissionsPage() {
             フォームがまだありません
           </div>
         ) : (
+          filteredForms.length === 0 ? (
+            <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">
+              条件に合うフォームがありません
+            </div>
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {forms.map((form) => {
+            {filteredForms.map((form) => {
               const isSelected = selectedFormId === form.id
               const totalCount = form.usedByAccounts.reduce((sum, a) => sum + a.count, 0)
               const displayCount = form.submitCount ?? totalCount
+              const normalizedName = displayFormName(form.name)
+              const isDuplicate = (duplicateNameCounts.get(normalizedName.toLocaleLowerCase('ja-JP')) ?? 0) > 1
               return (
-                <button
+                <article
                   key={form.id}
-                  onClick={() => handleSelectForm(form.id)}
-                  className={`group text-left rounded-xl border p-4 transition-all ${
-                    isSelected
-                      ? 'border-[#06C755] bg-[#F1FBF5] shadow-sm'
-                      : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
-                  }`}
+                  className="group relative"
                 >
-                  <div className="flex items-start justify-between gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectForm(form.id)}
+                    aria-pressed={isSelected}
+                    className={`w-full cursor-pointer rounded-xl border p-4 text-left transition-all focus:outline-none focus:ring-2 focus:ring-[#06C755]/30 ${
+                      isSelected
+                        ? 'border-[#06C755] bg-[#F1FBF5] shadow-sm'
+                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                    }`}
+                  >
+                  <div className="mb-2 flex items-start gap-2 pr-7">
                     <h3 className={`text-sm font-semibold leading-snug ${isSelected ? 'text-[#06C755]' : 'text-gray-900'}`}>
-                      {form.name}
+                      {normalizedName}
                     </h3>
-                    <span className="text-[11px] text-gray-400 whitespace-nowrap">
-                      {formatRelative(form.lastSubmittedAt)}
-                    </span>
                   </div>
 
                   <div className="flex items-baseline gap-1 mb-3">
@@ -208,12 +321,38 @@ export default function FormSubmissionsPage() {
                       })}
                     </div>
                   ) : (
-                    <div className="text-[11px] text-gray-300">配信中アカウントなし</div>
+                    <div className="text-[11px] text-gray-300">回答元アカウントなし</div>
                   )}
-                </button>
+
+                  <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
+                    <span>{form.lastSubmittedAt ? `最終回答 ${formatRelative(form.lastSubmittedAt)}` : '回答はまだありません'}</span>
+                    {!form.isActive && (
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-500">停止中</span>
+                    )}
+                    {isDuplicate && (
+                      <span className="ml-auto" title={`フォームID: ${form.id}`}>
+                        同名あり・{form.fields.length}項目・作成 {new Date(form.createdAt).toLocaleDateString('ja-JP', { month: '2-digit', day: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openRename(form)}
+                    className="absolute right-3 top-3 rounded-md p-1 text-gray-300 opacity-60 transition hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100"
+                    aria-label={`${normalizedName}の名前を変更`}
+                    title="フォーム名を変更"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931ZM19.5 7.125 16.875 4.5M18 13.5V19.125A1.875 1.875 0 0 1 16.125 21H4.875A1.875 1.875 0 0 1 3 19.125V7.875A1.875 1.875 0 0 1 4.875 6H10.5" />
+                    </svg>
+                  </button>
+                </article>
               )
             })}
           </div>
+          )
         )}
       </section>
 
@@ -222,7 +361,7 @@ export default function FormSubmissionsPage() {
         <section>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-baseline gap-2">
-              <h2 className="text-base font-semibold text-gray-900">{selectedForm.name}</h2>
+              <h2 className="text-base font-semibold text-gray-900">{displayFormName(selectedForm.name)}</h2>
               <span className="text-xs text-gray-400">
                 {subLoading ? '読み込み中...' : `${submissions.length}件`}
               </span>
@@ -389,6 +528,64 @@ export default function FormSubmissionsPage() {
               </div>
             </div>
           </aside>
+        </div>
+      )}
+
+      {/* Rename dialog */}
+      {editingForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/30"
+            onClick={() => !savingName && setEditingForm(null)}
+            aria-label="名前変更を閉じる"
+          />
+          <div className="relative w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+            <h3 className="text-base font-semibold text-gray-900">フォーム名を変更</h3>
+            <p className="mt-1 text-xs text-gray-400">
+              回答データやURLは変わりませんが、回答者に表示されるフォーム名も変わります。
+            </p>
+            <p className="mt-1 text-xs text-gray-400">推奨：サービス名｜目的（対象・導線）</p>
+            <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-gray-500">
+              <span className="rounded bg-gray-100 px-2 py-1">質問 {editingForm.fields.length}項目</span>
+              {editingForm.usedByAccounts.map((account) => (
+                <span key={account.id} className="rounded bg-gray-100 px-2 py-1">
+                  {account.name}
+                </span>
+              ))}
+            </div>
+            <label className="mt-4 block">
+              <span className="mb-1.5 block text-xs font-medium text-gray-600">フォーム名</span>
+              <input
+                autoFocus
+                value={editingName}
+                onChange={(event) => setEditingName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void saveName()
+                }}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-[#06C755]"
+              />
+            </label>
+            {renameError && <p className="mt-2 text-xs text-red-500">{renameError}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingForm(null)}
+                disabled={savingName}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveName()}
+                disabled={!editingName.trim() || savingName}
+                className="rounded-lg bg-[#06C755] px-4 py-2 text-sm font-medium text-white hover:bg-[#05b64d] disabled:opacity-50"
+              >
+                {savingName ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

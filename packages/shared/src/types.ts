@@ -85,6 +85,14 @@ export interface Tag {
   name: string;
   /** 表示色 (HEX: #RRGGBB) */
   color: string;
+  /** このタグを初めて獲得したときに付与するマイル */
+  mileageReward?: number;
+  /** 紹介された友だちがこのタグを獲得したとき、紹介者へ付与するマイル */
+  referralMileageReward?: number;
+  /** 今後の行動マイル倍率。10000 = 1.0倍、null = 倍率タグとして使わない */
+  mileageMultiplierBps?: number | null;
+  /** 複数の倍率タグがある場合の優先順位（大きい値を採用） */
+  mileageMultiplierPriority?: number;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
   /** このタグが付与されている友だち数 (GET /api/tags のみ付与) */

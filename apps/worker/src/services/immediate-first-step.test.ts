@@ -41,6 +41,9 @@ vi.mock('@line-crm/line-sdk', () => ({
   LineClient: vi.fn().mockImplementation(() => lineClientMock),
 }));
 
+const stepDeliveryMocks = vi.hoisted(() => ({
+  evaluateCondition: vi.fn(async (_db: unknown, _friendId: string, _step: { id: string }) => true),
+}));
 vi.mock('./step-delivery.js', () => ({
   buildMessage: vi.fn((type: string, content: string) => ({ type, text: content })),
   expandVariables: vi.fn((content: string) => content),
@@ -49,6 +52,7 @@ vi.mock('./step-delivery.js', () => ({
     messageType: msg.type,
     content: msg.text,
   })),
+  evaluateCondition: stepDeliveryMocks.evaluateCondition,
 }));
 
 // Cron-parity decoration (shared decorateForFriendPush pipeline).
@@ -532,5 +536,95 @@ describe('on_reach_tag', () => {
       enrollment: { id: 'fs-1', current_step_order: 0 },
     });
     expect(dbMocks.addTagToFriend).toHaveBeenCalledWith(db, 'friend-1', 'tag-9');
+  });
+});
+
+describe('step conditions — cron parity on the instant path', () => {
+  const COND_STEP1 = {
+    id: 'step-1',
+    step_order: 1,
+    delay_minutes: 0,
+    on_reach_tag_id: null,
+    condition_type: 'tag_exists',
+    condition_value: 'tag-answered',
+  };
+  const COND_STEP2 = {
+    id: 'step-2',
+    step_order: 2,
+    delay_minutes: 0,
+    on_reach_tag_id: null,
+    condition_type: 'tag_not_exists',
+    condition_value: 'tag-answered',
+  };
+
+  beforeEach(() => {
+    dbMocks.getScenarioById.mockResolvedValue({
+      id: 'scn-1',
+      is_active: 1,
+      delivery_mode: 'relative',
+      steps: [COND_STEP1, COND_STEP2],
+    });
+  });
+
+  it("delivers step 1 when its condition passes (evaluated via the cron's evaluateCondition)", async () => {
+    stepDeliveryMocks.evaluateCondition.mockImplementation(
+      async (_db: unknown, _friendId: string, step: { id: string }) => step.id === 'step-1',
+    );
+    dbMocks.resolveStepContent.mockResolvedValue({
+      messageType: 'text',
+      messageContent: 'reward!',
+      templateIdAtSend: null,
+    });
+    const { db } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(true);
+    expect(lineClientMock.pushMessage).toHaveBeenCalledWith('U-1', [{ type: 'text', text: 'reward!' }]);
+    // advanced to step 1's order, next scheduled from step 2
+    expect(dbMocks.advanceFriendScenario).toHaveBeenCalledWith(db, 'fs-1', 1, expect.any(String));
+  });
+
+  it('skips a failing step 1 and instantly delivers the next immediate step whose condition passes', async () => {
+    stepDeliveryMocks.evaluateCondition.mockImplementation(
+      async (_db: unknown, _friendId: string, step: { id: string }) => step.id === 'step-2',
+    );
+    const { db } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(true);
+    // delivered step 2 and completed (no step after it)
+    expect(dbMocks.completeFriendScenario).toHaveBeenCalledWith(db, 'fs-1');
+  });
+
+  it('does not walk past a non-immediate step: a failing delay-0 step 1 followed by a delayed step leaves the row to the cron', async () => {
+    dbMocks.getScenarioById.mockResolvedValue({
+      id: 'scn-1',
+      is_active: 1,
+      delivery_mode: 'relative',
+      steps: [COND_STEP1, { ...STEP2, condition_type: null, condition_value: null }],
+    });
+    stepDeliveryMocks.evaluateCondition.mockResolvedValue(false);
+    const { db } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(false);
+    expect(lineClientMock.pushMessage).not.toHaveBeenCalled();
+    // untouched: no claim, no advance — the cron owns the skip
+    expect(dbMocks.claimFriendScenarioForDelivery).not.toHaveBeenCalled();
+    expect(dbMocks.advanceFriendScenario).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing and touches nothing when every immediate step fails its condition', async () => {
+    stepDeliveryMocks.evaluateCondition.mockResolvedValue(false);
+    const { db } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(false);
+    expect(lineClientMock.pushMessage).not.toHaveBeenCalled();
+    expect(dbMocks.claimFriendScenarioForDelivery).not.toHaveBeenCalled();
   });
 });

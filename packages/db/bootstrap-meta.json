@@ -56,7 +56,25 @@
     "047_affiliate_offers.sql",
     "048_chats_friend_unique.sql",
     "049_tracked_links_short_code.sql",
-    "050_tracked_links_auto_dedup.sql"
+    "050_tracked_links_auto_dedup.sql",
+    "051_booking_recurring_availability_google_calendar.sql",
+    "051_webinars.sql",
+    "055_webinar_ctas.sql",
+    "056_webinar_registrations.sql",
+    "057_webinar_funnel_events.sql",
+    "058_webinar_followups.sql",
+    "059_meet_consultation_reminders.sql",
+    "060_webinar_journey_followups.sql",
+    "061_mileage_foundation.sql",
+    "062_mileage_admin_and_activity_rules.sql",
+    "063_webinar_instagram_mileage.sql",
+    "064_async_mileage_and_tag_policy.sql",
+    "065_following_loyalty_mileage.sql",
+    "066_referral_quality_mileage.sql",
+    "067_mileage_keyword_auto_reply.sql",
+    "068_media_inquiries.sql",
+    "069_rich_menu_selected.sql",
+    "070_admin_sso_jti.sql"
   ],
-  "migrationCount": 57
+  "migrationCount": 75
 }

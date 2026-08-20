@@ -257,13 +257,15 @@ chats.get('/api/chats', async (c) => {
     // chats を lookup する (無条件時は 全friend × chats lookup を省く)。
     const pageNeedsChats = Boolean(status || operatorId);
 
-    // preview は **最新の incoming (ユーザー発)** を優先する。auto_reply / scenario 等の
-    // outbound が直後に書き込まれて preview を上書きすると「ユーザーが何と言ったか」が
-    // 一覧から見えなくなる (operator triage の主目的が損なわれる)。
-    // incoming が無い (broadcast push など outbound only) chat は最新 outbound にフォールバック。
+    // preview は direction/source を問わず **実際の最新メッセージ** を表示する。
+    // incoming を常に優先すると、プロキシ経由の manual/external 送信が messages_log に
+    // 正しく保存されていても、一覧には何日も前の incoming とその日時が残って見える。
+    // また page の並び順は最新 any なのにレスポンスの lastMessageAt だけ過去の incoming に
+    // なるため、フロントが作るページング cursor と SQL のソートキーも食い違っていた。
+    // 未対応モードだけは取得後に unansweredMap の incoming で明示的に上書きする。
     // text 以外 (flex/image/sticker 等) は content を NULL にして payload size を抑える
     // (フロントは type で 📋 Flex / 📷 画像 等のラベルを出すので content は不要)。
-    // any_agg / in_agg の bare column (content 等) は「単一 MAX() を含む集約は max 行の
+    // any_agg の bare column (content 等) は「単一 MAX() を含む集約は max 行の
     // 値を返す」という SQLite の documented 挙動で argmax として使っている。
     // 集約は page 確定後の friend に絞って実行する (全 friend 分の content を
     // materialize しない)。last_any は並び順決定専用のスリムな全走査 1 回のみ。
@@ -305,25 +307,9 @@ chats.get('/api/chats', async (c) => {
           AND friend_id IN (SELECT friend_id FROM page)
         GROUP BY friend_id
       ),
-      in_agg AS (
-        SELECT friend_id,
-          CASE WHEN message_type = 'text' THEN SUBSTR(content, 1, 200) ELSE NULL END AS content,
-          message_type,
-          MAX(created_at) AS created_at
-        FROM messages_log
-        WHERE direction = 'incoming'
-          AND (delivery_type IS NULL OR delivery_type != 'test')
-          AND friend_id IN (SELECT friend_id FROM page)
-        GROUP BY friend_id
-      ),
       recent_msg AS (
-        SELECT a.friend_id,
-          COALESCE(i.content, a.content) AS content,
-          CASE WHEN i.friend_id IS NOT NULL THEN 'incoming' ELSE a.direction END AS direction,
-          COALESCE(i.message_type, a.message_type) AS message_type,
-          COALESCE(i.created_at, a.created_at) AS preview_at
-        FROM any_agg a
-        LEFT JOIN in_agg i ON i.friend_id = a.friend_id
+        SELECT friend_id, content, direction, message_type, created_at AS preview_at
+        FROM any_agg
       )
       SELECT
         f.id AS id,
@@ -352,7 +338,7 @@ chats.get('/api/chats', async (c) => {
 
     // placeholder 順 = SQL 出現順: last_any(account) → deduped 内 chats(account) →
     // page 条件 → cursor (beforeAt ×2 + beforeId) → LIMIT。
-    // any_agg / in_agg は page で friend が確定済みのため account filter 不要。
+    // any_agg は page で friend が確定済みのため account filter 不要。
     const allBindings: unknown[] = [];
     if (lineAccountId) allBindings.push(lineAccountId, lineAccountId);
     allBindings.push(...conditionBindings);

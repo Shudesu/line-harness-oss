@@ -21,8 +21,8 @@ export class HttpClient {
     return this.request<T>('GET', path)
   }
 
-  async post<T = unknown>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>('POST', path, body)
+  async post<T = unknown>(path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>('POST', path, body, headers)
   }
 
   async put<T = unknown>(path: string, body?: unknown): Promise<T> {
@@ -37,11 +37,12 @@ export class HttpClient {
     return this.request<T>('DELETE', path)
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
     const url = `${this.baseUrl}${path}`
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
+      ...extraHeaders,
     }
 
     const options: RequestInit = {

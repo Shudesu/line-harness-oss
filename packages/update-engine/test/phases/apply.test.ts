@@ -60,6 +60,7 @@ const sampleCtx = (overrides: Partial<UpdateContext> = {}): UpdateContext => ({
 
 const sampleBundle = (overrides: Partial<ParsedBundle> = {}): ParsedBundle => ({
   workerJs: Buffer.from("export default {fetch(){return new Response('hi')}}"),
+  workerAssetFiles: new Map([['index.html', Buffer.from('<html>worker assets</html>')]]),
   adminFiles: new Map([['index.html', Buffer.from('<html>a</html>')]]),
   liffFiles: new Map([['index.html', Buffer.from('<html>l</html>')]]),
   migrations: new Map([
@@ -108,6 +109,8 @@ interface RouteSpec {
 interface RouterRoutes {
   d1?: RouteSpec;
   bindings?: RouteSpec;
+  assetsSession?: RouteSpec;
+  assetsUpload?: RouteSpec;
   workerPut?: RouteSpec;
   /** First Pages project (admin) — admin Pages calls. */
   adminUploadToken?: RouteSpec;
@@ -158,6 +161,12 @@ function makeRouter(routes: RouterRoutes): ReturnType<typeof vi.fn> {
     // suffix.
     if (url.endsWith(`/workers/scripts/${WORKER_NAME}/bindings`)) {
       return respond(next('bindings'));
+    }
+    if (url.endsWith(`/workers/scripts/${WORKER_NAME}/assets-upload-session`)) {
+      return respond(next('assetsSession'));
+    }
+    if (url.includes(`/accounts/${ACCOUNT_ID}/workers/assets/upload`)) {
+      return respond(next('assetsUpload'));
     }
     if (url.endsWith(`/workers/scripts/${WORKER_NAME}`) && method === 'PUT') {
       return respond(next('workerPut'));
@@ -222,6 +231,20 @@ function defaultRoutes(bundle: ParsedBundle): RouterRoutes {
         ok: true,
         status: 200,
         body: { success: true, result: [{ type: 'd1', name: 'DB', database_id: D1_ID }] },
+      },
+    },
+    assetsSession: {
+      defaults: {
+        ok: true,
+        status: 200,
+        body: { result: { buckets: [], jwt: 'ASSETS_JWT' } },
+      },
+    },
+    assetsUpload: {
+      defaults: {
+        ok: true,
+        status: 200,
+        body: { result: { jwt: 'ASSETS_COMPLETION_JWT' } },
       },
     },
     workerPut: { defaults: { ok: true, status: 200, body: { success: true } } },
@@ -524,6 +547,7 @@ describe('runApply', () => {
     expect(metadata.bindings).toEqual([
       { type: 'd1', name: 'DB', database_id: D1_ID },
       { type: 'plain_text', name: 'ENV', text: 'prod' },
+      { type: 'assets', name: 'ASSETS' },
     ]);
     expect(metadata.keep_bindings).toEqual(['secret_text', 'secret_key']);
   });

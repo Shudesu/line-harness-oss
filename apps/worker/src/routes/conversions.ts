@@ -10,6 +10,7 @@ import {
   getConversionApprovalQueue,
   setConversionApproval,
   getConversionApprovalNotifyInfo,
+  syncAffiliateConversionMileage,
 } from '@line-crm/db';
 import { IDENTITY_KEY_SQL } from '../lib/identity-key.js';
 import { notifyAffiliateApproval } from '../services/affiliate-notifier.js';
@@ -233,6 +234,16 @@ conversions.patch('/api/conversions/events/:id/approval', async (c) => {
         404,
       );
     }
+
+    // Mileage projection is retry-safe and runs even for `already_set`. This is
+    // deliberate: if an earlier request updated the approval row but failed
+    // before writing the ledger, the operator's retry repairs the partial work.
+    await syncAffiliateConversionMileage(
+      c.env.DB,
+      c.req.param('id'),
+      body.status,
+    );
+
     if (updated === 'already_set') {
       // Idempotent re-click: the status is already set to the requested value.
       // Return 200 so the UI does not show an error to the operator.

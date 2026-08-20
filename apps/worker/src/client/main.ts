@@ -153,6 +153,7 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
               ig: params.get('ig') || undefined,
               iga: params.get('iga') || undefined,
               igan: params.get('igan') || undefined,
+              crossAccountToken: params.get('crossAccountToken') || undefined,
             }),
           });
           if (res.ok) {
@@ -577,29 +578,29 @@ async function initAffiliate(): Promise<void> {
   const ref = getRef();
   const affParams = new URLSearchParams(window.location.search);
 
-  // UUID linking (best-effort) — affiliate API は friends 行を要求するので、
-  // 未 link の初回利用者でも friend-add gate 通過後に行が存在するようにする。
-  apiCall('/api/liff/link', {
-    method: 'POST',
-    body: JSON.stringify({
-      idToken: liff.getIDToken(),
-      displayName: profile.displayName,
-      existingUuid,
-      ref: ref || undefined,
-      ig: affParams.get('ig') || undefined,
-      iga: affParams.get('iga') || undefined,
-      igan: affParams.get('igan') || undefined,
-    }),
-  })
-    .then(async (res) => {
-      if (res.ok) {
-        const data = (await res.json()) as { success: boolean; data?: { userId?: string } };
-        if (data?.data?.userId) saveUuid(data.data.userId);
-      }
-    })
-    .catch(() => {
-      /* silent */
+  // Wallet取得より先にUUID連携を確定する。初回表示でここを待たないと、
+  // 未登録アカウント用の署名付きリンクを生成できず、別財布になる余地がある。
+  try {
+    const res = await apiCall('/api/liff/link', {
+      method: 'POST',
+      body: JSON.stringify({
+        idToken: liff.getIDToken(),
+        displayName: profile.displayName,
+        existingUuid,
+        ref: ref || undefined,
+        ig: affParams.get('ig') || undefined,
+        iga: affParams.get('iga') || undefined,
+        igan: affParams.get('igan') || undefined,
+        crossAccountToken: affParams.get('crossAccountToken') || undefined,
+      }),
     });
+    if (res.ok) {
+      const data = (await res.json()) as { success: boolean; data?: { userId?: string } };
+      if (data?.data?.userId) saveUuid(data.data.userId);
+    }
+  } catch {
+    // 友だち追加前はfriends行がまだ無い場合がある。追加後の復帰処理で再試行する。
+  }
 
   // 未友達なら friend-add UI に流す。affiliate API は friends 行 (=友だち) を
   // 要求するので、ここを skip すると /affiliate/me が friend_not_found で詰む。
