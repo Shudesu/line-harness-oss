@@ -11,12 +11,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const dbMocks = {
   // eager module-load deps (mirror affiliate-links-redirect.test.ts)
   getLineAccounts: vi.fn().mockResolvedValue([]),
+  jstNow: vi.fn(() => '2026-08-23T03:36:00.000+09:00'),
   getStaffByApiKey: vi.fn(),
   recoverStalledBroadcasts: vi.fn(),
   recoverStuckDeliveries: vi.fn(),
   // /api/liff/link + applyRefAttribution helpers
   getFriendByLineUserId: vi.fn(),
   getFriendByLineUserIdForAccount: vi.fn(),
+  upsertFriend: vi.fn(),
   getEntryRouteByRefCode: vi.fn().mockResolvedValue(null),
   getTrackedLinkById: vi.fn().mockResolvedValue(null),
   getAffiliateLinkByRefCode: vi.fn().mockResolvedValue(null),
@@ -226,6 +228,53 @@ describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend ad
       'F-1',
       'TAG-route',
       expect.anything(),
+    );
+  });
+
+  it('hydrates a historical LINE/L-Step friend missing from L Harness', async () => {
+    dbMocks.getLineAccounts.mockResolvedValueOnce([{
+      id: 'A-1',
+      login_channel_id: LOGIN_CHANNEL_ID,
+      channel_access_token: 'messaging-token',
+      channel_id: 'messaging-channel',
+    }]);
+    dbMocks.getFriendByLineUserIdForAccount.mockResolvedValueOnce(null);
+    dbMocks.upsertFriend.mockResolvedValueOnce({
+      id: 'F-historical',
+      line_account_id: null,
+      is_following: 1,
+      user_id: 'U-existing',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url === 'https://api.line.me/oauth2/v2.1/verify') {
+          return new Response(JSON.stringify({ sub: 'U-friend', name: 'Tester' }), {
+            status: 200,
+          });
+        }
+        if (url === 'https://api.line.me/v2/bot/profile/U-friend') {
+          return new Response(JSON.stringify({ displayName: 'Historical Friend' }), {
+            status: 200,
+          });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+
+    const res = await link('lh-main');
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      success: true,
+      data: { isFollowing: true, alreadyLinked: true },
+    });
+    expect(dbMocks.upsertFriend).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        lineUserId: 'U-friend',
+        displayName: 'Historical Friend',
+      }),
     );
   });
 });

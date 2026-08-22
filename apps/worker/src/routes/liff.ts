@@ -1235,9 +1235,50 @@ liffRoutes.post('/api/liff/link', async (c) => {
     const matchedAccount = matchedLoginChannelId
       ? dbAccounts.find((a) => a.login_channel_id === matchedLoginChannelId) ?? null
       : null;
-    const friend = await getFriendByLineUserIdForAccount(
+    let friend = await getFriendByLineUserIdForAccount(
       db, lineUserId, matchedAccount?.id ?? null,
     );
+    if (!friend && matchedAccount?.channel_access_token) {
+      // Friends acquired before the webhook cut-over may exist in LINE/L-Step
+      // but not yet in L Harness. Because the Login and Messaging channels are
+      // under the same provider, the verified LIFF `sub` can be checked against
+      // this bot. A successful profile lookup lets us safely hydrate the missing
+      // row and continue without LINE Login's linked-bot feature.
+      try {
+        const profileRes = await fetch(
+          `https://api.line.me/v2/bot/profile/${encodeURIComponent(lineUserId)}`,
+          { headers: { Authorization: `Bearer ${matchedAccount.channel_access_token}` } },
+        );
+        if (profileRes.ok) {
+          const profile = await profileRes.json<{
+            displayName?: string;
+            pictureUrl?: string;
+            statusMessage?: string;
+          }>();
+          const hydrated = await upsertFriend(db, {
+            lineUserId,
+            displayName: profile.displayName ?? body.displayName ?? verified.name ?? null,
+            pictureUrl: profile.pictureUrl ?? null,
+            statusMessage: profile.statusMessage ?? null,
+          });
+          const now = jstNow();
+          await db
+            .prepare(
+              'UPDATE friends SET line_account_id = ?, is_following = 1, updated_at = ? WHERE id = ?',
+            )
+            .bind(matchedAccount.id, now, hydrated.id)
+            .run();
+          friend = {
+            ...hydrated,
+            line_account_id: matchedAccount.id,
+            is_following: 1,
+            updated_at: now,
+          };
+        }
+      } catch (error) {
+        console.warn('[liff-link] failed to hydrate historical friend', error);
+      }
+    }
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
