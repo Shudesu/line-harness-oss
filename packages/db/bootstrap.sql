@@ -532,6 +532,34 @@ CREATE TABLE line_accounts (
   updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , login_channel_id TEXT, login_channel_secret TEXT, liff_id TEXT, token_expires_at TEXT);
 
+CREATE TABLE line_coexistence_policies (
+  line_account_id TEXT PRIMARY KEY REFERENCES line_accounts(id) ON DELETE CASCADE,
+  harness_tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT,
+  lstep_tag_id    TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT,
+  cutover_at      TEXT NOT NULL,
+  is_active       INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  CHECK (harness_tag_id != lstep_tag_id)
+);
+
+CREATE TABLE line_webhook_forward_queue (
+  id                TEXT PRIMARY KEY,
+  line_account_id   TEXT REFERENCES line_accounts(id) ON DELETE SET NULL,
+  raw_body          TEXT NOT NULL,
+  line_signature    TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'sending', 'delivered', 'dead')),
+  attempt_count     INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at   TEXT NOT NULL,
+  locked_until      TEXT,
+  last_http_status  INTEGER,
+  last_error        TEXT,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  delivered_at      TEXT
+);
+
 CREATE TABLE link_clicks (
   id TEXT PRIMARY KEY,
   tracked_link_id TEXT NOT NULL REFERENCES tracked_links (id) ON DELETE CASCADE,
@@ -1278,6 +1306,15 @@ CREATE INDEX idx_idempotency_expires ON booking_idempotency_keys (expires_at);
 
 CREATE INDEX idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);
+
+CREATE INDEX idx_line_coexistence_policies_active
+  ON line_coexistence_policies(is_active, line_account_id);
+
+CREATE INDEX idx_line_webhook_forward_delivered
+  ON line_webhook_forward_queue(delivered_at);
+
+CREATE INDEX idx_line_webhook_forward_due
+  ON line_webhook_forward_queue(status, next_attempt_at, created_at);
 
 CREATE INDEX idx_link_clicks_friend ON link_clicks (friend_id);
 

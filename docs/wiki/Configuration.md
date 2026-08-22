@@ -45,6 +45,7 @@ crons = ["*/5 * * * *"]
 | `LINE_CHANNEL_ACCESS_TOKEN` | 必須 | string | Messaging API 長期アクセストークン | `eyJhbGciOi...` |
 | `API_KEY` | 必須 | string | REST API 認証用 Bearer トークン | `sk-my-secret-key` |
 | `LINE_CHANNEL_ID` | 任意 | string | Messaging API チャネルID | `1234567890` |
+| `LSTEP_WEBHOOK_URL` | 任意 | HTTPS URL | LINE WebhookをL Harnessで処理した後に転送する既存LステップWebhook URL。値はログ・DBへ保存せずWorker Secretで管理 | `https://example.invalid/line/webhook` |
 | `LIFF_URL` | 任意 | string | LIFF アプリ URL | `https://liff.line.me/12345-abcde` |
 | `LINE_LOGIN_CHANNEL_ID` | 任意 | string | LINE Login チャネルID（UUID連携用） | `9876543210` |
 | `LINE_LOGIN_CHANNEL_SECRET` | 任意 | string | LINE Login チャネルシークレット | `xyz789...` |
@@ -61,6 +62,7 @@ npx wrangler secret put LINE_CHANNEL_SECRET
 npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put API_KEY
 npx wrangler secret put LINE_CHANNEL_ID
+npx wrangler secret put LSTEP_WEBHOOK_URL
 npx wrangler secret put LIFF_URL
 npx wrangler secret put LINE_LOGIN_CHANNEL_ID
 npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
@@ -82,6 +84,7 @@ export type Env = {
     DB: D1Database;
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;
+    LSTEP_WEBHOOK_URL?: string;
     API_KEY: string;
     LIFF_URL: string;
     LINE_CHANNEL_ID: string;
@@ -90,6 +93,29 @@ export type Env = {
   };
 };
 ```
+
+## Lステップとの同一アカウント共存
+
+LINE Developersに登録できるMessaging API Webhookは1つだけです。共存構成では
+LINEの送信先をL Harnessの `/webhook` にし、署名付き本文を
+`LSTEP_WEBHOOK_URL` へそのまま転送します。
+
+共存ポリシーを有効にしたアカウントでは、次のシステムタグを使用します。
+
+- `管理元：Lステップ`: 切替時点の既存友だち、および友だち追加イベントを確認できず最初にメッセージだけ届いた友だち
+- `管理元：L Harness`: 切替後の友だち追加、またはL HarnessのLIFF・流入リンクを通った友だち
+
+同じ友だちにはどちらか一方だけを付けます。L HarnessのLIFF・流入リンクを通った場合は、
+既存のLステップ管理タグを外してL Harness管理へ移します。
+
+共存アカウントの一斉配信ではLINE Broadcast APIを使いません。`全員` 配信を含めて
+自動的にMulticastキューへ変換し、次の両方を満たす友だちだけへ送ります。
+
+- `管理元：L Harness` が付いている
+- `管理元：Lステップ` が付いていない
+
+これにより未分類者やタグ競合者も安全側で配信対象外になります。手動返信・AI返信の
+担当制御はこのポリシーには含まれません。
 
 ### 予約とGoogleカレンダーの同期
 

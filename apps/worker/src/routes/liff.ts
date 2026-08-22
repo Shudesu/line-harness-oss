@@ -36,6 +36,7 @@ import { isReservedRef } from '../lib/reserved-refs.js';
 import { loginUnconfiguredPage } from '../lib/login-unconfigured.js';
 import type { Env } from '../index.js';
 import { verifyCrossAccountToken } from '../lib/cross-account-token.js';
+import { markFriendAsHarnessManaged } from '../services/line-coexistence.js';
 
 
 // OAuth state base64 helpers. btoa() only accepts Latin-1, so a single
@@ -202,6 +203,11 @@ async function applyRefAttribution(
   lineUserId: string,
   options?: { accountChannelId?: string | null; isNewFriend?: boolean },
 ): Promise<void> {
+  await markFriendAsHarnessManaged(c.env.DB, {
+    friendId: friend.id,
+    lineAccountId: friend.line_account_id ?? null,
+    accountChannelId: options?.accountChannelId ?? null,
+  });
   if (!ref || ref.startsWith('xh:')) return;
   // Reserved product refs (e.g. 'dashboard') are provenance markers, never
   // campaigns — skip route/tracked-link/affiliate side effects even when a

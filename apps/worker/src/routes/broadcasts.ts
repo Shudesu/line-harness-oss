@@ -21,9 +21,13 @@ import {
 } from '../services/quota.js';
 import { computeDedupBroadcastPreview } from '../services/dedup-broadcast.js';
 import { processSegmentSend } from '../services/segment-send.js';
-import type { SegmentCondition } from '../services/segment-query.js';
+import { buildSegmentQuery, type SegmentCondition } from '../services/segment-query.js';
 import { getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
+import {
+  coexistenceAudienceCondition,
+  getLineCoexistencePolicy,
+} from '../services/line-coexistence.js';
 import {
   assertNoUnresolvedBroadcastVariables,
   getUnsupportedBroadcastVariables,
@@ -181,6 +185,10 @@ broadcasts.get('/api/broadcasts/:id/preview-count', async (c) => {
     const raw = broadcast as unknown as Record<string, unknown>;
     let count = 0;
     let perAccount: Array<{ accountId: string; sendCount: number }> | undefined;
+    const previewCoexistencePolicy = await getLineCoexistencePolicy(
+      c.env.DB,
+      (raw.line_account_id as string | null) ?? null,
+    );
 
     if (broadcast.target_type === 'multi-account-dedup') {
       const accountIds = parseJsonArray(raw.account_ids) ?? [];
@@ -205,6 +213,20 @@ broadcasts.get('/api/broadcasts/:id/preview-count', async (c) => {
       }
       count = active;
       perAccount = breakdown;
+    } else if (
+      previewCoexistencePolicy
+      && (broadcast.target_type === 'all' || broadcast.target_type === 'tag')
+    ) {
+      const condition = coexistenceAudienceCondition(
+        previewCoexistencePolicy,
+        broadcast.target_type === 'tag' ? broadcast.target_tag_id : null,
+      );
+      const { sql, bindings } = buildSegmentQuery(condition);
+      const row = await c.env.DB
+        .prepare(`SELECT COUNT(*) AS cnt FROM (${sql}) coexistence_audience`)
+        .bind(...bindings)
+        .first<{ cnt: number }>();
+      count = row?.cnt ?? 0;
     } else if (broadcast.target_type === 'tag' && broadcast.target_tag_id) {
       // 注: ここは inline send パス (broadcast.ts:61 getFriendsByTag) が
       // line_account_id でフィルタしないので、preview もアカウント横断で数える。
@@ -592,6 +614,84 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     const quota = await getQuotaUsage(c.env.DB, c.env);
     if (quota.exceeded) {
       return c.json({ success: false, error: 'quota_exceeded', quota }, 403);
+    }
+
+    // LINE's broadcast API cannot exclude legacy L-Step users. For an active
+    // coexistence account, convert all/tag sends to the same durable segment
+    // queue used by large audiences, with the owner tags enforced server-side.
+    // This guard also works for legacy clients that omit lineAccountId when
+    // the deployment has exactly one coexistence policy.
+    const existingAccountId = (
+      existing as unknown as Record<string, unknown>
+    ).line_account_id as string | null;
+    const coexistencePolicy = await getLineCoexistencePolicy(
+      c.env.DB,
+      existingAccountId,
+    );
+    if (
+      coexistencePolicy
+      && (existing.target_type === 'all' || existing.target_type === 'tag')
+    ) {
+      if (existing.target_type === 'tag' && !existing.target_tag_id) {
+        return c.json({ success: false, error: 'targetTagId is required for tag delivery' }, 400);
+      }
+      const condition = coexistenceAudienceCondition(
+        coexistencePolicy,
+        existing.target_type === 'tag' ? existing.target_tag_id : null,
+      );
+      const { sql, bindings } = buildSegmentQuery(condition);
+      const audience = await c.env.DB
+        .prepare(
+          `SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN q.display_name IS NULL OR trim(q.display_name) = '' THEN 1 ELSE 0 END) AS missing_name
+             FROM (${sql}) q`,
+        )
+        .bind(...bindings)
+        .first<{ total: number; missing_name: number | null }>();
+      const total = Number(audience?.total ?? 0);
+      if (
+        hasRecipientVariables(existing.message_content)
+        && Number(audience?.missing_name ?? 0) > 0
+      ) {
+        return c.json({
+          success: false,
+          error: `Cannot personalize broadcast: ${audience!.missing_name} recipient(s) have no display name`,
+        }, 400);
+      }
+      if (quota.monthlyMessages.max > 0 && wouldExceedMonthlyQuota(quota, total)) {
+        return c.json({ success: false, error: 'quota_exceeded', quota }, 403);
+      }
+
+      const lockResult = await c.env.DB
+        .prepare(
+          `UPDATE broadcasts
+              SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
+            WHERE id = ? AND status IN ('draft','scheduled')`,
+        )
+        .bind(total, JSON.stringify(condition), id)
+        .run();
+      if (!lockResult.meta.changes) {
+        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      }
+
+      try {
+        const ctx = c.executionCtx as ExecutionContext;
+        const defaultClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+        ctx.waitUntil(
+          processQueuedBroadcasts(c.env.DB, defaultClient, c.env.WORKER_URL, c.env).catch((err) => {
+            console.error('[coexistence-broadcast] background queue processing failed:', err);
+          }),
+        );
+      } catch (kickErr) {
+        console.warn('[coexistence-broadcast] waitUntil unavailable, falling back to cron:', kickErr);
+      }
+
+      return c.json({
+        success: true,
+        data: { id, status: 'sending', totalCount: total },
+        queued: true,
+        message: 'Coexistence-safe broadcast queued for L Harness recipients only',
+      }, 202);
     }
     // Also refuse when the projected total would cross the monthly limit, so
     // one big send just under the limit cannot overshoot it wholesale.
