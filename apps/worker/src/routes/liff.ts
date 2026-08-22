@@ -1262,6 +1262,15 @@ liffRoutes.post('/api/liff/link', async (c) => {
       linkedUserId = crossAccount.userId;
     }
 
+    // Reaching this verified LIFF endpoint means the user belongs to the
+    // L Harness acquisition path even when the URL has no explicit ref code.
+    // Run this only after any cross-account token has also been validated.
+    await markFriendAsHarnessManaged(db, {
+      friendId: friend.id,
+      lineAccountId: friend.line_account_id ?? null,
+      accountChannelId: matchedAccount?.channel_id ?? null,
+    });
+
     // IG cross-link: runs regardless of already-linked vs new-link branch so
     // existing friends still get ig_igsid wired when they hit this endpoint
     // from a reward DM.
@@ -1322,7 +1331,11 @@ liffRoutes.post('/api/liff/link', async (c) => {
       }
       return c.json({
         success: true,
-        data: { userId: linkedUserId, alreadyLinked: true },
+        data: {
+          userId: linkedUserId,
+          alreadyLinked: true,
+          isFollowing: Boolean(friend.is_following),
+        },
       });
     }
 
@@ -1393,7 +1406,11 @@ liffRoutes.post('/api/liff/link', async (c) => {
 
     return c.json({
       success: true,
-      data: { userId, alreadyLinked: false },
+      data: {
+        userId,
+        alreadyLinked: false,
+        isFollowing: Boolean(friend.is_following),
+      },
     });
   } catch (err) {
     console.error('POST /api/liff/link error:', err);

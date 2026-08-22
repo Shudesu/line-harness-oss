@@ -104,6 +104,7 @@ describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend ad
     dbMocks.getFriendByLineUserId.mockResolvedValue({
       id: 'F-1',
       line_account_id: null,
+      is_following: 1,
       user_id: 'U-uuid',
     });
     dbMocks.getEntryRouteByRefCode.mockResolvedValue(null);
@@ -127,6 +128,10 @@ describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend ad
 
     const res = await link('aff-offer');
     expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      success: true,
+      data: { isFollowing: true },
+    });
 
     expect(dbMocks.getAffiliateOfferById).toHaveBeenCalledWith(
       expect.anything(),
