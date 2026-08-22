@@ -1134,3 +1134,46 @@ CREATE TABLE IF NOT EXISTS rich_menu_areas (
 CREATE INDEX IF NOT EXISTS idx_rich_menu_pages_group    ON rich_menu_pages(group_id, order_index);
 CREATE INDEX IF NOT EXISTS idx_rich_menu_areas_page     ON rich_menu_areas(page_id);
 CREATE INDEX IF NOT EXISTS idx_rich_menu_groups_account ON rich_menu_groups(account_id, status);
+
+-- =============================================================================
+-- Durable forwarding of the one LINE webhook to a legacy provider (L-Step)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS line_webhook_forward_queue (
+  id                TEXT PRIMARY KEY,
+  line_account_id   TEXT REFERENCES line_accounts(id) ON DELETE SET NULL,
+  raw_body          TEXT NOT NULL,
+  line_signature    TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'sending', 'delivered', 'dead')),
+  attempt_count     INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at   TEXT NOT NULL,
+  locked_until      TEXT,
+  last_http_status  INTEGER,
+  last_error        TEXT,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  delivered_at      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_line_webhook_forward_due
+  ON line_webhook_forward_queue(status, next_attempt_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_line_webhook_forward_delivered
+  ON line_webhook_forward_queue(delivered_at);
+
+-- ============================================================
+-- LINE / L-Step coexistence policy
+-- ============================================================
+CREATE TABLE IF NOT EXISTS line_coexistence_policies (
+  line_account_id TEXT PRIMARY KEY REFERENCES line_accounts(id) ON DELETE CASCADE,
+  harness_tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT,
+  lstep_tag_id    TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT,
+  cutover_at      TEXT NOT NULL,
+  is_active       INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  CHECK (harness_tag_id != lstep_tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_line_coexistence_policies_active
+  ON line_coexistence_policies(is_active, line_account_id);

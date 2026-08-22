@@ -7,6 +7,12 @@ const lineClientMocks = vi.hoisted(() => ({
   pushMessage: vi.fn(),
 }));
 
+const forwardMocks = vi.hoisted(() => ({
+  validateLstepWebhookUrl: vi.fn(),
+  enqueueLineWebhookForward: vi.fn(),
+  deliverQueuedLineWebhookById: vi.fn(),
+}));
+
 // Stub the DB graph — these tests focus on webhook guard behavior and the
 // first-contact friend registration path without touching real D1/LINE.
 vi.mock('@line-crm/db', () => ({
@@ -46,6 +52,8 @@ vi.mock('../services/event-bus.js', () => ({
 vi.mock('../services/local-line-proxy.js', () => ({
   dispatchLineProxyLocally: vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
 }));
+
+vi.mock('../services/line-webhook-forwarder.js', () => forwardMocks);
 
 vi.mock('../services/step-delivery.js', () => ({
   buildMessage: vi.fn(),
@@ -97,6 +105,15 @@ const baseExecutionCtx = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getLineAccounts).mockResolvedValue([]);
+  forwardMocks.validateLstepWebhookUrl.mockImplementation((raw?: string) =>
+    raw ? new URL(raw) : null,
+  );
+  forwardMocks.enqueueLineWebhookForward.mockResolvedValue('line-wh-test');
+  forwardMocks.deliverQueuedLineWebhookById.mockResolvedValue({
+    id: 'line-wh-test',
+    outcome: 'delivered',
+    httpStatus: 200,
+  });
 });
 
 describe('POST /webhook — DoS defenses (#104)', () => {
@@ -188,6 +205,84 @@ describe('POST /webhook — DoS defenses (#104)', () => {
     expect(res.status).toBe(200);
     // Fast-rejected before any crypto / DB work.
     expect(verifySignature).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — L-Step forwarding', () => {
+  test('persists and forwards the exact signed LINE request when configured', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    const rawBody = JSON.stringify({ destination: 'bot', events: [] });
+    const signature = 'A'.repeat(43) + '=';
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+    const db = {} as D1Database;
+
+    const app = setupApp();
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': signature,
+        },
+        body: rawBody,
+      },
+      {
+        ...baseEnv,
+        DB: db,
+        LSTEP_WEBHOOK_URL: 'https://legacy.example.test/line/webhook',
+      },
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(forwardMocks.enqueueLineWebhookForward).toHaveBeenCalledWith(db, {
+      rawBody,
+      signature,
+      eventIds: [],
+      lineAccountId: null,
+    });
+    expect(executionCtx.waitUntil).toHaveBeenCalledOnce();
+    const background = vi.mocked(executionCtx.waitUntil).mock.calls[0][0] as Promise<unknown>;
+    await background;
+    expect(forwardMocks.deliverQueuedLineWebhookById).toHaveBeenCalledWith(
+      db,
+      new URL('https://legacy.example.test/line/webhook'),
+      'line-wh-test',
+    );
+  });
+
+  test('returns 503 so LINE retries when the durable queue cannot be written', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    forwardMocks.enqueueLineWebhookForward.mockRejectedValueOnce(new Error('D1 unavailable'));
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+
+    const app = setupApp();
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': 'A'.repeat(43) + '=',
+        },
+        body: JSON.stringify({ destination: 'bot', events: [] }),
+      },
+      { ...baseEnv, LSTEP_WEBHOOK_URL: 'https://legacy.example.test/line/webhook' },
+      executionCtx,
+    );
+
+    expect(res.status).toBe(503);
+    expect(executionCtx.waitUntil).not.toHaveBeenCalled();
+    expect(forwardMocks.deliverQueuedLineWebhookById).not.toHaveBeenCalled();
   });
 });
 

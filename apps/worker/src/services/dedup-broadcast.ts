@@ -86,6 +86,24 @@ export async function computeDedupBroadcastPreview(
     WHERE is_following = 1
       AND line_account_id IN (${inPlaceholders})
       AND line_account_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+          FROM line_coexistence_policies lcp
+         WHERE lcp.line_account_id = friends.line_account_id
+           AND lcp.is_active = 1
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM friend_tags coexist_h
+                WHERE coexist_h.friend_id = friends.id
+                  AND coexist_h.tag_id = lcp.harness_tag_id
+             )
+             OR EXISTS (
+               SELECT 1 FROM friend_tags coexist_l
+                WHERE coexist_l.friend_id = friends.id
+                  AND coexist_l.tag_id = lcp.lstep_tag_id
+             )
+           )
+      )
       ${tagJoinForSelectedCount}
     GROUP BY line_account_id
   `;
@@ -117,6 +135,24 @@ export async function computeDedupBroadcastPreview(
       WHERE f.is_following = 1
         AND f.line_account_id IN (${inPlaceholders})
         AND f.line_account_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM line_coexistence_policies lcp
+           WHERE lcp.line_account_id = f.line_account_id
+             AND lcp.is_active = 1
+             AND (
+               NOT EXISTS (
+                 SELECT 1 FROM friend_tags coexist_h
+                  WHERE coexist_h.friend_id = f.id
+                    AND coexist_h.tag_id = lcp.harness_tag_id
+               )
+               OR EXISTS (
+                 SELECT 1 FROM friend_tags coexist_l
+                  WHERE coexist_l.friend_id = f.id
+                    AND coexist_l.tag_id = lcp.lstep_tag_id
+               )
+             )
+        )
         ${tagJoinForRanked}
     ),
     ranked AS (

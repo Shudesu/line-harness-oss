@@ -24,6 +24,12 @@ import { awardActivityMileage } from '../services/activity-mileage.js';
 import { replyViaHarnessProxy } from '../services/line-proxy-send.js';
 import type { HarnessProxyDispatch } from '../services/line-proxy-send.js';
 import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
+import {
+  deliverQueuedLineWebhookById,
+  enqueueLineWebhookForward,
+  validateLstepWebhookUrl,
+} from '../services/line-webhook-forwarder.js';
+import { classifyWebhookFriendManagement } from '../services/line-coexistence.js';
 
 const webhook = new Hono<Env>();
 
@@ -158,6 +164,32 @@ webhook.post('/webhook', async (c) => {
     return c.json({ status: 'ok' }, 200);
   }
 
+  // LINE accepts only one webhook URL. When an L-Step destination is configured,
+  // persist the signed request before acknowledging LINE, then deliver the exact
+  // raw body/signature in the same waitUntil as local processing. A failed insert
+  // returns non-2xx so LINE redelivery remains the final safety net; a failed
+  // downstream POST stays in D1 for the minute cron to retry.
+  let forwardTarget: URL | null = null;
+  let forwardQueueId: string | null = null;
+  try {
+    forwardTarget = validateLstepWebhookUrl(c.env.LSTEP_WEBHOOK_URL, c.req.url);
+    if (forwardTarget) {
+      const events = Array.isArray(body.events) ? body.events : [];
+      const eventIds = events
+        .map((event) => event.webhookEventId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+      forwardQueueId = await enqueueLineWebhookForward(db, {
+        rawBody,
+        signature,
+        eventIds,
+        lineAccountId: matchedAccountId,
+      });
+    }
+  } catch (error) {
+    console.error('[line-webhook-forward] failed to persist signed webhook', error);
+    return c.json({ status: 'forward_queue_unavailable' }, 503);
+  }
+
   const lineClient = new LineClient(channelAccessToken);
 
   // 非同期処理 — LINE は ~1s 以内のレスポンスを要求
@@ -183,7 +215,19 @@ webhook.post('/webhook', async (c) => {
     }
   })();
 
-  c.executionCtx.waitUntil(processingPromise);
+  const backgroundTasks: Promise<unknown>[] = [processingPromise];
+  if (forwardTarget && forwardQueueId) {
+    backgroundTasks.push(
+      deliverQueuedLineWebhookById(db, forwardTarget, forwardQueueId).then((result) => {
+        if (result.outcome === 'retry_scheduled' || result.outcome === 'dead') {
+          console.error(
+            `[line-webhook-forward] delivery ${result.outcome} id=${result.id}`,
+          );
+        }
+      }),
+    );
+  }
+  c.executionCtx.waitUntil(Promise.allSettled(backgroundTasks));
 
   return c.json({ status: 'ok' }, 200);
 });
@@ -231,6 +275,13 @@ async function handleEvent(
         .bind(lineAccountId, jstNow(), friend.id).run();
       console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
     }
+
+    await classifyWebhookFriendManagement(db, {
+      friendId: friend.id,
+      lineAccountId,
+      origin: 'follow',
+      eventTimestamp: event.timestamp,
+    });
 
     // 新規・再フォローのどちらでも、最初の友だち登録マイルを同じキーで非同期投入する。
     // first_followed_at を使うため再フォローやWebhook再送では二重加算されない。
@@ -372,6 +423,12 @@ async function handleEvent(
 
     const friend = await ensureFriendFromWebhookUser(db, lineClient, userId, lineAccountId);
     if (!friend) return;
+    await classifyWebhookFriendManagement(db, {
+      friendId: friend.id,
+      lineAccountId,
+      origin: 'postback',
+      eventTimestamp: event.timestamp,
+    });
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
 
@@ -435,6 +492,12 @@ async function handleEvent(
     if (!userId) return;
     const friend = await ensureFriendFromWebhookUser(db, lineClient, userId, lineAccountId);
     if (!friend) return;
+    await classifyWebhookFriendManagement(db, {
+      friendId: friend.id,
+      lineAccountId,
+      origin: 'message',
+      eventTimestamp: event.timestamp,
+    });
 
     const msg = event.message as {
       id: string;
@@ -513,6 +576,12 @@ async function handleEvent(
 
     const friend = await ensureFriendFromWebhookUser(db, lineClient, userId, lineAccountId);
     if (!friend) return;
+    await classifyWebhookFriendManagement(db, {
+      friendId: friend.id,
+      lineAccountId,
+      origin: 'message',
+      eventTimestamp: event.timestamp,
+    });
 
     const incomingText = textMessage.text;
     const now = jstNow();

@@ -11,6 +11,10 @@ import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js'
 import { buildSegmentQuery } from './segment-query.js';
 import type { SegmentCondition } from './segment-query.js';
 import { buildMessage } from './broadcast.js';
+import {
+  coexistenceFriendSqlGuard,
+  getLineCoexistencePolicy,
+} from './line-coexistence.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 
@@ -44,7 +48,12 @@ export async function processSegmentSend(
     const broadcastAccountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
     let finalSql = sql;
     const finalBindings = [...bindings];
-    if (broadcastAccountId) {
+    const coexistencePolicy = await getLineCoexistencePolicy(db, broadcastAccountId);
+    if (coexistencePolicy) {
+      const guard = coexistenceFriendSqlGuard(coexistencePolicy);
+      finalSql = sql.replace('WHERE', `WHERE ${guard.where} AND`);
+      finalBindings.unshift(...guard.binds);
+    } else if (broadcastAccountId) {
       finalSql = sql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
       finalBindings.unshift(broadcastAccountId);
     }

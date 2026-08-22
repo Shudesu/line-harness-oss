@@ -36,6 +36,7 @@ import { isReservedRef } from '../lib/reserved-refs.js';
 import { loginUnconfiguredPage } from '../lib/login-unconfigured.js';
 import type { Env } from '../index.js';
 import { verifyCrossAccountToken } from '../lib/cross-account-token.js';
+import { markFriendAsHarnessManaged } from '../services/line-coexistence.js';
 
 
 // OAuth state base64 helpers. btoa() only accepts Latin-1, so a single
@@ -202,6 +203,11 @@ async function applyRefAttribution(
   lineUserId: string,
   options?: { accountChannelId?: string | null; isNewFriend?: boolean },
 ): Promise<void> {
+  await markFriendAsHarnessManaged(c.env.DB, {
+    friendId: friend.id,
+    lineAccountId: friend.line_account_id ?? null,
+    accountChannelId: options?.accountChannelId ?? null,
+  });
   if (!ref || ref.startsWith('xh:')) return;
   // Reserved product refs (e.g. 'dashboard') are provenance markers, never
   // campaigns — skip route/tracked-link/affiliate side effects even when a
@@ -1229,9 +1235,50 @@ liffRoutes.post('/api/liff/link', async (c) => {
     const matchedAccount = matchedLoginChannelId
       ? dbAccounts.find((a) => a.login_channel_id === matchedLoginChannelId) ?? null
       : null;
-    const friend = await getFriendByLineUserIdForAccount(
+    let friend = await getFriendByLineUserIdForAccount(
       db, lineUserId, matchedAccount?.id ?? null,
     );
+    if (!friend && matchedAccount?.channel_access_token) {
+      // Friends acquired before the webhook cut-over may exist in LINE/L-Step
+      // but not yet in L Harness. Because the Login and Messaging channels are
+      // under the same provider, the verified LIFF `sub` can be checked against
+      // this bot. A successful profile lookup lets us safely hydrate the missing
+      // row and continue without LINE Login's linked-bot feature.
+      try {
+        const profileRes = await fetch(
+          `https://api.line.me/v2/bot/profile/${encodeURIComponent(lineUserId)}`,
+          { headers: { Authorization: `Bearer ${matchedAccount.channel_access_token}` } },
+        );
+        if (profileRes.ok) {
+          const profile = await profileRes.json<{
+            displayName?: string;
+            pictureUrl?: string;
+            statusMessage?: string;
+          }>();
+          const hydrated = await upsertFriend(db, {
+            lineUserId,
+            displayName: profile.displayName ?? body.displayName ?? verified.name ?? null,
+            pictureUrl: profile.pictureUrl ?? null,
+            statusMessage: profile.statusMessage ?? null,
+          });
+          const now = jstNow();
+          await db
+            .prepare(
+              'UPDATE friends SET line_account_id = ?, is_following = 1, updated_at = ? WHERE id = ?',
+            )
+            .bind(matchedAccount.id, now, hydrated.id)
+            .run();
+          friend = {
+            ...hydrated,
+            line_account_id: matchedAccount.id,
+            is_following: 1,
+            updated_at: now,
+          };
+        }
+      } catch (error) {
+        console.warn('[liff-link] failed to hydrate historical friend', error);
+      }
+    }
     if (!friend) {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
@@ -1255,6 +1302,15 @@ liffRoutes.post('/api/liff/link', async (c) => {
       await linkFriendToUser(db, friend.id, crossAccount.userId);
       linkedUserId = crossAccount.userId;
     }
+
+    // Reaching this verified LIFF endpoint means the user belongs to the
+    // L Harness acquisition path even when the URL has no explicit ref code.
+    // Run this only after any cross-account token has also been validated.
+    await markFriendAsHarnessManaged(db, {
+      friendId: friend.id,
+      lineAccountId: friend.line_account_id ?? null,
+      accountChannelId: matchedAccount?.channel_id ?? null,
+    });
 
     // IG cross-link: runs regardless of already-linked vs new-link branch so
     // existing friends still get ig_igsid wired when they hit this endpoint
@@ -1316,7 +1372,11 @@ liffRoutes.post('/api/liff/link', async (c) => {
       }
       return c.json({
         success: true,
-        data: { userId: linkedUserId, alreadyLinked: true },
+        data: {
+          userId: linkedUserId,
+          alreadyLinked: true,
+          isFollowing: Boolean(friend.is_following),
+        },
       });
     }
 
@@ -1387,7 +1447,11 @@ liffRoutes.post('/api/liff/link', async (c) => {
 
     return c.json({
       success: true,
-      data: { userId, alreadyLinked: false },
+      data: {
+        userId,
+        alreadyLinked: false,
+        isFollowing: Boolean(friend.is_following),
+      },
     });
   } catch (err) {
     console.error('POST /api/liff/link error:', err);

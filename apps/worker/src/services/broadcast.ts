@@ -30,6 +30,12 @@ import {
   wouldExceedMonthlyQuota,
   type QuotaEnv,
 } from './quota.js';
+import {
+  coexistenceAudienceCondition,
+  coexistenceFriendSqlGuard,
+  getLineCoexistencePolicy,
+} from './line-coexistence.js';
+import { buildSegmentQuery } from './segment-query.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 const PERSONALIZED_PUSH_BATCH_SIZE = 10;
@@ -53,6 +59,51 @@ export async function processBroadcastSend(
     throw new Error(
       `Unsupported broadcast variables: ${unsupportedVariables.map((v) => `{{${v}}}`).join(', ')}`,
     );
+  }
+
+  // A shared L-Step account can never use LINE's broadcast API because that
+  // API has no per-recipient exclusion. Convert all/tag sends to the durable
+  // multicast queue with a mandatory Harness-owner guard. This also covers
+  // scheduled sends, which bypass the HTTP route's immediate-send checks.
+  const rawBroadcast = broadcast as unknown as Record<string, unknown>;
+  const coexistencePolicy = await getLineCoexistencePolicy(
+    db,
+    rawBroadcast.line_account_id as string | null,
+  );
+  if (
+    coexistencePolicy
+    && (broadcast.target_type === 'all' || broadcast.target_type === 'tag')
+  ) {
+    const condition = coexistenceAudienceCondition(
+      coexistencePolicy,
+      broadcast.target_type === 'tag' ? broadcast.target_tag_id : null,
+    );
+    const { sql, bindings } = buildSegmentQuery(condition);
+    const audience = await db
+      .prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN q.display_name IS NULL OR trim(q.display_name) = '' THEN 1 ELSE 0 END) AS missing_name
+           FROM (${sql}) q`,
+      )
+      .bind(...bindings)
+      .first<{ total: number; missing_name: number | null }>();
+    if (
+      hasRecipientVariables(broadcast.message_content)
+      && Number(audience?.missing_name ?? 0) > 0
+    ) {
+      throw new Error(
+        `Cannot personalize broadcast: ${audience!.missing_name} recipient(s) have no display name`,
+      );
+    }
+    await db
+      .prepare(
+        `UPDATE broadcasts
+            SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
+          WHERE id = ?`,
+      )
+      .bind(Number(audience?.total ?? 0), JSON.stringify(condition), broadcast.id)
+      .run();
+    return (await getBroadcastById(db, broadcastId))!;
   }
 
   // A recipient variable cannot be delivered through LINE broadcast or
@@ -486,6 +537,7 @@ async function processQueuedBroadcastBatches(
 
   // 対象ユーザーリストを取得（アカウントで絞り込む）
   const accountId = raw.line_account_id as string | null;
+  const queuedCoexistencePolicy = await getLineCoexistencePolicy(db, accountId);
   let friends: Array<{ id: string; line_user_id: string; display_name: string | null }>;
   if (segmentConditionsStr) {
     const { buildSegmentQuery } = await import('./segment-query.js');
@@ -494,11 +546,27 @@ async function processQueuedBroadcastBatches(
     // アカウントフィルタを追加（line_account_idで絞り込み）
     let accountSql = sql;
     const accountBindings = [...bindings];
-    if (accountId) {
+    if (queuedCoexistencePolicy) {
+      const guard = coexistenceFriendSqlGuard(queuedCoexistencePolicy);
+      accountSql = sql.replace('WHERE', `WHERE ${guard.where} AND`);
+      accountBindings.unshift(...guard.binds);
+    } else if (accountId) {
       accountSql = sql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
       accountBindings.unshift(accountId);
     }
     const result = await db.prepare(accountSql).bind(...accountBindings).all<{
+      id: string;
+      line_user_id: string;
+      display_name: string | null;
+    }>();
+    friends = result.results ?? [];
+  } else if (broadcast.target_tag_id && queuedCoexistencePolicy) {
+    const condition = coexistenceAudienceCondition(
+      queuedCoexistencePolicy,
+      broadcast.target_tag_id,
+    );
+    const { sql, bindings } = buildSegmentQuery(condition);
+    const result = await db.prepare(sql).bind(...bindings).all<{
       id: string;
       line_user_id: string;
       display_name: string | null;
@@ -512,6 +580,15 @@ async function processQueuedBroadcastBatches(
       line_user_id: f.line_user_id,
       display_name: f.display_name,
     }));
+  } else if (queuedCoexistencePolicy) {
+    const condition = coexistenceAudienceCondition(queuedCoexistencePolicy);
+    const { sql, bindings } = buildSegmentQuery(condition);
+    const result = await db.prepare(sql).bind(...bindings).all<{
+      id: string;
+      line_user_id: string;
+      display_name: string | null;
+    }>();
+    friends = result.results ?? [];
   } else {
     // target_type='all' でキューに入ることはないが、念のため
     // Same follower-count recording as the inline broadcast-API path (the

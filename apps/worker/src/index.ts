@@ -116,6 +116,8 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
+    /** Optional signed LINE webhook fan-out destination for an existing L-Step setup. */
+    LSTEP_WEBHOOK_URL?: string;
     // Admin auth topology (see middleware/admin-auth-config.ts):
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
@@ -961,6 +963,27 @@ async function scheduled(
     }
   }
   const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
+
+  // Retry durable L-Step webhook deliveries before heavier scheduled work.
+  // The destination is a Worker secret; D1 stores only the signed LINE payload.
+  if (env.LSTEP_WEBHOOK_URL) {
+    try {
+      const { drainLineWebhookForwardQueue, validateLstepWebhookUrl } = await import(
+        './services/line-webhook-forwarder.js'
+      );
+      const target = validateLstepWebhookUrl(env.LSTEP_WEBHOOK_URL, env.WORKER_URL);
+      if (target) {
+        const result = await drainLineWebhookForwardQueue(env.DB, target);
+        if (result.delivered + result.retried + result.dead > 0) {
+          console.log(
+            `[line-webhook-forward] delivered=${result.delivered} retried=${result.retried} dead=${result.dead}`,
+          );
+        }
+      }
+    } catch (error) {
+      console.error('[line-webhook-forward] cron drain failed', error);
+    }
+  }
 
   // 配信系は1回だけ実行（内部でfriendのline_account_idから正しいlineClientを動的解決）
   // 以前はアカウントごとにループしていたが、アカウントフィルタなしのDBクエリで

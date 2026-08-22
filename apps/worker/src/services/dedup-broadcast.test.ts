@@ -66,10 +66,11 @@ describe('computeDedupBroadcastPreview', () => {
 
     const selectedCountSql = preparedSqls.find((s) => s.includes('COUNT(*) AS cnt'));
     const rankedSql = preparedSqls.find((s) => s.includes('ROW_NUMBER() OVER'));
-    expect(selectedCountSql).toMatch(/EXISTS \(SELECT 1 FROM friend_tags/);
-    expect(rankedSql).toMatch(/EXISTS \(SELECT 1 FROM friend_tags/);
+    expect(selectedCountSql).toMatch(/EXISTS \(SELECT 1 FROM friend_tags ft/);
+    expect(rankedSql).toMatch(/EXISTS \(SELECT 1 FROM friend_tags ft/);
 
-    // Without tag, the EXISTS clause should NOT appear.
+    // The coexistence safety clause always references system friend tags;
+    // without targetTagId only the campaign-specific `ft` alias disappears.
     const preparedSqls2: string[] = [];
     const capturingDb2 = {
       prepare(sql: string) {
@@ -78,7 +79,7 @@ describe('computeDedupBroadcastPreview', () => {
       },
     } as unknown as D1Database;
     await computeDedupBroadcastPreview(capturingDb2, ['acc1'], ['acc1']);
-    expect(preparedSqls2.find((s) => s.includes('COUNT(*) AS cnt'))).not.toMatch(/friend_tags/);
+    expect(preparedSqls2.find((s) => s.includes('COUNT(*) AS cnt'))).not.toMatch(/friend_tags ft/);
   });
 
   it('single-account: returns all friends, no reduction', async () => {
