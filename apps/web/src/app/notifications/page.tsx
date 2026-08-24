@@ -6,6 +6,7 @@ import InboxFilters from '@/components/inbox/inbox-filters'
 import InboxList from '@/components/inbox/inbox-list'
 import InboxSummaryBar from '@/components/inbox/inbox-summary-bar'
 import { api } from '@/lib/api'
+import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 import type { InboxRowData } from '@/components/inbox/inbox-row'
 
 const PAGE_SIZE = 50
@@ -87,9 +88,11 @@ export default function InboxPage() {
 
   useEffect(() => {
     loadAll()
-    const id = setInterval(loadAll, POLL_INTERVAL_MS)
-    return () => clearInterval(id)
   }, [loadAll])
+
+  // 新着の未対応 (webhook 受信) をリロードなしで反映する。
+  // タブ非表示中は停止し、復帰時に即時更新する (use-auto-refresh 側の共通挙動)。
+  useAutoRefresh(loadAll, { intervalMs: POLL_INTERVAL_MS })
 
   // ── client-side filter ──
   const filteredRows = useMemo(() => {

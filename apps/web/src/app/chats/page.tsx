@@ -10,6 +10,7 @@ import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
 import ImageUploader, { type ImageUploaderValue } from '@/components/shared/image-uploader'
+import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 
 interface Chat {
   id: string
@@ -61,6 +62,9 @@ const SHOW_LOADING_PREF_KEY = 'lh_chat_show_loading_indicator'
 const CHAT_PAGE_SIZE = 300
 const LOADING_SECONDS_PREF_KEY = 'lh_chat_loading_seconds'
 const LOADING_REFRESH_INTERVAL_MS = 4000
+// チャット一覧・スレッドの自動更新間隔。Webhook 受信や MCP / API 経由の送信を
+// リロードなしで反映する (仕組みは hooks/use-auto-refresh.ts を参照)。
+const CHAT_POLL_INTERVAL_MS = 10_000
 
 function StickerMessageImage({ content }: { content: string }) {
   const [failed, setFailed] = useState(false)
@@ -153,19 +157,32 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   const isComposingRef = useRef(false)
   const sendLockRef = useRef(false)
 
-  useEffect(() => {
-    const loadMessages = async () => {
-      setLoadingMessages(true)
-      try {
-        const res = await fetchApi<{ success: boolean; data: MessageLog[] }>(
-          `/api/friends/${friendId}/messages`
-        )
-        if (res.success) setMessages(res.data)
-      } catch { /* silent */ }
-      setLoadingMessages(false)
-    }
-    loadMessages()
+  const loadMessages = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoadingMessages(true)
+    try {
+      const res = await fetchApi<{ success: boolean; data: MessageLog[] }>(
+        `/api/friends/${friendId}/messages`
+      )
+      if (res.success) {
+        // silent 更新では、送信直後の楽観追加より少ない件数 (send より前に
+        // 発行された古いレスポンス) を捨て、送ったばかりのメッセージが
+        // 一瞬消える現象を防ぐ。
+        setMessages((prev) => (opts?.silent && res.data.length < prev.length) ? prev : res.data)
+      }
+    } catch { /* silent */ }
+    if (!opts?.silent) setLoadingMessages(false)
   }, [friendId])
+
+  useEffect(() => {
+    void loadMessages()
+  }, [loadMessages])
+
+  // 新着 (webhook 受信 / MCP・API 経由の送信) をリロードなしで反映する
+  useAutoRefresh(() => loadMessages({ silent: true }), {
+    intervalMs: CHAT_POLL_INTERVAL_MS,
+    // 送信中は楽観更新と競合するためスキップ
+    isPaused: () => sendLockRef.current,
+  })
 
   const handleSend = async () => {
     if (!message.trim() || sending || sendLockRef.current) return
@@ -487,6 +504,60 @@ export default function ChatsPage() {
     loadChats()
   }, [loadChats])
 
+  // --- 自動更新 (ポーリング) ---
+  // loadChats / loadChatDetail はローディング表示を伴うため、ポーリングでは
+  // スピナーを出さない silent 版を使う。楽観更新済みの state を古いレスポンスで
+  // 巻き戻さないよう、適用前に件数・末尾 id を比較する。
+  const refreshChatsSilently = useCallback(async () => {
+    try {
+      const chatRes = await api.chats.list(buildListParams(null))
+      if (!chatRes.success) return
+      const rows = chatRes.data as unknown as Chat[]
+      // 1ページ目をサーバの並びで先頭に置き、「さらに読み込む」で取得済みの
+      // 古い行は末尾に残す (重複は除外)。
+      setChats((prev) => {
+        const fetched = new Set(rows.map((c) => c.id))
+        return [...rows, ...prev.filter((c) => !fetched.has(c.id))]
+      })
+    } catch { /* silent — 次回のポーリングで再試行 */ }
+  }, [buildListParams])
+
+  const refreshChatDetailSilently = useCallback(async (chatId: string) => {
+    try {
+      const res = await api.chats.get(chatId)
+      if (!res.success) return
+      const next = res.data as unknown as ChatDetail
+      setChatDetail((prev) => {
+        // 選択が変わっていたら破棄
+        if (!prev || prev.id !== next.id) return prev
+        const prevMsgs = prev.messages ?? []
+        const nextMsgs = next.messages ?? []
+        // 楽観更新より少ない件数 (送信前に発行された古いレスポンス) は捨てて、
+        // 送ったばかりのメッセージが一瞬消える現象を防ぐ
+        if (nextMsgs.length < prevMsgs.length) return prev
+        const prevLast = prevMsgs[prevMsgs.length - 1]
+        const nextLast = nextMsgs[nextMsgs.length - 1]
+        // 変化なしなら同じ参照を返して再レンダーさせない
+        if (
+          nextMsgs.length === prevMsgs.length &&
+          prevLast?.id === nextLast?.id &&
+          prev.status === next.status
+        ) return prev
+        return next
+      })
+    } catch { /* silent — 次回のポーリングで再試行 */ }
+  }, [])
+
+  useAutoRefresh(async () => {
+    const tasks: Promise<void>[] = [refreshChatsSilently()]
+    if (selectedChatId) tasks.push(refreshChatDetailSilently(selectedChatId))
+    await Promise.allSettled(tasks)
+  }, {
+    intervalMs: CHAT_POLL_INTERVAL_MS,
+    // 送信中は楽観更新と競合するためスキップ
+    isPaused: () => sendLockRef.current,
+  })
+
   // Deep-link from other pages (e.g. /form-submissions): ?friend=<friendId>
   // chat list returns id = friend_id, so selectedChatId === friendId is correct.
   // If no chat exists yet, loadChatDetail will fail and the user can fall back to
@@ -543,21 +614,34 @@ export default function ChatsPage() {
   // 詳細が新しくロードされたら最下部（＝最新メッセージ）までスクロールする。
   // そこから上にスクロールすれば過去のメッセージを辿れる（LINE受信画面と同じUX）。
   // ユーザーが手動でスクロールしたら delayed auto-scroll は発動させない。
+  // ポーリングによる新着追加時は、下端付近にいるときだけ追従スクロールする
+  // （過去ログを読んでいる途中に最下部へ飛ばされないように）。
+  const isNearBottomRef = useRef(true)
+  const prevScrollChatIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (!chatDetail?.messages || chatDetail.messages.length === 0) return
     const el = messagesScrollRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
     let userScrolled = false
     const onScroll = () => {
       if (!messagesScrollRef.current) return
       const current = messagesScrollRef.current
+      const distanceFromBottom = current.scrollHeight - current.scrollTop - current.clientHeight
+      isNearBottomRef.current = distanceFromBottom <= 20
       // 下端から一定以上離れたらユーザー操作とみなす
-      if (current.scrollHeight - current.scrollTop - current.clientHeight > 20) {
+      if (distanceFromBottom > 20) {
         userScrolled = true
       }
     }
     el.addEventListener('scroll', onScroll, { passive: true })
+    const isChatSwitch = prevScrollChatIdRef.current !== chatDetail.id
+    prevScrollChatIdRef.current = chatDetail.id
+    if (!isChatSwitch && !isNearBottomRef.current) {
+      // ポーリング新着だが過去ログ閲覧中 — スクロール位置は動かさない
+      return () => el.removeEventListener('scroll', onScroll)
+    }
+    el.scrollTop = el.scrollHeight
+    isNearBottomRef.current = true
     // 画像/Flex の表示後に高さが増える場合に追従するフォロワー（ユーザーがスクロール済みなら発動させない）
     const id = window.setTimeout(() => {
       if (userScrolled || !messagesScrollRef.current) return
