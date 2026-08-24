@@ -43,6 +43,19 @@ function applyMigrationFile(db, fileName) {
   }
 }
 
+/**
+ * sqlite_master が返す DDL は素の `CREATE TABLE ...` / `CREATE INDEX ...` で、
+ * 既存 DB に流すと 1 文目の "table already exists" でファイル全体が失敗する。
+ * セットアップのリトライ時 (D1 が既に存在するケース) にも bootstrap.sql を
+ * そのまま適用できるよう、書き出し時に IF NOT EXISTS を差し込む。
+ */
+function makeIdempotent(sql) {
+  return sql.replace(
+    /^CREATE\s+(TABLE|VIEW|TRIGGER|(?:UNIQUE\s+)?INDEX)\s+(?!IF\s+NOT\s+EXISTS\b)/i,
+    (_match, kind) => `CREATE ${kind.replace(/\s+/g, " ")} IF NOT EXISTS `,
+  );
+}
+
 function sqlLiteral(value) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") return String(value);
@@ -80,7 +93,7 @@ function buildBuiltinAutoReplySeeds(db) {
   return rows
     .map((row) => {
       const values = columns.map((column) => sqlLiteral(row[column])).join(", ");
-      return `INSERT INTO auto_replies (${columns.join(", ")})\nVALUES (${values});`;
+      return `INSERT OR IGNORE INTO auto_replies (${columns.join(", ")})\nVALUES (${values});`;
     })
     .join("\n\n");
 }
@@ -127,7 +140,7 @@ function buildBootstrapSql() {
     ].join("\n");
 
     const body = rows
-      .map((row) => `${String(row.sql).trim()};`)
+      .map((row) => `${makeIdempotent(String(row.sql).trim())};`)
       .join("\n\n");
     const builtinSeeds = buildBuiltinAutoReplySeeds(db);
 

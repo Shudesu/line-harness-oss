@@ -1,6 +1,6 @@
 -- Generated from schema.sql + migrations by scripts/generate-bootstrap.mjs.
 -- Do not edit manually. Run `pnpm --dir packages/db generate:bootstrap`.
-CREATE TABLE account_health_logs (
+CREATE TABLE IF NOT EXISTS account_health_logs (
   id              TEXT PRIMARY KEY,
   line_account_id TEXT NOT NULL,
   error_code      INTEGER,
@@ -10,7 +10,7 @@ CREATE TABLE account_health_logs (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE account_migrations (
+CREATE TABLE IF NOT EXISTS account_migrations (
   id               TEXT PRIMARY KEY,
   from_account_id  TEXT NOT NULL,
   to_account_id    TEXT NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE account_migrations (
   completed_at     TEXT
 );
 
-CREATE TABLE account_settings (
+CREATE TABLE IF NOT EXISTS account_settings (
   id              TEXT PRIMARY KEY,
   line_account_id TEXT NOT NULL,
   key             TEXT NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE account_settings (
   UNIQUE(line_account_id, key)
 );
 
-CREATE TABLE ad_conversion_logs (
+CREATE TABLE IF NOT EXISTS ad_conversion_logs (
   id                  TEXT PRIMARY KEY,
   ad_platform_id      TEXT NOT NULL,
   friend_id           TEXT NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE ad_conversion_logs (
   created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE ad_platforms (
+CREATE TABLE IF NOT EXISTS ad_platforms (
   id           TEXT PRIMARY KEY,
   name         TEXT NOT NULL,
   display_name TEXT,
@@ -56,14 +56,14 @@ CREATE TABLE ad_platforms (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE admin_users (
+CREATE TABLE IF NOT EXISTS admin_users (
   id            TEXT PRIMARY KEY,
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE affiliate_clicks (
+CREATE TABLE IF NOT EXISTS affiliate_clicks (
   id           TEXT PRIMARY KEY,
   affiliate_id TEXT NOT NULL REFERENCES affiliates (id) ON DELETE CASCADE,
   url          TEXT,
@@ -71,7 +71,7 @@ CREATE TABLE affiliate_clicks (
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE affiliate_links (
+CREATE TABLE IF NOT EXISTS affiliate_links (
   id              TEXT PRIMARY KEY,
   affiliate_id    TEXT NOT NULL REFERENCES affiliates (id),
   ref_code        TEXT NOT NULL UNIQUE,
@@ -83,7 +83,7 @@ CREATE TABLE affiliate_links (
   click_count     INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE affiliate_offers (
+CREATE TABLE IF NOT EXISTS affiliate_offers (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
   description     TEXT,
@@ -97,7 +97,7 @@ CREATE TABLE affiliate_offers (
   created_at      TEXT NOT NULL
 );
 
-CREATE TABLE affiliates (
+CREATE TABLE IF NOT EXISTS affiliates (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
   code            TEXT NOT NULL UNIQUE,
@@ -107,7 +107,7 @@ CREATE TABLE affiliates (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE auto_replies (
+CREATE TABLE IF NOT EXISTS auto_replies (
   id               TEXT PRIMARY KEY,
   keyword          TEXT NOT NULL,
   match_type       TEXT NOT NULL CHECK (match_type IN ('exact', 'contains')) DEFAULT 'exact',
@@ -119,7 +119,7 @@ CREATE TABLE auto_replies (
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE automation_logs (
+CREATE TABLE IF NOT EXISTS automation_logs (
   id             TEXT PRIMARY KEY,
   automation_id  TEXT NOT NULL REFERENCES automations (id) ON DELETE CASCADE,
   friend_id      TEXT REFERENCES friends (id) ON DELETE SET NULL,
@@ -129,7 +129,7 @@ CREATE TABLE automation_logs (
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE automations (
+CREATE TABLE IF NOT EXISTS automations (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   description TEXT,
@@ -142,7 +142,7 @@ CREATE TABLE automations (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , line_account_id TEXT);
 
-CREATE TABLE booking_idempotency_keys (
+CREATE TABLE IF NOT EXISTS booking_idempotency_keys (
   key              TEXT PRIMARY KEY,
   line_account_id  TEXT NOT NULL,
   friend_id        TEXT NOT NULL,
@@ -152,7 +152,7 @@ CREATE TABLE booking_idempotency_keys (
   expires_at       TEXT NOT NULL                  -- UTC ISO8601
 );
 
-CREATE TABLE booking_reminders (
+CREATE TABLE IF NOT EXISTS booking_reminders (
   id            TEXT PRIMARY KEY,
   booking_id    TEXT NOT NULL,
   kind          TEXT NOT NULL CHECK (kind IN ('day_before','hours_before')),
@@ -164,7 +164,7 @@ CREATE TABLE booking_reminders (
   FOREIGN KEY (booking_id) REFERENCES bookings(id)
 );
 
-CREATE TABLE bookings (
+CREATE TABLE IF NOT EXISTS bookings (
   id                      TEXT PRIMARY KEY,
   line_account_id         TEXT NOT NULL,
   friend_id               TEXT NOT NULL,        -- friends.id
@@ -190,7 +190,7 @@ CREATE TABLE bookings (
   FOREIGN KEY (menu_id) REFERENCES menus(id)
 );
 
-CREATE TABLE broadcast_insights (
+CREATE TABLE IF NOT EXISTS broadcast_insights (
   id                  TEXT PRIMARY KEY,
   broadcast_id        TEXT NOT NULL REFERENCES broadcasts(id) ON DELETE CASCADE,
   delivered           INTEGER,
@@ -206,7 +206,7 @@ CREATE TABLE broadcast_insights (
   created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE "broadcasts" (
+CREATE TABLE IF NOT EXISTS "broadcasts" (
   id                 TEXT PRIMARY KEY,
   title              TEXT NOT NULL,
   message_type       TEXT NOT NULL CHECK (message_type IN ('text', 'image', 'flex')),
@@ -230,7 +230,7 @@ CREATE TABLE "broadcasts" (
   failed_account_ids TEXT CHECK (failed_account_ids IS NULL OR json_valid(failed_account_ids))
 , dedup_progress TEXT, batch_lock_at TEXT, track_links INTEGER NOT NULL DEFAULT 1);
 
-CREATE TABLE calendar_bookings (
+CREATE TABLE IF NOT EXISTS calendar_bookings (
   id             TEXT PRIMARY KEY,
   connection_id  TEXT NOT NULL REFERENCES google_calendar_connections (id) ON DELETE CASCADE,
   friend_id      TEXT REFERENCES friends (id) ON DELETE SET NULL,
@@ -244,7 +244,7 @@ CREATE TABLE calendar_bookings (
   updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE chats (
+CREATE TABLE IF NOT EXISTS chats (
   id            TEXT PRIMARY KEY,
   friend_id     TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   operator_id   TEXT REFERENCES operators (id) ON DELETE SET NULL,
@@ -255,7 +255,7 @@ CREATE TABLE chats (
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , line_account_id TEXT);
 
-CREATE TABLE conversion_events (
+CREATE TABLE IF NOT EXISTS conversion_events (
   id                   TEXT PRIMARY KEY,
   conversion_point_id  TEXT NOT NULL REFERENCES conversion_points (id) ON DELETE CASCADE,
   friend_id            TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
@@ -269,7 +269,7 @@ CREATE TABLE conversion_events (
   created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE conversion_points (
+CREATE TABLE IF NOT EXISTS conversion_points (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
   event_type TEXT NOT NULL,
@@ -277,7 +277,7 @@ CREATE TABLE conversion_points (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE engagement_events (
+CREATE TABLE IF NOT EXISTS engagement_events (
   id                TEXT PRIMARY KEY,
   program_id        TEXT NOT NULL REFERENCES mileage_programs(id),
   idempotency_key   TEXT NOT NULL,
@@ -296,7 +296,7 @@ CREATE TABLE engagement_events (
   UNIQUE (program_id, idempotency_key)
 );
 
-CREATE TABLE entry_routes (
+CREATE TABLE IF NOT EXISTS entry_routes (
   id          TEXT PRIMARY KEY,
   ref_code    TEXT UNIQUE NOT NULL,
   name        TEXT NOT NULL,
@@ -308,7 +308,7 @@ CREATE TABLE entry_routes (
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 , pool_id TEXT REFERENCES traffic_pools (id) ON DELETE SET NULL, intro_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, run_account_friend_add_scenarios INTEGER NOT NULL DEFAULT 1);
 
-CREATE TABLE event_booking_idempotency_keys (
+CREATE TABLE IF NOT EXISTS event_booking_idempotency_keys (
   key              TEXT PRIMARY KEY,
   line_account_id  TEXT NOT NULL,
   friend_id        TEXT NOT NULL,
@@ -318,7 +318,7 @@ CREATE TABLE event_booking_idempotency_keys (
   expires_at       TEXT NOT NULL
 );
 
-CREATE TABLE event_booking_reminders (
+CREATE TABLE IF NOT EXISTS event_booking_reminders (
   id            TEXT PRIMARY KEY,
   booking_id    TEXT NOT NULL,
   kind          TEXT NOT NULL CHECK (kind IN ('day_before','hours_before')),
@@ -330,7 +330,7 @@ CREATE TABLE event_booking_reminders (
   FOREIGN KEY (booking_id) REFERENCES event_bookings(id)
 );
 
-CREATE TABLE event_bookings (
+CREATE TABLE IF NOT EXISTS event_bookings (
   id                    TEXT PRIMARY KEY,
   line_account_id       TEXT NOT NULL,
   event_id              TEXT NOT NULL,
@@ -352,7 +352,7 @@ CREATE TABLE event_bookings (
   FOREIGN KEY (friend_id) REFERENCES friends(id)
 );
 
-CREATE TABLE event_slots (
+CREATE TABLE IF NOT EXISTS event_slots (
   id          TEXT PRIMARY KEY,
   event_id    TEXT NOT NULL,
   starts_at   TEXT NOT NULL,
@@ -366,7 +366,7 @@ CREATE TABLE event_slots (
   FOREIGN KEY (event_id) REFERENCES events(id)
 );
 
-CREATE TABLE events (
+CREATE TABLE IF NOT EXISTS events (
   id                            TEXT PRIMARY KEY,
   line_account_id               TEXT NOT NULL,
   name                          TEXT NOT NULL,
@@ -393,7 +393,7 @@ CREATE TABLE events (
   FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
 );
 
-CREATE TABLE form_opens (
+CREATE TABLE IF NOT EXISTS form_opens (
   id TEXT PRIMARY KEY,
   form_id TEXT NOT NULL,
   friend_id TEXT,
@@ -401,7 +401,7 @@ CREATE TABLE form_opens (
   opened_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE form_submissions (
+CREATE TABLE IF NOT EXISTS form_submissions (
   id TEXT PRIMARY KEY,
   form_id TEXT NOT NULL REFERENCES forms (id) ON DELETE CASCADE,
   friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL,
@@ -409,7 +409,7 @@ CREATE TABLE form_submissions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE forms (
+CREATE TABLE IF NOT EXISTS forms (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
@@ -423,7 +423,7 @@ CREATE TABLE forms (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 , on_submit_message_type TEXT CHECK (on_submit_message_type IN ('text', 'flex')) DEFAULT NULL, on_submit_message_content TEXT DEFAULT NULL, on_submit_webhook_url TEXT, on_submit_webhook_headers TEXT, on_submit_webhook_fail_message TEXT, og_title TEXT, og_description TEXT, og_image_url TEXT);
 
-CREATE TABLE friend_reminder_deliveries (
+CREATE TABLE IF NOT EXISTS friend_reminder_deliveries (
   id                TEXT PRIMARY KEY,
   friend_reminder_id TEXT NOT NULL REFERENCES friend_reminders (id) ON DELETE CASCADE,
   reminder_step_id  TEXT NOT NULL REFERENCES reminder_steps (id) ON DELETE CASCADE,
@@ -431,7 +431,7 @@ CREATE TABLE friend_reminder_deliveries (
   UNIQUE (friend_reminder_id, reminder_step_id)
 );
 
-CREATE TABLE friend_reminders (
+CREATE TABLE IF NOT EXISTS friend_reminders (
   id              TEXT PRIMARY KEY,
   friend_id       TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   reminder_id     TEXT NOT NULL REFERENCES reminders (id) ON DELETE CASCADE,
@@ -441,7 +441,7 @@ CREATE TABLE friend_reminders (
   updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE "friend_scenarios" (
+CREATE TABLE IF NOT EXISTS "friend_scenarios" (
   id                 TEXT PRIMARY KEY,
   friend_id          TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   scenario_id        TEXT NOT NULL REFERENCES scenarios (id) ON DELETE CASCADE,
@@ -452,7 +452,7 @@ CREATE TABLE "friend_scenarios" (
   updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE friend_scores (
+CREATE TABLE IF NOT EXISTS friend_scores (
   id              TEXT PRIMARY KEY,
   friend_id       TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   scoring_rule_id TEXT REFERENCES scoring_rules (id) ON DELETE SET NULL,
@@ -461,14 +461,14 @@ CREATE TABLE friend_scores (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE friend_tags (
+CREATE TABLE IF NOT EXISTS friend_tags (
   friend_id   TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   tag_id      TEXT NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
   assigned_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   PRIMARY KEY (friend_id, tag_id)
 );
 
-CREATE TABLE friends (
+CREATE TABLE IF NOT EXISTS friends (
   id               TEXT PRIMARY KEY,
   line_user_id     TEXT UNIQUE NOT NULL,
   display_name     TEXT,
@@ -489,7 +489,7 @@ CREATE TABLE friends (
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , ref_code TEXT, metadata TEXT NOT NULL DEFAULT '{}', line_account_id TEXT REFERENCES line_accounts(id), first_tracked_link_id TEXT REFERENCES tracked_links (id) ON DELETE SET NULL);
 
-CREATE TABLE google_calendar_connections (
+CREATE TABLE IF NOT EXISTS google_calendar_connections (
   id            TEXT PRIMARY KEY,
   calendar_id   TEXT NOT NULL,
   line_account_id TEXT,
@@ -505,7 +505,7 @@ CREATE TABLE google_calendar_connections (
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE incoming_webhooks (
+CREATE TABLE IF NOT EXISTS incoming_webhooks (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   source_type TEXT NOT NULL DEFAULT 'custom',
@@ -515,7 +515,7 @@ CREATE TABLE incoming_webhooks (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE line_accounts (
+CREATE TABLE IF NOT EXISTS line_accounts (
   id                     TEXT PRIMARY KEY,
   channel_id             TEXT NOT NULL UNIQUE,
   name                   TEXT NOT NULL,
@@ -532,14 +532,14 @@ CREATE TABLE line_accounts (
   updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , login_channel_id TEXT, login_channel_secret TEXT, liff_id TEXT, token_expires_at TEXT);
 
-CREATE TABLE link_clicks (
+CREATE TABLE IF NOT EXISTS link_clicks (
   id TEXT PRIMARY KEY,
   tracked_link_id TEXT NOT NULL REFERENCES tracked_links (id) ON DELETE CASCADE,
   friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL,
   clicked_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE media_inquiries (
+CREATE TABLE IF NOT EXISTS media_inquiries (
   id TEXT PRIMARY KEY,
   inquiry_type TEXT NOT NULL,
   company_name TEXT NOT NULL,
@@ -571,7 +571,7 @@ CREATE TABLE media_inquiries (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE meet_consultation_reminders (
+CREATE TABLE IF NOT EXISTS meet_consultation_reminders (
   id               TEXT PRIMARY KEY,
   consultation_id  TEXT NOT NULL REFERENCES meet_consultations (id) ON DELETE CASCADE,
   kind             TEXT NOT NULL CHECK (kind IN ('day_before', 'hour_before')),
@@ -586,7 +586,7 @@ CREATE TABLE meet_consultation_reminders (
   UNIQUE (consultation_id, kind)
 );
 
-CREATE TABLE meet_consultations (
+CREATE TABLE IF NOT EXISTS meet_consultations (
   id                TEXT PRIMARY KEY,
   external_event_id TEXT NOT NULL UNIQUE,
   friend_id         TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
@@ -600,7 +600,7 @@ CREATE TABLE meet_consultations (
   updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE menus (
+CREATE TABLE IF NOT EXISTS menus (
   id                    TEXT PRIMARY KEY,
   line_account_id       TEXT NOT NULL,
   name                  TEXT NOT NULL,
@@ -619,7 +619,7 @@ CREATE TABLE menus (
   FOREIGN KEY (auto_tag_id) REFERENCES tags(id) ON DELETE SET NULL
 );
 
-CREATE TABLE message_templates (
+CREATE TABLE IF NOT EXISTS message_templates (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   message_type TEXT NOT NULL CHECK (message_type IN ('text', 'flex')),
@@ -628,7 +628,7 @@ CREATE TABLE message_templates (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE messages_log (
+CREATE TABLE IF NOT EXISTS messages_log (
   id               TEXT PRIMARY KEY,
   friend_id        TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
   direction        TEXT NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
@@ -643,7 +643,7 @@ CREATE TABLE messages_log (
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE mileage_event_queue (
+CREATE TABLE IF NOT EXISTS mileage_event_queue (
   engagement_event_id   TEXT PRIMARY KEY REFERENCES engagement_events(id) ON DELETE CASCADE,
   status                TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending','processing','processed','failed')),
@@ -656,7 +656,7 @@ CREATE TABLE mileage_event_queue (
   updated_at            TEXT NOT NULL
 );
 
-CREATE TABLE mileage_ledger (
+CREATE TABLE IF NOT EXISTS mileage_ledger (
   id                    TEXT PRIMARY KEY,
   program_id            TEXT NOT NULL REFERENCES mileage_programs(id),
   beneficiary_user_id   TEXT REFERENCES users(id),
@@ -679,7 +679,7 @@ CREATE TABLE mileage_ledger (
   UNIQUE (program_id, idempotency_key)
 );
 
-CREATE TABLE mileage_programs (
+CREATE TABLE IF NOT EXISTS mileage_programs (
   id         TEXT PRIMARY KEY,
   code       TEXT NOT NULL UNIQUE,
   name       TEXT NOT NULL,
@@ -689,7 +689,7 @@ CREATE TABLE mileage_programs (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE mileage_rules (
+CREATE TABLE IF NOT EXISTS mileage_rules (
   id             TEXT PRIMARY KEY,
   program_id     TEXT NOT NULL REFERENCES mileage_programs(id),
   name           TEXT NOT NULL,
@@ -706,7 +706,7 @@ CREATE TABLE mileage_rules (
   updated_at     TEXT NOT NULL
 );
 
-CREATE TABLE notification_rules (
+CREATE TABLE IF NOT EXISTS notification_rules (
   id           TEXT PRIMARY KEY,
   name         TEXT NOT NULL,
   event_type   TEXT NOT NULL,
@@ -717,7 +717,7 @@ CREATE TABLE notification_rules (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE notifications (
+CREATE TABLE IF NOT EXISTS notifications (
   id              TEXT PRIMARY KEY,
   rule_id         TEXT REFERENCES notification_rules (id) ON DELETE SET NULL,
   event_type      TEXT NOT NULL,
@@ -729,7 +729,7 @@ CREATE TABLE notifications (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE operators (
+CREATE TABLE IF NOT EXISTS operators (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
   email      TEXT NOT NULL UNIQUE,
@@ -739,7 +739,7 @@ CREATE TABLE operators (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE outgoing_webhooks (
+CREATE TABLE IF NOT EXISTS outgoing_webhooks (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   url         TEXT NOT NULL,
@@ -750,7 +750,7 @@ CREATE TABLE outgoing_webhooks (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE pool_accounts (
+CREATE TABLE IF NOT EXISTS pool_accounts (
   id TEXT PRIMARY KEY,
   pool_id TEXT NOT NULL REFERENCES traffic_pools(id) ON DELETE CASCADE,
   line_account_id TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
@@ -759,7 +759,7 @@ CREATE TABLE pool_accounts (
   UNIQUE(pool_id, line_account_id)
 );
 
-CREATE TABLE ref_tracking (
+CREATE TABLE IF NOT EXISTS ref_tracking (
   id              TEXT PRIMARY KEY,
   ref_code        TEXT NOT NULL,
   friend_id       TEXT REFERENCES friends (id) ON DELETE CASCADE,
@@ -768,7 +768,7 @@ CREATE TABLE ref_tracking (
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 , fbclid TEXT, gclid TEXT, twclid TEXT, ttclid TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, user_agent TEXT, ip_address TEXT);
 
-CREATE TABLE reminder_steps (
+CREATE TABLE IF NOT EXISTS reminder_steps (
   id              TEXT PRIMARY KEY,
   reminder_id     TEXT NOT NULL REFERENCES reminders (id) ON DELETE CASCADE,
   offset_minutes  INTEGER NOT NULL,
@@ -777,7 +777,7 @@ CREATE TABLE reminder_steps (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE reminders (
+CREATE TABLE IF NOT EXISTS reminders (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   description TEXT,
@@ -786,7 +786,7 @@ CREATE TABLE reminders (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , line_account_id TEXT);
 
-CREATE TABLE rich_menu_areas (
+CREATE TABLE IF NOT EXISTS rich_menu_areas (
   id              TEXT PRIMARY KEY,
   page_id         TEXT NOT NULL REFERENCES rich_menu_pages(id) ON DELETE CASCADE,
   bounds_x        INTEGER NOT NULL,
@@ -799,7 +799,7 @@ CREATE TABLE rich_menu_areas (
   updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE rich_menu_groups (
+CREATE TABLE IF NOT EXISTS rich_menu_groups (
   id                 TEXT PRIMARY KEY,
   account_id         TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
   name               TEXT NOT NULL,
@@ -814,7 +814,7 @@ CREATE TABLE rich_menu_groups (
   updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE rich_menu_pages (
+CREATE TABLE IF NOT EXISTS rich_menu_pages (
   id                 TEXT PRIMARY KEY,
   group_id           TEXT NOT NULL REFERENCES rich_menu_groups(id) ON DELETE CASCADE,
   order_index        INTEGER NOT NULL,
@@ -828,7 +828,7 @@ CREATE TABLE rich_menu_pages (
   UNIQUE (group_id, order_index)
 );
 
-CREATE TABLE scenario_steps (
+CREATE TABLE IF NOT EXISTS scenario_steps (
   id              TEXT PRIMARY KEY,
   scenario_id     TEXT NOT NULL REFERENCES scenarios (id) ON DELETE CASCADE,
   step_order      INTEGER NOT NULL,
@@ -844,7 +844,7 @@ CREATE TABLE scenario_steps (
   UNIQUE (scenario_id, step_order)
 );
 
-CREATE TABLE scenarios (
+CREATE TABLE IF NOT EXISTS scenarios (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
   description     TEXT,
@@ -856,7 +856,7 @@ CREATE TABLE scenarios (
   updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , line_account_id TEXT);
 
-CREATE TABLE scoring_rules (
+CREATE TABLE IF NOT EXISTS scoring_rules (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   event_type  TEXT NOT NULL,
@@ -866,12 +866,12 @@ CREATE TABLE scoring_rules (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE sso_jti (
+CREATE TABLE IF NOT EXISTS sso_jti (
   jti TEXT PRIMARY KEY,
   exp INTEGER NOT NULL
 );
 
-CREATE TABLE staff (
+CREATE TABLE IF NOT EXISTS staff (
   id                       TEXT PRIMARY KEY,
   line_account_id          TEXT NOT NULL,
   name                     TEXT NOT NULL,
@@ -888,7 +888,7 @@ CREATE TABLE staff (
   FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
 );
 
-CREATE TABLE staff_availability_rules (
+CREATE TABLE IF NOT EXISTS staff_availability_rules (
   id          TEXT PRIMARY KEY,
   staff_id    TEXT NOT NULL,
   weekday     INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
@@ -901,7 +901,7 @@ CREATE TABLE staff_availability_rules (
   FOREIGN KEY (staff_id) REFERENCES staff(id)
 );
 
-CREATE TABLE staff_members (
+CREATE TABLE IF NOT EXISTS staff_members (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
   email      TEXT,
@@ -912,7 +912,7 @@ CREATE TABLE staff_members (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE staff_menus (
+CREATE TABLE IF NOT EXISTS staff_menus (
   staff_id                  TEXT NOT NULL,
   menu_id                   TEXT NOT NULL,
   is_offered                INTEGER NOT NULL DEFAULT 1,
@@ -923,7 +923,7 @@ CREATE TABLE staff_menus (
   FOREIGN KEY (menu_id) REFERENCES menus(id)
 );
 
-CREATE TABLE staff_shifts (
+CREATE TABLE IF NOT EXISTS staff_shifts (
   id          TEXT PRIMARY KEY,
   staff_id    TEXT NOT NULL,
   work_date   TEXT NOT NULL,    -- YYYY-MM-DD (JST)
@@ -935,7 +935,7 @@ CREATE TABLE staff_shifts (
   FOREIGN KEY (staff_id) REFERENCES staff(id)
 );
 
-CREATE TABLE stripe_events (
+CREATE TABLE IF NOT EXISTS stripe_events (
   id               TEXT PRIMARY KEY,
   stripe_event_id  TEXT NOT NULL UNIQUE,
   event_type       TEXT NOT NULL,
@@ -946,7 +946,7 @@ CREATE TABLE stripe_events (
   processed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE tags (
+CREATE TABLE IF NOT EXISTS tags (
   id                          TEXT PRIMARY KEY,
   name                        TEXT UNIQUE NOT NULL,
   color                       TEXT NOT NULL DEFAULT '#3B82F6',
@@ -957,7 +957,7 @@ CREATE TABLE tags (
   created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE templates (
+CREATE TABLE IF NOT EXISTS templates (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
   category        TEXT NOT NULL DEFAULT 'general',
@@ -967,7 +967,7 @@ CREATE TABLE templates (
   updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE tracked_links (
+CREATE TABLE IF NOT EXISTS tracked_links (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   original_url TEXT NOT NULL,
@@ -979,7 +979,7 @@ CREATE TABLE tracked_links (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 , intro_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, reward_template_id TEXT REFERENCES message_templates (id) ON DELETE SET NULL, og_title TEXT, og_description TEXT, og_image_url TEXT, line_account_id TEXT REFERENCES line_accounts(id) ON DELETE SET NULL, short_code TEXT, dedup_key TEXT);
 
-CREATE TABLE traffic_pools (
+CREATE TABLE IF NOT EXISTS traffic_pools (
   id TEXT PRIMARY KEY,
   slug TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
@@ -989,7 +989,7 @@ CREATE TABLE traffic_pools (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE update_history (
+CREATE TABLE IF NOT EXISTS update_history (
   id                          TEXT PRIMARY KEY,
   started_at                  INTEGER NOT NULL,
   completed_at                INTEGER,
@@ -1005,7 +1005,7 @@ CREATE TABLE update_history (
   rollback_expires_at         INTEGER
 );
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id           TEXT PRIMARY KEY,
   email        TEXT,
   phone        TEXT,
@@ -1015,7 +1015,7 @@ CREATE TABLE users (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE TABLE webinar_comments (
+CREATE TABLE IF NOT EXISTS webinar_comments (
   id TEXT PRIMARY KEY,
   webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   at_seconds INTEGER NOT NULL,
@@ -1024,7 +1024,7 @@ CREATE TABLE webinar_comments (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE webinar_ctas (
+CREATE TABLE IF NOT EXISTS webinar_ctas (
   id TEXT PRIMARY KEY,
   webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   at_seconds INTEGER NOT NULL,
@@ -1039,7 +1039,7 @@ CREATE TABLE webinar_ctas (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE webinar_followup_configs (
+CREATE TABLE IF NOT EXISTS webinar_followup_configs (
   webinar_id          TEXT PRIMARY KEY REFERENCES webinars(id) ON DELETE CASCADE,
   enabled_at          TEXT NOT NULL,
   first_delay_minutes INTEGER NOT NULL DEFAULT 30,
@@ -1047,7 +1047,7 @@ CREATE TABLE webinar_followup_configs (
   is_active           INTEGER NOT NULL DEFAULT 1
 , stage_enabled_at TEXT, picker_delay_minutes INTEGER NOT NULL DEFAULT 30, no_show_delay_minutes INTEGER NOT NULL DEFAULT 30, booking_delay_minutes INTEGER NOT NULL DEFAULT 30, booking_second_delay_minutes INTEGER NOT NULL DEFAULT 1440, booking_menu_id TEXT, booking_url TEXT);
 
-CREATE TABLE webinar_followups (
+CREATE TABLE IF NOT EXISTS webinar_followups (
   id             TEXT PRIMARY KEY,
   webinar_id     TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   friend_id      TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
@@ -1061,7 +1061,7 @@ CREATE TABLE webinar_followups (
   UNIQUE (webinar_id, friend_id, kind)
 );
 
-CREATE TABLE webinar_funnel_events (
+CREATE TABLE IF NOT EXISTS webinar_funnel_events (
   id               TEXT PRIMARY KEY,
   webinar_id       TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   friend_id        TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
@@ -1082,7 +1082,7 @@ CREATE TABLE webinar_funnel_events (
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE webinar_journey_followups (
+CREATE TABLE IF NOT EXISTS webinar_journey_followups (
   id          TEXT PRIMARY KEY,
   webinar_id  TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   friend_id   TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
@@ -1102,7 +1102,7 @@ CREATE TABLE webinar_journey_followups (
   UNIQUE (webinar_id, friend_id, kind)
 );
 
-CREATE TABLE webinar_picker_opens (
+CREATE TABLE IF NOT EXISTS webinar_picker_opens (
   id              TEXT PRIMARY KEY,
   webinar_id      TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   friend_id       TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
@@ -1110,7 +1110,7 @@ CREATE TABLE webinar_picker_opens (
   UNIQUE (webinar_id, friend_id)
 );
 
-CREATE TABLE webinar_registrations (
+CREATE TABLE IF NOT EXISTS webinar_registrations (
   id TEXT PRIMARY KEY,
   webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   friend_id TEXT NOT NULL REFERENCES friends(id),
@@ -1120,7 +1120,7 @@ CREATE TABLE webinar_registrations (
   UNIQUE (webinar_id, friend_id, session_start_at)
 );
 
-CREATE TABLE webinar_user_comments (
+CREATE TABLE IF NOT EXISTS webinar_user_comments (
   id TEXT PRIMARY KEY,
   webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   friend_id TEXT NOT NULL REFERENCES friends(id),
@@ -1130,7 +1130,7 @@ CREATE TABLE webinar_user_comments (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE webinar_viewers (
+CREATE TABLE IF NOT EXISTS webinar_viewers (
   id TEXT PRIMARY KEY,
   webinar_id TEXT NOT NULL REFERENCES webinars(id) ON DELETE CASCADE,
   friend_id TEXT NOT NULL REFERENCES friends(id),
@@ -1141,7 +1141,7 @@ CREATE TABLE webinar_viewers (
   UNIQUE (webinar_id, friend_id, session_start_at)
 );
 
-CREATE TABLE webinars (
+CREATE TABLE IF NOT EXISTS webinars (
   id TEXT PRIMARY KEY,
   account_id TEXT REFERENCES line_accounts(id),
   title TEXT NOT NULL,
@@ -1157,274 +1157,274 @@ CREATE TABLE webinars (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX idx_ad_conversion_logs_friend ON ad_conversion_logs (friend_id);
+CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_friend ON ad_conversion_logs (friend_id);
 
-CREATE INDEX idx_ad_conversion_logs_platform ON ad_conversion_logs (ad_platform_id);
+CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_platform ON ad_conversion_logs (ad_platform_id);
 
-CREATE INDEX idx_ad_conversion_logs_status ON ad_conversion_logs (status);
+CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_status ON ad_conversion_logs (status);
 
-CREATE INDEX idx_affiliate_clicks_affiliate ON affiliate_clicks (affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_affiliate ON affiliate_clicks (affiliate_id);
 
-CREATE INDEX idx_affiliate_links_affiliate ON affiliate_links (affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_affiliate_links_affiliate ON affiliate_links (affiliate_id);
 
-CREATE INDEX idx_affiliate_links_offer ON affiliate_links (offer_id);
+CREATE INDEX IF NOT EXISTS idx_affiliate_links_offer ON affiliate_links (offer_id);
 
-CREATE UNIQUE INDEX idx_affiliates_friend ON affiliates (friend_id) WHERE friend_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_affiliates_friend ON affiliates (friend_id) WHERE friend_id IS NOT NULL;
 
-CREATE INDEX idx_auto_replies_template_id ON auto_replies(template_id);
+CREATE INDEX IF NOT EXISTS idx_auto_replies_template_id ON auto_replies(template_id);
 
-CREATE INDEX idx_automation_logs_automation ON automation_logs (automation_id);
+CREATE INDEX IF NOT EXISTS idx_automation_logs_automation ON automation_logs (automation_id);
 
-CREATE INDEX idx_automations_active ON automations (is_active);
+CREATE INDEX IF NOT EXISTS idx_automations_active ON automations (is_active);
 
-CREATE INDEX idx_automations_event ON automations (event_type);
+CREATE INDEX IF NOT EXISTS idx_automations_event ON automations (event_type);
 
-CREATE INDEX idx_bookings_account_status_starts ON bookings (line_account_id, status, starts_at);
+CREATE INDEX IF NOT EXISTS idx_bookings_account_status_starts ON bookings (line_account_id, status, starts_at);
 
-CREATE INDEX idx_bookings_friend_starts ON bookings (friend_id, starts_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bookings_friend_starts ON bookings (friend_id, starts_at DESC);
 
-CREATE INDEX idx_bookings_staff_overlap ON bookings (staff_id, status, starts_at, block_ends_at);
+CREATE INDEX IF NOT EXISTS idx_bookings_staff_overlap ON bookings (staff_id, status, starts_at, block_ends_at);
 
-CREATE INDEX idx_broadcast_insights_broadcast_id ON broadcast_insights(broadcast_id);
+CREATE INDEX IF NOT EXISTS idx_broadcast_insights_broadcast_id ON broadcast_insights(broadcast_id);
 
-CREATE INDEX idx_broadcast_insights_status ON broadcast_insights(status);
+CREATE INDEX IF NOT EXISTS idx_broadcast_insights_status ON broadcast_insights(status);
 
-CREATE INDEX idx_broadcasts_status ON broadcasts (status);
+CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts (status);
 
-CREATE INDEX idx_calendar_bookings_friend ON calendar_bookings (friend_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_bookings_friend ON calendar_bookings (friend_id);
 
-CREATE INDEX idx_calendar_bookings_start ON calendar_bookings (start_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_bookings_start ON calendar_bookings (start_at);
 
-CREATE UNIQUE INDEX idx_chats_friend_unique ON chats (friend_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_friend_unique ON chats (friend_id);
 
-CREATE INDEX idx_chats_operator ON chats (operator_id);
+CREATE INDEX IF NOT EXISTS idx_chats_operator ON chats (operator_id);
 
-CREATE INDEX idx_chats_status ON chats (status);
+CREATE INDEX IF NOT EXISTS idx_chats_status ON chats (status);
 
-CREATE INDEX idx_conversion_events_affiliate ON conversion_events (affiliate_code);
+CREATE INDEX IF NOT EXISTS idx_conversion_events_affiliate ON conversion_events (affiliate_code);
 
-CREATE INDEX idx_conversion_events_friend ON conversion_events (friend_id);
+CREATE INDEX IF NOT EXISTS idx_conversion_events_friend ON conversion_events (friend_id);
 
-CREATE INDEX idx_conversion_events_point ON conversion_events (conversion_point_id);
+CREATE INDEX IF NOT EXISTS idx_conversion_events_point ON conversion_events (conversion_point_id);
 
-CREATE INDEX idx_engagement_events_actor_friend
+CREATE INDEX IF NOT EXISTS idx_engagement_events_actor_friend
   ON engagement_events(program_id, actor_friend_id, occurred_at DESC);
 
-CREATE INDEX idx_engagement_events_actor_user
+CREATE INDEX IF NOT EXISTS idx_engagement_events_actor_user
   ON engagement_events(program_id, actor_user_id, occurred_at DESC);
 
-CREATE INDEX idx_engagement_events_source
+CREATE INDEX IF NOT EXISTS idx_engagement_events_source
   ON engagement_events(source, source_event_id);
 
-CREATE INDEX idx_entry_routes_pool ON entry_routes (pool_id);
+CREATE INDEX IF NOT EXISTS idx_entry_routes_pool ON entry_routes (pool_id);
 
-CREATE INDEX idx_entry_routes_ref ON entry_routes (ref_code);
+CREATE INDEX IF NOT EXISTS idx_entry_routes_ref ON entry_routes (ref_code);
 
-CREATE INDEX idx_event_booking_idempotency_expires ON event_booking_idempotency_keys (expires_at);
+CREATE INDEX IF NOT EXISTS idx_event_booking_idempotency_expires ON event_booking_idempotency_keys (expires_at);
 
-CREATE INDEX idx_event_booking_reminders_status_scheduled ON event_booking_reminders (status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_event_booking_reminders_status_scheduled ON event_booking_reminders (status, scheduled_at);
 
-CREATE INDEX idx_event_bookings_account_status_event ON event_bookings (line_account_id, status, event_id);
+CREATE INDEX IF NOT EXISTS idx_event_bookings_account_status_event ON event_bookings (line_account_id, status, event_id);
 
-CREATE INDEX idx_event_bookings_friend_requested ON event_bookings (friend_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_bookings_friend_requested ON event_bookings (friend_id, requested_at DESC);
 
-CREATE INDEX idx_event_bookings_identity_status
+CREATE INDEX IF NOT EXISTS idx_event_bookings_identity_status
   ON event_bookings (event_id, identity_key, status);
 
-CREATE INDEX idx_event_bookings_slot_status ON event_bookings (slot_id, status);
+CREATE INDEX IF NOT EXISTS idx_event_bookings_slot_status ON event_bookings (slot_id, status);
 
-CREATE INDEX idx_event_slots_event_starts ON event_slots (event_id, starts_at);
+CREATE INDEX IF NOT EXISTS idx_event_slots_event_starts ON event_slots (event_id, starts_at);
 
-CREATE INDEX idx_events_account_published_sort ON events (line_account_id, is_published, sort_order);
+CREATE INDEX IF NOT EXISTS idx_events_account_published_sort ON events (line_account_id, is_published, sort_order);
 
-CREATE INDEX idx_form_opens_form ON form_opens (form_id, opened_at);
+CREATE INDEX IF NOT EXISTS idx_form_opens_form ON form_opens (form_id, opened_at);
 
-CREATE INDEX idx_form_submissions_form ON form_submissions (form_id);
+CREATE INDEX IF NOT EXISTS idx_form_submissions_form ON form_submissions (form_id);
 
-CREATE INDEX idx_form_submissions_friend ON form_submissions (friend_id);
+CREATE INDEX IF NOT EXISTS idx_form_submissions_friend ON form_submissions (friend_id);
 
-CREATE INDEX idx_friend_reminders_friend ON friend_reminders (friend_id);
+CREATE INDEX IF NOT EXISTS idx_friend_reminders_friend ON friend_reminders (friend_id);
 
-CREATE INDEX idx_friend_reminders_status ON friend_reminders (status);
+CREATE INDEX IF NOT EXISTS idx_friend_reminders_status ON friend_reminders (status);
 
-CREATE INDEX idx_friend_scenarios_friend_id ON friend_scenarios (friend_id);
+CREATE INDEX IF NOT EXISTS idx_friend_scenarios_friend_id ON friend_scenarios (friend_id);
 
-CREATE INDEX idx_friend_scenarios_next_delivery_at ON friend_scenarios (next_delivery_at);
+CREATE INDEX IF NOT EXISTS idx_friend_scenarios_next_delivery_at ON friend_scenarios (next_delivery_at);
 
-CREATE INDEX idx_friend_scenarios_status ON friend_scenarios (status);
+CREATE INDEX IF NOT EXISTS idx_friend_scenarios_status ON friend_scenarios (status);
 
-CREATE UNIQUE INDEX idx_friend_scenarios_unique ON friend_scenarios (friend_id, scenario_id) WHERE status != 'completed';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_friend_scenarios_unique ON friend_scenarios (friend_id, scenario_id) WHERE status != 'completed';
 
-CREATE INDEX idx_friend_scores_created ON friend_scores (created_at);
+CREATE INDEX IF NOT EXISTS idx_friend_scores_created ON friend_scores (created_at);
 
-CREATE INDEX idx_friend_scores_friend ON friend_scores (friend_id);
+CREATE INDEX IF NOT EXISTS idx_friend_scores_friend ON friend_scores (friend_id);
 
-CREATE INDEX idx_friend_tags_tag_id ON friend_tags (tag_id);
+CREATE INDEX IF NOT EXISTS idx_friend_tags_tag_id ON friend_tags (tag_id);
 
-CREATE INDEX idx_friends_follow_tenure ON friends(is_following, current_follow_started_at);
+CREATE INDEX IF NOT EXISTS idx_friends_follow_tenure ON friends(is_following, current_follow_started_at);
 
-CREATE INDEX idx_friends_ig_igsid ON friends (ig_igsid);
+CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
 
-CREATE INDEX idx_friends_line_user_id ON friends (line_user_id);
+CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
 
-CREATE INDEX idx_friends_user_id ON friends (user_id);
+CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 
-CREATE INDEX idx_google_calendar_connections_staff
+CREATE INDEX IF NOT EXISTS idx_google_calendar_connections_staff
   ON google_calendar_connections (line_account_id, staff_id, is_active);
 
-CREATE INDEX idx_health_logs_account ON account_health_logs (line_account_id);
+CREATE INDEX IF NOT EXISTS idx_health_logs_account ON account_health_logs (line_account_id);
 
-CREATE INDEX idx_idempotency_expires ON booking_idempotency_keys (expires_at);
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON booking_idempotency_keys (expires_at);
 
-CREATE INDEX idx_line_accounts_display_order
+CREATE INDEX IF NOT EXISTS idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);
 
-CREATE INDEX idx_link_clicks_friend ON link_clicks (friend_id);
+CREATE INDEX IF NOT EXISTS idx_link_clicks_friend ON link_clicks (friend_id);
 
-CREATE INDEX idx_link_clicks_link ON link_clicks (tracked_link_id);
+CREATE INDEX IF NOT EXISTS idx_link_clicks_link ON link_clicks (tracked_link_id);
 
-CREATE INDEX idx_media_inquiries_created
+CREATE INDEX IF NOT EXISTS idx_media_inquiries_created
   ON media_inquiries (created_at DESC);
 
-CREATE INDEX idx_media_inquiries_mail_status
+CREATE INDEX IF NOT EXISTS idx_media_inquiries_mail_status
   ON media_inquiries (mail_status, created_at);
 
-CREATE INDEX idx_meet_consultation_reminders_due
+CREATE INDEX IF NOT EXISTS idx_meet_consultation_reminders_due
   ON meet_consultation_reminders (status, scheduled_at);
 
-CREATE INDEX idx_meet_consultations_friend ON meet_consultations (friend_id);
+CREATE INDEX IF NOT EXISTS idx_meet_consultations_friend ON meet_consultations (friend_id);
 
-CREATE INDEX idx_meet_consultations_start ON meet_consultations (status, starts_at);
+CREATE INDEX IF NOT EXISTS idx_meet_consultations_start ON meet_consultations (status, starts_at);
 
-CREATE INDEX idx_menus_account_sort ON menus (line_account_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_menus_account_sort ON menus (line_account_id, sort_order);
 
-CREATE INDEX idx_messages_log_broadcast_id ON messages_log(broadcast_id);
+CREATE INDEX IF NOT EXISTS idx_messages_log_broadcast_id ON messages_log(broadcast_id);
 
-CREATE INDEX idx_messages_log_created_at ON messages_log (created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_log_created_at ON messages_log (created_at);
 
-CREATE INDEX idx_messages_log_friend_direction_created ON messages_log (friend_id, direction, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_log_friend_direction_created ON messages_log (friend_id, direction, created_at);
 
-CREATE INDEX idx_messages_log_friend_id ON messages_log (friend_id);
+CREATE INDEX IF NOT EXISTS idx_messages_log_friend_id ON messages_log (friend_id);
 
-CREATE INDEX idx_messages_log_friend_source ON messages_log (friend_id, source);
+CREATE INDEX IF NOT EXISTS idx_messages_log_friend_source ON messages_log (friend_id, source);
 
-CREATE INDEX idx_mileage_event_queue_due
+CREATE INDEX IF NOT EXISTS idx_mileage_event_queue_due
   ON mileage_event_queue(status, available_at, created_at);
 
-CREATE INDEX idx_mileage_ledger_friend
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_friend
   ON mileage_ledger(program_id, beneficiary_friend_id, status, occurred_at DESC);
 
-CREATE UNIQUE INDEX idx_mileage_ledger_one_reversal
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mileage_ledger_one_reversal
   ON mileage_ledger(reverses_entry_id)
   WHERE reverses_entry_id IS NOT NULL;
 
-CREATE INDEX idx_mileage_ledger_rule
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_rule
   ON mileage_ledger(program_id, mileage_rule_id, occurred_at DESC);
 
-CREATE INDEX idx_mileage_ledger_source
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_source
   ON mileage_ledger(program_id, source, source_event_id);
 
-CREATE INDEX idx_mileage_ledger_user
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_user
   ON mileage_ledger(program_id, beneficiary_user_id, status, occurred_at DESC);
 
-CREATE INDEX idx_mileage_rules_match
+CREATE INDEX IF NOT EXISTS idx_mileage_rules_match
   ON mileage_rules(program_id, event_type, source, is_active);
 
-CREATE INDEX idx_notifications_created ON notifications (created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at);
 
-CREATE INDEX idx_notifications_status ON notifications (status);
+CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications (status);
 
-CREATE INDEX idx_ref_tracking_friend ON ref_tracking (friend_id);
+CREATE INDEX IF NOT EXISTS idx_ref_tracking_friend ON ref_tracking (friend_id);
 
-CREATE INDEX idx_ref_tracking_friend_created ON ref_tracking(friend_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ref_tracking_friend_created ON ref_tracking(friend_id, created_at);
 
-CREATE INDEX idx_ref_tracking_ref    ON ref_tracking (ref_code);
+CREATE INDEX IF NOT EXISTS idx_ref_tracking_ref    ON ref_tracking (ref_code);
 
-CREATE INDEX idx_ref_tracking_ref_created ON ref_tracking(ref_code, created_at);
+CREATE INDEX IF NOT EXISTS idx_ref_tracking_ref_created ON ref_tracking(ref_code, created_at);
 
-CREATE INDEX idx_reminder_steps_reminder ON reminder_steps (reminder_id);
+CREATE INDEX IF NOT EXISTS idx_reminder_steps_reminder ON reminder_steps (reminder_id);
 
-CREATE INDEX idx_reminders_status_scheduled ON booking_reminders (status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_reminders_status_scheduled ON booking_reminders (status, scheduled_at);
 
-CREATE INDEX idx_rich_menu_areas_page     ON rich_menu_areas(page_id);
+CREATE INDEX IF NOT EXISTS idx_rich_menu_areas_page     ON rich_menu_areas(page_id);
 
-CREATE INDEX idx_rich_menu_groups_account ON rich_menu_groups(account_id, status);
+CREATE INDEX IF NOT EXISTS idx_rich_menu_groups_account ON rich_menu_groups(account_id, status);
 
-CREATE INDEX idx_rich_menu_pages_group    ON rich_menu_pages(group_id, order_index);
+CREATE INDEX IF NOT EXISTS idx_rich_menu_pages_group    ON rich_menu_pages(group_id, order_index);
 
-CREATE INDEX idx_scenario_steps_scenario_id ON scenario_steps (scenario_id);
+CREATE INDEX IF NOT EXISTS idx_scenario_steps_scenario_id ON scenario_steps (scenario_id);
 
-CREATE INDEX idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
+CREATE INDEX IF NOT EXISTS idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
 
-CREATE INDEX idx_sso_jti_exp ON sso_jti(exp);
+CREATE INDEX IF NOT EXISTS idx_sso_jti_exp ON sso_jti(exp);
 
-CREATE INDEX idx_staff_account_sort ON staff (line_account_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_staff_account_sort ON staff (line_account_id, sort_order);
 
-CREATE INDEX idx_staff_availability_rules_staff
+CREATE INDEX IF NOT EXISTS idx_staff_availability_rules_staff
   ON staff_availability_rules (staff_id, weekday, is_active);
 
-CREATE UNIQUE INDEX idx_staff_members_api_key ON staff_members(api_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
 
-CREATE INDEX idx_staff_members_role ON staff_members(role);
+CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
 
-CREATE INDEX idx_stripe_events_friend ON stripe_events (friend_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_events_friend ON stripe_events (friend_id);
 
-CREATE INDEX idx_stripe_events_type ON stripe_events (event_type);
+CREATE INDEX IF NOT EXISTS idx_stripe_events_type ON stripe_events (event_type);
 
-CREATE INDEX idx_templates_category ON templates (category);
+CREATE INDEX IF NOT EXISTS idx_templates_category ON templates (category);
 
-CREATE UNIQUE INDEX idx_tracked_links_dedup_key
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tracked_links_dedup_key
   ON tracked_links (dedup_key) WHERE dedup_key IS NOT NULL;
 
-CREATE UNIQUE INDEX idx_tracked_links_short_code
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tracked_links_short_code
   ON tracked_links (short_code) WHERE short_code IS NOT NULL;
 
-CREATE INDEX idx_update_history_started ON update_history(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_update_history_started ON update_history(started_at DESC);
 
-CREATE INDEX idx_users_email ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
-CREATE INDEX idx_users_external_id ON users (external_id);
+CREATE INDEX IF NOT EXISTS idx_users_external_id ON users (external_id);
 
-CREATE INDEX idx_users_phone ON users (phone);
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
 
-CREATE INDEX idx_webinar_comments_webinar
+CREATE INDEX IF NOT EXISTS idx_webinar_comments_webinar
   ON webinar_comments (webinar_id, at_seconds);
 
-CREATE INDEX idx_webinar_ctas_webinar
+CREATE INDEX IF NOT EXISTS idx_webinar_ctas_webinar
   ON webinar_ctas (webinar_id, at_seconds);
 
-CREATE INDEX idx_webinar_followups_status
+CREATE INDEX IF NOT EXISTS idx_webinar_followups_status
   ON webinar_followups (status, updated_at);
 
-CREATE UNIQUE INDEX idx_webinar_funnel_events_unique
+CREATE UNIQUE INDEX IF NOT EXISTS idx_webinar_funnel_events_unique
   ON webinar_funnel_events (
     webinar_id, friend_id, session_start_at, event_type, cta_id, form_id, field_name
   );
 
-CREATE INDEX idx_webinar_funnel_events_webinar_created
+CREATE INDEX IF NOT EXISTS idx_webinar_funnel_events_webinar_created
   ON webinar_funnel_events (webinar_id, created_at);
 
-CREATE INDEX idx_webinar_journey_followups_status
+CREATE INDEX IF NOT EXISTS idx_webinar_journey_followups_status
   ON webinar_journey_followups (status, updated_at);
 
-CREATE INDEX idx_webinar_picker_opens_opened
+CREATE INDEX IF NOT EXISTS idx_webinar_picker_opens_opened
   ON webinar_picker_opens (webinar_id, opened_at);
 
-CREATE INDEX idx_webinar_regs_due
+CREATE INDEX IF NOT EXISTS idx_webinar_regs_due
   ON webinar_registrations (notified_at, session_start_at);
 
-CREATE INDEX idx_webinar_regs_friend
+CREATE INDEX IF NOT EXISTS idx_webinar_regs_friend
   ON webinar_registrations (webinar_id, friend_id);
 
-CREATE INDEX idx_webinar_user_comments_webinar
+CREATE INDEX IF NOT EXISTS idx_webinar_user_comments_webinar
   ON webinar_user_comments (webinar_id, created_at);
 
-CREATE INDEX idx_webinar_viewers_webinar
+CREATE INDEX IF NOT EXISTS idx_webinar_viewers_webinar
   ON webinar_viewers (webinar_id, session_start_at);
 
-CREATE UNIQUE INDEX uq_google_calendar_connections_active_staff
+CREATE UNIQUE INDEX IF NOT EXISTS uq_google_calendar_connections_active_staff
   ON google_calendar_connections (staff_id)
   WHERE staff_id IS NOT NULL AND is_active = 1;
 
-INSERT INTO auto_replies (id, keyword, match_type, response_type, response_content, template_id, line_account_id, is_active, created_at)
+INSERT OR IGNORE INTO auto_replies (id, keyword, match_type, response_type, response_content, template_id, line_account_id, is_active, created_at)
 VALUES ('builtin-mileage-wallet-keyword', 'マイル', 'exact', 'flex', '{"type":"bubble","size":"kilo","body":{"type":"box","layout":"vertical","paddingAll":"20px","contents":[{"type":"text","text":"あなたのHarnessマイル","weight":"bold","size":"lg","color":"#1e293b"},{"type":"text","text":"現在のマイル、獲得履歴、登録済みアカウント、次にマイルを獲得できる行動を確認できます。","wrap":true,"size":"sm","color":"#64748b","margin":"md"}]},"footer":{"type":"box","layout":"vertical","paddingAll":"16px","contents":[{"type":"button","style":"primary","color":"#06C755","height":"sm","action":{"type":"uri","label":"マイルを確認する","uri":"https://liff.line.me/{{liff_id}}/?page=affiliate&liffId={{liff_id}}"}}]}}', NULL, NULL, 1, '2026-08-11T00:00:00.000+09:00');
