@@ -343,6 +343,8 @@ export default function ChatsPage() {
   const [showImagePicker, setShowImagePicker] = useState(false)
   const [showComposerSettings, setShowComposerSettings] = useState(false)
   const [showMobileMemo, setShowMobileMemo] = useState(false)
+  const composerSettingsRef = useRef<HTMLDivElement | null>(null)
+  const composerSettingsButtonRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     try {
@@ -589,6 +591,30 @@ export default function ChatsPage() {
     setShowComposerSettings(false)
     setShowMobileMemo(false)
   }
+
+  // ⚙ 設定ポップオーバーは浮いた要素なので、外側クリックと Escape で閉じる。
+  // トグルボタン自身は除外する — ここで閉じると onClick のトグルが即座に開き直してしまう。
+  // 📎 の画像アップローダーはポップオーバーではなくインライン展開で、選択操作の途中に
+  // 閉じられると困るため対象にしない (pendingImage がある間は開いたままが正しい)。
+  useEffect(() => {
+    if (!showComposerSettings) return
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (composerSettingsRef.current?.contains(target)) return
+      if (composerSettingsButtonRef.current?.contains(target)) return
+      setShowComposerSettings(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowComposerSettings(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showComposerSettings])
 
   const triggerLoadingAnimation = useCallback(async (chatId: string) => {
     if (!showLoadingIndicator) return
@@ -1124,7 +1150,12 @@ export default function ChatsPage() {
                   通常時は入力欄1行だけにしてメッセージ表示領域を最大化する */}
               <div className="relative px-4 py-3 border-t border-gray-200">
                 {showComposerSettings && (
-                  <div className="absolute bottom-full left-2 z-20 mb-1 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg space-y-3 text-xs text-gray-600">
+                  <div
+                    ref={composerSettingsRef}
+                    role="dialog"
+                    aria-label="送信設定"
+                    className="absolute bottom-full left-2 z-20 mb-1 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg space-y-3 text-xs text-gray-600"
+                  >
                     <div className="flex items-center gap-2">
                       <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                         <input
@@ -1195,7 +1226,9 @@ export default function ChatsPage() {
                     </svg>
                   </button>
                   <button
+                    ref={composerSettingsButtonRef}
                     onClick={() => setShowComposerSettings((v) => !v)}
+                    aria-expanded={showComposerSettings}
                     className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
                       showComposerSettings
                         ? 'text-green-600 bg-green-50'
