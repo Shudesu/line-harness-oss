@@ -987,10 +987,10 @@ export default function ChatsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* メモはPC(lg+)では右サイドバーに常設。狭い画面のみトグルで表示する */}
+                  {/* メモはPC(xl+)では右サイドバーに常設。狭い画面のみトグルで表示する */}
                   <button
                     onClick={() => setShowMobileMemo((v) => !v)}
-                    className={`lg:hidden px-3 py-1 min-h-[44px] text-xs font-medium rounded-md transition-colors ${
+                    className={`xl:hidden px-3 py-1 min-h-[44px] text-xs font-medium rounded-md transition-colors ${
                       showMobileMemo ? 'text-green-700 bg-green-50' : 'text-gray-600 bg-gray-50 hover:bg-gray-100'
                     }`}
                     title="メモを表示"
@@ -1044,7 +1044,7 @@ export default function ChatsPage() {
               </div>
 
               {/* Messages — LINE-style chat bubbles */}
-              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
+              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
                 {(!chatDetail.messages || chatDetail.messages.length === 0) ? (
                   <div className="text-center py-8">
                     <p className="text-white/60 text-sm">メッセージはまだありません。</p>
@@ -1099,10 +1099,10 @@ export default function ChatsPage() {
                             )
                           )}
 
-                          <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
+                          <div className={`flex flex-col min-w-0 ${isOutgoing ? 'items-end' : 'items-start'}`}>
                             {/* メッセージバブル */}
                             <div
-                              className={`max-w-[75%] lg:max-w-[60%] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                              className={`max-w-[75%] lg:max-w-[60%] min-w-0 overflow-hidden px-3 py-2 text-sm break-words whitespace-pre-wrap ${
                                 isOutgoing
                                   ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
                                   : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
@@ -1123,9 +1123,9 @@ export default function ChatsPage() {
                 )}
               </div>
 
-              {/* Notes — PC(lg+)は右サイドバーに常設。狭い画面のみトグル表示 */}
+              {/* Notes — PC(xl+)は右サイドバーに常設。狭い画面のみトグル表示 */}
               {showMobileMemo && (
-                <div className="lg:hidden px-4 py-2 border-t border-gray-200 bg-gray-50">
+                <div className="xl:hidden px-4 py-2 border-t border-gray-200 bg-gray-50">
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
@@ -1210,7 +1210,7 @@ export default function ChatsPage() {
                     />
                   </div>
                 )}
-                <div className="flex items-end gap-1.5">
+                <div className="flex items-end gap-1.5 min-w-0">
                   <button
                     onClick={() => setShowImagePicker((v) => !v)}
                     className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
@@ -1265,7 +1265,7 @@ export default function ChatsPage() {
                     onBlur={() => setIsMessageInputFocused(false)}
                     onKeyDown={handleKeyDown}
                     placeholder="メッセージを入力..."
-                    className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 resize-none overflow-y-auto"
+                    className="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 resize-none overflow-y-auto"
                   />
                   <button
                     onClick={handleSendMessage}
@@ -1289,7 +1289,9 @@ export default function ChatsPage() {
           直接渡せる (chat list SQL が `id: f.id` で friend_id を返す)。
         */}
         {(selectedChatId || selectedFriendId) && (
-          <div className="hidden lg:flex">
+          // xl 未満で 3 カラムにすると中央のチャット列が 160px 前後まで潰れ、
+          // コンポーザーが収まらなくなる。サイドバーは xl 以上でのみ出す。
+          <div className="hidden xl:flex">
             <FriendInfoSidebar
               friendId={selectedFriendId || selectedChatId}
               chatStatus={
@@ -1309,7 +1311,9 @@ export default function ChatsPage() {
           </div>
         )}
       </div>
-      <CcPromptButton prompts={ccPrompts} />
+      {/* コンポーザーが画面下端まで来るレイアウトなので、既定位置 (bottom-6 right-6) だと
+          送信ボタンに重なってクリックを奪う。入力欄の上にずらす。 */}
+      <CcPromptButton prompts={ccPrompts} positionClassName="bottom-24 right-6" />
     </div>
   )
 }
