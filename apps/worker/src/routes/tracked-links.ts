@@ -22,6 +22,16 @@ import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const trackedLinks = new Hono<Env>();
 
+/** A tracked link may only ever bounce a click to http(s) — not javascript:/data:. */
+function isHttpUrl(url: string): boolean {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
   // Prefer the short code (baseUrl may be a branded short domain).
   const trackingUrl = `${baseUrl}/t/${row.short_code ?? row.id}`;
@@ -139,6 +149,9 @@ trackedLinks.post('/api/tracked-links', async (c) => {
     if (!body.name || !body.originalUrl) {
       return c.json({ success: false, error: 'name and originalUrl are required' }, 400);
     }
+    if (!isHttpUrl(body.originalUrl)) {
+      return c.json({ success: false, error: 'originalUrl must be a valid HTTP(S) URL' }, 400);
+    }
 
     const link = await createTrackedLink(c.env.DB, {
       name: body.name,
@@ -249,29 +262,41 @@ function getAndroidPackage(url: string): string | null {
 }
 
 function buildAppRedirectHtml(destinationUrl: string): string {
-  const escaped = destinationUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  // HTML escaping alone does not make a URL safe inside a <script> string:
+  // a quote or </script> in original_url would break out of it. JSON.stringify
+  // produces a properly escaped JS literal; the &/" escaping is only used for
+  // the <noscript> attribute.
+  const destJs = JSON.stringify(destinationUrl);
+  const escaped = destinationUrl
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
   const androidPackage = getAndroidPackage(destinationUrl);
   // intent://path#Intent;scheme=https;package=com.xxx;S.browser_fallback_url=https://...;end
   const intentUrl = androidPackage
     ? `intent://${destinationUrl.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=${androidPackage};S.browser_fallback_url=${encodeURIComponent(destinationUrl)};end`
     : null;
-  const intentEscaped = intentUrl ? intentUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;') : '';
+  const intentJs = intentUrl ? JSON.stringify(intentUrl) : 'null';
 
   return `<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>Redirecting...</title>
 <style>body{display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui;color:#64748b;background:#f8fafc}p{font-size:14px}</style>
 </head><body>
 <p>Opening app...</p>
 <script>
 (function(){
+  var dest=${destJs};
+  var intent=${intentJs};
   var isAndroid = /Android/i.test(navigator.userAgent);
-  if(isAndroid && "${intentEscaped}"){
-    window.location.href="${intentEscaped}";
+  if(isAndroid && intent){
+    window.location.href=intent;
   } else {
-    window.location.href="${escaped}";
+    window.location.href=dest;
   }
 })();
 </script>
@@ -382,6 +407,16 @@ trackedLinks.get('/t/:linkId', async (c) => {
       }
     })(),
   );
+
+  // Defense in depth: refuse to bounce a click to anything but http(s), so a
+  // javascript:/data: value that reached the row cannot execute in the browser.
+  if (!isHttpUrl(link.original_url)) {
+    return c.json({ success: false, error: 'Invalid redirect target' }, 400);
+  }
+
+  // Keep the tracking URL (which carries the link id and friend id) out of the
+  // destination's Referer header.
+  c.header('Referrer-Policy', 'no-referrer');
 
   // App-link domains: return HTML with JS redirect for Universal Link support
   if (useAppRedirect) {
