@@ -551,7 +551,7 @@ chats.post('/api/chats/:id/send', async (c) => {
     const chat = await resolveOrCreateChat(c.env.DB, chatId);
     if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
 
-    const body = await c.req.json<{ messageType?: string; content: string }>();
+    const body = await c.req.json<{ messageType?: string; content: string; trackLinks?: boolean }>();
     if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
 
     const { friend, accessToken } = await resolveFriendAndAccessToken(
@@ -566,13 +566,35 @@ chats.post('/api/chats/:id/send', async (c) => {
     const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';
 
-    if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
-    } else if (messageType === 'flex') {
-      const contents = JSON.parse(body.content);
+    // Auto-wrap URLs with tracking links — mirrors POST /api/friends/:id/messages.
+    // Chat replies were the only manual-send path without this, so URLs pasted
+    // into the chat box went out untracked. trackLinks=false opts out (send as-is).
+    const sendWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+    let tracked = { messageType, content: body.content };
+    if (body.trackLinks !== false) {
+      const { autoTrackContent } = await import('../services/auto-track.js');
+      tracked = await autoTrackContent(c.env.DB, messageType, body.content, sendWorkerUrl, {
+        lineAccountId: friend.line_account_id ?? null,
+      });
+    }
+    // 1:1 send — burn f=<friendId> into /t links so clicks attribute without the
+    // LIFF identification hop (also applies to pre-existing /t links, hence
+    // unconditional).
+    {
+      const { appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+      tracked = {
+        ...tracked,
+        content: await appendFriendToTrackedLinks(c.env.DB, tracked.content, sendWorkerUrl, friend.id),
+      };
+    }
+
+    if (tracked.messageType === 'text') {
+      await lineClient.pushTextMessage(friend.line_user_id, tracked.content);
+    } else if (tracked.messageType === 'flex') {
+      const contents = JSON.parse(tracked.content);
       await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
-    } else if (messageType === 'image') {
-      const parsed = JSON.parse(body.content) as {
+    } else if (tracked.messageType === 'image') {
+      const parsed = JSON.parse(tracked.content) as {
         originalContentUrl: string;
         previewImageUrl: string;
       };
