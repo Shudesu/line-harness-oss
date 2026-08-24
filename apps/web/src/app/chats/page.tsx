@@ -1099,10 +1099,13 @@ export default function ChatsPage() {
                             )
                           )}
 
-                          <div className={`flex flex-col min-w-0 ${isOutgoing ? 'items-end' : 'items-start'}`}>
+                          {/* w-full が要る: 吹き出しの max-w が % 指定なので、
+                              親の幅が確定していないとパーセントを解決できず
+                              min-content（1 文字幅）まで潰れて縦一列に改行される */}
+                          <div className={`flex flex-col w-full min-w-0 ${isOutgoing ? 'items-end' : 'items-start'}`}>
                             {/* メッセージバブル */}
                             <div
-                              className={`max-w-[75%] lg:max-w-[60%] min-w-0 overflow-hidden px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                              className={`max-w-[75%] lg:max-w-[60%] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
                                 isOutgoing
                                   ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
                                   : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
@@ -1148,7 +1151,7 @@ export default function ChatsPage() {
               {/* Send Message Form — OAM風コンパクト構成。
                   画像添付は 📎、ローディング/送信キー設定は ⚙ に格納し、
                   通常時は入力欄1行だけにしてメッセージ表示領域を最大化する */}
-              <div className="relative px-4 py-3 border-t border-gray-200">
+              <div className="relative px-4 pt-3 pb-5 border-t border-gray-200">
                 {showComposerSettings && (
                   <div
                     ref={composerSettingsRef}
@@ -1213,7 +1216,7 @@ export default function ChatsPage() {
                 <div className="flex items-end gap-1.5 min-w-0">
                   <button
                     onClick={() => setShowImagePicker((v) => !v)}
-                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                    className={`flex-shrink-0 flex items-center justify-center h-11 w-11 rounded-lg transition-colors ${
                       showImagePicker || pendingImage
                         ? 'text-green-600 bg-green-50'
                         : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
@@ -1229,7 +1232,7 @@ export default function ChatsPage() {
                     ref={composerSettingsButtonRef}
                     onClick={() => setShowComposerSettings((v) => !v)}
                     aria-expanded={showComposerSettings}
-                    className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                    className={`flex-shrink-0 flex items-center justify-center h-11 w-11 rounded-lg transition-colors ${
                       showComposerSettings
                         ? 'text-green-600 bg-green-50'
                         : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
@@ -1265,12 +1268,12 @@ export default function ChatsPage() {
                     onBlur={() => setIsMessageInputFocused(false)}
                     onKeyDown={handleKeyDown}
                     placeholder="メッセージを入力..."
-                    className="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 resize-none overflow-y-auto"
+                    className="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg px-3 py-3 min-h-[52px] bg-white focus:outline-none focus:ring-2 focus:ring-green-500 resize-none overflow-y-auto"
                   />
                   <button
                     onClick={handleSendMessage}
                     disabled={sending || (!messageContent.trim() && !pendingImage)}
-                    className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-shrink-0 px-4 h-11 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ backgroundColor: '#06C755' }}
                   >
                     {sending ? '送信中...' : '送信'}
