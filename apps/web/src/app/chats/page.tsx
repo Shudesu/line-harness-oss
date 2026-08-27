@@ -190,28 +190,6 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
 
   function renderContent(msg: MessageLog) {
     if (msg.messageType === 'text') return msg.content
-    if (msg.messageType === 'flex') {
-      try {
-        const parsed = JSON.parse(msg.content)
-        // Extract ALL text from flex (up to 200 chars)
-        const texts: string[] = []
-        const collectText = (obj: Record<string, unknown>) => {
-          if (texts.join(' ').length > 200) return
-          if (obj.type === 'text' && typeof obj.text === 'string') {
-            const t = (obj.text as string).trim()
-            if (t && !t.startsWith('{{')) texts.push(t)
-          }
-          for (const key of ['header', 'body', 'footer']) {
-            if (obj[key]) collectText(obj[key] as Record<string, unknown>)
-          }
-          if (Array.isArray(obj.contents)) {
-            for (const c of obj.contents) collectText(c as Record<string, unknown>)
-          }
-        }
-        collectText(parsed)
-        return texts.slice(0, 4).join('\n') || '[Flex Message]'
-      } catch { return '[Flex Message]' }
-    }
     if (msg.messageType === 'sticker') {
       return <StickerMessageImage content={msg.content} />
     }
@@ -246,16 +224,26 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
         ) : (
           messages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
-                msg.direction === 'outgoing'
-                  ? 'bg-green-500 text-white'
-                  : 'bg-gray-100 text-gray-900'
-              }`}>
-                <div className="text-sm whitespace-pre-wrap break-words">{renderContent(msg)}</div>
-                <p className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-200' : 'text-gray-400'}`}>
-                  {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
+              {/* flex はチャット詳細画面と同じくバブルに包まず素のカードで描画する */}
+              {msg.messageType === 'flex' ? (
+                <div className="max-w-[92%] min-w-0">
+                  <FlexPreviewComponent content={msg.content} />
+                  <p className="text-xs mt-1 text-gray-400">
+                    {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              ) : (
+                <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                  msg.direction === 'outgoing'
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gray-100 text-gray-900'
+                }`}>
+                  <div className="text-sm whitespace-pre-wrap break-words">{renderContent(msg)}</div>
+                  <p className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-200' : 'text-gray-400'}`}>
+                    {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              )}
             </div>
           ))
         )}
@@ -802,9 +790,10 @@ export default function ChatsPage() {
 
   return (
     // OAM(公式LINEマネージャー)風フルスクリーンレイアウト:
-    // app-shell 側の余白 (px-4〜lg:px-8 / pb / lg:pt-8) を負マージンで打ち消して
-    // 3カラムを画面いっぱいに広げる。ページタイトル行も廃止してチャット領域を最大化。
-    <div className="-mx-4 sm:-mx-6 lg:-mx-8 -mb-6 lg:-mb-8 lg:-mt-8 flex flex-col h-[calc(100vh-72px)] lg:h-screen bg-white">
+    // app-shell がこのページをフルブリード (余白なし・高さ = シェルの残り全部)
+    // で描画するので、ここは flex-1 で受けるだけ。viewport 単位の高さ計算は
+    // 使わない — バナーやモバイル URL バーの分ずれてコンポーザーがはみ出すため。
+    <div className="flex flex-col flex-1 min-h-0 bg-white">
       {/* Error */}
       {error && (
         <div className="m-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -960,8 +949,9 @@ export default function ChatsPage() {
             </div>
           ) : chatDetail ? (
             <>
-              {/* Chat Header */}
-              <div className="px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-2">
+              {/* Chat Header — flex-shrink-0: 低いビューポートでもヘッダーとコンポーザーは
+                  高さを保ち、縮むのはメッセージ一覧だけにする */}
+              <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <button
                     onClick={() => setSelectedChatId(null)}
@@ -1010,7 +1000,7 @@ export default function ChatsPage() {
                           setSelectedChatId(next.id)
                         }
                       }}
-                      className="rounded-md bg-emerald-600 px-3 py-1.5 min-h-[44px] lg:min-h-0 text-sm font-medium text-white hover:bg-emerald-700"
+                      className="rounded-md bg-emerald-600 px-3 py-1.5 min-h-[44px] lg:min-h-[36px] text-sm font-medium text-white hover:bg-emerald-700"
                       title="次の未対応 friend に進む"
                     >
                       次の未対応 →
@@ -1019,7 +1009,7 @@ export default function ChatsPage() {
                   {chatDetail.status !== 'unread' && (
                     <button
                       onClick={() => handleStatusUpdate('unread')}
-                      className="px-3 py-1 min-h-[44px] lg:min-h-0 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                      className="px-3 py-1.5 min-h-[44px] lg:min-h-[36px] text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
                     >
                       未読に戻す
                     </button>
@@ -1027,7 +1017,7 @@ export default function ChatsPage() {
                   {chatDetail.status !== 'in_progress' && (
                     <button
                       onClick={() => handleStatusUpdate('in_progress')}
-                      className="px-3 py-1 min-h-[44px] lg:min-h-0 text-xs font-medium text-yellow-700 bg-yellow-50 hover:bg-yellow-100 rounded-md transition-colors"
+                      className="px-3 py-1.5 min-h-[44px] lg:min-h-[36px] text-xs font-medium text-yellow-700 bg-yellow-50 hover:bg-yellow-100 rounded-md transition-colors"
                     >
                       対応中にする
                     </button>
@@ -1035,7 +1025,7 @@ export default function ChatsPage() {
                   {chatDetail.status !== 'resolved' && (
                     <button
                       onClick={() => handleStatusUpdate('resolved')}
-                      className="px-3 py-1 min-h-[44px] lg:min-h-0 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
+                      className="px-3 py-1.5 min-h-[44px] lg:min-h-[36px] text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
                     >
                       解決済にする
                     </button>
@@ -1055,14 +1045,16 @@ export default function ChatsPage() {
                     const showDateSep = !prevMsg || !sameYmd(prevMsg.createdAt, msg.createdAt)
                     const isOutgoing = msg.direction === 'outgoing'
 
-                    // メッセージ表示の分岐
+                    // メッセージ表示の分岐。
+                    // flex は LINE 本体と同じく吹き出し (背景色つきバブル) に包まない。
+                    // カード自体が完成された UI なので、緑バブルに入れると余白と背景が
+                    // 二重になる上、狭い max-w に押し込まれて崩れる。
+                    // sticker はバブルに残す — 画像 404 時のテキストフォールバックが
+                    // 裸だと青背景に無彩色文字で浮いてしまう (Codex Review 指摘)。
+                    const isBareContent = msg.messageType === 'flex'
                     let bubbleContent: React.ReactNode
                     if (msg.messageType === 'flex') {
-                      bubbleContent = (
-                        <div className="max-w-[300px]">
-                          <FlexPreviewComponent content={msg.content} maxWidth={280} />
-                        </div>
-                      )
+                      bubbleContent = <FlexPreviewComponent content={msg.content} />
                     } else if (msg.messageType === 'image') {
                       try {
                         const parsed = JSON.parse(msg.content)
@@ -1103,17 +1095,23 @@ export default function ChatsPage() {
                               親の幅が確定していないとパーセントを解決できず
                               min-content（1 文字幅）まで潰れて縦一列に改行される */}
                           <div className={`flex flex-col w-full min-w-0 ${isOutgoing ? 'items-end' : 'items-start'}`}>
-                            {/* メッセージバブル */}
-                            <div
-                              className={`max-w-[75%] lg:max-w-[60%] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
-                                isOutgoing
-                                  ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
-                                  : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
-                              }`}
-                              style={isOutgoing ? { backgroundColor: '#06C755' } : undefined}
-                            >
-                              {bubbleContent}
-                            </div>
+                            {/* メッセージバブル。flex / sticker はバブル chrome なしで直接置く */}
+                            {isBareContent ? (
+                              <div className="max-w-[92%] lg:max-w-[80%] min-w-0">
+                                {bubbleContent}
+                              </div>
+                            ) : (
+                              <div
+                                className={`max-w-[75%] lg:max-w-[60%] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                                  isOutgoing
+                                    ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
+                                    : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
+                                }`}
+                                style={isOutgoing ? { backgroundColor: '#06C755' } : undefined}
+                              >
+                                {bubbleContent}
+                              </div>
+                            )}
                             {/* 時刻 */}
                             <span className="text-xs text-white/50 mt-0.5 px-1">
                               {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
@@ -1151,7 +1149,7 @@ export default function ChatsPage() {
               {/* Send Message Form — OAM風コンパクト構成。
                   画像添付は 📎、ローディング/送信キー設定は ⚙ に格納し、
                   通常時は入力欄1行だけにしてメッセージ表示領域を最大化する */}
-              <div className="relative px-4 pt-3 pb-5 border-t border-gray-200">
+              <div className="relative flex-shrink-0 px-4 pt-3 pb-5 border-t border-gray-200">
                 {showComposerSettings && (
                   <div
                     ref={composerSettingsRef}

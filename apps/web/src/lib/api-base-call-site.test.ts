@@ -32,11 +32,11 @@ function collectSourceFiles(dir: string, out: string[] = []): string[] {
  * `const API_URL = getApiBase()`. That freezes the value at first module
  * evaluation. `apps/web` is a Next.js `output: 'export'` app — 'use client'
  * pages are also rendered once in Node during `next build` to produce their
- * initial static HTML, and `window` is undefined there. For a shared build
- * (no per-tenant NEXT_PUBLIC_API_URL rewrite), that Node-side evaluation is
- * what a module-scope const permanently captures: the unresolved
- * `https://__LH_WORKER_URL__` placeholder, never the real origin. See
- * apps/web/src/lib/api-base.ts's doc comment for the full precedence rule.
+ * initial static HTML, and `window` is undefined there. For an explicit
+ * same-origin shared build, that Node-side evaluation cannot resolve the
+ * browser origin yet and would permanently capture the build-time value.
+ * See apps/web/src/lib/api-base.ts's doc comment for the full precedence
+ * rule.
  *
  * Every call site must instead call `getApiBase()` at call time (inside a
  * function body), so it re-resolves against the real `window.location.origin`

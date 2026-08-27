@@ -393,7 +393,9 @@ export default function Sidebar() {
       {isOpen && <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsOpen(false)} />}
 
       {/* モバイル: スライドインサイドバー */}
-      <aside className={`lg:hidden fixed top-0 left-0 z-50 w-72 bg-white flex flex-col h-screen transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      {/* h-dvh: 100vh だとモバイルの URL バー表示時に下端のログアウトボタンが
+          可視領域の外に落ちてタップ不能になる */}
+      <aside className={`lg:hidden fixed top-0 left-0 z-50 w-72 bg-white flex flex-col h-dvh transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="absolute top-4 right-4">
           <button onClick={() => setIsOpen(false)} className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100" aria-label="閉じる">
             <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -404,8 +406,11 @@ export default function Sidebar() {
         {sidebarContent}
       </aside>
 
-      {/* デスクトップ: 常時表示 */}
-      <aside className="hidden lg:flex w-64 bg-white border-r border-gray-200 flex-col h-screen sticky top-0">
+      {/* デスクトップ: 常時表示。max-h-full — バナー表示時に h-screen が行の高さ
+          (viewport - バナー) を超えて行を押し広げないための上限。フルブリード画面
+          (チャット) でコンポーザーが画面外へ押し出されるのを防ぐのが主目的で、
+          通常ページでも行が definite height を持つ場合は同様に効く (無害)。 */}
+      <aside className="hidden lg:flex w-64 bg-white border-r border-gray-200 flex-col h-screen max-h-full sticky top-0">
         {sidebarContent}
       </aside>
     </>

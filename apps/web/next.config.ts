@@ -39,6 +39,12 @@ const nextConfig: NextConfig = {
     APP_VERSION: pkg.version,
     APP_COMMIT_SHA: buildSha.slice(0, 12),
     APP_BUILD_TIME: buildTime,
+    // API topology must be explicit in the emitted client bundle. Standard
+    // Pages/self-hosted builds use the materialized Worker origin; the WfP
+    // workflow overrides this with `same-origin`. Keeping a concrete default
+    // here also lets Next fold the branch at build time instead of leaving a
+    // runtime process.env lookup in browser code.
+    NEXT_PUBLIC_API_MODE: process.env.NEXT_PUBLIC_API_MODE ?? 'worker-origin',
     // basePath 自体は next/link・next/router には自動で乗るが、`window.location.href = '/x'`
     // のような生の絶対パス代入には乗らない。そうした呼び出し側（sidebar.tsx のログアウト、
     // emergency/page.tsx の切替導線）がこの値を読んで自分でプレフィックスする

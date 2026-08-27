@@ -23,6 +23,26 @@ import { DEFAULT_ACCOUNT_SETTINGS } from './services/booking-types.js';
 import { lineProxy } from './routes/line-proxy.js';
 import type { Env } from './index.js';
 
+/**
+ * 5分に1回だけ通すゲート。
+ *
+ * この関数を通る tick は3種類ある:
+ *   - 分足 cron ("* * * * *")  … apps/worker/wrangler.toml の構成
+ *   - DO alarm                 … tenant-scheduler.ts が分足と同じ cron 文字列を積む
+ *   - 5分足 cron ("*\/5 * * * *") … インストーラ (packages/create-line-harness) と
+ *     テナント生成 (scripts/lib/tenant-wrangler.ts) が書く構成
+ * 前2つは毎分来るので分が5の倍数のときだけ通し、最後の1つは既に5分粒度なので
+ * そのまま通す。分足だけを見ていると、5分足 cron しか持たない環境で中の
+ * ジョブが一度も走らない。
+ *
+ * 6時間足 cron ("0 *\/6 * * *") は弾く。分が0なので、通してしまうと6時間境界の
+ * 分だけ同じジョブが2回走る (Cloudflare はトリガーごとに scheduled() を呼ぶ)。
+ */
+export function isFiveMinuteTick(event: { cron: string; scheduledTime: number }): boolean {
+  if (event.cron === '*/5 * * * *') return true;
+  return event.cron === '* * * * *' && new Date(event.scheduledTime).getUTCMinutes() % 5 === 0;
+}
+
 // Scheduled handler — Cron Trigger と DO alarm (durable-objects/tenant-scheduler.ts)
 // の双方から呼ばれる共通ジョブ本体。index.ts から切り出しているのは、
 // tenant-scheduler.ts がこの関数を import する際に index.ts 自体との
@@ -173,15 +193,16 @@ export async function scheduled(
     () => processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL, env),
   ]));
   jobs.push(processReminderDeliveries(env.DB, defaultLineClient));
-  jobs.push(checkAccountHealth(env.DB));
 
   // Mileage is an eventually-consistent projection. Reuse the existing
   // minute cron invocation, but drain only every five minutes and at most 100
   // actions per batch so it adds no extra Cron Trigger and keeps D1 load flat.
-  if (
-    event.cron === '* * * * *'
-    && new Date(event.scheduledTime).getUTCMinutes() % 5 === 0
-  ) {
+  //
+  // アカウントのヘルスチェックも同じ tick に相乗りさせる。分足で回すと全アカウント
+  // 分の LINE API (/v2/bot/info) を毎分叩くことになり (2026-08-26 実測: 43テナントで
+  // 1日6.2万回)、そこまでの即時性は要らない — 403 の検知が最大5分遅れるだけ。
+  if (isFiveMinuteTick(event)) {
+    jobs.push(checkAccountHealth(env.DB));
     jobs.push(
       processPendingMileageEvents(env.DB, { limit: 100 }).then((result) => {
         if (result.claimed > 0) {

@@ -8,8 +8,9 @@
  * self-update) for a per-tenant / self-hosted install MUST rewrite that
  * placeholder to the install's Worker URL first — deploying the files
  * verbatim produces an admin UI that calls `https://__LH_WORKER_URL__/api/...`
- * and breaks on arrival. (Shared builds, which are never materialized here,
- * resolve the placeholder at runtime instead — see admin-url-placeholder.ts.)
+ * and breaks on arrival. Shared builds are never materialized here; their
+ * build pipeline explicitly selects same-origin API mode instead — see
+ * admin-url-placeholder.ts.
  */
 
 import { ADMIN_URL_PLACEHOLDER } from './admin-url-placeholder.js';

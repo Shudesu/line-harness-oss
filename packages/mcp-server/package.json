@@ -1,6 +1,6 @@
 {
   "name": "@line-harness/mcp-server",
-  "version": "0.23.0",
+  "version": "0.23.1",
   "description": "MCP server for L Harness — operate a LINE official account from AI agents over MCP",
   "type": "module",
   "bin": {

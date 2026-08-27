@@ -1,49 +1,51 @@
-import { ADMIN_URL_PLACEHOLDER } from '@line-harness/update-engine/pure'
-
 /**
  * Resolve the admin UI's API base origin.
  *
- * `NEXT_PUBLIC_API_URL` is read at build time by Next.js and inlined as a
- * literal string into the bundle — there's no way around that, it's how
- * Next.js env vars work. What varies is what that literal turns out to be:
+ * Both variables below are read at build time and inlined by Next.js:
  *
  *   - Per-tenant builds and self-hosted installs: the release pipeline
  *     builds with `NEXT_PUBLIC_API_URL=https://__LH_WORKER_URL__` and the
  *     deploy step (`materializeAdminFiles`, see
  *     `@line-harness/update-engine`'s materialize.ts) rewrites that
  *     placeholder to the real Worker origin before the files are served.
- *     The bundle ends up with the real origin baked in, so we just use it.
- *   - Shared builds, reused unmodified across every tenant: nothing
- *     rewrites the placeholder (there is no single "real" URL to bake into
- *     one build shared by many tenants), so the literal string is still
- *     `https://__LH_WORKER_URL__` when this code runs. In that layout the
- *     admin is served by the tenant Worker itself, so the browser's own
- *     origin *is* the API origin — no configuration needed.
+ *   - Shared same-origin builds: the build pipeline explicitly sets
+ *     `NEXT_PUBLIC_API_MODE=same-origin`; the browser origin is the API.
  *
- * This lets one shared build correctly serve every tenant while the
- * existing per-tenant-build and self-hosted paths keep working exactly as
- * they do today (their bundles never contain the placeholder by the time a
- * browser loads them, so the fallback branch never triggers for them).
+ * The explicit mode is load-bearing. v0.23.0 inferred same-origin mode by
+ * comparing `NEXT_PUBLIC_API_URL` with an imported placeholder constant.
+ * `materializeAdminFiles()` replaced BOTH copies with the tenant Worker URL,
+ * so the comparison stayed true and a normal Pages admin posted login to
+ * itself (`pages.dev/api/auth/login` → 405). Never infer deployment topology
+ * from a value that the normal deployment pipeline rewrites.
  *
- * Returns `undefined` if `NEXT_PUBLIC_API_URL` was never set at all — the
- * same "unconfigured" signal `process.env.NEXT_PUBLIC_API_URL` gave before,
- * callers keep deciding what to do about that (throw, show a banner, fall
- * back to an empty string, ...).
+ * A standard build that somehow reaches the browser with the placeholder
+ * still present returns `undefined` instead of silently becoming same-origin.
+ * Callers then surface their existing configuration error. The lowercase
+ * hostname check deliberately does not contain the full replaceable
+ * `https://__LH_WORKER_URL__` literal, so materialization cannot rewrite the
+ * detector itself.
  *
- * Browser-only fallback: `window` doesn't exist during the Node-side static
- * prerender pass (`next build` with `output: 'export'` renders each
- * 'use client' page once in Node to produce its initial HTML). If this runs
- * there with an unsubstituted placeholder, it returns the placeholder
- * unchanged rather than resolving anything — that value is only ever used
- * for a one-time prerendered snapshot, never for an actual fetch, since
- * fetches happen from effects/handlers that only run after the browser
- * hydrates the page (at which point `window` is defined and the real
- * origin is used).
+ * During the Node-side static prerender pass `window` does not exist. A
+ * same-origin build returns the configured value for that one-time render;
+ * browser effects/handlers call this again after hydration and receive the
+ * real browser origin.
  */
 export function getApiBase(): string | undefined {
   const configured = process.env.NEXT_PUBLIC_API_URL
-  if (!configured || configured !== ADMIN_URL_PLACEHOLDER) {
-    return configured
+  if (!configured) return undefined
+
+  if (process.env.NEXT_PUBLIC_API_MODE === 'same-origin') {
+    return typeof window !== 'undefined' ? window.location.origin : configured
   }
-  return typeof window !== 'undefined' ? window.location.origin : configured
+
+  if (isUnmaterializedWorkerPlaceholder(configured)) return undefined
+  return configured
+}
+
+function isUnmaterializedWorkerPlaceholder(value: string): boolean {
+  try {
+    return new URL(value).hostname === '__lh_worker_url__'
+  } catch {
+    return false
+  }
 }
