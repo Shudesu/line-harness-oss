@@ -134,6 +134,21 @@ export type Env = {
     // the Worker keeps a refresh token and never needs a service-account key.
     GOOGLE_OAUTH_CLIENT_ID?: string;
     GOOGLE_OAUTH_CLIENT_SECRET?: string;
+    // Online meeting links for confirmed bookings (services/booking-conference.ts).
+    // Provider is 'google_meet' (default) or 'zoom'. Per-account overrides live in
+    // account_settings; these env values are the fallback.
+    BOOKING_CONFERENCE_PROVIDER?: string;
+    ZOOM_ACCOUNT_ID?: string;
+    ZOOM_CLIENT_ID?: string;
+    ZOOM_CLIENT_SECRET?: string;
+    /**
+     * 'true' makes LIFF bookings confirm immediately instead of waiting for approval.
+     * Default (unset) keeps the approval flow. Per-account override: account_settings
+     * key 'booking_auto_confirm'.
+     */
+    BOOKING_AUTO_CONFIRM?: string;
+    /** LINE user id that receives owner notifications for new/cancelled bookings. */
+    OWNER_LINE_USER_ID?: string;
     /** Days to keep messages_log rows. Unset/invalid = keep forever. */
     LOG_RETENTION_DAYS?: string;
     /** Max friends (is_following=1). Unset/invalid = unlimited. */

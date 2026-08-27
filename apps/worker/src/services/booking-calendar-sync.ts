@@ -1,4 +1,6 @@
 import { GoogleCalendarClient, type BusyInterval } from './google-calendar.js';
+
+export type { GoogleCalendarCredentials };
 import { getGoogleServiceAccountToken } from './google-service-account.js';
 import {
   refreshGoogleOAuthAccessToken,
@@ -84,6 +86,7 @@ export async function syncConfirmedBookingToGoogle(
   const row = await db
     .prepare(
       `SELECT b.id, b.starts_at, b.ends_at, b.customer_note, b.external_event_id,
+              b.conference_url,
               f.display_name AS friend_name, m.name AS menu_name,
               s.display_name AS staff_name,
               gc.id AS connection_id, gc.calendar_id, gc.auth_type,
@@ -105,6 +108,7 @@ export async function syncConfirmedBookingToGoogle(
       ends_at: string;
       customer_note: string | null;
       external_event_id: string | null;
+      conference_url: string | null;
       friend_name: string | null;
       menu_name: string;
       staff_name: string;
@@ -133,6 +137,8 @@ export async function syncConfirmedBookingToGoogle(
     start: row.starts_at,
     end: row.ends_at,
     description: [
+      // 会議URLは予約者にも共有されるため、カレンダー本文の先頭に置く。
+      row.conference_url ? `オンライン会議: ${row.conference_url}\n` : '',
       `L Harness予約（担当: ${row.staff_name}）`,
       `予約ID: ${row.id}`,
       row.customer_note ? `メモ: ${row.customer_note}` : '',

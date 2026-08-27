@@ -11,6 +11,7 @@ interface DueRow {
   kind: 'day_before' | 'hours_before';
   retry_count: number;
   starts_at: string;
+  conference_url: string | null;
   menu_name: string;
   staff_name: string;
   channel_access_token: string;
@@ -39,7 +40,7 @@ export async function processDueReminders(
   const due = await db
     .prepare(
       `SELECT r.id, r.booking_id, r.kind, r.retry_count,
-              b.starts_at,
+              b.starts_at, b.conference_url,
               m.name AS menu_name,
               s.display_name AS staff_name,
               la.channel_access_token,
@@ -73,6 +74,7 @@ export async function processDueReminders(
           staffName: row.staff_name,
           startsAtJst: startsAtJst(row.starts_at),
           hoursBefore: params.reminderHoursBefore,
+          conferenceUrl: row.conference_url,
         },
       });
       await db

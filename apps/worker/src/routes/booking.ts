@@ -25,7 +25,14 @@ import {
   findIdempotencyResponse,
   saveIdempotencyResponse,
 } from '../services/booking-idempotency.js';
-import { sendBookingNotification } from '../services/booking-notifier.js';
+import {
+  sendBookingNotification,
+  sendOwnerBookingNotification,
+} from '../services/booking-notifier.js';
+import {
+  provisionBookingConference,
+  releaseBookingConference,
+} from '../services/booking-conference.js';
 import { insertConfirmationReminders } from '../services/booking-confirm.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import {
@@ -249,18 +256,28 @@ async function resolveFriendId(
   return f?.id ?? null;
 }
 
-async function notifyForBooking(
+interface BookingNotifyRow {
+  starts_at: string;
+  menu_name: string;
+  staff_name: string;
+  channel_access_token: string;
+  line_user_id: string;
+  conference_url: string | null;
+  customer_name: string | null;
+}
+
+async function loadBookingNotifyRow(
   db: D1Database,
   bookingId: string,
-  kind: 'requested' | 'approved' | 'rejected',
-): Promise<void> {
-  const row = await db
+): Promise<BookingNotifyRow | null> {
+  return await db
     .prepare(
-      `SELECT b.starts_at,
+      `SELECT b.starts_at, b.conference_url,
               m.name AS menu_name,
               s.display_name AS staff_name,
               la.channel_access_token,
-              f.line_user_id
+              f.line_user_id,
+              f.display_name AS customer_name
          FROM bookings b
          INNER JOIN menus m ON m.id = b.menu_id
          INNER JOIN staff s ON s.id = b.staff_id
@@ -269,13 +286,15 @@ async function notifyForBooking(
         WHERE b.id = ?`,
     )
     .bind(bookingId)
-    .first<{
-      starts_at: string;
-      menu_name: string;
-      staff_name: string;
-      channel_access_token: string;
-      line_user_id: string;
-    }>();
+    .first<BookingNotifyRow>();
+}
+
+async function notifyForBooking(
+  db: D1Database,
+  bookingId: string,
+  kind: 'requested' | 'approved' | 'rejected',
+): Promise<void> {
+  const row = await loadBookingNotifyRow(db, bookingId);
   if (!row) return;
   await sendBookingNotification({
     channelAccessToken: row.channel_access_token,
@@ -286,8 +305,111 @@ async function notifyForBooking(
       staffName: row.staff_name,
       startsAtJst: startsAtJst(row.starts_at),
       hoursBefore: 0,
+      conferenceUrl: row.conference_url,
     },
   });
+}
+
+/**
+ * 運営者（アカウント所有者）へ予約の発生・取消を知らせる。
+ *
+ * 宛先は環境変数 OWNER_LINE_USER_ID。未設定なら何もしない（既存環境の挙動を変えないため）。
+ * 送信元は予約が入ったアカウント自身のチャネルトークンを使う。運営者がそのアカウントを
+ * 友だち追加していない場合は LINE 側で弾かれるので、セットアップ時に自分で友だち追加しておく。
+ */
+async function notifyOwnerForBooking(
+  db: D1Database,
+  env: { OWNER_LINE_USER_ID?: string },
+  bookingId: string,
+  kind: 'owner_new_booking' | 'owner_cancelled',
+): Promise<void> {
+  const ownerUserId = env.OWNER_LINE_USER_ID;
+  if (!ownerUserId) return;
+  const row = await loadBookingNotifyRow(db, bookingId);
+  if (!row) return;
+  await sendOwnerBookingNotification({
+    channelAccessToken: row.channel_access_token,
+    toLineUserId: ownerUserId,
+    kind,
+    ctx: {
+      customerName: row.customer_name ?? '（名前未取得）',
+      menuName: row.menu_name,
+      staffName: row.staff_name,
+      startsAtJst: startsAtJst(row.starts_at),
+      hoursBefore: 0,
+      conferenceUrl: row.conference_url,
+    },
+  });
+}
+
+/**
+ * LIFF からの予約を即時確定にするかどうか。
+ *
+ * 既定は false（承認制）で、これは既存環境の挙動を変えないため。
+ * オンライン個別面談のように「申し込み＝確定」で運用する場合は、
+ * account_settings（key = 'booking_auto_confirm'）に 'true' を入れるか、
+ * 環境変数 BOOKING_AUTO_CONFIRM=true を設定する。
+ *
+ * 承認制のまま運用する場合、24 時間承認しないと予約は自動的に期限切れになり、
+ * 申込者へ期限切れの通知が飛ぶ（booking-expirer.ts）。承認を見落とさない運用が前提になる。
+ */
+async function resolveAutoConfirm(
+  db: D1Database,
+  lineAccountId: string,
+  env: { BOOKING_AUTO_CONFIRM?: string },
+): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT value FROM account_settings WHERE line_account_id = ? AND key = ?`)
+    .bind(lineAccountId, 'booking_auto_confirm')
+    .first<{ value: string }>();
+  const raw = row?.value ?? env.BOOKING_AUTO_CONFIRM;
+  return raw === 'true' || raw === '1';
+}
+
+/**
+ * 予約が confirmed になった直後の副作用をまとめて実行する。
+ *
+ * 実行順は「リマインダー登録 → 会議URL発行とカレンダー登録 → 予約者へ通知 → 運営者へ通知」。
+ * 会議URLを先に確定させてから通知を送るため、確定通知に参加URLが載る。
+ * 通知は fire-and-forget（失敗しても予約は成立させる）。
+ */
+async function runConfirmedSideEffects(
+  env: Env['Bindings'],
+  waitUntil: (p: Promise<unknown>) => void,
+  bookingId: string,
+  startsAt: Date,
+): Promise<'not_configured' | 'synced' | 'failed'> {
+  await insertConfirmationReminders(env.DB, {
+    bookingId,
+    startsAt,
+    now: new Date(),
+  });
+
+  const provisioned = await provisionBookingConference(
+    env.DB,
+    googleCredentials(env),
+    env,
+    bookingId,
+  ).catch((error) => {
+    console.error('booking conference provisioning failed:', error);
+    return null;
+  });
+
+  waitUntil(
+    notifyForBooking(env.DB, bookingId, 'approved').catch((err) =>
+      console.error('booking notify (approved) failed:', err),
+    ),
+  );
+  waitUntil(
+    notifyOwnerForBooking(env.DB, env, bookingId, 'owner_new_booking').catch((err) =>
+      console.error('owner notify (new booking) failed:', err),
+    ),
+  );
+
+  if (!provisioned) return 'failed';
+  // 'failed'（Google APIがエラーを返した）と 'not_configured'（そもそも未連携）を潰さない。
+  // 潰すと、カレンダーに予定が入っていない予約を障害として検知できなくなる。
+  return provisioned.calendarStatus;
 }
 
 // ================================================================
@@ -453,6 +575,9 @@ booking.post('/api/liff/booking/requests', async (c) => {
 
   const bookingId = crypto.randomUUID();
   const nowIso = new Date().toISOString();
+  // 即時確定モードでは requested を経由せず confirmed で作る。承認制のままなら requested。
+  const autoConfirm = await resolveAutoConfirm(c.env.DB, accountId, c.env);
+  const initialStatus: BookingStatus = autoConfirm ? 'confirmed' : 'requested';
   // 競合チェックと INSERT を 1 ステートメントで原子化する。
   // INSERT ... SELECT WHERE NOT EXISTS パターンで、同一スタッフの overlap 行がある場合は
   // 0 行 INSERT に落とす。changes=0 を 409 として扱う。
@@ -461,8 +586,8 @@ booking.post('/api/liff/booking/requests', async (c) => {
       `INSERT INTO bookings
         (id, line_account_id, friend_id, staff_id, menu_id,
          starts_at, ends_at, block_ends_at, status,
-         customer_note, price_at_booking, requested_at)
-       SELECT ?,?,?,?,?,?,?,?,?,?,?,?
+         customer_note, price_at_booking, requested_at, decided_at)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?
         WHERE NOT EXISTS (
           SELECT 1 FROM bookings
            WHERE staff_id = ?
@@ -480,10 +605,11 @@ booking.post('/api/liff/booking/requests', async (c) => {
       startsAt.toISOString(),
       endsAt.toISOString(),
       blockEndsAt.toISOString(),
-      'requested' satisfies BookingStatus,
+      initialStatus,
       body.customer_note ?? null,
       menuRow.price,
       nowIso,
+      autoConfirm ? nowIso : null,
       // NOT EXISTS subquery params
       body.staff_id,
       blockEndsAt.toISOString(),
@@ -515,12 +641,28 @@ booking.post('/api/liff/booking/requests', async (c) => {
     }),
   );
 
-  // Fire-and-forget notification — failures must not roll back the booking.
-  c.executionCtx.waitUntil(
-    notifyForBooking(c.env.DB, bookingId, 'requested').catch((err) =>
-      console.error('booking notify (requested) failed:', err),
-    ),
-  );
+  if (autoConfirm) {
+    // 即時確定：リマインダー登録・会議URL発行・カレンダー登録・確定通知・運営者通知まで走らせる。
+    await runConfirmedSideEffects(
+      c.env,
+      (p) => c.executionCtx.waitUntil(p),
+      bookingId,
+      startsAt,
+    );
+  } else {
+    // Fire-and-forget notification — failures must not roll back the booking.
+    c.executionCtx.waitUntil(
+      notifyForBooking(c.env.DB, bookingId, 'requested').catch((err) =>
+        console.error('booking notify (requested) failed:', err),
+      ),
+    );
+    // 承認待ちであることを運営者に知らせる。放置すると 24 時間で自動失効するため。
+    c.executionCtx.waitUntil(
+      notifyOwnerForBooking(c.env.DB, c.env, bookingId, 'owner_new_booking').catch((err) =>
+        console.error('owner notify (requested) failed:', err),
+      ),
+    );
+  }
 
   // notifyForBooking と同じく fire-and-forget。タグ付与失敗は予約成功扱い。
   // attachTagAndFireSideEffects は POST /api/friends/:id/tags と同じ side effects
@@ -538,7 +680,7 @@ booking.post('/api/liff/booking/requests', async (c) => {
     );
   }
 
-  const responseBody = { booking_id: bookingId, status: 'requested' };
+  const responseBody = { booking_id: bookingId, status: initialStatus };
   await saveIdempotencyResponse(c.env.DB, {
     key: idemKey,
     lineAccountId: accountId,
@@ -933,27 +1075,11 @@ booking.post('/api/booking/admin/bookings', async (c) => {
     return c.json({ error: 'slot_conflict' }, 409);
   }
 
-  await insertConfirmationReminders(c.env.DB, {
+  const calendarSync = await runConfirmedSideEffects(
+    c.env,
+    (p) => c.executionCtx.waitUntil(p),
     bookingId,
     startsAt,
-    now: new Date(),
-  });
-  let calendarSync: 'not_configured' | 'synced' | 'failed' = 'not_configured';
-  try {
-    const synced = await syncConfirmedBookingToGoogle(
-      c.env.DB,
-      googleCredentials(c.env),
-      bookingId,
-    );
-    calendarSync = synced.synced ? 'synced' : 'not_configured';
-  } catch (error) {
-    calendarSync = 'failed';
-    console.error('Google Calendar sync (proxy-create) failed:', error);
-  }
-  c.executionCtx.waitUntil(
-    notifyForBooking(c.env.DB, bookingId, 'approved').catch((err) =>
-      console.error('booking notify (proxy-create) failed:', err),
-    ),
   );
   return c.json({ booking_id: bookingId, status: 'confirmed', calendar_sync: calendarSync }, 201);
 });
@@ -1618,20 +1744,11 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
   }
 
   if (next === 'confirmed') {
-    await insertConfirmationReminders(c.env.DB, {
-      bookingId: id,
-      startsAt: new Date(row.starts_at),
-      now: new Date(),
-    });
-    try {
-      await syncConfirmedBookingToGoogle(c.env.DB, googleCredentials(c.env), id);
-    } catch (error) {
-      console.error('Google Calendar sync (approve) failed:', error);
-    }
-    c.executionCtx.waitUntil(
-      notifyForBooking(c.env.DB, id, 'approved').catch((err) =>
-        console.error('booking notify (approved) failed:', err),
-      ),
+    await runConfirmedSideEffects(
+      c.env,
+      (p) => c.executionCtx.waitUntil(p),
+      id,
+      new Date(row.starts_at),
     );
   } else if (next === 'rejected') {
     c.executionCtx.waitUntil(
@@ -1646,9 +1763,20 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
       )
       .bind(id)
       .run();
+    // 運営者通知は Google/Zoom を消す前に打つ（conference_url を文面に載せるため）。
+    c.executionCtx.waitUntil(
+      notifyOwnerForBooking(c.env.DB, c.env, id, 'owner_cancelled').catch((err) =>
+        console.error('owner notify (cancelled) failed:', err),
+      ),
+    );
     c.executionCtx.waitUntil(
       removeBookingFromGoogle(c.env.DB, googleCredentials(c.env), id).catch((error) =>
         console.error('Google Calendar delete failed:', error),
+      ),
+    );
+    c.executionCtx.waitUntil(
+      releaseBookingConference(c.env.DB, c.env, id).catch((error) =>
+        console.error('conference release failed:', error),
       ),
     );
   }

@@ -1044,6 +1044,9 @@ CREATE TABLE IF NOT EXISTS bookings (
   decided_by_staff_id     TEXT,
   external_event_id       TEXT,                 -- Phase 3 余地 (Google Calendar)
   external_calendar_id    TEXT,                 -- Phase 3 余地
+  conference_provider     TEXT,                 -- 'zoom' | 'google_meet'
+  conference_url          TEXT,                 -- 参加URL
+  conference_external_id  TEXT,                 -- Zoom meeting id 等（削除・再発行用）
   created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   FOREIGN KEY (line_account_id) REFERENCES line_accounts(id),

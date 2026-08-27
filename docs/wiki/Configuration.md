@@ -52,6 +52,14 @@ crons = ["*/5 * * * *"]
 | `GOOGLE_OAUTH_CLIENT_SECRET` | 推奨 | string | OAuthクライアントの秘密鍵（Worker secretとして保存） | `GOCSPX-...` |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` | 互換用 | string | 旧サービスアカウント方式で使うメールアドレス | `calendar-sync@project.iam.gserviceaccount.com` |
 | `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | 互換用 | string | 旧サービスアカウント方式で使うPKCS#8秘密鍵 | `-----BEGIN PRIVATE KEY-----...` |
+| `ZOOM_ACCOUNT_ID` | 任意 | string | Zoom Server-to-Server OAuth のアカウントID（会議URL自動発行） | `abcDEF...` |
+| `ZOOM_CLIENT_ID` | 任意 | string | 同 クライアントID | `abcDEF...` |
+| `ZOOM_CLIENT_SECRET` | 任意 | string | 同 クライアントシークレット | `abcDEF...` |
+| `OWNER_LINE_USER_ID` | 任意 | string | 新規予約・キャンセルの通知を受け取る運営者のLINE利用者ID | `U0123...` |
+
+> **`wrangler.toml` の `[vars]` には書かないこと。** `wrangler.toml` は Git 追跡対象のため、
+> シークレットや LINE 利用者IDを書くと公開リポジトリに入る。上表の値は必ず `wrangler secret put` で設定する。
+> 非機密の `BOOKING_CONFERENCE_PROVIDER`（`zoom` / `google_meet`）と `BOOKING_AUTO_CONFIRM`（`true` で即時確定）は `[vars]` でよい。
 
 ### シークレット設定コマンド
 
