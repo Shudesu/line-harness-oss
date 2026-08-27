@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.23.1 (2026-08-27)
+
+### 管理画面ログイン 405（v0.23.0 回帰）
+
+- 公式bundleから更新した通常版の管理画面が、Worker APIではなくCloudflare Pages自身へ
+  `POST /api/auth/login`を送り、405でログインできなくなる問題を修正
+- 通常版の`worker-origin`とCloud共有ビルドの`same-origin`を明示的に分離し、
+  URLプレースホルダーの置換結果から構成を推測しないよう変更
+- v0.23.0の二重置換、通常版の未置換設定、Cloud版の同一オリジン設定に回帰テストを追加
+
+### その他の修正
+
+- 5分cronのみの環境でも5分ごとの定期処理が確実に動作するよう修正
+- ヘルスチェックの不要な毎分ログ書き込みを停止
+- 管理画面のチャット入力欄のはみ出しとFlexメッセージのプレビュー崩れを修正
+
 ## Brand name update (2026-08-19)
 
 - Public product display name changed from the former name to **L Harness**.
