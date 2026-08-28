@@ -1,16 +1,26 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { openUpdateStream, getUpdateStatus } from '@/lib/update-client'
 import type { UpdateEvent } from '@line-harness/update-engine'
+import { buildProgressRows } from './progress-rows'
 
 /**
  * ProgressModal — live timeline for an in-flight update.
  *
  * Subscribes to `GET /admin/update/stream/:id` (SSE) via the update-client
- * helper and renders each `progress` event as a row. When a `complete` frame
- * lands the modal pivots to a terminal panel (success / rolled_back / failed)
+ * helper and renders the event log as rows. When a `complete` frame lands
+ * the modal pivots to a terminal panel (success / rolled_back / failed)
  * with a 閉じる button that calls `onClose`.
+ *
+ * Row grouping
+ * ------------
+ * The raw log is one event per state change, so rendering it verbatim gave
+ * two lines per step and 2N lines for an N-migration release. `buildProgressRows`
+ * folds it: one line per step, completed migrations collapsed into a count,
+ * and the informational `requires_secrets` event attached to the Pre-flight
+ * line instead of occupying one of its own. Grouping is display-only — the
+ * polling/SSE transport and the terminal-state decision are untouched.
  *
  * Fallback to polling
  * -------------------
@@ -43,6 +53,7 @@ export function ProgressModal({
   const [events, setEvents] = useState<UpdateEvent[]>([])
   const [final, setFinal] = useState<FinalState | null>(null)
   const [mode, setMode] = useState<'sse' | 'polling'>('sse')
+  const rows = useMemo(() => buildProgressRows(events), [events])
 
   useEffect(() => {
     let es: EventSource | null = null
@@ -123,19 +134,34 @@ export function ProgressModal({
           )}
         </h2>
         <ul className="space-y-1 font-mono text-sm">
-          {events.length === 0 && (
+          {rows.length === 0 && (
             <li className="text-gray-500">接続中...</li>
           )}
-          {events.map((e, i) => (
-            <li key={i} className="flex items-center gap-2">
-              <span className="w-5 inline-block">{iconFor(e.status)}</span>
-              <span>
-                {labelFor(e.step)}
-                {e.name ? ` — ${e.name}` : ''}
-                {e.error ? ` (${e.error})` : ''}
-              </span>
-            </li>
-          ))}
+          {rows.map((row) =>
+            row.kind === 'migration-summary' ? (
+              <li key={row.key} className="flex items-center gap-2">
+                <span className="w-5 inline-block">{iconFor('done')}</span>
+                <span>
+                  {labelFor('migration')} — {row.total}件完了
+                  {row.skipped > 0 && `(${row.skipped}件は適用済みスキップ)`}
+                </span>
+              </li>
+            ) : (
+              <li key={row.key} className="flex items-start gap-2">
+                <span className="w-5 inline-block">{iconFor(row.status)}</span>
+                <span>
+                  {labelFor(row.step)}
+                  {row.name ? ` — ${row.name}` : ''}
+                  {row.error ? ` (${row.error})` : ''}
+                  {row.secrets && row.secrets.length > 0 && (
+                    <span className="block text-xs text-gray-600">
+                      新しく必要になるsecret: {row.secrets.join(', ')}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ),
+          )}
         </ul>
         {final && (
           <div className="mt-4 p-3 rounded bg-gray-50">
