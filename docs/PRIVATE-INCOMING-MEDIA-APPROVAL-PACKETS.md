@@ -685,6 +685,217 @@ restart, feature enablement, LINE send, PR merge, and every unlisted request are
 forbidden.
 ```
 
+### A0-R4 execution receipt — COMPLETED
+
+KEN explicitly approved `5229-A0-R4-20260901` for Harness
+`dd73798c9c3e251f4221fa1b33533311b357cc7a` and packet SHA-256
+`b29f7fc63e6ca441711cd907425e4f9cfbb0b03451269c84fccc074d8142df00`
+at `2026-09-01T08:04:48+09:00` (expiry
+`2026-09-01T10:04:48+09:00`). All local anchors, modes, and hashes matched.
+The target-key-only accounting precheck completed before any provider request,
+then the bounded direct-REST discovery completed without drift or a write.
+
+```text
+Fresh T0_R2 / T0_D1: 2026-08-31T23:08:08Z / 2026-09-01T08:08:08
+Worker latest deployment / active version:
+  7b3bb319-e618-4f57-a520-cd33f43115e5 /
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7
+D1 schema objects/details/index details for 071/072: 0/0/0
+D1 migration presence: absent
+R2 lifecycle rules/enabled/delete-or-expire/incoming collision: 1/1/0/0
+R2 LIST passes/pages: 2 / 1+1
+D1 first/second candidate snapshot reads: 1/1 (canonical digests equal)
+U/H/N/E/B: 77/77/77/0/27,625,839 bytes
+C count/bytes; P count/bytes; private invalid: 0/0; 0/0; 0
+MIME: image/jpeg=77
+D1 canonical digest: 7f2a46441c5308295266b37549d325363b8d46959394bd3f079be7256da599a2
+R2 canonical digest: 8a99cacbf50951a4e2d8a6d4a5bdb197cab2d1d06776378e4dbce6d41f35fc7
+Provider GET / D1 read-only POST / provider total: 12/5/17
+Local accounting boolean reads: 1
+R2 object HEAD/content GET; private Worker probes: 0/0; 0
+Provider writes/deploys/migrations/token changes/purges/restarts/LINE sends/merges: 0
+```
+
+The mode-0700 directory
+`/Users/kensmba/.line-harness-5229-A0-R4-20260901` contains exactly these three
+mode-0600 files and remains immutable:
+
+```text
+d1-candidates.json
+  06998bb58bd04fe1d64b437c9770c6a7ee9d85684c5a3b6791dd4e6a372e2cf9
+r2-incoming-metadata.json
+  d330d16e8b6d7aab19a08fc4c91d09789b1282e4b74e9f49831d9a7399a4dab8
+sanitized-summary.json
+  d6c6394e606ce60282d5a0c3442c534704208d2af5b3eed4f23b0119e3bc24fd
+```
+
+The accounting consumer remains fail-closed: service running and mode 0600,
+but base URL, account ID, credential, and expected fingerprint are absent;
+fallback is off, the kill switch is on, and the allowlist is empty. Secret
+binding metadata proves names/types only. Secret values remain `unknown`.
+Migration 071/072 and `incoming_media_service_credentials` are absent, so the
+generic Packet A below would stop before private-route or credential readback.
+
+## Packet C0 — exact historical R2 content evidence, awaiting KEN approval
+
+This is an independent content-evidence packet, not generic Packet A or A1.
+Existing A0 requires A1 to record `ABSENT -> STOP` when migration 072 or the
+service credential is absent; A0-R4 confirmed both absent. C0 does not override
+or satisfy that gate. It authorizes only one content read of each of the 77
+exact historical objects frozen by A0-R4 and records first-observed content
+digests. It does not infer LINE source provenance or create a helper-ready
+backfill manifest. Approval expires two hours after KEN's explicit approval.
+
+```text
+Approval ID: 5229-C0-20260901
+Mode: CF-R2-EXACT-CONTENT-GET-AND-LOCAL-DIGEST-EVIDENCE-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+
+Immutable anchors and source evidence:
+- Accounting PR head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation: 63635fa00a992301daa8422d9401c6479de13246
+- Harness implementation: 07c4f27a5694ed50fe07bb09c48f28820d7c4833
+- A0-R4 execution head: dd73798c9c3e251f4221fa1b33533311b357cc7a
+- A0-R4 T0_R2 / T0_D1:
+  2026-08-31T23:08:08Z / 2026-09-01T08:08:08
+- A0-R4 d1-candidates.json SHA-256:
+  06998bb58bd04fe1d64b437c9770c6a7ee9d85684c5a3b6791dd4e6a372e2cf9
+- A0-R4 r2-incoming-metadata.json SHA-256:
+  d330d16e8b6d7aab19a08fc4c91d09789b1282e4b74e9f49831d9a7399a4dab8
+- A0-R4 sanitized-summary.json SHA-256:
+  d6c6394e606ce60282d5a0c3442c534704208d2af5b3eed4f23b0119e3bc24fd
+- source directory must be the existing real mode-0700 non-symlink
+  /Users/kensmba/.line-harness-5229-A0-R4-20260901 and its three source files
+  must remain real mode-0600 non-symlinks
+
+Exact provider target:
+- Cloudflare account ID: 67907592fdf596376bc2097e14a6563a
+- R2 binding/bucket: IMAGES / line-harness-images
+- candidates N=77; excluded E=0; exact total bytes B=27,625,839
+- exact object keys, per-object sizes, MIME, and ETags come only from the two
+  hash-bound A0-R4 evidence files; never derive, broaden, or print them
+
+Allowed provider requests and hard maxima:
+- maximum 77 sequential direct REST GET requests, no retry, maximum in-flight
+  requests=1; COMPLETED requires exactly 77 successful requests:
+  GET /client/v4/accounts/67907592fdf596376bc2097e14a6563a/r2/
+      buckets/line-harness-images/objects/{exact-approved-key}
+- each key must retain the approved legacy grammar and be encoded exactly once
+  as the final path segment; keys containing slash are impossible and STOP
+- application headers are exactly Authorization and Accept-Encoding: identity;
+  transport supplies Host only. Cookie, User-Agent, Accept, Range, and every
+  conditional/custom header are suppressed. No request header is logged
+- R2 object HEAD: 0
+- R2 LIST, bucket/lifecycle, D1, Worker, account, or other provider reads: 0
+- provider writes and all non-GET methods: 0
+- request body bytes: 0
+- accepted success bytes per object: exactly its A0-R4 size
+- accepted success bytes aggregate: exactly 27,625,839
+- one-byte sentinel application-read ceiling per object: expected size + 1;
+  largest expected object=785,458, so largest ceiling=785,459
+- aggregate one-byte sentinel application-read ceiling: 27,625,840
+- if an extra sentinel byte exists, abort immediately, do not hash or retain it,
+  and STOP; raw object bytes written to disk/log/chat remain 0
+
+Per-object verification before accepting completion:
+- HTTP status is exactly 200; no redirect is followed
+- 206, 304, and every other status are rejected
+- Content-Encoding is absent or exactly identity
+- Content-Type is exactly the A0-R4 MIME (all 77 are image/jpeg)
+- when Content-Length is present it is a canonical non-negative decimal and
+  exactly the A0-R4 size; absence is recorded and the streamed byte count
+  remains authoritative
+- quoted HTTP ETag, after removing exactly one surrounding quote pair, equals
+  the A0-R4 raw ETag; weak, missing, or malformed ETags are rejected
+- streamed byte count equals the exact A0-R4 size
+- SHA-256 is computed over exactly the accepted bytes while streaming and
+  retained only as lowercase hex
+- JPEG bytes begin FF D8 FF and end FF D9; no decoding, OCR, visual display,
+  thumbnail, temporary body file, or image/body logging is allowed
+- all 77 A0 custom sha256/custom byteSize values are absent. Record
+  custom_sha256_present=0, custom_byte_size_present=0, and
+  sha256_source=observed_r2_content; never treat the ETag as a content SHA-256
+- record only status, Content-Type, Content-Length presence/value, normalized
+  ETag, computed SHA-256, magic-valid boolean, cf-ray when present, and byte
+  count; discard all other response headers
+
+Local content-evidence construction after all 77 GETs pass:
+- one entry per exact approved object, sorted by key, with fixed field order:
+  key,size,a0_etag,content_type,observed_sha256,sha256_source,
+  custom_sha256_present,custom_byte_size_present,http_status,
+  content_length_present,content_length,content_encoding,magic_valid,cf_ray
+- sha256_source is exactly observed_r2_content; custom_sha256_present and
+  custom_byte_size_present are false for every entry
+- content-evidence canonical digest is SHA-256 over the entry array serialized
+  as compact UTF-8 JSON in that field order with no trailing newline
+- every missing optional value serializes as JSON null, never omitted or an
+  empty string
+- record the raw r2-content-digests.json SHA-256 separately
+- do not set verified=true, choose incoming_media IDs/backfill timestamps,
+  infer source_type/source_id/sender_user_id, copy messages_log preimages, call
+  the migration helper, or generate SQL/purge/readback plans
+
+Exclusive local evidence writes:
+- leave every A0/A0-R1/A0-R2/A0-R3/A0-R4 evidence directory unchanged
+- create only one new non-symlink mode-0700 directory with exclusive-create:
+  /Users/kensmba/.line-harness-5229-C0-20260901
+- on COMPLETED create exactly two non-symlink mode-0600 files with wx, in this
+  order: first r2-content-digests.json, verify its mode/size/SHA-256, then write
+  sanitized-summary.json and verify its mode/size/SHA-256
+- r2-content-digests contains exact legacy keys that embed account/message
+  identifiers, but no additional D1 fields, URLs, image bytes, credentials,
+  authorization headers, cookies, or unallowlisted response headers; it must
+  never enter Git, CI output, or chat
+- keep per-object receipts/digests in memory until all 77 checks pass; temporary
+  body/receipt/digest files always remain 0
+- sanitized-summary contains only approval/timestamps, aggregate counts/bytes,
+  MIME counts, request counts, custom_sha256_present=0,
+  custom_byte_size_present=0, sha256_source=observed_r2_content,
+  STOP/COMPLETED, canonical/raw file digests, and sanitized request IDs; it
+  contains no customer/account IDs, keys, or URLs
+- if the output path already exists, STOP before creating or changing anything
+  and emit only the sanitized STOP reason/counts to the operator; local receipt
+  file count remains 0
+- on a provider/verification STOP before the completion writes, create only
+  sanitized-summary.json with wx if that path is absent; canonical/raw content
+  digest fields serialize as JSON null
+- if serialization or either completion write/verification fails, retain every
+  already-created file byte-for-byte without delete, overwrite, chmod repair,
+  append, or rename. Report the actual directory/file count, names, modes,
+  sizes, and any computable hashes in the sanitized operator receipt and mark
+  every residual artifact unusable
+- partial object receipts/digests are never reused. Any retry requires a new
+  packet/evidence path and starts all 77 GETs again. Never delete or modify an
+  A0-R4 source artifact
+- retain the new owner-only evidence until #5229 migration and UAT complete;
+  deletion or relaxation of permissions is outside this packet
+
+Immediate STOP conditions:
+- any anchor/source hash/mode/path mismatch, duplicate/missing/unexpected object,
+  N/E/B mismatch, invalid legacy key grammar, D1-to-R2 approved-key-set mismatch,
+  or A0 MIME/size/ETag inconsistency
+- any unexpected request, redirect, retry, provider error, response/header/body
+  mismatch, magic failure, byte-cap breach, or content SHA conflict
+- any output path exists, mode/owner-only check fails, unexpected file appears,
+  or a credential/header/body would be logged
+
+Explicitly forbidden and expected count=0:
+- deploy, migration, D1 query/write, backup creation, R2 HEAD/LIST/mutation,
+  secret or token change, credential creation/revocation, Worker/private-route
+  probe, cache purge, restart, feature enablement, LINE send, PR merge
+```
+
+Cloudflare's current Object Get contract returns the object body with metadata
+headers. This packet uses that single response for both metadata agreement and
+streaming content verification, so a separate HEAD adds no approved value.
+The C0 result proves only exact R2 byte evidence; migration 071/072, credential,
+private-route auth, D1 source provenance/preimage/ledger state, and a backfill
+manifest remain absent or unverified. Generic Packet A/A1 therefore still
+cannot complete. Manifest assembly/helper execution, private-route auth tests,
+and every production mutation remain separate later packets. The exposed
+management credential may be used once only for these exact 77 GETs during the
+two-hour window; rotation/revocation remains a separate mutation approval.
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
