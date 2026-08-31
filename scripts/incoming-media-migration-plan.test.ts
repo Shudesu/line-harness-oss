@@ -59,7 +59,11 @@ describe('incoming-media migration plan', () => {
     expect(readback.precondition).toMatch(/purge\.json.*receipts/i);
     expect(readback.checks[0]).toMatchObject({
       legacy_public_url: { unauthenticated_status_after_gate_enabled_and_exact_purge: 404 },
-      private_metadata_head: { unauthenticated_status: 401, owner_or_admin_status: 200 },
+      private_metadata_head: {
+        unauthenticated_status: 401,
+        account_bound_service_credential_status: 200,
+        cross_account_service_credential_status: 404,
+      },
       private_content_get: { sha256: 'a'.repeat(64), byte_size: 4 },
     });
   });

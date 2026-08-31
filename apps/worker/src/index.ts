@@ -158,6 +158,12 @@ export type Env = {
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    incomingMediaService?: {
+      credentialId: string;
+      lineAccountId: string;
+      scope: 'incoming_media_read';
+    };
+    incomingMediaAccountId?: string;
   };
 };
 

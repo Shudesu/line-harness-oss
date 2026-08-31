@@ -3,6 +3,7 @@ import { getStaffByApiKey } from '@line-crm/db';
 import type { Env } from '../index.js';
 import type { AdminSameSite } from './admin-auth-config.js';
 import { safeDecode } from '../utils/safe-decode.js';
+import { authenticateIncomingMediaServiceToken } from './incoming-media-service-auth.js';
 
 export const ADMIN_AUTH_COOKIE = 'lh_admin_session';
 export const CSRF_COOKIE = 'lh_csrf';
@@ -12,6 +13,8 @@ export const CSRF_HEADER = 'x-csrf-token';
 const SESSION_MAX_AGE = 604800;
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const INCOMING_MEDIA_HEAD_PATH = /^\/api\/incoming-media\/[^/]+\/[^/]+$/;
+const INCOMING_MEDIA_CONTENT_PATH = /^\/api\/incoming-media\/[^/]+\/[^/]+\/content$/;
 
 function parseCookieHeader(cookieHeader: string | undefined): Record<string, string> {
   if (!cookieHeader) return {};
@@ -89,6 +92,10 @@ export async function authenticateApiToken(
 ): Promise<AuthenticatedStaff | null> {
   if (!token) return null;
 
+  // A fixed-purpose media credential must never become a staff identity,
+  // even if it is accidentally copied into staff_members.
+  if (token.startsWith('lhim_v1.')) return null;
+
   const staff = await getStaffByApiKey(c.env.DB, token);
   if (staff) {
     return { id: staff.id, name: staff.name, role: staff.role };
@@ -164,6 +171,55 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
       /^\/api\/forms\/[^/]+\/opened$/.test(path) ||
       /^\/api\/forms\/[^/]+\/partial$/.test(path));
   if (isPublicFormAction) return next();
+
+  // Fixed-purpose machine credentials are valid only for private incoming
+  // media metadata HEAD and content GET. They never become a staff identity,
+  // never authenticate any other route, and are accepted only as Bearer tokens.
+  const isIncomingMediaRead =
+    (method === 'HEAD' && INCOMING_MEDIA_HEAD_PATH.test(path)) ||
+    (method === 'GET' && INCOMING_MEDIA_CONTENT_PATH.test(path));
+  if (isIncomingMediaRead) {
+    const bearer = bearerToken(c);
+    const cookie = cookieToken(c);
+    const staff = await authenticateApiToken(c, bearer ?? cookie);
+    if (staff) {
+      c.set('staff', staff);
+      return next();
+    }
+    if (bearer) {
+      try {
+        const principal = await authenticateIncomingMediaServiceToken(c.env.DB, bearer);
+        if (principal) {
+          c.set('incomingMediaService', principal);
+          return next();
+        }
+      } catch {
+        console.error(JSON.stringify({
+          event: 'incoming_media_service_auth_failed',
+          stage: 'credential_store_error',
+          method,
+          cf_ray: c.req.header('cf-ray') ?? null,
+        }));
+        return new Response(JSON.stringify({ success: false, error: 'Service unavailable' }), {
+          status: 503,
+          headers: {
+            'Cache-Control': 'private, no-store',
+            'Content-Type': 'application/json',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        });
+      }
+    }
+    return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+      status: 401,
+      headers: {
+        'Cache-Control': 'private, no-store',
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer realm="incoming-media"',
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
+  }
 
   if (
     path === '/webhook' ||

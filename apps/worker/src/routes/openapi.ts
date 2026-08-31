@@ -20,6 +20,11 @@ const spec = {
         scheme: 'bearer',
         description: 'API Key passed as Bearer token',
       },
+      incomingMediaServiceBearer: {
+        type: 'http',
+        scheme: 'bearer',
+        description: 'One-account, incoming-media HEAD/GET-only service credential',
+      },
     },
     schemas: {
       ApiResponse: {
@@ -962,7 +967,8 @@ const spec = {
       head: {
         tags: ['Incoming Media'],
         summary: '受信画像のprivate metadata取得',
-        description: 'D1のaccount＋LINE message IDからprivate R2 objectを解決する。raw R2 keyは受け付けない。',
+        description: 'D1のaccount＋LINE message IDからprivate R2 objectを解決する。raw R2 keyは受け付けない。owner/adminまたは同一accountに固定されたincoming-media service credentialだけを許可する。',
+        security: [{ bearerAuth: [] }, { incomingMediaServiceBearer: [] }],
         parameters: [
           { name: 'accountId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
@@ -981,6 +987,7 @@ const spec = {
           '401': { description: 'Unauthorized' },
           '403': { description: 'Owner or admin role required' },
           '404': { description: 'Account/message/object not found' },
+          '503': { description: 'D1/R2 error or integrity metadata mismatch' },
         },
       },
     },
@@ -988,7 +995,8 @@ const spec = {
       get: {
         tags: ['Incoming Media'],
         summary: '受信画像のprivate content取得',
-        description: '認証必須。D1で解決した1 objectだけをstreamし、private/no-storeで返す。',
+        description: '認証必須。owner/adminまたは同一accountに固定されたincoming-media service credentialだけを許可し、D1で解決した1 objectだけをstreamしてprivate/no-storeで返す。',
+        security: [{ bearerAuth: [] }, { incomingMediaServiceBearer: [] }],
         parameters: [
           { name: 'accountId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
@@ -1008,6 +1016,7 @@ const spec = {
           '401': { description: 'Unauthorized' },
           '403': { description: 'Owner or admin role required' },
           '404': { description: 'Account/message/object not found' },
+          '503': { description: 'D1/R2 error or integrity metadata mismatch' },
         },
       },
     },

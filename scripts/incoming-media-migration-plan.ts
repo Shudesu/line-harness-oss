@@ -298,8 +298,21 @@ export function buildIncomingMediaMigrationArtifacts(input: unknown): IncomingMe
       precondition: 'Run after the exact gate=true revision is read back and purge.json has received successful exact-URL purge receipts.',
       checks: entries.map((entry) => ({
         legacy_public_url: { url: entry.legacy_public_url, unauthenticated_status_after_gate_enabled_and_exact_purge: 404 },
-        private_metadata_head: { url: entry.private_content_url.replace(/\/content$/, ''), unauthenticated_status: 401, owner_or_admin_status: 200 },
-        private_content_get: { url: entry.private_content_url, unauthenticated_status: 401, owner_or_admin_status: 200, mime_type: entry.mime_type, byte_size: entry.byte_size, sha256: entry.sha256 },
+        private_metadata_head: {
+          url: entry.private_content_url.replace(/\/content$/, ''),
+          unauthenticated_status: 401,
+          account_bound_service_credential_status: 200,
+          cross_account_service_credential_status: 404,
+        },
+        private_content_get: {
+          url: entry.private_content_url,
+          unauthenticated_status: 401,
+          account_bound_service_credential_status: 200,
+          cross_account_service_credential_status: 404,
+          mime_type: entry.mime_type,
+          byte_size: entry.byte_size,
+          sha256: entry.sha256,
+        },
         r2_head: { r2_key: entry.r2_key, mime_type: entry.mime_type, byte_size: entry.byte_size, sha256: entry.sha256 },
       })),
     }),

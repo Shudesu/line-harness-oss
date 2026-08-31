@@ -48,10 +48,12 @@ extension), and every other `incoming-*` shape is always private and returns
 1. Reconfirm the live tenant header, exact Worker release, D1 binding, R2
    bucket, and that this code is deployed with
    `INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED` **not** equal to `true`.
-2. Take an encrypted D1 backup and collect a read-only candidate extract by
+2. Collect a read-only candidate extract by
    joining each historical incoming `messages_log` image with its account/source
    attribution. The old `messages_log.line_account_id` may be absent, so derive
    the account only from the verified relation; do not split a legacy R2 key.
+   Do not create a backup under this read-only approval: backup creation and
+   retention are a separate write-preparation packet before migration.
 3. For every exact candidate, perform R2 HEAD and the separately approved
    content/hash verification. Confirm object key, MIME, byte size, SHA-256, and
    allowed image magic. This repository intentionally does not include an R2
@@ -85,11 +87,14 @@ Ask KEN for item-specific approval containing all of the following:
 - candidate, excluded, D1 insert, JSON rewrite, and exact-URL purge counts;
 - the proposed before/after URLs, maintenance impact (expected: none while the
   bridge is off), and exact rollback operation/order;
-- permission for migration `071`, manifest-only D1 ledger writes, conditional
+- permission for migrations `071` and `072`, one account-bound credential hash
+  insert, the separately controlled accounting runtime secret update,
+  manifest-only D1 ledger writes, conditional
   `messages_log` rewrites, deployment/config change to set the gate to `true`,
   and the exact limited cache purge;
 - the required provider readback: D1 row state, R2 HEAD, anonymous old URL,
-  unauthenticated private route, authenticated owner/admin HEAD/GET, and
+  unauthenticated private route, account-bound service-credential HEAD/GET,
+  cross-account and wrong-method denial, and
   MIME/length/SHA-256 checks.
 
 Approval is invalid if the manifest digest, counts, release, tenant, or any
@@ -100,8 +105,13 @@ are separate external-write boundaries; re-read provider results after each.
 
 1. Recheck the manifest digest and Step 1 identifiers. Run the preflight
    artifact read-only and stop on every non-zero expectation.
-2. Apply `packages/db/migrations/071_incoming_media.sql` through the approved
-   D1 change process. Read back table/index existence before proceeding.
+2. Apply `packages/db/migrations/071_incoming_media.sql` and
+   `072_incoming_media_service_credentials.sql` through separately approved D1
+   changes. Read back both tables/indexes and migration-ledger checksums.
+   Generate credential artifacts offline with
+   `scripts/incoming-media-service-credential.ts`; separately approve exactly
+   one hash-row insert and one accounting runtime-secret update. Never place
+   plaintext in D1, Git, logs, chat, or the approval packet.
 3. Execute `apply.json` entry by entry under the approved executor. Each entry
    must be transactional: insert precisely one `incoming_media` row with
    `status='stored'`, then rewrite exactly one `messages_log` row only when its
@@ -113,8 +123,10 @@ are separate external-write boundaries; re-read provider results after each.
 5. Perform the required private R2/Worker readback before closing the bridge.
    Every ledger object must HEAD with
    the expected metadata; private metadata HEAD/content GET must deny anonymous
-   access and succeed only for owner/admin credentials, and content must match
-   the expected MIME, length, and SHA-256.
+   access and succeed with the credential bound to that exact account. The same
+   credential must return 404 for another account and 401 on unrelated routes.
+   Content must match the expected MIME, length, and SHA-256. Owner/admin is
+   break-glass compatibility, not the accounting runtime credential.
 6. Only after Steps 1–5 have recorded readback may KEN separately approve
    setting `INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED=true` and deploying that exact
    configuration. Re-read the deployed gate value and exact Worker version
@@ -125,7 +137,8 @@ are separate external-write boundaries; re-read provider results after each.
    or zone purge.
 8. Run `readback.json` only after the Step 6 gate/version receipt and Step 7
    successful exact-URL purge receipt. Verify every legacy public URL returns
-   404, and repeat the private owner/admin HEAD/GET plus MIME/length/SHA-256
+   404, and repeat the account-bound private HEAD/GET plus the negative auth
+   matrix and MIME/length/SHA-256
    checks. The private route must retain `Cache-Control: private, no-store` and
    must not expose an R2 key.
 
@@ -143,7 +156,8 @@ rollback, and provider readback; it is not an automatic post-purge rollback.
 ## Acceptance record
 
 Record sanitized provider receipts and the manifest digest outside Git. Report
-separately: migration/table status, ledger backfill count, JSON rewrite count,
-purge count, private-route auth/hash readback, public-block result, and every
+separately: migration 071/072 status, credential ID/account/scope (never value),
+ledger backfill count, JSON rewrite count, purge count, private-route auth/hash
+readback, public-block result, and every
 excluded blocker. A green deployment, a D1 screen, or a browser tab alone is
 not completion.
