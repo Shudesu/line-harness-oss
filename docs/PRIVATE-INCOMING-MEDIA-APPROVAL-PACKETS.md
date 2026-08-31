@@ -578,6 +578,113 @@ allowlist. Token mutation, deploy, migration, purge, restart, feature enablement
 LINE send, PR merge, and every unlisted request remain forbidden.
 ```
 
+### A0-R3 execution receipt — STOP
+
+KEN explicitly approved `5229-A0-R3-20260831` for Harness
+`709ef490a286f7d34e2dfc402e05aaf4c95468aa` and packet SHA-256
+`bdd7b68261155809ef95fd683c60d00e48fe1d3f0276becbef7e50b13fb6cfff`
+at `2026-08-31T23:51:14+09:00` (expiry
+`2026-09-01T01:51:14+09:00`). All local anchors, modes, and hashes matched.
+
+Every authorized provider phase completed successfully: exact account, all six
+Worker endpoints, exact D1 database, first D1 schema/candidate snapshot, exact
+R2 bucket/lifecycle, two terminal one-page R2 LIST passes under A0-R3's optional
+envelope rule, and the second D1 snapshot. The final local accounting check then
+stopped with `accounting_env_duplicate` because its parser rejected a duplicate
+key outside the approved Harness field set. No accounting values or usable
+boolean result were emitted. Provider data remained in memory and was discarded
+rather than reused after STOP.
+
+```text
+Fresh T0_R2 / T0_D1: 2026-08-31T14:58:00Z / 2026-08-31T23:58:00
+Provider GET requests: 12
+D1 read-only query POST requests: 5
+Provider total: 17
+R2 LIST passes/pages: 2 / 1+1
+D1 first/second candidate snapshot reads: 1/1
+accounting consumer check attempts/usable results: 1/0
+R2 object HEAD/content GET: 0/0
+private Worker probes: 0
+provider writes/deploys/migrations/token changes/purges/restarts/LINE sends/merges: 0
+local evidence directories/files created: 1/1
+```
+
+The mode-0700 directory
+`/Users/kensmba/.line-harness-5229-A0-R3-20260831` contains only the mode-0600
+`sanitized-summary.json` STOP receipt (SHA-256
+`56e8572c5b08fee2389f869042dcd129142d133bdbb2136c3553245d9e901b10`).
+It must remain unchanged. No A1 was created.
+
+## Packet A0-R4 — target-key-only local precheck, awaiting KEN approval
+
+This is a new approval boundary, not an A0-R3 retry. It repeats A0-R3's full
+provider discovery with a fresh T0 because A0-R3 intentionally retained no
+provider metadata. It inherits A0-R3's immutable resource/code hashes,
+direct-REST endpoint and header allowlists, D1 statements, optional R2
+pagination-envelope rule, double reads, canonical digests, `U/H/N/E/B/C/P`,
+secret-value `unknown` boundary, request ceilings, STOP rules, and all write
+prohibitions. Only the local precheck order/parser and evidence path change.
+Approval expires two hours after KEN's explicit approval.
+
+```text
+Approval ID: 5229-A0-R4-20260901
+Mode: LOCAL-PRECHECK-THEN-CF-DIRECT-REST-READ-ONLY-DISCOVERY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+
+Immutable anchors:
+- Accounting PR head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation: 63635fa00a992301daa8422d9401c6479de13246
+- Harness implementation: 07c4f27a5694ed50fe07bb09c48f28820d7c4833
+- A0-R3 packet/result parent: 709ef490a286f7d34e2dfc402e05aaf4c95468aa
+- A0-R3 packet SHA-256: bdd7b68261155809ef95fd683c60d00e48fe1d3f0276becbef7e50b13fb6cfff
+- migration/helper/client and local-locator SHA-256 values: exactly as A0-R3
+
+Local accounting check runs once before any provider request:
+- confirm the exact config file is a real mode-0600 non-symlink and inspect the
+  exact launchd label/executable in memory
+- parse only these eight exact keys:
+  LINE_ACCOUNTING_HARNESS_BASE_URL,
+  LINE_ACCOUNTING_HARNESS_ACCOUNT_ID,
+  LINE_ACCOUNTING_HARNESS_MEDIA_READ_CREDENTIAL,
+  LINE_ACCOUNTING_HARNESS_MEDIA_READ_CREDENTIAL_SHA256,
+  LINE_ACCOUNTING_HARNESS_INTERNAL_TOKEN,
+  LINE_ACCOUNTING_HARNESS_FALLBACK_MODE,
+  LINE_ACCOUNTING_HARNESS_FALLBACK_KILL_SWITCH,
+  LINE_ACCOUNTING_HARNESS_FALLBACK_COMPANY_ALLOWLIST
+- ignore every non-target key/line and all duplication among non-target keys;
+  never retain or count them
+- accept one unexported single-line KEY=VALUE assignment per target key, with an
+  optional matching single/double quote pair around the whole value; duplicate
+  target assignments, unmatched quotes, NUL/newline, or malformed target lines
+  are immediate STOP before provider access
+- absent target keys are valid discovery results, not parser errors
+- emit only A0-R3's approved boolean/enum/count field allowlist; never emit an
+  account ID, credential, fingerprint, allowlist value, launchd body, or other
+  environment data
+- if the local check cannot produce the complete allowlisted result, STOP with
+  provider request count 0
+
+Provider phase after successful local precheck:
+- exclusively create a new evidence directory, then record a fresh T0
+  immediately before the exact account GET
+- repeat A0-R3's endpoint order and validation without retry
+- ceilings remain GET <= 30, D1 query POST <= 7, provider total <= 37;
+  local accounting check <= 1; provider writes/object HEAD/GET/probes = 0
+
+Local evidence writes:
+- leave A0-R1/A0-R2/A0-R3 evidence directories unchanged
+- exclusively create one mode-0700 directory:
+  /Users/kensmba/.line-harness-5229-A0-R4-20260901
+- exclusively create the same three mode-0600 files and no others, under the
+  inherited field and retention rules
+
+The potentially deployment-capable management credential remains exposed.
+Approval permits one-time use only for this exact target-key precheck and REST
+allowlist during the two-hour window. Token mutation, deploy, migration, purge,
+restart, feature enablement, LINE send, PR merge, and every unlisted request are
+forbidden.
+```
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
