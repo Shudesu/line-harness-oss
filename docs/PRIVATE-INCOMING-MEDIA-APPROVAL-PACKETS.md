@@ -293,6 +293,190 @@ an immediate STOP. Never print the credential value, hash, or Authorization
 material.
 ```
 
+### A0-R1 execution receipt — STOP
+
+KEN explicitly approved `5229-A0-R1-20260831` for Harness
+`2dfc0e5f705765084d27360a0d004e564499cc3d` at
+`2026-08-31T22:22:15+09:00` (expiry `2026-09-01T00:22:15+09:00`). Heads and
+packet SHA-256 matched. The one allowed Wrangler identity command resolved the
+exact Cloudflare account and fixed `T0_R2=2026-08-31T13:23:43Z` /
+`T0_D1=2026-08-31T22:23:43`.
+
+Before that provider call, one local launcher attempt failed with a Python
+syntax error. It made no network request and created no file; it is not counted
+as a provider command.
+
+The first Worker metadata invocation then failed before returning deployment
+metadata. Wrangler made an implicit `/memberships` request and Cloudflare
+returned authentication error code 10000. That path was not in A0-R1's direct
+REST allowlist, and provider error/unexpected-path are STOP conditions. No retry
+or alternative endpoint was attempted under the same approval.
+
+```text
+Cloudflare identity command: 1 successful
+Worker metadata command: 1 failed; deployment metadata unverified
+Known unexpected internal path: /memberships
+D1 inventory/query requests: 0/0
+R2 bucket/lifecycle/LIST requests: 0/0/0
+accounting consumer boolean-only checks: 0
+R2 object HEAD/content GET: 0/0
+private Worker probes: 0
+provider writes/deploys/migrations/token changes/purges/restarts/LINE sends/merges: 0
+local evidence directories/files created: 1/0
+```
+
+The empty mode-0700 directory
+`/Users/kensmba/.line-harness-5229-A0-R1-20260831` is retained unchanged. Its
+deletion, reuse, or permission change was not authorized. No A1 was created.
+
+## Packet A0-R2 — direct account-scoped REST discovery, awaiting KEN approval
+
+This replacement removes Wrangler from every provider operation so no implicit
+membership/account discovery can occur. It inherits A0-R1's exact locators,
+service target, D1 statement definitions, `U/H/N/E/B/C/P` definitions,
+validator order, snapshot/double-read rules, canonical serialization, secret
+redaction, and STOP conditions. Approval expires two hours after KEN's explicit
+approval.
+
+Official schema authorities retrieved 2026-08-31:
+
+- `https://developers.cloudflare.com/api/resources/accounts/methods/get/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/get/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/settings/methods/get/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/secrets/methods/list/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/subdomains/methods/get/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/subdomain/methods/get/`
+- `https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/get/`
+- `https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/`
+- `https://developers.cloudflare.com/api/resources/r2/subresources/buckets/methods/get/`
+- `https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/lifecycle/methods/get/`
+- `https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/objects/methods/list/`
+
+```text
+Approval ID: 5229-A0-R2-20260831
+Mode: CF-DIRECT-REST-AND-RUNTIME-READ-ONLY-DISCOVERY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+
+Immutable anchors:
+- Accounting PR head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation: 63635fa00a992301daa8422d9401c6479de13246
+- Harness implementation: 07c4f27a5694ed50fe07bb09c48f28820d7c4833
+- A0-R1 packet/result commit: 2dfc0e5f705765084d27360a0d004e564499cc3d
+- migration/helper/client and local-locator SHA-256 values: exactly as A0-R1
+
+Exact base and targets:
+- API base: https://api.cloudflare.com/client/v4
+- Cloudflare account ID: 67907592fdf596376bc2097e14a6563a
+- Worker: line-harness
+- expected workers.dev origin: https://line-harness.family8office.workers.dev
+- D1 name/ID: line-harness / c19584d7-e9f1-4d46-83c5-6c0ba96561d1
+- R2 bucket: line-harness-images
+- accounting service/config/executable: exactly as A0-R1
+
+Transport contract for every provider request:
+- direct HTTPS only; no Wrangler/SDK, redirect, retry, cookie, proxy override,
+  request-body logging, or Authorization logging
+- parse only one exact `CLOUDFLARE_API_TOKEN=` assignment from the mode-0600
+  ignored/untracked `/Users/kensmba/.line-harness/.env.local`; never source or
+  execute the file, and STOP on a duplicate, missing, empty, or malformed value
+- connect timeout 10 seconds, total timeout 30 seconds per request
+- accept only HTTP 200 plus JSON `success=true`; otherwise record sanitized
+  status/error codes/request ID and STOP
+- allowed response fields are parsed in memory and only field-allowlisted
+  evidence enters the three authorized files
+- raw provider bodies never enter stdout, stderr, shell tracing, logs, temporary
+  files, or evidence files; only the in-memory parser may inspect them
+- application-controlled request headers are exactly `Authorization: Bearer
+  <redacted>` and `Accept: application/json`, plus `Content-Type:
+  application/json` only for D1 query POST. The HTTP transport may generate
+  only required `Host` and `Content-Length`; suppress defaults such as Cookie,
+  User-Agent, Accept-Encoding, and all custom/jurisdiction headers
+- every metadata request uses GET. The sole non-GET exception is the enumerated
+  D1 query POST; its JSON body contains exactly one prevalidated A0-R1
+  SELECT/PRAGMA statement and optional parameters, never `batch`
+- immediately before request 1, record one fresh immutable cutoff as `T0_R2`
+  and its equivalent `T0_D1`. The A0-R1 cutoff is receipt-only and must not be
+  reused
+
+Exact provider request allowlist and maxima, in order:
+1. GET /accounts/67907592fdf596376bc2097e14a6563a — exactly 1
+2. Worker GETs — maximum 6, no other Worker path:
+   a. /accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/deployments
+   b. /accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/versions/<active-version-id>
+   c. /accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/settings
+   d. /accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/secrets
+   e. /accounts/67907592fdf596376bc2097e14a6563a/workers/subdomain
+   f. /accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/subdomain
+   Each a-f may execute at most once; b-f execute only after every preceding
+   required validation succeeds.
+   Cloudflare defines the first returned deployment as the latest deployment
+   actively serving traffic. It must contain exactly one version at 100%;
+   otherwise record drift and STOP before request b. Request b may use only that
+   returned UUID. Bindings must resolve DB and IMAGES exactly once. Retain only
+   compatibility date/flags, binding names/types, exact D1/R2 identifiers,
+   deployment/version IDs/timestamps, secret names/types, and subdomain enabled
+   booleans plus `workers_dev_origin_matches` only. The account subdomain is
+   compared with the expected origin in memory and never retained. Discard all
+   binding values and unrelated settings. If the secrets
+   response contains `text`, `key_base64`, `key_jwk`, or any other value-bearing
+   field, discard the body and STOP without writing it; secret values are never
+   authorized output.
+3. GET /accounts/67907592fdf596376bc2097e14a6563a/d1/database/c19584d7-e9f1-4d46-83c5-6c0ba96561d1
+   — exactly 1; require exact database ID and name `line-harness`.
+4. POST /accounts/67907592fdf596376bc2097e14a6563a/d1/database/c19584d7-e9f1-4d46-83c5-6c0ba96561d1/query
+   — maximum 7 requests, one A0-R1 SELECT/PRAGMA statement per request, no
+   batching/retry. Require meta.changed_db=false and changes/rows_written=0
+   when those fields are returned; any write signal, truncation, or unexpected
+   shape is STOP.
+5. GET /accounts/67907592fdf596376bc2097e14a6563a/r2/buckets/line-harness-images
+   — exactly 1; require the exact bucket name.
+6. GET /accounts/67907592fdf596376bc2097e14a6563a/r2/buckets/line-harness-images/lifecycle
+   — exactly 1.
+7. GET /accounts/67907592fdf596376bc2097e14a6563a/r2/buckets/line-harness-images/objects
+   with only prefix=incoming-, per_page=1000, and provider-returned cursor —
+   A0-R1's two-pass maximum 10 requests/pass and 20 total.
+
+Total provider ceiling: 30 GET requests plus 7 D1 query POST requests = 37.
+The local accounting boolean-only read ceiling is 1 and provider writes remain
+0. A dynamic `<active-version-id>` is allowed only when it came from request 2a
+and matches UUID grammar. A pagination cursor is allowed only when it came from
+the immediately preceding response, is nonempty and previously unseen, and is
+URL-encoded exactly once. Any method, host, path, query key, header, dynamic
+value, implicit retry, SDK/discovery call, or additional request outside this
+allowlist is an immediate STOP.
+
+Forbidden provider paths include `/memberships`, `/accounts` collection list,
+object-key GET, Worker content download, audit logs, and every endpoint not
+listed above. R2 object HEAD/content GET and private Worker probes remain 0.
+
+Local runtime read:
+- one A0-R1 accounting consumer boolean-only check, same field allowlist
+
+Secret-value limitation:
+- Worker request 2d can establish only each deployed secret's name/type
+  presence. It cannot establish that a secret value is nonempty, non-placeholder,
+  current, or usable. A0-R2 must report those value properties as `unknown`,
+  never infer them from presence, and cannot satisfy that portion of the wider
+  production preflight. Any later value/readback proof requires a separately
+  designed and separately approved boundary; private Worker probes remain
+  forbidden here.
+
+Local evidence writes explicitly authorized:
+- leave `/Users/kensmba/.line-harness-5229-A0-R1-20260831` untouched
+- create exactly one new mode-0700 directory with exclusive-create semantics:
+  /Users/kensmba/.line-harness-5229-A0-R2-20260831
+- create exactly three new mode-0600 exclusive files named
+  `d1-candidates.json`, `r2-incoming-metadata.json`, and
+  `sanitized-summary.json`, with the exact A0-R1 field/retention rules
+
+The management credential is still potentially deployment-capable and exposed.
+Approval accepts one-time use only for the exact request allowlist above. Token
+rotation/revocation/replacement, provider mutation, deployment, migration,
+object HEAD/GET, purge, restart, feature enablement, LINE send, and PR merge are
+all forbidden and expected count=0.
+```
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
