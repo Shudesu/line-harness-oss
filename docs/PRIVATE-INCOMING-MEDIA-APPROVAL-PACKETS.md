@@ -477,6 +477,107 @@ object HEAD/GET, purge, restart, feature enablement, LINE send, and PR merge are
 all forbidden and expected count=0.
 ```
 
+### A0-R2 execution receipt — STOP
+
+KEN explicitly approved `5229-A0-R2-20260831` for Harness
+`1412bcfa926c7a63347b940aa320156282f5d6fc` and packet SHA-256
+`630ee67f1cfe596f96465770d593d60f11951ebd65779358ccf0aa577e57d29b`
+at `2026-08-31T23:08:08+09:00` (expiry
+`2026-09-01T01:08:08+09:00`). All local anchors, modes, and hashes matched.
+
+Direct REST reads for the exact account, all six Worker endpoints, the exact D1
+database, four read-only D1 statements, the exact R2 bucket, and R2 lifecycle
+all returned HTTP 200 and passed their preceding field validations. The first
+R2 collection LIST also returned HTTP 200, but its JSON omitted the optional
+`result_info` object. A0-R2 required that object and therefore stopped with
+`r2_result_info_shape`. The response body and the in-memory cutoff were
+discarded; no object metadata, raw provider body, or T0 value was persisted.
+There was no retry or second R2 pass.
+
+```text
+Provider GET requests: 11
+D1 read-only query POST requests: 4
+Provider total: 15
+Successful R2 collection LIST requests: 1; result_info absent
+Second R2 pass / D1 second snapshot read: 0/0
+accounting consumer boolean-only checks: 0
+R2 object HEAD/content GET: 0/0
+private Worker probes: 0
+provider writes/deploys/migrations/token changes/purges/restarts/LINE sends/merges: 0
+local evidence directories/files created: 1/1
+```
+
+The mode-0700 directory
+`/Users/kensmba/.line-harness-5229-A0-R2-20260831` contains only the mode-0600
+`sanitized-summary.json` STOP receipt (SHA-256
+`50d1845f7613c4512072ddd314e3f2a5739f588223049b478b91fff432780f15`).
+It must remain unchanged. No A1 was created.
+
+## Packet A0-R3 — optional pagination-envelope recovery, awaiting KEN approval
+
+This is a new approval boundary, not an A0-R2 retry. It repeats A0-R2's full
+current-state discovery with a fresh T0 because A0-R2 intentionally retained no
+provider metadata. It inherits A0-R2's immutable locators and code hashes,
+direct-REST transport, endpoint order, request/header/response field allowlists,
+D1 statements, `U/H/N/E/B/C/P` definitions, double reads, canonical digests,
+secret-value `unknown` boundary, total request ceiling, STOP rules, and all
+write prohibitions except for the pagination and evidence-path changes below.
+Approval expires two hours after KEN's explicit approval.
+
+Cloudflare's List Objects schema marks `result_info` optional:
+`https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/objects/methods/list/`
+
+```text
+Approval ID: 5229-A0-R3-20260831
+Mode: CF-DIRECT-REST-AND-RUNTIME-READ-ONLY-DISCOVERY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+
+Immutable anchors:
+- Accounting PR head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation: 63635fa00a992301daa8422d9401c6479de13246
+- Harness implementation: 07c4f27a5694ed50fe07bb09c48f28820d7c4833
+- A0-R2 packet/result parent: 1412bcfa926c7a63347b940aa320156282f5d6fc
+- A0-R2 packet SHA-256: 630ee67f1cfe596f96465770d593d60f11951ebd65779358ccf0aa577e57d29b
+- migration/helper/client and local-locator SHA-256 values: exactly as A0-R2
+
+Fresh snapshot:
+- immediately before the exact account GET, record a new immutable T0_R2 and
+  equivalent T0_D1; do not reuse or infer A0-R1/A0-R2 cutoffs
+
+R2 LIST pagination rule replacing A0-R2's result_info requirement:
+- each pass starts with no cursor and uses prefix=incoming-, per_page=1000
+- require result to be an array of at most 1000 unique, field-valid objects
+- if result_info is present, it must be an object with boolean is_truncated;
+  false is terminal, while true requires one nonempty, unseen provider cursor
+  that is URL-encoded once and used only by the immediately following request
+- if result_info is absent, accept the page as terminal only when result length
+  is strictly less than 1000; length 1000 is ambiguous and immediate STOP
+- null/non-object result_info, a cursor without is_truncated=true, pagination
+  response headers, or any other pagination shape is immediate STOP
+- inspect response headers in memory only for pagination indicators such as
+  Link/Cursor/X-Cursor; retain neither their names nor values, and STOP if any
+  is present
+- run exactly two complete passes, at most 10 pages/pass and 20 LIST GETs total;
+  require the same cutoff-filtered canonical digest
+
+Provider ceilings unchanged:
+- GET maximum 30, D1 query POST maximum 7, provider total maximum 37
+- local accounting boolean-only read maximum 1
+- provider writes, R2 object HEAD/GET, and private Worker probes: 0
+
+Local evidence writes:
+- leave both prior A0-R1 and A0-R2 evidence directories unchanged
+- exclusively create one mode-0700 directory:
+  /Users/kensmba/.line-harness-5229-A0-R3-20260831
+- exclusively create the same three mode-0600 evidence files and no others;
+  field/retention rules are exactly A0-R2
+
+The potentially deployment-capable management credential remains exposed.
+Approval accepts one-time use only within this two-hour window and exact
+allowlist. Token mutation, deploy, migration, purge, restart, feature enablement,
+LINE send, PR merge, and every unlisted request remain forbidden.
+```
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
