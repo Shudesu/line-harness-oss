@@ -23,6 +23,27 @@ function isPrivateIncomingObjectKey(key: string): boolean {
   return decodeKeyForPublicPolicy(key).toLowerCase().startsWith('incoming-');
 }
 
+/**
+ * Only the old public shape participates in the compatibility bridge. New
+ * #5229 objects are `incoming-` plus a 64-hex digest and have no extension,
+ * so they must never become public merely because the bridge is still open.
+ */
+function isLegacyPublicIncomingObjectKey(key: string): boolean {
+  return /^incoming-[^/\\]+\.(?:png|jpe?g|gif|webp)$/i.test(decodeKeyForPublicPolicy(key));
+}
+
+/**
+ * The #5229 public-route block is deliberately opt-in for an outage-free
+ * migration of historical messages_log references. Treat every value except
+ * the literal string "true" as disabled: a typo or omitted binding can never
+ * accidentally activate the cutover before its readback is complete.
+ *
+ * This only controls GET. The generic DELETE protection below is unconditional.
+ */
+function isIncomingMediaPublicBlockEnabled(value: string | undefined): boolean {
+  return value === 'true';
+}
+
 // POST /api/images — upload image (base64 or binary)
 images.post('/api/images', async (c) => {
   try {
@@ -101,13 +122,15 @@ images.get('/images/:key', async (c) => {
   if (policyKey.includes('/') || policyKey.includes('\\')) {
     return c.json({ success: false, error: 'Image not found' }, 404);
   }
-  // Incoming LINE evidence is private even when an older object uses the
-  // legacy flat-key shape. Never consult R2 for it on this public route.
-  // DEPLOYMENT NOTE (#5229): existing messages_log JSON may still contain
-  // public /images/incoming-* URLs. Before deploying this block to an existing
-  // tenant, separately approve and complete D1 backfill, URL rewrite, and CDN
-  // cache purge; this code intentionally does not perform those live writes.
-  if (isPrivateIncomingObjectKey(key)) {
+  // Only historical flat incoming image keys stay public while the bridge is
+  // disabled. New digest-only incoming keys (and every other incoming-* shape)
+  // are private immediately and never consult R2 on this route. Once the
+  // separately approved #5229 D1 backfill, exact URL rewrite, CDN purge, and
+  // provider readback finish, the explicit binding blocks the legacy shape too.
+  // See docs/PRIVATE-INCOMING-MEDIA-MIGRATION.md. This route never writes data.
+  if (isPrivateIncomingObjectKey(key)
+    && (!isLegacyPublicIncomingObjectKey(key)
+      || isIncomingMediaPublicBlockEnabled(c.env.INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED))) {
     return c.json({ success: false, error: 'Image not found' }, 404);
   }
   const object = await c.env.IMAGES.get(key);

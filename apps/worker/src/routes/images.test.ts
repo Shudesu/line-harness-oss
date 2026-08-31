@@ -2,8 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { images } from './images.js';
 
+const NEW_INCOMING_DIGEST_KEY = `incoming-${'a'.repeat(64)}`;
+
 type TestEnv = {
-  Bindings: { DB: D1Database; IMAGES: R2Bucket };
+  Bindings: {
+    DB: D1Database;
+    IMAGES: R2Bucket;
+    INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED?: string;
+  };
 };
 
 function makeR2Stub() {
@@ -29,11 +35,11 @@ function makeR2Stub() {
   return { r2, store, get, deleteObject };
 }
 
-function setupApp() {
+function setupApp(bindings: Pick<TestEnv['Bindings'], 'INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED'> = {}) {
   const { r2, store, get, deleteObject } = makeR2Stub();
   const app = new Hono<TestEnv>();
   app.use('*', async (c, next) => {
-    c.env = { DB: {} as D1Database, IMAGES: r2 };
+    c.env = { DB: {} as D1Database, IMAGES: r2, ...bindings };
     await next();
   });
   app.route('/', images);
@@ -66,10 +72,19 @@ describe('GET /images/:key', () => {
     expect(await res.text()).not.toContain('secret');
   });
 
-  it('never serves incoming-* evidence objects or consults R2 for them', async () => {
+  it('keeps legacy incoming-* objects available while the cutover binding is unset', async () => {
     const { app, store, get } = setupApp();
     store.set('incoming-secret.png', { body: 'private-evidence', contentType: 'image/png' });
     const res = await app.request('/images/incoming-secret.png');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('private-evidence');
+    expect(get).toHaveBeenCalledWith('incoming-secret.png');
+  });
+
+  it.each([undefined, 'false', 'true'])('never serves a new deterministic incoming digest while the cutover is %s', async (value) => {
+    const { app, store, get } = setupApp({ INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED: value });
+    store.set(NEW_INCOMING_DIGEST_KEY, { body: 'private-evidence', contentType: 'image/png' });
+    const res = await app.request(`/images/${NEW_INCOMING_DIGEST_KEY}`);
     expect(res.status).toBe(404);
     expect(await res.text()).not.toContain('private-evidence');
     expect(get).not.toHaveBeenCalled();
@@ -79,11 +94,19 @@ describe('GET /images/:key', () => {
     '/images/InCoMiNg-secret.png',
     '/images/%69nCoMiNg-secret.png',
     '/images/%2569ncoming-secret.png',
-  ])('blocks case and percent-encoded incoming prefixes: %s', async (path) => {
-    const { app, get } = setupApp();
+  ])('blocks case and percent-encoded incoming prefixes only when explicitly enabled: %s', async (path) => {
+    const { app, get } = setupApp({ INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED: 'true' });
     const res = await app.request(path);
     expect(res.status).toBe(404);
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'TRUE', '1', 'false'])('does not activate the cutover for non-literal true values: %s', async (value) => {
+    const { app, store, get } = setupApp({ INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED: value });
+    store.set('incoming-secret.png', { body: 'private-evidence', contentType: 'image/png' });
+    const res = await app.request('/images/incoming-secret.png');
+    expect(res.status).toBe(200);
+    expect(get).toHaveBeenCalledWith('incoming-secret.png');
   });
 
   it('keeps ordinary public uploads retrievable from their returned /images URL', async () => {
@@ -104,6 +127,13 @@ describe('GET /images/:key', () => {
 });
 
 describe('DELETE /api/images/:key', () => {
+  it.each(['incoming-secret.png', NEW_INCOMING_DIGEST_KEY])('keeps generic deletion blocked for %s even while the GET cutover is disabled', async (key) => {
+    const { app, deleteObject } = setupApp({ INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED: 'false' });
+    const res = await app.request(`/api/images/${key}`, { method: 'DELETE' });
+    expect(res.status).toBe(404);
+    expect(deleteObject).not.toHaveBeenCalled();
+  });
+
   it.each([
     '/api/images/incoming-secret.png',
     '/api/images/InCoMiNg-secret.png',
