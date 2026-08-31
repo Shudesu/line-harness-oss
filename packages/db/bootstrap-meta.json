@@ -74,7 +74,8 @@
     "067_mileage_keyword_auto_reply.sql",
     "068_media_inquiries.sql",
     "069_rich_menu_selected.sql",
-    "070_admin_sso_jti.sql"
+    "070_admin_sso_jti.sql",
+    "071_incoming_media.sql"
   ],
-  "migrationCount": 75
+  "migrationCount": 76
 }

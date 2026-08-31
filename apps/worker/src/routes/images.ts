@@ -3,6 +3,26 @@ import type { Env } from '../index.js';
 
 const images = new Hono<Env>();
 
+function decodeKeyForPublicPolicy(key: string): string {
+  let decoded = key;
+  // Hono normally decodes one layer. Decode at most two additional layers so
+  // case/percent-encoded variants cannot bypass the private-prefix policy.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded;
+}
+
+function isPrivateIncomingObjectKey(key: string): boolean {
+  return decodeKeyForPublicPolicy(key).toLowerCase().startsWith('incoming-');
+}
+
 // POST /api/images — upload image (base64 or binary)
 images.post('/api/images', async (c) => {
   try {
@@ -75,9 +95,19 @@ images.post('/api/images', async (c) => {
 // GET /images/:key — serve image (public, no auth)
 images.get('/images/:key', async (c) => {
   const key = c.req.param('key');
+  const policyKey = decodeKeyForPublicPolicy(key);
   // Public route: only flat "{uuid}.{ext}" keys are servable. Anything with a
   // path separator (e.g. archive/ objects) must 404.
-  if (key.includes('/') || key.includes('\\')) {
+  if (policyKey.includes('/') || policyKey.includes('\\')) {
+    return c.json({ success: false, error: 'Image not found' }, 404);
+  }
+  // Incoming LINE evidence is private even when an older object uses the
+  // legacy flat-key shape. Never consult R2 for it on this public route.
+  // DEPLOYMENT NOTE (#5229): existing messages_log JSON may still contain
+  // public /images/incoming-* URLs. Before deploying this block to an existing
+  // tenant, separately approve and complete D1 backfill, URL rewrite, and CDN
+  // cache purge; this code intentionally does not perform those live writes.
+  if (isPrivateIncomingObjectKey(key)) {
     return c.json({ success: false, error: 'Image not found' }, 404);
   }
   const object = await c.env.IMAGES.get(key);
@@ -98,6 +128,11 @@ images.get('/images/:key', async (c) => {
 images.delete('/api/images/:key', async (c) => {
   try {
     const key = c.req.param('key');
+    // The generic delete route must never remove private evidence while its D1
+    // ledger row remains stored. Deletion/retention needs a ledger-aware flow.
+    if (isPrivateIncomingObjectKey(key)) {
+      return c.json({ success: false, error: 'Image not found' }, 404);
+    }
     await c.env.IMAGES.delete(key);
     return c.json({ success: true, data: null });
   } catch (err) {

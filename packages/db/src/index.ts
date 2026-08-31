@@ -36,6 +36,7 @@ export * from './affiliate-report';
 export * from './account-settings';
 export * from './webinars';
 export * from './admin-sso';
+export * from './incoming-media';
 
 /**
  * Thin wrapper around D1Database.

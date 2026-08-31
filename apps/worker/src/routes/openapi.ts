@@ -958,6 +958,59 @@ const spec = {
     '/api/webinars/{id}/user-comments': {
       get: { tags: ['Webinars'], summary: '視聴者の生コメント一覧', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Comments' } } },
     },
+    '/api/incoming-media/{accountId}/{messageId}': {
+      head: {
+        tags: ['Incoming Media'],
+        summary: '受信画像のprivate metadata取得',
+        description: 'D1のaccount＋LINE message IDからprivate R2 objectを解決する。raw R2 keyは受け付けない。',
+        parameters: [
+          { name: 'accountId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Metadata headers only',
+            headers: {
+              'Content-Type': { schema: { type: 'string' } },
+              'Content-Length': { schema: { type: 'integer' } },
+              'X-Content-SHA256': { schema: { type: 'string', pattern: '^[0-9a-f]{64}$' } },
+              'Cache-Control': { schema: { type: 'string', const: 'private, no-store' } },
+              'X-Content-Type-Options': { schema: { type: 'string', const: 'nosniff' } },
+            },
+          },
+          '401': { description: 'Unauthorized' },
+          '403': { description: 'Owner or admin role required' },
+          '404': { description: 'Account/message/object not found' },
+        },
+      },
+    },
+    '/api/incoming-media/{accountId}/{messageId}/content': {
+      get: {
+        tags: ['Incoming Media'],
+        summary: '受信画像のprivate content取得',
+        description: '認証必須。D1で解決した1 objectだけをstreamし、private/no-storeで返す。',
+        parameters: [
+          { name: 'accountId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Image bytes',
+            headers: {
+              'Content-Type': { schema: { type: 'string' } },
+              'Content-Length': { schema: { type: 'integer' } },
+              'X-Content-SHA256': { schema: { type: 'string', pattern: '^[0-9a-f]{64}$' } },
+              'Cache-Control': { schema: { type: 'string', const: 'private, no-store' } },
+              'X-Content-Type-Options': { schema: { type: 'string', const: 'nosniff' } },
+            },
+            content: { 'image/*': { schema: { type: 'string', format: 'binary' } } },
+          },
+          '401': { description: 'Unauthorized' },
+          '403': { description: 'Owner or admin role required' },
+          '404': { description: 'Account/message/object not found' },
+        },
+      },
+    },
     '/webhook': {
       post: {
         tags: ['Webhook'],
@@ -980,6 +1033,7 @@ const spec = {
     { name: 'Forms', description: 'フォーム（LIFF 内で回答）' },
     { name: 'Links', description: '流入経路(/r) とクリック計測(/t) — 役割が違うので取り違えないこと' },
     { name: 'Webinars', description: 'オートウェビナー（動画・CTA・コメント・分析）' },
+    { name: 'Incoming Media', description: 'LINEから受信したprivate画像の認証付きread-only取得' },
     { name: 'Webhook', description: 'LINE Webhook' },
   ],
 };
