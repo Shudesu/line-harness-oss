@@ -1175,6 +1175,90 @@ token/secret/credential change, cache purge, restart, feature enablement,
 Drive write, LINE send, PR merge.
 ```
 
+## Packet P0 execution receipt — COMPLETED
+
+KEN explicitly approved `5229-P0-20260901` for Harness
+`47e64fd5810bbea6cfe65a09d7f3c67cd4f4760a` and packet SHA-256
+`9a98060417cba6919b2a7bed1e4559584d6adcb92d7c7ab0391d2111b98103de`
+at `2026-09-01T12:20:01+09:00` (expiry
+`2026-09-01T14:20:01+09:00`). Exact-head/source/hash/mode checks, focused tests,
+all script tests, standalone TypeScript, and the zero-write preflight passed
+before the single approved D1 SELECT batch.
+
+The request started at `2026-09-01T03:20:58.174Z` and completed at
+`2026-09-01T03:20:58.688Z`. The result was `COMPLETED` with exactly one D1
+query POST, one provider request total, zero provider writes, and zero retries.
+All nine aggregate fields were integer 77: frozen/message/message-shape/user/
+historical-account-null/friend/friend-identity/account-FK/fully-matched rows.
+The result records `provenance_basis=legacy_user_path_reconstruction` and
+`raw_event_snapshot=false`.
+
+The retained owner-only evidence is:
+
+- directory `/Users/kensmba/.line-harness-5229-P0-20260901`, mode `0700`;
+- exactly one mode-`0600` `sanitized-summary.json`, 791 bytes;
+- summary SHA-256
+  `180bb410582445c3fc891c17a87be3ef6c6e58c734c59b9f85c1bb53abc854da`.
+
+An independent audit passed with P1=0 and P2=0. No deploy, migration, token or
+secret change, R2 access, cache purge, restart, feature enablement, Drive
+write, LINE send, or PR merge occurred.
+
+## M0 protected manifest and offline plan receipt — COMPLETED LOCALLY
+
+After P0 completed, the fixed A0-R4, C0-R1, and P0 evidence was joined only
+offline. The builder accepts exactly 77 unique historical user-path rows,
+E=0, B=27,625,839, one account, and 77 JPEG content digests observed from R2.
+It preserves each original `messages_log.created_at`, marks provenance as
+reconstructed rather than raw, and refuses every count/byte/MIME/key/source/
+URL/hash drift.
+
+Hash-bound code:
+
+- manifest builder SHA-256
+  `82be4e2a4de58c5c33e842180f5e45e2a66e2af0f0dff39a3665e6ca28857621`;
+- builder test SHA-256
+  `7c78008b4d5f3b0eb16ba6995cbb45568f8a1bca7228c219df631d9e3afc61ee`;
+- migration-plan builder SHA-256
+  `7e911055348a6d10afa3a3e4b1072288387903ca841ba614392d2b56c51a4beb`;
+- migration-plan test SHA-256
+  `2801b79c1f24a0976aad1ec5307d1d8f937fa4805e5e3c89652a438b4864842c`.
+
+Protected artifacts:
+
+- manifest directory `/Users/kensmba/.line-harness-5229-M0-20260901`, mode
+  `0700`, containing exactly one mode-`0600` manifest;
+- raw manifest SHA-256
+  `cf35a1045040a265019a5afad8c2cefb8994edba684eeaa5dd2fad0b17b1663e`;
+- compact canonical manifest SHA-256 used by every plan artifact
+  `e50d8a0f10b15fba61d98860bf761587e34958a5b07b2c0ea4cdac9cbd2afe69`;
+- plan directory `/Users/kensmba/.line-harness-5229-M0-PLAN-20260901`, mode
+  `0700`, containing exactly five mode-`0600` files;
+- `preflight.json` SHA-256
+  `cf6d513dc2712192f5739b90cf50212aae80d3cb5684b6065af6bae1921af077`;
+- `apply.json` SHA-256
+  `38d616248dfce3db08f4340817278758445d574b9d405e29b4def5e066e974ce`;
+- `rollback.json` SHA-256
+  `4b77fd9c7dfada52d2b6746f054d6205840bb3f1d8da7978e8e7bdab32dd785e`;
+- `purge.json` SHA-256
+  `3fb15f8bee9135e4459b82f69df04f1df2b0fb7933b83ea6dee8f876a66c65f1`;
+- `readback.json` SHA-256
+  `7716f07a95ac9aad488cc7fbe3602328599f9afd78b4769dafeaab7e0b1ed59e`.
+
+The preflight plan has 154 exact SELECT checks. The apply plan has 308 ordered
+operations: 77 ledger INSERTs and 77 exact-preimage JSON UPDATEs, each
+immediately followed by a `changes()=1` assertion. They must be submitted as
+one D1 transactional batch; one stale row or conflict raises an SQL error and
+rolls back all 77 entries. The rollback plan similarly has 154 operations and
+requires a new approval. Purge/readback plans contain exactly 77 URLs/checks.
+
+Independent audits passed with P1=0 and P2=0, including a local transactional
+proof that a stale preimage leaves zero ledger rows. All script tests passed
+87/87. Manifest construction and plan generation made zero provider requests.
+No D1 migration/write, deploy, token/secret/credential change, R2 mutation,
+cache purge, restart, feature enablement, Drive write, LINE send, or PR merge
+occurred.
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text

@@ -70,8 +70,12 @@ pnpm exec tsx scripts/incoming-media-migration-plan.ts \
   --output-dir /secure/5229-artifacts
 ```
 
-The manifest requires `schema_version: 1`, `issue: 5229`, `verified: true`, a
-single HTTPS Worker origin, fixed `backfill_at`, and one entry per identity.
+The manifest requires `schema_version: 1`, `issue: 5229`, `verified: true`,
+`provenance_basis=legacy_user_path_reconstruction`,
+`raw_event_snapshot=false`, a single HTTPS Worker origin, fixed `backfill_at`,
+the original `messages_log_created_at`, and exactly the frozen 77-row,
+27,625,839-byte JPEG cohort. `incoming_media.created_at` preserves the original
+message timestamp; `stored_at` and `updated_at` use the fixed backfill time.
 The helper only emits conditional D1 operations, exact URL purge targets, and
 readback expectations; it never imports Cloudflare/LINE clients, reads R2, or
 executes generated SQL. It creates its new output directory as `0700` and every
@@ -112,11 +116,14 @@ are separate external-write boundaries; re-read provider results after each.
    `scripts/incoming-media-service-credential.ts`; separately approve exactly
    one hash-row insert and one accounting runtime-secret update. Never place
    plaintext in D1, Git, logs, chat, or the approval packet.
-3. Execute `apply.json` entry by entry under the approved executor. Each entry
-   must be transactional: insert precisely one `incoming_media` row with
-   `status='stored'`, then rewrite exactly one `messages_log` row only when its
-   content equals the manifest preimage. Roll back that entry if either expected
-   change count is not one. Do not overwrite a conflict.
+3. Execute all 308 ordered `apply.json` operations as one D1 transactional
+   batch under the approved executor. For each of the 77 entries, insert
+   precisely one `incoming_media` row with `status='stored'`, assert
+   `changes()=1`, rewrite exactly one `messages_log` row only when its content
+   equals the manifest preimage, then assert `changes()=1` again. An assertion
+   deliberately raises an SQL error on mismatch so D1 rolls back the entire
+   77-entry sequence. Never split, resume, or retry a partial batch; do not
+   overwrite a conflict.
 4. Read back every approved D1 ledger row and rewritten JSON against the
    manifest. While the gate is off, old public URLs remain available for
    continuity; this is expected, not completion.
