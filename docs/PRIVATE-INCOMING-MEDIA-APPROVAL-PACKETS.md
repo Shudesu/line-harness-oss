@@ -1014,6 +1014,62 @@ drift. STOP on the first provider/header/body/byte/write discrepancy with no
 retry. Partial results and the old C0 approval are never reused.
 ```
 
+## Packet C0-R1 execution receipt — COMPLETED
+
+KEN explicitly approved `5229-C0-R1-20260901` for Harness
+`8363d6be3595662e4c53a71303fec47255210e34` and packet SHA-256
+`69c0a7fdbf73e1eef53a0c6f7189c09ef0cc40519cc68c4b9f92137783c32850`
+at `2026-09-01T11:36:24+09:00` (expiry
+`2026-09-01T13:36:24+09:00`). The committed collector/test hashes, both
+worktree heads, all A0-R4 source hashes and modes, and exclusive output-path
+absence matched before provider access. The focused collector tests passed
+12/12, all script tests passed 64/64, the standalone TypeScript check passed,
+and the final preflight reported 77 sources, 27,625,839 bytes, token present,
+zero provider requests, and zero local writes.
+
+The approved collector was invoked exactly once. It completed all 77 fresh,
+sequential R2 content GETs without retry, redirect, overlapping request, or
+write, and accepted every object only after its frozen metadata, byte count,
+SHA-256, and JPEG boundary checks matched.
+
+```text
+Status: COMPLETED
+Started/completed UTC:
+  2026-09-01T02:38:08.245Z / 2026-09-01T02:39:31.446Z
+N/E/B; completed: 77/0/27,625,839; 77
+Accepted/application-read bytes: 27,625,839/27,625,839
+MIME: image/jpeg=77
+Provider GET / successful GET / retry: 77/77/0
+Maximum in flight: 1
+Provider writes: 0
+R2 HEAD/LIST; D1; Worker requests: 0/0; 0; 0
+Content-evidence canonical SHA-256:
+  b897e6154ec47eb36d05874d70baed6cde951d50bc5b2e96c27d40ce2c13b50a
+```
+
+The mode-0700 directory
+`/Users/kensmba/.line-harness-5229-C0-R1-20260901` contains exactly these two
+mode-0600 files. The detailed object-level artifact remains private and its
+contents were not printed:
+
+```text
+r2-content-digests.json
+  db0146a9fc8dfe9bd576f57dafdf9e4d10c64acbfe92b6e84502e7cd5d5ba5f0
+sanitized-summary.json
+  c8134d393d9df4e48f7f0a60476995c681501e39c92b311e56187f93ed768769
+```
+
+No deploy, migration, token/secret/credential change, purge, restart, feature
+enablement, LINE send, or PR merge was performed. C0-R1 proves byte-level
+availability of the 77 A0-R4 historical objects only; it does not authorize or
+perform any migration, backfill, URL rewrite, customer notification, or
+production route readback.
+
+An independent local audit passed with P1=0 and P2=0. It rechecked the exact
+entry set, owner-only modes, file sizes and hashes, two-hour half-open approval
+window, aggregate counts and bytes, request bounds, and raw-digest hash match
+without reading the detailed digest contents or making any provider request.
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
