@@ -1259,7 +1259,7 @@ No D1 migration/write, deploy, token/secret/credential change, R2 mutation,
 cache purge, restart, feature enablement, Drive write, LINE send, or PR merge
 occurred.
 
-## Packet B2 — exact D1 migrations 071/072, awaiting KEN approval
+## Packet B2 — exact D1 migrations 071/072, approved and completed
 
 This packet authorizes only the two additive private-media schema migrations
 and their two checksum-ledger rows. It does not authorize the 77-row manifest
@@ -1359,6 +1359,48 @@ insert/revoke, deploy, Worker setting or secret change, R2 HEAD/GET/LIST/write/
 delete, cache purge, restart, feature enablement, Drive write, LINE send, PR
 merge. All have expected count zero.
 ```
+
+### B2 execution receipt — COMPLETED
+
+KEN approved the exact packet `5229-B2-20260901` at
+`2026-09-01T16:57:09Z`, bound to Harness head
+`2570670d7b17de76b9e48f01f4ae8e04381a3e43` and packet SHA-256
+`c6ecb62753b2e7c180f75411a6b03bad577f20ed545e62b4851fc73bc4062c67`.
+The half-open approval interval ended at `2026-09-01T18:57:09Z`.
+
+Before provider access, both worktrees were clean at their approved heads, all
+immutable hashes matched, the focused executor suite passed 6/6, the complete
+script suite passed 93/93, and the exact local preflight returned
+`status=preflight_passed` with provider/local write counts zero. The execution
+started at `2026-09-01T16:57:34.778Z` and completed at
+`2026-09-01T16:57:35.396Z`.
+
+Exactly one transactional D1 write batch installed migrations 071 and 072 and
+their two checksum-ledger rows. Exactly one immediate read-only D1 batch then
+verified:
+
+- tables `incoming_media` and `incoming_media_service_credentials`;
+- indexes `idx_incoming_media_status_updated` and
+  `idx_incoming_media_service_credentials_account_active`;
+- normalized schema, columns, defaults, primary keys, foreign keys, CHECKs,
+  index order, and both exact `sha256:<hash>` ledger values.
+
+Provider request counts were exactly 2 D1 query POSTs: 1 transactional write
+batch and 1 readback batch. Retry count was zero. The protected evidence
+directory `/Users/kensmba/.line-harness-5229-B2-20260901` is mode 0700 and
+contains exactly one non-symlink mode-0600 `sanitized-summary.json`, SHA-256
+`5f393930c545582d656c0068ee1d854a01ef8d60e66e1d04e4dca49a0beda95f`.
+
+An independent read-only receipt audit passed with P1=0 and P2=0. It confirmed
+the exact head, approval interval, source/packet/receipt/ledger checksum
+agreement, schema/value whitelist, evidence permissions, request counts, and
+absence of credential or customer identifiers. It made no provider request and
+created no artifact.
+
+Deploy, manifest backfill, R2 access or mutation, secret/token/credential
+change, cache purge, restart, feature enablement, Drive write, LINE send, and
+PR merge all remained zero. The additive schema is retained; no rollback or
+DROP was authorized or attempted.
 
 ## Packet A — Cloudflare read-only preflight only
 
