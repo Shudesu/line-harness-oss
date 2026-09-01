@@ -112,11 +112,21 @@ are separate external-write boundaries; re-read provider results after each.
 2. Apply `packages/db/migrations/071_incoming_media.sql` and
    `072_incoming_media_service_credentials.sql` through separately approved D1
    changes. Read back both tables/indexes and migration-ledger checksums.
-   Generate credential artifacts offline with
+3. Separately approve and deploy the exact private-media Worker revision while
+   `INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED` remains false or unset. Read back the
+   exact deployment/version, routes, D1/R2 bindings, and gate value. Confirm
+   that the existing public evidence route still works and that the new private
+   route denies unauthenticated requests. Do not issue a credential, rewrite a
+   message row, or close the public bridge in this deployment packet.
+4. After the gate-off Worker deployment is verified, generate credential
+   artifacts offline with
    `scripts/incoming-media-service-credential.ts`; separately approve exactly
    one hash-row insert and one accounting runtime-secret update. Never place
-   plaintext in D1, Git, logs, chat, or the approval packet.
-3. Execute all 308 ordered `apply.json` operations as one D1 transactional
+   plaintext in D1, Git, logs, chat, or the approval packet. Immediately read
+   back the D1 row and consumer-side format/fingerprint booleans, but defer the
+   successful private-media HEAD/GET until the manifest rows exist. Do not
+   restart or enable the accounting feature in this credential packet.
+5. Execute all 308 ordered `apply.json` operations as one D1 transactional
    batch under the approved executor. For each of the 77 entries, insert
    precisely one `incoming_media` row with `status='stored'`, assert
    `changes()=1`, rewrite exactly one `messages_log` row only when its content
@@ -124,25 +134,25 @@ are separate external-write boundaries; re-read provider results after each.
    deliberately raises an SQL error on mismatch so D1 rolls back the entire
    77-entry sequence. Never split, resume, or retry a partial batch; do not
    overwrite a conflict.
-4. Read back every approved D1 ledger row and rewritten JSON against the
+6. Read back every approved D1 ledger row and rewritten JSON against the
    manifest. While the gate is off, old public URLs remain available for
    continuity; this is expected, not completion.
-5. Perform the required private R2/Worker readback before closing the bridge.
+7. Perform the required private R2/Worker readback before closing the bridge.
    Every ledger object must HEAD with
    the expected metadata; private metadata HEAD/content GET must deny anonymous
    access and succeed with the credential bound to that exact account. The same
    credential must return 404 for another account and 401 on unrelated routes.
    Content must match the expected MIME, length, and SHA-256. Owner/admin is
    break-glass compatibility, not the accounting runtime credential.
-6. Only after Steps 1–5 have recorded readback may KEN separately approve
+8. Only after Steps 1–7 have recorded readback may KEN separately approve
    setting `INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED=true` and deploying that exact
    configuration. Re-read the deployed gate value and exact Worker version
    before any purge. This closes the public origin route first, so an old URL
    cannot be requested and re-cached during the cache invalidation window.
-7. Purge only the URLs listed in `purge.json`, in approved bounded batches,
-   **after** Step 6. Save provider request/result receipts. No wildcard, prefix,
+9. Purge only the URLs listed in `purge.json`, in approved bounded batches,
+   **after** Step 8. Save provider request/result receipts. No wildcard, prefix,
    or zone purge.
-8. Run `readback.json` only after the Step 6 gate/version receipt and Step 7
+10. Run `readback.json` only after the Step 8 gate/version receipt and Step 9
    successful exact-URL purge receipt. Verify every legacy public URL returns
    404, and repeat the account-bound private HEAD/GET plus the negative auth
    matrix and MIME/length/SHA-256
