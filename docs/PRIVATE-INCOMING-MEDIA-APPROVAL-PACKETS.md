@@ -1070,6 +1070,111 @@ entry set, owner-only modes, file sizes and hashes, two-hour half-open approval
 window, aggregate counts and bytes, request bounds, and raw-digest hash match
 without reading the detailed digest contents or making any provider request.
 
+## Packet P0 — frozen source-provenance aggregate, awaiting KEN approval
+
+This packet resolves only the historical source-provenance join-health blocker
+for the 77 A0-R4 rows. It does not create a backfill manifest and does not mark
+any row verified. The historical code path proves that legacy image rows could
+only be created for a 1:1 `user` source: group and room events returned before
+the old R2 write and `messages_log` insert. Because the raw webhook source was
+not persisted and `friends.line_account_id` is mutable, P0 describes the result
+as `legacy_user_path_reconstruction`, never as a raw event snapshot.
+
+```text
+Approval ID: 5229-P0-20260901
+Mode: CF-D1-FROZEN-SOURCE-PROVENANCE-AGGREGATE-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: exactly two hours after KEN's explicit approval
+
+Immutable anchors:
+- Accounting PR head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation: 63635fa00a992301daa8422d9401c6479de13246
+- Harness implementation: 07c4f27a5694ed50fe07bb09c48f28820d7c4833
+- C0-R1 receipt parent: dcd9b044ddc2f37ee68cc21c4e8f06808a2cc608
+- historical release anchor: 900440558232790c50839f7416ac8db7b3133414
+- historical webhook.ts SHA-256:
+  b24e179a6ca688620e6083dfb6fd1a21f6b4d6a9e0c83272a4498a35ec434af8
+- historical incoming-image.ts SHA-256:
+  63119a36550fc63e1d1e2de877b47e857fe44d08b1b60779cc199d32b4cb27a6
+- collector SHA-256:
+  a1f6182e173c0da8333d71d27988cc61ee40cba6c74cb7e495174c76a2ee18db
+- collector test SHA-256:
+  9e8e0c368e00248d58ee572f31266c3386e0568604066186362f1608820aa75f
+- A0-R4 d1-candidates.json SHA-256:
+  06998bb58bd04fe1d64b437c9770c6a7ee9d85684c5a3b6791dd4e6a372e2cf9
+- A0-R4 sanitized-summary.json SHA-256:
+  d6c6394e606ce60282d5a0c3442c534704208d2af5b3eed4f23b0119e3bc24fd
+
+Exact provider target:
+- Cloudflare account: 67907592fdf596376bc2097e14a6563a
+- D1 database: line-harness / c19584d7-e9f1-4d46-83c5-6c0ba96561d1
+- endpoint: POST /client/v4/accounts/67907592fdf596376bc2097e14a6563a/
+  d1/database/c19584d7-e9f1-4d46-83c5-6c0ba96561d1/query
+
+Frozen input and query contract:
+- source directory must remain real mode-0700 and both hash-bound sources real
+  mode-0600; N/E/B must remain 77/0/27,625,839
+- all 77 rows must remain record_type=message, carry nonempty log/friend/user/
+  authoritative-account/content values, and retain historical log account null
+- one CTE/SELECT statement only; no PRAGMA or write statement
+- the 77 frozen tuples (log ID, friend ID, LINE user ID, authoritative account,
+  exact JSON preimage) are encoded in one bound JSON parameter; they never
+  appear in SQL, stdout, the packet, or the sanitized result
+- SQL bytes=2,076; bound parameters=1; bound JSON bytes=39,348
+- the one aggregate result must report exactly 77 for every field:
+  frozen_rows, message_rows, message_shape_rows, source_user_rows,
+  historical_account_null_rows, friend_rows, friend_identity_rows,
+  account_fk_rows, fully_matched_rows
+- every aggregate value must be a JSON integer number exactly equal to 77;
+  string coercion is forbidden
+
+Transport and ceilings:
+- direct node:https, application headers Authorization, Content-Type,
+  Accept-Encoding: identity, and Content-Length only; agent=false
+- exactly one D1 query POST maximum, provider total=1, provider writes=0
+- no retry, redirect, GET, R2, Worker, account, or other D1 request
+- response status 200, application/json, identity/absent encoding, success=true,
+  exactly one statement result and exactly one aggregate row
+- application response-body ceiling=65,536 bytes with a one-byte sentinel;
+  the response is consumed through bounded paused-mode reads
+- the active half-open approval window is checked before the POST and after the
+  response; an absolute expiry timer aborts an in-flight request
+
+Required final local preflight before execution:
+- focused tests 12/12; all script tests 76/76; standalone TypeScript check pass
+- --preflight-only result exactly:
+  status=preflight_passed, source_count=77, token_present=true,
+  provider_requests=0, local_writes=0
+- preflight-only must leave this output path absent:
+  /Users/kensmba/.line-harness-5229-P0-20260901
+
+Approved execution after all hashes/heads/modes are rechecked:
+- derive approval_received from KEN's explicit approval and set
+  approval_expires=approval_received+2h
+- invoke exactly once:
+  pnpm exec tsx scripts/d1-source-provenance-5229.ts
+    --approval-received <exact ISO-8601 approval instant>
+    --approval-expires <exact instant plus two hours>
+- exclusively create one mode-0700 directory:
+  /Users/kensmba/.line-harness-5229-P0-20260901
+- write exactly one mode-0600 sanitized-summary.json on success or safe STOP;
+  pin directory device/inode and exact entry set before and after the write
+- retain the owner-only evidence unchanged until the backfill is completed or
+  abandoned; relocation, permission broadening, upload, or deletion requires a
+  separate approval
+
+STOP before provider access on any head/script/test/source/token/path/preflight
+drift. STOP after the first provider, response, aggregate, expiry, or local
+write discrepancy with no retry. Customer identifiers, tuple values, SQL
+parameters, token, token hash, Authorization header, and response error bodies
+must never be printed.
+
+Writes and actions not authorized: D1 migration/INSERT/UPDATE, manifest
+verified=true, R2 HEAD/GET/LIST/mutation, Worker/account/secret reads, deploy,
+token/secret/credential change, cache purge, restart, feature enablement,
+Drive write, LINE send, PR merge.
+```
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
