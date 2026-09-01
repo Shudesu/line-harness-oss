@@ -896,6 +896,124 @@ and every production mutation remain separate later packets. The exposed
 management credential may be used once only for these exact 77 GETs during the
 two-hour window; rotation/revocation remains a separate mutation approval.
 
+### C0 execution receipt — STOP before provider access
+
+KEN explicitly approved `5229-C0-20260901` for Harness
+`808d1d9305065af04ccee21236438de0c6815d4f` and packet SHA-256
+`2522f10e84c50968c0b9c953961f8606e8b35efc4bc224c18dffe91df0da3841`.
+The local executor stopped during its first source-path assertion because it
+passed the label `source_directory` to a predicate that recognized only the
+exact label `directory`; the real mode-0700 source directory was consequently
+misclassified as a file. The predicate bug occurred before token parsing,
+output-directory creation, or any provider request.
+
+```text
+Status: STOP
+Stop reason: source_directory_type
+Provider GET / successful GET / retry: 0/0/0
+Accepted/application-read bytes: 0/0
+Provider writes: 0
+R2 HEAD/LIST; D1; Worker requests: 0/0; 0; 0
+Local evidence directories/files created: 0/0
+```
+
+No C0 result may be reused. The path
+`/Users/kensmba/.line-harness-5229-C0-20260901` remains absent. A new approval
+and evidence path are required before the first R2 object GET.
+
+## Packet C0-R1 — hash-bound content collector, awaiting KEN approval
+
+This is a new approval boundary, not a C0 retry under the old approval. It
+inherits C0's exact account/bucket, A0-R4 source hashes, N/E/B, 77 sequential
+GET/no-retry/in-flight-one rule, per-object size+1 and aggregate B+1 sentinel
+ceilings, metadata/body verification, evidence schema, STOP rules, retention,
+generic A/A1 separation, and every write prohibition. It changes only the
+local executor from an inline predicate to the hash-bound tested collector and
+uses a new exclusive evidence path. Approval expires exactly two hours after
+KEN's explicit approval.
+
+```text
+Approval ID: 5229-C0-R1-20260901
+Mode: CF-R2-EXACT-CONTENT-GET-AND-LOCAL-DIGEST-EVIDENCE-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+
+Immutable anchors:
+- Accounting PR head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation: 63635fa00a992301daa8422d9401c6479de13246
+- Harness implementation: 07c4f27a5694ed50fe07bb09c48f28820d7c4833
+- C0 packet/result parent head: 808d1d9305065af04ccee21236438de0c6815d4f
+- C0 packet SHA-256:
+  2522f10e84c50968c0b9c953961f8606e8b35efc4bc224c18dffe91df0da3841
+- collector path: scripts/r2-content-evidence-5229.ts
+- collector SHA-256:
+  db6901bd9e9da5919fcf99e6d9b451d7d694334af4895475ba908def32b5c1a2
+- collector test SHA-256:
+  88c9a698b0f6c79ef8845ac319e064d56885840b340609bb67b02787a5b2a1db
+- all A0-R4 source paths/hashes/modes: exactly as C0
+
+Fixed collector scope:
+- exact account ID 67907592fdf596376bc2097e14a6563a
+- exact bucket line-harness-images
+- exact N=77, E=0, B=27,625,839; largest object=785,458
+- token locator only:
+  /Users/kensmba/.line-harness/.env.local, real mode-0600 non-symlink,
+  exactly one nonempty CLOUDFLARE_API_TOKEN assignment
+- token value, Authorization header, object bytes, and customer identifiers are
+  never printed; preflight emits token_present boolean only
+- source kind is now a closed `directory | file` enum and the A0-R4 source is
+  asserted with the exact `directory` member before token parsing
+
+Required local preflight before approval execution:
+- focused Vitest: 12/12 pass, including source directory/file/symlink,
+  approval half-open interval boundaries, pinned output identity/entry-set
+  drift, strict GET headers, valid/oversize body ceilings, sequential STOP,
+  preflight zero-write, 77-item completion, and STOP residual evidence
+- standalone TypeScript no-emit check: pass
+- collector --preflight-only result must be exactly:
+  status=preflight_passed, source_count=77, total_bytes=27,625,839,
+  token_present=true, provider_requests=0, local_writes=0
+- preflight-only never creates the C0-R1 output path or opens/calls a provider
+  connection/request
+
+Approved execution after all hashes/heads are rechecked:
+- derive approval_received from KEN's explicit approval and
+  approval_expires=approval_received+2h; the collector rejects every other
+  window length, rejects execution before approval_received, checks the active
+  window before each GET, and aborts an in-flight GET on an absolute expiry
+  timer; the response end callback rechecks expiry before accepting success
+- invoke exactly once:
+  pnpm exec tsx scripts/r2-content-evidence-5229.ts
+    --approval-received <exact ISO-8601 approval instant>
+    --approval-expires <exact instant plus two hours>
+- exclusive output path changes to:
+  /Users/kensmba/.line-harness-5229-C0-R1-20260901
+- C0 and all A0 evidence paths remain unchanged
+
+Collector/provider bounds:
+- direct node:https only; application headers Authorization and
+  Accept-Encoding: identity; transport-generated Host/Connection only
+- exact once-encoded approved key path; no redirect handling and no automatic
+  retry; one fresh connection per GET, maximum 77 total connections, and
+  maximum one connection/request in flight
+- response bodies stay in paused mode and use bounded read(n); the application
+  receives at most the remaining per-object size+1 sentinel allowance rather
+  than an arbitrary transport chunk
+- the exclusive output directory is pinned by device/inode and its exact entry
+  set is revalidated before and after every GET and completion write; identity,
+  mode, symlink, or unexpected-entry drift is immediate STOP
+- completion requires exactly 77 HTTP 200 responses and B accepted bytes
+- C0's Content-Type, optional Content-Length, strong quoted ETag, identity
+  encoding, byte count, SHA-256, JPEG SOI/EOI, null serialization, canonical
+  digest, two-file wx/write-order/verification, and partial-write rules apply
+- provider GET maximum=77; provider writes, R2 HEAD/LIST, D1/Worker/account
+  reads, deploy, migration, token/secret/credential change, purge, restart,
+  feature enablement, LINE send, PR merge remain exactly 0
+
+STOP before provider access on any head/script/test/source/preflight/token/path
+drift. STOP on the first provider/header/body/byte/write discrepancy with no
+retry. Partial results and the old C0 approval are never reused.
+```
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
