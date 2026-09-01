@@ -1259,6 +1259,107 @@ No D1 migration/write, deploy, token/secret/credential change, R2 mutation,
 cache purge, restart, feature enablement, Drive write, LINE send, or PR merge
 occurred.
 
+## Packet B2 — exact D1 migrations 071/072, awaiting KEN approval
+
+This packet authorizes only the two additive private-media schema migrations
+and their two checksum-ledger rows. It does not authorize the 77-row manifest
+backfill, a credential issue/rotation, deploy, gate change, purge, accounting
+feature enablement, Drive write, or LINE send. Approval expires exactly two
+hours after KEN's explicit approval.
+
+```text
+Approval ID: 5229-B2-20260901
+Mode: CF-D1-EXACT-MIGRATIONS-071-072-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: exactly two hours after KEN's explicit approval
+
+Immutable anchors:
+- Accounting PR head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation: 63635fa00a992301daa8422d9401c6479de13246
+- Harness implementation: 07c4f27a5694ed50fe07bb09c48f28820d7c4833
+- M0 receipt parent: d846e1d5a1e580cc39a74d9db5cafb3d52c7ab22
+- A0-R4 sanitized-summary SHA-256:
+  d6c6394e606ce60282d5a0c3442c534704208d2af5b3eed4f23b0119e3bc24fd
+- migration 071 SHA-256:
+  c65203ce28e750b6cf612ad17029bc195fd2e6253a379cf62e642e3c5a8ae5d6
+- migration 072 SHA-256:
+  be4b1730fadd497d0a0d9677bda8626d174aaa08946d1c27e9e68e1549049937
+- exact executor SHA-256:
+  3cafd12fc29f39a95ecf105bb9cf37b5368754a6d51e6a4e13e5f18b19e8357b
+- executor test SHA-256:
+  558ca6ab9205c9a05b7bf72edb13a9ec1ceca85bf4d7a03fe51ce525d3966d83
+
+Exact provider target:
+- Cloudflare account: 67907592fdf596376bc2097e14a6563a
+- D1 database: line-harness / c19584d7-e9f1-4d46-83c5-6c0ba96561d1
+- endpoint: POST /client/v4/accounts/67907592fdf596376bc2097e14a6563a/
+  d1/database/c19584d7-e9f1-4d46-83c5-6c0ba96561d1/query
+
+Required final local preflight before provider access:
+- recheck both worktree heads, exact executor/test/migration hashes, source
+  modes, and that M0 artifacts remain unchanged
+- focused executor tests and all script tests pass; standalone TypeScript pass
+- invoke `pnpm exec tsx scripts/d1-migrations-5229.ts --preflight-only`
+- result exactly: approval_id=5229-B2-20260901,
+  status=preflight_passed, migration_count=2, token_present=true,
+  provider_requests=0, provider_writes=0, local_writes=0
+- `/Users/kensmba/.line-harness-5229-B2-20260901` remains absent
+
+Approved write request — exactly one transactional D1 batch:
+1. assert `_line_harness_migrations`, `incoming_media`,
+   `idx_incoming_media_status_updated`,
+   `incoming_media_service_credentials`, and
+   `idx_incoming_media_service_credentials_account_active` are all absent
+2. create the exact `_line_harness_migrations` checksum ledger
+3. assert both exact migration ledger names are absent
+4. execute the exact 071 CREATE TABLE then CREATE INDEX as separate statements
+5. assert both 071 schema objects exist
+6. insert exactly one 071 `sha256:<hash>` ledger row and assert changes()=1
+7. execute the exact 072 CREATE TABLE then CREATE INDEX as separate statements
+8. assert both 072 schema objects exist
+9. insert exactly one 072 `sha256:<hash>` ledger row and assert changes()=1
+
+The request body contains 13 ordered batch statements. Every absence/schema/
+change assertion raises an SQL error on mismatch. Cloudflare D1 batch is
+transactional; any statement failure aborts and rolls back the entire sequence.
+Do not split, resume, retry, or run either migration separately.
+
+Required immediate readback — exactly one read-only D1 batch:
+- exactly four new sqlite_master objects with normalized SQL equal to the two
+  hash-bound migration files
+- exactly two checksum-ledger rows with their `sha256:<hash>` values
+- exact ordered columns/defaults/PK flags for both tables
+- exact line_accounts foreign keys and ON DELETE CASCADE
+- exact explicit/automatic index sets and exact index column orders
+- ten readback statements total; every mismatch is STOP
+
+Transport and evidence limits:
+- direct node:https POST only; Authorization, Content-Type,
+  Accept-Encoding: identity, and Content-Length application headers only;
+  agent=false, no redirect, no retry
+- response body ceiling 65,536 bytes with one-byte sentinel
+- provider request maximum=2: one transactional write batch and one read-only
+  readback batch; provider write batches=1, retry=0
+- recheck the active half-open approval interval before the first request,
+  between requests, and after readback; abort in-flight requests at expiry
+- create only `/Users/kensmba/.line-harness-5229-B2-20260901` mode 0700
+  and exactly one mode-0600 sanitized-summary.json
+- receipt may contain only approval/timestamps, migration names/checksums,
+  sanitized schema/ledger readback, request counts, and cf-ray values; never
+  token/header/error body/customer identifiers
+
+STOP before provider access on any head/hash/source/token/output/preflight
+drift. STOP with no retry on the first provider/response/assertion/readback/
+expiry/evidence discrepancy. A failed transactional batch rolls back itself.
+After a successful commit, the additive tables and ledger rows remain; no
+automatic DROP is authorized.
+
+Writes/actions not authorized: manifest backfill INSERT/UPDATE, credential
+insert/revoke, deploy, Worker setting or secret change, R2 HEAD/GET/LIST/write/
+delete, cache purge, restart, feature enablement, Drive write, LINE send, PR
+merge. All have expected count zero.
+```
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
