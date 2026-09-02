@@ -23,6 +23,15 @@ function isBenignSqliteError(error) {
   return error instanceof Error && BENIGN_SQLITE_ERROR.test(error.message);
 }
 
+/**
+ * Windows の checkout (core.autocrlf) では schema.sql / migrations が CRLF になり、
+ * sqlite_master 経由で CR が bootstrap.sql に混入する。
+ * 生成物も比較対象も LF に揃え、checkout 設定に依存しないようにする。
+ */
+function normalizeEol(text) {
+  return text.replace(/\r\n/g, "\n");
+}
+
 function splitSqlStatements(sql) {
   return sql
     .split(/;\s*(?:\r?\n|$)/)
@@ -145,7 +154,7 @@ function buildBootstrapSql() {
     const builtinSeeds = buildBuiltinAutoReplySeeds(db);
 
     return {
-      sql: `${header}${body}${builtinSeeds ? `\n\n${builtinSeeds}` : ""}\n`,
+      sql: normalizeEol(`${header}${body}${builtinSeeds ? `\n\n${builtinSeeds}` : ""}\n`),
       meta: {
         includedMigrations: migrationFiles,
         migrationCount: migrationFiles.length,
@@ -170,10 +179,10 @@ if (wantsStdout) {
 
 if (wantsCheck) {
   const current = existsSync(BOOTSTRAP_PATH)
-    ? readFileSync(BOOTSTRAP_PATH, "utf8")
+    ? normalizeEol(readFileSync(BOOTSTRAP_PATH, "utf8"))
     : "";
   const currentMeta = existsSync(BOOTSTRAP_META_PATH)
-    ? readFileSync(BOOTSTRAP_META_PATH, "utf8")
+    ? normalizeEol(readFileSync(BOOTSTRAP_META_PATH, "utf8"))
     : "";
   const nextMeta = `${JSON.stringify(generated.meta, null, 2)}\n`;
   if (current !== generated.sql || currentMeta !== nextMeta) {
