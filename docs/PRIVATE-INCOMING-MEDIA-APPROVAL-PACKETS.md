@@ -1621,7 +1621,7 @@ change, R2 operation, purge, restart, feature enablement, Drive write, LINE
 send, PR merge, or rollback occurred. This approval is consumed and must not
 be retried.
 
-## Packet B1-D0 — one public runtime version read, awaiting KEN approval
+## Packet B1-D0 — one public runtime version read, completed below
 
 This diagnostic packet resolves only the public build-identity field that
 caused B1 to stop. It does not use a Cloudflare token or read settings,
@@ -1674,6 +1674,155 @@ After D0, build a new isolated B1-R1 artifact with its Admin/LIFF identity set
 to the observed production values, repeat the deterministic two-build and
 offline test/audit gates, and create a separately hash-bound B1-R1 deploy
 packet. D0 itself never authorizes a deploy or reuse of the consumed B1 packet.
+
+### B1-D0 execution receipt — COMPLETED read, legacy identity remains unknown
+
+KEN approved `5229-B1-D0-20260903` for Harness
+`f4f5ae28a1f4b6615b9cb2383803fb0cbb16c88e` and packet SHA-256
+`963cbdecbb383e973f922c01dbcdbe85bcdeda1e4ea468e625e54971049e733e`.
+The approval was recorded at `2026-09-02T23:19:05Z` and expires at
+`2026-09-03T01:19:05Z`.
+
+The exact unauthenticated GET began at `2026-09-02T23:20:22.512Z` and
+completed at `2026-09-02T23:20:22.626Z`. It returned HTTP 200 with the exact
+five-field JSON shape and passed the packet's type, format, size, encoding,
+and timestamp checks. Request count was 1, retry was 0, and writes were 0.
+
+```text
+version: 0.0.0-dev
+worker_hash: sha256:0000000000000000000000000000000000000000000000000000000000000000
+admin_hash:  sha256:0000000000000000000000000000000000000000000000000000000000000000
+liff_hash:   sha256:0000000000000000000000000000000000000000000000000000000000000000
+released_at: 1970-01-01T00:00:00Z
+```
+
+These values are the repository's legacy source-build sentinels, not measured
+Admin/LIFF asset hashes. The public endpoint returns embedded Worker constants;
+it does not hash the currently served asset trees. D0 therefore completed its
+approved request but did **not** establish production asset byte identity.
+No local evidence file was created, as required by the approved packet. No
+deploy, migration/backfill, credential/secret/token change, R2 access, Pages
+asset access, purge, restart, feature enablement, Drive write, LINE send, PR
+merge, or rollback occurred. B1-R1 is not yet authorized.
+
+## Packet B1-D1 — exact asset-topology read-only attestation, awaiting KEN approval
+
+This is a new approval boundary, not a D0 retry and not a B1 deploy approval.
+It records only immutable/provider asset-topology identifiers needed to redesign
+B1-R1 without presenting the legacy zero sentinels as asset-integrity hashes.
+The request set follows Cloudflare's documented read-only Worker deployment,
+version-detail, settings, and Pages project APIs. It deliberately does not
+download Worker code or any Pages/Worker asset bytes.
+
+```text
+Approval ID: 5229-B1-D1-20260903
+Mode: CF-WORKER-AND-PAGES-ASSET-TOPOLOGY-READ-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: exactly two hours after KEN's explicit approval
+
+Immutable anchors:
+- Harness D0 execution/result parent:
+  f4f5ae28a1f4b6615b9cb2383803fb0cbb16c88e
+- D0 packet SHA-256:
+  963cbdecbb383e973f922c01dbcdbe85bcdeda1e4ea468e625e54971049e733e
+- B1 STOP receipt SHA-256:
+  af2e06bbcf1358d5128836cb5729b0b49e8a2eaa1a9cbcd54e08ca2f0361751b
+- v0.19 backport head:
+  9f3c6c3ac98d0777f8e7354f807a6af4ab642b18
+- Accounting PR head:
+  ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- exact executor:
+  scripts/worker-b1-d1-asset-topology-5229.ts
+- executor SHA-256:
+  9772920f12468b485edfab91286ed099b5da00b839df73b35bb94ec5c00a1dfb
+- exact test:
+  scripts/worker-b1-d1-asset-topology-5229.test.ts
+- test SHA-256:
+  5239776bafe52ace4f48cb80104ddf7953086aec04929645f9f0ef85a0fea8a6
+
+Exact production target and required initial state:
+- Cloudflare account: 67907592fdf596376bc2097e14a6563a
+- Worker script: line-harness
+- active deployment:
+  7b3bb319-e618-4f57-a520-cd33f43115e5
+- sole 100%-traffic active version:
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7
+- existing local token file only; no token creation, permission change,
+  replacement, rotation, or output is permitted
+
+Required zero-provider preflight:
+- planning, backport, and Accounting worktrees are clean at the approved exact
+  heads before the token or provider is read
+- the executor itself requires executor/test to be regular non-symlink
+  mode-0644 files after the exact-head/clean-state checks and before token read;
+  the offline preflight commands separately verify their exact hashes above
+- focused tests pass 5/5, strict standalone TypeScript passes, canonical
+  script tests pass, and git diff check passes
+- invoke exactly:
+  pnpm exec tsx scripts/worker-b1-d1-asset-topology-5229.ts
+    --preflight-only
+    --approved-harness-head <exact commit in KEN approval>
+- require status=preflight_passed, token_present=true, and provider requests,
+  provider writes, local writes all equal 0
+- /Users/kensmba/.line-harness-5229-B1-D1-20260903 remains absent
+
+Approved HTTPS GETs, in exact order, redirect=0 and retry=0:
+1. Worker deployments; require the exact active deployment/version above and
+   exactly one version at 100%
+2. exact active Worker version detail; retain only the script etag, the
+   canonical SHA-256 of the `ASSETS` binding object, and whether that object
+   exposes any resource-identity field beyond name/type
+3. Worker settings; read in memory only the exact `ADMIN_PAGES_PROJECT`,
+   `LIFF_PAGES_PROJECT`, and `ASSETS` bindings; require exact types and safe
+   project-name grammar
+4. Admin Pages project derived from the exact settings binding; retain only a
+   SHA-256 of the project name and its canonical production deployment ID
+5. only if `LIFF_PAGES_PROJECT` is nonempty, the corresponding LIFF Pages
+   project; retain the same two fields; otherwise record topology=worker_assets
+6. repeat Worker deployments and require byte-equivalent sanitized active
+   deployment/version identity to the first read
+
+Transport and request ceilings:
+- direct node:https to api.cloudflare.com only, TLS port 443, agent=false,
+  Authorization: Bearer from the protected local token file,
+  Accept: application/json, Accept-Encoding: identity
+- status must be 200, content type application/json, content encoding absent or
+  identity, each body at most 262,144 bytes, connect/total timeout at most 20s
+- Cloudflare GET total is exactly 5 when LIFF topology is Worker Assets or
+  exactly 6 when LIFF uses Pages; all other request counts are invalid
+- no automatic retry, redirect, pagination, alternate endpoint, or fallback
+
+Sanitized local evidence:
+- create exclusively one mode-0700 directory:
+  /Users/kensmba/.line-harness-5229-B1-D1-20260903
+- create exclusively one mode-0600 regular non-symlink file:
+  sanitized-summary.json
+- retain only approval times/head, active deployment/version, script etag,
+  ASSETS binding digests/identity-availability boolean, LIFF topology, hashed
+  project names, canonical Pages deployment IDs, timestamps, request counts,
+  and zero-valued forbidden-action counters
+- never retain or print token/header, raw provider body, raw settings/version
+  resource, project name/URL/domain/alias, build config, environment value,
+  binding text, secret, customer identifier, image path, or asset content
+
+STOP with no further request and no retry on any head/clean-state/mode/hash/
+approval/token/status/type/encoding/schema/ID/topology/permission/size/time
+failure, unexpected LIFF state, or active deployment drift. A partial discovery
+does not authorize an inferred topology. A failed run creates no sanitized
+success receipt and cannot be retried under the consumed approval.
+
+Writes/actions authorized: 0. Worker content GET, Pages/Worker asset GET,
+deploy, migration/backfill, credential/secret/token change, R2 operation,
+purge, restart, feature enablement, Drive write, LINE send, PR merge, and
+rollback are forbidden.
+```
+
+After a completed D1, B1-R1 may be rebuilt with Admin/LIFF fields explicitly
+classified as inherited `legacy_unknown` sentinels, not byte hashes. Its
+separate deploy packet must pin the exact Worker resource and Pages deployment
+identities before and after the code-only PUT, preserve the full settings
+digest, and keep every non-code action forbidden. D1 itself never authorizes
+that artifact build to be deployed.
 
 ## Packet A — Cloudflare read-only preflight only
 
