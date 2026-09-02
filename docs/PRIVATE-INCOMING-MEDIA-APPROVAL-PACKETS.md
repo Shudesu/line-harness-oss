@@ -1582,6 +1582,99 @@ authorization behavior; it does not create a service credential or backfill
 the 77 historical rows, so authenticated 200 private-media readback remains a
 later packet.
 
+### B1 execution receipt — STOP before mutation
+
+KEN approved `5229-B1-20260902` for Harness
+`90da72f145d8f7cdb293fcfcb087aae55720b62c` and packet SHA-256
+`284471fdf5f003583d61cf8c306fcaf8c13a1d02f4a63ae85e56ec1acaafbcbb`.
+The approval was recorded at `2026-09-02T22:51:43Z` and expires at
+`2026-09-03T00:51:43Z`.
+
+All local exact-head/hash/mode/clean-state checks passed. Focused tests passed
+9/9, canonical script tests passed 102/102, strict standalone TypeScript and
+diff checks passed, and the zero-write executor preflight returned the exact
+approved artifact hash, byte count, and Harness head.
+
+Execution then stopped at `pre_version_drift` after the four pre-write
+Cloudflare metadata GETs and one public runtime `/admin/version` GET. The
+deployed version's public build identity did not equal the packet's assumed
+unchanged Admin/LIFF identity. The receipt deliberately does not say which
+public field differed, so no value is inferred from this STOP.
+
+```text
+Status: STOP before mutation
+Started/completed UTC:
+  2026-09-02T22:52:14.194Z / 2026-09-02T22:52:15.565Z
+Cloudflare metadata reads: 4
+Runtime version reads: 1
+Worker content PUT: 0
+Provider total / retry: 5 / 0
+Rollback required/performed: false / false
+```
+
+The owner-only evidence directory
+`/Users/kensmba/.line-harness-5229-B1-20260902` is mode 0700 and contains
+exactly one mode-0600 `sanitized-summary.json`, SHA-256
+`af2e06bbcf1358d5128836cb5729b0b49e8a2eaa1a9cbcd54e08ca2f0361751b`.
+It is retained unchanged. No deploy, D1 write/backfill, credential/secret
+change, R2 operation, purge, restart, feature enablement, Drive write, LINE
+send, PR merge, or rollback occurred. This approval is consumed and must not
+be retried.
+
+## Packet B1-D0 — one public runtime version read, awaiting KEN approval
+
+This diagnostic packet resolves only the public build-identity field that
+caused B1 to stop. It does not use a Cloudflare token or read settings,
+bindings, D1, R2, customer identifiers, image paths, or content. Its result is
+needed to stamp a truthful code-only B1-R1 artifact whose Admin/LIFF hashes
+describe the assets that will actually remain deployed.
+
+```text
+Approval ID: 5229-B1-D0-20260903
+Mode: PUBLIC-WORKER-VERSION-READ-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: exactly two hours after KEN's explicit approval
+
+Immutable anchors:
+- Harness source/result parent:
+  90da72f145d8f7cdb293fcfcb087aae55720b62c
+- original B1 packet SHA-256:
+  284471fdf5f003583d61cf8c306fcaf8c13a1d02f4a63ae85e56ec1acaafbcbb
+- B1 STOP receipt SHA-256:
+  af2e06bbcf1358d5128836cb5729b0b49e8a2eaa1a9cbcd54e08ca2f0361751b
+- exact origin/path:
+  https://line-harness.family8office.workers.dev/admin/version
+
+Allowed request:
+- exactly one unauthenticated HTTPS GET to the exact origin/path above
+- headers explicitly set by the command: Accept: application/json and
+  Accept-Encoding: identity; no Authorization, Cookie, conditional, or Range
+  header
+- TLS only, redirects=0, retry=0, connect timeout=10 seconds,
+  total timeout=20 seconds, accepted body maximum=8,192 bytes
+- require HTTP 200 and JSON object with exactly the five string fields:
+  version, worker_hash, admin_hash, liff_hash, released_at
+- version must be a nonempty printable version, all three hashes must match
+  sha256:[0-9a-f]{64}, and released_at must parse as an ISO-8601 instant
+
+Required sanitized output:
+- the five public build fields above, request count=1, retry=0, and timestamp
+- no response headers, request headers, cookies, token, settings, binding,
+  D1/R2 value, customer identifier, image URL, or body beyond those fields
+- no local evidence directory or file is created by this packet
+
+STOP with no second request on timeout, redirect, non-200, body overflow,
+invalid content type/encoding/JSON/schema/hash/time, or changed exact origin.
+Writes/actions authorized: 0. Deploy, migration/backfill, credential/secret/
+token change, R2 access, purge, restart, feature enablement, Drive write, LINE
+send, PR merge, and rollback are forbidden.
+```
+
+After D0, build a new isolated B1-R1 artifact with its Admin/LIFF identity set
+to the observed production values, repeat the deterministic two-build and
+offline test/audit gates, and create a separately hash-bound B1-R1 deploy
+packet. D0 itself never authorizes a deploy or reuse of the consumed B1 packet.
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text
