@@ -1402,6 +1402,186 @@ change, cache purge, restart, feature enablement, Drive write, LINE send, and
 PR merge all remained zero. The additive schema is retained; no rollback or
 DROP was authorized or attempted.
 
+## Packet B1 — exact v0.19 code-only Worker deploy, awaiting KEN approval
+
+This packet authorizes one immediate Worker code change and the bounded reads
+needed to prove that the active version changed while configuration and the
+legacy public bridge did not. It deliberately uses Cloudflare's dedicated
+script-content endpoint rather than the full Worker upload endpoint. Cloudflare
+documents this endpoint as putting script content without touching config or
+metadata; therefore the request does not reconstruct or resend bindings,
+assets, compatibility settings, routes, or secrets.
+
+Official authorities retrieved 2026-09-02:
+
+- `https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/content/methods/update/`
+- `https://developers.cloudflare.com/changelog/post/2025-09-03-new-workers-api/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/`
+- `https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/`
+
+```text
+Approval ID: 5229-B1-20260902
+Mode: CF-WORKER-EXACT-CODE-CONTENT-IMMEDIATE-DEPLOY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: exactly two hours after KEN's explicit approval
+
+Immutable source and artifact anchors:
+- Accounting PR head:
+  ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- Accounting implementation:
+  63635fa00a992301daa8422d9401c6479de13246
+- Harness planning parent:
+  534ec2c980a01c7c09738cfdc9d9b236c351783e
+- v0.19 backport source head:
+  9f3c6c3ac98d0777f8e7354f807a6af4ab642b18
+- exact executor SHA-256:
+  d2d053b3cf472ba068d2381f63daa6175d9dd584901922ab4ce50b8c6c1da195
+- executor test SHA-256:
+  f21c9e30119d00a7ee184ca674f301d596c68a00855758bc5dec462950d5dcbd
+- exact single-file artifact:
+  /Users/kensmba/.line-harness-5229-B1-BUILD-20260902/
+  apps/worker/dist-release-final/index.js
+- artifact mode/bytes/SHA-256:
+  0600 / 1,350,194 /
+  1355c7bdffc73dd20bc082fd439a1750fd8b7d5831291c1635cd71396c946de4
+- target runtime version:
+  0.19.0-5229.b1.9f3c6c3
+- target embedded Worker hash:
+  sha256:6420c520444baa670973197f6c336b23a511e9dcd8fdbdf24082b61ce24c2b1e
+- unchanged Admin hash:
+  sha256:43e9888fa37af2db1ecdd2f135029ddb570279ebf07373b47d6cb5e62a25ac6c
+- unchanged LIFF hash:
+  sha256:350e651bacbede38ea9f197d0ae6e29903c5b3b219daccf4c62566310cc7ce17
+- protected manifest SHA-256:
+  cf35a1045040a265019a5afad8c2cefb8994edba684eeaa5dd2fad0b17b1663e
+- completed B2 receipt SHA-256:
+  5f393930c545582d656c0068ee1d854a01ef8d60e66e1d04e4dca49a0beda95f
+
+Exact production target and expected before-state:
+- Cloudflare account: 67907592fdf596376bc2097e14a6563a
+- Worker script: line-harness
+- Worker origin: https://line-harness.family8office.workers.dev
+- latest active deployment:
+  7b3bb319-e618-4f57-a520-cd33f43115e5
+- single 100%-traffic active version:
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7
+- compatibility date/flags: 2024-12-01 / [nodejs_compat]
+- binding shape: exactly the 20 name/type pairs fixed by A0-R4; it includes
+  DB, IMAGES, ASSETS, and the eight secret-name bindings, and does not include
+  INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED
+- script workers.dev subdomain enabled=true
+- migration ledger contains exact 071/072 names and sha256 checksums from B2
+- pre-deploy /admin/version has the pinned Admin/LIFF hashes and is not already
+  the target B1 version
+
+Required final local preflight before any provider request:
+- planning and backport worktrees are clean at the approved exact heads
+- the executor itself obtains and compares the approved Harness head passed on
+  the execution command, the exact v0.19 backport and Accounting heads, all
+  three clean worktree states, executor/test modes, test hash, and B2 receipt
+  entry set/modes/hash before it reads the artifact, token, or provider
+- executor/test, artifact, manifest, and B2 receipt hashes/modes match
+- focused executor tests 9/9, canonical `pnpm test:scripts` 102/102, strict standalone
+  TypeScript check, and git diff check pass
+- invoke exactly:
+  pnpm exec tsx scripts/worker-b1-deploy-5229.ts --preflight-only
+- result exactly includes status=preflight_passed,
+  artifact_sha256=1355c7bd..., artifact_bytes=1350194,
+  planning_head=<approved exact Harness head>, token_present=true,
+  provider_requests=0, provider_writes=0, local_writes=0
+- /Users/kensmba/.line-harness-5229-B1-20260902 remains absent
+
+Approved pre-write reads, in exact order:
+1. GET Worker deployments; require the exact prior deployment/version and one
+   100% version
+2. GET Worker settings; require exact compatibility and 20-binding name/type
+   shape with the public-block gate absent; retain a canonical in-memory digest
+3. GET Worker subdomain; require enabled=true; retain canonical digest
+4. GET Worker schedules; retain canonical digest
+5. GET the direct Worker /admin/version; require old version and pinned
+   Admin/LIFF hashes
+6. one D1 read-only query POST for the exact 071/072 ledger name/checksum rows
+
+Approved mutation — exactly one request:
+- PUT /client/v4/accounts/67907592fdf596376bc2097e14a6563a/
+  workers/scripts/line-harness/content
+- multipart metadata part is exactly {"main_module":"worker.js"}
+- worker.js part name and filename are exactly worker.js, Content-Type is
+  application/javascript+module, and bytes are the exact artifact above
+- metadata contains no bindings, assets, keep_assets, keep_bindings,
+  compatibility, migrations, settings, annotations, routes, or secrets
+- Cloudflare immediately creates and activates a new version; there is no
+  separate deploy request and no preview/canary stage
+- approved execution command is exactly:
+  pnpm exec tsx scripts/worker-b1-deploy-5229.ts
+    --approval-received <exact ISO-8601 approval instant>
+    --approval-expires <exact instant plus two hours>
+    --approved-harness-head <exact commit in KEN approval>
+
+Required immediate readback:
+1. repeat deployments/settings/subdomain/schedules in the same order
+2. require new deployment and version IDs, single 100% traffic, exact canonical
+   settings/subdomain/schedules digests unchanged, exact binding shape
+   unchanged, and public-block gate still absent
+3. poll direct /admin/version at most 12 times, two seconds apart; require the
+   exact target version/Worker hash and unchanged Admin/LIFF hashes
+4. one unauthenticated HEAD to a fixed non-customer private-route probe must
+   return 401 with an empty body
+5. one HEAD to the first exact legacy image path derived only in memory from
+   the protected 77-row manifest must return 200 with an empty body; its path,
+   identifiers, and headers are never printed or written
+
+Transport and request ceilings:
+- direct node:https only, agent=false, no redirect and no automatic retry
+- Cloudflare read maximum=9: eight management GETs plus one D1 read-only POST
+- Worker content PUT exactly=1
+- direct runtime reads minimum/maximum=4/15: pre-version 1, post-version polls
+  1..12, private HEAD 1, legacy HEAD 1
+- provider total minimum/maximum=14/25; retry=0; concurrent request maximum=1
+- JSON response ceilings are 262,144 bytes for Worker management, 65,536 for
+  D1, 8,192 for version, and 1,024 for each HEAD response
+- active half-open approval interval is checked before every request and after
+  all readback; in-flight requests abort at expiry
+
+Evidence and STOP behavior:
+- exclusively create one mode-0700 directory:
+  /Users/kensmba/.line-harness-5229-B1-20260902
+- write exactly one mode-0600 sanitized-summary.json on completion or STOP
+- receipt may contain only approval/timestamps, artifact/version hashes,
+  deployment/version IDs, canonical config digests, binding count, gate enum,
+  status-only runtime probes, request counts, sanitized cf-ray values, and
+  forbidden-action counters
+- never retain token/header values, settings bodies, binding values, manifest
+  identifiers, image path/body, D1 response bodies, or error bodies
+- STOP before PUT on any head/hash/mode/token/output/prior-deployment/config/
+  migration/runtime drift
+- STOP after PUT on the first deployment/config/runtime/probe/expiry/evidence
+  mismatch. Record rollback_required=true but do not roll back automatically.
+
+Rollback boundary and maintenance impact:
+- this is an immediate live code switch and may expose a brief global
+  propagation interval; it does not restart the Worker or create planned
+  downtime
+- rollback requires a new exact approval that deploys prior version
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7 at 100%, then reads the new rollback
+  deployment; force=true and automatic rollback are forbidden
+- this packet does not authorize that rollback
+
+Writes/actions explicitly forbidden and expected zero:
+- full Worker upload, separate deployment POST, binding/secret/settings/assets/
+  routes/schedules/domain change, D1 write/backfill, credential issue/revoke,
+  R2 HEAD/GET/LIST/write/delete, cache purge, restart, gate change, feature
+  enablement, Drive write, LINE send, PR merge, and rollback
+```
+
+The exact Harness commit containing this packet and executor must be included
+in KEN's approval message. Any changed commit, source/artifact/packet digest,
+prior deployment/version, request ceiling, or approval interval invalidates the
+approval. B1 establishes only the deployed private-media code and negative
+authorization behavior; it does not create a service credential or backfill
+the 77 historical rows, so authenticated 200 private-media readback remains a
+later packet.
+
 ## Packet A — Cloudflare read-only preflight only
 
 ```text

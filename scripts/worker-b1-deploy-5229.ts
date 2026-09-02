@@ -1,0 +1,677 @@
+#!/usr/bin/env tsx
+/** Exact, approval-bound Worker code-only deploy executor for #5229 Packet B1. */
+
+import { createHash } from 'node:crypto';
+import type { ClientRequest, IncomingMessage } from 'node:http';
+import { request, type RequestOptions } from 'node:https';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
+import { argv, exit, stdout } from 'node:process';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const APPROVAL_ID = '5229-B1-20260902';
+const ACCOUNT_ID = '67907592fdf596376bc2097e14a6563a';
+const SCRIPT_NAME = 'line-harness';
+const DATABASE_ID = 'c19584d7-e9f1-4d46-83c5-6c0ba96561d1';
+const WORKER_HOST = 'line-harness.family8office.workers.dev';
+const TOKEN_FILE = '/Users/kensmba/.line-harness/.env.local';
+const ARTIFACT_DIR = '/Users/kensmba/.line-harness-5229-B1-BUILD-20260902';
+const ARTIFACT_FILE = `${ARTIFACT_DIR}/apps/worker/dist-release-final/index.js`;
+const ARTIFACT_SHA256 = '1355c7bdffc73dd20bc082fd439a1750fd8b7d5831291c1635cd71396c946de4';
+const ARTIFACT_BYTES = 1_350_194;
+const MANIFEST_DIR = '/Users/kensmba/.line-harness-5229-M0-20260901';
+const MANIFEST_FILE = `${MANIFEST_DIR}/incoming-media-backfill-manifest.json`;
+const MANIFEST_SHA256 = 'cf35a1045040a265019a5afad8c2cefb8994edba684eeaa5dd2fad0b17b1663e';
+const OUTPUT_DIR = '/Users/kensmba/.line-harness-5229-B1-20260902';
+const PLANNING_WORKTREE = '/Users/kensmba/.line-harness-wt/5229-private-incoming-media';
+const BACKPORT_WORKTREE = '/Users/kensmba/.line-harness-wt/5229-b1-v019-backport';
+const ACCOUNTING_WORKTREE = '/Users/kensmba/scripts-wt/5230-line-recovery';
+const BACKPORT_HEAD = '9f3c6c3ac98d0777f8e7354f807a6af4ab642b18';
+const ACCOUNTING_HEAD = 'ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f';
+const EXECUTOR_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.ts`;
+const EXECUTOR_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.test.ts`;
+const EXECUTOR_TEST_SHA256 = 'f21c9e30119d00a7ee184ca674f301d596c68a00855758bc5dec462950d5dcbd';
+const B2_DIR = '/Users/kensmba/.line-harness-5229-B2-20260901';
+const B2_RECEIPT = `${B2_DIR}/sanitized-summary.json`;
+const B2_RECEIPT_SHA256 = '5f393930c545582d656c0068ee1d854a01ef8d60e66e1d04e4dca49a0beda95f';
+const PREVIOUS_DEPLOYMENT_ID = '7b3bb319-e618-4f57-a520-cd33f43115e5';
+const PREVIOUS_VERSION_ID = 'c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7';
+const TARGET_VERSION = '0.19.0-5229.b1.9f3c6c3';
+const TARGET_WORKER_HASH = 'sha256:6420c520444baa670973197f6c336b23a511e9dcd8fdbdf24082b61ce24c2b1e';
+const ADMIN_HASH = 'sha256:43e9888fa37af2db1ecdd2f135029ddb570279ebf07373b47d6cb5e62a25ac6c';
+const LIFF_HASH = 'sha256:350e651bacbede38ea9f197d0ae6e29903c5b3b219daccf4c62566310cc7ce17';
+const MAX_JSON_BYTES = 262_144;
+const MULTIPART_BOUNDARY = '----line-harness-5229-b1-code-only';
+
+const EXPECTED_BINDINGS = [
+  ['ADMIN_ALLOW_CROSS_SITE', 'secret_text'], ['ADMIN_ORIGIN', 'secret_text'],
+  ['ADMIN_PAGES_PROJECT', 'plain_text'], ['ADMIN_PUBLIC_URL', 'plain_text'],
+  ['API_KEY', 'secret_text'], ['ASSETS', 'assets'], ['CF_ACCOUNT_ID', 'plain_text'],
+  ['D1_DATABASE_ID', 'plain_text'], ['DB', 'd1'], ['IMAGES', 'r2_bucket'],
+  ['LIFF_PAGES_PROJECT', 'plain_text'], ['LIFF_PUBLIC_URL', 'plain_text'],
+  ['LIFF_URL', 'secret_text'], ['LINE_CHANNEL_ACCESS_TOKEN', 'secret_text'],
+  ['LINE_CHANNEL_SECRET', 'secret_text'], ['LINE_LOGIN_CHANNEL_ID', 'secret_text'],
+  ['MANIFEST_URL', 'plain_text'], ['WORKER_NAME', 'plain_text'],
+  ['WORKER_PUBLIC_URL', 'plain_text'], ['WORKER_URL', 'secret_text'],
+] as const;
+
+export interface HttpResponse {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: Buffer;
+}
+export interface ExactRequest {
+  hostname: string;
+  method: 'GET' | 'HEAD' | 'POST' | 'PUT';
+  path: string;
+  headers: Record<string, string | number>;
+  body?: Buffer;
+  maxBytes: number;
+}
+export type RequestFunction = (
+  options: RequestOptions,
+  callback: (response: IncomingMessage) => void,
+) => ClientRequest;
+
+export interface RunDependencies {
+  now: () => number;
+  loadArtifact: () => Buffer;
+  loadLegacyProbePath: () => string;
+  loadToken: () => string;
+  validateLocalAnchors: (approvedHarnessHead: string | null) => string;
+  outputDir: string;
+  cfRequest: (request: ExactRequest, expiresAt: number) => Promise<HttpResponse>;
+  workerRequest: (request: ExactRequest, expiresAt: number) => Promise<HttpResponse>;
+  sleep: (milliseconds: number) => Promise<void>;
+}
+
+interface WorkerSnapshot {
+  deploymentId: string;
+  versionId: string;
+  settings: unknown;
+  settingsSha256: string;
+  subdomain: unknown;
+  subdomainSha256: string;
+  schedules: unknown;
+  schedulesSha256: string;
+  bindingShape: Array<{ name: string; type: string }>;
+}
+
+interface VersionReadback {
+  version: string;
+  worker_hash: string;
+  admin_hash: string;
+  liff_hash: string;
+  released_at: string;
+}
+
+export class DeployStop extends Error {
+  constructor(readonly code: string) { super(code); }
+}
+
+function sha256(value: Buffer | string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stable(object[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function assertRealPath(path: string, kind: 'directory' | 'file', mode: number): void {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) throw new DeployStop(`${kind}_symlink`);
+  if (kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) throw new DeployStop(`${kind}_type`);
+  if ((stat.mode & 0o777) !== mode) throw new DeployStop(`${kind}_mode`);
+}
+
+export function validateArtifact(bytes: Buffer): Buffer {
+  if (bytes.length !== ARTIFACT_BYTES || sha256(bytes) !== ARTIFACT_SHA256) {
+    throw new DeployStop('artifact_hash');
+  }
+  for (const marker of [TARGET_VERSION, TARGET_WORKER_HASH.slice(7), ADMIN_HASH.slice(7), LIFF_HASH.slice(7)]) {
+    if (!bytes.includes(Buffer.from(marker, 'utf8'))) throw new DeployStop('artifact_marker');
+  }
+  if (bytes.includes(Buffer.from(MULTIPART_BOUNDARY, 'utf8'))) throw new DeployStop('multipart_boundary_collision');
+  return bytes;
+}
+
+export function loadArtifact(): Buffer {
+  assertRealPath(ARTIFACT_DIR, 'directory', 0o700);
+  assertRealPath(ARTIFACT_FILE, 'file', 0o600);
+  return validateArtifact(readFileSync(ARTIFACT_FILE));
+}
+
+export function loadLegacyProbePath(): string {
+  assertRealPath(MANIFEST_DIR, 'directory', 0o700);
+  assertRealPath(MANIFEST_FILE, 'file', 0o600);
+  const bytes = readFileSync(MANIFEST_FILE);
+  if (sha256(bytes) !== MANIFEST_SHA256) throw new DeployStop('manifest_hash');
+  let parsed: unknown;
+  try { parsed = JSON.parse(bytes.toString('utf8')); } catch { throw new DeployStop('manifest_json'); }
+  const manifest = parsed as { verified?: unknown; entries?: unknown[] };
+  if (manifest.verified !== true || !Array.isArray(manifest.entries) || manifest.entries.length !== 77) {
+    throw new DeployStop('manifest_shape');
+  }
+  const first = manifest.entries[0] as { r2_key?: unknown } | undefined;
+  if (!first || typeof first.r2_key !== 'string' ||
+      !/^incoming-[A-Za-z0-9_-]+-[A-Za-z0-9_-]+\.(?:jpe?g|png|gif|webp)$/i.test(first.r2_key)) {
+    throw new DeployStop('manifest_probe');
+  }
+  return `/images/${encodeURIComponent(first.r2_key)}`;
+}
+
+export function parseTokenFile(text: string): string {
+  const values: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = /^CLOUDFLARE_API_TOKEN=(.*)$/.exec(line);
+    if (!match) {
+      if (line.startsWith('CLOUDFLARE_API_TOKEN')) throw new DeployStop('token_format');
+      continue;
+    }
+    let value = match[1];
+    if (value.startsWith("'") || value.endsWith("'") || value.startsWith('"') || value.endsWith('"')) {
+      if (!((value.startsWith("'") && value.endsWith("'")) ||
+            (value.startsWith('"') && value.endsWith('"')))) throw new DeployStop('token_format');
+      value = value.slice(1, -1);
+    }
+    if (!value || /[\r\n\0]/.test(value)) throw new DeployStop('token_format');
+    values.push(value);
+  }
+  if (values.length !== 1) throw new DeployStop('token_count');
+  return values[0];
+}
+
+export function loadToken(): string {
+  assertRealPath(TOKEN_FILE, 'file', 0o600);
+  return parseTokenFile(readFileSync(TOKEN_FILE, 'utf8'));
+}
+
+function gitValue(worktree: string, args: string[]): string {
+  try {
+    return execFileSync('git', ['-C', worktree, ...args], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    throw new DeployStop('git_anchor');
+  }
+}
+
+export function validateLocalAnchors(approvedHarnessHead: string | null): string {
+  const planningHead = gitValue(PLANNING_WORKTREE, ['rev-parse', 'HEAD']);
+  const backportHead = gitValue(BACKPORT_WORKTREE, ['rev-parse', 'HEAD']);
+  const accountingHead = gitValue(ACCOUNTING_WORKTREE, ['rev-parse', 'HEAD']);
+  if (approvedHarnessHead !== null && !/^[0-9a-f]{40}$/.test(approvedHarnessHead)) {
+    throw new DeployStop('approved_head_format');
+  }
+  if (approvedHarnessHead !== null && planningHead !== approvedHarnessHead) {
+    throw new DeployStop('planning_head_drift');
+  }
+  if (backportHead !== BACKPORT_HEAD) throw new DeployStop('backport_head_drift');
+  if (accountingHead !== ACCOUNTING_HEAD) throw new DeployStop('accounting_head_drift');
+  for (const [label, worktree] of [
+    ['planning', PLANNING_WORKTREE], ['backport', BACKPORT_WORKTREE],
+    ['accounting', ACCOUNTING_WORKTREE],
+  ] as const) {
+    if (gitValue(worktree, ['status', '--porcelain=v1', '--untracked-files=all']) !== '') {
+      throw new DeployStop(`${label}_worktree_dirty`);
+    }
+  }
+  assertRealPath(EXECUTOR_FILE, 'file', 0o644);
+  assertRealPath(EXECUTOR_TEST_FILE, 'file', 0o644);
+  if (sha256(readFileSync(EXECUTOR_TEST_FILE)) !== EXECUTOR_TEST_SHA256) {
+    throw new DeployStop('executor_test_hash');
+  }
+  assertRealPath(B2_DIR, 'directory', 0o700);
+  if (stable(readdirSync(B2_DIR).sort()) !== stable(['sanitized-summary.json'])) {
+    throw new DeployStop('b2_receipt_entries');
+  }
+  assertRealPath(B2_RECEIPT, 'file', 0o600);
+  if (sha256(readFileSync(B2_RECEIPT)) !== B2_RECEIPT_SHA256) throw new DeployStop('b2_receipt_hash');
+  return planningHead;
+}
+
+export function validateApprovalWindow(received: string, expires: string, now: number): void {
+  const start = Date.parse(received);
+  const end = Date.parse(expires);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end - start !== 7_200_000) {
+    throw new DeployStop('approval_window');
+  }
+  if (now < start || now >= end) throw new DeployStop('approval_inactive');
+}
+
+export async function exactHttpsRequest(
+  spec: ExactRequest,
+  expiresAt: number,
+  requestImpl: RequestFunction = request,
+): Promise<HttpResponse> {
+  return await new Promise<HttpResponse>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn();
+    };
+    if (Date.now() >= expiresAt) {
+      reject(new DeployStop('approval_expired'));
+      return;
+    }
+    const req = requestImpl({
+      protocol: 'https:', hostname: spec.hostname, port: 443, method: spec.method,
+      path: spec.path, headers: spec.headers, agent: false,
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let stopped = false;
+      res.once('error', (error) => { stopped = true; finish(() => reject(error)); });
+      res.once('aborted', () => { stopped = true; finish(() => reject(new DeployStop('response_aborted'))); });
+      res.on('readable', () => {
+        if (stopped) return;
+        let chunk: Buffer | null;
+        while ((chunk = res.read(Math.min(16_384, spec.maxBytes - bytes + 1)) as Buffer | null) !== null) {
+          bytes += chunk.length;
+          if (bytes > spec.maxBytes) {
+            stopped = true;
+            req.destroy(new DeployStop('response_oversize'));
+            return;
+          }
+          chunks.push(chunk);
+        }
+      });
+      res.on('end', () => {
+        if (stopped) return;
+        finish(() => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
+      });
+    });
+    req.once('error', (error) => finish(() => reject(error)));
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      req.destroy(new DeployStop('approval_expired'));
+      return;
+    }
+    timer = setTimeout(() => req.destroy(new DeployStop('approval_expired')), remaining);
+    req.end(spec.body);
+  });
+}
+
+function contentType(response: HttpResponse): string {
+  const value = response.headers['content-type'];
+  return typeof value === 'string' ? value.split(';', 1)[0].trim().toLowerCase() : '';
+}
+
+function parseJson(response: HttpResponse, code: string, expectedStatus = 200): unknown {
+  if (response.status !== expectedStatus) throw new DeployStop(`${code}_status`);
+  if (contentType(response) !== 'application/json') throw new DeployStop(`${code}_content_type`);
+  const encoding = response.headers['content-encoding'];
+  if (encoding !== undefined && encoding !== 'identity') throw new DeployStop(`${code}_content_encoding`);
+  try { return JSON.parse(response.body.toString('utf8')); } catch { throw new DeployStop(`${code}_json`); }
+}
+
+function parseEnvelope(response: HttpResponse, code: string): { result: unknown; cfRay: string | null } {
+  const body = parseJson(response, code) as { success?: unknown; result?: unknown };
+  if (body.success !== true || body.result === undefined) throw new DeployStop(`${code}_shape`);
+  const ray = response.headers['cf-ray'];
+  return { result: body.result, cfRay: typeof ray === 'string' ? ray : null };
+}
+
+function activeDeployment(result: unknown): { deploymentId: string; versionId: string } {
+  const deployments = (result as { deployments?: unknown[] } | null)?.deployments;
+  if (!Array.isArray(deployments) || deployments.length < 1) throw new DeployStop('deployment_shape');
+  const first = deployments[0] as { id?: unknown; versions?: unknown[] };
+  if (typeof first.id !== 'string' || !Array.isArray(first.versions) || first.versions.length !== 1) {
+    throw new DeployStop('deployment_shape');
+  }
+  const active = first.versions[0] as { version_id?: unknown; percentage?: unknown };
+  if (typeof active.version_id !== 'string' || active.percentage !== 100) throw new DeployStop('deployment_shape');
+  return { deploymentId: first.id, versionId: active.version_id };
+}
+
+function bindingShape(settings: unknown): Array<{ name: string; type: string }> {
+  const bindings = (settings as { bindings?: unknown[] } | null)?.bindings;
+  if (!Array.isArray(bindings)) throw new DeployStop('settings_bindings');
+  const shape = bindings.map((binding) => {
+    const row = binding as { name?: unknown; type?: unknown };
+    if (typeof row.name !== 'string' || typeof row.type !== 'string') throw new DeployStop('settings_bindings');
+    return { name: row.name, type: row.type };
+  }).sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type));
+  const expected = EXPECTED_BINDINGS.map(([name, type]) => ({ name, type }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type));
+  if (stable(shape) !== stable(expected)) throw new DeployStop('binding_shape_drift');
+  if (shape.some((row) => row.name === 'INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED')) {
+    throw new DeployStop('public_block_gate_drift');
+  }
+  const object = settings as { compatibility_date?: unknown; compatibility_flags?: unknown };
+  if (object.compatibility_date !== '2024-12-01' ||
+      stable(object.compatibility_flags) !== stable(['nodejs_compat'])) {
+    throw new DeployStop('compatibility_drift');
+  }
+  return shape;
+}
+
+function versionReadback(response: HttpResponse): VersionReadback {
+  const parsed = parseJson(response, 'admin_version') as Record<string, unknown>;
+  for (const key of ['version', 'worker_hash', 'admin_hash', 'liff_hash', 'released_at']) {
+    if (typeof parsed[key] !== 'string') throw new DeployStop('admin_version_shape');
+  }
+  return parsed as unknown as VersionReadback;
+}
+
+export function buildContentUpload(artifact: Buffer): Buffer {
+  validateArtifact(artifact);
+  const before = Buffer.from(
+    `--${MULTIPART_BOUNDARY}\r\n` +
+    'Content-Disposition: form-data; name="metadata"\r\n' +
+    'Content-Type: application/json\r\n\r\n' +
+    '{"main_module":"worker.js"}\r\n' +
+    `--${MULTIPART_BOUNDARY}\r\n` +
+    'Content-Disposition: form-data; name="worker.js"; filename="worker.js"\r\n' +
+    'Content-Type: application/javascript+module\r\n\r\n',
+    'utf8',
+  );
+  const after = Buffer.from(`\r\n--${MULTIPART_BOUNDARY}--\r\n`, 'utf8');
+  return Buffer.concat([before, artifact, after]);
+}
+
+function createOutput(path: string): { dev: number; ino: number } {
+  if (existsSync(path)) throw new DeployStop('output_exists');
+  mkdirSync(path, { mode: 0o700 });
+  assertRealPath(path, 'directory', 0o700);
+  const stat = lstatSync(path);
+  if (readdirSync(path).length !== 0) throw new DeployStop('output_entries');
+  return { dev: stat.dev, ino: stat.ino };
+}
+
+function assertPinnedOutput(path: string, identity: { dev: number; ino: number }, names: string[]): void {
+  assertRealPath(path, 'directory', 0o700);
+  const stat = lstatSync(path);
+  if (stat.dev !== identity.dev || stat.ino !== identity.ino ||
+      stable(readdirSync(path).sort()) !== stable([...names].sort())) throw new DeployStop('output_drift');
+}
+
+function writeSummary(path: string, identity: { dev: number; ino: number }, summary: unknown): void {
+  assertPinnedOutput(path, identity, []);
+  const target = `${path}/sanitized-summary.json`;
+  writeFileSync(target, `${JSON.stringify(summary, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+  assertRealPath(target, 'file', 0o600);
+  assertPinnedOutput(path, identity, ['sanitized-summary.json']);
+}
+
+export function parseArgs(raw: string[]): {
+  preflightOnly: boolean; received: string; expires: string; approvedHarnessHead: string | null;
+} {
+  if (raw.length === 1 && raw[0] === '--preflight-only') {
+    return { preflightOnly: true, received: '', expires: '', approvedHarnessHead: null };
+  }
+  if (raw.length === 6 && raw[0] === '--approval-received' && raw[2] === '--approval-expires' &&
+      raw[4] === '--approved-harness-head') {
+    return { preflightOnly: false, received: raw[1], expires: raw[3], approvedHarnessHead: raw[5] };
+  }
+  throw new DeployStop('arguments');
+}
+
+async function getSnapshot(
+  token: string,
+  expiresAt: number,
+  requestCf: (spec: ExactRequest) => Promise<HttpResponse>,
+): Promise<{ snapshot: WorkerSnapshot; cfRays: Array<string | null> }> {
+  const base = `/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}`;
+  const auth = { Authorization: `Bearer ${token}`, 'Accept-Encoding': 'identity' };
+  const deploymentResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/deployments`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'deployments');
+  const settingsResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/settings`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'settings');
+  const subdomainResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/subdomain`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'subdomain');
+  const schedulesResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/schedules`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'schedules');
+  void expiresAt;
+  const active = activeDeployment(deploymentResponse.result);
+  const shape = bindingShape(settingsResponse.result);
+  const subdomain = subdomainResponse.result as { enabled?: unknown };
+  if (subdomain?.enabled !== true) throw new DeployStop('subdomain_drift');
+  return {
+    snapshot: {
+      ...active,
+      settings: settingsResponse.result,
+      settingsSha256: sha256(stable(settingsResponse.result)),
+      subdomain: subdomainResponse.result,
+      subdomainSha256: sha256(stable(subdomainResponse.result)),
+      schedules: schedulesResponse.result,
+      schedulesSha256: sha256(stable(schedulesResponse.result)),
+      bindingShape: shape,
+    },
+    cfRays: [deploymentResponse.cfRay, settingsResponse.cfRay, subdomainResponse.cfRay, schedulesResponse.cfRay],
+  };
+}
+
+function validateMigrations(response: HttpResponse): string | null {
+  const envelope = parseJson(response, 'migration_readback') as {
+    success?: unknown; result?: Array<{ success?: unknown; results?: unknown[] }>;
+  };
+  const rows = envelope.result?.[0]?.results as Array<{ name?: unknown; checksum?: unknown }> | undefined;
+  const expected = [
+    { name: '071_incoming_media.sql', checksum: 'sha256:c65203ce28e750b6cf612ad17029bc195fd2e6253a379cf62e642e3c5a8ae5d6' },
+    { name: '072_incoming_media_service_credentials.sql', checksum: 'sha256:be4b1730fadd497d0a0d9677bda8626d174aaa08946d1c27e9e68e1549049937' },
+  ];
+  if (envelope.success !== true || envelope.result?.length !== 1 || envelope.result[0]?.success !== true ||
+      !Array.isArray(rows) || stable(rows) !== stable(expected)) throw new DeployStop('migration_readback_shape');
+  const ray = response.headers['cf-ray'];
+  return typeof ray === 'string' ? ray : null;
+}
+
+function sameSnapshotConfig(before: WorkerSnapshot, after: WorkerSnapshot): void {
+  for (const key of ['settingsSha256', 'subdomainSha256', 'schedulesSha256'] as const) {
+    if (before[key] !== after[key]) throw new DeployStop(`${key}_changed`);
+  }
+  if (stable(before.bindingShape) !== stable(after.bindingShape)) throw new DeployStop('binding_shape_changed');
+}
+
+function validateTargetVersion(value: VersionReadback): void {
+  if (value.version !== TARGET_VERSION || value.worker_hash !== TARGET_WORKER_HASH ||
+      value.admin_hash !== ADMIN_HASH || value.liff_hash !== LIFF_HASH ||
+      !Number.isFinite(Date.parse(value.released_at))) throw new DeployStop('target_version_mismatch');
+}
+
+export async function run(raw: string[], deps: RunDependencies): Promise<Record<string, unknown>> {
+  const args = parseArgs(raw);
+  const planningHead = deps.validateLocalAnchors(args.approvedHarnessHead);
+  const artifact = validateArtifact(deps.loadArtifact());
+  const legacyProbePath = deps.loadLegacyProbePath();
+  const token = deps.loadToken();
+  const upload = buildContentUpload(artifact);
+  if (args.preflightOnly) {
+    if (existsSync(deps.outputDir)) throw new DeployStop('output_exists');
+    return {
+      approval_id: APPROVAL_ID, status: 'preflight_passed', artifact_sha256: ARTIFACT_SHA256,
+      artifact_bytes: artifact.length, planning_head: planningHead, token_present: token.length > 0,
+      provider_requests: 0, provider_writes: 0, local_writes: 0,
+    };
+  }
+
+  validateApprovalWindow(args.received, args.expires, deps.now());
+  const expiresAt = Date.parse(args.expires);
+  const identity = createOutput(deps.outputDir);
+  const startedAt = new Date(deps.now()).toISOString();
+  let cfReads = 0;
+  let runtimeReads = 0;
+  let contentWrites = 0;
+  let versionPolls = 0;
+  const cfRays: Array<string | null> = [];
+  const requestCf = async (spec: ExactRequest): Promise<HttpResponse> => {
+    validateApprovalWindow(args.received, args.expires, deps.now());
+    cfReads += spec.method === 'GET' || spec.method === 'POST' ? 1 : 0;
+    contentWrites += spec.method === 'PUT' ? 1 : 0;
+    return deps.cfRequest(spec, expiresAt);
+  };
+  const requestWorker = async (spec: ExactRequest): Promise<HttpResponse> => {
+    validateApprovalWindow(args.received, args.expires, deps.now());
+    runtimeReads += 1;
+    return deps.workerRequest(spec, expiresAt);
+  };
+
+  try {
+    const before = await getSnapshot(token, expiresAt, requestCf);
+    cfRays.push(...before.cfRays);
+    if (before.snapshot.deploymentId !== PREVIOUS_DEPLOYMENT_ID || before.snapshot.versionId !== PREVIOUS_VERSION_ID) {
+      throw new DeployStop('previous_deployment_drift');
+    }
+    const preVersion = versionReadback(await requestWorker({
+      hostname: WORKER_HOST, method: 'GET', path: '/admin/version',
+      headers: { 'Accept-Encoding': 'identity' }, maxBytes: 8_192,
+    }));
+    if (preVersion.version === TARGET_VERSION || preVersion.admin_hash !== ADMIN_HASH || preVersion.liff_hash !== LIFF_HASH) {
+      throw new DeployStop('pre_version_drift');
+    }
+
+    const migrationBody = Buffer.from(JSON.stringify({
+      sql: 'SELECT name, checksum FROM _line_harness_migrations WHERE name IN (?, ?) ORDER BY name',
+      params: ['071_incoming_media.sql', '072_incoming_media_service_credentials.sql'],
+    }), 'utf8');
+    const migrationResponse = await requestCf({
+      hostname: 'api.cloudflare.com', method: 'POST',
+      path: `/client/v4/accounts/${ACCOUNT_ID}/d1/database/${DATABASE_ID}/query`,
+      headers: {
+        Authorization: `Bearer ${token}`, 'Accept-Encoding': 'identity',
+        'Content-Type': 'application/json', 'Content-Length': migrationBody.length,
+      },
+      body: migrationBody, maxBytes: 65_536,
+    });
+    cfRays.push(validateMigrations(migrationResponse));
+
+    const putResponse = parseEnvelope(await requestCf({
+      hostname: 'api.cloudflare.com', method: 'PUT',
+      path: `/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/content`,
+      headers: {
+        Authorization: `Bearer ${token}`, 'Accept-Encoding': 'identity',
+        'Content-Type': `multipart/form-data; boundary=${MULTIPART_BOUNDARY}`,
+        'Content-Length': upload.length,
+      },
+      body: upload, maxBytes: MAX_JSON_BYTES,
+    }), 'content_put');
+    cfRays.push(putResponse.cfRay);
+    validateApprovalWindow(args.received, args.expires, deps.now());
+
+    const after = await getSnapshot(token, expiresAt, requestCf);
+    cfRays.push(...after.cfRays);
+    if (after.snapshot.deploymentId === before.snapshot.deploymentId ||
+        after.snapshot.versionId === before.snapshot.versionId) throw new DeployStop('deployment_not_advanced');
+    sameSnapshotConfig(before.snapshot, after.snapshot);
+
+    let target: VersionReadback | null = null;
+    for (let attempt = 1; attempt <= 12; attempt += 1) {
+      versionPolls = attempt;
+      const observed = versionReadback(await requestWorker({
+        hostname: WORKER_HOST, method: 'GET', path: '/admin/version',
+        headers: { 'Accept-Encoding': 'identity' }, maxBytes: 8_192,
+      }));
+      if (observed.version === TARGET_VERSION && observed.worker_hash === TARGET_WORKER_HASH &&
+          observed.admin_hash === ADMIN_HASH && observed.liff_hash === LIFF_HASH) {
+        target = observed;
+        break;
+      }
+      if (attempt < 12) await deps.sleep(2_000);
+    }
+    if (!target) throw new DeployStop('runtime_propagation_timeout');
+    validateTargetVersion(target);
+
+    const privateProbe = await requestWorker({
+      hostname: WORKER_HOST, method: 'HEAD',
+      path: '/api/incoming-media/b1-probe-account/b1-probe-message',
+      headers: { 'Accept-Encoding': 'identity' }, maxBytes: 1_024,
+    });
+    if (privateProbe.status !== 401 || privateProbe.body.length !== 0) throw new DeployStop('private_unauthorized_probe');
+    const legacyProbe = await requestWorker({
+      hostname: WORKER_HOST, method: 'HEAD', path: legacyProbePath,
+      headers: { 'Accept-Encoding': 'identity' }, maxBytes: 1_024,
+    });
+    if (legacyProbe.status !== 200 || legacyProbe.body.length !== 0) throw new DeployStop('legacy_continuity_probe');
+    validateApprovalWindow(args.received, args.expires, deps.now());
+
+    const summary = {
+      schema_version: 1, approval_id: APPROVAL_ID, approval_received: args.received,
+      approval_expires: args.expires, started_at: startedAt,
+      completed_at: new Date(deps.now()).toISOString(), status: 'completed',
+      artifact: { sha256: ARTIFACT_SHA256, bytes: artifact.length, version: TARGET_VERSION, worker_hash: TARGET_WORKER_HASH },
+      deployment: {
+        previous_deployment_id: before.snapshot.deploymentId,
+        previous_version_id: before.snapshot.versionId,
+        new_deployment_id: after.snapshot.deploymentId,
+        new_version_id: after.snapshot.versionId,
+      },
+      immutable_config: {
+        settings_sha256: after.snapshot.settingsSha256,
+        subdomain_sha256: after.snapshot.subdomainSha256,
+        schedules_sha256: after.snapshot.schedulesSha256,
+        binding_count: after.snapshot.bindingShape.length,
+        public_block_gate: 'absent',
+      },
+      runtime_readback: {
+        version: target.version, worker_hash: target.worker_hash,
+        admin_hash: target.admin_hash, liff_hash: target.liff_hash,
+        private_unauthenticated_head: 401, legacy_public_head: 200,
+      },
+      request_counts: {
+        cloudflare_read: cfReads, worker_content_put: contentWrites,
+        runtime_read: runtimeReads, runtime_version_polls: versionPolls,
+        provider_total: cfReads + contentWrites + runtimeReads, retry: 0,
+      },
+      cf_rays: cfRays,
+      forbidden_actions: {
+        d1_write: 0, binding_change: 0, secret_change: 0, assets_change: 0,
+        routes_change: 0, schedules_change: 0, gate_change: 0, r2: 0,
+        purge: 0, restart: 0, feature_enablement: 0, drive_write: 0,
+        line_send: 0, pr_merge: 0, automatic_rollback: 0,
+      },
+    };
+    writeSummary(deps.outputDir, identity, summary);
+    return summary;
+  } catch (error) {
+    const reason = error instanceof DeployStop ? error.code : 'unexpected_local_error';
+    if (readdirSync(deps.outputDir).length === 0) {
+      writeSummary(deps.outputDir, identity, {
+        schema_version: 1, approval_id: APPROVAL_ID, approval_received: args.received,
+        approval_expires: args.expires, started_at: startedAt,
+        completed_at: new Date(deps.now()).toISOString(), status: 'stopped', stop_reason: reason,
+        request_counts: {
+          cloudflare_read: cfReads, worker_content_put: contentWrites,
+          runtime_read: runtimeReads, runtime_version_polls: versionPolls,
+          provider_total: cfReads + contentWrites + runtimeReads, retry: 0,
+        },
+        rollback_required: contentWrites === 1,
+      });
+    }
+    throw new DeployStop(reason);
+  }
+}
+
+const defaultDeps: RunDependencies = {
+  now: () => Date.now(), loadArtifact, loadLegacyProbePath, loadToken, validateLocalAnchors,
+  outputDir: OUTPUT_DIR,
+  cfRequest: (spec, expiresAt) => exactHttpsRequest(spec, expiresAt),
+  workerRequest: (spec, expiresAt) => exactHttpsRequest(spec, expiresAt),
+  sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+};
+
+const isCliEntry = (() => {
+  if (!argv[1]) return false;
+  try { return fileURLToPath(import.meta.url) === argv[1]; } catch { return false; }
+})();
+
+if (isCliEntry) {
+  run(argv.slice(2), defaultDeps).then((result) => stdout.write(`${JSON.stringify(result)}\n`)).catch((error: unknown) => {
+    const reason = error instanceof DeployStop ? error.code : 'unexpected_local_error';
+    stdout.write(`${JSON.stringify({ approval_id: APPROVAL_ID, status: 'stopped', stop_reason: reason, retry: 0 })}\n`);
+    exit(1);
+  });
+}
