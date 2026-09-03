@@ -2564,3 +2564,131 @@ Every B packet must state exact before/after, resource IDs, head/artifact hashes
 expected mutation counts, maintenance impact, stop conditions, readback, approval
 expiry, rollback feasibility, and operations not authorized. PR merge and LINE
 send always remain separate approvals.
+
+## 5229-B1-R1-20260903 accepted PUT and post-write STOP
+
+The code-only content PUT was accepted exactly once during the blanket approval
+interval `[2026-09-03T05:51:46.737Z, 2026-09-03T07:51:46.737Z)`. The executor
+then stopped fail-closed at `settingsSha256_changed`; it did not roll back.
+
+- sanitized receipt:
+  `/Users/kensmba/.line-harness-5229-B1-R1-20260903/sanitized-summary.json`
+- receipt SHA-256:
+  `a3f5e2c411f5b8656427f363549d5ed0952da3937a1c47e47185ea78faa3f785`
+- prior deployment/version:
+  `7b3bb319-e618-4f57-a520-cd33f43115e5` /
+  `c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7`
+- observed accepted deployment/version:
+  `89b40fb5-bfc8-48b1-a7b1-b8f3538bccf7` /
+  `5dab4e03-2147-4c34-b5c7-f70c105b4712`
+- observed new script etag:
+  `41cc0b7544b0466426c08b7b2544c8b161ae4817925803605d68760f85659f1c`
+- requests: Cloudflare reads 19; content PUT 1; runtime read 1; total 21;
+  retry 0
+
+The receipt's `rollback_required=true` means that a separate decision is
+required after a post-write STOP. It is not an authorization or instruction to
+roll back. A raw settings-response digest change alone is not classified as a
+security or configuration regression.
+
+## Packet 5229-B1-V1-20260903 — bounded post-deploy read-only decision
+
+```text
+Approval ID: 5229-B1-V1-20260903
+Approval source: KEN blanket continuation approval recorded at
+  2026-09-03T05:51:46.737Z
+Approval interval: [2026-09-03T05:51:46.737Z,
+  2026-09-03T07:51:46.737Z)
+Mode: POST-DEPLOY-READ-ONLY-DECISION
+Issues/PR: #5229 / #5230 / Draft PR #5244
+
+Immutable anchors:
+- Harness parent head before this packet: 90d518576749bd63f39ba6876132f6091fe6aedd
+- Accounting head: ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- v0.19 backport head: 9f3c6c3ac98d0777f8e7354f807a6af4ab642b18
+- B1 STOP receipt SHA-256:
+  a3f5e2c411f5b8656427f363549d5ed0952da3937a1c47e47185ea78faa3f785
+- executor SHA-256:
+  ea9d8bd776460955b3f248952ca1cc629e97149a4ad4aa658f5d884974573d98
+- executor test SHA-256:
+  6d4bfe15c3e1aadf23d140ec3db4874009020c1f1d8f9edf151bc8cd47a4e709
+- prior deployment/version/etag:
+  7b3bb319-e618-4f57-a520-cd33f43115e5 /
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7 /
+  1d9a88703ce2509f372740c140aa18699884b779a82108efdd863484555611b6
+- current deployment/version/etag:
+  89b40fb5-bfc8-48b1-a7b1-b8f3538bccf7 /
+  5dab4e03-2147-4c34-b5c7-f70c105b4712 /
+  41cc0b7544b0466426c08b7b2544c8b161ae4817925803605d68760f85659f1c
+
+Exact serial read plan, no redirect/transport retry/fallback:
+1. Cloudflare GET deployments; require current deployment/version at 100%.
+2. Cloudflare GET current settings; revalidate compatibility and exact binding
+   shape/topology without retaining values.
+3. Cloudflare GET immutable current version detail.
+4. Cloudflare GET the pinned Admin Pages project; revalidate its deployment.
+5. Cloudflare GET subdomain; require the pinned enabled=true and
+   previews_enabled=true state.
+6. Cloudflare GET schedules; require the exact pinned cron set.
+7. Cloudflare GET immutable prior version detail.
+8. Direct Worker GET /admin/version; one second GET is allowed only if the
+   first identity is not the exact target.
+9. Direct Worker unauthenticated HEAD to the fixed non-customer private probe;
+   require 401 and empty body.
+10. Direct Worker HEAD to the first manifest-derived frozen legacy public path;
+    require 200, empty body, and exact manifest MIME type. The path is used
+    only in memory and never stored.
+11. Cloudflare GET deployments; require byte-equivalent active identity to step 1.
+
+Request ceilings:
+- Cloudflare management GET: exactly 8
+- direct Worker reads: 3, or 4 only for the one conditional version re-read
+- provider total: 11..12
+- provider writes, transport retry, redirect, fallback: 0
+- management/version body ceiling: 262,144 bytes
+- runtime version body ceiling: 8,192 bytes
+- HEAD body ceiling: 1,024 bytes
+- concurrency maximum: 1
+
+Semantic comparison:
+- compare every field and value under old/new version resources in memory
+- sort only the binding array by exact name/type
+- allow differences only at version audit fields $.id, $.number, $.metadata,
+  $.annotations and script fields $.resources.script.etag and
+  $.resources.script.last_deployed_from
+- require the exact 20 binding names/types; compare resource IDs and plain-text
+  values without writing or printing them; secret bindings are compared only as
+  returned by the provider and are never retained
+- separately retain only equality booleans and SHA-256 digests for full
+  comparable resources, full bindings, script runtime, and handler topology
+
+Accept, STOP, and rollback boundary:
+- accept only when both deployment reads are the exact current 100% deployment,
+  current settings/Pages/subdomain/schedules match every pinned anchor, all
+  comparable version resources are equal, target runtime identity is exact,
+  private HEAD is 401/empty, and legacy HEAD is 200/empty with exact MIME
+- classify the evidence as current_config_anchors_and_version_resources_equal;
+  do not claim that every unretained raw settings field was proven unchanged
+- active-deployment mismatch is external_drift and must not be overwritten
+- resource/runtime/private/legacy regression is rollback_candidate, but this
+  packet never performs rollback
+- provider/auth/timeout/expiry/shape ambiguity is inconclusive; do not infer
+  either acceptance or rollback
+
+Evidence:
+- create exactly one mode-0700 directory:
+  /Users/kensmba/.line-harness-5229-B1-V1-20260903
+- write exactly one mode-0600 sanitized-summary.json on completion or STOP
+- never retain token/header values, raw provider bodies, binding values,
+  customer identifiers, legacy path, or response bodies
+
+Writes/actions explicitly forbidden and expected zero:
+- Worker deploy/rollback, D1/R2 mutation, credential issue/revoke, secret or
+  binding change, route/schedule/domain/Pages change, purge, restart, feature
+  enablement, Drive write, LINE send, and PR merge
+```
+
+The exact committed Harness head containing this packet and both V1 files is
+the execution head under the blanket continuation approval. Any head/hash/
+receipt/resource/interval drift invalidates execution and stops before provider
+access. A rollback, if indicated, remains a new exact write packet.
