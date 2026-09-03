@@ -1868,7 +1868,7 @@ read. No deploy, migration/backfill, credential/secret/token change, R2
 operation, purge, restart, feature enablement, Drive write, LINE send, PR
 merge, or rollback occurred. This approval is consumed and is not reusable.
 
-## Packet B1-D2 — stable full-config hash discovery, awaiting KEN approval
+## Packet B1-D2 — stable full-config hash discovery, consumed STOP
 
 This is a new read-only approval boundary required by the final B1 security
 audit. D1 established asset/Page topology but intentionally did not retain the
@@ -1969,10 +1969,135 @@ The exact committed Harness head and SHA-256 of this packet file must appear in
 KEN's approval. D2 authorizes only the 12 configuration GETs and sanitized
 local receipt. It does not authorize B1-R1 deployment.
 
-## Packet B1-R1 — exact code-only Worker deploy, blocked pending B1-D2
+### B1-D2 execution result — STOP, approval consumed
+
+KEN approved exact Harness head
+`8d2bde586d0a881ec738e824b47bdf3bbd09e8cd` and packet SHA-256
+`f15d4120e21f9b3e75446498fea5fd9e191f916700f67cebe9528ce9813db2ad`.
+The explicit approval event occurred at `2026-09-03T05:22:00.990Z`. The
+executor receipt recorded `2026-09-03T05:22:30Z` as its conservative local
+window start and `2026-09-03T07:22:30Z` as its end. This shifted the declared
+end 29.010 seconds later than the real approval window, but the actual provider
+access ran from `2026-09-03T05:22:44.691Z` through
+`2026-09-03T05:22:46.346Z`, safely inside both windows. Future packets must use
+the actual approval event instant without substitution.
+
+The approved zero-provider preflight passed. The execution then completed the
+first six-resource GET sequence and stopped with `subdomain_drift` before the
+second snapshot. Receipt SHA-256:
+`253cebe9939a54852cbd104a74bf5523f6b3182f841e7f7e098986592abdd0a6`.
+
+```text
+status: stopped
+stop_reason: subdomain_drift
+stable_snapshot_count: 0
+Cloudflare GET/provider total: 6/6
+retry/redirect/provider write: 0/0/0
+local write: one sanitized STOP receipt
+```
+
+The receipt directory is mode 0700 with exactly one regular mode-0600 file.
+Two independent receipt audits found no unauthorized provider action or secret
+leakage; one audit recorded the approval-timestamp discrepancy above as P2.
+This approval is consumed and cannot be reused. No deploy, migration/backfill,
+credential/token/secret change, R2 operation, purge, restart, feature
+enablement, Drive write, LINE send, PR merge, or rollback occurred.
+
+## Packet B1-D3 — exact subdomain-state discovery, awaiting KEN approval
+
+D2 proved that the current script-level subdomain response differs from the
+previously assumed `{enabled:true,previews_enabled:false}` state, but its
+sanitized STOP receipt intentionally retained no response value. D3 discovers
+only the two non-secret booleans from the one mismatched resource. It does not
+replace the required successful full-config D2-R1 readback.
+
+The response contract is the current Cloudflare `GET Worker subdomain` schema:
+`https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/subdomain/methods/get/`.
+
+```text
+Approval ID: 5229-B1-D3-20260903
+Mode: CF-WORKER-SUBDOMAIN-STATE-READ-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: exactly two hours from the actual KEN approval event instant
+
+Immutable anchors:
+- parent Harness head:
+  8d2bde586d0a881ec738e824b47bdf3bbd09e8cd
+- consumed D2 STOP receipt SHA-256:
+  253cebe9939a54852cbd104a74bf5523f6b3182f841e7f7e098986592abdd0a6
+- v0.19 backport/Accounting heads:
+  9f3c6c3ac98d0777f8e7354f807a6af4ab642b18 /
+  ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+
+Exact collector/test:
+- scripts/worker-b1-d3-subdomain-anchor-5229.ts
+- scripts/worker-b1-d3-subdomain-anchor-5229.test.ts
+- collector SHA-256:
+  ca94588bbe28bc401fdd296a4821238458531fe730d0a6b3f58308fd2140b09b
+- test SHA-256:
+  677a78459c8be776f0d0426ec29a153df109e11daa136fb8b991e8956183d3d4
+
+Required zero-provider preflight, only after the new approval:
+- planning/backport/Accounting worktrees are clean at the approved exact heads
+- collector/test are regular mode-0644 files in the clean approved commit
+- consumed D2 receipt directory is mode 0700 with exactly one regular
+  mode-0600 `sanitized-summary.json`; its SHA-256 and STOP/count fields match
+  the immutable anchor above before token access or provider request
+- focused D3 tests 13/13, related B1 tests 45/45, canonical script tests
+  143/143, strict standalone TypeScript, and git diff check pass
+- output path `/Users/kensmba/.line-harness-5229-B1-D3-20260903` is absent
+- invoke exactly:
+  pnpm exec tsx scripts/worker-b1-d3-subdomain-anchor-5229.ts \
+    --preflight-only \
+    --approved-harness-head <exact commit in KEN approval>
+- require status=preflight_passed, planning_head=<approved exact Harness head>,
+  token_present=true, and provider requests/writes/local writes all 0
+
+Approved reads, exact serial order:
+1. GET the exact script-level Worker subdomain endpoint
+2. GET the identical endpoint again
+
+Read validation and sanitized evidence:
+- accept no predetermined boolean values; require only an exact result object
+  with own keys `enabled` and `previews_enabled`, both boolean
+- require the two canonical responses to be identical
+- direct node:https, TLS 443, agent=false, body absent, redirect=0, retry=0;
+  status 200, JSON content type, identity/absent content encoding, body maximum
+  4,096 bytes, and the half-open approval interval checked before and after
+  every response including transport completion
+- provider request total exactly 2 GETs; provider writes exactly 0
+- create only `/Users/kensmba/.line-harness-5229-B1-D3-20260903` mode 0700
+  containing only mode-0600 `sanitized-summary.json`
+- retain only approval/head/timestamps, stable-snapshot count, the two boolean
+  values, their canonical SHA-256, and request counts
+- never retain or print token/header, raw response/envelope, account subdomain,
+  URL, customer/image value, provider error/body, or CF-Ray
+- exact execution command must use the actual approval event instant and its
+  exact plus-two-hour expiry:
+  pnpm exec tsx scripts/worker-b1-d3-subdomain-anchor-5229.ts \
+    --approval-received <actual KEN approval event ISO-8601 instant> \
+    --approval-expires <that exact instant plus two hours> \
+    --approved-harness-head <exact commit in KEN approval>
+- STOP immediately without retry on any mismatch; a STOP may write only the
+  same sanitized one-file receipt and cannot reuse the approval
+
+Writes/actions explicitly forbidden and expected zero:
+- Worker/Pages/D1/R2 write, Worker or asset content GET, deploy, migration,
+  backfill, credential/token/secret change, purge, restart, gate/feature
+  enablement, Drive write, LINE send, PR merge, and rollback
+```
+
+The exact committed Harness head and SHA-256 of this packet file must appear in
+KEN's approval. D3 authorizes only two script-subdomain configuration GETs and
+one sanitized receipt. After D3, a separate D2-R1 packet must pin the discovered
+state and complete the full six-resource double snapshot before B1-R1 can be
+approved.
+
+## Packet B1-R1 — exact code-only Worker deploy, blocked pending B1-D3 and D2-R1
 
 This supersedes the consumed B1 packet, but is not yet approvable. A completed
-B1-D2 receipt must first provide exact full settings/subdomain/schedules hashes
+B1-D3 receipt must first fix the actual subdomain state, then a completed D2-R1
+receipt must provide exact full settings/subdomain/schedules hashes
 and be pinned into the executor and this packet. Once unblocked, it deploys
 only the private incoming media Worker code while explicitly preserving the legacy environment's unknown
 Admin/LIFF identity sentinels. The sentinels are not asset byte hashes. Asset
