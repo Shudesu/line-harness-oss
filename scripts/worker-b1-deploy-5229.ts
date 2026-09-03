@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-/** Exact, approval-bound Worker code-only deploy executor for #5229 Packet B1. */
+/** Exact, approval-bound Worker code-only deploy executor for #5229 Packet B1-R1. */
 
 import { createHash } from 'node:crypto';
 import type { ClientRequest, IncomingMessage } from 'node:http';
@@ -16,20 +16,20 @@ import { argv, exit, stdout } from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const APPROVAL_ID = '5229-B1-20260902';
+const APPROVAL_ID = '5229-B1-R1-20260903';
 const ACCOUNT_ID = '67907592fdf596376bc2097e14a6563a';
 const SCRIPT_NAME = 'line-harness';
 const DATABASE_ID = 'c19584d7-e9f1-4d46-83c5-6c0ba96561d1';
 const WORKER_HOST = 'line-harness.family8office.workers.dev';
 const TOKEN_FILE = '/Users/kensmba/.line-harness/.env.local';
-const ARTIFACT_DIR = '/Users/kensmba/.line-harness-5229-B1-BUILD-20260902';
+const ARTIFACT_DIR = '/Users/kensmba/.line-harness-5229-B1-R1-BUILD-20260903';
 const ARTIFACT_FILE = `${ARTIFACT_DIR}/apps/worker/dist-release-final/index.js`;
-const ARTIFACT_SHA256 = '1355c7bdffc73dd20bc082fd439a1750fd8b7d5831291c1635cd71396c946de4';
+const ARTIFACT_SHA256 = '07dcc5ef5504bf2ae70286fad2d356444beb7626f6d64faa920ea7b3c33b19c1';
 const ARTIFACT_BYTES = 1_350_194;
 const MANIFEST_DIR = '/Users/kensmba/.line-harness-5229-M0-20260901';
 const MANIFEST_FILE = `${MANIFEST_DIR}/incoming-media-backfill-manifest.json`;
 const MANIFEST_SHA256 = 'cf35a1045040a265019a5afad8c2cefb8994edba684eeaa5dd2fad0b17b1663e';
-const OUTPUT_DIR = '/Users/kensmba/.line-harness-5229-B1-20260902';
+const OUTPUT_DIR = '/Users/kensmba/.line-harness-5229-B1-R1-20260903';
 const PLANNING_WORKTREE = '/Users/kensmba/.line-harness-wt/5229-private-incoming-media';
 const BACKPORT_WORKTREE = '/Users/kensmba/.line-harness-wt/5229-b1-v019-backport';
 const ACCOUNTING_WORKTREE = '/Users/kensmba/scripts-wt/5230-line-recovery';
@@ -37,18 +37,34 @@ const BACKPORT_HEAD = '9f3c6c3ac98d0777f8e7354f807a6af4ab642b18';
 const ACCOUNTING_HEAD = 'ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f';
 const EXECUTOR_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.ts`;
 const EXECUTOR_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.test.ts`;
-const EXECUTOR_TEST_SHA256 = 'f21c9e30119d00a7ee184ca674f301d596c68a00855758bc5dec462950d5dcbd';
+const EXECUTOR_TEST_SHA256 = 'faff478a79d163f9b930b25d1593de7f81415ada64466811ec30f5a2712e6787';
+const ARTIFACT_BUILDER_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.ts`;
+const ARTIFACT_BUILDER_SHA256 = 'c5d5f9dba49f8b03afeea1f6b43d07a8d26da22615c7d5e37c6b60187139fa2b';
+const ARTIFACT_BUILDER_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.test.ts`;
+const ARTIFACT_BUILDER_TEST_SHA256 = 'fe2e3a658105cedcdc499aaac1940dbdbe459fc5c9b48b003bb1feefe5853cfd';
 const B2_DIR = '/Users/kensmba/.line-harness-5229-B2-20260901';
 const B2_RECEIPT = `${B2_DIR}/sanitized-summary.json`;
 const B2_RECEIPT_SHA256 = '5f393930c545582d656c0068ee1d854a01ef8d60e66e1d04e4dca49a0beda95f';
+const D1_DIR = '/Users/kensmba/.line-harness-5229-B1-D1-20260903';
+const D1_RECEIPT = `${D1_DIR}/sanitized-summary.json`;
+const D1_RECEIPT_SHA256 = 'c2e294eae170d8a3f3b1592a43232b0c1ce2538f605464e7da3d057d44bebbd2';
 const PREVIOUS_DEPLOYMENT_ID = '7b3bb319-e618-4f57-a520-cd33f43115e5';
 const PREVIOUS_VERSION_ID = 'c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7';
 const TARGET_VERSION = '0.19.0-5229.b1.9f3c6c3';
 const TARGET_WORKER_HASH = 'sha256:6420c520444baa670973197f6c336b23a511e9dcd8fdbdf24082b61ce24c2b1e';
-const ADMIN_HASH = 'sha256:43e9888fa37af2db1ecdd2f135029ddb570279ebf07373b47d6cb5e62a25ac6c';
-const LIFF_HASH = 'sha256:350e651bacbede38ea9f197d0ae6e29903c5b3b219daccf4c62566310cc7ce17';
+const LEGACY_UNKNOWN_HASH = 'sha256:0000000000000000000000000000000000000000000000000000000000000000';
+const LEGACY_VERSION = '0.0.0-dev';
+const LEGACY_RELEASED_AT = '1970-01-01T00:00:00Z';
+const ADMIN_HASH = LEGACY_UNKNOWN_HASH;
+const LIFF_HASH = LEGACY_UNKNOWN_HASH;
+const PREVIOUS_SCRIPT_ETAG = '1d9a88703ce2509f372740c140aa18699884b779a82108efdd863484555611b6';
+const ASSET_BINDING_DIGEST = '8fcf498813511a591cb5d595bc281fee2d45f7a27a87f124257a319b543d04c6';
+const ADMIN_PROJECT_NAME_SHA256 = '492123998ae432be97e93235fce10a2d5d118fd9eb8be802edd46ae8345ca9a2';
+const ADMIN_DEPLOYMENT_ID = '301a632d-dc9a-4655-8368-2d77f8db3b21';
 const MAX_JSON_BYTES = 262_144;
 const MULTIPART_BOUNDARY = '----line-harness-5229-b1-code-only';
+const EXPECTED_SUBDOMAIN = { enabled: true, previews_enabled: false } as const;
+const EXPECTED_SCHEDULE_CRONS = ['* * * * *', '0 */6 * * *'] as const;
 
 const EXPECTED_BINDINGS = [
   ['ADMIN_ALLOW_CROSS_SITE', 'secret_text'], ['ADMIN_ORIGIN', 'secret_text'],
@@ -90,6 +106,7 @@ export interface RunDependencies {
   cfRequest: (request: ExactRequest, expiresAt: number) => Promise<HttpResponse>;
   workerRequest: (request: ExactRequest, expiresAt: number) => Promise<HttpResponse>;
   sleep: (milliseconds: number) => Promise<void>;
+  expectedAdminProjectNameSha256: string;
 }
 
 interface WorkerSnapshot {
@@ -102,6 +119,12 @@ interface WorkerSnapshot {
   schedules: unknown;
   schedulesSha256: string;
   bindingShape: Array<{ name: string; type: string }>;
+  scriptEtag: string;
+  versionAssetBindingDigest: string;
+  assetResourceIdentityAvailable: boolean;
+  settingsAssetBindingDigest: string;
+  adminProjectNameSha256: string;
+  adminDeploymentId: string;
 }
 
 interface VersionReadback {
@@ -140,8 +163,11 @@ export function validateArtifact(bytes: Buffer): Buffer {
   if (bytes.length !== ARTIFACT_BYTES || sha256(bytes) !== ARTIFACT_SHA256) {
     throw new DeployStop('artifact_hash');
   }
-  for (const marker of [TARGET_VERSION, TARGET_WORKER_HASH.slice(7), ADMIN_HASH.slice(7), LIFF_HASH.slice(7)]) {
+  for (const marker of [TARGET_VERSION, TARGET_WORKER_HASH.slice(7), ADMIN_HASH.slice(7)]) {
     if (!bytes.includes(Buffer.from(marker, 'utf8'))) throw new DeployStop('artifact_marker');
+  }
+  if (bytes.toString('utf8').split(LEGACY_UNKNOWN_HASH).length - 1 !== 2) {
+    throw new DeployStop('artifact_legacy_unknown_count');
   }
   if (bytes.includes(Buffer.from(MULTIPART_BOUNDARY, 'utf8'))) throw new DeployStop('multipart_boundary_collision');
   return bytes;
@@ -149,6 +175,8 @@ export function validateArtifact(bytes: Buffer): Buffer {
 
 export function loadArtifact(): Buffer {
   assertRealPath(ARTIFACT_DIR, 'directory', 0o700);
+  for (const path of [`${ARTIFACT_DIR}/apps`, `${ARTIFACT_DIR}/apps/worker`,
+    `${ARTIFACT_DIR}/apps/worker/dist-release-final`]) assertRealPath(path, 'directory', 0o700);
   assertRealPath(ARTIFACT_FILE, 'file', 0o600);
   return validateArtifact(readFileSync(ARTIFACT_FILE));
 }
@@ -210,6 +238,25 @@ function gitValue(worktree: string, args: string[]): string {
   }
 }
 
+export function validateD1Receipt(d1: unknown): void {
+  const value = d1 as Record<string, unknown>;
+  const worker = value.worker_resource as Record<string, unknown> | undefined;
+  const topology = value.topology as Record<string, unknown> | undefined;
+  const admin = topology?.admin_pages as Record<string, unknown> | undefined;
+  const counts = value.request_counts as Record<string, unknown> | undefined;
+  if (value.status !== 'completed' || value.active_deployment_id !== PREVIOUS_DEPLOYMENT_ID ||
+      value.active_version_id !== PREVIOUS_VERSION_ID || value.stable_active_snapshot !== true ||
+      value.legacy_build_identity !== 'unstamped_unknown' || worker?.worker_script_etag !== PREVIOUS_SCRIPT_ETAG ||
+      worker?.version_asset_binding_digest !== ASSET_BINDING_DIGEST ||
+      worker?.asset_resource_identity_available !== false || topology?.liff_topology !== 'worker_assets' ||
+      topology?.settings_asset_binding_digest !== ASSET_BINDING_DIGEST || topology?.liff_pages !== null ||
+      admin?.project_name_sha256 !== ADMIN_PROJECT_NAME_SHA256 ||
+      admin?.canonical_deployment_id !== ADMIN_DEPLOYMENT_ID ||
+      stable(counts) !== stable({ cloudflare_get: 5, provider_total: 5, retry: 0, writes: 0 })) {
+    throw new DeployStop('d1_receipt_shape');
+  }
+}
+
 export function validateLocalAnchors(approvedHarnessHead: string | null): string {
   const planningHead = gitValue(PLANNING_WORKTREE, ['rev-parse', 'HEAD']);
   const backportHead = gitValue(BACKPORT_WORKTREE, ['rev-parse', 'HEAD']);
@@ -235,12 +282,29 @@ export function validateLocalAnchors(approvedHarnessHead: string | null): string
   if (sha256(readFileSync(EXECUTOR_TEST_FILE)) !== EXECUTOR_TEST_SHA256) {
     throw new DeployStop('executor_test_hash');
   }
+  for (const [path, expected] of [
+    [ARTIFACT_BUILDER_FILE, ARTIFACT_BUILDER_SHA256],
+    [ARTIFACT_BUILDER_TEST_FILE, ARTIFACT_BUILDER_TEST_SHA256],
+  ] as const) {
+    assertRealPath(path, 'file', 0o644);
+    if (sha256(readFileSync(path)) !== expected) throw new DeployStop('artifact_builder_hash');
+  }
   assertRealPath(B2_DIR, 'directory', 0o700);
   if (stable(readdirSync(B2_DIR).sort()) !== stable(['sanitized-summary.json'])) {
     throw new DeployStop('b2_receipt_entries');
   }
   assertRealPath(B2_RECEIPT, 'file', 0o600);
   if (sha256(readFileSync(B2_RECEIPT)) !== B2_RECEIPT_SHA256) throw new DeployStop('b2_receipt_hash');
+  assertRealPath(D1_DIR, 'directory', 0o700);
+  if (stable(readdirSync(D1_DIR).sort()) !== stable(['sanitized-summary.json'])) {
+    throw new DeployStop('d1_receipt_entries');
+  }
+  assertRealPath(D1_RECEIPT, 'file', 0o600);
+  const d1Bytes = readFileSync(D1_RECEIPT);
+  if (sha256(d1Bytes) !== D1_RECEIPT_SHA256) throw new DeployStop('d1_receipt_hash');
+  let d1: unknown;
+  try { d1 = JSON.parse(d1Bytes.toString('utf8')); } catch { throw new DeployStop('d1_receipt_json'); }
+  validateD1Receipt(d1);
   return planningHead;
 }
 
@@ -363,6 +427,92 @@ function bindingShape(settings: unknown): Array<{ name: string; type: string }> 
   return shape;
 }
 
+function assetTopology(settings: unknown, expectedAdminProjectNameSha256: string): {
+  adminProject: string;
+  settingsAssetBindingDigest: string;
+} {
+  const bindings = (settings as { bindings?: unknown[] } | null)?.bindings;
+  if (!Array.isArray(bindings)) throw new DeployStop('settings_topology');
+  const exact = (name: string): Record<string, unknown> => {
+    const matches = bindings.filter((binding) => (binding as { name?: unknown }).name === name);
+    if (matches.length !== 1) throw new DeployStop('settings_topology');
+    return matches[0] as Record<string, unknown>;
+  };
+  const admin = exact('ADMIN_PAGES_PROJECT');
+  const liff = exact('LIFF_PAGES_PROJECT');
+  const assets = exact('ASSETS');
+  if (admin.type !== 'plain_text' || typeof admin.text !== 'string' ||
+      !/^[a-z0-9](?:[a-z0-9-]{0,56}[a-z0-9])?$/.test(admin.text) ||
+      liff.type !== 'plain_text' || liff.text !== '' || assets.type !== 'assets') {
+    throw new DeployStop('settings_topology');
+  }
+  const digest = sha256(stable(assets));
+  if (sha256(admin.text) !== expectedAdminProjectNameSha256 || digest !== ASSET_BINDING_DIGEST) {
+    throw new DeployStop('settings_asset_drift');
+  }
+  return { adminProject: admin.text, settingsAssetBindingDigest: digest };
+}
+
+function versionResource(result: unknown, expectedVersionId: string): {
+  scriptEtag: string;
+  versionAssetBindingDigest: string;
+  assetResourceIdentityAvailable: boolean;
+} {
+  const value = result as {
+    id?: unknown;
+    resources?: { script?: { etag?: unknown }; bindings?: unknown };
+  };
+  if (value.id !== expectedVersionId || typeof value.resources?.script?.etag !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(value.resources.script.etag) || !Array.isArray(value.resources.bindings)) {
+    throw new DeployStop('version_resource_shape');
+  }
+  const assets = (value.resources.bindings as Array<Record<string, unknown>>)
+    .filter((binding) => binding.name === 'ASSETS' && binding.type === 'assets');
+  if (assets.length !== 1) throw new DeployStop('version_asset_binding');
+  const digest = sha256(stable(assets[0]));
+  const identityAvailable = Object.keys(assets[0]).some((key) => !['name', 'type'].includes(key));
+  if (digest !== ASSET_BINDING_DIGEST || identityAvailable) throw new DeployStop('version_asset_drift');
+  return {
+    scriptEtag: value.resources.script.etag,
+    versionAssetBindingDigest: digest,
+    assetResourceIdentityAvailable: identityAvailable,
+  };
+}
+
+function adminProject(result: unknown, expectedProject: string, expectedAdminProjectNameSha256: string): {
+  adminProjectNameSha256: string;
+  adminDeploymentId: string;
+} {
+  const value = result as { name?: unknown; canonical_deployment?: { id?: unknown } };
+  if (value.name !== expectedProject || typeof value.canonical_deployment?.id !== 'string' ||
+      !/^[0-9a-f-]{36}$/.test(value.canonical_deployment.id) ||
+      sha256(expectedProject) !== expectedAdminProjectNameSha256 ||
+      value.canonical_deployment.id !== ADMIN_DEPLOYMENT_ID) throw new DeployStop('admin_pages_drift');
+  return { adminProjectNameSha256: sha256(expectedProject), adminDeploymentId: value.canonical_deployment.id };
+}
+
+function validateSubdomain(result: unknown): void {
+  if (stable(result) !== stable(EXPECTED_SUBDOMAIN)) throw new DeployStop('subdomain_drift');
+}
+
+function validateSchedules(result: unknown): void {
+  const value = result as { schedules?: unknown } | null;
+  if (!value || stable(Object.keys(value).sort()) !== stable(['schedules']) || !Array.isArray(value.schedules)) {
+    throw new DeployStop('schedules_drift');
+  }
+  const crons = value.schedules.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    if (!row || typeof row !== 'object' || typeof row.cron !== 'string' ||
+        Object.keys(row).some((key) => !['cron', 'created_on', 'modified_on'].includes(key)) ||
+        (row.created_on !== undefined && (typeof row.created_on !== 'string' || !Number.isFinite(Date.parse(row.created_on)))) ||
+        (row.modified_on !== undefined && (typeof row.modified_on !== 'string' || !Number.isFinite(Date.parse(row.modified_on))))) {
+      throw new DeployStop('schedules_drift');
+    }
+    return row.cron;
+  }).sort();
+  if (stable(crons) !== stable([...EXPECTED_SCHEDULE_CRONS].sort())) throw new DeployStop('schedules_drift');
+}
+
 function versionReadback(response: HttpResponse): VersionReadback {
   const parsed = parseJson(response, 'admin_version') as Record<string, unknown>;
   for (const key of ['version', 'worker_hash', 'admin_hash', 'liff_hash', 'released_at']) {
@@ -414,8 +564,8 @@ function writeSummary(path: string, identity: { dev: number; ino: number }, summ
 export function parseArgs(raw: string[]): {
   preflightOnly: boolean; received: string; expires: string; approvedHarnessHead: string | null;
 } {
-  if (raw.length === 1 && raw[0] === '--preflight-only') {
-    return { preflightOnly: true, received: '', expires: '', approvedHarnessHead: null };
+  if (raw.length === 3 && raw[0] === '--preflight-only' && raw[1] === '--approved-harness-head') {
+    return { preflightOnly: true, received: '', expires: '', approvedHarnessHead: raw[2] };
   }
   if (raw.length === 6 && raw[0] === '--approval-received' && raw[2] === '--approval-expires' &&
       raw[4] === '--approved-harness-head') {
@@ -428,18 +578,24 @@ async function getSnapshot(
   token: string,
   expiresAt: number,
   requestCf: (spec: ExactRequest) => Promise<HttpResponse>,
+  expectedAdminProjectNameSha256: string,
 ): Promise<{ snapshot: WorkerSnapshot; cfRays: Array<string | null> }> {
   const base = `/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}`;
   const auth = { Authorization: `Bearer ${token}`, 'Accept-Encoding': 'identity' };
   const deploymentResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/deployments`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'deployments');
+  const active = activeDeployment(deploymentResponse.result);
   const settingsResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/settings`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'settings');
+  const shape = bindingShape(settingsResponse.result);
+  const topology = assetTopology(settingsResponse.result, expectedAdminProjectNameSha256);
+  const versionResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/versions/${active.versionId}`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'version_resource');
+  const resource = versionResource(versionResponse.result, active.versionId);
+  const adminResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `/client/v4/accounts/${ACCOUNT_ID}/pages/projects/${encodeURIComponent(topology.adminProject)}`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'admin_pages');
+  const admin = adminProject(adminResponse.result, topology.adminProject, expectedAdminProjectNameSha256);
   const subdomainResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/subdomain`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'subdomain');
   const schedulesResponse = parseEnvelope(await requestCf({ hostname: 'api.cloudflare.com', method: 'GET', path: `${base}/schedules`, headers: auth, maxBytes: MAX_JSON_BYTES }), 'schedules');
   void expiresAt;
-  const active = activeDeployment(deploymentResponse.result);
-  const shape = bindingShape(settingsResponse.result);
-  const subdomain = subdomainResponse.result as { enabled?: unknown };
-  if (subdomain?.enabled !== true) throw new DeployStop('subdomain_drift');
+  validateSubdomain(subdomainResponse.result);
+  validateSchedules(schedulesResponse.result);
   return {
     snapshot: {
       ...active,
@@ -450,8 +606,12 @@ async function getSnapshot(
       schedules: schedulesResponse.result,
       schedulesSha256: sha256(stable(schedulesResponse.result)),
       bindingShape: shape,
+      ...resource,
+      settingsAssetBindingDigest: topology.settingsAssetBindingDigest,
+      ...admin,
     },
-    cfRays: [deploymentResponse.cfRay, settingsResponse.cfRay, subdomainResponse.cfRay, schedulesResponse.cfRay],
+    cfRays: [deploymentResponse.cfRay, settingsResponse.cfRay, versionResponse.cfRay,
+      adminResponse.cfRay, subdomainResponse.cfRay, schedulesResponse.cfRay],
   };
 }
 
@@ -471,10 +631,15 @@ function validateMigrations(response: HttpResponse): string | null {
 }
 
 function sameSnapshotConfig(before: WorkerSnapshot, after: WorkerSnapshot): void {
-  for (const key of ['settingsSha256', 'subdomainSha256', 'schedulesSha256'] as const) {
+  for (const key of ['settingsSha256', 'subdomainSha256', 'schedulesSha256',
+    'versionAssetBindingDigest', 'settingsAssetBindingDigest', 'adminProjectNameSha256',
+    'adminDeploymentId', 'assetResourceIdentityAvailable'] as const) {
     if (before[key] !== after[key]) throw new DeployStop(`${key}_changed`);
   }
   if (stable(before.bindingShape) !== stable(after.bindingShape)) throw new DeployStop('binding_shape_changed');
+  if (before.scriptEtag !== PREVIOUS_SCRIPT_ETAG || after.scriptEtag === before.scriptEtag) {
+    throw new DeployStop('script_etag_transition');
+  }
 }
 
 function validateTargetVersion(value: VersionReadback): void {
@@ -487,7 +652,7 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
   const args = parseArgs(raw);
   const planningHead = deps.validateLocalAnchors(args.approvedHarnessHead);
   const artifact = validateArtifact(deps.loadArtifact());
-  const legacyProbePath = deps.loadLegacyProbePath();
+  void deps.loadLegacyProbePath();
   const token = deps.loadToken();
   const upload = buildContentUpload(artifact);
   if (args.preflightOnly) {
@@ -507,6 +672,8 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
   let runtimeReads = 0;
   let contentWrites = 0;
   let versionPolls = 0;
+  let mutationStage = 'pre_write_readback';
+  let mutationOutcome: 'not_attempted' | 'unknown' | 'accepted' = 'not_attempted';
   const cfRays: Array<string | null> = [];
   const requestCf = async (spec: ExactRequest): Promise<HttpResponse> => {
     validateApprovalWindow(args.received, args.expires, deps.now());
@@ -521,7 +688,7 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
   };
 
   try {
-    const before = await getSnapshot(token, expiresAt, requestCf);
+    const before = await getSnapshot(token, expiresAt, requestCf, deps.expectedAdminProjectNameSha256);
     cfRays.push(...before.cfRays);
     if (before.snapshot.deploymentId !== PREVIOUS_DEPLOYMENT_ID || before.snapshot.versionId !== PREVIOUS_VERSION_ID) {
       throw new DeployStop('previous_deployment_drift');
@@ -530,7 +697,9 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
       hostname: WORKER_HOST, method: 'GET', path: '/admin/version',
       headers: { 'Accept-Encoding': 'identity' }, maxBytes: 8_192,
     }));
-    if (preVersion.version === TARGET_VERSION || preVersion.admin_hash !== ADMIN_HASH || preVersion.liff_hash !== LIFF_HASH) {
+    if (preVersion.version !== LEGACY_VERSION || preVersion.worker_hash !== LEGACY_UNKNOWN_HASH ||
+        preVersion.admin_hash !== LEGACY_UNKNOWN_HASH || preVersion.liff_hash !== LEGACY_UNKNOWN_HASH ||
+        preVersion.released_at !== LEGACY_RELEASED_AT) {
       throw new DeployStop('pre_version_drift');
     }
 
@@ -549,6 +718,21 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
     });
     cfRays.push(validateMigrations(migrationResponse));
 
+    const finalPrePutDeployment = parseEnvelope(await requestCf({
+      hostname: 'api.cloudflare.com', method: 'GET',
+      path: `/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/deployments`,
+      headers: { Authorization: `Bearer ${token}`, 'Accept-Encoding': 'identity' },
+      maxBytes: MAX_JSON_BYTES,
+    }), 'final_pre_put_deployment');
+    cfRays.push(finalPrePutDeployment.cfRay);
+    const finalPrePutActive = activeDeployment(finalPrePutDeployment.result);
+    if (finalPrePutActive.deploymentId !== before.snapshot.deploymentId ||
+        finalPrePutActive.versionId !== before.snapshot.versionId) {
+      throw new DeployStop('pre_put_deployment_drift');
+    }
+
+    mutationStage = 'content_put_in_flight';
+    mutationOutcome = 'unknown';
     const putResponse = parseEnvelope(await requestCf({
       hostname: 'api.cloudflare.com', method: 'PUT',
       path: `/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/content`,
@@ -559,10 +743,12 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
       },
       body: upload, maxBytes: MAX_JSON_BYTES,
     }), 'content_put');
+    mutationOutcome = 'accepted';
+    mutationStage = 'post_write_readback';
     cfRays.push(putResponse.cfRay);
     validateApprovalWindow(args.received, args.expires, deps.now());
 
-    const after = await getSnapshot(token, expiresAt, requestCf);
+    const after = await getSnapshot(token, expiresAt, requestCf, deps.expectedAdminProjectNameSha256);
     cfRays.push(...after.cfRays);
     if (after.snapshot.deploymentId === before.snapshot.deploymentId ||
         after.snapshot.versionId === before.snapshot.versionId) throw new DeployStop('deployment_not_advanced');
@@ -591,12 +777,21 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
       headers: { 'Accept-Encoding': 'identity' }, maxBytes: 1_024,
     });
     if (privateProbe.status !== 401 || privateProbe.body.length !== 0) throw new DeployStop('private_unauthorized_probe');
-    const legacyProbe = await requestWorker({
-      hostname: WORKER_HOST, method: 'HEAD', path: legacyProbePath,
-      headers: { 'Accept-Encoding': 'identity' }, maxBytes: 1_024,
-    });
-    if (legacyProbe.status !== 200 || legacyProbe.body.length !== 0) throw new DeployStop('legacy_continuity_probe');
+
+    const finalPostReadbackDeployment = parseEnvelope(await requestCf({
+      hostname: 'api.cloudflare.com', method: 'GET',
+      path: `/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/deployments`,
+      headers: { Authorization: `Bearer ${token}`, 'Accept-Encoding': 'identity' },
+      maxBytes: MAX_JSON_BYTES,
+    }), 'final_post_readback_deployment');
+    cfRays.push(finalPostReadbackDeployment.cfRay);
+    const finalPostReadbackActive = activeDeployment(finalPostReadbackDeployment.result);
+    if (finalPostReadbackActive.deploymentId !== after.snapshot.deploymentId ||
+        finalPostReadbackActive.versionId !== after.snapshot.versionId) {
+      throw new DeployStop('post_readback_deployment_drift');
+    }
     validateApprovalWindow(args.received, args.expires, deps.now());
+    mutationStage = 'completed';
 
     const summary = {
       schema_version: 1, approval_id: APPROVAL_ID, approval_received: args.received,
@@ -615,20 +810,29 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
         schedules_sha256: after.snapshot.schedulesSha256,
         binding_count: after.snapshot.bindingShape.length,
         public_block_gate: 'absent',
+        asset_identity: 'legacy_unknown',
+        version_asset_binding_digest: after.snapshot.versionAssetBindingDigest,
+        settings_asset_binding_digest: after.snapshot.settingsAssetBindingDigest,
+        asset_resource_identity_available: after.snapshot.assetResourceIdentityAvailable,
+        admin_project_name_sha256: after.snapshot.adminProjectNameSha256,
+        admin_pages_deployment_id: after.snapshot.adminDeploymentId,
+        previous_script_etag: before.snapshot.scriptEtag,
+        deployed_script_etag: after.snapshot.scriptEtag,
       },
       runtime_readback: {
         version: target.version, worker_hash: target.worker_hash,
         admin_hash: target.admin_hash, liff_hash: target.liff_hash,
-        private_unauthenticated_head: 401, legacy_public_head: 200,
+        private_unauthenticated_head: 401,
       },
       request_counts: {
         cloudflare_read: cfReads, worker_content_put: contentWrites,
         runtime_read: runtimeReads, runtime_version_polls: versionPolls,
         provider_total: cfReads + contentWrites + runtimeReads, retry: 0,
       },
+      mutation: { stage: mutationStage, outcome: mutationOutcome, put_attempts: contentWrites },
       cf_rays: cfRays,
       forbidden_actions: {
-        d1_write: 0, binding_change: 0, secret_change: 0, assets_change: 0,
+        d1_write: 0, binding_change: 0, secret_change: 0, asset_endpoint_write: 0,
         routes_change: 0, schedules_change: 0, gate_change: 0, r2: 0,
         purge: 0, restart: 0, feature_enablement: 0, drive_write: 0,
         line_send: 0, pr_merge: 0, automatic_rollback: 0,
@@ -648,6 +852,7 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
           runtime_read: runtimeReads, runtime_version_polls: versionPolls,
           provider_total: cfReads + contentWrites + runtimeReads, retry: 0,
         },
+        mutation: { stage: mutationStage, outcome: mutationOutcome, put_attempts: contentWrites },
         rollback_required: contentWrites === 1,
       });
     }
@@ -661,6 +866,7 @@ const defaultDeps: RunDependencies = {
   cfRequest: (spec, expiresAt) => exactHttpsRequest(spec, expiresAt),
   workerRequest: (spec, expiresAt) => exactHttpsRequest(spec, expiresAt),
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  expectedAdminProjectNameSha256: ADMIN_PROJECT_NAME_SHA256,
 };
 
 const isCliEntry = (() => {
