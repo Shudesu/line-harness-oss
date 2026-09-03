@@ -2693,3 +2693,206 @@ The exact committed Harness head containing this packet and both V1 files is
 the execution head under the blanket continuation approval. Any head/hash/
 receipt/resource/interval drift invalidates execution and stops before provider
 access. A rollback, if indicated, remains a new exact write packet.
+
+### 5229-B1-V1-20260903 execution receipt — COMPLETED
+
+The bounded read-only decision completed at Harness head
+`fb2d6bb8e32b32bca9e3b9bff29d62acc53d39ee` inside the fixed blanket
+approval interval.
+
+- receipt:
+  `/Users/kensmba/.line-harness-5229-B1-V1-20260903/sanitized-summary.json`
+- receipt SHA-256:
+  `5e3dcbf0a5ae7b5e883788cfa7ce87f9bb411fa1935d885ae2bb10a2f769d3a6`
+- Cloudflare GET/runtime reads/provider writes: `8/3/0`
+- active deployment/version remained
+  `89b40fb5-bfc8-48b1-a7b1-b8f3538bccf7` /
+  `5dab4e03-2147-4c34-b5c7-f70c105b4712` at 100% through the terminal read
+- old/new comparable version resources and full binding values were equal;
+  exact binding count was 20
+- target runtime identity matched on the first read
+- unauthenticated private HEAD was 401/empty
+- manifest-derived legacy public HEAD was 200/empty with exact MIME
+- disposition: `accept_candidate_no_rollback`; automatic rollback: 0
+
+Independent receipt audit passed with P0/P1/P2 all zero. For continuation under
+KEN's blanket approval, B1 is treated as operationally accepted on the combined
+basis of Cloudflare's content-only update contract, the pinned current
+configuration anchors, equal immutable version resources, exact runtime build,
+both authorization/compatibility probes, and terminal deployment stability.
+This decision does not assert that every unretained field in the raw settings
+response was independently reconstructed. Subsequent packets must continue to
+fail closed on any live drift.
+
+## Packet 5229-B0-20260903 — issue one account-bound read credential
+
+```text
+Approval ID: 5229-B0-20260903
+Approval source/interval: KEN blanket continuation approval,
+  [2026-09-03T05:51:46.737Z, 2026-09-03T07:51:46.737Z)
+Mode: ONE-ROW-D1-CREDENTIAL-ISSUE
+
+Immutable anchors:
+- B1-V1 source head: fb2d6bb8e32b32bca9e3b9bff29d62acc53d39ee
+- Accounting deploy worktree/head:
+  /Users/kensmba/scripts-wt/5230-line-recovery-deploy /
+  ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+- executor SHA-256:
+  8e2e6a838ca39a6c8301bc6d3cdda8ec99765f9e10713742c849700ca1d86d80
+- executor test SHA-256:
+  d1f7fa80f4df264e7880b767197a8b1fdf83f1b709786662742d27472778abfd
+- protected 77-row manifest SHA-256:
+  cf35a1045040a265019a5afad8c2cefb8994edba684eeaa5dd2fad0b17b1663e
+- B2/B1/V1 receipt SHA-256 values are pinned by the executor
+- offline credential directory is exactly mode 0700 with apply.sql,
+  credential.env, and manifest.json exactly mode 0600
+- credential id: a6f8d1124f07d9ab81d0aa3b8ee080fb
+- scope: incoming_media_read
+- not-before/expires-at:
+  2026-09-03T06:30:00.000Z / 2026-12-02T06:30:00.000Z
+- the exact account is derived from the protected manifest and never retained
+  in the execution receipt
+
+Exact provider operations:
+1. one D1 transactional query batch containing one prerequisite assertion,
+   one parameterized INSERT, and one changes()=1 assertion
+2. one D1 read-only query batch requiring exactly one row with the exact
+   credential id, account, scope, token digest, active window, creation time,
+   and revoked_at IS NULL
+
+Ceilings and STOP:
+- D1 POST total exactly 2; write batches exactly 1; inserted rows exactly 1
+- direct HTTPS, serial, agent=false, no redirect or retry
+- stop before provider access on any head/worktree/receipt/manifest/artifact/
+  mode/hash/approval drift
+- stop after write on any response/readback/expiry mismatch; do not retry,
+  revoke, or delete automatically
+- every success or STOP receipt records mutation_stage, mutation_outcome
+  (not_attempted, unknown, or accepted), and reconciliation_required; a
+  request/response ambiguity is unknown, while an accepted INSERT without
+  exact readback remains accepted but requires reconciliation
+
+Evidence:
+- output /Users/kensmba/.line-harness-5229-B0-20260903 mode 0700
+- exactly one sanitized-summary.json mode 0600
+- receipt may retain credential id, scope, active window, revoked boolean,
+  account_match boolean, counts, timestamps, and pinned receipt hashes
+- never retain or print LINE account ID, plaintext credential, token digest,
+  Authorization header, SQL parameters, or provider response body
+
+Explicitly forbidden and expected zero:
+- accounting secret installation/restart/feature enable, credential revoke,
+  Worker deploy/settings/gate, backfill, R2 operation, purge, Drive write,
+  LINE send, and PR merge
+```
+
+The final clean Harness commit containing this packet and the B0 executor/tests
+is the approved execution head under the blanket continuation approval. Any
+drift stops before provider access.
+
+## Packet 5229-B3-20260903 — atomic 77-row D1 backfill
+
+```text
+Approval source/interval: KEN blanket continuation approval,
+  [2026-09-03T05:51:46.737Z, 2026-09-03T07:51:46.737Z)
+Executor/test SHA-256:
+  a8851c310e2ace5f41ad949a6db7f94717578e20706af4e13db9958d493b2044 /
+  88108bcf5fcd08b67d8598524324ef731b9b68c80e7c32e4bd9c1db914c7b397
+Inputs: exact B1 artifact and B1/V1/B2 receipts; M0 manifest N=77,
+  E=0, B=27,625,839; exact preflight/apply/rollback/purge/readback PLAN files.
+
+Provider sequence, serial and no retry:
+1. one read-only D1 batch containing the exact 154 preflight operations;
+   require every expected row count
+2. one unsplittable transactional D1 batch containing all exact 308 apply
+   operations: 77 ledger inserts, 77 exact-preimage messages_log rewrites, and
+   154 adjacent changes() assertions
+3. one read-only D1 batch containing the exact 154 readback operations;
+   require every expected row count and digest
+
+Ceilings: D1 POST exactly 3; provider write batches exactly 1; ledger inserts
+77; messages_log rewrites 77; R2/Worker/deploy/gate/purge/credential/LINE/Drive
+operations 0. Any drift or assertion failure is STOP. Never split, retry,
+resume, auto-rollback, or delete evidence.
+
+Evidence: /Users/kensmba/.line-harness-5229-B3-20260903 mode 0700 with exactly
+one sanitized-summary.json mode 0600. Retain only hashes/counts/timestamps and
+mutation outcome; never row identifiers, URLs, JSON content, account/message/
+sender IDs, SQL parameters, or provider bodies.
+```
+
+## Packet 5229-B3-R1-20260903 — complete private functional readback
+
+```text
+Approval source/interval: KEN blanket continuation approval,
+  [2026-09-03T05:51:46.737Z, 2026-09-03T07:51:46.737Z)
+Executor/test SHA-256:
+  ed0d5a0d788d99c57db183f0e8d001831738a619da1cba8811635d9b38abe26b /
+  a9078432e5aea5ccd074a94ffb793f88cfc413afe8bc5264db6b3a642011efba
+Prerequisites: exact B0 and B3 completed receipts plus protected credential,
+manifest, PLAN, B1/V1/B2 evidence, and final clean Harness/accounting heads.
+The operator must pass both exact completed receipt SHA-256 values on the
+command line; preflight and execution validate their mode, hash, approval/head,
+semantic outcome, counts, and credential identity before provider access.
+
+Exact reads:
+- one D1 read-only SELECT batch proving 77 exact ledger rows and 77 rewritten
+  messages_log rows
+- four fixed authorization probes: anonymous=401, invalid credential=401,
+  correct credential with cross-account=404, unrelated route denied
+- for each of 77 exact manifest entries, one account-bound authenticated HEAD
+  and one authenticated GET; require 200, private/no-store, exact MIME/length/
+  SHA-256 and image magic; identifiers and bytes remain memory-only
+
+Ceilings: D1 POST 1 + Worker reads 158 = provider reads 159; provider writes,
+direct R2, retry, redirect, fallback, gate, purge, Drive, LINE 0. All requests
+are serial and approval-bound. Any mismatch is STOP; no retry or rollback.
+
+Evidence: /Users/kensmba/.line-harness-5229-B3-R1-20260903 mode 0700 with
+exactly one sanitized-summary.json mode 0600. Retain aggregate counts/digests
+and status matrix only; never token/token digest, account/message/key/path/URL,
+customer image bytes, header values, SQL params, or provider bodies.
+```
+
+The final clean Harness commit containing both B3 packets and four files is the
+approved execution head. B3-R1 cannot preflight or execute until B0 and B3
+completed receipts exist and match their exact pinned states.
+
+## Packet 5229-B4-20260903 — public compatibility gate safety STOP
+
+```text
+Approval source/interval: KEN blanket continuation approval,
+  [2026-09-03T05:51:46.737Z, 2026-09-03T07:51:46.737Z)
+Executor/test SHA-256:
+  1b2f94e15d3f0db554776d702f2fa26eacf9d731671e7efaf1f681f18e72b656 /
+  cc990af967e2a34b4d5d3fc72566409a3b18975c6b81bfd921a30c61b0bb5474
+Mode: STOP-NO-PROVIDER-TRANSPORT
+
+Decision:
+- Cloudflare settings PATCH requires a complete binding disposition; the
+  settings endpoint does not provide a strict fail-on-unresolved inheritance
+  guarantee equivalent to version upload
+- therefore preservation of all 20 live bindings cannot be proved under this
+  packet's zero-loss/no-automatic-rollback constraints
+- the executor intentionally contains no provider transport and cannot change
+  the public compatibility gate
+
+Evidence:
+- validate the exact clean Harness/accounting heads, the B1/V1/B2/manifest
+  anchors, and protected artifact modes/hashes locally
+- write one mode-0600 sanitized STOP receipt below one mode-0700 directory
+- record provider requests/writes, deploys, gate changes, purges, Drive writes,
+  and LINE sends as zero
+
+Disposition:
+- STOP; do not use settings PATCH
+- a later gate closure must use a separately reviewed code-only deployment or
+  another mechanism that proves complete binding preservation
+```
+
+B5 is not a zone-cache purge. The 77 legacy URLs are workers.dev URLs and the
+Worker does not use the Workers Cache API. A zone purge would not purge Workers
+Cache and cannot revoke copies already held by browsers or LINE. After a safe
+B4 implementation, B5 is replaced by a zero-write cache attestation: require
+cache settings absent/false, all exact 77 legacy HEAD probes 404, and no
+CF-Cache-Status HIT/STALE/UPDATING. If cache is enabled, STOP without fallback.
