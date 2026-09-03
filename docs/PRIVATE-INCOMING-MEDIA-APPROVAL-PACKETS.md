@@ -2896,3 +2896,44 @@ Cache and cannot revoke copies already held by browsers or LINE. After a safe
 B4 implementation, B5 is replaced by a zero-write cache attestation: require
 cache settings absent/false, all exact 77 legacy HEAD probes 404, and no
 CF-Cache-Status HIT/STALE/UPDATING. If cache is enabled, STOP without fallback.
+
+## 2026-09-03 blanket continuation execution receipts
+
+All operations below ran at Harness head
+`51e5e505b0c2e83426506144bb3fc6afa1c525d0` inside the fixed blanket interval.
+
+- B0 credential issue: completed; one D1 write batch, one inserted account-bound
+  credential, exact readback, no retry, no reconciliation required. Receipt
+  `/Users/kensmba/.line-harness-5229-B0-20260903/sanitized-summary.json`, SHA-256
+  `a85d62c7f68b4c901612481c985ac735260373efa98e19d547579fb04ef9e32b`.
+- B3 backfill: completed; all 154 preflight assertions, 77 ledger inserts, 77
+  message URL rewrites, and all 154 post-write assertions passed in one
+  transactional write batch with no retry or rollback requirement. Receipt
+  `/Users/kensmba/.line-harness-5229-B3-20260903/sanitized-summary.json`, SHA-256
+  `098b0ded9bf20d16d40d5e1108c6571f2e75e24179a0fae29f7b80c27e76c660`.
+- B3-R1 functional readback: completed; D1 exact count 77, authenticated HEAD
+  77, GET 77, content SHA-256 match 77, JPEG magic match 77, expected denial
+  matrix 4/4, provider reads 159, writes/retry/redirect 0. Receipt
+  `/Users/kensmba/.line-harness-5229-B3-R1-20260903/sanitized-summary.json`,
+  SHA-256
+  `4372dc856adbf7ac59facac24789417d61f3d282f8f47d91b92f73d4018ae991`.
+- B4: stopped before provider access because a lossless settings PATCH could
+  not be proved. Provider requests/writes are zero. Receipt
+  `/Users/kensmba/.line-harness-5229-B4-STOP-20260903/sanitized-summary.json`,
+  SHA-256
+  `2eee00f58b52bdedd1fbba1b516431f4820099727f2db66a7cab280f0c2dbeff`.
+- Accounting receiver: deployed from exact head
+  `ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f` in the isolated deploy worktree.
+  The scoped credential fingerprint was verified without disclosure. FO-only
+  Harness recovery is `write`; customer notification is `shadow` with kill
+  switch engaged, so LINE sends remain zero. Launchd is running and `/health`
+  reports zero pending/processing/ambiguous/failed events and zero outbox rows.
+  Sanitized receipt
+  `/Users/kensmba/.line-accounting-5230-deploy-20260903/sanitized-summary.json`,
+  SHA-256
+  `c55985ef41e5189740938a5fb94a0f76d2ed729865f0b89b705f507841982882`.
+
+The incident image that was absent at 14:54 was independently found in Drive
+with creation time 15:12 JST under `月次添付物/2026年08月/その他`. Its 455,769
+bytes exactly match the retained Harness object by SHA-256, so no duplicate
+Drive upload was performed.
