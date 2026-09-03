@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  symlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -11,6 +14,7 @@ import {
   parseTokenFile,
   run,
   validateApprovalWindow,
+  validateReceiptArtifact,
   type Dependencies,
 } from './worker-b1-d2-config-anchor-5229.js';
 
@@ -152,6 +156,30 @@ describe('Worker B1-D2 stable configuration anchor', () => {
     expect(localChecks).toBe(1);
     expect(f.calls).toHaveLength(0);
     expect(readdirSync(f.root)).toEqual([]);
+  });
+
+  test('validates the immutable D1 receipt directory, file mode, and digest', () => {
+    const root = mkdtempSync(join(tmpdir(), 'lh-5229-b1-d1-receipt-'));
+    tempDirs.push(root);
+    const directory = join(root, 'receipt');
+    const file = join(directory, 'sanitized-summary.json');
+    mkdirSync(directory, { mode: 0o700 });
+    writeFileSync(file, 'sanitized\n', { mode: 0o600 });
+    const digest = createHash('sha256').update('sanitized\n').digest('hex');
+    expect(() => validateReceiptArtifact(directory, file, digest)).not.toThrow();
+
+    writeFileSync(file, 'changed\n');
+    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/d1_receipt_sha256/);
+    writeFileSync(file, 'sanitized\n');
+    chmodSync(file, 0o644);
+    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/file_state/);
+    chmodSync(file, 0o600);
+    writeFileSync(join(directory, 'extra'), 'x', { mode: 0o600 });
+    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/d1_receipt_entries/);
+    rmSync(join(directory, 'extra'));
+    rmSync(file);
+    symlinkSync('/dev/null', file);
+    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/file_state/);
   });
 
   test('takes two identical full snapshots in the exact six-GET order and writes hashes/IDs/counts only', async () => {

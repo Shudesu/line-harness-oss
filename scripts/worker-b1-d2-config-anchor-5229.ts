@@ -25,6 +25,9 @@ const ACCOUNTING_WORKTREE = '/Users/kensmba/scripts-wt/5230-line-recovery';
 const BACKPORT_HEAD = '9f3c6c3ac98d0777f8e7354f807a6af4ab642b18';
 const ACCOUNTING_HEAD = 'ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f';
 const OUTPUT_DIR = '/Users/kensmba/.line-harness-5229-B1-D2-20260903';
+const D1_RECEIPT_DIR = '/Users/kensmba/.line-harness-5229-B1-D1-20260903';
+const D1_RECEIPT_FILE = `${D1_RECEIPT_DIR}/sanitized-summary.json`;
+const D1_RECEIPT_SHA256 = 'c2e294eae170d8a3f3b1592a43232b0c1ce2538f605464e7da3d057d44bebbd2';
 const EXECUTOR_FILE = `${WORKTREE}/scripts/worker-b1-d2-config-anchor-5229.ts`;
 const TEST_FILE = `${WORKTREE}/scripts/worker-b1-d2-config-anchor-5229.test.ts`;
 const ACTIVE_DEPLOYMENT_ID = '7b3bb319-e618-4f57-a520-cd33f43115e5';
@@ -144,6 +147,7 @@ export function validateLocalState(approvedHead: string): string {
     }
   }
   for (const path of [EXECUTOR_FILE, TEST_FILE]) assertRealPath(path, 'file', 0o644);
+  validateReceiptArtifact(D1_RECEIPT_DIR, D1_RECEIPT_FILE, D1_RECEIPT_SHA256);
   return approvedHead;
 }
 
@@ -151,6 +155,20 @@ function assertRealPath(path: string, kind: 'directory' | 'file', mode: number):
   const stat = lstatSync(path);
   if (stat.isSymbolicLink() || (kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) ||
       (stat.mode & 0o777) !== mode) throw new AnchorStop(`${kind}_state`);
+}
+
+export function validateReceiptArtifact(
+  directory: string,
+  file: string,
+  expectedSha256: string,
+): void {
+  assertRealPath(directory, 'directory', 0o700);
+  if (canonical(readdirSync(directory)) !== canonical(['sanitized-summary.json'])) {
+    throw new AnchorStop('d1_receipt_entries');
+  }
+  if (file !== `${directory}/sanitized-summary.json`) throw new AnchorStop('d1_receipt_path');
+  assertRealPath(file, 'file', 0o600);
+  if (sha256(readFileSync(file)) !== expectedSha256) throw new AnchorStop('d1_receipt_sha256');
 }
 
 function createOutput(path: string): OutputIdentity {

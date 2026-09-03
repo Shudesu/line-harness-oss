@@ -1908,15 +1908,18 @@ Exact collector/test:
 - scripts/worker-b1-d2-config-anchor-5229.ts
 - scripts/worker-b1-d2-config-anchor-5229.test.ts
 - collector SHA-256:
-  281f8dd530e7d0fc3c5bd8995f5f5eff2e05791d93eb7fec0324cad548ff238f
+  5f3a157390d33556ba747335c006a4695c0456aac0b92fdaeb541ff3ced3ba3d
 - test SHA-256:
-  925af48aff7bd1f4edb1e0bb5b2ffb2fcd92ac42314c9684cbaed40b3f6356f5
+  7bf6f7a9af27635b7417196ef406ef00a256cb0f9b5d4092dd85108e08e933f9
 
 Required zero-provider preflight:
 - planning/backport/Accounting worktrees are clean at the approved exact heads
 - collector/test are regular mode-0644 files in the clean approved commit
-- focused D2 tests 9/9, related B1 tests 31/31, canonical script tests
-  129/129, strict standalone TypeScript, and git diff check pass
+- completed D1 receipt directory is mode 0700 with exactly one regular
+  mode-0600 `sanitized-summary.json`, and its SHA-256 matches the immutable
+  anchor above before token access or any provider request
+- focused D2 tests 10/10, related B1 tests 32/32, canonical script tests
+  130/130, strict standalone TypeScript, and git diff check pass
 - output path `/Users/kensmba/.line-harness-5229-B1-D2-20260903` is absent
 - invoke exactly:
   pnpm exec tsx scripts/worker-b1-d2-config-anchor-5229.ts \
