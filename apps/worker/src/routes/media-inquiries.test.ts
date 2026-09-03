@@ -99,4 +99,41 @@ describe('POST /api/public/media-inquiries', () => {
     const body = await res.json() as { data: { notification: string } };
     expect(body.data.notification).toBe('activation_required');
   });
+
+  // タイムスタンプはプロジェクト共通の JST ISO-8601（+09:00 付き）で保存する。
+  // SQLite 側の now 系関数はオフセットなしの UTC 文字列を返すため、それを
+  // 使うと読み手がローカル時刻として解釈し、JST 00:00〜09:00 の問い合わせが
+  // 前日の日付として扱われる。
+  it('persists offset-bearing JST timestamps instead of offset-less UTC', async () => {
+    const calls: RunCall[] = [];
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ success: true }), { status: 200 })));
+
+    await mediaInquiries.request(
+      '/api/public/media-inquiries',
+      {
+        method: 'POST',
+        headers: { origin: 'https://the-harness.com', 'content-type': 'application/json' },
+        body: JSON.stringify(validBody),
+      },
+      createEnv(calls),
+    );
+
+    const JST_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+09:00$/;
+
+    // INSERT: created_at / updated_at は末尾 2 バインド。
+    const [createdAt, initialUpdatedAt] = calls[0].values.slice(-2) as [string, string];
+    expect(createdAt).toMatch(JST_ISO);
+    expect(initialUpdatedAt).toMatch(JST_ISO);
+    // 同一イベントなので初期値は完全一致させる（無駄な数 ms 差を作らない）。
+    expect(initialUpdatedAt).toBe(createdAt);
+
+    // UPDATE: updated_at は id の 1 つ手前。
+    const notifiedUpdatedAt = calls[1].values.at(-2) as string;
+    expect(notifiedUpdatedAt).toMatch(JST_ISO);
+
+    // タイムスタンプを SQL 側で生成しない（オフセットなし UTC への逆戻り防止）。
+    expect(calls[0].sql).not.toContain('datetime(');
+    expect(calls[1].sql).not.toContain('datetime(');
+  });
 });
