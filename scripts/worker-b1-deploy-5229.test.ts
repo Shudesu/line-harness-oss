@@ -13,6 +13,7 @@ import {
   validateApprovalWindow,
   validateArtifact,
   validateD1Receipt,
+  validateD2R1Receipt,
   type ExactRequest,
   type HttpResponse,
   type RunDependencies,
@@ -52,6 +53,20 @@ const settings = {
 };
 const subdomain = { enabled: true, previews_enabled: true };
 const schedules = { schedules: [{ cron: '* * * * *' }, { cron: '0 */6 * * *' }] };
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonical(object[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function fixtureSha(value: unknown): string {
+  return createHash('sha256').update(canonical(value)).digest('hex');
+}
 
 function json(body: unknown, cfRay = 'ray-test'): HttpResponse {
   return {
@@ -164,6 +179,11 @@ function dependencies(cfResponses: HttpResponse[], workerResponses: HttpResponse
     },
     sleep: vi.fn(async () => undefined),
     expectedAdminProjectNameSha256: createHash('sha256').update('line-harness-admin').digest('hex'),
+    expectedSettingsSha256: fixtureSha(settings),
+    expectedSubdomainSha256: fixtureSha(subdomain),
+    expectedSchedulesSha256: fixtureSha(schedules),
+    expectedBindingShapeSha256: fixtureSha(bindingPairs.map(([name, type]) => ({ name, type }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type))),
   };
   return { deps, cfCalls, workerCalls };
 }
@@ -244,6 +264,46 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
     };
     expect(() => validateD1Receipt(receipt)).not.toThrow();
     expect(() => validateD1Receipt({ ...receipt, stable_active_snapshot: false })).toThrow(/d1_receipt_shape/);
+  });
+
+  test('validates the exact completed D2-R1 configuration anchor', () => {
+    const receipt = {
+      approval_id: '5229-B1-D2-R1-20260903',
+      status: 'completed',
+      stable_snapshot_count: 2,
+      active_deployment_id: PRE_DEPLOYMENT,
+      active_version_id: PRE_VERSION,
+      worker_script_etag: PREVIOUS_ETAG,
+      settings_sha256: '107835eb17613fa3789f34a913ced66be79b9dc48fa8666276bf2feed9a51abc',
+      subdomain_sha256: '81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3',
+      schedules_sha256: 'ba94fb8a9b24fb239e7de571c5b281dd302cc139821d28fa7f12721ef2cd1849',
+      binding_shape_sha256: 'cdc3ac05d11170d7d795274d4a873576358eeaf86737e0b78931c81b59dc19a4',
+      binding_count: 20,
+      settings_asset_binding_sha256: '8fcf498813511a591cb5d595bc281fee2d45f7a27a87f124257a319b543d04c6',
+      version_asset_binding_sha256: '8fcf498813511a591cb5d595bc281fee2d45f7a27a87f124257a319b543d04c6',
+      admin_project_name_sha256: '492123998ae432be97e93235fce10a2d5d118fd9eb8be802edd46ae8345ca9a2',
+      admin_deployment_id: '301a632d-dc9a-4655-8368-2d77f8db3b21',
+      asset_resource_identity_count: 0,
+      request_counts: {
+        cloudflare_get: 12, provider_total: 12, retry: 0, redirect: 0,
+        provider_write: 0, local_file_write: 1,
+      },
+    };
+    expect(() => validateD2R1Receipt(receipt)).not.toThrow();
+    expect(() => validateD2R1Receipt({ ...receipt, settings_sha256: '0'.repeat(64) }))
+      .toThrow(/d2_r1_receipt_shape/);
+  });
+
+  test('stops before runtime and PUT when the full config differs from D2-R1', async () => {
+    const responses = cfSequence();
+    responses[1] = envelope({ ...settings, observability: { enabled: true, drift: true } });
+    const fixture = dependencies(responses, []);
+    await expect(run([
+      '--approval-received', RECEIVED, '--approval-expires', EXPIRES,
+      '--approved-harness-head', APPROVED_HEAD,
+    ], fixture.deps)).rejects.toThrow(/d2_r1_snapshot_drift/);
+    expect(fixture.workerCalls).toHaveLength(0);
+    expect(fixture.cfCalls.filter((call) => call.method === 'PUT')).toHaveLength(0);
   });
 
   test('preflight makes zero provider request and creates no receipt path', async () => {

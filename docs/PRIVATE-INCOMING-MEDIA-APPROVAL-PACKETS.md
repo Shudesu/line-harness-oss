@@ -2228,12 +2228,46 @@ D2-R1 remains a read-only gate. A completed receipt is required before any
 B1-R1 content PUT. Its exact committed head and packet SHA are recorded before
 execution under KEN's blanket continuation approval.
 
-## Packet B1-R1 — exact code-only Worker deploy, blocked pending B1-D3 and D2-R1
+### B1-D2-R1 execution result — completed, approval consumed
 
-This supersedes the consumed B1 packet, but is not yet approvable. A completed
-B1-D3 receipt must first fix the actual subdomain state, then a completed D2-R1
-receipt must provide exact full settings/subdomain/schedules hashes
-and be pinned into the executor and this packet. Once unblocked, it deploys
+The zero-provider preflight passed at exact Harness head
+`eddaec06c191a0b5ae207ac1e3f0b71de78be502` and packet SHA-256
+`58525f27eaad9022a0b139764a8d33e0b76e68ac9669a25a24a18d88eaa218dd`.
+The approved twelve GETs ran from `2026-09-03T05:58:16.134Z` through
+`2026-09-03T05:58:19.091Z` inside the blanket approval interval.
+
+```text
+status/stable_snapshot_count: completed / 2
+active deployment/version:
+  7b3bb319-e618-4f57-a520-cd33f43115e5 /
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7
+script etag:
+  1d9a88703ce2509f372740c140aa18699884b779a82108efdd863484555611b6
+settings SHA-256:
+  107835eb17613fa3789f34a913ced66be79b9dc48fa8666276bf2feed9a51abc
+subdomain SHA-256:
+  81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3
+schedules SHA-256:
+  ba94fb8a9b24fb239e7de571c5b281dd302cc139821d28fa7f12721ef2cd1849
+binding shape SHA-256/count:
+  cdc3ac05d11170d7d795274d4a873576358eeaf86737e0b78931c81b59dc19a4 / 20
+Cloudflare GET/provider total: 12/12
+retry/redirect/provider write: 0/0/0
+receipt SHA-256:
+  f3ca1426f0c3ca19175699bf1af685b4b315e1a4eb29d04c296ed2e791bbb5c2
+```
+
+The receipt directory is mode 0700 with exactly one regular mode-0600 file.
+Two independent audits found P0=0, P1=0, and P2=0. No deploy,
+migration/backfill, credential/token/secret change, R2 operation, purge,
+restart, feature enablement, Drive write, LINE send, PR merge, or rollback
+occurred. This read-only approval is consumed and cannot be reused.
+
+## Packet B1-R1 — exact code-only Worker deploy, ready under blanket approval
+
+This supersedes the consumed B1 packet. Completed B1-D3 and D2-R1 receipts now
+fix the actual subdomain state and exact full settings/subdomain/schedules
+hashes in the executor and this packet. It deploys
 only the private incoming media Worker code while explicitly preserving the legacy environment's unknown
 Admin/LIFF identity sentinels. The sentinels are not asset byte hashes. Asset
 continuity is instead enforced using the exact Worker settings, ASSETS binding
@@ -2248,7 +2282,8 @@ packet.
 Approval ID: 5229-B1-R1-20260903
 Mode: CF-WORKER-EXACT-CODE-CONTENT-IMMEDIATE-DEPLOY-WITH-ASSET-CONTINUITY
 Issues/PR: #5229 / #5230 / Draft PR #5244
-Approval lifetime: exactly two hours after KEN's explicit approval
+Approval lifetime: within the blanket approval's half-open interval
+  [2026-09-03T05:51:46.737Z, 2026-09-03T07:51:46.737Z)
 
 Immutable source/evidence anchors:
 - D1 planning/execution head:
@@ -2257,6 +2292,8 @@ Immutable source/evidence anchors:
   970508f8516ccd3d69ce10904c513bbfcb5f3fe1f9cd35cf424d4512a4435ffd
 - D1 receipt SHA-256:
   c2e294eae170d8a3f3b1592a43232b0c1ce2538f605464e7da3d057d44bebbd2
+- completed D2-R1 receipt SHA-256:
+  f3ca1426f0c3ca19175699bf1af685b4b315e1a4eb29d04c296ed2e791bbb5c2
 - B1 STOP receipt SHA-256:
   af2e06bbcf1358d5128836cb5729b0b49e8a2eaa1a9cbcd54e08ca2f0361751b
 - completed B2 receipt SHA-256:
@@ -2303,9 +2340,9 @@ Exact executor/test:
 - scripts/worker-b1-deploy-5229.ts
 - scripts/worker-b1-deploy-5229.test.ts
 - executor SHA-256:
-  625527a40c21ec7cb19628853989f0bc8e660d02b02aaa42cbf4b7364728d878
+  85fdd3f1a7a34ab466e4c1105abd20e9d37af7fc23e6ebfca3bf62183534d690
 - executor test SHA-256:
-  e06c3e9956be39a53f811fdae9ab3cab005d1d88b60b80eff0f35dd9024cce43
+  24ac11b6129b092a0652c75d009fbe63558c1eb55650badf7146b5f585b761f1
 
 Exact production target and required before-state:
 - account/script/origin:
@@ -2324,9 +2361,14 @@ Exact production target and required before-state:
   301a632d-dc9a-4655-8368-2d77f8db3b21
 - exact 20-binding shape, compatibility date/flags
   2024-12-01/[nodejs_compat], subdomain exactly
-  `{enabled:true,previews_enabled:false}`, cron expressions exactly
-  `* * * * *` and `0 */6 * * *`, and full
-  settings/subdomain/schedules digests must remain unchanged
+  `{enabled:true,previews_enabled:true}`, cron expressions exactly
+  `* * * * *` and `0 */6 * * *`
+- exact full configuration anchors from D2-R1:
+  - settings: `107835eb17613fa3789f34a913ced66be79b9dc48fa8666276bf2feed9a51abc`
+  - subdomain: `81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3`
+  - schedules: `ba94fb8a9b24fb239e7de571c5b281dd302cc139821d28fa7f12721ef2cd1849`
+  - binding shape: `cdc3ac05d11170d7d795274d4a873576358eeaf86737e0b78931c81b59dc19a4`
+  All four must match before PUT and remain unchanged after PUT.
 - migration ledger contains exact 071/072 names/checksums from B2
 - public /admin/version is the exact D0 unstamped sentinel state and is not
   already the target version
@@ -2334,9 +2376,10 @@ Exact production target and required before-state:
 Required final local preflight before any provider request:
 - planning/backport/Accounting worktrees clean at approved exact heads
 - executor/test/builder/test and artifact have the exact hashes/modes above
-- protected manifest, B2 receipt, and D1 receipt have exact entry sets,
+- protected manifest, B2 receipt, D1 receipt, and D2-R1 receipt have exact entry sets,
   modes, hashes, and required sanitized fields
-- focused B1-R1 tests 22/22, canonical script tests 129/129, strict standalone
+- focused B1-R1 tests 22/22, related B1 tests 47/47, canonical script tests
+  145/145, strict standalone
   TypeScript, artifact/source diff invariants, and git diff check pass
 - output path `/Users/kensmba/.line-harness-5229-B1-R1-20260903` is absent
 - invoke exactly:
@@ -2375,9 +2418,9 @@ Approved mutation — exactly one request:
 - this immediately creates/activates one new version; no separate deploy POST
 - exact command:
   pnpm exec tsx scripts/worker-b1-deploy-5229.ts \
-    --approval-received <exact approval instant> \
-    --approval-expires <exact instant plus two hours> \
-    --approved-harness-head <exact commit in KEN approval>
+    --approval-received 2026-09-03T05:51:46.737Z \
+    --approval-expires 2026-09-03T07:51:46.737Z \
+    --approved-harness-head <exact committed Harness head>
 
 Required immediate readback:
 1. repeat deployments/settings/new-version-detail/Admin Pages/subdomain/

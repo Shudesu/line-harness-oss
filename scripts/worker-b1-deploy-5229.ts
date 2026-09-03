@@ -37,7 +37,7 @@ const BACKPORT_HEAD = '9f3c6c3ac98d0777f8e7354f807a6af4ab642b18';
 const ACCOUNTING_HEAD = 'ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f';
 const EXECUTOR_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.ts`;
 const EXECUTOR_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.test.ts`;
-const EXECUTOR_TEST_SHA256 = 'e06c3e9956be39a53f811fdae9ab3cab005d1d88b60b80eff0f35dd9024cce43';
+const EXECUTOR_TEST_SHA256 = '24ac11b6129b092a0652c75d009fbe63558c1eb55650badf7146b5f585b761f1';
 const ARTIFACT_BUILDER_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.ts`;
 const ARTIFACT_BUILDER_SHA256 = 'c5d5f9dba49f8b03afeea1f6b43d07a8d26da22615c7d5e37c6b60187139fa2b';
 const ARTIFACT_BUILDER_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.test.ts`;
@@ -48,6 +48,9 @@ const B2_RECEIPT_SHA256 = '5f393930c545582d656c0068ee1d854a01ef8d60e66e1d04e4dca
 const D1_DIR = '/Users/kensmba/.line-harness-5229-B1-D1-20260903';
 const D1_RECEIPT = `${D1_DIR}/sanitized-summary.json`;
 const D1_RECEIPT_SHA256 = 'c2e294eae170d8a3f3b1592a43232b0c1ce2538f605464e7da3d057d44bebbd2';
+const D2_R1_DIR = '/Users/kensmba/.line-harness-5229-B1-D2-R1-20260903';
+const D2_R1_RECEIPT = `${D2_R1_DIR}/sanitized-summary.json`;
+const D2_R1_RECEIPT_SHA256 = 'f3ca1426f0c3ca19175699bf1af685b4b315e1a4eb29d04c296ed2e791bbb5c2';
 const PREVIOUS_DEPLOYMENT_ID = '7b3bb319-e618-4f57-a520-cd33f43115e5';
 const PREVIOUS_VERSION_ID = 'c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7';
 const TARGET_VERSION = '0.19.0-5229.b1.9f3c6c3';
@@ -65,6 +68,10 @@ const MAX_JSON_BYTES = 262_144;
 const MULTIPART_BOUNDARY = '----line-harness-5229-b1-code-only';
 const EXPECTED_SUBDOMAIN = { enabled: true, previews_enabled: true } as const;
 const EXPECTED_SCHEDULE_CRONS = ['* * * * *', '0 */6 * * *'] as const;
+const EXPECTED_SETTINGS_SHA256 = '107835eb17613fa3789f34a913ced66be79b9dc48fa8666276bf2feed9a51abc';
+const EXPECTED_SUBDOMAIN_SHA256 = '81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3';
+const EXPECTED_SCHEDULES_SHA256 = 'ba94fb8a9b24fb239e7de571c5b281dd302cc139821d28fa7f12721ef2cd1849';
+const EXPECTED_BINDING_SHAPE_SHA256 = 'cdc3ac05d11170d7d795274d4a873576358eeaf86737e0b78931c81b59dc19a4';
 
 const EXPECTED_BINDINGS = [
   ['ADMIN_ALLOW_CROSS_SITE', 'secret_text'], ['ADMIN_ORIGIN', 'secret_text'],
@@ -107,6 +114,10 @@ export interface RunDependencies {
   workerRequest: (request: ExactRequest, expiresAt: number) => Promise<HttpResponse>;
   sleep: (milliseconds: number) => Promise<void>;
   expectedAdminProjectNameSha256: string;
+  expectedSettingsSha256: string;
+  expectedSubdomainSha256: string;
+  expectedSchedulesSha256: string;
+  expectedBindingShapeSha256: string;
 }
 
 export interface WorkerSnapshot {
@@ -260,6 +271,28 @@ export function validateD1Receipt(d1: unknown): void {
   }
 }
 
+export function validateD2R1Receipt(receipt: unknown): void {
+  const value = receipt as Record<string, unknown>;
+  const counts = value.request_counts as Record<string, unknown> | undefined;
+  if (value.approval_id !== '5229-B1-D2-R1-20260903' || value.status !== 'completed' ||
+      value.stable_snapshot_count !== 2 || value.active_deployment_id !== PREVIOUS_DEPLOYMENT_ID ||
+      value.active_version_id !== PREVIOUS_VERSION_ID || value.worker_script_etag !== PREVIOUS_SCRIPT_ETAG ||
+      value.settings_sha256 !== EXPECTED_SETTINGS_SHA256 ||
+      value.subdomain_sha256 !== EXPECTED_SUBDOMAIN_SHA256 ||
+      value.schedules_sha256 !== EXPECTED_SCHEDULES_SHA256 ||
+      value.binding_shape_sha256 !== EXPECTED_BINDING_SHAPE_SHA256 || value.binding_count !== 20 ||
+      value.settings_asset_binding_sha256 !== ASSET_BINDING_DIGEST ||
+      value.version_asset_binding_sha256 !== ASSET_BINDING_DIGEST ||
+      value.admin_project_name_sha256 !== ADMIN_PROJECT_NAME_SHA256 ||
+      value.admin_deployment_id !== ADMIN_DEPLOYMENT_ID || value.asset_resource_identity_count !== 0 ||
+      stable(counts) !== stable({
+        cloudflare_get: 12, provider_total: 12, retry: 0, redirect: 0,
+        provider_write: 0, local_file_write: 1,
+      })) {
+    throw new DeployStop('d2_r1_receipt_shape');
+  }
+}
+
 export function validateLocalAnchors(approvedHarnessHead: string | null): string {
   const planningHead = gitValue(PLANNING_WORKTREE, ['rev-parse', 'HEAD']);
   const backportHead = gitValue(BACKPORT_WORKTREE, ['rev-parse', 'HEAD']);
@@ -308,6 +341,18 @@ export function validateLocalAnchors(approvedHarnessHead: string | null): string
   let d1: unknown;
   try { d1 = JSON.parse(d1Bytes.toString('utf8')); } catch { throw new DeployStop('d1_receipt_json'); }
   validateD1Receipt(d1);
+  assertRealPath(D2_R1_DIR, 'directory', 0o700);
+  if (stable(readdirSync(D2_R1_DIR).sort()) !== stable(['sanitized-summary.json'])) {
+    throw new DeployStop('d2_r1_receipt_entries');
+  }
+  assertRealPath(D2_R1_RECEIPT, 'file', 0o600);
+  const d2R1Bytes = readFileSync(D2_R1_RECEIPT);
+  if (sha256(d2R1Bytes) !== D2_R1_RECEIPT_SHA256) throw new DeployStop('d2_r1_receipt_hash');
+  let d2R1: unknown;
+  try { d2R1 = JSON.parse(d2R1Bytes.toString('utf8')); } catch {
+    throw new DeployStop('d2_r1_receipt_json');
+  }
+  validateD2R1Receipt(d2R1);
   return planningHead;
 }
 
@@ -654,6 +699,15 @@ function samePreWriteSnapshot(before: WorkerSnapshot, current: WorkerSnapshot): 
   if (stable(before) !== stable(current)) throw new DeployStop('pre_put_snapshot_drift');
 }
 
+function validateSnapshotAnchors(snapshot: WorkerSnapshot, deps: RunDependencies): void {
+  if (snapshot.settingsSha256 !== deps.expectedSettingsSha256 ||
+      snapshot.subdomainSha256 !== deps.expectedSubdomainSha256 ||
+      snapshot.schedulesSha256 !== deps.expectedSchedulesSha256 ||
+      sha256(stable(snapshot.bindingShape)) !== deps.expectedBindingShapeSha256) {
+    throw new DeployStop('d2_r1_snapshot_drift');
+  }
+}
+
 function validateTargetVersion(value: VersionReadback): void {
   if (value.version !== TARGET_VERSION || value.worker_hash !== TARGET_WORKER_HASH ||
       value.admin_hash !== ADMIN_HASH || value.liff_hash !== LIFF_HASH ||
@@ -707,6 +761,7 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
       throw new DeployStop('previous_deployment_drift');
     }
     if (before.snapshot.scriptEtag !== PREVIOUS_SCRIPT_ETAG) throw new DeployStop('previous_script_etag_drift');
+    validateSnapshotAnchors(before.snapshot, deps);
     const preVersion = versionReadback(await requestWorker({
       hostname: WORKER_HOST, method: 'GET', path: '/admin/version',
       headers: { 'Accept-Encoding': 'identity' }, maxBytes: 8_192,
@@ -878,6 +933,10 @@ const defaultDeps: RunDependencies = {
   workerRequest: (spec, expiresAt) => exactHttpsRequest(spec, expiresAt),
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   expectedAdminProjectNameSha256: ADMIN_PROJECT_NAME_SHA256,
+  expectedSettingsSha256: EXPECTED_SETTINGS_SHA256,
+  expectedSubdomainSha256: EXPECTED_SUBDOMAIN_SHA256,
+  expectedSchedulesSha256: EXPECTED_SCHEDULES_SHA256,
+  expectedBindingShapeSha256: EXPECTED_BINDING_SHAPE_SHA256,
 };
 
 const isCliEntry = (() => {
