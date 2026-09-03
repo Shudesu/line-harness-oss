@@ -50,7 +50,7 @@ const settings = {
   })),
   placement: { mode: 'smart' },
 };
-const subdomain = { enabled: true, previews_enabled: false };
+const subdomain = { enabled: true, previews_enabled: true };
 const schedules = { schedules: [{ cron: '* * * * *' }, { cron: '0 */6 * * *' }] };
 
 function json(body: unknown, cfRay = 'ray-test'): HttpResponse {
@@ -461,7 +461,7 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
 
   test('stops before PUT unless subdomain and cron state match the approved semantics', async () => {
     const subdomainResponses = cfSequence();
-    subdomainResponses[4] = envelope({ enabled: true, previews_enabled: true });
+    subdomainResponses[4] = envelope({ enabled: true, previews_enabled: false });
     const subdomainFixture = dependencies(subdomainResponses, []);
     await expect(run([
       '--approval-received', RECEIVED, '--approval-expires', EXPIRES,

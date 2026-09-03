@@ -17,17 +17,17 @@ import {
   type WorkerSnapshot,
 } from './worker-b1-deploy-5229.js';
 
-const APPROVAL_ID = '5229-B1-D2-20260903';
+const APPROVAL_ID = '5229-B1-D2-R1-20260903';
 const TOKEN_FILE = '/Users/kensmba/.line-harness/.env.local';
 const WORKTREE = '/Users/kensmba/.line-harness-wt/5229-private-incoming-media';
 const BACKPORT_WORKTREE = '/Users/kensmba/.line-harness-wt/5229-b1-v019-backport';
 const ACCOUNTING_WORKTREE = '/Users/kensmba/scripts-wt/5230-line-recovery';
 const BACKPORT_HEAD = '9f3c6c3ac98d0777f8e7354f807a6af4ab642b18';
 const ACCOUNTING_HEAD = 'ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f';
-const OUTPUT_DIR = '/Users/kensmba/.line-harness-5229-B1-D2-20260903';
-const D1_RECEIPT_DIR = '/Users/kensmba/.line-harness-5229-B1-D1-20260903';
-const D1_RECEIPT_FILE = `${D1_RECEIPT_DIR}/sanitized-summary.json`;
-const D1_RECEIPT_SHA256 = 'c2e294eae170d8a3f3b1592a43232b0c1ce2538f605464e7da3d057d44bebbd2';
+const OUTPUT_DIR = '/Users/kensmba/.line-harness-5229-B1-D2-R1-20260903';
+const D3_RECEIPT_DIR = '/Users/kensmba/.line-harness-5229-B1-D3-20260903';
+const D3_RECEIPT_FILE = `${D3_RECEIPT_DIR}/sanitized-summary.json`;
+const D3_RECEIPT_SHA256 = '554d9f725bd251ecceb96ff383e81c83706f489e2bb0b2d164ad2bed6169385f';
 const EXECUTOR_FILE = `${WORKTREE}/scripts/worker-b1-d2-config-anchor-5229.ts`;
 const TEST_FILE = `${WORKTREE}/scripts/worker-b1-d2-config-anchor-5229.test.ts`;
 const ACTIVE_DEPLOYMENT_ID = '7b3bb319-e618-4f57-a520-cd33f43115e5';
@@ -147,7 +147,7 @@ export function validateLocalState(approvedHead: string): string {
     }
   }
   for (const path of [EXECUTOR_FILE, TEST_FILE]) assertRealPath(path, 'file', 0o644);
-  validateReceiptArtifact(D1_RECEIPT_DIR, D1_RECEIPT_FILE, D1_RECEIPT_SHA256);
+  validateReceiptArtifact(D3_RECEIPT_DIR, D3_RECEIPT_FILE, D3_RECEIPT_SHA256);
   return approvedHead;
 }
 
@@ -164,11 +164,27 @@ export function validateReceiptArtifact(
 ): void {
   assertRealPath(directory, 'directory', 0o700);
   if (canonical(readdirSync(directory)) !== canonical(['sanitized-summary.json'])) {
-    throw new AnchorStop('d1_receipt_entries');
+    throw new AnchorStop('d3_receipt_entries');
   }
-  if (file !== `${directory}/sanitized-summary.json`) throw new AnchorStop('d1_receipt_path');
+  if (file !== `${directory}/sanitized-summary.json`) throw new AnchorStop('d3_receipt_path');
   assertRealPath(file, 'file', 0o600);
-  if (sha256(readFileSync(file)) !== expectedSha256) throw new AnchorStop('d1_receipt_sha256');
+  const bytes = readFileSync(file);
+  if (sha256(bytes) !== expectedSha256) throw new AnchorStop('d3_receipt_sha256');
+  let receipt: Record<string, unknown>;
+  try { receipt = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>; } catch {
+    throw new AnchorStop('d3_receipt_json');
+  }
+  const subdomain = receipt.subdomain as Record<string, unknown> | undefined;
+  const counts = receipt.request_counts as Record<string, unknown> | undefined;
+  if (receipt.approval_id !== '5229-B1-D3-20260903' || receipt.status !== 'completed' ||
+      receipt.approved_harness_head !== 'fdc2aa2913719658b495a1461e69929631efea95' ||
+      receipt.stable_snapshot_count !== 2 || subdomain?.enabled !== true ||
+      subdomain?.previews_enabled !== true || receipt.subdomain_sha256 !==
+      '81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3' ||
+      counts?.cloudflare_get !== 2 || counts?.provider_total !== 2 || counts?.retry !== 0 ||
+      counts?.redirect !== 0 || counts?.provider_write !== 0 || counts?.local_file_write !== 1) {
+    throw new AnchorStop('d3_receipt_state');
+  }
 }
 
 function createOutput(path: string): OutputIdentity {

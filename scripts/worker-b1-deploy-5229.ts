@@ -63,7 +63,7 @@ const ADMIN_PROJECT_NAME_SHA256 = '492123998ae432be97e93235fce10a2d5d118fd9eb8be
 const ADMIN_DEPLOYMENT_ID = '301a632d-dc9a-4655-8368-2d77f8db3b21';
 const MAX_JSON_BYTES = 262_144;
 const MULTIPART_BOUNDARY = '----line-harness-5229-b1-code-only';
-const EXPECTED_SUBDOMAIN = { enabled: true, previews_enabled: false } as const;
+const EXPECTED_SUBDOMAIN = { enabled: true, previews_enabled: true } as const;
 const EXPECTED_SCHEDULE_CRONS = ['* * * * *', '0 */6 * * *'] as const;
 
 const EXPECTED_BINDINGS = [

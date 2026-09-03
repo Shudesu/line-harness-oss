@@ -21,7 +21,7 @@ import {
 const RECEIVED = '2026-09-03T00:00:00.000Z';
 const EXPIRES = '2026-09-03T02:00:00.000Z';
 const NOW = Date.parse('2026-09-03T00:10:00.000Z');
-const HEAD = '881d237873d9aa6ea90a61e60dde8f2f29c707b9';
+const HEAD = 'fdc2aa2913719658b495a1461e69929631efea95';
 const DEPLOYMENT = '7b3bb319-e618-4f57-a520-cd33f43115e5';
 const VERSION = 'c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7';
 const ETAG = '1d9a88703ce2509f372740c140aa18699884b779a82108efdd863484555611b6';
@@ -79,7 +79,7 @@ function sixResponses(settingsValue = settings()): HttpResponse[] {
       resources: { script: { etag: ETAG }, bindings: [{ name: 'ASSETS', type: 'assets' }] },
     }),
     envelope({ name: 'line-harness-admin', canonical_deployment: { id: ADMIN_DEPLOYMENT } }),
-    envelope({ enabled: true, previews_enabled: false }),
+    envelope({ enabled: true, previews_enabled: true }),
     envelope({ schedules: [
       { cron: '* * * * *', created_on: '2026-01-01T00:00:00.000Z' },
       { cron: '0 */6 * * *', modified_on: '2026-01-01T00:00:00.000Z' },
@@ -125,7 +125,7 @@ function actualArgs(): string[] {
     '--approved-harness-head', HEAD];
 }
 
-describe('Worker B1-D2 stable configuration anchor', () => {
+describe('Worker B1-D2-R1 stable configuration anchor', () => {
   test('token parser accepts exactly one assignment and never needs to emit it', () => {
     expect(parseTokenFile("# local\nCLOUDFLARE_API_TOKEN='secret'\nOTHER=value\n")).toBe('secret');
     expect(() => parseTokenFile('CLOUDFLARE_API_TOKEN=a\nCLOUDFLARE_API_TOKEN=b\n'))
@@ -158,24 +158,36 @@ describe('Worker B1-D2 stable configuration anchor', () => {
     expect(readdirSync(f.root)).toEqual([]);
   });
 
-  test('validates the immutable D1 receipt directory, file mode, and digest', () => {
-    const root = mkdtempSync(join(tmpdir(), 'lh-5229-b1-d1-receipt-'));
+  test('validates the immutable D3 receipt directory, file mode, digest, and state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'lh-5229-b1-d3-receipt-'));
     tempDirs.push(root);
     const directory = join(root, 'receipt');
     const file = join(directory, 'sanitized-summary.json');
     mkdirSync(directory, { mode: 0o700 });
-    writeFileSync(file, 'sanitized\n', { mode: 0o600 });
-    const digest = createHash('sha256').update('sanitized\n').digest('hex');
+    const receipt = JSON.stringify({
+      approval_id: '5229-B1-D3-20260903',
+      approved_harness_head: HEAD,
+      status: 'completed',
+      stable_snapshot_count: 2,
+      subdomain: { enabled: true, previews_enabled: true },
+      subdomain_sha256: '81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3',
+      request_counts: {
+        cloudflare_get: 2, provider_total: 2, retry: 0, redirect: 0,
+        provider_write: 0, local_file_write: 1,
+      },
+    });
+    writeFileSync(file, receipt, { mode: 0o600 });
+    const digest = createHash('sha256').update(receipt).digest('hex');
     expect(() => validateReceiptArtifact(directory, file, digest)).not.toThrow();
 
     writeFileSync(file, 'changed\n');
-    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/d1_receipt_sha256/);
-    writeFileSync(file, 'sanitized\n');
+    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/d3_receipt_sha256/);
+    writeFileSync(file, receipt);
     chmodSync(file, 0o644);
     expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/file_state/);
     chmodSync(file, 0o600);
     writeFileSync(join(directory, 'extra'), 'x', { mode: 0o600 });
-    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/d1_receipt_entries/);
+    expect(() => validateReceiptArtifact(directory, file, digest)).toThrow(/d3_receipt_entries/);
     rmSync(join(directory, 'extra'));
     rmSync(file);
     symlinkSync('/dev/null', file);

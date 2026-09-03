@@ -2093,6 +2093,141 @@ one sanitized receipt. After D3, a separate D2-R1 packet must pin the discovered
 state and complete the full six-resource double snapshot before B1-R1 can be
 approved.
 
+### B1-D3 execution result — completed, approval consumed
+
+KEN's blanket continuation approval event occurred at
+`2026-09-03T05:51:46.737Z`; its exact two-hour boundary is
+`2026-09-03T07:51:46.737Z`. The zero-provider preflight passed, then the two
+approved serial GETs completed from `2026-09-03T05:52:45.001Z` through
+`2026-09-03T05:52:45.661Z`.
+
+```text
+status: completed
+stable_snapshot_count: 2
+subdomain: enabled=true, previews_enabled=true
+canonical SHA-256:
+  81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3
+Cloudflare GET/provider total: 2/2
+retry/redirect/provider write: 0/0/0
+local write: one sanitized receipt
+receipt SHA-256:
+  554d9f725bd251ecceb96ff383e81c83706f489e2bb0b2d164ad2bed6169385f
+```
+
+The receipt directory is mode 0700 with exactly one regular mode-0600 file.
+An independent audit found P0=0, P1=0, and P2=0. No deploy,
+migration/backfill, credential/token/secret change, R2 operation, purge,
+restart, feature enablement, Drive write, LINE send, PR merge, or rollback
+occurred. This approval is consumed and cannot be reused.
+
+## Packet B1-D2-R1 — corrected stable full-config hash discovery
+
+D2-R1 repeats D2's complete six-resource double snapshot with the discovered
+script subdomain state fixed to `enabled=true,previews_enabled=true`. It first
+pins the completed D3 receipt and performs no provider write.
+
+```text
+Approval ID: 5229-B1-D2-R1-20260903
+Mode: CF-WORKER-STABLE-FULL-CONFIG-HASH-READ-ONLY-R1
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: within the blanket approval's half-open interval
+  [2026-09-03T05:51:46.737Z, 2026-09-03T07:51:46.737Z)
+
+Immutable anchors:
+- parent Harness head:
+  fdc2aa2913719658b495a1461e69929631efea95
+- completed D3 receipt SHA-256:
+  554d9f725bd251ecceb96ff383e81c83706f489e2bb0b2d164ad2bed6169385f
+- subdomain canonical SHA-256 and value:
+  81d85b2e35295c30a89a15cfce655824db618966f23be5b068d6f55c545429f3 /
+  {enabled:true,previews_enabled:true}
+- active deployment/version:
+  7b3bb319-e618-4f57-a520-cd33f43115e5 /
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7
+- script etag:
+  1d9a88703ce2509f372740c140aa18699884b779a82108efdd863484555611b6
+- settings/version ASSETS binding SHA-256:
+  8fcf498813511a591cb5d595bc281fee2d45f7a27a87f124257a319b543d04c6
+- Admin project-name SHA-256/canonical deployment:
+  492123998ae432be97e93235fce10a2d5d118fd9eb8be802edd46ae8345ca9a2 /
+  301a632d-dc9a-4655-8368-2d77f8db3b21
+- exact 20-binding shape, compatibility 2024-12-01/[nodejs_compat], and cron
+  expressions `* * * * *` plus `0 */6 * * *`
+- v0.19 backport/Accounting heads:
+  9f3c6c3ac98d0777f8e7354f807a6af4ab642b18 /
+  ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+
+Exact collector/test and shared snapshot validator:
+- scripts/worker-b1-d2-config-anchor-5229.ts
+- scripts/worker-b1-d2-config-anchor-5229.test.ts
+- scripts/worker-b1-deploy-5229.ts
+- scripts/worker-b1-deploy-5229.test.ts
+- collector SHA-256:
+  26f0082b31a5086c36d856b199ec22cc61b932a4dccf4a62a1c6bad016f597c9
+- collector test SHA-256:
+  0373f56645e94981ad4fed58a6367dfbe73335cf6f73141a4b7b1679d817198b
+- shared validator SHA-256:
+  9a6113ac1d89204cc1fd999490c3642a41eef30d8e4064c2787be1a29bbfab52
+- shared validator test SHA-256:
+  95f5f848b6bf50d6f927d11e369873ddd761f859412f478062e3802b5f4bb986
+
+Required zero-provider preflight:
+- planning/backport/Accounting worktrees are clean at the approved exact heads
+- D3 receipt is the sole mode-0600 file in its mode-0700 directory and matches
+  its SHA, completed state, true/true booleans/hash, and exact request counts
+  before token access or provider request
+- collector/test/shared validator files are regular mode-0644 files
+- focused D2-R1 tests 10/10, related B1 tests 45/45, canonical script tests
+  143/143, strict standalone TypeScript, and git diff check pass
+- output path `/Users/kensmba/.line-harness-5229-B1-D2-R1-20260903` is absent
+- invoke exactly:
+  pnpm exec tsx scripts/worker-b1-d2-config-anchor-5229.ts \
+    --preflight-only \
+    --approved-harness-head <exact committed Harness head>
+- require status=preflight_passed, planning_head=<exact committed Harness head>,
+  token_present=true, and provider requests/writes/local writes all 0
+
+Approved reads, exact order repeated twice:
+1. GET Worker deployments
+2. GET complete Worker settings
+3. GET exact active Worker version detail
+4. GET exact Admin Pages project derived in memory from settings
+5. GET Worker subdomain
+6. GET Worker schedules
+
+Read validation and sanitized evidence:
+- each pass must match every immutable identity, topology, and semantic anchor
+  above; the complete canonical snapshots must be identical
+- direct node:https, TLS 443, agent=false, redirect=0, retry=0, serial only;
+  status 200, JSON content type, identity/absent content encoding, body maximum
+  262,144 bytes, and the blanket approval interval checked before and after
+  every response including transport completion
+- provider request total exactly 12 GETs; provider writes exactly 0
+- create only `/Users/kensmba/.line-harness-5229-B1-D2-R1-20260903` mode 0700
+  containing only mode-0600 `sanitized-summary.json`
+- retain only approval/head/timestamps, stable-snapshot count, approved IDs,
+  script etag, canonical settings/subdomain/schedules/binding hashes, ASSETS
+  topology hashes, Admin name hash/deployment ID, and request counts
+- never retain or print token/header, raw response/settings/binding values,
+  project name/URL, secret/customer/image value, or error/response body
+- exact execution command:
+  pnpm exec tsx scripts/worker-b1-d2-config-anchor-5229.ts \
+    --approval-received 2026-09-03T05:51:46.737Z \
+    --approval-expires 2026-09-03T07:51:46.737Z \
+    --approved-harness-head <exact committed Harness head>
+- STOP immediately without retry on any mismatch; a STOP may write only the
+  same sanitized one-file receipt and cannot reuse this approval
+
+Writes/actions explicitly forbidden and expected zero:
+- Worker/Pages/D1/R2 write, Worker or asset content GET, deploy, migration,
+  backfill, credential/token/secret change, purge, restart, gate/feature
+  enablement, Drive write, LINE send, PR merge, and rollback
+```
+
+D2-R1 remains a read-only gate. A completed receipt is required before any
+B1-R1 content PUT. Its exact committed head and packet SHA are recorded before
+execution under KEN's blanket continuation approval.
+
 ## Packet B1-R1 — exact code-only Worker deploy, blocked pending B1-D3 and D2-R1
 
 This supersedes the consumed B1 packet, but is not yet approvable. A completed
