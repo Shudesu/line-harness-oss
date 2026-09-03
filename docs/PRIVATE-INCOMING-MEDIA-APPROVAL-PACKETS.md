@@ -2925,9 +2925,11 @@ All operations below ran at Harness head
 - Accounting receiver: deployed from exact head
   `ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f` in the isolated deploy worktree.
   The scoped credential fingerprint was verified without disclosure. Harness
-  recovery is `write` for the 11 companies resolved by the current routing;
-  customer notification is `shadow` with kill switch engaged, so LINE sends
-  remain zero. Launchd is running and `/health`
+  recovery is `write` for the 11 companies resolved by the current routing.
+  Customer recovery notification is also `write` for those exact companies;
+  bot identity, route fingerprint, body hash, and emergency stop are rechecked
+  before every send. No outbox row existed during activation, so activation
+  itself sent zero LINE messages. Launchd is running and `/health`
   reports zero pending/processing/ambiguous/failed events and zero outbox rows.
   Sanitized receipt
   `/Users/kensmba/.line-accounting-5230-deploy-20260903/sanitized-summary.json`,
@@ -2937,6 +2939,10 @@ All operations below ran at Harness head
   `/Users/kensmba/.line-accounting-5230-deploy-20260903/activation-r1-summary.json`,
   SHA-256
   `194e44d29b1dfee9c6125cfd32d5ce39225a7e31bbdef82847c56a1c927e42d7`.
+  The final notification-write activation readback is
+  `/Users/kensmba/.line-accounting-5230-deploy-20260903/activation-r2-summary.json`,
+  SHA-256
+  `728b3bc722811a4327c9469c297b13f64d430bc43fa17abbcd3d4344ef3461d5`.
 
 The incident image that was absent at 14:54 was independently found in Drive
 with creation time 15:12 JST under `月次添付物/2026年08月/その他`. Its 455,769
