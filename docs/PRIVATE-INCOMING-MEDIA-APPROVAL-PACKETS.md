@@ -2397,7 +2397,7 @@ Approved pre-write reads, in exact order:
    ASSETS binding digest with no extra resource identity
 4. GET exact Admin Pages project derived only in memory from settings; require
    hashed project name and canonical deployment ID above
-5. GET Worker subdomain; require exactly enabled=true and previews_enabled=false
+5. GET Worker subdomain; require exactly enabled=true and previews_enabled=true
 6. GET Worker schedules; require exactly the two approved cron expressions
    `* * * * *` and `0 */6 * * *` (provider timestamps may be present)
 7. GET direct Worker /admin/version; require exact D0 legacy sentinel state
