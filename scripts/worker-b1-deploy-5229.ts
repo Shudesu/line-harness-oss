@@ -37,7 +37,7 @@ const BACKPORT_HEAD = '9f3c6c3ac98d0777f8e7354f807a6af4ab642b18';
 const ACCOUNTING_HEAD = 'ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f';
 const EXECUTOR_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.ts`;
 const EXECUTOR_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.test.ts`;
-const EXECUTOR_TEST_SHA256 = 'faff478a79d163f9b930b25d1593de7f81415ada64466811ec30f5a2712e6787';
+const EXECUTOR_TEST_SHA256 = 'd9a34a033b886d50f262baf19159df3e58edb804ecdc2a71dda5eea594d31238';
 const ARTIFACT_BUILDER_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.ts`;
 const ARTIFACT_BUILDER_SHA256 = 'c5d5f9dba49f8b03afeea1f6b43d07a8d26da22615c7d5e37c6b60187139fa2b';
 const ARTIFACT_BUILDER_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.test.ts`;
@@ -183,6 +183,9 @@ export function loadArtifact(): Buffer {
 
 export function loadLegacyProbePath(): string {
   assertRealPath(MANIFEST_DIR, 'directory', 0o700);
+  if (stable(readdirSync(MANIFEST_DIR).sort()) !== stable(['incoming-media-backfill-manifest.json'])) {
+    throw new DeployStop('manifest_entries');
+  }
   assertRealPath(MANIFEST_FILE, 'file', 0o600);
   const bytes = readFileSync(MANIFEST_FILE);
   if (sha256(bytes) !== MANIFEST_SHA256) throw new DeployStop('manifest_hash');
@@ -321,6 +324,7 @@ export async function exactHttpsRequest(
   spec: ExactRequest,
   expiresAt: number,
   requestImpl: RequestFunction = request,
+  now: () => number = Date.now,
 ): Promise<HttpResponse> {
   return await new Promise<HttpResponse>((resolve, reject) => {
     let settled = false;
@@ -331,7 +335,7 @@ export async function exactHttpsRequest(
       if (timer) clearTimeout(timer);
       fn();
     };
-    if (Date.now() >= expiresAt) {
+    if (now() >= expiresAt) {
       reject(new DeployStop('approval_expired'));
       return;
     }
@@ -359,11 +363,15 @@ export async function exactHttpsRequest(
       });
       res.on('end', () => {
         if (stopped) return;
+        if (now() >= expiresAt) {
+          finish(() => reject(new DeployStop('approval_expired')));
+          return;
+        }
         finish(() => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
       });
     });
     req.once('error', (error) => finish(() => reject(error)));
-    const remaining = expiresAt - Date.now();
+    const remaining = expiresAt - now();
     if (remaining <= 0) {
       req.destroy(new DeployStop('approval_expired'));
       return;
@@ -693,6 +701,7 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
     if (before.snapshot.deploymentId !== PREVIOUS_DEPLOYMENT_ID || before.snapshot.versionId !== PREVIOUS_VERSION_ID) {
       throw new DeployStop('previous_deployment_drift');
     }
+    if (before.snapshot.scriptEtag !== PREVIOUS_SCRIPT_ETAG) throw new DeployStop('previous_script_etag_drift');
     const preVersion = versionReadback(await requestWorker({
       hostname: WORKER_HOST, method: 'GET', path: '/admin/version',
       headers: { 'Accept-Encoding': 'identity' }, maxBytes: 8_192,

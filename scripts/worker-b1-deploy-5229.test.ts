@@ -1,10 +1,12 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   buildContentUpload,
+  exactHttpsRequest,
   loadArtifact,
   loadLegacyProbePath,
   run,
@@ -190,6 +192,32 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
     expect(() => validateApprovalWindow(RECEIVED, EXPIRES, Date.parse(RECEIVED))).not.toThrow();
     expect(() => validateApprovalWindow(RECEIVED, EXPIRES, Date.parse(EXPIRES))).toThrow(/approval_inactive/);
     expect(() => validateApprovalWindow(RECEIVED, '2026-09-02T09:00:01.000Z', NOW)).toThrow(/approval_window/);
+  });
+
+  test('rejects a response that completes at the approval expiry boundary', async () => {
+    const response = Object.assign(new EventEmitter(), {
+      statusCode: 200,
+      headers: {},
+      read: () => null,
+    });
+    const requestImpl = vi.fn((_options, callback: (value: never) => void) => {
+      const req = Object.assign(new EventEmitter(), {
+        end: () => {
+          callback(response as never);
+          response.emit('end');
+        },
+        destroy: (error?: Error) => { if (error) req.emit('error', error); },
+      });
+      return req as never;
+    });
+    const now = vi.fn()
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(1_000);
+    await expect(exactHttpsRequest({
+      hostname: 'api.cloudflare.com', method: 'GET', path: '/test',
+      headers: { 'Accept-Encoding': 'identity' }, maxBytes: 1_024,
+    }, 1_000, requestImpl, now)).rejects.toThrow(/approval_expired/);
   });
 
   test('validates the exact sanitized D1 evidence contract', () => {
@@ -384,6 +412,17 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
       '--approval-received', RECEIVED, '--approval-expires', EXPIRES,
       '--approved-harness-head', APPROVED_HEAD,
     ], fixture.deps)).rejects.toThrow(/version_asset_drift/);
+    expect(fixture.cfCalls.filter((call) => call.method === 'PUT')).toHaveLength(0);
+  });
+
+  test('stops before PUT when the prior script etag changed', async () => {
+    const responses = cfSequence();
+    responses[2] = versionResource(PRE_VERSION, '3'.repeat(64));
+    const fixture = dependencies(responses, []);
+    await expect(run([
+      '--approval-received', RECEIVED, '--approval-expires', EXPIRES,
+      '--approved-harness-head', APPROVED_HEAD,
+    ], fixture.deps)).rejects.toThrow(/previous_script_etag_drift/);
     expect(fixture.cfCalls.filter((call) => call.method === 'PUT')).toHaveLength(0);
   });
 

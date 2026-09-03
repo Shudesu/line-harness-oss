@@ -1940,9 +1940,9 @@ Exact executor/test:
 - scripts/worker-b1-deploy-5229.ts
 - scripts/worker-b1-deploy-5229.test.ts
 - executor SHA-256:
-  50338a29ca8f80096e163ae8ce00ea06e2229fb9e7eb05256144cc33e2a791a2
+  38baea20219ddf47994ebc72a50c9f944d612956b5e65c6808540fbb17fdf6cb
 - executor test SHA-256:
-  faff478a79d163f9b930b25d1593de7f81415ada64466811ec30f5a2712e6787
+  d9a34a033b886d50f262baf19159df3e58edb804ecdc2a71dda5eea594d31238
 
 Exact production target and required before-state:
 - account/script/origin:
@@ -1973,7 +1973,7 @@ Required final local preflight before any provider request:
 - executor/test/builder/test and artifact have the exact hashes/modes above
 - protected manifest, B2 receipt, and D1 receipt have exact entry sets,
   modes, hashes, and required sanitized fields
-- focused B1-R1 tests 18/18, canonical script tests 116/116, strict standalone
+- focused B1-R1 tests 20/20, canonical script tests 118/118, strict standalone
   TypeScript, artifact/source diff invariants, and git diff check pass
 - output path `/Users/kensmba/.line-harness-5229-B1-R1-20260903` is absent
 - invoke exactly:
