@@ -12,6 +12,8 @@ import {
 } from './worker-b1-deploy-5229.js';
 
 const APPROVAL_ID = '5229-B1-V1-20260903';
+const APPROVAL_RECEIVED = '2026-09-03T05:51:46.737Z';
+const APPROVAL_EXPIRES = '2026-09-03T07:51:46.737Z';
 const ACCOUNT_ID = '67907592fdf596376bc2097e14a6563a';
 const SCRIPT_NAME = 'line-harness';
 const WORKTREE = '/Users/kensmba/.line-harness-wt/5229-private-incoming-media';
@@ -108,6 +110,9 @@ function assertRealPath(path: string, kind: 'directory' | 'file', mode: number):
 }
 
 export function validateApprovalWindow(received: string, expires: string, now: number): void {
+  if (received !== APPROVAL_RECEIVED || expires !== APPROVAL_EXPIRES) {
+    throw new VerifyStop('approval_identity');
+  }
   const start = Date.parse(received);
   const end = Date.parse(expires);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end - start !== 7_200_000) {
@@ -329,10 +334,7 @@ function safeReason(error: unknown): string {
   return 'provider_or_local_error';
 }
 
-function dispositionFor(reason: string): 'rollback_candidate' | 'external_drift' | 'inconclusive' {
-  if (['version_resources_changed', 'runtime_identity', 'private_probe', 'legacy_probe'].includes(reason)) {
-    return 'rollback_candidate';
-  }
+function dispositionFor(reason: string): 'external_drift' | 'inconclusive' {
   if (reason === 'external_deployment_drift') return 'external_drift';
   return 'inconclusive';
 }
@@ -441,7 +443,7 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
         pre_put_raw_settings_sha256: PREVIOUS_SETTINGS_SHA256,
         post_put_raw_settings_changed: true,
         current_raw_settings_sha256: current.snapshot.settingsSha256,
-        classification: 'current_config_anchors_and_version_resources_equal',
+        classification: 'bounded_current_config_anchors_and_version_resources_equal',
       },
       version_semantics: {
         old_resources_sha256: oldVersion.resourcesSha256,
@@ -469,7 +471,7 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
         provider_total: cfReads + runtimeReads, provider_write: 0,
         transport_retry: 0, redirect: 0, local_file_write: 1,
       },
-      disposition: 'accept_deployment_no_rollback', automatic_rollback: 0,
+      disposition: 'accept_candidate_no_rollback', automatic_rollback: 0,
     };
     writeSummary(deps.outputDir, identity, summary);
     return summary;

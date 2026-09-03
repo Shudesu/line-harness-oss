@@ -156,7 +156,7 @@ describe('B1 V1 post-deploy readback', () => {
   test('accepts version-resource equality and both runtime HEAD probes without writes', async () => {
     const f = fixture();
     const result = await run(args(), f.deps);
-    expect(result).toMatchObject({ status: 'completed', disposition: 'accept_deployment_no_rollback',
+    expect(result).toMatchObject({ status: 'completed', disposition: 'accept_candidate_no_rollback',
       request_counts: { cloudflare_get: 8, runtime_read: 3, provider_total: 11,
         provider_write: 0, transport_retry: 0, redirect: 0 } });
     expect(f.state).toEqual({ cfCalls: 8, workerCalls: 3 });
@@ -165,14 +165,14 @@ describe('B1 V1 post-deploy readback', () => {
     expect(receipt).not.toContain('/images/frozen.jpg');
   });
 
-  test('retries runtime identity once, then classifies a persistent mismatch as rollback candidate', async () => {
+  test('rereads runtime identity once, then classifies a persistent mismatch as inconclusive', async () => {
     const f = fixture();
     f.deps.workerRequest = async (spec: ExactRequest) => spec.path === '/admin/version'
       ? response({ version: 'wrong' })
       : { status: 200, headers: {}, body: Buffer.alloc(0) };
     await expect(run(args(), f.deps)).rejects.toThrow(/runtime_identity/);
     const receipt = JSON.parse(readFileSync(join(f.deps.outputDir, 'sanitized-summary.json'), 'utf8'));
-    expect(receipt.disposition).toBe('rollback_candidate');
+    expect(receipt.disposition).toBe('inconclusive');
     expect(receipt.request_counts).toMatchObject({ cloudflare_get: 7, runtime_read: 2, provider_write: 0 });
   });
 
@@ -198,6 +198,15 @@ describe('B1 V1 post-deploy readback', () => {
     const f = fixture();
     f.deps.validateLocalState = () => { throw new VerifyStop('head_drift'); };
     await expect(run(args(), f.deps)).rejects.toThrow(/head_drift/);
+    expect(readdirSync(f.root)).toEqual([]);
+    expect(f.state).toEqual({ cfCalls: 0, workerCalls: 0 });
+  });
+
+  test('rejects a substituted two-hour approval interval', async () => {
+    const f = fixture();
+    const shifted = ['--approval-received', '2026-09-03T05:52:00.000Z',
+      '--approval-expires', '2026-09-03T07:52:00.000Z', '--approved-harness-head', HEAD];
+    await expect(run(shifted, f.deps)).rejects.toThrow(/approval_identity/);
     expect(readdirSync(f.root)).toEqual([]);
     expect(f.state).toEqual({ cfCalls: 0, workerCalls: 0 });
   });

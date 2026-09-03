@@ -2609,9 +2609,9 @@ Immutable anchors:
 - B1 STOP receipt SHA-256:
   a3f5e2c411f5b8656427f363549d5ed0952da3937a1c47e47185ea78faa3f785
 - executor SHA-256:
-  ea9d8bd776460955b3f248952ca1cc629e97149a4ad4aa658f5d884974573d98
+  4557814b81d1da548f4ee1a4d5d9f4429144791e38acbfc304a0fbe0747b933a
 - executor test SHA-256:
-  6d4bfe15c3e1aadf23d140ec3db4874009020c1f1d8f9edf151bc8cd47a4e709
+  e6f58d5202c4d389f7461e4ae51e311aa9cc2cb36e54053aaeac566964be6275
 - prior deployment/version/etag:
   7b3bb319-e618-4f57-a520-cd33f43115e5 /
   c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7 /
@@ -2662,15 +2662,16 @@ Semantic comparison:
 - separately retain only equality booleans and SHA-256 digests for full
   comparable resources, full bindings, script runtime, and handler topology
 
-Accept, STOP, and rollback boundary:
-- accept only when both deployment reads are the exact current 100% deployment,
+Candidate, STOP, and rollback boundary:
+- emit an accept candidate only when both deployment reads are the exact current 100% deployment,
   current settings/Pages/subdomain/schedules match every pinned anchor, all
   comparable version resources are equal, target runtime identity is exact,
   private HEAD is 401/empty, and legacy HEAD is 200/empty with exact MIME
-- classify the evidence as current_config_anchors_and_version_resources_equal;
+- classify the evidence as bounded_current_config_anchors_and_version_resources_equal;
   do not claim that every unretained raw settings field was proven unchanged
 - active-deployment mismatch is external_drift and must not be overwritten
-- resource/runtime/private/legacy regression is rollback_candidate, but this
+- resource/runtime/private/legacy mismatch is inconclusive because a terminal
+  deployment read has not yet proved the active deployment stayed fixed; this
   packet never performs rollback
 - provider/auth/timeout/expiry/shape ambiguity is inconclusive; do not infer
   either acceptance or rollback
