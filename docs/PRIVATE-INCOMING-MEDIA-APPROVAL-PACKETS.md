@@ -1868,10 +1868,110 @@ read. No deploy, migration/backfill, credential/secret/token change, R2
 operation, purge, restart, feature enablement, Drive write, LINE send, PR
 merge, or rollback occurred. This approval is consumed and is not reusable.
 
-## Packet B1-R1 — exact code-only Worker deploy, awaiting KEN approval
+## Packet B1-D2 — stable full-config hash discovery, awaiting KEN approval
 
-This supersedes the consumed B1 packet. It deploys only the private incoming
-media Worker code while explicitly preserving the legacy environment's unknown
+This is a new read-only approval boundary required by the final B1 security
+audit. D1 established asset/Page topology but intentionally did not retain the
+full Worker settings, subdomain, or schedules digests. D2 reads the same six
+resources twice, requires byte-equivalent canonical snapshots, and retains
+only hashes and already-approved resource IDs. It performs no provider write.
+
+```text
+Approval ID: 5229-B1-D2-20260903
+Mode: CF-WORKER-STABLE-FULL-CONFIG-HASH-READ-ONLY
+Issues/PR: #5229 / #5230 / Draft PR #5244
+Approval lifetime: exactly two hours after KEN's explicit approval
+
+Immutable anchors:
+- parent Harness head:
+  881d237873d9aa6ea90a61e60dde8f2f29c707b9
+- completed D1 receipt SHA-256:
+  c2e294eae170d8a3f3b1592a43232b0c1ce2538f605464e7da3d057d44bebbd2
+- active deployment/version:
+  7b3bb319-e618-4f57-a520-cd33f43115e5 /
+  c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7
+- script etag:
+  1d9a88703ce2509f372740c140aa18699884b779a82108efdd863484555611b6
+- settings/version ASSETS binding SHA-256:
+  8fcf498813511a591cb5d595bc281fee2d45f7a27a87f124257a319b543d04c6
+- Admin project-name SHA-256/canonical deployment:
+  492123998ae432be97e93235fce10a2d5d118fd9eb8be802edd46ae8345ca9a2 /
+  301a632d-dc9a-4655-8368-2d77f8db3b21
+- exact 20-binding shape, compatibility 2024-12-01/[nodejs_compat],
+  subdomain `{enabled:true,previews_enabled:false}`, and cron expressions
+  `* * * * *` plus `0 */6 * * *`
+- v0.19 backport/Accounting heads:
+  9f3c6c3ac98d0777f8e7354f807a6af4ab642b18 /
+  ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f
+
+Exact collector/test:
+- scripts/worker-b1-d2-config-anchor-5229.ts
+- scripts/worker-b1-d2-config-anchor-5229.test.ts
+- collector SHA-256:
+  281f8dd530e7d0fc3c5bd8995f5f5eff2e05791d93eb7fec0324cad548ff238f
+- test SHA-256:
+  925af48aff7bd1f4edb1e0bb5b2ffb2fcd92ac42314c9684cbaed40b3f6356f5
+
+Required zero-provider preflight:
+- planning/backport/Accounting worktrees are clean at the approved exact heads
+- collector/test are regular mode-0644 files in the clean approved commit
+- focused D2 tests 9/9, related B1 tests 31/31, canonical script tests
+  129/129, strict standalone TypeScript, and git diff check pass
+- output path `/Users/kensmba/.line-harness-5229-B1-D2-20260903` is absent
+- invoke exactly:
+  pnpm exec tsx scripts/worker-b1-d2-config-anchor-5229.ts \
+    --preflight-only \
+    --approved-harness-head <exact commit in KEN approval>
+- require status=preflight_passed, planning_head=<approved exact Harness head>,
+  token_present=true, and provider requests/writes/local writes all 0
+
+Approved reads, exact order repeated twice:
+1. GET Worker deployments
+2. GET complete Worker settings
+3. GET exact active Worker version detail
+4. GET exact Admin Pages project derived in memory from settings
+5. GET Worker subdomain
+6. GET Worker schedules
+
+Read validation and sanitized evidence:
+- each pass must match all immutable IDs/topology/semantics above; the complete
+  canonical first and second snapshots must be identical
+- direct node:https, TLS 443, agent=false, redirect=0, retry=0, serial only;
+  status 200, JSON content type, identity/absent content encoding, body maximum
+  262,144 bytes, and the half-open approval interval checked before and after
+  every response including transport completion
+- provider request total exactly 12 GETs; provider writes exactly 0
+- create only `/Users/kensmba/.line-harness-5229-B1-D2-20260903` mode 0700
+  containing only mode-0600 `sanitized-summary.json`
+- retain only approval/head/timestamps, stable-snapshot count, approved IDs,
+  script etag, canonical settings/subdomain/schedules/binding hashes,
+  ASSETS topology hashes, Admin name hash/deployment ID, and request counts
+- never retain or print token/header, raw response/settings/binding values,
+  project name/URL, secret/customer/image value, or error/response body
+- exact execution command:
+  pnpm exec tsx scripts/worker-b1-d2-config-anchor-5229.ts \
+    --approval-received <exact approval instant> \
+    --approval-expires <exact instant plus two hours> \
+    --approved-harness-head <exact commit in KEN approval>
+- STOP immediately without retry on any mismatch; a STOP may write only the
+  same sanitized one-file receipt and does not authorize reuse of the approval
+
+Writes/actions explicitly forbidden and expected zero:
+- Worker/Pages/D1/R2 write, Worker or asset content GET, deploy, migration,
+  backfill, credential/token/secret change, purge, restart, gate/feature
+  enablement, Drive write, LINE send, PR merge, and rollback
+```
+
+The exact committed Harness head and SHA-256 of this packet file must appear in
+KEN's approval. D2 authorizes only the 12 configuration GETs and sanitized
+local receipt. It does not authorize B1-R1 deployment.
+
+## Packet B1-R1 — exact code-only Worker deploy, blocked pending B1-D2
+
+This supersedes the consumed B1 packet, but is not yet approvable. A completed
+B1-D2 receipt must first provide exact full settings/subdomain/schedules hashes
+and be pinned into the executor and this packet. Once unblocked, it deploys
+only the private incoming media Worker code while explicitly preserving the legacy environment's unknown
 Admin/LIFF identity sentinels. The sentinels are not asset byte hashes. Asset
 continuity is instead enforced using the exact Worker settings, ASSETS binding
 digests, and Admin Pages canonical deployment discovered by D1 before and after
@@ -1940,9 +2040,9 @@ Exact executor/test:
 - scripts/worker-b1-deploy-5229.ts
 - scripts/worker-b1-deploy-5229.test.ts
 - executor SHA-256:
-  38baea20219ddf47994ebc72a50c9f944d612956b5e65c6808540fbb17fdf6cb
+  625527a40c21ec7cb19628853989f0bc8e660d02b02aaa42cbf4b7364728d878
 - executor test SHA-256:
-  d9a34a033b886d50f262baf19159df3e58edb804ecdc2a71dda5eea594d31238
+  e06c3e9956be39a53f811fdae9ab3cab005d1d88b60b80eff0f35dd9024cce43
 
 Exact production target and required before-state:
 - account/script/origin:
@@ -1973,12 +2073,12 @@ Required final local preflight before any provider request:
 - executor/test/builder/test and artifact have the exact hashes/modes above
 - protected manifest, B2 receipt, and D1 receipt have exact entry sets,
   modes, hashes, and required sanitized fields
-- focused B1-R1 tests 20/20, canonical script tests 118/118, strict standalone
+- focused B1-R1 tests 22/22, canonical script tests 129/129, strict standalone
   TypeScript, artifact/source diff invariants, and git diff check pass
 - output path `/Users/kensmba/.line-harness-5229-B1-R1-20260903` is absent
 - invoke exactly:
-  pnpm exec tsx scripts/worker-b1-deploy-5229.ts
-    --preflight-only
+  pnpm exec tsx scripts/worker-b1-deploy-5229.ts \
+    --preflight-only \
     --approved-harness-head <exact commit in KEN approval>
 - require status=preflight_passed, exact artifact hash/bytes,
   planning_head=<approved exact Harness head>, token_present=true, and provider
@@ -1996,8 +2096,10 @@ Approved pre-write reads, in exact order:
    `* * * * *` and `0 */6 * * *` (provider timestamps may be present)
 7. GET direct Worker /admin/version; require exact D0 legacy sentinel state
 8. one D1 read-only query POST; require exact 071/072 ledger rows/checksums
-9. repeat Worker deployments immediately before PUT and require the exact same
-   deployment/version as read 1; any concurrent deploy stops before mutation
+9. repeat the complete six-resource snapshot immediately before PUT and require
+   byte-equivalent canonical state to reads 1-6; any concurrent deployment,
+   settings, asset topology, Admin Page, subdomain, or schedule drift stops
+   before mutation
 
 Approved mutation — exactly one request:
 - PUT /client/v4/accounts/67907592fdf596376bc2097e14a6563a/
@@ -2009,9 +2111,9 @@ Approved mutation — exactly one request:
   annotation, route, schedule, or secret metadata
 - this immediately creates/activates one new version; no separate deploy POST
 - exact command:
-  pnpm exec tsx scripts/worker-b1-deploy-5229.ts
-    --approval-received <exact approval instant>
-    --approval-expires <exact instant plus two hours>
+  pnpm exec tsx scripts/worker-b1-deploy-5229.ts \
+    --approval-received <exact approval instant> \
+    --approval-expires <exact instant plus two hours> \
     --approved-harness-head <exact commit in KEN approval>
 
 Required immediate readback:
@@ -2031,9 +2133,9 @@ Transport/request ceilings:
 - serial direct node:https only, agent=false, redirect=0, retry=0; each request
   begins and completes inside the half-open two-hour approval interval and an
   in-flight request aborts at expiry
-- Cloudflare read maximum=15: fourteen management GETs plus one D1 read-only POST
+- Cloudflare read maximum=20: nineteen management GETs plus one D1 read-only POST
 - Worker content PUT exactly=1
-- runtime reads minimum/maximum=3/14; total provider requests=19..30
+- runtime reads minimum/maximum=3/14; total provider requests=24..35
 - response ceilings remain 262,144 bytes management, 65,536 D1, 8,192
   version, 1,024 each HEAD
 - Cloudflare documents no compare-and-swap predecessor condition for this

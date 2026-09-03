@@ -111,7 +111,9 @@ function cfSequence(opts: { postSettings?: unknown; previousVersion?: string } =
   return [
     deployment(PRE_DEPLOYMENT, previousVersion), envelope(settings), versionResource(previousVersion, PREVIOUS_ETAG),
     adminProject(), envelope(subdomain), envelope(schedules),
-    migrations(), deployment(PRE_DEPLOYMENT, previousVersion),
+    migrations(),
+    deployment(PRE_DEPLOYMENT, previousVersion), envelope(settings), versionResource(previousVersion, PREVIOUS_ETAG),
+    adminProject(), envelope(subdomain), envelope(schedules),
     envelope({ id: 'line-harness', etag: 'provider-etag-not-content-sha' }),
     deployment('11111111-2222-4333-8444-555555555555', newVersion),
     envelope(opts.postSettings ?? settings), versionResource(newVersion, '2'.repeat(64)),
@@ -294,8 +296,8 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
       },
       runtime_readback: { version: TARGET_VERSION, private_unauthenticated_head: 401 },
       request_counts: {
-        cloudflare_read: 15, worker_content_put: 1, runtime_read: 3,
-        runtime_version_polls: 1, provider_total: 19, retry: 0,
+        cloudflare_read: 20, worker_content_put: 1, runtime_read: 3,
+        runtime_version_polls: 1, provider_total: 24, retry: 0,
       },
       mutation: { stage: 'completed', outcome: 'accepted', put_attempts: 1 },
     });
@@ -306,21 +308,17 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
     expect(putCalls[0].body?.length).toBe(Number(putCalls[0].headers['Content-Length']));
     expect(fixture.cfCalls.some((call) => call.path.includes('/secrets'))).toBe(false);
     expect(fixture.cfCalls.some((call) => call.path.includes('/assets'))).toBe(false);
+    const base = '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness';
+    const snapshotPaths = (version: string) => [
+      `${base}/deployments`, `${base}/settings`, `${base}/versions/${version}`,
+      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/pages/projects/line-harness-admin',
+      `${base}/subdomain`, `${base}/schedules`,
+    ];
     expect(fixture.cfCalls.filter((call) => call.method === 'GET').map((call) => call.path)).toEqual([
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/deployments',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/settings',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/versions/c87a5ad8-9bfc-48a5-8fe8-0448cac34fb7',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/pages/projects/line-harness-admin',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/subdomain',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/schedules',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/deployments',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/deployments',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/settings',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/versions/66666666-7777-4888-8999-aaaaaaaaaaaa',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/pages/projects/line-harness-admin',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/subdomain',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/schedules',
-      '/client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/deployments',
+      ...snapshotPaths(PRE_VERSION),
+      ...snapshotPaths(PRE_VERSION),
+      ...snapshotPaths('66666666-7777-4888-8999-aaaaaaaaaaaa'),
+      `${base}/deployments`,
     ]);
     expect(fixture.workerCalls.map((call) => `${call.method} ${call.path}`)).toEqual([
       'GET /admin/version', 'GET /admin/version',
@@ -329,9 +327,9 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
     expect(fixture.cfCalls.map((call) => `${call.method} ${call.path}`)).toEqual([
       ...fixture.cfCalls.slice(0, 6).map((call) => `GET ${call.path}`),
       'POST /client/v4/accounts/67907592fdf596376bc2097e14a6563a/d1/database/c19584d7-e9f1-4d46-83c5-6c0ba96561d1/query',
-      'GET /client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/deployments',
+      ...fixture.cfCalls.slice(7, 13).map((call) => `GET ${call.path}`),
       'PUT /client/v4/accounts/67907592fdf596376bc2097e14a6563a/workers/scripts/line-harness/content',
-      ...fixture.cfCalls.slice(9).map((call) => `GET ${call.path}`),
+      ...fixture.cfCalls.slice(14).map((call) => `GET ${call.path}`),
     ]);
     const d1Call = fixture.cfCalls[6];
     expect(d1Call.hostname).toBe('api.cloudflare.com');
@@ -384,6 +382,25 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
     expect(fixture.cfCalls.filter((call) => call.method === 'PUT')).toHaveLength(1);
     expect(JSON.parse(readFileSync(`${fixture.deps.outputDir}/sanitized-summary.json`, 'utf8')))
       .toMatchObject({ status: 'stopped', rollback_required: true });
+  });
+
+  test('records an unknown mutation outcome for a rejected content PUT response', async () => {
+    const responses = cfSequence();
+    responses[13] = {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"success":false,"result":null}'),
+    };
+    const fixture = dependencies(responses, [adminVersion(false)]);
+    await expect(run([
+      '--approval-received', RECEIVED, '--approval-expires', EXPIRES,
+      '--approved-harness-head', APPROVED_HEAD,
+    ], fixture.deps)).rejects.toThrow(/content_put_status/);
+    const receipt = JSON.parse(readFileSync(`${fixture.deps.outputDir}/sanitized-summary.json`, 'utf8'));
+    expect(receipt).toMatchObject({
+      status: 'stopped', rollback_required: true, observed_post_state: null,
+      mutation: { stage: 'content_put_in_flight', outcome: 'unknown', put_attempts: 1 },
+    });
   });
 
   test('rejects a public-block gate binding before any write', async () => {
@@ -464,21 +481,34 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
 
   test('stops before PUT if the active deployment changes after migration readback', async () => {
     const responses = cfSequence();
+    const driftVersion = '11111111-2222-4333-8444-555555555555';
     responses[7] = deployment(
       'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-      '11111111-2222-4333-8444-555555555555',
+      driftVersion,
     );
+    responses[9] = versionResource(driftVersion, PREVIOUS_ETAG);
     const fixture = dependencies(responses, [adminVersion(false)]);
     await expect(run([
       '--approval-received', RECEIVED, '--approval-expires', EXPIRES,
       '--approved-harness-head', APPROVED_HEAD,
-    ], fixture.deps)).rejects.toThrow(/pre_put_deployment_drift/);
+    ], fixture.deps)).rejects.toThrow(/pre_put_snapshot_drift/);
+    expect(fixture.cfCalls.filter((call) => call.method === 'PUT')).toHaveLength(0);
+  });
+
+  test('stops before PUT if settings change after migration readback', async () => {
+    const responses = cfSequence();
+    responses[8] = envelope({ ...settings, placement: { mode: 'off' } });
+    const fixture = dependencies(responses, [adminVersion(false)]);
+    await expect(run([
+      '--approval-received', RECEIVED, '--approval-expires', EXPIRES,
+      '--approved-harness-head', APPROVED_HEAD,
+    ], fixture.deps)).rejects.toThrow(/pre_put_snapshot_drift/);
     expect(fixture.cfCalls.filter((call) => call.method === 'PUT')).toHaveLength(0);
   });
 
   test('stops after PUT if the Admin Pages deployment changes', async () => {
     const responses = cfSequence();
-    responses[12] = adminProject('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    responses[17] = adminProject('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
     const fixture = dependencies(responses, [adminVersion(false)]);
     await expect(run([
       '--approval-received', RECEIVED, '--approval-expires', EXPIRES,
@@ -495,7 +525,7 @@ describe('exact Worker code-only deploy #5229 B1-R1', () => {
 
   test('stops after PUT if the active deployment changes after runtime readback', async () => {
     const responses = cfSequence();
-    responses[15] = deployment(
+    responses[20] = deployment(
       'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
       '11111111-2222-4333-8444-555555555555',
     );

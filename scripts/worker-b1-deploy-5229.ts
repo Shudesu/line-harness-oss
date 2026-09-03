@@ -37,7 +37,7 @@ const BACKPORT_HEAD = '9f3c6c3ac98d0777f8e7354f807a6af4ab642b18';
 const ACCOUNTING_HEAD = 'ba9d7785ca0de8135d454c0df1a4c4c20fc6c46f';
 const EXECUTOR_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.ts`;
 const EXECUTOR_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-deploy-5229.test.ts`;
-const EXECUTOR_TEST_SHA256 = 'd9a34a033b886d50f262baf19159df3e58edb804ecdc2a71dda5eea594d31238';
+const EXECUTOR_TEST_SHA256 = 'e06c3e9956be39a53f811fdae9ab3cab005d1d88b60b80eff0f35dd9024cce43';
 const ARTIFACT_BUILDER_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.ts`;
 const ARTIFACT_BUILDER_SHA256 = 'c5d5f9dba49f8b03afeea1f6b43d07a8d26da22615c7d5e37c6b60187139fa2b';
 const ARTIFACT_BUILDER_TEST_FILE = `${PLANNING_WORKTREE}/scripts/worker-b1-r1-artifact-5229.test.ts`;
@@ -109,7 +109,7 @@ export interface RunDependencies {
   expectedAdminProjectNameSha256: string;
 }
 
-interface WorkerSnapshot {
+export interface WorkerSnapshot {
   deploymentId: string;
   versionId: string;
   settings: unknown;
@@ -582,7 +582,7 @@ export function parseArgs(raw: string[]): {
   throw new DeployStop('arguments');
 }
 
-async function getSnapshot(
+export async function getSnapshot(
   token: string,
   expiresAt: number,
   requestCf: (spec: ExactRequest) => Promise<HttpResponse>,
@@ -650,6 +650,10 @@ function sameSnapshotConfig(before: WorkerSnapshot, after: WorkerSnapshot): void
   }
 }
 
+function samePreWriteSnapshot(before: WorkerSnapshot, current: WorkerSnapshot): void {
+  if (stable(before) !== stable(current)) throw new DeployStop('pre_put_snapshot_drift');
+}
+
 function validateTargetVersion(value: VersionReadback): void {
   if (value.version !== TARGET_VERSION || value.worker_hash !== TARGET_WORKER_HASH ||
       value.admin_hash !== ADMIN_HASH || value.liff_hash !== LIFF_HASH ||
@@ -682,6 +686,7 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
   let versionPolls = 0;
   let mutationStage = 'pre_write_readback';
   let mutationOutcome: 'not_attempted' | 'unknown' | 'accepted' = 'not_attempted';
+  let observedPostState: { deployment_id: string; version_id: string; script_etag: string } | null = null;
   const cfRays: Array<string | null> = [];
   const requestCf = async (spec: ExactRequest): Promise<HttpResponse> => {
     validateApprovalWindow(args.received, args.expires, deps.now());
@@ -727,18 +732,9 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
     });
     cfRays.push(validateMigrations(migrationResponse));
 
-    const finalPrePutDeployment = parseEnvelope(await requestCf({
-      hostname: 'api.cloudflare.com', method: 'GET',
-      path: `/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${SCRIPT_NAME}/deployments`,
-      headers: { Authorization: `Bearer ${token}`, 'Accept-Encoding': 'identity' },
-      maxBytes: MAX_JSON_BYTES,
-    }), 'final_pre_put_deployment');
-    cfRays.push(finalPrePutDeployment.cfRay);
-    const finalPrePutActive = activeDeployment(finalPrePutDeployment.result);
-    if (finalPrePutActive.deploymentId !== before.snapshot.deploymentId ||
-        finalPrePutActive.versionId !== before.snapshot.versionId) {
-      throw new DeployStop('pre_put_deployment_drift');
-    }
+    const finalPrePut = await getSnapshot(token, expiresAt, requestCf, deps.expectedAdminProjectNameSha256);
+    cfRays.push(...finalPrePut.cfRays);
+    samePreWriteSnapshot(before.snapshot, finalPrePut.snapshot);
 
     mutationStage = 'content_put_in_flight';
     mutationOutcome = 'unknown';
@@ -759,6 +755,11 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
 
     const after = await getSnapshot(token, expiresAt, requestCf, deps.expectedAdminProjectNameSha256);
     cfRays.push(...after.cfRays);
+    observedPostState = {
+      deployment_id: after.snapshot.deploymentId,
+      version_id: after.snapshot.versionId,
+      script_etag: after.snapshot.scriptEtag,
+    };
     if (after.snapshot.deploymentId === before.snapshot.deploymentId ||
         after.snapshot.versionId === before.snapshot.versionId) throw new DeployStop('deployment_not_advanced');
     sameSnapshotConfig(before.snapshot, after.snapshot);
@@ -862,6 +863,7 @@ export async function run(raw: string[], deps: RunDependencies): Promise<Record<
           provider_total: cfReads + contentWrites + runtimeReads, retry: 0,
         },
         mutation: { stage: mutationStage, outcome: mutationOutcome, put_attempts: contentWrites },
+        observed_post_state: observedPostState,
         rollback_required: contentWrites === 1,
       });
     }
