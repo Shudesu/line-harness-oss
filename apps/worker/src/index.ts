@@ -99,12 +99,6 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
-    /**
-     * #5229 cutover switch. Only the exact string "true" blocks legacy
-     * public /images/incoming-* URLs after their D1/R2 migration completes.
-     * Unset is intentionally the compatibility default during the rollout.
-     */
-    INCOMING_MEDIA_PUBLIC_BLOCK_ENABLED?: string;
     // Admin auth topology (see middleware/admin-auth-config.ts):
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
