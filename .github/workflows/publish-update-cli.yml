@@ -15,7 +15,13 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 + tags — update-engine の upgrade-matrix テストが
+      # 旧リリースタグ (v0.14.1 等) の bootstrap/schema を `git show` で読むため、
+      # shallow checkout だと全テストが invalid object name で落ちる。
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: pnpm/action-setup@v4
 

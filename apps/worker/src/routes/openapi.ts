@@ -100,6 +100,11 @@ const spec = {
           sentAt: { type: 'string', nullable: true },
           totalCount: { type: 'integer' },
           successCount: { type: 'integer' },
+          lastError: {
+            type: 'string',
+            nullable: true,
+            description: '直近の送信失敗理由 (LINE プランクォータ不足ガード等)。送信成功で null に戻る。',
+          },
           createdAt: { type: 'string', format: 'date-time' },
         },
       },
@@ -423,6 +428,15 @@ const spec = {
         summary: 'LINEアカウント登録',
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { channelId: { type: 'string' }, name: { type: 'string' }, channelAccessToken: { type: 'string' }, channelSecret: { type: 'string' } }, required: ['channelId', 'name', 'channelAccessToken', 'channelSecret'] } } } },
         responses: { '201': { description: 'Account created' } },
+      },
+    },
+    '/api/line-accounts/delivery-health': {
+      get: {
+        tags: ['LINE Accounts'],
+        summary: 'アカウント別 配信健全性 (クォータ残・友だち/ブロック前日比・今月配信数)',
+        description:
+          'アクティブな全アカウントについて、LINE 月間クォータ (上限/消費/残り) と前日時点の友だち数・ブロック数 (前日比つき)、当月の push 配信数を一括で返す。残クォータが配信可能友だち数を下回ると quotaAlert=true (全員配信が完走できない状態)。',
+        responses: { '200': { description: 'Per-account delivery health snapshot' } },
       },
     },
     '/api/line-accounts/order': {

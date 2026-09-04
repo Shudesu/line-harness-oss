@@ -9,7 +9,7 @@ import { AccountProvider } from '@/contexts/account-context'
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
-  if (pathname === '/login') {
+  if (pathname === '/login' || pathname === '/ui-preview') {
     return <>{children}</>
   }
 

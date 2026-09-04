@@ -3,12 +3,13 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { webinarApi, type Webinar, type WebinarInput, type WebinarScheduleRule } from '@/lib/api'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Input } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
 
 const DAYS = ['日', '月', '火', '水', '木', '金', '土']
-
-const inputClass =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-const labelClass = 'block text-sm font-medium text-gray-700 mb-1.5'
 
 function timeToMinutes(value: string): number {
   const [hours, minutes] = value.split(':').map(Number)
@@ -109,40 +110,26 @@ export default function WebinarForm({ initial }: WebinarFormProps) {
 
   return (
     <div className="max-w-4xl space-y-5">
-      {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
+      {error && <Banner variant="error" title="ウェビナーを保存できません" description={error} />}
 
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <div><h2 className="font-bold text-slate-900">基本情報</h2><p className="mt-1 text-xs text-slate-500">普段変更する項目だけを表示しています</p></div>
-        <div>
-          <label className={labelClass}>タイトル</label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
-        </div>
-        <div>
-          <label className={labelClass}>状態</label>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value as Webinar['status'])}
-            className={`${inputClass} w-auto`}
-          >
-            <option value="draft">下書き</option>
-            <option value="active">公開中</option>
-            <option value="archived">アーカイブ</option>
-          </select>
-        </div>
-        <div>
-          <label className={labelClass}>動画の長さ（分）</label>
-          <input
+        <Input label="タイトル" value={title} onChange={(e) => setTitle(e.target.value)} />
+        <Select
+          label="状態"
+          value={status}
+          onValueChange={(value) => setStatus(value as Webinar['status'])}
+          items={{ draft: '下書き', active: '公開中', archived: 'アーカイブ' }}
+          className="w-48"
+        />
+        <Input
+            label="動画の長さ（分）"
             type="number"
             value={durationMinutes}
             min={1}
             onChange={(e) => setDurationMinutes(Number(e.target.value))}
-            className={`${inputClass} w-32`}
+            className="w-32"
           />
-        </div>
         {!videoPrefix.trim() && (
           <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-700">
             <p className="font-bold text-amber-900">動画のアップロードは Claude Code / Codex から行います</p>
@@ -163,14 +150,8 @@ export default function WebinarForm({ initial }: WebinarFormProps) {
             <span className="text-xs text-slate-400 group-open:rotate-180">▾</span>
           </summary>
           <div className="space-y-4 border-t border-slate-200 p-4">
-            <div>
-              <label className={labelClass}>slug（URL 用・半角英数とハイフン）</label>
-              <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-seminar" className={`${inputClass} font-mono text-xs`} />
-            </div>
-            <div>
-              <label className={labelClass}>動画 R2 プレフィックス</label>
-              <input value={videoPrefix} onChange={(e) => setVideoPrefix(e.target.value)} className={`${inputClass} font-mono text-xs`} />
-            </div>
+            <Input label="slug（URL 用・半角英数とハイフン）" value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-seminar" className="font-mono text-xs" />
+            <Input label="動画 R2 プレフィックス" value={videoPrefix} onChange={(e) => setVideoPrefix(e.target.value)} className="font-mono text-xs" />
           </div>
         </details>
       </section>
@@ -200,20 +181,22 @@ export default function WebinarForm({ initial }: WebinarFormProps) {
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="mb-3 text-xs font-bold text-slate-700">毎日の枠をまとめて作成</div>
               <div className="flex flex-wrap items-end gap-3">
-                <label className="text-xs text-slate-500">開始<input type="time" value={bulkStart} onChange={(e) => setBulkStart(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-2 py-2 text-sm" /></label>
-                <label className="text-xs text-slate-500">終了<input type="time" value={bulkEnd} onChange={(e) => setBulkEnd(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-2 py-2 text-sm" /></label>
-                <label className="text-xs text-slate-500">間隔<select value={bulkInterval} onChange={(e) => setBulkInterval(Number(e.target.value))} className="mt-1 block rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value={30}>30分</option><option value={60}>60分</option><option value={120}>120分</option></select></label>
-                <button type="button" onClick={applyDailySchedule} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">毎日の枠を置き換える</button>
+                <Input label="開始" type="time" value={bulkStart} onChange={(e) => setBulkStart(e.target.value)} className="w-32" />
+                <Input label="終了" type="time" value={bulkEnd} onChange={(e) => setBulkEnd(e.target.value)} className="w-32" />
+                <Select label="間隔" value={String(bulkInterval)} onValueChange={(value) => setBulkInterval(Number(value))} items={{ '30': '30分', '60': '60分', '120': '120分' }} className="w-28" />
+                <Button type="button" variant="secondary" onClick={applyDailySchedule}>毎日の枠を置き換える</Button>
               </div>
               <p className="mt-2 text-[11px] text-slate-400">下の保存ボタンを押すまでは本番へ反映されません。</p>
             </div>
             <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
         {rules.map((r, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 p-2 text-sm">
-            <select
+            <Select
+              label="ルール種別"
+              hideLabel
               value={r.type}
-              onChange={(e) => {
-                const type = e.target.value as WebinarScheduleRule['type']
+              onValueChange={(value) => {
+                const type = value as WebinarScheduleRule['type']
                 updateRule(
                   i,
                   type === 'once'
@@ -221,59 +204,57 @@ export default function WebinarForm({ initial }: WebinarFormProps) {
                     : { type, time: r.time ?? '20:00', days: type === 'weekly' ? [] : undefined, at: undefined },
                 )
               }}
-              className="rounded-lg border border-gray-300 px-2 py-1"
-            >
-              <option value="daily">毎日</option>
-              <option value="weekly">毎週</option>
-              <option value="once">単発</option>
-            </select>
+              items={{ daily: '毎日', weekly: '毎週', once: '単発' }}
+              className="w-28"
+            />
             {r.type === 'weekly' &&
               DAYS.map((d, di) => (
-                <label key={di} className="flex items-center gap-0.5">
-                  <input
-                    type="checkbox"
+                <Checkbox
+                    key={di}
+                    label={d}
                     checked={r.days?.includes(di) ?? false}
-                    onChange={(e) =>
+                    onCheckedChange={(checked) =>
                       updateRule(i, {
-                        days: e.target.checked
+                        days: checked
                           ? [...(r.days ?? []), di]
                           : (r.days ?? []).filter((x) => x !== di),
                       })
                     }
-                  />
-                  {d}
-                </label>
+                />
               ))}
             {r.type === 'once' ? (
-              <input
+              <Input
+                aria-label="開催日時"
                 type="datetime-local"
                 value={(r.at ?? '').slice(0, 16)}
                 onChange={(e) => updateRule(i, { at: `${e.target.value}:00+09:00` })}
-                className="rounded-lg border border-gray-300 px-2 py-1"
               />
             ) : (
-              <input
+              <Input
+                aria-label="開催時刻"
                 type="time"
                 value={r.time ?? '20:00'}
                 onChange={(e) => updateRule(i, { time: e.target.value })}
-                className="rounded-lg border border-gray-300 px-2 py-1"
               />
             )}
-            <button
+            <Button
+              size="xs"
+              variant="secondary-destructive"
               onClick={() => setRules((prev) => prev.filter((_, j) => j !== i))}
-              className="ml-auto text-red-500 hover:text-red-600"
+              className="ml-auto"
             >
               削除
-            </button>
+            </Button>
           </div>
         ))}
             </div>
-        <button
+        <Button
+          size="xs"
+          variant="secondary"
           onClick={() => setRules((prev) => [...prev, { type: 'daily', time: '20:00' }])}
-          className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
         >
           ＋ ルール追加
-        </button>
+        </Button>
           </div>
         </details>
       </section>
@@ -281,35 +262,24 @@ export default function WebinarForm({ initial }: WebinarFormProps) {
       <details className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <summary className="flex cursor-pointer list-none items-center justify-between p-5 text-sm font-bold text-slate-900 sm:p-6">従来CTAボタンの設定<span className="text-xs text-slate-400 group-open:rotate-180">▾</span></summary>
         <section className="space-y-3 border-t border-slate-200 p-5 sm:p-6">
-        <label className="flex items-center gap-2 text-sm text-gray-700">
-          <input type="checkbox" checked={ctaEnabled} onChange={(e) => setCtaEnabled(e.target.checked)} />
-          CTA ボタンを表示する
-        </label>
+        <Checkbox label="CTA ボタンを表示する" checked={ctaEnabled} onCheckedChange={setCtaEnabled} />
         {ctaEnabled && (
           <>
-            <div>
-              <label className={labelClass}>ボタン文言</label>
-              <input value={ctaLabel} onChange={(e) => setCtaLabel(e.target.value)} className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>決済ページ URL</label>
-              <input
+            <Input label="ボタン文言" value={ctaLabel} onChange={(e) => setCtaLabel(e.target.value)} />
+            <Input
+                label="決済ページ URL"
                 value={ctaUrl}
                 onChange={(e) => setCtaUrl(e.target.value)}
                 placeholder="https://..."
-                className={inputClass}
               />
-            </div>
-            <div>
-              <label className={labelClass}>表示開始（開始から何分後）</label>
-              <input
+            <Input
+                label="表示開始（開始から何分後）"
                 type="number"
                 value={ctaShowMinutes}
                 min={0}
                 onChange={(e) => setCtaShowMinutes(Number(e.target.value))}
-                className={`${inputClass} w-32`}
+                className="w-32"
               />
-            </div>
           </>
         )}
         </section>
@@ -317,7 +287,7 @@ export default function WebinarForm({ initial }: WebinarFormProps) {
 
       <div className="sticky bottom-3 z-10 flex items-center justify-between rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur">
         <span className="hidden text-xs text-slate-500 sm:block">変更内容を確認して本番へ反映します</span>
-        <button onClick={() => void save()} disabled={saving} className="ml-auto rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">{saving ? '保存中...' : '変更を保存'}</button>
+        <Button variant="primary" onClick={() => void save()} disabled={saving} loading={saving} className="ml-auto">変更を保存</Button>
       </div>
     </div>
   )

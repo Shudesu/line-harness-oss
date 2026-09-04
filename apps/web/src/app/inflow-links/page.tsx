@@ -9,6 +9,13 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import type { EntryRoute, TrafficPool, Scenario, Tag } from '@line-crm/shared'
 import EditRouteModal from './_components/edit-route-modal'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 interface MessageTemplate {
   id: string
@@ -382,69 +389,48 @@ export default function InflowLinksPage() {
             ? `（全 ${allRows.length} 件中、選択中アカ）`
             : ''}
         </span>
-        <button
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
           onClick={() => setEditing('new')}
-          className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
         >
           + 新規リンク
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm mb-4">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="リンクを読み込めませんでした" description={error} />
       )}
 
       {loading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          読み込み中...
-        </div>
+        <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>
       ) : sortedRows.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          {selectedAccountId
+        <Empty
+          title="リファラルリンクがありません"
+          description={selectedAccountId
             ? '選択中のアカウントに紐づくリファラルリンクはありません。'
-            : 'リファラルリンクがありません。「+ 新規リンク」から作成してください。'}
-        </div>
+            : '「+ 新規リンク」から作成してください。'}
+        />
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[1080px]">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  名前
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  ref コード
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  送り先 Pool
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  起動シナリオ
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  自動付与タグ
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  モード
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                  友だち数
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                  クリック数
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  最新追加
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  URL
-                </th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
+        <LayerCard className="overflow-x-auto p-0">
+          <Table className="min-w-[1080px]">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>名前</Table.Head>
+                <Table.Head>ref コード</Table.Head>
+                <Table.Head>送り先 Pool</Table.Head>
+                <Table.Head>起動シナリオ</Table.Head>
+                <Table.Head>自動付与タグ</Table.Head>
+                <Table.Head>モード</Table.Head>
+                <Table.Head className="text-right">友だち数</Table.Head>
+                <Table.Head className="text-right">クリック数</Table.Head>
+                <Table.Head>最新追加</Table.Head>
+                <Table.Head>URL</Table.Head>
+                <Table.Head />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {sortedRows.map((r) => {
                 const pool = pools.find((p) => p.id === r.poolId)
                 const sc = scenarios.find((s) => s.id === r.scenarioId)
@@ -463,7 +449,7 @@ export default function InflowLinksPage() {
                     refDetail={refDetail}
                     refCode={r.refCode}
                   >
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                    <Table.Cell className="font-medium text-kumo-strong">
                       {r.source === 'entry_route' && r.entryRouteId ? (
                         <Link
                           href={`/inflow-links/detail?id=${r.entryRouteId}`}
@@ -475,29 +461,23 @@ export default function InflowLinksPage() {
                       ) : r.source === 'tracked_link' ? (
                         <span className="text-gray-700">
                           {r.name}
-                          <span
-                            className="ml-2 text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5"
-                            title="tracked_links 登録済み — クリック計測 + シナリオ起動が設定されています。Pool 振り分けは持ちません。"
-                          >
-                            Tracked Link
+                          <span title="tracked_links 登録済み — クリック計測 + シナリオ起動が設定されています。Pool 振り分けは持ちません。">
+                            <Badge className="ml-2" variant="success">Tracked Link</Badge>
                           </span>
                         </span>
                       ) : (
                         <span className="text-gray-700">
                           {r.name}
-                          <span
-                            className="ml-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
-                            title="entry_routes / tracked_links いずれにも未登録 — X Harness など外部システムが発行した ref。流入実績のみ集計。"
-                          >
-                            未登録
+                          <span title="entry_routes / tracked_links いずれにも未登録 — X Harness など外部システムが発行した ref。流入実績のみ集計。">
+                            <Badge className="ml-2" variant="warning">未登録</Badge>
                           </span>
                         </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-mono text-blue-600 break-all">
+                    </Table.Cell>
+                    <Table.Cell className="font-mono text-kumo-link break-all">
                       {r.refCode}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-default">
                       {pool ? (
                         pool.name
                       ) : r.source === 'tracked_link' ? (
@@ -515,9 +495,9 @@ export default function InflowLinksPage() {
                           未設定
                         </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700">{sc?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-sm text-gray-700">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-default">{sc?.name ?? '—'}</Table.Cell>
+                    <Table.Cell className="text-kumo-default">
                       {tag ? (
                         <span
                           className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
@@ -531,8 +511,8 @@ export default function InflowLinksPage() {
                       ) : (
                         <span className="text-gray-400">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-subtle">
                       {r.source === 'entry_route'
                         ? r.runAccountFriendAddScenarios
                           ? '並走'
@@ -543,32 +523,36 @@ export default function InflowLinksPage() {
                             // フラグは entry_routes 専用)。worker 上は常に並走挙動。
                             '並走'
                           : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
+                    </Table.Cell>
+                    <Table.Cell className="text-right font-semibold text-kumo-strong">
                       {r.stats?.friendCount ?? 0}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-600">
+                    </Table.Cell>
+                    <Table.Cell className="text-right text-kumo-subtle">
                       {r.stats?.clickCount ?? 0}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-subtle">
                       {formatDate(r.stats?.latestAt ?? null)}
-                    </td>
-                    <td className="px-4 py-3 text-sm" onClick={(e) => e.stopPropagation()}>
-                      <button
+                    </Table.Cell>
+                    <Table.Cell onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
                         onClick={() => onCopy(r.refCode, r.refCode)}
-                        className="text-xs text-blue-500 hover:text-blue-700"
                       >
                         {copiedId === r.refCode ? 'コピー済' : 'コピー'}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      </Button>
+                    </Table.Cell>
+                    <Table.Cell className="text-right" onClick={(e) => e.stopPropagation()}>
                       {editTarget ? (
-                        <button
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
                           onClick={() => setEditing(editTarget)}
-                          className="text-xs text-gray-600 hover:underline"
                         >
                           編集
-                        </button>
+                        </Button>
                       ) : r.source === 'tracked_link' ? (
                         // tracked_links は別管理 (Web app に編集 UI 未提供)。
                         // entry_routes への "昇格登録" は worker 優先順位的に
@@ -577,21 +561,23 @@ export default function InflowLinksPage() {
                         // 編集導線 (MCP / API) に委ねる。
                         <span className="text-xs text-gray-400">—</span>
                       ) : (
-                        <button
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
                           onClick={() => setEditing({ register: r.refCode })}
-                          className="text-xs text-blue-600 hover:underline"
                           title="未登録 ref を entry_routes に登録します。流入実績はそのまま引き継がれます。"
                         >
                           登録
-                        </button>
+                        </Button>
                       )}
-                    </td>
+                    </Table.Cell>
                   </FragmentRow>
                 )
               })}
-            </tbody>
-          </table>
-        </div>
+            </Table.Body>
+          </Table>
+        </LayerCard>
       )}
 
       {editing && (
@@ -645,12 +631,12 @@ function FragmentRow({
   const friends = isExpanded && refDetail?.refCode === refCode ? refDetail.friends : null
   return (
     <Fragment>
-      <tr className="hover:bg-gray-50 cursor-pointer" onClick={onToggle}>
+      <Table.Row className="cursor-pointer" onClick={onToggle}>
         {children}
-      </tr>
+      </Table.Row>
       {isExpanded && (
-        <tr>
-          <td colSpan={11} className="px-6 py-4 bg-gray-50 border-t border-gray-100">
+        <Table.Row>
+          <Table.Cell colSpan={11} className="px-6 py-4 bg-kumo-control">
             {refDetailLoading ? (
               <p className="text-sm text-gray-400">読み込み中…</p>
             ) : !friends ? (
@@ -686,8 +672,8 @@ function FragmentRow({
                 </div>
               </div>
             )}
-          </td>
-        </tr>
+          </Table.Cell>
+        </Table.Row>
       )}
     </Fragment>
   )

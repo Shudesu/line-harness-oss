@@ -3,6 +3,8 @@ import {
   quotaConfig,
   quotaEnabled,
   monthStartJst,
+  jstYyyyMmDd,
+  countAccountMonthlyMessages,
   getQuotaUsage,
   isQuotaExceeded,
   wouldExceedMonthlyQuota,
@@ -58,6 +60,31 @@ describe('monthStartJst', () => {
     expect(monthStartJst(new Date('2026-07-31T20:00:00Z'))).toBe('2026-08-01T00:00:00.000');
     // 2026-08-01T05:00:00Z = 2026-08-01T14:00 JST → still August
     expect(monthStartJst(new Date('2026-08-01T05:00:00Z'))).toBe('2026-08-01T00:00:00.000');
+  });
+});
+
+describe('jstYyyyMmDd', () => {
+  test('JST day boundary: UTC evening is already the next JST day', () => {
+    // 2026-08-31T20:00:00Z = 2026-09-01T05:00 JST
+    expect(jstYyyyMmDd(0, new Date('2026-08-31T20:00:00Z'))).toBe('20260901');
+    expect(jstYyyyMmDd(1, new Date('2026-08-31T20:00:00Z'))).toBe('20260831');
+    expect(jstYyyyMmDd(2, new Date('2026-08-31T20:00:00Z'))).toBe('20260830');
+  });
+});
+
+describe('countAccountMonthlyMessages', () => {
+  test('sums per-account log rows and all-target broadcast successes, JST month window', async () => {
+    const { db, executed } = makeDb({ monthly: 40, allBroadcasts: 2 });
+    const total = await countAccountMonthlyMessages(db, 'acc-1', new Date('2026-08-21T00:00:00Z'));
+    expect(total).toBe(42);
+    const ml = executed.find((e) => e.sql.includes('FROM messages_log'))!;
+    expect(ml.sql).toContain('f.line_account_id = ?');
+    expect(ml.params).toEqual(['2026-08-01T00:00:00.000', 'acc-1']);
+    const bc = executed.find((e) => e.sql.includes('FROM broadcasts'))!;
+    expect(bc.sql).toContain(`target_type = 'all'`);
+    expect(bc.sql).toContain('line_request_id IS NOT NULL');
+    expect(bc.sql).toContain('line_account_id = ?');
+    expect(bc.params).toEqual(['2026-08-01T00:00:00.000', 'acc-1']);
   });
 });
 

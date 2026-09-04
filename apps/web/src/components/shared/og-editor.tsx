@@ -1,5 +1,7 @@
 'use client'
 
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
 import ImageUploader from './image-uploader'
 
 export interface OgValue {
@@ -34,57 +36,50 @@ export default function OgEditor({
     onChange({ ...value, [k]: v })
 
   return (
-    <div className="space-y-3 border border-gray-200 rounded-lg p-4 bg-gray-50">
-      <div className="text-sm font-medium text-gray-900">
+    <LayerCard className="space-y-3 bg-kumo-tint p-4">
+      <div className="text-sm font-medium text-kumo-strong">
         リンクプレビュー（OGP）
       </div>
-      <div className="text-xs text-gray-500">
+      <div className="text-xs text-kumo-subtle">
         LINE / X / Facebook 等にリンクを貼ったときに表示されるカードの内容。
         空欄なら自動で生成されます。
       </div>
 
-      {!hideTitle && (
+      {!hideTitle ? (
         <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            タイトル
-          </label>
-          <input
-            type="text"
+          <Input
+            label="タイトル"
             value={value.ogTitle ?? ''}
             maxLength={TITLE_MAX}
             placeholder={autoTitle ? `自動: ${autoTitle}` : '（自動生成）'}
-            onChange={(e) => set('ogTitle', e.target.value || null)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            onValueChange={(nextValue) => set('ogTitle', nextValue || null)}
           />
-          <div className="text-xs text-gray-400 mt-1">
+          <div className="mt-1 text-xs text-kumo-subtle">
             {(value.ogTitle ?? '').length} / {TITLE_MAX}
           </div>
         </div>
-      )}
+      ) : null}
 
       <div>
-        <label className="block text-xs font-medium text-gray-700 mb-1">
-          説明文
-        </label>
-        <textarea
+        <InputArea
+          label="説明文"
           value={value.ogDescription ?? ''}
           maxLength={DESC_MAX}
           placeholder={
             autoDescription ? `自動: ${autoDescription}` : '（自動生成）'
           }
-          rows={3}
-          onChange={(e) => set('ogDescription', e.target.value || null)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          minRows={3}
+          maxRows={6}
+          autoResize
+          onValueChange={(nextValue) => set('ogDescription', nextValue || null)}
         />
-        <div className="text-xs text-gray-400 mt-1">
+        <div className="mt-1 text-xs text-kumo-subtle">
           {(value.ogDescription ?? '').length} / {DESC_MAX}
         </div>
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-gray-700 mb-1">
-          画像
-        </label>
+        <p className="mb-1 text-xs font-medium text-kumo-default">画像</p>
         <ImageUploader
           mode="url"
           value={value.ogImageUrl ? { mode: 'url', url: value.ogImageUrl } : null}
@@ -92,12 +87,12 @@ export default function OgEditor({
             set('ogImageUrl', v?.mode === 'url' ? v.url : null)
           }
         />
-        {!value.ogImageUrl && autoImageUrl && (
-          <div className="text-xs text-gray-400 mt-1">
+        {!value.ogImageUrl && autoImageUrl ? (
+          <div className="mt-1 text-xs text-kumo-subtle">
             自動: {autoImageUrl}
           </div>
-        )}
+        ) : null}
       </div>
-    </div>
+    </LayerCard>
   )
 }

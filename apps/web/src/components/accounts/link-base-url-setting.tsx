@@ -1,6 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
 import { api } from '@/lib/api'
 
 /**
@@ -66,34 +71,27 @@ function UrlSettingCard({ title, description, placeholder, load, save }: UrlSett
   }
 
   if (loading) {
-    return <p className="text-xs text-gray-400">読み込み中...</p>
+    return <span className="inline-flex items-center gap-2 text-xs text-kumo-subtle"><Loader size="sm" /> 設定を読み込み中</span>
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-      <h3 className="text-sm font-semibold text-gray-800 mb-1">{title}</h3>
-      <p className="text-xs text-gray-500 mb-3">{description}</p>
-      <div className="flex gap-2 items-start">
-        <div className="flex-1">
-          <input
-            type="url"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={placeholder}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-          />
-          {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
-          {saved && <p className="text-xs text-green-600 mt-1">保存しました</p>}
-        </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-medium disabled:opacity-50 whitespace-nowrap"
-        >
-          {saving ? '保存中...' : '保存'}
-        </button>
+    <LayerCard className="mb-6 p-6">
+      <h3 className="mb-1 text-sm font-semibold text-kumo-strong">{title}</h3>
+      <div className="mb-3 text-xs leading-5 text-kumo-subtle">{description}</div>
+      <div className="flex items-start gap-2">
+        <Input
+          className="min-w-0 flex-1"
+          aria-label={title}
+          type="url"
+          value={value}
+          onValueChange={setValue}
+          placeholder={placeholder}
+        />
+        <Button type="button" variant="secondary" loading={saving} onClick={() => void handleSave()}>保存</Button>
       </div>
-    </div>
+      {error ? <Banner className="mt-2" variant="error" title="保存できません" description={error} /> : null}
+      {saved ? <p className="mt-2 text-xs text-kumo-success">保存しました</p> : null}
+    </LayerCard>
   )
 }
 
@@ -105,7 +103,7 @@ export default function LinkBaseUrlSetting() {
         description={
           <>
             アフィリエイト配布リンクに短縮ドメインを使う場合に設定。例:{' '}
-            <code className="bg-gray-100 px-1 rounded">https://go.example.com</code>
+            <code className="rounded bg-kumo-tint px-1">https://go.example.com</code>
             （そのドメインから Worker の /r/ へ転送する Redirect Rule が必要）
           </>
         }
@@ -118,9 +116,9 @@ export default function LinkBaseUrlSetting() {
         description={
           <>
             配信メッセージの自動短縮リンク（/t/…）に使うドメイン。例:{' '}
-            <code className="bg-gray-100 px-1 rounded">https://go.example.com</code>
-            {' '}→ リンクは <code className="bg-gray-100 px-1 rounded">https://go.example.com/t/Ab3xY9k</code> 形式に。
-            そのドメインの <code className="bg-gray-100 px-1 rounded">/t/*</code> をパスそのまま Worker へ転送する設定（Redirect Rule 等）が必要。詳細は wiki「Tracked Links」参照
+            <code className="rounded bg-kumo-tint px-1">https://go.example.com</code>
+            {' '}→ リンクは <code className="rounded bg-kumo-tint px-1">https://go.example.com/t/Ab3xY9k</code> 形式に。
+            そのドメインの <code className="rounded bg-kumo-tint px-1">/t/*</code> をパスそのまま Worker へ転送する設定（Redirect Rule 等）が必要。詳細は wiki「Tracked Links」参照
           </>
         }
         placeholder="https://go.example.com（空欄で Worker URL を使用）"

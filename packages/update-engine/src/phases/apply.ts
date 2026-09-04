@@ -72,7 +72,9 @@ export async function runApply(
         status: 'done',
         name: result.alreadyApplied
           ? `${result.name} (already applied)`
-          : result.name,
+          : result.adopted
+            ? `${result.name} (adopted, not executed)`
+            : result.name,
       }),
   });
 

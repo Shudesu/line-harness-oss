@@ -5,6 +5,12 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/layout/header'
 import WebinarForm from '@/components/webinars/webinar-form'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Table } from '@cloudflare/kumo/components/table'
 import {
   fetchApi,
   webinarApi,
@@ -30,9 +36,6 @@ function fmtSec(sec: number): string {
 function fmtSession(epoch: number): string {
   return new Date(epoch * 1000).toLocaleString('ja-JP')
 }
-
-const inputClass =
-  'w-full border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 function CommentsTab({ webinarId }: { webinarId: string }) {
   const [comments, setComments] = useState<WebinarSakuraComment[]>([])
@@ -112,93 +115,93 @@ function CommentsTab({ webinarId }: { webinarId: string }) {
 
   return (
     <div className="space-y-4">
-      {message && (
-        <div
-          className={`p-3 rounded-lg text-sm border ${
-            isErrorMessage
-              ? 'bg-red-50 border-red-200 text-red-700'
-              : 'bg-blue-50 border-blue-200 text-blue-800'
-          }`}
-        >
-          {message}
-        </div>
-      )}
+      {message && <Banner variant={isErrorMessage ? 'error' : 'secondary'} title={isErrorMessage ? '処理に失敗しました' : 'コメントを更新しました'} description={message} />}
       <div>
         <p className="mb-1 text-sm text-gray-600">
           JSON 一括インポート（形式: {'[{"atSeconds":10,"authorName":"田中","body":"こんばんは"}]'}）
         </p>
-        <textarea
+        <InputArea
+          label="JSON 一括インポート"
           value={importJson}
-          onChange={(e) => setImportJson(e.target.value)}
-          rows={4}
-          className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+          onValueChange={setImportJson}
+          minRows={4}
+          maxRows={8}
+          className="font-mono text-xs"
         />
-        <button
+        <Button
+          size="xs"
+          variant="secondary"
           onClick={doImport}
-          className="mt-1 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+          className="mt-1"
         >
           読み込む
-        </button>
+        </Button>
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-200 text-left text-gray-500">
-            <th className="w-24 py-1 font-medium">秒数</th>
-            <th className="w-40 font-medium">名前</th>
-            <th className="font-medium">本文</th>
-            <th className="w-12"></th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="w-full text-sm">
+        <Table.Header>
+          <Table.Row>
+            <Table.Head className="w-24">秒数</Table.Head>
+            <Table.Head className="w-40">名前</Table.Head>
+            <Table.Head>本文</Table.Head>
+            <Table.Head className="w-12" />
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
           {comments.map((c, i) => (
-            <tr key={i} className="border-b border-gray-100">
-              <td className="py-1 pr-2">
-                <input
+            <Table.Row key={i}>
+              <Table.Cell>
+                <Input
+                  aria-label="秒数"
                   type="number"
                   value={c.atSeconds}
                   onChange={(e) => update(i, { atSeconds: Number(e.target.value) })}
-                  className={`${inputClass} w-20`}
+                  className="w-20"
                 />
-              </td>
-              <td className="pr-2">
-                <input
+              </Table.Cell>
+              <Table.Cell>
+                <Input
+                  aria-label="名前"
                   value={c.authorName}
                   onChange={(e) => update(i, { authorName: e.target.value })}
-                  className={inputClass}
                 />
-              </td>
-              <td className="pr-2">
-                <input
+              </Table.Cell>
+              <Table.Cell>
+                <Input
+                  aria-label="本文"
                   value={c.body}
                   onChange={(e) => update(i, { body: e.target.value })}
-                  className={inputClass}
                 />
-              </td>
-              <td>
-                <button
+              </Table.Cell>
+              <Table.Cell>
+                <Button
+                  size="xs"
+                  shape="square"
+                  title="コメントを削除"
+                  variant="secondary-destructive"
                   onClick={() => setComments((prev) => prev.filter((_, j) => j !== i))}
-                  className="text-red-500 hover:text-red-600"
                 >
                   ×
-                </button>
-              </td>
-            </tr>
+                </Button>
+              </Table.Cell>
+            </Table.Row>
           ))}
-        </tbody>
-      </table>
+        </Table.Body>
+      </Table>
       <div className="flex gap-2">
-        <button
+        <Button
+          size="xs"
+          variant="secondary"
           onClick={() => setComments((prev) => [...prev, { atSeconds: 0, authorName: '', body: '' }])}
-          className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
         >
           ＋ 追加
-        </button>
-        <button
+        </Button>
+        <Button
+          size="xs"
+          variant="primary"
           onClick={() => void save()}
-          className="px-4 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
         >
           保存
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -503,17 +506,17 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
         ) : (
           <>
             <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead>
-                  <tr className="bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-5 py-3">参加者</th>
-                    <th className="px-4 py-3">最終参加</th>
-                    <th className="px-4 py-3">視聴</th>
-                    <th className="px-4 py-3">アクション</th>
-                    <th className="px-5 py-3 text-right">詳細</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
+              <Table className="w-full min-w-[760px] text-sm">
+                <Table.Header>
+                  <Table.Row>
+                    <Table.Head>参加者</Table.Head>
+                    <Table.Head>最終参加</Table.Head>
+                    <Table.Head>視聴</Table.Head>
+                    <Table.Head>アクション</Table.Head>
+                    <Table.Head className="text-right">詳細</Table.Head>
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
                   {recentParticipants.map((p) => {
                     const name = p.friendName ?? `友だち ${p.friendId.slice(0, 6)}`
                     const watchedSeconds = typeof p.latestWatchedSeconds === 'number'
@@ -523,8 +526,8 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
                         : 0
                     const watchedRate = Math.min(100, Math.round((watchedSeconds / Math.max(1, durationSeconds)) * 100))
                     return (
-                      <tr key={p.friendId} className="hover:bg-blue-50/30">
-                        <td className="px-5 py-3.5">
+                      <Table.Row key={p.friendId} className="hover:bg-blue-50/30">
+                        <Table.Cell>
                           <div className="flex items-center gap-3">
                             <ParticipantAvatar name={name} pictureUrl={p.pictureUrl} size="lg" />
                             <div className="min-w-0">
@@ -532,17 +535,17 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
                               <div className="mt-0.5 text-[11px] text-slate-400">{p.sessions > 1 ? `${p.sessions}回参加` : p.registered ? '予約から参加' : '直接参加'}</div>
                             </div>
                           </div>
-                        </td>
-                        <td className="px-4 py-3.5 text-xs text-slate-600">{compactDateTime(p.latestJoinedAt)}</td>
-                        <td className="w-48 px-4 py-3.5">
+                        </Table.Cell>
+                        <Table.Cell className="text-xs text-slate-600">{compactDateTime(p.latestJoinedAt)}</Table.Cell>
+                        <Table.Cell className="w-48">
                           <div className="flex items-center justify-between text-[11px] text-slate-500">
                             <span>{fmtSec(watchedSeconds)}</span><span>{watchedRate}%</span>
                           </div>
                           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
                             <div className="h-full rounded-full bg-blue-500" style={{ width: `${watchedRate}%` }} />
                           </div>
-                        </td>
-                        <td className="px-4 py-3.5">
+                        </Table.Cell>
+                        <Table.Cell>
                           <div className="flex flex-wrap gap-1.5">
                             {p.formSubmittedAt ? (
                               <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">フォーム送信</span>
@@ -552,15 +555,15 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
                               <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-500">視聴のみ</span>
                             )}
                           </div>
-                        </td>
-                        <td className="px-5 py-3.5 text-right">
+                        </Table.Cell>
+                        <Table.Cell className="text-right">
                           <Link href={`/chats?friend=${p.friendId}`} className="text-xs font-semibold text-blue-600 hover:text-blue-700">チャットを見る →</Link>
-                        </td>
-                      </tr>
+                        </Table.Cell>
+                      </Table.Row>
                     )
                   })}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table>
             </div>
             <div className="divide-y divide-slate-100 md:hidden">
               {recentParticipants.map((p) => {
@@ -612,16 +615,16 @@ function AnalyticsTab({ webinarId, durationSeconds }: { webinarId: string; durat
           <div className="min-w-0">
             <h4 className="mb-3 text-sm font-semibold text-slate-800">直近の開催回</h4>
             <div className="max-h-80 overflow-auto rounded-xl border border-slate-200">
-              <table className="w-full min-w-[520px] text-xs">
-                <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
-                  <tr><th className="px-3 py-2 font-medium">開始</th><th className="font-medium">参加</th><th className="font-medium">平均視聴</th><th className="font-medium">CTA</th></tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
+              <Table className="w-full min-w-[520px] text-xs">
+                <Table.Header className="sticky top-0">
+                  <Table.Row><Table.Head>開始</Table.Head><Table.Head>参加</Table.Head><Table.Head>平均視聴</Table.Head><Table.Head>CTA</Table.Head></Table.Row>
+                </Table.Header>
+                <Table.Body>
                   {analytics.sessions.slice(0, 30).map((s) => (
-                    <tr key={s.sessionStartAt}><td className="px-3 py-2 text-slate-700">{fmtSession(s.sessionStartAt)}</td><td>{s.viewers}</td><td>{fmtSec(s.avgWatchedSeconds)}</td><td>{s.ctaClicks} ({percent(s.ctaClicks, s.viewers)})</td></tr>
+                    <Table.Row key={s.sessionStartAt}><Table.Cell className="text-slate-700">{fmtSession(s.sessionStartAt)}</Table.Cell><Table.Cell>{s.viewers}</Table.Cell><Table.Cell>{fmtSec(s.avgWatchedSeconds)}</Table.Cell><Table.Cell>{s.ctaClicks} ({percent(s.ctaClicks, s.viewers)})</Table.Cell></Table.Row>
                   ))}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table>
             </div>
           </div>
         </div>
@@ -723,86 +726,88 @@ function CtasTab({ webinarId }: { webinarId: string }) {
       {ctas.map((c, i) => (
         <div key={i} className="space-y-2 rounded border border-gray-200 p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <label className="flex items-center gap-1">
-              表示時間
-              <input
+            <Input
+                aria-label="表示時間"
                 value={times[i] ?? ''}
                 onChange={(e) =>
                   setTimes((prev) => prev.map((t, j) => (j === i ? e.target.value : t)))
                 }
                 placeholder="45:00"
-                className="w-20 rounded border px-2 py-1"
-              />
-            </label>
-            <select
+                className="w-24"
+            />
+            <Select
+              label="CTA種別"
+              hideLabel
               value={c.kind}
-              onChange={(e) => update(i, { kind: e.target.value as 'form' | 'url' })}
-              className="rounded border px-2 py-1"
-            >
-              <option value="form">フォーム</option>
-              <option value="url">URL</option>
-            </select>
+              onValueChange={(value) => update(i, { kind: value as 'form' | 'url' })}
+              items={{ form: 'フォーム', url: 'URL' }}
+              className="w-32"
+            />
             {c.kind === 'form' ? (
-              <select
+              <Select
+                label="フォーム"
+                hideLabel
                 value={c.formId ?? ''}
-                onChange={(e) => update(i, { formId: e.target.value || null })}
-                className="min-w-40 rounded border px-2 py-1"
-              >
-                <option value="">フォームを選択...</option>
-                {forms.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
+                onValueChange={(value) => update(i, { formId: value || null })}
+                placeholder="フォームを選択..."
+                items={Object.fromEntries(forms.map((form) => [form.id, form.name]))}
+                className="min-w-40"
+              />
             ) : (
-              <input
+              <Input
+                aria-label="URL"
                 value={c.url ?? ''}
                 onChange={(e) => update(i, { url: e.target.value || null })}
                 placeholder="https://..."
-                className="min-w-60 flex-1 rounded border px-2 py-1"
+                className="min-w-60 flex-1"
               />
             )}
             {c.kind === 'form' && (
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
+              <Checkbox
+                  label="自動でフォームを開く"
                   checked={c.autoOpen}
-                  onChange={(e) => update(i, { autoOpen: e.target.checked })}
-                />
-                自動でフォームを開く
-              </label>
+                  onCheckedChange={(checked) => update(i, { autoOpen: checked })}
+              />
             )}
-            <button
+            <Button
+              size="xs"
+              variant="secondary-destructive"
               onClick={() => {
                 setCtas((prev) => prev.filter((_, j) => j !== i))
                 setTimes((prev) => prev.filter((_, j) => j !== i))
               }}
-              className="ml-auto text-red-500"
+              className="ml-auto"
             >
               削除
-            </button>
+            </Button>
           </div>
-          <input
+          <Input
+            aria-label="カード見出し"
             value={c.title}
             onChange={(e) => update(i, { title: e.target.value })}
             placeholder="カード見出し（例: 🎁 個別導入診断、受付中です）"
-            className="w-full rounded border px-2 py-1 text-sm font-bold"
+            className="w-full text-sm font-bold"
           />
-          <input
+          <Input
+            aria-label="補足文"
             value={c.body ?? ''}
             onChange={(e) => update(i, { body: e.target.value || null })}
             placeholder="補足文（任意。例: この配信を見ている方限定・枠が少なめです）"
-            className="w-full rounded border px-2 py-1 text-sm"
+            className="w-full text-sm"
           />
-          <input
+          <Input
+            aria-label="ボタン文言"
             value={c.buttonLabel}
             onChange={(e) => update(i, { buttonLabel: e.target.value })}
             placeholder="ボタン文言（例: 無料で診断を受ける）"
-            className="w-full rounded border px-2 py-1 text-sm"
+            className="w-full text-sm"
           />
         </div>
       ))}
       <div className="flex gap-2">
-        <button
+        <Button
+          size="xs"
+          variant="secondary"
           onClick={() => {
             setCtas((prev) => [...prev, {
               atSeconds: 0, kind: 'form', title: '', body: null,
@@ -810,17 +815,18 @@ function CtasTab({ webinarId }: { webinarId: string }) {
             }])
             setTimes((prev) => [...prev, '0:00'])
           }}
-          className="rounded border px-3 py-1 text-sm"
         >
           + CTAカード追加
-        </button>
-        <button
+        </Button>
+        <Button
+          size="xs"
+          variant="primary"
           onClick={() => void save()}
           disabled={saving || !loaded}
-          className="rounded bg-blue-600 px-4 py-1 text-sm text-white disabled:opacity-50"
+          loading={saving}
         >
-          {saving ? '保存中...' : '保存'}
-        </button>
+          保存
+        </Button>
       </div>
     </div>
   )
@@ -906,17 +912,15 @@ function EditWebinarInner() {
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="grid grid-cols-2 gap-1 border-b border-slate-200 bg-slate-50/70 p-2 sm:flex sm:gap-0 sm:overflow-x-auto sm:px-4 sm:pb-0 sm:pt-2">
             {TABS.map(([key, label]) => (
-              <button
+              <Button
                 key={key}
+                size="sm"
+                variant={tab === key ? 'primary' : 'ghost'}
                 onClick={() => setTab(key)}
-                className={`shrink-0 rounded-lg border px-2 py-2.5 text-xs font-semibold transition-colors sm:rounded-b-none sm:rounded-t-xl sm:border-x-0 sm:border-t-0 sm:border-b-2 sm:px-5 sm:py-3 sm:text-sm ${
-                  tab === key
-                    ? 'border-blue-200 bg-blue-50 text-blue-700 sm:border-b-blue-600 sm:bg-white sm:shadow-[0_-1px_0_0_rgba(226,232,240,1)]'
-                    : 'border-transparent text-slate-500 hover:bg-white/70 hover:text-slate-800'
-                }`}
+                className="shrink-0"
               >
                 {label}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="bg-slate-50/40 p-4 sm:p-6 xl:p-8">

@@ -2,6 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { getApiBase } from '@/lib/api-base'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 // 呼び出し時 (call time) に解決する — モジュールスコープの定数にすると、静的
 // 書き出し（window 未定義）の時点で値が確定してしまい、共有ビルドではプレース
@@ -65,8 +73,9 @@ export default function UpdatesPage() {
   return (
     <div className="max-w-3xl mx-auto p-6">
       <h1 className="text-xl font-semibold mb-4">アップデート履歴</h1>
+      {state.kind === 'loading' && <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>}
       {state.kind === 'unconfigured' && (
-        <div className="text-gray-600 bg-gray-50 p-4 rounded mb-4 text-sm leading-relaxed">
+        <Banner className="mb-4" variant="secondary" title="自動アップデートは未構成">
           この環境では自動アップデートが構成されていないため、履歴はありません。
           <br />
           自動アップデートは <code className="text-xs">create-line-harness</code>{' '}
@@ -80,31 +89,29 @@ export default function UpdatesPage() {
             手動アップデートガイド
           </a>{' '}
           をご覧ください。
-        </div>
+        </Banner>
       )}
       {state.kind === 'error' && (
-        <div className="text-amber-800 bg-amber-50 p-3 rounded mb-4 text-sm">
-          履歴を取得できませんでした（{state.message}）。時間をおいて再読み込みしてください。
-        </div>
+        <Banner className="mb-4" variant="alert" title="履歴を取得できませんでした" description={`${state.message}。時間をおいて再読み込みしてください。`} />
       )}
       {state.kind === 'ready' && rows.length === 0 && (
-        <p className="text-gray-500 text-sm">履歴はまだありません。</p>
+        <Empty title="履歴はまだありません" description="アップデートを実行するとここに記録されます。" />
       )}
       {rows.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-gray-600 border-b">
-              <tr>
-                <th className="py-2 pr-4">開始</th>
-                <th className="py-2 pr-4">From → To</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2">Rollback</th>
-              </tr>
-            </thead>
-            <tbody>
+        <LayerCard className="overflow-x-auto p-0">
+          <Table>
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>開始</Table.Head>
+                <Table.Head>From → To</Table.Head>
+                <Table.Head>Status</Table.Head>
+                <Table.Head>Rollback</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {rows.map((r) => (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="py-2 pr-4">
+                <Table.Row key={r.id}>
+                  <Table.Cell>
                     {new Date(r.started_at).toLocaleString('ja-JP', {
                       year: 'numeric',
                       month: '2-digit',
@@ -112,47 +119,43 @@ export default function UpdatesPage() {
                       hour: '2-digit',
                       minute: '2-digit',
                     })}
-                  </td>
-                  <td className="py-2 pr-4 font-mono text-xs">
+                  </Table.Cell>
+                  <Table.Cell className="font-mono text-xs">
                     {r.from_version} → {r.to_version}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded ${statusClass(r.status)}`}
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="py-2">
+                  </Table.Cell>
+                  <Table.Cell><Badge variant={statusVariant(r.status)}>{r.status}</Badge></Table.Cell>
+                  <Table.Cell>
                     {r.status === 'success' &&
                     r.rollback_expires_at &&
                     Date.now() < r.rollback_expires_at ? (
-                      <button
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
                         onClick={() =>
                           alert('rollback not implemented in MVP — use CLI')
                         }
-                        className="underline text-blue-600 text-xs"
                       >
                         Rollback
-                      </button>
+                      </Button>
                     ) : (
                       <span className="text-gray-400 text-xs">—</span>
                     )}
-                  </td>
-                </tr>
+                  </Table.Cell>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Body>
+          </Table>
+        </LayerCard>
       )}
     </div>
   )
 }
 
-function statusClass(s: string): string {
-  if (s === 'success') return 'bg-green-100 text-green-800'
-  if (s === 'rolled_back') return 'bg-amber-100 text-amber-800'
-  if (s === 'failed') return 'bg-red-100 text-red-800'
-  if (s === 'running') return 'bg-blue-100 text-blue-800'
-  return 'bg-gray-100 text-gray-800'
+function statusVariant(s: string): BadgeVariant {
+  if (s === 'success') return 'success'
+  if (s === 'rolled_back') return 'warning'
+  if (s === 'failed') return 'error'
+  if (s === 'running') return 'info'
+  return 'neutral'
 }

@@ -3,6 +3,8 @@ import { Hono } from 'hono';
 
 const lineClientMocks = vi.hoisted(() => ({
   getProfile: vi.fn(),
+  getMessageQuota: vi.fn(),
+  getMessageQuotaConsumption: vi.fn(),
 }));
 
 vi.mock('@line-crm/db', () => ({
@@ -26,6 +28,18 @@ vi.mock('@line-crm/line-sdk', async () => {
     LineClient: vi.fn().mockImplementation(() => lineClientMocks),
   };
 });
+
+// LINE プランクォータのガード面。デフォルトは「不足なし」(null) — 既存テストの
+// 挙動を変えない。個別テストで shortfall を差し込む。
+const quotaAlertMocks = vi.hoisted(() => ({
+  getLinePlanQuotaShortfall: vi.fn(),
+  notifyQuotaAlert: vi.fn(),
+  allTargetGuardAudience: vi.fn(),
+  readPlanQuotaSnapshot: vi.fn(),
+  LINE_MONTHLY_LIMIT_MESSAGE: 'You have reached your monthly limit.',
+}));
+
+vi.mock('../services/quota-alert.js', () => quotaAlertMocks);
 
 // Keep the real shape of messageToLogPayload without dragging in the whole
 // step-delivery dependency graph.
@@ -177,6 +191,13 @@ beforeEach(() => {
   vi.mocked(getChatByFriendId).mockResolvedValue({ id: 'chat-1', status: 'unread' } as never);
   vi.mocked(updateChat).mockResolvedValue(undefined as never);
   vi.mocked(authenticateApiToken).mockResolvedValue(null as never);
+  quotaAlertMocks.getLinePlanQuotaShortfall.mockResolvedValue(null);
+  quotaAlertMocks.notifyQuotaAlert.mockResolvedValue(true);
+  quotaAlertMocks.allTargetGuardAudience.mockReturnValue(async () => 0);
+  // デフォルトは「quota 再取得が失敗」— 429 事後通知が合成 shortfall (limit=0) に落ちる経路
+  quotaAlertMocks.readPlanQuotaSnapshot.mockRejectedValue(new Error('not stubbed'));
+  lineClientMocks.getMessageQuota.mockRejectedValue(new Error('not stubbed'));
+  lineClientMocks.getMessageQuotaConsumption.mockRejectedValue(new Error('not stubbed'));
 });
 
 afterEach(() => {
@@ -893,6 +914,73 @@ describe('usage limit gate', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * ゲートが返す 429 が「LINE が止めた」のか「harness が止めた」のかを、
+   * 応答本文だけで判別できること。
+   *
+   * message は LINE の limit レスポンスと同じ文面のままにする（既存クライアントは
+   * これを読む）。同じ文面のままだと運用中に取り違えるので、source / reason を
+   * 足して由来と理由が分かるようにした。実際、本番で 1:1 送信が 429 になった際に
+   * 「LINE のプラン枠を使い切った」と誤って切り分けかけている
+   * （実際は LINE 側の別要因で、枠は 30,000 中 200 しか使っていなかった）。
+   */
+  describe('429 の由来が判別できる', () => {
+    test('月次上限超過: message は LINE 互換のまま、source/reason で harness 由来と分かる', async () => {
+      const { db } = fakeDb({ counts: { monthly: 5000 } });
+      const res = await setupApp().request(broadcastRequest(), {}, { ...env(db), ...quotaEnv });
+      expect(res.status).toBe(429);
+      const body = await res.json() as { message: string; source?: string; reason?: string };
+      expect(body.message).toBe('You have reached your monthly limit.');
+      expect(body.source).toBe('line-harness');
+      expect(body.reason).toBe('monthly-messages-exceeded');
+    });
+
+    test('友だち数上限で止めたときは monthly ではなく friends の reason を返す', async () => {
+      // usage.exceeded は友だち数上限でも立つ。ここで monthly-messages-exceeded を
+      // 返すと、運用者を「追加メッセージを買う」という誤った対処に誘導してしまう。
+      const { db } = fakeDb({ counts: { monthly: 0, friends: 11 } });
+      const res = await setupApp().request(
+        broadcastRequest(),
+        {},
+        { ...env(db), QUOTA_FRIENDS_MAX: '10' },
+      );
+      expect(res.status).toBe(429);
+      const body = await res.json() as { message: string; source?: string; reason?: string };
+      expect(body.source).toBe('line-harness');
+      expect(body.reason).toBe('friends-exceeded');
+      // message は既存クライアント互換のため据え置き（挙動を変えない）
+      expect(body.message).toBe('You have reached your monthly limit.');
+    });
+
+    test('narrowcast 拒否にも source/reason が付く', async () => {
+      const { db } = fakeDb({ counts: { monthly: 0 } });
+      const res = await setupApp().request(narrowcastRequest(), {}, { ...env(db), ...quotaEnv });
+      expect(res.status).toBe(429);
+      const body = await res.json() as { source?: string; reason?: string };
+      expect(body.source).toBe('line-harness');
+      expect(body.reason).toBe('narrowcast-unrecordable');
+    });
+
+    test('未登録チャネルからの broadcast 拒否にも source/reason が付く', async () => {
+      vi.mocked(getLineAccounts).mockResolvedValue([ACCOUNT, ACCOUNT_2] as never);
+      const { db } = fakeDb({ counts: { monthly: 0, friends: 1 } });
+      const res = await setupApp().request(broadcastRequest('env-token'), {}, { ...env(db), ...quotaEnv });
+      expect(res.status).toBe(429);
+      const body = await res.json() as { source?: string; reason?: string };
+      expect(body.source).toBe('line-harness');
+      expect(body.reason).toBe('broadcast-unregistered-channel');
+    });
+
+    test('未登録受信者が多すぎる multicast 拒否にも source/reason が付く', async () => {
+      const { db } = fakeDb({ counts: { monthly: 0, knownRecipients: 0 } });
+      const res = await setupApp().request(multicastRequest(25), {}, { ...env(db), ...quotaEnv });
+      expect(res.status).toBe(429);
+      const body = await res.json() as { source?: string; reason?: string };
+      expect(body.source).toBe('line-harness');
+      expect(body.reason).toBe('too-many-unregistered-recipients');
+    });
+  });
+
   test('monthly limit active (not exceeded): 1:1 push still passes', async () => {
     const { db } = fakeDb({ counts: { monthly: 0 } });
     const res = await setupApp().request(pushRequest('acc-token'), {}, { ...env(db), ...quotaEnv });
@@ -906,5 +994,220 @@ describe('usage limit gate', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(executed.filter((e) => e.sql.includes('COUNT(*) as count'))).toEqual([]);
+  });
+});
+
+describe('LINE plan quota guard (proxy bulk sends)', () => {
+  const SHORTFALL = { limit: 1000, consumption: 950, remaining: 50, audience: 300 };
+
+  function broadcastRequest(token = 'acc-token') {
+    return new Request('http://worker.test/line-api/v2/bot/message/broadcast', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ type: 'text', text: 'to everyone' }] }),
+    });
+  }
+
+  function multicastRequest(recipients: number) {
+    return new Request('http://worker.test/line-api/v2/bot/message/multicast', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer acc-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: Array.from({ length: recipients }, (_, i) => U(0x700 + i)),
+        messages: [{ type: 'text', text: 'hi' }],
+      }),
+    });
+  }
+
+  test('broadcast: プラン不足が確定 → 通知して 429、上流は呼ばない (quotaEnv 未設定でも)', async () => {
+    quotaAlertMocks.getLinePlanQuotaShortfall.mockResolvedValue(SHORTFALL);
+    const { db } = fakeDb();
+    const res = await setupApp().request(broadcastRequest(), {}, env(db));
+
+    expect(res.status).toBe(429);
+    const body = await res.json() as { message: string; reason: string; quota: unknown };
+    expect(body.message).toBe('You have reached your monthly limit.');
+    expect(body.reason).toBe('line-plan-quota-insufficient');
+    expect(body.quota).toEqual(SHORTFALL);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(quotaAlertMocks.notifyQuotaAlert).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        lineAccountId: 'acc-1',
+        accountName: 'Main',
+        shortfall: SHORTFALL,
+        source: 'proxy-pre-send',
+      }),
+    );
+  });
+
+  test('未登録 env トークンは通知キー default で通知する', async () => {
+    quotaAlertMocks.getLinePlanQuotaShortfall.mockResolvedValue(SHORTFALL);
+    const { db } = fakeDb();
+    const res = await setupApp().request(broadcastRequest('env-token'), {}, env(db));
+
+    expect(res.status).toBe(429);
+    expect(quotaAlertMocks.notifyQuotaAlert).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ lineAccountId: 'default', source: 'proxy-pre-send' }),
+    );
+  });
+
+  test('multicast: audience は to のユニーク受信者数 (重複は過大計上しない)', async () => {
+    const { db } = fakeDb();
+    const [u1, u2] = [U(0x700), U(0x701)];
+    const res = await setupApp().request(
+      new Request('http://worker.test/line-api/v2/bot/message/multicast', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer acc-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: [u1, u2, u1, 42], messages: [{ type: 'text', text: 'hi' }] }),
+      }),
+      {},
+      env(db),
+    );
+
+    expect(res.status).toBe(200);
+    expect(quotaAlertMocks.getLinePlanQuotaShortfall).toHaveBeenCalledWith(expect.anything(), 2, expect.any(String));
+  });
+
+  test('broadcast: audience は共有の allTargetGuardAudience (lazy) — accountCount を single 判定に渡す', async () => {
+    const lazy = async () => 120;
+    quotaAlertMocks.allTargetGuardAudience.mockReturnValue(lazy);
+    const { db } = fakeDb();
+    const res = await setupApp().request(broadcastRequest(), {}, env(db));
+
+    expect(res.status).toBe(200);
+    expect(quotaAlertMocks.allTargetGuardAudience).toHaveBeenCalledWith(db, 'acc-1', true);
+    expect(quotaAlertMocks.getLinePlanQuotaShortfall).toHaveBeenCalledWith(expect.anything(), lazy, expect.any(String));
+  });
+
+  test('マルチアカウント + 未登録 env トークンの broadcast: audience=0 (remaining=0 のみブロック)', async () => {
+    vi.mocked(getLineAccounts).mockResolvedValue([ACCOUNT, ACCOUNT_2] as never);
+    const { db } = fakeDb();
+    const res = await setupApp().request(broadcastRequest('env-token'), {}, env(db));
+
+    expect(res.status).toBe(200);
+    expect(quotaAlertMocks.getLinePlanQuotaShortfall).toHaveBeenCalledWith(expect.anything(), 0, expect.any(String));
+    expect(quotaAlertMocks.allTargetGuardAudience).not.toHaveBeenCalled();
+  });
+
+  test('narrowcast: audience=0 で常時ガード対象 — remaining=0 なら通知して 429', async () => {
+    quotaAlertMocks.getLinePlanQuotaShortfall.mockResolvedValue({
+      limit: 200, consumption: 200, remaining: 0, audience: 0,
+    });
+    const { db } = fakeDb();
+    const res = await setupApp().request(
+      new Request('http://worker.test/line-api/v2/bot/message/narrowcast', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer acc-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ type: 'text', text: 'targeted' }],
+          recipient: { type: 'audience', audienceGroupId: 1 },
+        }),
+      }),
+      {},
+      env(db),
+    );
+
+    expect(res.status).toBe(429);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(quotaAlertMocks.getLinePlanQuotaShortfall).toHaveBeenCalledWith(expect.anything(), 0, expect.any(String));
+    expect(quotaAlertMocks.notifyQuotaAlert).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ source: 'proxy-pre-send' }),
+    );
+  });
+
+  test('1:1 push はプランクォータのチェック対象外', async () => {
+    const { db } = fakeDb();
+    const res = await setupApp().request(pushRequest('acc-token'), {}, env(db));
+
+    expect(res.status).toBe(200);
+    expect(quotaAlertMocks.getLinePlanQuotaShortfall).not.toHaveBeenCalled();
+  });
+
+  test('上流 429 (LINE の月間上限文言) → proxy-upstream-429 で通知、応答は据え置き', async () => {
+    // 送信前ガードは fail-open で素通り (null)、429 後の残量再取得も失敗
+    // → limit=0 の合成 shortfall で通知される。
+    fetchMock.mockResolvedValue(
+      upstreamResponse(429, '{"message":"You have reached your monthly limit."}'),
+    );
+    const { db } = fakeDb();
+    const res = await setupApp().request(multicastRequest(2), {}, env(db));
+
+    expect(res.status).toBe(429);
+    const body = await res.json() as { message: string };
+    expect(body.message).toBe('You have reached your monthly limit.');
+    expect(quotaAlertMocks.notifyQuotaAlert).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        source: 'proxy-upstream-429',
+        lineAccountId: 'acc-1',
+        shortfall: { limit: 0, consumption: 0, remaining: 0, audience: 2 },
+      }),
+    );
+  });
+
+  test('上流 429: 残量再取得が成功したら実測値で通知する (不足判定は経ない — 429 の事実が優先)', async () => {
+    fetchMock.mockResolvedValue(
+      upstreamResponse(429, '{"message":"You have reached your monthly limit."}'),
+    );
+    // consumption API のラグで remaining(100) > audience(2) に見えても通知する。
+    quotaAlertMocks.readPlanQuotaSnapshot.mockResolvedValue({
+      limit: 30000,
+      consumption: 29900,
+      remaining: 100,
+    });
+    const { db } = fakeDb();
+    const res = await setupApp().request(multicastRequest(2), {}, env(db));
+
+    expect(res.status).toBe(429);
+    expect(quotaAlertMocks.notifyQuotaAlert).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        source: 'proxy-upstream-429',
+        shortfall: { limit: 30000, consumption: 29900, remaining: 100, audience: 2 },
+      }),
+    );
+  });
+
+  test('上流 429: broadcast の audience COUNT が失敗しても通知は audience=0 で生き残る', async () => {
+    fetchMock.mockResolvedValue(
+      upstreamResponse(429, '{"message":"You have reached your monthly limit."}'),
+    );
+    quotaAlertMocks.allTargetGuardAudience.mockReturnValue(async () => {
+      throw new Error('D1 down');
+    });
+    const { db } = fakeDb();
+    const res = await setupApp().request(broadcastRequest(), {}, env(db));
+
+    expect(res.status).toBe(429);
+    expect(quotaAlertMocks.notifyQuotaAlert).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        source: 'proxy-upstream-429',
+        shortfall: expect.objectContaining({ audience: 0 }),
+      }),
+    );
+  });
+
+  test('上流 429 (レート制限など別文言) では通知しない', async () => {
+    fetchMock.mockResolvedValue(upstreamResponse(429, '{"message":"Too many requests"}'));
+    const { db } = fakeDb();
+    const res = await setupApp().request(multicastRequest(2), {}, env(db));
+
+    expect(res.status).toBe(429);
+    expect(quotaAlertMocks.notifyQuotaAlert).not.toHaveBeenCalled();
+  });
+
+  test('1:1 push の上流 429 では通知しない (一斉送信経路のみ)', async () => {
+    fetchMock.mockResolvedValue(
+      upstreamResponse(429, '{"message":"You have reached your monthly limit."}'),
+    );
+    const { db } = fakeDb();
+    const res = await setupApp().request(pushRequest('acc-token'), {}, env(db));
+
+    expect(res.status).toBe(429);
+    expect(quotaAlertMocks.notifyQuotaAlert).not.toHaveBeenCalled();
   });
 });

@@ -37,6 +37,16 @@ import type { Env } from '../index.js';
 /** 分足 cron ("* * * * *") と同じ粒度で自分自身を再アームする間隔。 */
 export const SCHEDULER_TICK_INTERVAL_MS = 60_000;
 
+/**
+ * 次の分境界 (UTC 分の頭) にアラインしたアラーム時刻。`now + 60s` で再アーム
+ * すると alarm 発火レイテンシぶんずつ tick が毎回前方へドリフトし、繰り上がりが
+ * 分0をまたいだ時間帯は isHourlyTick (毎時クォータチェック) 等の「特定の分」判定が
+ * silent にスキップされる。分境界に張り直せばドリフトは毎 tick リセットされる。
+ */
+export function nextMinuteBoundary(nowMs: number): number {
+  return (Math.floor(nowMs / SCHEDULER_TICK_INTERVAL_MS) + 1) * SCHEDULER_TICK_INTERVAL_MS;
+}
+
 /** DO インスタンスは1テナントにつき1つで足りるので固定名で解決する。 */
 export const SCHEDULER_INSTANCE_NAME = 'scheduler';
 
@@ -87,8 +97,9 @@ export async function runSchedulerTick(
   runJobs: RunSchedulerJobs,
   now: Date = new Date(),
 ): Promise<void> {
-  // 1. 再アーム最優先。work の成否を待たない。
-  await storage.setAlarm(now.getTime() + SCHEDULER_TICK_INTERVAL_MS);
+  // 1. 再アーム最優先。work の成否を待たない。分境界アライン (nextMinuteBoundary
+  //    のコメント参照) — ドリフトで毎時 tick が飛ばないように。
+  await storage.setAlarm(nextMinuteBoundary(now.getTime()));
 
   // 2. 実ジョブ。cron trigger が発火したときと同じ event 形を渡し、
   //    scheduled() 内の event.cron 分岐 (mileage キュー / 6h ジョブ) を
@@ -118,7 +129,7 @@ export async function ensureAlarmArmed(
 ): Promise<boolean> {
   const existing = await storage.getAlarm();
   if (existing !== null) return false;
-  await storage.setAlarm(now.getTime() + SCHEDULER_TICK_INTERVAL_MS);
+  await storage.setAlarm(nextMinuteBoundary(now.getTime()));
   return true;
 }
 

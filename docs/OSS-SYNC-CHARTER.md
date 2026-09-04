@@ -240,11 +240,14 @@ semver に従う。**root `package.json` を唯一の真実**とし、umbrella p
 
 ### 7.2 リリース手順
 
+**publish は手元から実行できない。GitHub Actions の `publish-npm.yml` が trusted publishing (OIDC) で行う。**
+npm アカウントはパスキー運用で TOTP コードが出せないため、手元の `npm publish` / `pnpm publish` は 2FA を満たせず実行不可能。
+
 ```bash
 # 1. CHANGELOG.md にエントリ追加
 
-# 2. root package.json のバージョンを bump (例: 0.12.0 → 0.13.0)
-node -e "const fs=require('fs');const p=require('./package.json');p.version='0.13.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+# 2. root package.json のバージョンを bump (例: 0.22.0 → 0.23.0)
+node -e "const fs=require('fs');const p=require('./package.json');p.version='0.23.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
 
 # 3. umbrella packages を同期 (apps/web, apps/worker, packages/sdk, packages/mcp-server)
 bash scripts/sync-versions.sh
@@ -253,22 +256,36 @@ bash scripts/sync-versions.sh
 pnpm --filter @line-harness/sdk build && pnpm --filter @line-harness/sdk test
 pnpm --filter @line-harness/mcp-server build
 
-# 5. npm publish (pnpm で)
-cd packages/sdk && pnpm publish --access public --no-git-checks
-cd packages/mcp-server && pnpm publish --access public --no-git-checks
-
-# 6. commit + push (pre-push hook が版差を再検証 → 不一致なら拒否)
+# 5. commit + push → PR を main にマージ
+#    (pre-push hook が版差を再検証 → 不一致なら拒否)
 git add -A
-git commit -m "chore: release v0.13.0"
+git commit -m "chore: release v0.23.0"
 git push  # GitHub Actions が deploy を走らせる
 
+# 6. main にマージされた後に publish workflow を dispatch
+gh workflow run publish-npm.yml --ref main -f target=all -f dry_run=false
+gh run watch  # 完走を確認
+
 # 7. OSS リポに GitHub Release 作成
-gh release create v0.13.0 --repo Shudesu/line-harness-oss --title "v0.13.0" --notes "..."
+gh release create v0.23.0 --repo Shudesu/line-harness-oss --title "v0.23.0" --notes "..."
 ```
 
-### 7.3 npm publish は pnpm で
+**順序が重要**: publish workflow は `main` の内容を checkout する。バージョン bump が main に入る前に dispatch しても、古いバージョンを publish する（もしくは publish 済み扱いで skip する）だけで意味がない。必ず「commit + push（PR マージ）→ workflow_dispatch」の順にすること。2026-08-25 の v0.23.0 リリースはこの順で実施した。
 
-`npm publish` ではなく `pnpm publish` を使う。`workspace:*` が自動で実バージョンに変換される。
+### 7.3 publish workflow (`publish-npm.yml`)
+
+手元 publish は禁止ではなく、そもそも不可能。すべて `.github/workflows/publish-npm.yml` 経由で行う（前提・ハマりどころは workflow 冒頭のコメントに詳述）。
+
+| input | 値 |
+|-------|-----|
+| `target` | `all` / `sdk-only` / `mcp-server-only` / `create-line-harness-only` |
+| `dry_run` | `true` なら build + pack までで publish しない |
+
+- **通常は `target=all` を使う。** `packages/mcp-server` の `@line-harness/sdk` 依存は `workspace:*` で、`pnpm pack` 時に厳密バージョン（例 `0.23.0`）へ書き換わる。したがって **mcp-server だけを publish することはできず、sdk も同じバージョンで同時に publish する必要がある**
+- workflow は「既に npm 上にあるバージョンは skip」する冪等実装。`target=all` に未変更パッケージが混ざっても no-op になるので、迷ったら `all` でよい。部分失敗しても同じ dispatch を再実行できる
+- 内部は `pnpm pack` でパックして `npm publish <tarball>` する。pnpm 9 の publish パスが OIDC ハンドシェイクをしないため、pack は pnpm・publish は npm という組み合わせにしている
+- `create-line-harness` は umbrella 外の独立バージョンで、`@line-harness/update-engine` に `workspace:^` 依存する。update-engine はこの workflow では publish されないため、参照先バージョンが npm 上に存在しないと install が壊れる。`npm view @line-harness/update-engine version` で先に確認すること
+- 事前確認したいときは `gh workflow run publish-npm.yml --ref main -f target=all -f dry_run=true`
 
 ### 7.4 ダッシュボード表示バージョン
 
@@ -308,7 +325,8 @@ MCP や Claude Code で操作する際の追加ルール。
 - **OSS に sync されるファイルにシークレットを書かない**
 - **CLAUDE.md にアカウント ID・DB ID・メールアドレスの実値を書かない**
 - **外部 PR がマージされたら、次の作業前に Private に取り込む**
-- **npm publish は `pnpm publish` を使う**
+- **npm publish を手元で実行しない**（パスキー 2FA のため不可能） — `gh workflow run publish-npm.yml --ref main -f target=all -f dry_run=false` で GitHub Actions に任せる
+- **publish workflow の dispatch は main へのマージ後**（workflow は main を checkout する）
 
 ---
 
@@ -334,6 +352,8 @@ MCP や Claude Code で操作する際の追加ルール。
 
 - [ ] CHANGELOG.md 更新した
 - [ ] SDK と MCP のバージョンを揃えた
-- [ ] pnpm publish した（npm publish ではない）
+- [ ] バージョン bump を main にマージしてから publish workflow を dispatch した（手元 publish ではない）
+- [ ] `target=all` で dispatch した（mcp-server 単独 publish は不可）
+- [ ] workflow run が成功し、npm 上に新バージョンが出たことを確認した
 - [ ] OSS に GitHub Release を作成した
 - [ ] 本番デプロイした（必要な場合）

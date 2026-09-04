@@ -136,7 +136,8 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   failed_account_ids TEXT CHECK (failed_account_ids IS NULL OR json_valid(failed_account_ids)),
   dedup_progress     TEXT CHECK (dedup_progress IS NULL OR json_valid(dedup_progress)),
   batch_lock_at      TEXT,
-  track_links        INTEGER NOT NULL DEFAULT 1
+  track_links        INTEGER NOT NULL DEFAULT 1,
+  last_error         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts (status);
@@ -762,7 +763,8 @@ CREATE TABLE IF NOT EXISTS notification_rules (
   channels     TEXT NOT NULL DEFAULT '["webhook"]',
   is_active    INTEGER NOT NULL DEFAULT 1,
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  line_account_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -774,11 +776,13 @@ CREATE TABLE IF NOT EXISTS notifications (
   channel         TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
   metadata        TEXT,
-  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  line_account_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications (status);
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_event_account ON notifications (event_type, line_account_id, created_at);
 
 -- ============================================================
 -- Round 3: Stripe決済連携
@@ -810,7 +814,8 @@ CREATE TABLE IF NOT EXISTS account_health_logs (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_health_logs_account ON account_health_logs (line_account_id);
+CREATE INDEX IF NOT EXISTS idx_health_logs_account_created_at
+  ON account_health_logs (line_account_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS account_migrations (
   id               TEXT PRIMARY KEY,

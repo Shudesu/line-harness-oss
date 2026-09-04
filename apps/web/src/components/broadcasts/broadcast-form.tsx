@@ -1,6 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Tabs } from '@cloudflare/kumo/components/tabs'
 import type { Tag } from '@line-crm/shared'
 import { api, eventsApi, type ApiBroadcast, type EventListItem } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
@@ -117,54 +124,24 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-      <h2 className="text-sm font-semibold text-gray-800 mb-5">新規配信を作成</h2>
+    <LayerCard className="mb-6 p-6">
+      <h2 className="mb-5 text-sm font-semibold text-kumo-strong">新規配信を作成</h2>
 
       <div className="space-y-4 max-w-lg">
-        {/* Title */}
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
-            配信タイトル <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-            placeholder="例: 3月のキャンペーン告知"
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-          />
-        </div>
+        <Input label="配信タイトル" required placeholder="例：3月のキャンペーン告知" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
 
-        {/* Message type */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">メッセージ種別</label>
-          <div className="flex gap-2">
-            {(Object.keys(messageTypeLabels) as ApiBroadcast['messageType'][]).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setForm({ ...form, messageType: type })}
-                className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
-                  form.messageType === type
-                    ? 'border-green-500 text-green-700 bg-green-50'
-                    : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
-                }`}
-              >
-                {messageTypeLabels[type]}
-              </button>
-            ))}
-          </div>
+          <p className="mb-2 text-xs font-medium text-kumo-subtle">メッセージ種別</p>
+          <Tabs
+            size="sm"
+            value={form.messageType}
+            onValueChange={(value) => setForm({ ...form, messageType: value as ApiBroadcast['messageType'] })}
+            tabs={(Object.keys(messageTypeLabels) as ApiBroadcast['messageType'][]).map((type) => ({ value: type, label: messageTypeLabels[type] }))}
+          />
         </div>
 
         {/* Message content */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
-            メッセージ内容 <span className="text-red-500">*</span>
-            {(form.messageType === 'flex' || form.messageType === 'image') && (
-              <span className="ml-1 text-gray-400">(JSON形式)</span>
-            )}
-          </label>
-
           {/* Image helper: ImageUploader that auto-generates the required LINE image JSON */}
           {form.messageType === 'image' && (
             <div className="mb-2">
@@ -194,13 +171,12 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
           {/* リンクするイベント: 選択で {{liff_id}} 入りテンプレ URL を本文末尾に挿入 */}
           {linkableEvents.length > 0 && form.messageType === 'text' && (
             <div className="mb-2">
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                リンクするイベント（任意）
-              </label>
-              <select
+              <Select
+                label="リンクするイベント"
+                required={false}
                 value=""
-                onChange={(e) => {
-                  const id = e.target.value
+                onValueChange={(value) => {
+                  const id = value ?? ''
                   if (!id) return
                   const url = `https://liff.line.me/{{liff_id}}/?page=event&id=${id}&liffId={{liff_id}}`
                   setForm((prev) => ({
@@ -209,24 +185,20 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
                       ? `${prev.messageContent}\n${url}`
                       : url,
                   }))
-                  e.target.value = ''
                 }}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm w-full"
-              >
-                <option value="">— 選択しない —</option>
-                {linkableEvents.map((ev) => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.name} ({ev.target_type === 'multi-account-dedup' ? 'multi' : 'single'})
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
+                placeholder="選択しない"
+                items={linkableEvents.map((event) => ({ value: event.id, label: `${event.name} (${event.target_type === 'multi-account-dedup' ? 'multi' : 'single'})` }))}
+              />
+              <p className="mt-1 text-xs text-kumo-subtle">
                 選ぶと本文末尾にテンプレ URL を挿入。{'{{liff_id}}'} は配信時に各友だちのアカに対応した値に自動置換されます。
               </p>
             </div>
           )}
-          <textarea
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
+          <InputArea
+            label="メッセージ内容"
+            required
+            description={form.messageType === 'text' ? undefined : 'JSON形式で指定します。'}
+            className={form.messageType !== 'text' ? 'font-mono' : undefined}
             rows={form.messageType === 'flex' ? 8 : form.messageType === 'image' ? 3 : 4}
             placeholder={
               form.messageType === 'text'
@@ -236,8 +208,7 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
                 : '{"type":"bubble","body":{...}}'
             }
             value={form.messageContent}
-            onChange={(e) => setForm({ ...form, messageContent: e.target.value })}
-            style={{ fontFamily: form.messageType !== 'text' ? 'monospace' : 'inherit' }}
+            onValueChange={(value) => setForm({ ...form, messageContent: value })}
           />
           {form.messageType === 'image' && (
             <p className="text-xs text-gray-400 mt-1">上のURLフォームか、直接JSONを編集できます</p>
@@ -255,15 +226,8 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
         {/* Link tracking toggle */}
         {form.messageType !== 'image' && (
           <div>
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.trackLinks}
-                onChange={(e) => setForm({ ...form, trackLinks: e.target.checked })}
-              />
-              このメッセージでリンクを短縮する（クリック計測）
-            </label>
-            <p className="text-xs text-gray-500 mt-1 ml-6">
+            <Checkbox label="このメッセージでリンクを短縮する（クリック計測）" checked={form.trackLinks} onCheckedChange={(checked) => setForm({ ...form, trackLinks: checked })} />
+            <p className="ml-6 mt-1 text-xs text-kumo-subtle">
               ONにすると本文のURLが計測用リンク（/t/…）に自動変換されます。OFFの場合はURLをそのまま送信します。
             </p>
           </div>
@@ -271,53 +235,22 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
 
         {/* Target */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">配信対象</label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, targetType: 'all', targetTagId: '' })}
-              className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
-                form.targetType === 'all'
-                  ? 'border-green-500 text-green-700 bg-green-50'
-                  : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
-              }`}
-            >
-              全員
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, targetType: 'tag' })}
-              className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
-                form.targetType === 'tag'
-                  ? 'border-green-500 text-green-700 bg-green-50'
-                  : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
-              }`}
-            >
-              タグで絞り込み
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, targetType: 'multi-account-dedup', targetTagId: '' })}
-              className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
-                form.targetType === 'multi-account-dedup'
-                  ? 'border-green-500 text-green-700 bg-green-50'
-                  : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
-              }`}
-            >
-              複数アカ重複除外
-            </button>
-          </div>
+          <p className="mb-2 text-xs font-medium text-kumo-subtle">配信対象</p>
+          <Tabs
+            size="sm"
+            value={form.targetType}
+            onValueChange={(value) => setForm({ ...form, targetType: value as ApiBroadcast['targetType'], targetTagId: value === 'tag' ? form.targetTagId : '' })}
+            tabs={[{ value: 'all', label: '全員' }, { value: 'tag', label: 'タグで絞り込み' }, { value: 'multi-account-dedup', label: '複数アカ重複除外' }]}
+          />
           {form.targetType === 'tag' && (
-            <select
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+            <Select
+              className="mt-2 w-full"
+              aria-label="配信対象タグ"
               value={form.targetTagId}
-              onChange={(e) => setForm({ ...form, targetTagId: e.target.value })}
-            >
-              <option value="">タグを選択...</option>
-              {tags.map((tag) => (
-                <option key={tag.id} value={tag.id}>{tag.name}</option>
-              ))}
-            </select>
+              onValueChange={(value) => setForm({ ...form, targetTagId: value ?? '' })}
+              placeholder="タグを選択"
+              items={tags.map((tag) => ({ value: tag.id, label: tag.name }))}
+            />
           )}
           {form.targetType === 'multi-account-dedup' && (
             <MultiAccountDedupSection
@@ -334,63 +267,28 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
 
         {/* Schedule */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">配信タイミング</label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, sendNow: true, scheduledAt: '' })}
-              className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
-                form.sendNow
-                  ? 'border-green-500 text-green-700 bg-green-50'
-                  : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
-              }`}
-            >
-              下書きとして保存
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, sendNow: false })}
-              className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
-                !form.sendNow
-                  ? 'border-green-500 text-green-700 bg-green-50'
-                  : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
-              }`}
-            >
-              予約配信
-            </button>
-          </div>
+          <p className="mb-2 text-xs font-medium text-kumo-subtle">配信タイミング</p>
+          <Tabs size="sm" value={form.sendNow ? 'draft' : 'scheduled'} onValueChange={(value) => setForm({ ...form, sendNow: value === 'draft', scheduledAt: value === 'draft' ? '' : form.scheduledAt })} tabs={[{ value: 'draft', label: '下書きとして保存' }, { value: 'scheduled', label: '予約配信' }]} />
           {!form.sendNow && (
-            <input
+            <Input
+              className="mt-2"
+              label="配信日時"
               type="datetime-local"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               value={form.scheduledAt}
-              onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })}
+              onChange={(event) => setForm({ ...form, scheduledAt: event.target.value })}
             />
           )}
         </div>
 
         {/* Error */}
-        {error && <p className="text-xs text-red-600">{error}</p>}
+        {error ? <Banner size="sm" variant="error" title="作成できません" description={error} /> : null}
 
         {/* Actions */}
         <div className="flex gap-2 pt-1">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            {saving ? '作成中...' : '作成'}
-          </button>
-          <button
-            onClick={onCancel}
-            disabled={saving}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-          >
-            キャンセル
-          </button>
+          <Button type="button" variant="primary" loading={saving} onClick={() => void handleSave()}>作成</Button>
+          <Button type="button" variant="secondary" disabled={saving} onClick={onCancel}>キャンセル</Button>
         </div>
       </div>
-    </div>
+    </LayerCard>
   )
 }

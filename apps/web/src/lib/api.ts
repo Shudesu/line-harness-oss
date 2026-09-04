@@ -35,6 +35,31 @@ import type {
 } from '@line-crm/shared'
 import { getApiBase } from './api-base'
 
+/** Per-account delivery-health snapshot for the dashboard cards. */
+export type AccountDeliveryHealth = {
+  lineAccountId: string
+  name: string
+  quota: {
+    type: string | null
+    limit: number | null
+    consumption: number | null
+    remaining: number | null
+  }
+  quotaAlert: boolean
+  insight: {
+    /** 'unready' = LINE がまだ前日分を集計していない状態（失敗とは別物） */
+    status: 'ready' | 'unready' | 'error'
+    date: string | null
+    followers: number | null
+    targetedReaches: number | null
+    blocks: number | null
+    followersDelta: number | null
+    blocksDelta: number | null
+  }
+  messagesThisMonth: number | null
+  errors: string[]
+}
+
 /** Affiliate offer (案件) as returned by the worker. */
 export type AffiliateOffer = {
   id: string
@@ -619,6 +644,10 @@ export const api = {
   lineAccounts: {
     list: () =>
       fetchApi<ApiResponse<LineAccount[]>>('/api/line-accounts'),
+    deliveryHealth: () =>
+      fetchApi<ApiResponse<{ insightDate: string; accounts: AccountDeliveryHealth[] }>>(
+        '/api/line-accounts/delivery-health',
+      ),
     get: (id: string) =>
       fetchApi<ApiResponse<LineAccount>>(`/api/line-accounts/${id}`),
     create: (data: {

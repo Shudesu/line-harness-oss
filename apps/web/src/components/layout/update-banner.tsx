@@ -1,5 +1,6 @@
 'use client'
 import { useUpdateNotification } from '@/hooks/use-update-notification'
+import { Button } from '@cloudflare/kumo/components/button'
 
 export default function UpdateBanner() {
   const { release, dismiss } = useUpdateNotification()
@@ -21,14 +22,17 @@ export default function UpdateBanner() {
           詳細を見る
         </a>
       </div>
-      <button
+      <Button
         type="button"
         onClick={dismiss}
         aria-label="このアップデート通知を閉じる"
-        className="shrink-0 text-blue-600 hover:text-blue-800 px-2 -mr-2"
+        className="shrink-0 -mr-2"
+        size="xs"
+        shape="square"
+        variant="ghost"
       >
         ✕
-      </button>
+      </Button>
     </div>
   )
 }

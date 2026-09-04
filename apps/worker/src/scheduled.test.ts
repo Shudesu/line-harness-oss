@@ -31,3 +31,18 @@ describe('isFiveMinuteTick', () => {
     expect(isFiveMinuteTick(tick('0 */6 * * *', 0))).toBe(false);
   });
 });
+
+import { isHourlyTick } from './scheduled.js';
+
+describe('isHourlyTick', () => {
+  test('分=0 の tick だけ true (分足・5分足どちらの cron でも)', () => {
+    expect(isHourlyTick(tick('* * * * *', 0))).toBe(true);
+    expect(isHourlyTick(tick('*/5 * * * *', 0))).toBe(true);
+    expect(isHourlyTick(tick('* * * * *', 5))).toBe(false);
+    expect(isHourlyTick(tick('*/5 * * * *', 30))).toBe(false);
+  });
+
+  test('6時間足の cron では false（同じ分に二重で走らせない）', () => {
+    expect(isHourlyTick(tick('0 */6 * * *', 0))).toBe(false);
+  });
+});

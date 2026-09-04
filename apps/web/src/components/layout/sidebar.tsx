@@ -1,8 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { CheckIcon, CaretDownIcon, ListIcon, SignOutIcon, XIcon } from '@phosphor-icons/react'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Button } from '@cloudflare/kumo/components/button'
+import { DropdownMenu } from '@cloudflare/kumo/components/dropdown'
 import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
@@ -96,8 +100,8 @@ function AccountAvatar({ account, size = 32 }: { account: AccountWithStats; size
   }
   return (
     <div
-      className="rounded-full flex items-center justify-center text-white font-bold shrink-0"
-      style={{ width: size, height: size, backgroundColor: '#06C755', fontSize: size * 0.4 }}
+      className="flex shrink-0 items-center justify-center rounded-full bg-kumo-brand font-bold text-kumo-inverse"
+      style={{ width: size, height: size, fontSize: size * 0.4 }}
     >
       {displayName.charAt(0)}
     </div>
@@ -107,87 +111,57 @@ function AccountAvatar({ account, size = 32 }: { account: AccountWithStats; size
 function AccountSwitcher() {
   const { accounts, selectedAccount, setSelectedAccountId, loading } = useAccount()
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
 
   if (loading || accounts.length === 0) return null
 
   const displayName = selectedAccount?.displayName || selectedAccount?.name || ''
 
   return (
-    <div ref={ref} className="px-3 py-3 border-b border-gray-200">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-50 transition-colors"
-      >
-        {selectedAccount && <AccountAvatar account={selectedAccount} size={28} />}
-        <div className="flex-1 text-left min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">
-            <span className="flex items-center gap-1.5">
-              {countryFlag(selectedAccount?.country) && (
-                <span className="text-base leading-none">{countryFlag(selectedAccount?.country)}</span>
-              )}
-              <span>{displayName}</span>
-            </span>
-          </p>
-        </div>
-        <svg
-          className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+    <div className="border-b border-kumo-line px-3 py-3">
+      <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-kumo-subtle">
+        操作中のLINEアカウント
+      </p>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenu.Trigger
+          render={<Button type="button" variant="secondary" className="h-auto min-h-12 w-full justify-start px-2.5 py-2 text-left" />}
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
-          {accounts.map((account) => {
-            const isSelected = account.id === selectedAccount?.id
-            const name = account.displayName || account.name
-            return (
-              <button
-                key={account.id}
-                onClick={() => {
-                  setSelectedAccountId(account.id)
-                  setOpen(false)
-                }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${
-                  isSelected ? 'bg-green-50' : 'hover:bg-gray-50'
-                }`}
-              >
-                <AccountAvatar account={account} size={24} />
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm truncate ${isSelected ? 'font-semibold text-green-700' : 'text-gray-700'}`}>
-                    <span className="flex items-center gap-1.5">
-                      {countryFlag(account.country) && (
-                        <span className="text-base leading-none">{countryFlag(account.country)}</span>
-                      )}
-                      <span>{name}</span>
+          {selectedAccount ? <AccountAvatar account={selectedAccount} size={28} /> : null}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              {countryFlag(selectedAccount?.country) ? <span className="leading-none">{countryFlag(selectedAccount?.country)}</span> : null}
+              <span className="truncate text-sm font-semibold text-kumo-strong">{displayName}</span>
+            </div>
+            <Badge className="mt-1" variant="success" appearance="dot">操作中</Badge>
+          </div>
+          <CaretDownIcon className={`ml-auto shrink-0 text-kumo-subtle transition-transform ${open ? 'rotate-180' : ''}`} size={16} />
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="start" className="min-w-56">
+          <DropdownMenu.Group>
+            <DropdownMenu.Label>切り替えるLINEアカウント</DropdownMenu.Label>
+            {accounts.map((account) => {
+              const isSelected = account.id === selectedAccount?.id
+              const name = account.displayName || account.name
+              return (
+                <DropdownMenu.Item
+                  key={account.id}
+                  selected={isSelected}
+                  icon={<AccountAvatar account={account} size={24} />}
+                  onClick={() => setSelectedAccountId(account.id)}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5 truncate">
+                      {countryFlag(account.country) ? <span className="leading-none">{countryFlag(account.country)}</span> : null}
+                      <span className="truncate">{name}</span>
                     </span>
-                  </p>
-                  {account.basicId && (
-                    <p className="text-xs text-gray-400 truncate">{account.basicId}</p>
-                  )}
-                </div>
-                {isSelected && (
-                  <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </button>
-            )
-          })}
-        </div>
-      )}
+                    {account.basicId ? <span className="block truncate text-xs text-kumo-subtle">{account.basicId}</span> : null}
+                  </span>
+                  {isSelected ? <CheckIcon className="shrink-0 text-kumo-success" size={16} weight="bold" /> : null}
+                </DropdownMenu.Item>
+              )
+            })}
+          </DropdownMenu.Group>
+        </DropdownMenu.Content>
+      </DropdownMenu>
     </div>
   )
 }
@@ -255,7 +229,7 @@ export default function Sidebar() {
       {/* ロゴ */}
       <div className="px-6 py-5 border-b border-gray-200">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm" style={{ backgroundColor: '#06C755' }}>
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-kumo-brand text-sm font-bold text-kumo-inverse">
             H
           </div>
           <div>
@@ -290,12 +264,11 @@ export default function Sidebar() {
                   href={item.href}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                     active
-                      ? 'text-white'
+                      ? isDanger ? 'bg-kumo-danger text-kumo-inverse' : 'bg-kumo-brand text-kumo-inverse'
                       : isDanger
                         ? 'text-red-500 hover:bg-red-50'
                         : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                   }`}
-                  style={active ? { backgroundColor: isDanger ? '#EF4444' : '#06C755' } : {}}
                 >
                   <NavIcon d={item.icon} />
                   <span className="flex-1">{item.label}</span>
@@ -336,7 +309,11 @@ export default function Sidebar() {
             build {appCommitSha}{appBuildDate ? ` · ${appBuildDate}` : ''}
           </p>
         </div>
-        <button
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          icon={SignOutIcon}
           onClick={async () => {
             try {
               const apiUrl = getApiBase()
@@ -355,13 +332,10 @@ export default function Sidebar() {
             localStorage.removeItem('lh_staff_role')
             window.location.href = withBasePath('/login')
           }}
-          className="flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 transition-colors"
+          className="justify-start px-0 text-kumo-subtle hover:text-kumo-danger"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
           ログアウト
-        </button>
+        </Button>
         </div>
       </div>
     </>
@@ -371,20 +345,17 @@ export default function Sidebar() {
     <>
       {/* モバイル: ハンバーガーヘッダー */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
-        <button
+        <Button
+          type="button"
+          shape="square"
+          size="lg"
+          variant="ghost"
+          icon={isOpen ? XIcon : ListIcon}
           onClick={() => setIsOpen(!isOpen)}
-          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
           aria-label="メニュー"
-        >
-          <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            {isOpen
-              ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            }
-          </svg>
-        </button>
+        />
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{ backgroundColor: '#06C755' }}>H</div>
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-kumo-brand text-xs font-bold text-kumo-inverse">H</div>
           <p className="text-sm font-bold text-gray-900">L Harness</p>
         </div>
       </div>
@@ -397,11 +368,7 @@ export default function Sidebar() {
           可視領域の外に落ちてタップ不能になる */}
       <aside className={`lg:hidden fixed top-0 left-0 z-50 w-72 bg-white flex flex-col h-dvh transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="absolute top-4 right-4">
-          <button onClick={() => setIsOpen(false)} className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-gray-100" aria-label="閉じる">
-            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <Button type="button" shape="square" size="lg" variant="ghost" icon={XIcon} onClick={() => setIsOpen(false)} aria-label="閉じる" />
         </div>
         {sidebarContent}
       </aside>

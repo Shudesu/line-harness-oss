@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "0.23.1",
+  "version": "0.24.0",
   "private": true,
   "scripts": {
     "dev": "next dev --port 3001",
@@ -9,14 +9,18 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@cloudflare/kumo": "2.12.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@line-crm/shared": "workspace:*",
+    "@line-harness/update-engine": "workspace:*",
+    "@phosphor-icons/react": "^2.1.10",
+    "echarts": "^6.0.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@line-harness/update-engine": "workspace:*"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",

@@ -10,6 +10,13 @@ workers_dev = true
 # ═══════════════════════════════════════════════════════════════
 account_id = "YOUR_DEV_ACCOUNT_ID"
 
+# Workers Cache pilot. Enabled only for the private test Worker; production is
+# explicitly disabled below until cache hit rate and auth isolation are proven.
+# Only routes with an explicit public Cache-Control header are eligible because
+# src/middleware/cache-policy.ts marks every other response no-store.
+[cache]
+enabled = true
+
 [assets]
 directory = "dist/client"
 binding = "ASSETS"
@@ -82,6 +89,9 @@ CF_ACCOUNT_ID = "YOUR_DEV_ACCOUNT_ID"
 [env.production]
 account_id = "YOUR_ACCOUNT_ID"
 compatibility_flags = ["nodejs_compat"]
+
+[env.production.cache]
+enabled = false
 
 [env.production.assets]
 directory = "dist/client"

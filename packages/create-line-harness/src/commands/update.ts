@@ -852,11 +852,14 @@ async function applyMigrations(opts: {
   names: string[];
   bundle: ParsedBundle;
   s: Spinner;
+  /** adoption 専用: 破壊的な旧世代 migration を probe + 記録のみで通す (エンジン側 doc 参照)。 */
+  adoptGrandfathered?: boolean;
 }): Promise<void> {
   const { creds, d1DatabaseId, names, bundle, s } = opts;
   try {
     await applyD1Migrations({
       creds,
+      adoptGrandfathered: opts.adoptGrandfathered,
       databaseId: d1DatabaseId,
       names,
       migrations: bundle.migrations,
@@ -866,6 +869,10 @@ async function applyMigrations(opts: {
       onMigrationDone(result) {
         if (result.alreadyApplied) {
           s.stop(pc.dim(`Migration ${result.name}: 適用済み`));
+        } else if (result.adopted) {
+          // grandfathered 世代 (カットオフ 041 未満): 破壊的 SQL を含み得るため
+          // 実行せず、適用済みとして台帳へ記録のみ (既存 DB は適用後の構造が前提)。
+          s.stop(pc.dim(`Migration ${result.name}: 旧世代のため記録のみ (実行なし)`));
         } else if (result.skippedStatements > 0) {
           s.stop(
             `Migration ${result.name} 完了 (${result.executedStatements}文実行・${result.skippedStatements}文適用済み)`,
@@ -1218,10 +1225,13 @@ async function runAdoption(opts: {
   const bundle = await downloadAndVerifyBundle(target, s);
 
   // Replay every migration in the bundle, oldest first. Duplicates are
-  // skipped via the benign-error policy inside applyMigrations.
+  // skipped via the benign-error policy inside applyMigrations. 破壊的な
+  // 旧世代 migration (027/029) は再実行できないため、スキーマ実在を probe した
+  // 上で「適用済み記録のみ」で通す (adoptGrandfathered — エンジン側 doc 参照)。
   const allMigrations = Array.from(bundle.migrations.keys()).sort();
   p.log.info(
-    `全 ${allMigrations.length} migration を確認します（適用済みはスキップされます）`,
+    `全 ${allMigrations.length} migration を確認します（適用済みはスキップ、` +
+      `再実行不能な旧世代の再構築 migration は記録のみになります）`,
   );
   await applyMigrations({
     creds,
@@ -1229,6 +1239,7 @@ async function runAdoption(opts: {
     names: allMigrations,
     bundle,
     s,
+    adoptGrandfathered: true,
   });
 
   await deployWorkerFromBundle(creds, cfg, bundle, s);

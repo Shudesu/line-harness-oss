@@ -15,6 +15,14 @@ import {
   type BookingTimeFilter,
   type BookingTimeGroup,
 } from './booking-view'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Select } from '@cloudflare/kumo/components/select'
 
 const STATUS_FILTERS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'すべて' },
@@ -95,6 +103,8 @@ export default function BookingsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<{ id: string; action: 'approve' | 'reject' | 'cancel' | 'no_show' | 'complete' } | null>(null)
+  const [deciding, setDeciding] = useState(false)
 
   const liffId = selectedAccount?.liffId ?? null
   const workerBase = getApiBase() ?? ''
@@ -144,12 +154,20 @@ export default function BookingsPage() {
     action: 'approve' | 'reject' | 'cancel' | 'no_show' | 'complete',
   ) {
     if (!selectedAccountId) return
-    if (!confirm(`この予約を「${actionLabel[action]}」しますか？`)) return
+    setPendingAction({ id, action })
+  }
+
+  async function confirmDecision() {
+    if (!selectedAccountId || !pendingAction) return
+    setDeciding(true)
     try {
-      await bookingApi.decideRequest(selectedAccountId, id, action)
+      await bookingApi.decideRequest(selectedAccountId, pendingAction.id, pendingAction.action)
+      setPendingAction(null)
       await load()
     } catch (e) {
       alert(`操作に失敗しました: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setDeciding(false)
     }
   }
 
@@ -217,19 +235,20 @@ export default function BookingsPage() {
           {shareUrl ? (
             <>
               <div className="flex items-center gap-2">
-                <input
+                <Input
+                  aria-label="お客様向け予約フォームURL"
                   readOnly
                   value={shareUrl}
                   onFocus={(e) => e.currentTarget.select()}
-                  className="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-mono"
+                  className="min-w-0 flex-1 font-mono text-xs"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="primary"
                   onClick={() => copyUrl(shareUrl)}
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
                 >
                   {copied ? 'コピー済' : 'コピー'}
-                </button>
+                </Button>
               </div>
               <p className="mt-2 text-xs text-blue-700">
                 LINE / OpenChat / IG DM で共有できます。タップすると LINE の予約画面が開きます。
@@ -245,9 +264,7 @@ export default function BookingsPage() {
       )}
 
       {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="予約を読み込めませんでした" description={error} />
       )}
 
       {selectedAccountId && !loading && (
@@ -315,17 +332,14 @@ export default function BookingsPage() {
                 ))}
               </FilterGroup>
             </div>
-            <label className="flex shrink-0 items-center gap-2 text-xs font-medium text-gray-500">
-              並び順
-              <select
+            <div className="shrink-0 min-w-52">
+              <Select
+                label="並び順"
                 value={sort}
-                onChange={(e) => setSort(e.target.value as BookingSort)}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
-              >
-                <option value="schedule">予約日時が近い順</option>
-                <option value="received">受付が新しい順</option>
-              </select>
-            </label>
+                onValueChange={(value) => setSort((value ?? 'schedule') as BookingSort)}
+                items={{ schedule: '予約日時が近い順', received: '受付が新しい順' }}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -337,16 +351,18 @@ export default function BookingsPage() {
       ) : visibleCount === 0 ? (
         <EmptyPanel>
           <div className="font-medium text-gray-700">条件に合う予約はありません</div>
-          <button
+          <Button
             type="button"
+            size="sm"
+            variant="ghost"
             onClick={() => {
               setStatusFilter('all')
               setTimeFilter('all')
             }}
-            className="mt-2 text-sm font-medium text-blue-600 hover:underline"
+            className="mt-2"
           >
             絞り込みを解除
-          </button>
+          </Button>
         </EmptyPanel>
       ) : (
         <div className="space-y-5">
@@ -380,6 +396,9 @@ export default function BookingsPage() {
           )}
         </div>
       )}
+      <Dialog.Root role="alertdialog" open={pendingAction !== null} onOpenChange={(open) => { if (!open && !deciding) setPendingAction(null) }}>
+        <Dialog><Dialog.Title>予約を「{pendingAction ? actionLabel[pendingAction.action] : ''}」しますか？</Dialog.Title><Dialog.Description className="mt-2">予約の状態を変更します。内容を確認して実行してください。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" disabled={deciding} onClick={() => setPendingAction(null)}>キャンセル</Button><Button type="button" variant={pendingAction?.action === 'approve' || pendingAction?.action === 'complete' ? 'primary' : 'destructive'} loading={deciding} onClick={confirmDecision}>実行する</Button></div></Dialog>
+      </Dialog.Root>
     </div>
   )
 }
@@ -406,8 +425,9 @@ function SummaryCard({
     gray: 'border-gray-200 bg-gray-50 text-gray-800',
   }
   return (
-    <button
+    <Button
       type="button"
+      variant="secondary"
       onClick={onClick}
       className={`rounded-xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${tones[tone]} ${active ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
     >
@@ -416,7 +436,7 @@ function SummaryCard({
         <span className="text-2xl font-bold tabular-nums">{count}</span>
       </div>
       <div className="mt-1 text-xs opacity-70">{helper}</div>
-    </button>
+    </Button>
   )
 }
 
@@ -439,17 +459,15 @@ function FilterButton({
   children: React.ReactNode
 }) {
   return (
-    <button
+    <Button
       type="button"
+      size="xs"
+      variant={active ? 'primary' : 'ghost'}
       onClick={onClick}
-      className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-        active
-          ? 'bg-gray-900 text-white'
-          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-      }`}
+      shape="base"
     >
       {children}
-    </button>
+    </Button>
   )
 }
 
@@ -593,15 +611,12 @@ function BookingCard({
 }
 
 function StatusAndNew({ status, recentlyReceived }: { status: string; recentlyReceived: boolean }) {
+  const statusVariant: Record<string, BadgeVariant> = { requested: 'warning', confirmed: 'success', completed: 'info', no_show: 'error' }
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
-      <span className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusBadgeColor[status] ?? 'bg-gray-100 text-gray-700 ring-gray-200'}`}>
-        {statusLabel[status] ?? status}
-      </span>
+      <Badge variant={statusVariant[status] ?? 'neutral'}>{statusLabel[status] ?? status}</Badge>
       {recentlyReceived && (
-        <span className="rounded-md bg-fuchsia-100 px-2 py-0.5 text-[10px] font-bold tracking-wide text-fuchsia-700">
-          NEW
-        </span>
+        <Badge variant="info">NEW</Badge>
       )}
     </span>
   )
@@ -617,47 +632,57 @@ function ActionButtons({
   if (status === 'requested') {
     return (
       <div className="flex gap-2 lg:flex-col">
-        <button
+        <Button
           type="button"
           onClick={() => onAction('approve')}
-          className="flex-1 rounded-lg bg-[#06C755] px-4 py-2 text-xs font-bold text-white hover:opacity-90 lg:w-24"
+          size="sm"
+          variant="primary"
+          className="flex-1 lg:w-24"
         >
           承認
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => onAction('reject')}
-          className="flex-1 rounded-lg bg-red-50 px-4 py-2 text-xs font-medium text-red-700 hover:bg-red-100 lg:w-24"
+          size="sm"
+          variant="destructive"
+          className="flex-1 lg:w-24"
         >
           拒否
-        </button>
+        </Button>
       </div>
     )
   }
   if (status === 'confirmed') {
     return (
       <div className="flex flex-wrap gap-1.5 lg:w-28 lg:flex-col">
-        <button
+        <Button
           type="button"
           onClick={() => onAction('complete')}
-          className="flex-1 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+          size="xs"
+          variant="primary"
+          className="flex-1"
         >
           完了
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => onAction('no_show')}
-          className="flex-1 rounded-lg bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-100"
+          size="xs"
+          variant="destructive"
+          className="flex-1"
         >
           無断
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => onAction('cancel')}
-          className="flex-1 rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-200"
+          size="xs"
+          variant="secondary"
+          className="flex-1"
         >
           取消
-        </button>
+        </Button>
       </div>
     )
   }
@@ -666,9 +691,9 @@ function ActionButtons({
 
 function EmptyPanel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-sm text-gray-500 shadow-sm">
+    <LayerCard className="p-12 text-center text-sm text-kumo-subtle">
       {children}
-    </div>
+    </LayerCard>
   )
 }
 

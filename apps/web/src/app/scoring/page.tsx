@@ -4,6 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { api, type MileageAdminOverview, type MileageRule } from '@/lib/api'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Switch } from '@cloudflare/kumo/components/switch'
+import { Table } from '@cloudflare/kumo/components/table'
 
 const PAGE_SIZE = 50
 
@@ -176,12 +186,13 @@ export default function MileagePage() {
       <Header
         title="マイル"
         action={
-          <button
+          <Button
+            type="button"
+            variant="secondary"
             onClick={() => void reloadAll()}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
           >
             再読み込み
-          </button>
+          </Button>
         }
       />
 
@@ -193,27 +204,24 @@ export default function MileagePage() {
             <p className="mt-1 text-sm text-slate-300">{accountLabel}で同一ユーザーをまとめ、マイルと行動量を表示しています。</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <select
+            <Select
+              label="対象アカウント"
               value={accountId}
-              onChange={(event) => { setAccountId(event.target.value); setOffset(0) }}
-              className="min-w-48 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none [&>option]:text-gray-900"
-            >
-              <option value="all">全アカウント横断</option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>{account.displayName || account.name}</option>
-              ))}
-            </select>
-            <input
+              onValueChange={(value) => { setAccountId(value ?? 'all'); setOffset(0) }}
+              className="min-w-48"
+              items={{ all: '全アカウント横断', ...Object.fromEntries(accounts.map((account) => [account.id, account.displayName || account.name])) }}
+            />
+            <Input
+              label="ユーザー検索"
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
               placeholder="名前で検索"
-              className="rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-slate-400 outline-none"
             />
           </div>
         </div>
       </div>
 
-      {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {error && <Banner className="mb-4" variant="error" title="操作を完了できませんでした" description={error} />}
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
@@ -223,17 +231,17 @@ export default function MileagePage() {
           ['記録済みアクション', summary?.totalActions, '件'],
           ['反映待ち', summary?.queuedEvents, '件'],
         ].map(([label, value, unit]) => (
-          <div key={String(label)} className="rounded-xl border border-gray-200 bg-white p-4">
+          <LayerCard key={String(label)} className="p-4">
             <p className="text-xs text-gray-500">{label}</p>
             <p className="mt-1 text-2xl font-bold text-gray-900">
               {loading || value === undefined ? '—' : formatNumber(Number(value))}
               <span className="ml-1 text-xs font-medium text-gray-400">{unit}</span>
             </p>
-          </div>
+          </LayerCard>
         ))}
       </div>
 
-      <section className="mb-6 rounded-xl border border-gray-200 bg-white">
+      <LayerCard className="mb-6 p-0">
         <div className="border-b border-gray-100 px-5 py-4">
           <h2 className="text-sm font-semibold text-gray-900">マイル付与ルール</h2>
           <p className="mt-1 text-xs text-gray-500">付与数を変更すると、変更後に発生した行動から新しい値が使われます。</p>
@@ -248,25 +256,23 @@ export default function MileagePage() {
                   </span>
                   <p className="mt-2 text-sm font-semibold text-gray-900">{rule.name}</p>
                 </div>
-                <button
-                  type="button"
+                <Switch
                   disabled={savingRuleId === rule.id}
-                  onClick={() => void updateRule(rule, { isActive: !rule.isActive })}
-                  className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${rule.isActive ? 'bg-indigo-600' : 'bg-gray-300'}`}
+                  checked={rule.isActive}
+                  onCheckedChange={(checked) => void updateRule(rule, { isActive: checked })}
                   aria-label={`${rule.name}を${rule.isActive ? '無効' : '有効'}にする`}
-                >
-                  <span className={`mt-1 h-4 w-4 rounded-full bg-white transition-transform ${rule.isActive ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
+                />
               </div>
               <div className="mt-4 flex items-end gap-2">
-                <input
+                <Input
+                  aria-label={`${rule.name}の付与マイル`}
                   type="number"
                   min={1}
                   value={amounts[rule.id] ?? rule.amount}
                   onChange={(event) => setAmounts((current) => ({ ...current, [rule.id]: event.target.value }))}
                   onBlur={() => void saveAmount(rule)}
                   onKeyDown={(event) => { if (event.key === 'Enter') void saveAmount(rule) }}
-                  className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-right text-lg font-bold text-gray-900 outline-none focus:border-indigo-400"
+                  className="w-24 text-right text-lg font-bold"
                 />
                 <span className="pb-2 text-xs text-gray-500">mile</span>
               </div>
@@ -274,9 +280,9 @@ export default function MileagePage() {
             </div>
           ))}
         </div>
-      </section>
+      </LayerCard>
 
-      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <LayerCard className="overflow-hidden p-0">
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold text-gray-900">マイル・コミットランキング</h2>
@@ -286,33 +292,33 @@ export default function MileagePage() {
         </div>
 
         {loading ? (
-          <div className="p-12 text-center text-sm text-gray-400">集計中...</div>
+          <div className="p-12"><Loader className="mx-auto" /></div>
         ) : members.length === 0 ? (
-          <div className="p-12 text-center text-sm text-gray-400">該当するユーザーがいません</div>
+          <Empty title="該当するユーザーがいません" description="検索条件を変えてお試しください。" />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px]">
-              <thead className="bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
-                <tr>
-                  <th className="px-4 py-3">順位</th>
-                  <th className="px-4 py-3">ユーザー</th>
-                  <th className="px-4 py-3">接続アカウント</th>
-                  <th className="px-4 py-3 text-right">保有マイル</th>
-                  <th className="px-4 py-3">コミット</th>
-                  <th className="px-4 py-3">行動内訳</th>
-                  <th className="px-4 py-3">最終行動</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
+            <Table className="min-w-[1050px]">
+              <Table.Header>
+                <Table.Row>
+                  <Table.Head>順位</Table.Head>
+                  <Table.Head>ユーザー</Table.Head>
+                  <Table.Head>接続アカウント</Table.Head>
+                  <Table.Head className="text-right">保有マイル</Table.Head>
+                  <Table.Head>コミット</Table.Head>
+                  <Table.Head>行動内訳</Table.Head>
+                  <Table.Head>最終行動</Table.Head>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
                 {members.map((member, index) => {
                   const rank = offset + index + 1
                   const commitment = commitmentLabel(member.actionCount, member.available)
                   return (
-                    <tr key={member.identityKey} className="hover:bg-gray-50/70">
-                      <td className="px-4 py-4 text-center text-sm font-bold text-gray-500">
+                    <Table.Row key={member.identityKey}>
+                      <Table.Cell className="text-center font-bold text-kumo-subtle">
                         {rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : rank}
-                      </td>
-                      <td className="px-4 py-4">
+                      </Table.Cell>
+                      <Table.Cell>
                         <div className="flex items-center gap-3">
                           {member.pictureUrl ? (
                             <img src={member.pictureUrl} alt="" className="h-9 w-9 rounded-full object-cover" />
@@ -326,23 +332,21 @@ export default function MileagePage() {
                             <p className="text-[11px] text-gray-400">アクション {formatNumber(member.actionCount)}件</p>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-4 py-4">
+                      </Table.Cell>
+                      <Table.Cell>
                         <div className="flex max-w-60 flex-wrap gap-1">
                           {member.accountNames.slice(0, 3).map((name) => (
                             <span key={name} className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">{name}</span>
                           ))}
                           {member.accountCount > 3 && <span className="text-[10px] text-gray-400">+{member.accountCount - 3}</span>}
                         </div>
-                      </td>
-                      <td className="px-4 py-4 text-right">
+                      </Table.Cell>
+                      <Table.Cell className="text-right">
                         <p className="text-lg font-bold text-indigo-700">{formatNumber(member.available)}</p>
                         {member.pending > 0 && <p className="text-[10px] text-amber-600">保留 {formatNumber(member.pending)}</p>}
-                      </td>
-                      <td className="px-4 py-4">
-                        <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${commitment.style}`}>{commitment.text}</span>
-                      </td>
-                      <td className="px-4 py-4">
+                      </Table.Cell>
+                      <Table.Cell><Badge variant={member.actionCount > 0 ? 'success' : 'neutral'}>{commitment.text}</Badge></Table.Cell>
+                      <Table.Cell>
                         <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-600">
                           <span>💬 {formatNumber(member.messageCount)}</span>
                           <span>🔗 {formatNumber(member.linkClickCount)}</span>
@@ -356,13 +360,13 @@ export default function MileagePage() {
                             <span>🤝 良質紹介{formatNumber(member.qualityReferralCount)}人・{formatNumber(member.referralMiles)}mile</span>
                           )}
                         </div>
-                      </td>
-                      <td className="px-4 py-4 text-xs text-gray-500">{formatDate(member.lastActivityAt)}</td>
-                    </tr>
+                      </Table.Cell>
+                      <Table.Cell className="text-xs text-kumo-subtle">{formatDate(member.lastActivityAt)}</Table.Cell>
+                    </Table.Row>
                   )
                 })}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table>
           </div>
         )}
 
@@ -370,20 +374,24 @@ export default function MileagePage() {
           <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
             <span className="text-xs text-gray-500">{currentPage} / {totalPages}ページ</span>
             <div className="flex gap-2">
-              <button
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
                 disabled={offset === 0}
                 onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 disabled:opacity-40"
-              >前へ</button>
-              <button
+              >前へ</Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
                 disabled={offset + PAGE_SIZE >= (overview?.pagination.total ?? 0)}
                 onClick={() => setOffset(offset + PAGE_SIZE)}
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 disabled:opacity-40"
-              >次へ</button>
+              >次へ</Button>
             </div>
           </div>
         )}
-      </section>
+      </LayerCard>
     </div>
   )
 }

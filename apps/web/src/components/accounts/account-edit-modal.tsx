@@ -1,6 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { XIcon } from '@phosphor-icons/react'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input } from '@cloudflare/kumo/components/input'
 import { api } from '@/lib/api'
 import {
   AccountFormSections,
@@ -51,16 +56,6 @@ export default function AccountEditModal({
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-
-  // Lock background scroll while modal open. Restore on unmount so navigation
-  // away mid-edit doesn't leave the page in a non-scrollable state.
-  useEffect(() => {
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [])
 
   const update = (partial: Partial<AccountFormState>) =>
     setState((s) => ({ ...s, ...partial }))
@@ -134,36 +129,15 @@ export default function AccountEditModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-start sm:items-center justify-center p-4 overflow-y-auto"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-lg shadow-xl w-full max-w-2xl my-8"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-base font-bold text-gray-900">アカウント編集</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-xl leading-none"
-            aria-label="閉じる"
-          >
-            ×
-          </button>
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
+      <Dialog size="lg" className="max-h-[90vh] overflow-y-auto p-0">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-kumo-line bg-kumo-base px-6 py-4">
+          <Dialog.Title className="text-base font-bold text-kumo-strong">アカウント編集</Dialog.Title>
+          <Button type="button" size="xs" variant="ghost" icon={XIcon} aria-label="編集を閉じる" disabled={saving} onClick={onClose} />
         </div>
 
-        <form onSubmit={handleSave} className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">アカウント名</label>
-            <input
-              value={state.name}
-              onChange={(e) => update({ name: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              required
-            />
-          </div>
+        <form onSubmit={handleSave} className="space-y-4 p-6">
+          <Input label="アカウント名" value={state.name} onValueChange={(value) => update({ name: value })} required />
 
           <AccountFormSections
             state={state}
@@ -185,31 +159,14 @@ export default function AccountEditModal({
             heading="このアカで使う URL（LINE Developers Console に貼る）"
           />
 
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-xs">
-              {error}
-            </div>
-          )}
+          {error ? <Banner variant="error" title="保存できません" description={error} /> : null}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 hover:bg-gray-50"
-            >
-              キャンセル
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
-              style={{ backgroundColor: '#06C755' }}
-            >
-              {saving ? '保存中...' : '保存'}
-            </button>
+          <div className="flex justify-end gap-2 border-t border-kumo-line pt-4">
+            <Button type="button" variant="secondary" disabled={saving} onClick={onClose}>キャンセル</Button>
+            <Button type="submit" variant="primary" loading={saving}>保存</Button>
           </div>
         </form>
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }

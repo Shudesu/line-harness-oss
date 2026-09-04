@@ -11,6 +11,10 @@ import ProgressBar from '@/components/broadcasts/progress-bar'
 import SendConfirmDialog from '@/components/broadcasts/send-confirm-dialog'
 import SegmentBuilder from '@/components/broadcasts/segment-builder'
 import type { Tag } from '@line-crm/shared'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Table } from '@cloudflare/kumo/components/table'
 
 interface BroadcastDetailProps {
   broadcastId: string
@@ -192,18 +196,16 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       <Header
         title={broadcast.title}
         action={
-          <button
+          <Button
+            variant="ghost"
             onClick={() => router.push('/broadcasts', { scroll: false })}
-            className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
           >
             ← 一覧に戻る
-          </button>
+          </Button>
         }
       />
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
-      )}
+      {error && <Banner variant="error" title="配信操作に失敗しました" description={error} className="mb-4" />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         {/* Left: Preview */}
@@ -267,12 +269,13 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       {broadcast.status === 'draft' && (
         <div className="mb-4">
           {!showSegmentBuilder ? (
-            <button
+            <Button
+              size="xs"
+              variant="ghost"
               onClick={() => setShowSegmentBuilder(true)}
-              className="text-xs text-blue-500 hover:text-blue-700"
             >
               セグメント条件を編集
-            </button>
+            </Button>
           ) : (
             <SegmentBuilder
               tags={tags}
@@ -291,20 +294,16 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       {/* Link tracking toggle — 送信前 (draft/scheduled) に最終切替できる */}
       {(broadcast.status === 'draft' || broadcast.status === 'scheduled') && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={broadcast.trackLinks}
-              onChange={async (e) => {
-                const trackLinks = e.target.checked
-                try {
-                  await api.broadcasts.update(id, { trackLinks })
-                  load()
-                } catch { /* keep previous state on failure */ }
-              }}
-            />
-            このメッセージでリンクを短縮する（クリック計測）
-          </label>
+          <Checkbox
+            label="このメッセージでリンクを短縮する（クリック計測）"
+            checked={broadcast.trackLinks}
+            onCheckedChange={async (trackLinks) => {
+              try {
+                await api.broadcasts.update(id, { trackLinks })
+                load()
+              } catch { /* keep previous state on failure */ }
+            }}
+          />
           <p className="text-xs text-gray-500 mt-1 ml-6">
             OFFにすると本文のURLを計測用リンク（/t/…）に変換せず、そのまま送信します。
           </p>
@@ -353,16 +352,16 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">アカウント別内訳</h3>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">アカウント</th>
-                  <th className="px-2 py-2 text-right text-xs font-medium text-gray-500">送信</th>
-                  <th className="px-2 py-2 text-right text-xs font-medium text-gray-500">開封</th>
-                  <th className="px-2 py-2 text-right text-xs font-medium text-gray-500">クリック</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
+            <Table className="w-full text-sm">
+              <Table.Header>
+                <Table.Row>
+                  <Table.Head>アカウント</Table.Head>
+                  <Table.Head className="text-right">送信</Table.Head>
+                  <Table.Head className="text-right">開封</Table.Head>
+                  <Table.Head className="text-right">クリック</Table.Head>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
                 {perAccountStats.map((row) => {
                   // accounts list から displayName を引く (なければ row.accountName 内部ラベル)
                   const acc = accounts.find((a) => a.id === row.accountId)
@@ -374,10 +373,10 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                     ? (row.uniqueClick / row.sent) * 100
                     : null
                   return (
-                    <tr key={row.accountId}>
-                      <td className="px-2 py-2 text-gray-900">{label}</td>
-                      <td className="px-2 py-2 text-right text-gray-900">{row.sent.toLocaleString('ja-JP')}</td>
-                      <td className="px-2 py-2 text-right">
+                    <Table.Row key={row.accountId}>
+                      <Table.Cell className="text-kumo-strong">{label}</Table.Cell>
+                      <Table.Cell className="text-right text-kumo-strong">{row.sent.toLocaleString('ja-JP')}</Table.Cell>
+                      <Table.Cell className="text-right">
                         {row.uniqueImpression != null ? (
                           <span className="text-blue-600">
                             {row.uniqueImpression.toLocaleString('ja-JP')}
@@ -388,8 +387,8 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                         ) : (
                           <span className="text-gray-300">-</span>
                         )}
-                      </td>
-                      <td className="px-2 py-2 text-right">
+                      </Table.Cell>
+                      <Table.Cell className="text-right">
                         {row.uniqueClick != null ? (
                           <span className="text-green-600">
                             {row.uniqueClick.toLocaleString('ja-JP')}
@@ -400,8 +399,8 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                         ) : (
                           <span className="text-gray-300">-</span>
                         )}
-                      </td>
-                    </tr>
+                      </Table.Cell>
+                    </Table.Row>
                   )
                 })}
                 {/* Totals row */}
@@ -424,10 +423,10 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                   const totalOpenRate = totalImpr != null && totalSent > 0 ? (totalImpr / totalSent) * 100 : null
                   const totalClickRate = totalClick != null && totalSent > 0 ? (totalClick / totalSent) * 100 : null
                   return (
-                    <tr className="bg-gray-50 font-medium">
-                      <td className="px-2 py-2 text-gray-900">合計</td>
-                      <td className="px-2 py-2 text-right text-gray-900">{totalSent.toLocaleString('ja-JP')}</td>
-                      <td className="px-2 py-2 text-right">
+                    <Table.Row className="bg-kumo-control font-medium">
+                      <Table.Cell className="text-kumo-strong">合計</Table.Cell>
+                      <Table.Cell className="text-right text-kumo-strong">{totalSent.toLocaleString('ja-JP')}</Table.Cell>
+                      <Table.Cell className="text-right">
                         {totalImpr != null ? (
                           <span className="text-blue-600">
                             {totalImpr.toLocaleString('ja-JP')}
@@ -438,8 +437,8 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                         ) : (
                           <span className="text-gray-300">-</span>
                         )}
-                      </td>
-                      <td className="px-2 py-2 text-right">
+                      </Table.Cell>
+                      <Table.Cell className="text-right">
                         {totalClick != null ? (
                           <span className="text-green-600">
                             {totalClick.toLocaleString('ja-JP')}
@@ -450,12 +449,12 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                         ) : (
                           <span className="text-gray-300">-</span>
                         )}
-                      </td>
-                    </tr>
+                      </Table.Cell>
+                    </Table.Row>
                   )
                 })()}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table>
           </div>
           {broadcast.status === 'sent' && perAccountStats.some((r) => r.sent > 0 && r.uniqueImpression == null) && (
             <p className="text-xs text-gray-400 mt-2">
@@ -469,14 +468,15 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
 
       {/* Send Button */}
       {broadcast.status === 'draft' && (
-        <button
+        <Button
+          variant="primary"
+          className="w-full min-h-[44px]"
           onClick={() => setShowConfirm(true)}
           disabled={sending}
-          className="w-full px-4 py-3 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-          style={{ backgroundColor: '#06C755' }}
+          loading={sending}
         >
           {sending ? '送信中...' : `この配信を送信する${targetCount != null ? ` (${targetCount.toLocaleString('ja-JP')}人)` : ''}`}
-        </button>
+        </Button>
       )}
 
       {/* Confirm Dialog */}

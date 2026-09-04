@@ -191,7 +191,8 @@ export async function computeDedupBroadcastPreview(
 }
 
 import { LineClient, type Message } from '@line-crm/line-sdk';
-import { getLineAccountById, jstNow, updateBroadcastLineRequestId } from '@line-crm/db';
+import { getLineAccountById, jstNow, updateBroadcastLineRequestId, setBroadcastLastError } from '@line-crm/db';
+import { getLinePlanQuotaShortfall, notifyQuotaAlert } from './quota-alert.js';
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
 import {
   assertNoUnresolvedBroadcastVariables,
@@ -209,6 +210,10 @@ export interface ProcessMultiAccountDedupResult {
   totalCount: number;
   successCount: number;
   failedAccountIds: string[];
+  // クォータ不足でスキップしたアカウントの要約 (last_error 用)。無ければ null。
+  // caller は status='sent' 遷移 (last_error が clear される) の後にこれを
+  // last_error へ書き戻す。
+  quotaSkippedSummary: string | null;
   // false = この実行は時間バジェットに達して途中で yield した (まだ未送の人が残る)。
   // caller は status='sent' にせず batch_offset=0 に戻して次の cron tick に継続させる。
   // true = 全 account を送り切った (= 完了)。caller が status='sent' にする。
@@ -266,6 +271,14 @@ const MAX_RUN_MS = 10_000;
  */
 interface DedupProgress {
   sentIdentKeys: string[];
+  /**
+   * この broadcast で既にクォータ不足通知を出したアカウント ID。
+   * multi-tick resume (timeExceeded → 次 cron tick で再入場) では不足アカウントが
+   * 毎 tick 再評価されるため、これが無いと dedup なしの 'pre-send' 通知が tick
+   * ごとに連打される (1時間かかる配信で ~12 重複 Slack 通知)。クォータの再チェック
+   * 自体は毎 tick 行う — 配信中に追加購入されたら当該アカウントも再開できる。
+   */
+  quotaNotifiedAccountIds?: string[];
 }
 
 function parseProgress(raw: string | null | undefined): DedupProgress {
@@ -274,9 +287,13 @@ function parseProgress(raw: string | null | undefined): DedupProgress {
   try {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { sentIdentKeys?: unknown }).sentIdentKeys)) {
+      const notified = (parsed as { quotaNotifiedAccountIds?: unknown }).quotaNotifiedAccountIds;
       return {
         sentIdentKeys: (parsed as { sentIdentKeys: unknown[] }).sentIdentKeys
           .filter((s): s is string => typeof s === 'string'),
+        ...(Array.isArray(notified)
+          ? { quotaNotifiedAccountIds: notified.filter((s): s is string => typeof s === 'string') }
+          : {}),
       };
     }
   } catch {
@@ -321,6 +338,7 @@ export async function processMultiAccountDedupBroadcast(
   db: D1Database,
   broadcast: {
     id: string;
+    title?: string | null;
     account_ids: string | null;
     dedup_priority: string | null;
     target_tag_id?: string | null;
@@ -367,6 +385,13 @@ export async function processMultiAccountDedupBroadcast(
   const allIdentKeys = new Set<string>(progress.sentIdentKeys);
 
   const failedAccountIds: string[] = [];
+  // クォータ不足でスキップしたアカウント (failed_account_ids に加えて last_error に
+  // 理由を残すため別トラック)。
+  const quotaSkippedAccounts: Array<{
+    id: string;
+    name: string | null;
+    shortfall: { remaining: number; audience: number };
+  }> = [];
 
   // 単一 broadcast-wide unit を全アカウント multicast で共有する。各 LINE
   // チャネルは独立した unit namespace を持つので「同じ名前で別カウント」が
@@ -401,6 +426,42 @@ export async function processMultiAccountDedupBroadcast(
     if (remaining.length === 0) continue; // このアカに残作業なし
 
     const client = lineClientFactory(account.channel_access_token);
+
+    // LINE プランクォータの送信前ガード (2026-09-01 事故 — 複数アカウント一斉配信で
+    // 一部アカウントがクォータ不足のまま送信して全滅した形そのもの)。このアカウントの
+    // 残差 (remaining) を賄えなければ、そのアカウントだけスキップして failed に記録し、
+    // 他アカウントの配信は続行する。resume 時も残差基準で再評価される。
+    // クォータ確認 API の失敗は fail-open (getLinePlanQuotaShortfall 内)。
+    const planShortfall = await getLinePlanQuotaShortfall(client, remaining.length);
+    if (planShortfall) {
+      console.error(
+        `[multi-account-dedup] account ${account.id} skipped: plan quota insufficient ` +
+        `(remaining=${planShortfall.remaining} audience=${remaining.length})`,
+      );
+      failedAccountIds.push(account.id);
+      quotaSkippedAccounts.push({ id: account.id, name: account.name, shortfall: planShortfall });
+      // 通知はこの broadcast につきアカウントごとに1回だけ。multi-tick resume では
+      // 不足アカウントが毎 tick ここを通るため、進捗 JSON に通知済みを永続化しないと
+      // dedup なしの 'pre-send' 通知が tick ごとに連打される (DedupProgress 参照)。
+      const notifiedIds = new Set(progress.quotaNotifiedAccountIds ?? []);
+      if (!notifiedIds.has(account.id)) {
+        await notifyQuotaAlert(db, {
+          lineAccountId: account.id,
+          accountName: account.name,
+          shortfall: planShortfall,
+          source: 'pre-send',
+          broadcastId: broadcast.id,
+          broadcastTitle: broadcast.title ?? undefined,
+        });
+        notifiedIds.add(account.id);
+        progress.quotaNotifiedAccountIds = [...notifiedIds];
+        await db.prepare(
+          `UPDATE broadcasts SET dedup_progress = ? WHERE id = ?`,
+        ).bind(JSON.stringify(progress), broadcast.id).run();
+      }
+      continue;
+    }
+
     const accountContent = renderBroadcastMessageContent(
       broadcast.message_type,
       broadcast.message_content,
@@ -539,6 +600,19 @@ export async function processMultiAccountDedupBroadcast(
     `UPDATE broadcasts SET failed_account_ids = ? WHERE id = ?`,
   ).bind(failedAccountIds.length > 0 ? JSON.stringify(failedAccountIds) : null, broadcast.id).run();
 
+  // クォータ不足でスキップしたアカウントがあれば理由を last_error に残す
+  // (failed_account_ids は「どのアカが失敗したか」だけで理由を持てない)。
+  // 完了時は caller が status='sent' で last_error を clear した後に
+  // quotaSkippedSummary から書き戻す (途中 yield 時のためここでも書いておく)。
+  let quotaSkippedSummary: string | null = null;
+  if (quotaSkippedAccounts.length > 0) {
+    const detail = quotaSkippedAccounts
+      .map((a) => `${a.name || a.id} (残り${a.shortfall.remaining}通 < 対象${a.shortfall.audience}人)`)
+      .join('、');
+    quotaSkippedSummary = `LINEプラン月間クォータ不足のため一部アカウントをスキップ: ${detail}`;
+    await setBroadcastLastError(db, broadcast.id, quotaSkippedSummary);
+  }
+
   const successCount = progress.sentIdentKeys.length;
   const totalCount = allIdentKeys.size;
 
@@ -557,5 +631,5 @@ export async function processMultiAccountDedupBroadcast(
   //
   // complete=false (timeExceeded) のときは caller が status='sent' にせず batch_offset=0 に
   // 戻し、次の cron tick が getQueuedBroadcasts で拾って残りを送る (= 分割送信)。
-  return { totalCount, successCount, failedAccountIds, complete: !timeExceeded };
+  return { totalCount, successCount, failedAccountIds, quotaSkippedSummary, complete: !timeExceeded };
 }

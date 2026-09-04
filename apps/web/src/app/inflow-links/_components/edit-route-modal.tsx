@@ -9,6 +9,12 @@ import type {
   Scenario,
   Tag,
 } from '@line-crm/shared'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
 
 interface MessageTemplate {
   id: string
@@ -111,33 +117,31 @@ export default function EditRouteModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-medium">
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting) onClose() }}>
+      <Dialog size="lg" className="max-h-[90vh] overflow-y-auto p-6">
+        <Dialog.Title className="text-lg font-medium">
           {isNew ? '新規リファラルリンク' : 'リファラルリンク編集'}
-        </h2>
+        </Dialog.Title>
+        <Dialog.Description className="mt-1 mb-4">流入後の送り先と自動処理を設定します。</Dialog.Description>
 
         {error && (
-          <div className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-xs">
-            {error}
-          </div>
+          <Banner className="mb-3" size="sm" variant="error" title="保存できませんでした" description={error} />
         )}
 
-        <Field label="名前（運用用ラベル）">
-          <input
+        <div className="space-y-3">
+          <Input
+            label="名前（運用用ラベル）"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
-            className="w-full border border-gray-200 rounded px-3 py-2 text-sm"
             placeholder="例: YouTube 動画概要欄"
           />
-        </Field>
 
-        <Field label="ref_code（URL に出る識別子）">
-          <input
+          <Input
+            label="ref_code（URL に出る識別子）"
             value={form.refCode}
             onChange={(e) => setForm({ ...form, refCode: e.target.value })}
             disabled={refCodeLocked}
-            className="w-full border border-gray-200 rounded px-3 py-2 text-sm font-mono disabled:bg-gray-50 disabled:text-gray-500"
+            className="font-mono"
             placeholder="例: youtube"
           />
           {refCodeLocked && (
@@ -145,136 +149,94 @@ export default function EditRouteModal({
               既に流入があった ref を登録中のため、ref_code は変更できません。
             </p>
           )}
-        </Field>
 
-        <Field label="自動付与タグ（任意）">
-          <select
+          <div>
+          <Select
+            label="自動付与タグ（任意）"
             value={form.tagId ?? ''}
-            onChange={(e) => setForm({ ...form, tagId: e.target.value || null })}
-            className="w-full border border-gray-200 rounded px-3 py-2 text-sm"
-          >
-            <option value="">— 設定なし —</option>
-            {tags.map((tag) => (
-              <option key={tag.id} value={tag.id}>
-                {tag.name}
-              </option>
-            ))}
-          </select>
+            onValueChange={(value) => setForm({ ...form, tagId: value || null })}
+            placeholder="— 設定なし —"
+            items={Object.fromEntries(tags.map((tag) => [tag.id, tag.name]))}
+          />
           <p className="text-xs text-gray-500 mt-1">
             友だち追加時にこのタグを自動付与します。タグ未作成の場合は先にタグを作成してください。
           </p>
-        </Field>
+          </div>
 
-        <Field label="送り先 Pool">
-          <select
+          <Select
+            label="送り先 Pool"
             value={form.poolId ?? ''}
-            onChange={(e) => setForm({ ...form, poolId: e.target.value || null })}
-            className="w-full border border-gray-200 rounded px-3 py-2 text-sm"
-          >
-            {pools.map((p) => {
+            onValueChange={(value) => setForm({ ...form, poolId: value || null })}
+            items={Object.fromEntries(pools.map((p) => {
               const members = poolMembers[p.id] ?? []
               const memberText =
                 members.length === 0
                   ? '（アカウント未所属）'
                   : `— ${members.join(', ')}`
-              return (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.slug === 'main' ? '（既定）' : ''} {memberText}
-                </option>
-              )
-            })}
-          </select>
-        </Field>
+              return [p.id, `${p.name}${p.slug === 'main' ? '（既定）' : ''} ${memberText}`]
+            }))}
+          />
 
-        <Field label="起動シナリオ（任意）">
-          <select
+          <Select
+            label="起動シナリオ（任意）"
             value={form.scenarioId ?? ''}
-            onChange={(e) => setForm({ ...form, scenarioId: e.target.value || null })}
-            className="w-full border border-gray-200 rounded px-3 py-2 text-sm"
-          >
-            <option value="">— 設定なし —</option>
-            {scenarios.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </Field>
+            onValueChange={(value) => setForm({ ...form, scenarioId: value || null })}
+            placeholder="— 設定なし —"
+            items={Object.fromEntries(scenarios.map((scenario) => [scenario.id, scenario.name]))}
+          />
 
-        <Field label="即時 push テンプレ（任意）">
-          <select
+          <Select
+            label="即時 push テンプレ（任意）"
             value={form.introTemplateId ?? ''}
-            onChange={(e) => setForm({ ...form, introTemplateId: e.target.value || null })}
-            className="w-full border border-gray-200 rounded px-3 py-2 text-sm"
-          >
-            <option value="">— 設定なし —</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </Field>
+            onValueChange={(value) => setForm({ ...form, introTemplateId: value || null })}
+            placeholder="— 設定なし —"
+            items={Object.fromEntries(templates.map((template) => [template.id, template.name]))}
+          />
 
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
+            label="アカウント標準の友だち追加時設定も実行する（並走モード）"
             checked={form.runAccountFriendAddScenarios ?? true}
-            onChange={(e) => {
+            onCheckedChange={(checked) => {
               setForm({
                 ...form,
-                runAccountFriendAddScenarios: e.target.checked,
+                runAccountFriendAddScenarios: checked,
               })
               setWarning(null)
             }}
-            className="mt-0.5"
           />
-          <span>
-            アカウント標準の友だち追加時設定も実行する（並走モード）
-            <span className="block text-xs text-gray-500 mt-0.5">
-              OFF にするとアカウント標準シナリオは抑止され、このリンクの設定だけが流れます。
-            </span>
-          </span>
-        </label>
+          <p className="text-xs text-kumo-subtle">OFF にするとアカウント標準シナリオは抑止され、このリンクの設定だけが流れます。</p>
 
         {warning && (
-          <div className="p-3 rounded bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
-            {warning}
+          <Banner variant="alert" title="配信されない設定です" description={warning}>
             <div className="mt-2">
-              <button
+              <Button
+                type="button"
+                size="xs"
+                variant="primary"
                 onClick={doSave}
+                loading={submitting}
                 disabled={submitting}
-                className="text-xs px-2 py-1 rounded bg-yellow-600 text-white disabled:opacity-50"
               >
                 それでも保存
-              </button>
+              </Button>
             </div>
-          </div>
+          </Banner>
         )}
+        </div>
 
         <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
-          <button onClick={onClose} className="text-sm px-3 py-1.5 text-gray-600">
-            キャンセル
-          </button>
-          <button
+          <Button type="button" variant="secondary" onClick={onClose}>キャンセル</Button>
+          <Button
+            type="button"
+            variant="primary"
             onClick={onSubmit}
+            loading={submitting}
             disabled={submitting || !form.name || !form.refCode}
-            className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white disabled:opacity-50"
           >
-            {submitting ? '保存中…' : isNew ? '作成' : '保存'}
-          </button>
+            {isNew ? '作成' : '保存'}
+          </Button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-      {children}
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }

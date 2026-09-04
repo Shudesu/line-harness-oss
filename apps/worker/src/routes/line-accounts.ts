@@ -19,7 +19,8 @@ import {
 } from '../services/follower-import.js';
 import type { FollowerImportClient } from '../services/follower-import.js';
 import type { Env } from '../index.js';
-import { monthStartJst } from '../services/quota.js';
+import { countAccountMonthlyMessages, jstYyyyMmDd } from '../services/quota.js';
+import { countDeliverableAudience } from '../services/quota-alert.js';
 
 const lineAccounts = new Hono<Env>();
 
@@ -111,17 +112,10 @@ lineAccounts.get('/api/line-accounts', async (c) => {
              INNER JOIN friends f ON f.id = fs.friend_id
              WHERE fs.status = 'active' AND f.line_account_id = ?`,
           ).bind(item.id).first<{ count: number }>(),
-          db.prepare(
-            // 「今月送信」(messagesThisMonth) は LINE 公式ダッシュボードの「配信済みの無料メッセージ数」と
-            // 揃える設計: push 系のみ + 当月 1 日 00:00 以降。reply API 経由 (1-on-1 chat) は LINE quota 外なので
-            // delivery_type='push' で除外。以前は date('now', '-30 days') の rolling window で月初に bias 残って
-            // 公式 dashboard と数桁ズレてた (例: 公式 10 通 vs UI 10,609 通) → start of month に揃えた。
-            // month start is computed in JST to match created_at (SQLite's
-            // date('now') is UTC and lags 9h behind on the 1st of the month).
-            `SELECT COUNT(*) as count FROM messages_log ml
-             INNER JOIN friends f ON f.id = ml.friend_id
-             WHERE ml.direction = 'outgoing' AND (ml.delivery_type IS NULL OR ml.delivery_type = 'push') AND ml.created_at >= ? AND f.line_account_id = ?`,
-          ).bind(monthStartJst(), item.id).first<{ count: number }>(),
+          // 「今月送信」(messagesThisMonth) は LINE 公式ダッシュボードの「配信済みの無料メッセージ数」に
+          // 近い概算 (マルチアカウント運用では NULL プール分だけ上振れする —
+          // countAccountMonthlyMessages の注意書き参照)。定義は services/quota.ts に一本化。
+          countAccountMonthlyMessages(db, item.id),
         ]);
 
         return {
@@ -132,7 +126,7 @@ lineAccounts.get('/api/line-accounts', async (c) => {
           stats: {
             friendCount: friendCount?.count ?? 0,
             activeScenarios: scenarioCount?.count ?? 0,
-            messagesThisMonth: msgCount?.count ?? 0,
+            messagesThisMonth: msgCount,
           },
         };
       }),
@@ -140,6 +134,167 @@ lineAccounts.get('/api/line-accounts', async (c) => {
     return c.json({ success: true, data: results });
   } catch (err) {
     console.error('GET /api/line-accounts error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+/**
+ * LINE's insight endpoints have a low rate limit (60 requests/hour), and a
+ * followers insight that reached status 'ready' for a past date never changes
+ * again — so 'ready' results are kept in the Workers Cache for 6h to stop
+ * dashboard reloads from burning the budget. Non-ready results are never
+ * cached (LINE finishes aggregating during the day and we must retry).
+ * caches.default is absent under vitest/node, where the guard falls through
+ * to the live (mocked) client.
+ */
+async function getFollowersInsightCached(
+  client: LineClient,
+  lineAccountId: string,
+  date: string,
+): Promise<Awaited<ReturnType<LineClient['getFollowersInsight']>>> {
+  type Insight = Awaited<ReturnType<LineClient['getFollowersInsight']>>;
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  const key = `https://line-harness.internal/insight-cache/${encodeURIComponent(lineAccountId)}/${date}`;
+  if (cache) {
+    try {
+      const hit = await cache.match(key);
+      if (hit) return (await hit.json()) as Insight;
+    } catch {
+      // Cache read failures must never break the endpoint.
+    }
+  }
+  const insight = await client.getFollowersInsight(date);
+  if (cache && insight.status === 'ready') {
+    try {
+      await cache.put(
+        key,
+        new Response(JSON.stringify(insight), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=21600' },
+        }),
+      );
+    } catch {
+      // Best-effort: a failed put just means the next request refetches.
+    }
+  }
+  return insight;
+}
+
+// GET /api/line-accounts/delivery-health — per-account broadcast-health snapshot
+// for the dashboard: LINE plan quota vs. this month's consumption, follower /
+// block counts with day-over-day deltas, and the harness-side monthly send count.
+//
+// Born from the 2026-09-01 incident where two accounts ran out of monthly quota
+// and every all-target send failed silently — the quota was visible nowhere in
+// the UI. quotaAlert flags the state where the remaining quota can no longer
+// cover one all-target broadcast (remaining < deliverable audience).
+//
+// IMPORTANT: declared BEFORE the /:id routes below so Hono matches the literal
+// "delivery-health" segment first (same ordering rule as PATCH /order).
+lineAccounts.get('/api/line-accounts/delivery-health', async (c) => {
+  try {
+    const db = c.env.DB;
+    const items = (await getLineAccounts(db)).filter((item) => item.is_active);
+    // audience フォールバックの NULL 行ポリシーは監視 (ban-monitor) ・送信ガードと
+    // 同じ定義に揃える: 単一アカウント運用では legacy NULL 行こそが友だちの本体。
+    // ここだけ厳密一致で数えると、insight 未取得時に audience≈0 → quotaAlert=false
+    // となり、ban-monitor が warning を出している状態でダッシュボードだけ正常表示になる。
+    const singleAccountInstall = items.length <= 1;
+    // LINE's followers insight is only 'ready' for completed JST days: ask for
+    // yesterday, and the day before for the day-over-day delta.
+    const insightDate = jstYyyyMmDd(1);
+    const prevInsightDate = jstYyyyMmDd(2);
+
+    const accounts = await Promise.all(
+      items.map(async (account) => {
+        const client = new LineClient(account.channel_access_token);
+        const [quotaRes, consumptionRes, insightRes, prevInsightRes, msgCountRes, friendCountRes] =
+          await Promise.allSettled([
+            client.getMessageQuota(),
+            client.getMessageQuotaConsumption(),
+            getFollowersInsightCached(client, account.id, insightDate),
+            getFollowersInsightCached(client, account.id, prevInsightDate),
+            countAccountMonthlyMessages(db, account.id),
+            countDeliverableAudience(db, account.id, singleAccountInstall),
+          ]);
+
+        // Partial failures degrade to null fields (one revoked token must not
+        // blank the whole dashboard). take() records every failure in errors
+        // so value extraction and error bookkeeping cannot drift apart, and
+        // the UI can say 取得失敗 instead of rendering a silent zero.
+        const errors: string[] = [];
+        const take = <T>(r: PromiseSettledResult<T>, name: string): T | null => {
+          if (r.status === 'fulfilled') return r.value;
+          errors.push(name);
+          return null;
+        };
+
+        const quota = take(quotaRes, 'quota');
+        const consumptionData = take(consumptionRes, 'consumption');
+        const insightRaw = take(insightRes, 'insight');
+        const prevInsightRaw = take(prevInsightRes, 'prevInsight');
+        const messagesThisMonth = take(msgCountRes, 'messagesThisMonth');
+        const deliverableFriendCount = take(friendCountRes, 'friendCount');
+
+        const limit =
+          quota?.type === 'limited' && typeof quota.value === 'number' ? quota.value : null;
+        const consumption = consumptionData?.totalUsage ?? null;
+        const remaining =
+          limit !== null && consumption !== null ? Math.max(0, limit - consumption) : null;
+
+        // 'unready' (LINE has not aggregated the day yet) is a distinct state
+        // from a failed call: the UI must render "集計待ち", not "正常".
+        const insightStatus: 'ready' | 'unready' | 'error' =
+          insightRaw === null ? 'error' : insightRaw.status === 'ready' ? 'ready' : 'unready';
+        const insight = insightStatus === 'ready' ? insightRaw : null;
+        const prevInsight = prevInsightRaw?.status === 'ready' ? prevInsightRaw : null;
+        const followers = insight?.followers ?? null;
+        const targetedReaches = insight?.targetedReaches ?? null;
+        const blocks = insight?.blocks ?? null;
+        const prevFollowers = prevInsight?.followers ?? null;
+        const prevBlocks = prevInsight?.blocks ?? null;
+
+        // "全員配信が不可能" check: an all-target broadcast costs one message per
+        // deliverable friend — targetedReaches (followers minus blocked). When
+        // the insight is unavailable, fall back to the DB following count
+        // (close to targetedReaches; the raw followers number would include
+        // blocked users and over-alert). remaining === 0 always alerts: with
+        // nothing left to send, no audience estimate is needed to know bulk
+        // sends will fail.
+        const audience = targetedReaches ?? deliverableFriendCount ?? null;
+        const quotaAlert =
+          quota?.type === 'limited' &&
+          remaining !== null &&
+          (remaining === 0 || (audience !== null && remaining < audience));
+
+        return {
+          lineAccountId: account.id,
+          name: account.name,
+          quota: {
+            type: quota?.type ?? null,
+            limit,
+            consumption,
+            remaining,
+          },
+          quotaAlert,
+          insight: {
+            status: insightStatus,
+            date: insight ? insightDate : null,
+            followers,
+            targetedReaches,
+            blocks,
+            followersDelta:
+              followers !== null && prevFollowers !== null ? followers - prevFollowers : null,
+            blocksDelta: blocks !== null && prevBlocks !== null ? blocks - prevBlocks : null,
+          },
+          messagesThisMonth,
+          errors,
+        };
+      }),
+    );
+
+    return c.json({ success: true, data: { insightDate, accounts } });
+  } catch (err) {
+    console.error('GET /api/line-accounts/delivery-health error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

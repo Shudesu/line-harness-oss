@@ -9,6 +9,7 @@ import {
 import type { Broadcast as DbBroadcast, BroadcastMessageType, BroadcastTargetType } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 import { processBroadcastSend, buildMessage, processQueuedBroadcasts } from '../services/broadcast.js';
+import { LinePlanQuotaError } from '../services/quota-alert.js';
 import {
   getQuotaUsage,
   wouldExceedMonthlyQuota,
@@ -133,6 +134,8 @@ function serializeBroadcast(row: DbBroadcast) {
     failedAccountIds: parseJsonArray(r.failed_account_ids),
     // 046 以前の行/未マイグレーション環境では undefined → 従来挙動 (ON) 扱い
     trackLinks: row.track_links === undefined ? true : row.track_links !== 0,
+    // 直近の送信失敗理由 (クォータ不足ガード等)。送信成功で null に戻る。
+    lastError: (r.last_error as string | undefined) ?? null,
     createdAt: row.created_at,
   };
 }
@@ -843,6 +846,12 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     const result = await getBroadcastById(c.env.DB, id);
     return c.json({ success: true, data: result ? serializeBroadcast(result) : null });
   } catch (err) {
+    // LINE プランのクォータ不足ガード (services/broadcast.ts) の typed error。
+    // オペレーターには 500 ではなく理由を返す (詳細は broadcasts.last_error にも
+    // 記録済み)。
+    if (err instanceof LinePlanQuotaError) {
+      return c.json({ success: false, error: 'line_plan_quota_insufficient' }, 403);
+    }
     console.error('POST /api/broadcasts/:id/send error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }

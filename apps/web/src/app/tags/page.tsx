@@ -1,20 +1,29 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { PlusIcon, TagIcon, TrashIcon } from '@phosphor-icons/react'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 import type { Tag } from '@line-crm/shared'
 import { api, ApiError } from '@/lib/api'
 import Header from '@/components/layout/header'
 import TagBadge from '@/components/friends/tag-badge'
 
 const PRESET_COLORS = [
-  '#3B82F6', // blue (server default)
-  '#10B981', // green
-  '#F59E0B', // amber
-  '#EF4444', // red
-  '#8B5CF6', // purple
-  '#EC4899', // pink
-  '#06B6D4', // cyan
-  '#6B7280', // gray
+  '#3B82F6',
+  '#10B981',
+  '#F59E0B',
+  '#EF4444',
+  '#8B5CF6',
+  '#EC4899',
+  '#06B6D4',
+  '#6B7280',
 ]
 
 function TagMileageEditor({ tag, onSaved }: { tag: Tag; onSaved: () => void }) {
@@ -51,64 +60,64 @@ function TagMileageEditor({ tag, onSaved }: { tag: Tag; onSaved: () => void }) {
 
   return (
     <>
-      <td className="px-3 py-3">
-        <input
+      <Table.Cell>
+        <Input
           aria-label={`${tag.name}の獲得マイル`}
           type="number"
           min={0}
           step={1}
+          size="sm"
           value={reward}
-          onChange={(e) => setReward(e.target.value)}
-          className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+          onChange={(event) => setReward(event.target.value)}
+          className="w-20 tabular-nums"
         />
-      </td>
-      <td className="px-3 py-3">
-        <input
+      </Table.Cell>
+      <Table.Cell>
+        <Input
           aria-label={`${tag.name}の紹介者マイル`}
           type="number"
           min={0}
           step={1}
+          size="sm"
           value={referralReward}
-          onChange={(e) => setReferralReward(e.target.value)}
-          className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+          onChange={(event) => setReferralReward(event.target.value)}
+          className="w-20 tabular-nums"
         />
-      </td>
-      <td className="px-3 py-3">
+      </Table.Cell>
+      <Table.Cell>
         <div className="flex items-center gap-1">
-          <input
+          <Input
             aria-label={`${tag.name}の還元倍率`}
             type="number"
             min={0.1}
             max={10}
             step={0.1}
+            size="sm"
             placeholder="なし"
             value={multiplier}
-            onChange={(e) => setMultiplier(e.target.value)}
-            className="w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+            onChange={(event) => setMultiplier(event.target.value)}
+            className="w-20 tabular-nums"
           />
-          <span className="text-xs text-gray-400">倍</span>
+          <span className="text-xs text-kumo-subtle">倍</span>
         </div>
-      </td>
-      <td className="px-3 py-3">
-        <input
+      </Table.Cell>
+      <Table.Cell>
+        <Input
           aria-label={`${tag.name}の倍率優先度`}
           type="number"
           min={0}
           max={1000}
+          size="sm"
           value={priority}
-          onChange={(e) => setPriority(e.target.value)}
-          className="w-16 px-2 py-1.5 text-sm border border-gray-300 rounded-md tabular-nums"
+          onChange={(event) => setPriority(event.target.value)}
+          className="w-16 tabular-nums"
         />
-      </td>
-      <td className="px-3 py-3 text-right whitespace-nowrap">
-        <button
-          onClick={save}
-          disabled={saving}
-          className="px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50 rounded-md disabled:opacity-40"
-        >
-          {saving ? '保存中' : 'マイル保存'}
-        </button>
-      </td>
+      </Table.Cell>
+      <Table.Cell className="text-right whitespace-nowrap">
+        <Button type="button" size="xs" variant="ghost" loading={saving} onClick={save}>
+          マイル保存
+        </Button>
+      </Table.Cell>
     </>
   )
 }
@@ -117,18 +126,19 @@ export default function TagsPage() {
   const [items, setItems] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState(PRESET_COLORS[0])
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Tag | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await api.tags.list({ withCounts: true })
-      if (res.success) setItems(res.data)
+      const response = await api.tags.list({ withCounts: true })
+      if (response.success) setItems(response.data)
     } catch {
       setError('読み込みに失敗しました')
     } finally {
@@ -142,7 +152,7 @@ export default function TagsPage() {
     if (saving) return
     const name = newName.trim()
     if (!name) return
-    if (items.some((t) => t.name === name)) {
+    if (items.some((tag) => tag.name === name)) {
       setError(`タグ「${name}」は既に存在します`)
       return
     }
@@ -152,11 +162,11 @@ export default function TagsPage() {
       await api.tags.create({ name, color: newColor })
       setNewName('')
       setCreating(false)
-      load()
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
+      await load()
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 409) {
         setError(`タグ「${name}」は既に存在します`)
-        load()
+        await load()
       } else {
         setError('作成に失敗しました')
       }
@@ -165,153 +175,224 @@ export default function TagsPage() {
     }
   }
 
-  const handleDelete = async (tag: Tag) => {
-    const count = tag.friendCount ?? 0
-    const message = count > 0
-      ? `タグ「${tag.name}」は ${count} 人の友だちに付与されています。\n削除すると全員からこのタグが外れます。よろしいですか？`
-      : `タグ「${tag.name}」を削除しますか？`
-    if (!confirm(message)) return
+  const handleDelete = async () => {
+    if (!deleteTarget || deleting) return
+    setDeleting(true)
     setError('')
     try {
-      await api.tags.delete(tag.id)
-      load()
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        setError(`タグ「${tag.name}」はアフィリエイトオファー等で使用中のため削除できません`)
+      await api.tags.delete(deleteTarget.id)
+      setDeleteTarget(null)
+      await load()
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 409) {
+        setError(`タグ「${deleteTarget.name}」はアフィリエイトオファー等で使用中のため削除できません`)
       } else {
         setError('削除に失敗しました')
       }
+      setDeleteTarget(null)
+    } finally {
+      setDeleting(false)
     }
   }
+
+  const deleteDescription = deleteTarget
+    ? (deleteTarget.friendCount ?? 0) > 0
+      ? `「${deleteTarget.name}」は ${deleteTarget.friendCount} 人の友だちに付与されています。削除すると全員から外れます。`
+      : `「${deleteTarget.name}」を削除します。この操作は取り消せません。`
+    : ''
 
   return (
     <div>
       <Header
         title="タグ管理"
-        description="本人のタグ獲得マイル、紹介した友だちがタグを獲得した時の紹介者マイル、今後の行動倍率を設定できます。反映は非同期です。"
-        action={
-          <button
-            onClick={() => { setCreating(!creating); setError('') }}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
+        description="本人のタグ獲得マイル、紹介者マイル、今後の行動倍率を管理します。"
+        action={(
+          <Button
+            type="button"
+            variant="primary"
+            icon={PlusIcon}
+            onClick={() => {
+              setCreating((current) => !current)
+              setError('')
+            }}
           >
-            + 新規タグ
-          </button>
-        }
+            新規タグ
+          </Button>
+        )}
       />
 
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
+      {error ? (
+        <Banner
+          className="mb-4"
+          variant="error"
+          title="操作を完了できませんでした"
+          description={error}
+        />
+      ) : null}
 
-      {creating && (
-        <div className="mb-4 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">タグ名</label>
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreate() }}
-                placeholder="例: 見込み客"
-                autoFocus
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              />
-            </div>
+      {creating ? (
+        <LayerCard className="mb-4 p-5">
+          <div className="grid items-end gap-4 lg:grid-cols-[minmax(220px,1fr)_auto_auto]">
+            <Input
+              label="タグ名"
+              type="text"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void handleCreate() }}
+              placeholder="例: 見込み客"
+              autoFocus
+            />
+
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">色</label>
-              <div className="flex items-center gap-1.5">
-                {PRESET_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setNewColor(c)}
-                    className={`w-7 h-7 rounded-full transition-transform ${newColor === c ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : 'hover:scale-110'}`}
-                    style={{ backgroundColor: c }}
-                    aria-label={`色 ${c}`}
+              <p className="mb-2 text-sm font-medium text-kumo-default">色</p>
+              <div className="flex items-center gap-2">
+                {PRESET_COLORS.map((color) => (
+                  <Button
+                    key={color}
+                    type="button"
+                    shape="circle"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setNewColor(color)}
+                    className={newColor === color ? 'ring-2 ring-kumo-focus ring-offset-2' : ''}
+                    style={{ backgroundColor: color }}
+                    aria-label={`色 ${color}`}
+                    aria-pressed={newColor === color}
                   />
                 ))}
-                <input
+                <Input
                   type="color"
+                  size="sm"
                   value={newColor}
-                  onChange={(e) => setNewColor(e.target.value)}
-                  className="w-7 h-7 p-0 border border-gray-300 rounded cursor-pointer"
-                  title="カスタム色"
+                  onChange={(event) => setNewColor(event.target.value)}
+                  className="w-9 cursor-pointer p-1"
+                  aria-label="カスタム色"
                 />
               </div>
             </div>
+
             <div className="flex gap-2">
-              <button
+              <Button
+                type="button"
+                variant="primary"
+                loading={saving}
+                disabled={!newName.trim()}
                 onClick={handleCreate}
-                disabled={saving || !newName.trim()}
-                className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-40"
-                style={{ backgroundColor: '#06C755' }}
               >
-                {saving ? '作成中...' : '作成'}
-              </button>
-              <button
-                onClick={() => { setCreating(false); setNewName('') }}
-                className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                作成
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setCreating(false)
+                  setNewName('')
+                }}
               >
                 キャンセル
-              </button>
+              </Button>
             </div>
           </div>
-        </div>
-      )}
+        </LayerCard>
+      ) : null}
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <LayerCard className="overflow-hidden p-0">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1020px]">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">タグ</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">友だち数</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">作成日</th>
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">獲得マイル</th>
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">紹介者マイル</th>
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">行動倍率</th>
-                <th className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase">優先度</th>
-                <th className="px-3 py-3" />
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
+          <Table className="min-w-[1020px]">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>タグ</Table.Head>
+                <Table.Head>友だち数</Table.Head>
+                <Table.Head>作成日</Table.Head>
+                <Table.Head>獲得マイル</Table.Head>
+                <Table.Head>紹介者マイル</Table.Head>
+                <Table.Head>行動倍率</Table.Head>
+                <Table.Head>優先度</Table.Head>
+                <Table.Head />
+                <Table.Head />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {loading ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">読み込み中...</td></tr>
+                <Table.Row>
+                  <Table.Cell colSpan={9} className="py-12 text-center">
+                    <span className="inline-flex items-center gap-2 text-sm text-kumo-subtle">
+                      <Loader size="sm" /> 読み込み中
+                    </span>
+                  </Table.Cell>
+                </Table.Row>
               ) : items.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">タグがありません</td></tr>
+                <Table.Row>
+                  <Table.Cell colSpan={9} className="p-0">
+                    <Empty
+                      size="sm"
+                      icon={<TagIcon size={32} />}
+                      title="タグがありません"
+                      description="最初のタグを作成すると、友だちの分類や自動化に利用できます。"
+                      contents={(
+                        <Button type="button" variant="primary" icon={PlusIcon} onClick={() => setCreating(true)}>
+                          新規タグ
+                        </Button>
+                      )}
+                    />
+                  </Table.Cell>
+                </Table.Row>
               ) : (
-                items.map((t) => (
-                  <tr key={t.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <TagBadge tag={t} />
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700 tabular-nums">
-                      {t.friendCount ?? 0}
-                      <span className="text-xs text-gray-400 ml-0.5">人</span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-500">
-                      {t.createdAt ? new Date(t.createdAt).toLocaleDateString('ja-JP') : ''}
-                    </td>
-                    <TagMileageEditor tag={t} onSaved={load} />
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => handleDelete(t)}
-                        className="px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 rounded-md"
+                items.map((tag) => (
+                  <Table.Row key={tag.id}>
+                    <Table.Cell><TagBadge tag={tag} /></Table.Cell>
+                    <Table.Cell className="tabular-nums text-kumo-default">
+                      {tag.friendCount ?? 0}<span className="ml-0.5 text-xs text-kumo-subtle">人</span>
+                    </Table.Cell>
+                    <Table.Cell className="text-xs text-kumo-subtle">
+                      {tag.createdAt ? new Date(tag.createdAt).toLocaleDateString('ja-JP') : ''}
+                    </Table.Cell>
+                    <TagMileageEditor tag={tag} onSaved={load} />
+                    <Table.Cell className="text-right whitespace-nowrap">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="secondary-destructive"
+                        icon={TrashIcon}
+                        onClick={() => setDeleteTarget(tag)}
                       >
                         削除
-                      </button>
-                    </td>
-                  </tr>
+                      </Button>
+                    </Table.Cell>
+                  </Table.Row>
                 ))
               )}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table>
         </div>
-      </div>
+      </LayerCard>
+
+      <Dialog.Root
+        role="alertdialog"
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteTarget(null)
+        }}
+      >
+        <Dialog size="base" className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">タグを削除しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">
+            {deleteDescription}
+          </Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
+            <Dialog.Close
+              render={(props) => (
+                <Button {...props} type="button" variant="secondary" disabled={deleting}>
+                  キャンセル
+                </Button>
+              )}
+            />
+            <Button type="button" variant="destructive" loading={deleting} onClick={handleDelete}>
+              削除する
+            </Button>
+          </div>
+        </Dialog>
+      </Dialog.Root>
     </div>
   )
 }

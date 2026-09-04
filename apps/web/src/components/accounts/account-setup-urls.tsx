@@ -1,6 +1,5 @@
-'use client'
-
-import { useState } from 'react'
+import { ClipboardText } from '@cloudflare/kumo/components/clipboard-text'
+import { Input } from '@cloudflare/kumo/components/input'
 import { getApiBase } from '@/lib/api-base'
 
 interface Props {
@@ -58,42 +57,17 @@ export default function AccountSetupUrls({ liffId, heading }: Props) {
 }
 
 function UrlRow({ label, hint, url }: { label: string; hint: string; url: string }) {
-  const [copied, setCopied] = useState(false)
-  const onCopy = async () => {
-    if (!url) return
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    } catch {
-      // navigator.clipboard requires HTTPS / secure context. If it ever fails
-      // the user can still select-copy from the visible text.
-    }
-  }
-
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs font-medium text-gray-600">{label}</span>
-        <span className="text-[10px] text-gray-400">{hint}</span>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-kumo-default">{label}</span>
+        <span className="text-right text-[10px] text-kumo-subtle">{hint}</span>
       </div>
-      <div className="flex items-stretch gap-1">
-        <input
-          readOnly
-          value={url}
-          placeholder="—"
-          onFocus={(e) => e.currentTarget.select()}
-          className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs font-mono bg-gray-50 text-gray-700 truncate"
-        />
-        <button
-          type="button"
-          onClick={onCopy}
-          disabled={!url}
-          className="px-2 rounded text-xs font-medium border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {copied ? '✓' : 'コピー'}
-        </button>
-      </div>
+      {url ? (
+        <ClipboardText size="sm" text={url} tooltip={{ text: 'コピー', copiedText: 'コピーしました' }} labels={{ copyAction: `${label}をコピー` }} />
+      ) : (
+        <Input aria-label={label} size="sm" value="" placeholder="—" disabled readOnly />
+      )}
     </div>
   )
 }

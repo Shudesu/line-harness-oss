@@ -7,6 +7,11 @@ import Header from '@/components/layout/header'
 import { api } from '@/lib/api'
 import { CanvasEditor, type Area } from '@/components/rich-menus/canvas-editor'
 import { AreaProperties } from '@/components/rich-menus/area-properties'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input } from '@cloudflare/kumo/components/input'
 
 type Page = {
   id: string
@@ -98,6 +103,7 @@ function Editor({
   const [unpublishing, setUnpublishing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [imageVersion, setImageVersion] = useState(0)
+  const [pendingConfirm, setPendingConfirm] = useState<{ kind: 'remove-page'; pageId: string } | { kind: 'publish' } | { kind: 'unpublish' } | null>(null)
 
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -183,7 +189,7 @@ function Editor({
     setSelectedAreaId(null)
   }
 
-  function removePage(pageId: string) {
+  function removePage(pageId: string, confirmed = false) {
     if (pages.length <= 1) {
       alert('最低 1 ページは必要です。')
       return
@@ -205,7 +211,10 @@ function Editor({
       )
       return
     }
-    if (!confirm('このページを削除しますか？')) return
+    if (!confirmed) {
+      setPendingConfirm({ kind: 'remove-page', pageId })
+      return
+    }
     const remaining = pages
       .filter((p) => p.id !== pageId)
       .map((p, i) => ({ ...p, orderIndex: i }))
@@ -254,13 +263,12 @@ function Editor({
     }
   }
 
-  async function handlePublish() {
-    if (!confirm(
-      'このリッチメニューを LINE 公式アカウントに登録します。\n\n' +
-        '※ この操作だけでは友だちのトーク画面にはまだ表示されません。\n' +
-        '友だちに見せるには、登録後に一覧画面の「友だちに表示」を実行してください。\n\n' +
-        '続行しますか？',
-    )) return
+  async function handlePublish(confirmed = false) {
+    if (!confirmed) {
+      setPendingConfirm({ kind: 'publish' })
+      return
+    }
+    setPendingConfirm(null)
     setPublishing(true)
     setError(null)
     try {
@@ -276,13 +284,12 @@ function Editor({
     }
   }
 
-  async function handleUnpublish() {
-    if (!confirm(
-      'このリッチメニューを LINE から取り下げます。\n\n' +
-        '・LINE 公式アカウント上のメニュー登録 (alias / richmenu) をすべて削除\n' +
-        '・現在このメニューを見ている友だちのトーク画面からも消えます\n\n' +
-        '取り下げ後はもう一度「LINE に登録」すれば再公開できます。\n\n続行しますか？',
-    )) return
+  async function handleUnpublish(confirmed = false) {
+    if (!confirmed) {
+      setPendingConfirm({ kind: 'unpublish' })
+      return
+    }
+    setPendingConfirm(null)
     setUnpublishing(true)
     setError(null)
     try {
@@ -386,33 +393,25 @@ function Editor({
         description={`サイズ ${SIZE_LABEL[group.size]} • ${group.status === 'published' ? 'LINE 登録済み' : '下書き'}`}
         action={
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1.5 text-sm text-gray-600 mr-2 cursor-pointer">
-              <input
-                type="checkbox"
+            <Checkbox
+                label="プレビュー"
                 checked={preview}
-                onChange={(e) => setPreview(e.target.checked)}
+                onCheckedChange={setPreview}
               />
-              プレビュー
-            </label>
-            <button
+            <Button type="button" variant="secondary" loading={saving}
               onClick={handleSave}
               disabled={saving || publishing || unpublishing || busy}
-              className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
             >
-              {saving ? '保存中...' : '下書き保存'}
-            </button>
-            <button
-              onClick={handlePublish}
+              下書き保存
+            </Button>
+            <Button type="button" variant="primary" loading={publishing}
+              onClick={() => void handlePublish()}
               disabled={saving || publishing || unpublishing || busy}
-              className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity hover:opacity-90"
-              style={{ backgroundColor: '#06C755' }}
             >
-              {publishing
-                ? 'LINE 登録中...'
-                : group.status === 'published'
+              {group.status === 'published'
                   ? 'LINE に再登録'
                   : 'LINE に登録'}
-            </button>
+            </Button>
           </div>
         }
       />
@@ -425,9 +424,7 @@ function Editor({
       </Link>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded mb-4">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="操作を完了できませんでした" description={error} />
       )}
 
       {/* タブバー */}
@@ -435,32 +432,28 @@ function Editor({
         {pages.map((p) => {
           const active = p.id === activePageId
           return (
-            <button
+            <Button
+              type="button"
+              size="sm"
+              variant={active ? 'primary' : 'secondary'}
               key={p.id}
               onClick={() => {
                 setActivePageId(p.id)
                 setSelectedAreaId(null)
               }}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                active
-                  ? 'text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              style={active ? { backgroundColor: '#06C755' } : undefined}
             >
               {p.name}
               {p.id.startsWith('tmp-') && (
                 <span className="ml-1 text-xs opacity-70">(未保存)</span>
               )}
-            </button>
+            </Button>
           )
         })}
-        <button
+        <Button type="button" size="sm" variant="secondary"
           onClick={addPage}
-          className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
         >
           + ページ追加
-        </button>
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
@@ -504,39 +497,33 @@ function Editor({
             <h2 className="text-sm font-semibold text-gray-900">メニュー設定</h2>
             <label className="block">
               <span className="text-xs font-medium text-gray-600">名前</span>
-              <input
+              <Input
+                label="名前"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />
               <p className="mt-1 text-[11px] text-gray-500">管理画面でだけ使う名前 (友だちには見えない)</p>
             </label>
             <label className="block">
               <span className="text-xs font-medium text-gray-600">トーク画面下の文言</span>
-              <input
+              <Input
+                label="トーク画面下の文言"
                 value={chatBarText}
                 onChange={(e) => setChatBarText(e.target.value)}
                 maxLength={14}
-                className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />
               <p className="mt-1 text-[11px] text-gray-500">14 文字以内 (友だちのトーク画面でメニューを開く前に表示)</p>
             </label>
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
+            <div>
+              <Checkbox
+                label="トークを開いたときにメニューを表示する"
                 checked={selected}
-                onChange={(e) => setSelected(e.target.checked)}
-                className="mt-0.5"
+                onCheckedChange={setSelected}
               />
-              <span>
-                <span className="block text-xs font-medium text-gray-700">
-                  トークを開いたときにメニューを表示する
-                </span>
-                <span className="block mt-1 text-[11px] text-gray-500">
+                <span className="block mt-1 ml-7 text-[11px] text-gray-500">
                   変更後は「LINE に登録」をやり直すと反映されます。
                 </span>
-              </span>
-            </label>
+            </div>
           </section>
 
           {/* ページ設定 (画像 upload 含む、常時表示) */}
@@ -545,12 +532,12 @@ function Editor({
               <h2 className="text-sm font-semibold text-gray-900">ページ設定</h2>
               <label className="block">
                 <span className="text-xs font-medium text-gray-600">ページ名</span>
-                <input
+                <Input
+                  label="ページ名"
                   value={activePage.name}
                   onChange={(e) =>
                     updatePage(activePage.id, { name: e.target.value })
                   }
-                  className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                 />
               </label>
               <div>
@@ -571,13 +558,13 @@ function Editor({
                     e.target.value = ''
                   }}
                 />
-                <button
+                <Button type="button" size="sm" variant="secondary"
                   onClick={() => fileInput.current?.click()}
                   disabled={busy || activePage.id.startsWith('tmp-')}
-                  className="mt-2 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="mt-2"
                 >
                   {activePage.imageR2Key ? '画像を差し替え' : '画像を選択'}
-                </button>
+                </Button>
                 <p className="mt-1.5 text-[11px] text-gray-500">
                   PNG / JPEG, {SIZE_LABEL[group.size]}, 1MB 以下
                 </p>
@@ -625,13 +612,13 @@ function Editor({
                   友だちのトーク画面からメニューが消えます。下書きに戻すので、再登録すれば復旧できます。
                 </div>
               </div>
-              <button
-                onClick={handleUnpublish}
+              <Button type="button" variant="destructive" loading={unpublishing}
+                onClick={() => void handleUnpublish()}
                 disabled={saving || publishing || unpublishing || busy}
-                className="shrink-0 px-3 py-2 text-sm font-medium border border-red-300 text-red-700 bg-white rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+                className="shrink-0"
               >
-                {unpublishing ? '取り下げ中...' : 'LINE から取り下げ'}
-              </button>
+                LINE から取り下げ
+              </Button>
             </div>
           )}
           {activePage && pages.length > 1 && (
@@ -644,12 +631,12 @@ function Editor({
                   現在表示中のページを削除します。他のページから「タブ切替」でこのページを参照している場合は事前に解除が必要です。
                 </div>
               </div>
-              <button
+              <Button type="button" variant="destructive"
                 onClick={() => removePage(activePage.id)}
-                className="shrink-0 px-3 py-2 text-sm font-medium border border-red-300 text-red-700 bg-white rounded-lg hover:bg-red-50 transition-colors"
+                className="shrink-0"
               >
                 ページ削除
-              </button>
+              </Button>
             </div>
           )}
           <div className="flex items-start justify-between gap-4 bg-white border border-red-300 rounded-lg p-4">
@@ -663,16 +650,22 @@ function Editor({
                   : '管理画面と DB から完全に削除します。元には戻せません。'}
               </div>
             </div>
-            <button
+            <Button type="button" variant="destructive"
               onClick={handleDelete}
-              className="shrink-0 px-3 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-              style={{ backgroundColor: '#dc2626' }}
+              className="shrink-0"
             >
               削除
-            </button>
+            </Button>
           </div>
         </div>
       </section>
+      <Dialog.Root role="alertdialog" open={pendingConfirm !== null} onOpenChange={(open) => { if (!open) setPendingConfirm(null) }}>
+        <Dialog>
+          <Dialog.Title>{pendingConfirm?.kind === 'publish' ? 'LINEに登録しますか？' : pendingConfirm?.kind === 'unpublish' ? 'LINEから取り下げますか？' : 'このページを削除しますか？'}</Dialog.Title>
+          <Dialog.Description className="mt-2">{pendingConfirm?.kind === 'publish' ? '登録後、友だちに見せるには一覧画面の「友だちに表示」を実行します。' : pendingConfirm?.kind === 'unpublish' ? '現在表示中の友だちのトーク画面からもメニューが消えます。' : 'ページと設定したタップ領域を削除します。'}</Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setPendingConfirm(null)}>キャンセル</Button><Button type="button" variant={pendingConfirm?.kind === 'publish' ? 'primary' : 'destructive'} onClick={() => { if (pendingConfirm?.kind === 'publish') void handlePublish(true); else if (pendingConfirm?.kind === 'unpublish') void handleUnpublish(true); else if (pendingConfirm?.kind === 'remove-page') removePage(pendingConfirm.pageId, true) }}>実行する</Button></div>
+        </Dialog>
+      </Dialog.Root>
     </main>
   )
 }

@@ -1,6 +1,6 @@
 {
   "name": "@line-harness/update-engine",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "Self-update engine for L Harness — shared between Worker (cloud-side self-update) and CLI (npx create-line-harness update)",
   "repository": {
     "type": "git",

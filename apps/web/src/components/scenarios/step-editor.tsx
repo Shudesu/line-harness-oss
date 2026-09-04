@@ -2,6 +2,9 @@
 
 import { useState } from 'react'
 import type { ScenarioStep, MessageType } from '@line-crm/shared'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
 
 interface StepEditorProps {
   step?: ScenarioStep
@@ -80,34 +83,37 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
         </label>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1">
-            <input
+            <Input
               type="number"
               min={0}
-              className="w-16 border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 text-center"
+              className="w-16 text-center"
               value={days}
               onChange={(e) => setDays(Math.max(0, parseInt(e.target.value) || 0))}
+              aria-label="待機日数"
             />
             <span className="text-sm text-gray-500">日</span>
           </div>
           <div className="flex items-center gap-1">
-            <input
+            <Input
               type="number"
               min={0}
               max={23}
-              className="w-16 border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 text-center"
+              className="w-16 text-center"
               value={hours}
               onChange={(e) => setHours(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))}
+              aria-label="待機時間"
             />
             <span className="text-sm text-gray-500">時間</span>
           </div>
           <div className="flex items-center gap-1">
-            <input
+            <Input
               type="number"
               min={0}
               max={59}
-              className="w-16 border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 text-center"
+              className="w-16 text-center"
               value={mins}
               onChange={(e) => setMins(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
+              aria-label="待機分"
             />
             <span className="text-sm text-gray-500">分</span>
           </div>
@@ -122,18 +128,15 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
         <label className="block text-xs font-medium text-gray-600 mb-2">メッセージ種別</label>
         <div className="flex gap-2">
           {(Object.keys(messageTypeLabels) as MessageType[]).map((type) => (
-            <button
+            <Button
               key={type}
               type="button"
               onClick={() => setMessageType(type)}
-              className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md border transition-colors ${
-                messageType === type
-                  ? 'border-green-500 text-green-700 bg-green-50'
-                  : 'border-gray-300 text-gray-600 bg-white hover:border-gray-400'
-              }`}
+              size="sm"
+              variant={messageType === type ? 'primary' : 'secondary'}
             >
               {messageTypeLabels[type]}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -155,9 +158,8 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
             <div className="space-y-2 mb-2">
               <div>
                 <label className="block text-xs text-gray-500 mb-1">元画像URL (originalContentUrl)</label>
-                <input
+                <Input
                   type="url"
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                   placeholder="https://example.com/image.png"
                   value={parsed.originalContentUrl ?? ''}
                   onChange={(e) => {
@@ -165,28 +167,28 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
                     const prev = parsed.previewImageUrl ?? orig
                     setMessageContent(JSON.stringify({ originalContentUrl: orig, previewImageUrl: prev }))
                   }}
+                  aria-label="元画像URL"
                 />
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">プレビュー画像URL (previewImageUrl)</label>
-                <input
+                <Input
                   type="url"
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                   placeholder="https://example.com/preview.png (空欄で元画像と同じ)"
                   value={parsed.previewImageUrl ?? ''}
                   onChange={(e) => {
                     const prev = e.target.value
                     setMessageContent(JSON.stringify({ originalContentUrl: parsed.originalContentUrl ?? '', previewImageUrl: prev }))
                   }}
+                  aria-label="プレビュー画像URL"
                 />
               </div>
             </div>
           )
         })()}
 
-        <textarea
-          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-          rows={messageType === 'flex' ? 8 : messageType === 'image' ? 3 : 4}
+        <InputArea
+          minRows={messageType === 'flex' ? 8 : messageType === 'image' ? 3 : 4}
           placeholder={
             messageType === 'text'
               ? 'メッセージテキストを入力...'
@@ -195,8 +197,9 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
               : '{"type":"bubble","body":{...}}'
           }
           value={messageContent}
-          onChange={(e) => setMessageContent(e.target.value)}
+          onValueChange={setMessageContent}
           style={{ fontFamily: messageType !== 'text' ? 'monospace' : 'inherit' }}
+          aria-label="メッセージ内容"
         />
         {messageType === 'image' && (
           <p className="text-xs text-gray-400 mt-1">上のURLフォームか、直接JSONを編集できます</p>
@@ -204,27 +207,25 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
       </div>
 
       {/* Error */}
-      {error && (
-        <p className="text-xs text-red-600">{error}</p>
-      )}
+      {error && <Banner size="sm" variant="error" title="保存できませんでした" description={error} />}
 
       {/* Actions */}
       <div className="flex gap-2 pt-1">
-        <button
+        <Button
           onClick={handleSave}
           disabled={saving}
-          className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-          style={{ backgroundColor: '#06C755' }}
+          variant="primary"
+          loading={saving}
         >
           {saving ? '保存中...' : '保存'}
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={onCancel}
           disabled={saving}
-          className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          variant="secondary"
         >
           キャンセル
-        </button>
+        </Button>
       </div>
     </div>
   )

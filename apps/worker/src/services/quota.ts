@@ -43,6 +43,61 @@ export function monthStartJst(now: Date = new Date()): string {
   return jst.toISOString().slice(0, 7) + '-01T00:00:00.000';
 }
 
+/** yyyyMMdd of the JST day `daysAgo` days in the past (0 = today). */
+export function jstYyyyMmDd(daysAgo: number, now: Date = new Date()): string {
+  const jst = new Date(now.getTime() + 9 * 3600_000 - daysAgo * 86_400_000);
+  return jst.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+/**
+ * Per-account count of messages sent this JST month, approximating LINE's
+ * official 「配信済みメッセージ数」: push-type messages_log rows (joined through
+ * friends.line_account_id — legacy rows carry no ml.line_account_id) plus the
+ * success_count of all-target broadcasts sent through LINE's broadcast API,
+ * which write no per-recipient messages_log rows (same term as getQuotaUsage
+ * below). Broadcast rows with a NULL line_account_id (single-account era) are
+ * deliberately excluded — they cannot be attributed to one account.
+ *
+ * ⚠️ 概算 (上振れ側): all-target broadcast の success_count は送信直前の
+ * `line_account_id = ? OR IS NULL` COUNT のスナップショットで、マルチアカウント
+ * 運用では共有 legacy NULL プールが各アカウントの配信に重複計上される
+ * (broadcast.ts の followerRow コメント参照 — 制限用途では over-count が安全側)。
+ * 正確な消費量は同じ delivery-health 応答の LINE 公式 consumption を見ること。
+ *
+ * Single definition shared by GET /api/line-accounts (stats.messagesThisMonth)
+ * and GET /api/line-accounts/delivery-health so the two dashboard numbers
+ * never disagree.
+ */
+export async function countAccountMonthlyMessages(
+  db: D1Database,
+  lineAccountId: string,
+  now: Date = new Date(),
+): Promise<number> {
+  const cutoff = monthStartJst(now);
+  const [logRow, bcRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT COUNT(*) as count FROM messages_log ml
+          INNER JOIN friends f ON f.id = ml.friend_id
+          WHERE ml.direction = 'outgoing'
+            AND (ml.delivery_type IS NULL OR ml.delivery_type = 'push')
+            AND ml.created_at >= ? AND f.line_account_id = ?`,
+      )
+      .bind(cutoff, lineAccountId)
+      .first<{ count: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(success_count), 0) as count FROM broadcasts
+          WHERE target_type = 'all'
+            AND line_request_id IS NOT NULL
+            AND sent_at >= ? AND line_account_id = ?`,
+      )
+      .bind(cutoff, lineAccountId)
+      .first<{ count: number }>(),
+  ]);
+  return (logRow?.count ?? 0) + (bcRow?.count ?? 0);
+}
+
 export type QuotaUsage = {
   friends: { used: number; max: number };
   monthlyMessages: { used: number; max: number };

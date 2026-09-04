@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Header from '@/components/layout/header'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Switch } from '@cloudflare/kumo/components/switch'
+import { Table } from '@cloudflare/kumo/components/table'
 import { api, type AffiliateOffer, type ConversionApprovalItem } from '@/lib/api'
 import { getApiBase } from '@/lib/api-base'
 import type { Tag, Scenario, LineAccount } from '@line-crm/shared'
@@ -167,17 +174,14 @@ export default function AffiliatesPage() {
       {/* Tab switcher */}
       <div className="mb-4 flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
         {(['affiliates', 'offers', 'approvals'] as const).map((t) => (
-          <button
+          <Button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${
-              tab === t
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
+            size="sm"
+            variant={tab === t ? 'primary' : 'ghost'}
           >
             {TAB_LABELS[t]}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -329,12 +333,12 @@ function AffiliatorsTab() {
   return (
     <div>
       <div className="mb-4 flex justify-end">
-        <button
+        <Button
           onClick={() => setCreateOpen(true)}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+          variant="primary"
         >
           + 新規作成
-        </button>
+        </Button>
       </div>
 
       {createOpen && (
@@ -360,59 +364,59 @@ function AffiliatorsTab() {
         </div>
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[900px]">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">名前</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">コード</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">友だち紐付</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">リンク数</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">クリック</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">友だち追加</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">CV</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">売上</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">参考報酬</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">率</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">状態</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
+          <Table className="w-full min-w-[900px]">
+            <Table.Header className="bg-gray-50 border-b border-gray-200">
+              <Table.Row>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">名前</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">コード</Table.Head>
+                <Table.Head className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">友だち紐付</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">リンク数</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">クリック</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">友だち追加</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">CV</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">売上</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">参考報酬</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">率</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">状態</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body className="divide-y divide-gray-200">
               {rows.map((row) => {
                 const isExpanded = selectedId === row.id
                 return (
                   <>
-                    <tr
+                    <Table.Row
                       key={row.id}
                       className={`cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                       onClick={() => handleRowClick(row.id)}
                     >
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.name}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-blue-600">{row.code}</td>
-                      <td className="px-4 py-3 text-sm text-center">
+                      <Table.Cell className="px-4 py-3 text-sm font-medium text-gray-900">{row.name}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm font-mono text-blue-600">{row.code}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-center">
                         {row.friendId
                           ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">あり</span>
                           : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">なし</span>
                         }
-                      </td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-700">{row.linkCount.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-700">{row.totalClicks.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm text-right font-semibold text-blue-600">{row.friendAdds.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">{row.totalConversions.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-700">{formatYen(row.totalRevenue)}</td>
-                      <td className="px-4 py-3 text-sm text-right font-semibold text-emerald-600">{formatYen(row.estimatedCommission)}</td>
-                      <td className="px-4 py-3 text-sm text-right text-gray-500">{row.commissionRate}%</td>
-                      <td className="px-4 py-3 text-sm">
+                      </Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-right text-gray-700">{row.linkCount.toLocaleString()}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-right text-gray-700">{row.totalClicks.toLocaleString()}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-right font-semibold text-blue-600">{row.friendAdds.toLocaleString()}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-right font-semibold text-gray-900">{row.totalConversions.toLocaleString()}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-right text-gray-700">{formatYen(row.totalRevenue)}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-right font-semibold text-emerald-600">{formatYen(row.estimatedCommission)}</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm text-right text-gray-500">{row.commissionRate}%</Table.Cell>
+                      <Table.Cell className="px-4 py-3 text-sm">
                         {row.isActive
                           ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">有効</span>
                           : <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">無効</span>
                         }
-                      </td>
-                    </tr>
+                      </Table.Cell>
+                    </Table.Row>
 
                     {/* Detail expansion row */}
                     {isExpanded && (
-                      <tr key={`${row.id}-detail`}>
-                        <td colSpan={11} className="px-6 py-5 bg-blue-50 border-t border-blue-100">
+                      <Table.Row key={`${row.id}-detail`}>
+                        <Table.Cell colSpan={11} className="px-6 py-5 bg-blue-50 border-t border-blue-100">
                           {detailLoading ? (
                             <p className="text-sm text-gray-400">読み込み中...</p>
                           ) : (
@@ -448,28 +452,28 @@ function AffiliatorsTab() {
                                 <div>
                                   <p className="text-xs font-semibold text-gray-500 uppercase mb-2">案件別内訳</p>
                                   <div className="overflow-x-auto">
-                                    <table className="min-w-[560px] text-sm">
-                                      <thead>
-                                        <tr className="text-left text-xs text-gray-400">
-                                          <th className="pb-1 pr-4">案件</th>
-                                          <th className="pb-1 pr-4 text-right">報酬単価</th>
-                                          <th className="pb-1 pr-4 text-right">承認済み</th>
-                                          <th className="pb-1 pr-4 text-right">審査中</th>
-                                          <th className="pb-1 text-right">確定報酬</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-gray-100">
+                                    <Table className="min-w-[560px] text-sm">
+                                      <Table.Header>
+                                        <Table.Row className="text-left text-xs text-gray-400">
+                                          <Table.Head className="pb-1 pr-4">案件</Table.Head>
+                                          <Table.Head className="pb-1 pr-4 text-right">報酬単価</Table.Head>
+                                          <Table.Head className="pb-1 pr-4 text-right">承認済み</Table.Head>
+                                          <Table.Head className="pb-1 pr-4 text-right">審査中</Table.Head>
+                                          <Table.Head className="pb-1 text-right">確定報酬</Table.Head>
+                                        </Table.Row>
+                                      </Table.Header>
+                                      <Table.Body className="divide-y divide-gray-100">
                                         {report.byOffer.map((o) => (
-                                          <tr key={o.offerId}>
-                                            <td className="py-1 pr-4 text-gray-700">{o.offerName}</td>
-                                            <td className="py-1 pr-4 text-right text-gray-500">{formatYen(o.rewardAmount)}</td>
-                                            <td className="py-1 pr-4 text-right font-semibold text-gray-900">{o.conversionsApproved.toLocaleString()}</td>
-                                            <td className="py-1 pr-4 text-right text-gray-500">{o.conversionsPending.toLocaleString()}</td>
-                                            <td className="py-1 text-right font-semibold text-emerald-600">{formatYen(o.confirmedReward)}</td>
-                                          </tr>
+                                          <Table.Row key={o.offerId}>
+                                            <Table.Cell className="py-1 pr-4 text-gray-700">{o.offerName}</Table.Cell>
+                                            <Table.Cell className="py-1 pr-4 text-right text-gray-500">{formatYen(o.rewardAmount)}</Table.Cell>
+                                            <Table.Cell className="py-1 pr-4 text-right font-semibold text-gray-900">{o.conversionsApproved.toLocaleString()}</Table.Cell>
+                                            <Table.Cell className="py-1 pr-4 text-right text-gray-500">{o.conversionsPending.toLocaleString()}</Table.Cell>
+                                            <Table.Cell className="py-1 text-right font-semibold text-emerald-600">{formatYen(o.confirmedReward)}</Table.Cell>
+                                          </Table.Row>
                                         ))}
-                                      </tbody>
-                                    </table>
+                                      </Table.Body>
+                                    </Table>
                                   </div>
                                 </div>
                               )}
@@ -498,24 +502,24 @@ function AffiliatorsTab() {
                                 <div>
                                   <p className="text-xs font-semibold text-gray-500 uppercase mb-2">CV ポイント別内訳</p>
                                   <div className="overflow-x-auto">
-                                    <table className="min-w-[400px] text-sm">
-                                      <thead>
-                                        <tr className="text-left text-xs text-gray-400">
-                                          <th className="pb-1 pr-4">ポイント名</th>
-                                          <th className="pb-1 pr-4 text-right">件数</th>
-                                          <th className="pb-1 text-right">売上合計</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-gray-100">
+                                    <Table className="min-w-[400px] text-sm">
+                                      <Table.Header>
+                                        <Table.Row className="text-left text-xs text-gray-400">
+                                          <Table.Head className="pb-1 pr-4">ポイント名</Table.Head>
+                                          <Table.Head className="pb-1 pr-4 text-right">件数</Table.Head>
+                                          <Table.Head className="pb-1 text-right">売上合計</Table.Head>
+                                        </Table.Row>
+                                      </Table.Header>
+                                      <Table.Body className="divide-y divide-gray-100">
                                         {report.conversionsByPoint.map((p) => (
-                                          <tr key={p.conversionPointId}>
-                                            <td className="py-1 pr-4 text-gray-700">{p.name}</td>
-                                            <td className="py-1 pr-4 text-right font-semibold text-gray-900">{p.count}</td>
-                                            <td className="py-1 text-right text-gray-700">{formatYen(p.value)}</td>
-                                          </tr>
+                                          <Table.Row key={p.conversionPointId}>
+                                            <Table.Cell className="py-1 pr-4 text-gray-700">{p.name}</Table.Cell>
+                                            <Table.Cell className="py-1 pr-4 text-right font-semibold text-gray-900">{p.count}</Table.Cell>
+                                            <Table.Cell className="py-1 text-right text-gray-700">{formatYen(p.value)}</Table.Cell>
+                                          </Table.Row>
                                         ))}
-                                      </tbody>
-                                    </table>
+                                      </Table.Body>
+                                    </Table>
                                   </div>
                                 </div>
                               )}
@@ -527,39 +531,39 @@ function AffiliatorsTab() {
                                     リンク別クリック ({links.length} 本)
                                   </p>
                                   <div className="overflow-x-auto">
-                                    <table className="min-w-[560px] text-sm">
-                                      <thead>
-                                        <tr className="text-left text-xs text-gray-400">
-                                          <th className="pb-1 pr-4">ref_code</th>
-                                          <th className="pb-1 pr-4">ラベル</th>
-                                          <th className="pb-1 pr-4">案件</th>
-                                          <th className="pb-1 pr-4 text-right">クリック</th>
-                                          <th className="pb-1">状態</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-gray-100">
+                                    <Table className="min-w-[560px] text-sm">
+                                      <Table.Header>
+                                        <Table.Row className="text-left text-xs text-gray-400">
+                                          <Table.Head className="pb-1 pr-4">ref_code</Table.Head>
+                                          <Table.Head className="pb-1 pr-4">ラベル</Table.Head>
+                                          <Table.Head className="pb-1 pr-4">案件</Table.Head>
+                                          <Table.Head className="pb-1 pr-4 text-right">クリック</Table.Head>
+                                          <Table.Head className="pb-1">状態</Table.Head>
+                                        </Table.Row>
+                                      </Table.Header>
+                                      <Table.Body className="divide-y divide-gray-100">
                                         {links.map((link) => (
-                                          <tr key={link.id}>
-                                            <td className="py-1 pr-4 font-mono text-blue-600">{link.ref_code}</td>
-                                            <td className="py-1 pr-4 text-gray-600">{link.label ?? '—'}</td>
-                                            <td className="py-1 pr-4">
+                                          <Table.Row key={link.id}>
+                                            <Table.Cell className="py-1 pr-4 font-mono text-blue-600">{link.ref_code}</Table.Cell>
+                                            <Table.Cell className="py-1 pr-4 text-gray-600">{link.label ?? '—'}</Table.Cell>
+                                            <Table.Cell className="py-1 pr-4">
                                               {link.offer_name ? (
                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                                                   {link.offer_name}
                                                 </span>
                                               ) : <span className="text-gray-400">—</span>}
-                                            </td>
-                                            <td className="py-1 pr-4 text-right font-semibold text-gray-900">{link.click_count.toLocaleString()}</td>
-                                            <td className="py-1">
+                                            </Table.Cell>
+                                            <Table.Cell className="py-1 pr-4 text-right font-semibold text-gray-900">{link.click_count.toLocaleString()}</Table.Cell>
+                                            <Table.Cell className="py-1">
                                               {link.is_active
                                                 ? <span className="text-xs text-green-600">有効</span>
                                                 : <span className="text-xs text-gray-400">無効</span>
                                               }
-                                            </td>
-                                          </tr>
+                                            </Table.Cell>
+                                          </Table.Row>
                                         ))}
-                                      </tbody>
-                                    </table>
+                                      </Table.Body>
+                                    </Table>
                                   </div>
                                 </div>
                               )}
@@ -576,47 +580,50 @@ function AffiliatorsTab() {
                                 ) : (
                                   <>
                                     <div className="overflow-x-auto">
-                                      <table className="min-w-[640px] text-sm">
-                                        <thead>
-                                          <tr className="text-left text-xs text-gray-400">
-                                            <th className="pb-1 pr-4">友だち</th>
-                                            <th className="pb-1 pr-4">追加日</th>
-                                            <th className="pb-1 pr-4">ref_code</th>
-                                            <th className="pb-1 pr-4 text-right">タッチ</th>
-                                            <th className="pb-1 pr-4 text-right">フォーム</th>
-                                            <th className="pb-1 pr-4 text-right">CV</th>
-                                            <th className="pb-1">最終行動</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100">
+                                      <Table className="min-w-[640px] text-sm">
+                                        <Table.Header>
+                                          <Table.Row className="text-left text-xs text-gray-400">
+                                            <Table.Head className="pb-1 pr-4">友だち</Table.Head>
+                                            <Table.Head className="pb-1 pr-4">追加日</Table.Head>
+                                            <Table.Head className="pb-1 pr-4">ref_code</Table.Head>
+                                            <Table.Head className="pb-1 pr-4 text-right">タッチ</Table.Head>
+                                            <Table.Head className="pb-1 pr-4 text-right">フォーム</Table.Head>
+                                            <Table.Head className="pb-1 pr-4 text-right">CV</Table.Head>
+                                            <Table.Head className="pb-1">最終行動</Table.Head>
+                                          </Table.Row>
+                                        </Table.Header>
+                                        <Table.Body className="divide-y divide-gray-100">
                                           {journeys.map((j) => {
                                             const isDup = report?.duplicateFlags.some((f) => f.friendId === j.friendId)
                                             return (
-                                              <tr key={j.friendId} className={isDup ? 'bg-amber-50' : ''}>
-                                                <td className="py-1 pr-4 text-gray-800">
+                                              <Table.Row key={j.friendId} className={isDup ? 'bg-amber-50' : ''}>
+                                                <Table.Cell className="py-1 pr-4 text-gray-800">
                                                   {isDup && <span className="mr-1">⚠</span>}
                                                   {j.displayName ?? <span className="text-gray-400 italic">不明</span>}
-                                                </td>
-                                                <td className="py-1 pr-4 text-gray-500">{formatDate(j.addedAt)}</td>
-                                                <td className="py-1 pr-4 font-mono text-xs text-blue-500">{j.refCode ?? '—'}</td>
-                                                <td className="py-1 pr-4 text-right text-gray-700">{j.touchCount}</td>
-                                                <td className="py-1 pr-4 text-right text-gray-700">{j.formCount}</td>
-                                                <td className="py-1 pr-4 text-right font-semibold text-gray-900">{j.conversionCount}</td>
-                                                <td className="py-1 text-gray-400 text-xs">{formatDate(j.lastEventAt)}</td>
-                                              </tr>
+                                                </Table.Cell>
+                                                <Table.Cell className="py-1 pr-4 text-gray-500">{formatDate(j.addedAt)}</Table.Cell>
+                                                <Table.Cell className="py-1 pr-4 font-mono text-xs text-blue-500">{j.refCode ?? '—'}</Table.Cell>
+                                                <Table.Cell className="py-1 pr-4 text-right text-gray-700">{j.touchCount}</Table.Cell>
+                                                <Table.Cell className="py-1 pr-4 text-right text-gray-700">{j.formCount}</Table.Cell>
+                                                <Table.Cell className="py-1 pr-4 text-right font-semibold text-gray-900">{j.conversionCount}</Table.Cell>
+                                                <Table.Cell className="py-1 text-gray-400 text-xs">{formatDate(j.lastEventAt)}</Table.Cell>
+                                              </Table.Row>
                                             )
                                           })}
-                                        </tbody>
-                                      </table>
+                                        </Table.Body>
+                                      </Table>
                                     </div>
                                     {journeyMore && (
-                                      <button
+                                      <Button
                                         onClick={() => { void loadMoreJourneys(row.id) }}
                                         disabled={journeyLoadingMore}
-                                        className="mt-3 px-4 py-2 text-sm text-blue-700 hover:bg-blue-100 disabled:opacity-50 rounded-md border border-blue-200"
+                                        className="mt-3"
+                                        size="sm"
+                                        variant="secondary"
+                                        loading={journeyLoadingMore}
                                       >
                                         {journeyLoadingMore ? '読み込み中...' : 'さらに読み込む'}
-                                      </button>
+                                      </Button>
                                     )}
                                   </>
                                 )}
@@ -624,14 +631,14 @@ function AffiliatorsTab() {
 
                             </div>
                           )}
-                        </td>
-                      </tr>
+                        </Table.Cell>
+                      </Table.Row>
                     )}
                   </>
                 )
               })}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table>
         </div>
       )}
     </div>
@@ -733,17 +740,11 @@ function CreateAffiliateModal({
   }, [issuedUrl])
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md bg-white rounded-lg shadow-xl p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting) onClose() }}>
+      <Dialog className="w-full max-w-md p-6">
+        <Dialog.Title className="mb-4 text-lg font-semibold text-kumo-strong">
           アフィリエイター新規作成
-        </h2>
+        </Dialog.Title>
 
         {issuedUrl ? (
           // ── Success state: show issued link with a copy button ────────────
@@ -752,25 +753,26 @@ function CreateAffiliateModal({
               アフィリエイターを作成し、初期リンクを発行しました。
             </p>
             <div className="flex items-stretch gap-2">
-              <input
+              <Input
                 readOnly
                 value={issuedUrl}
-                className="flex-1 px-3 py-2 text-sm font-mono border border-gray-300 rounded-md bg-gray-50 text-gray-800"
+                aria-label="発行済みリンク"
+                className="flex-1 font-mono"
               />
-              <button
+              <Button
                 onClick={() => { void handleCopy() }}
-                className="px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md whitespace-nowrap"
+                variant="primary"
               >
                 {copied ? 'コピー済' : 'コピー'}
-              </button>
+              </Button>
             </div>
             <div className="flex justify-end">
-              <button
+              <Button
                 onClick={onClose}
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                variant="secondary"
               >
                 閉じる
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
@@ -786,20 +788,21 @@ function CreateAffiliateModal({
                   <span className="text-sm text-gray-800">
                     {selected.displayName ?? <span className="text-gray-400 italic">不明</span>}
                   </span>
-                  <button
+                  <Button
                     onClick={() => { setSelected(null); setSearch('') }}
-                    className="text-xs text-blue-600 hover:underline"
+                    size="xs"
+                    variant="ghost"
                   >
                     変更
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div className="relative">
-                  <input
+                  <Input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="名前で検索..."
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    aria-label="LINE友だちを名前で検索"
                   />
                   {(searching || options.length > 0) && search.trim() && (
                     <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-md shadow-lg">
@@ -809,13 +812,14 @@ function CreateAffiliateModal({
                         <div className="px-3 py-2 text-sm text-gray-400">該当なし</div>
                       ) : (
                         options.map((f) => (
-                          <button
+                          <Button
                             key={f.id}
                             onClick={() => { setSelected(f); setOptions([]) }}
-                            className="block w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-blue-50"
+                            className="w-full justify-start"
+                            variant="ghost"
                           >
                             {f.displayName ?? <span className="text-gray-400 italic">不明</span>}
-                          </button>
+                          </Button>
                         ))
                       )}
                     </div>
@@ -830,14 +834,15 @@ function CreateAffiliateModal({
                 報酬率（%・省略可）
               </label>
               <div className="relative">
-                <input
+                <Input
                   type="number"
                   min={0}
                   step="0.1"
                   value={commissionRate}
                   onChange={(e) => setCommissionRate(e.target.value)}
                   placeholder="例: 10"
-                  className="w-full px-3 py-2 pr-8 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  aria-label="報酬率"
+                  className="pr-8"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">%</span>
               </div>
@@ -848,31 +853,28 @@ function CreateAffiliateModal({
               アフィリコードは推測されないよう自動でランダム生成されます（手入力は不要）。
             </p>
 
-            {formError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
-                {formError}
-              </div>
-            )}
+            {formError && <Banner size="sm" variant="error" title="作成できませんでした" description={formError} />}
 
             <div className="flex justify-end gap-2 pt-2">
-              <button
+              <Button
                 onClick={onClose}
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                variant="secondary"
               >
                 キャンセル
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => { void handleSubmit() }}
                 disabled={submitting || !selected}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-md"
+                variant="primary"
+                loading={submitting}
               >
                 {submitting ? '作成中...' : '作成'}
-              </button>
+              </Button>
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }
 
@@ -989,166 +991,135 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
   }, [submitting, name, description, rewardAmount, rewardMiles, lineAccountId, tagId, scenarioId, isActive, isEdit, initial, onSaved, onClose])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting) onClose() }}>
+      <Dialog className="w-full max-w-lg overflow-hidden p-0">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-base font-semibold text-gray-900">
+          <Dialog.Title className="text-base font-semibold text-kumo-strong">
             {isEdit ? '案件を編集' : '案件を新規作成'}
-          </h2>
-          <button
+          </Dialog.Title>
+          <Button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            size="xs"
+            shape="square"
+            variant="ghost"
             aria-label="閉じる"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </button>
+          </Button>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
-          {formError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-              {formError}
-            </div>
-          )}
+          {formError && <Banner size="sm" variant="error" title="保存できませんでした" description={formError} />}
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
               案件名 <span className="text-red-500">*</span>
             </label>
-            <input
+            <Input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="例: 無料体験申込"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="案件名"
             />
           </div>
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">説明</label>
-            <textarea
+            <InputArea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={2}
+              onValueChange={setDescription}
+              minRows={2}
               placeholder="案件の説明（任意）"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              aria-label="案件の説明"
             />
           </div>
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">報酬額（円）</label>
-            <input
+            <Input
               type="number"
               min="0"
               step="1"
               value={rewardAmount}
               onChange={(e) => setRewardAmount(e.target.value)}
               placeholder="例: 3000"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="報酬額"
             />
           </div>
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">成果承認時の付与マイル</label>
-            <input
+            <Input
               type="number"
               min="0"
               step="1"
               value={rewardMiles}
               onChange={(e) => setRewardMiles(e.target.value)}
               placeholder="例: 500"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="成果承認時の付与マイル"
             />
             <p className="mt-1 text-[11px] text-gray-400">承認された紹介1件ごとに紹介者へ付与します</p>
           </div>
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">誘導 LINE アカウント</label>
-            <select
+            <Select
               value={lineAccountId}
-              onChange={(e) => setLineAccountId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">— 選択しない —</option>
-              {accounts.map((acc) => (
-                <option key={acc.id} value={acc.id}>
-                  {acc.name}
-                </option>
-              ))}
-            </select>
+              onValueChange={(value) => setLineAccountId(value ?? '')}
+              aria-label="誘導LINEアカウント"
+              items={[{ value: '', label: '— 選択しない —' }, ...accounts.map((acc) => ({ value: acc.id, label: acc.name }))]}
+            />
           </div>
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">タグ</label>
-            <select
+            <Select
               value={tagId}
-              onChange={(e) => setTagId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">— 選択しない —</option>
-              {tags.map((tag) => (
-                <option key={tag.id} value={tag.id}>
-                  {tag.name}
-                </option>
-              ))}
-            </select>
+              onValueChange={(value) => setTagId(value ?? '')}
+              aria-label="タグ"
+              items={[{ value: '', label: '— 選択しない —' }, ...tags.map((tag) => ({ value: tag.id, label: tag.name }))]}
+            />
           </div>
 
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">シナリオ</label>
-            <select
+            <Select
               value={scenarioId}
-              onChange={(e) => setScenarioId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">— 選択しない —</option>
-              {scenarios.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+              onValueChange={(value) => setScenarioId(value ?? '')}
+              aria-label="シナリオ"
+              items={[{ value: '', label: '— 選択しない —' }, ...scenarios.map((scenario) => ({ value: scenario.id, label: scenario.name }))]}
+            />
           </div>
 
           {isEdit && (
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setIsActive((v) => !v)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  isActive ? 'bg-blue-600' : 'bg-gray-200'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    isActive ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
+              <Switch checked={isActive} onCheckedChange={setIsActive} aria-label="案件の状態" />
               <span className="text-sm text-gray-700">{isActive ? '有効' : '無効'}</span>
             </div>
           )}
         </div>
 
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200">
-          <button
+          <Button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+            variant="secondary"
           >
             キャンセル
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => { void handleSubmit() }}
             disabled={submitting}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg"
+            variant="primary"
+            loading={submitting}
           >
             {submitting ? '保存中...' : isEdit ? '更新' : '作成'}
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }
 
@@ -1221,17 +1192,14 @@ function ApprovalQueue() {
       {/* Status filter tabs */}
       <div className="flex gap-2 mb-4">
         {(['pending', 'approved', 'rejected'] as const).map((s) => (
-          <button
+          <Button
             key={s}
             onClick={() => setStatus(s)}
-            className={`px-4 py-1.5 text-sm rounded-full font-medium transition-colors ${
-              status === s
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
+            size="sm"
+            variant={status === s ? 'primary' : 'secondary'}
           >
             {s === 'pending' ? '承認待ち' : s === 'approved' ? '承認済み' : '却下済み'}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -1251,35 +1219,35 @@ function ApprovalQueue() {
         </div>
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[900px]">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">日時</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">友だち</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">アフィリエイター</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">案件</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">CV ポイント</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">金額</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">フラグ</th>
+          <Table className="w-full min-w-[900px]">
+            <Table.Header className="bg-gray-50 border-b border-gray-200">
+              <Table.Row>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">日時</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">友だち</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">アフィリエイター</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">案件</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">CV ポイント</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">金額</Table.Head>
+                <Table.Head className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">フラグ</Table.Head>
                 {status === 'pending' && (
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</th>
+                  <Table.Head className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</Table.Head>
                 )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
+              </Table.Row>
+            </Table.Header>
+            <Table.Body className="divide-y divide-gray-200">
               {items.map((item) => (
-                <tr key={item.eventId} className={item.duplicateFlag ? 'bg-amber-50' : ''}>
-                  <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                <Table.Row key={item.eventId} className={item.duplicateFlag ? 'bg-amber-50' : ''}>
+                  <Table.Cell className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
                     {formatDateTime(item.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-900">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-gray-900">
                     {item.friendName ?? <span className="text-gray-400 italic">不明</span>}
                     <span className="block text-xs font-mono text-gray-400">{item.friendId.slice(0, 8)}…</span>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-gray-700">
                     {item.affiliateName ?? '—'}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm">
                     {item.offerName ? (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                         {item.offerName}
@@ -1287,44 +1255,46 @@ function ApprovalQueue() {
                     ) : (
                       <span className="text-gray-400">—</span>
                     )}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-gray-700">
                     {item.conversionPointName ?? '—'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
                     {formatYenNullable(item.value)}
-                  </td>
-                  <td className="px-4 py-3 text-center">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-center">
                     {item.duplicateFlag ? (
                       <span className="text-amber-500 text-base" title="重複 identity_key 検出">⚠</span>
                     ) : (
                       <span className="text-gray-300">—</span>
                     )}
-                  </td>
+                  </Table.Cell>
                   {status === 'pending' && (
-                    <td className="px-4 py-3 text-center">
+                    <Table.Cell className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        <button
+                        <Button
                           onClick={() => { void handleApprove(item.eventId) }}
                           disabled={actioning === item.eventId}
-                          className="px-3 py-1 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-md"
+                          size="xs"
+                          variant="primary"
                         >
                           承認
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           onClick={() => { void handleReject(item.eventId) }}
                           disabled={actioning === item.eventId}
-                          className="px-3 py-1 text-xs font-medium text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 rounded-md"
+                          size="xs"
+                          variant="destructive"
                         >
                           却下
-                        </button>
+                        </Button>
                       </div>
-                    </td>
+                    </Table.Cell>
                   )}
-                </tr>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table>
         </div>
       )}
     </div>
@@ -1374,74 +1344,76 @@ function OffersList({
         </div>
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[800px]">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">案件名</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">説明</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">報酬額</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">付与マイル</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">LINEアカウント</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">タグ</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">シナリオ</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">状態</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
+          <Table className="w-full min-w-[800px]">
+            <Table.Header className="bg-gray-50 border-b border-gray-200">
+              <Table.Row>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">案件名</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">説明</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">報酬額</Table.Head>
+                <Table.Head className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">付与マイル</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">LINEアカウント</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">タグ</Table.Head>
+                <Table.Head className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">シナリオ</Table.Head>
+                <Table.Head className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">状態</Table.Head>
+                <Table.Head className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body className="divide-y divide-gray-200">
               {offers.map((offer) => (
-                <tr key={offer.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{offer.name}</td>
-                  <td className="px-4 py-3 text-sm text-gray-500 max-w-[200px] truncate">
+                <Table.Row key={offer.id} className="hover:bg-gray-50">
+                  <Table.Cell className="px-4 py-3 text-sm font-medium text-gray-900">{offer.name}</Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-gray-500 max-w-[200px] truncate">
                     {offer.description ?? <span className="italic text-gray-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-right font-semibold text-emerald-700">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-right font-semibold text-emerald-700">
                     {formatYenNullable(offer.rewardAmount)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-right font-semibold text-amber-600">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-right font-semibold text-amber-600">
                     {offer.rewardMiles.toLocaleString()} mile
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-gray-700">
                     {offer.lineAccountId ? accountMap.get(offer.lineAccountId) ?? offer.lineAccountId : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-gray-700">
                     {offer.tagId ? (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
                         {tagMap.get(offer.tagId) ?? offer.tagId}
                       </span>
                     ) : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-sm text-gray-700">
                     {offer.scenarioId ? scenarioMap.get(offer.scenarioId) ?? offer.scenarioId : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-center">
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-center">
                     {offer.isActive ? (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">有効</span>
                     ) : (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">無効</span>
                     )}
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <button
+                  </Table.Cell>
+                  <Table.Cell className="px-4 py-3 text-center">
+                    <Button
                       onClick={() => onEdit(offer)}
-                      className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                      size="xs"
+                      variant="ghost"
                     >
                       編集
-                    </button>
-                  </td>
-                </tr>
+                    </Button>
+                  </Table.Cell>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table>
         </div>
       )}
       <div className="mt-2 text-right">
-        <button
+        <Button
           onClick={onRefresh}
-          className="text-xs text-gray-400 hover:text-gray-600"
+          size="xs"
+          variant="ghost"
         >
           更新
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -1509,12 +1481,12 @@ function OffersTab() {
   return (
     <div>
       <div className="mb-4 flex justify-end">
-        <button
+        <Button
           onClick={handleOpenCreate}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+          variant="primary"
         >
           + 新規案件
-        </button>
+        </Button>
       </div>
 
       <OffersList

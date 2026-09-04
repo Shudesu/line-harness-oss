@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient } from "../client.js";
+import { addTestBannerToFlex } from "./test-banner.js";
 
 export function registerSendMessage(server: McpServer): void {
   server.tool(
@@ -48,23 +49,8 @@ export function registerSendMessage(server: McpServer): void {
           if (messageType === "text") {
             finalContent = `【テスト配信】\n${content}`;
           } else if (messageType === "flex") {
-            try {
-              const flex = JSON.parse(content);
-              // Wrap in a carousel with a test banner
-              finalContent = JSON.stringify({
-                type: "bubble",
-                header: {
-                  type: "box",
-                  layout: "vertical",
-                  backgroundColor: "#FFE066",
-                  paddingAll: "8px",
-                  contents: [{ type: "text", text: "⚠️ テスト配信", size: "sm", weight: "bold", color: "#333", align: "center" }],
-                },
-                ...(flex.type === "bubble" ? { body: flex.body, footer: flex.footer } : { body: { type: "box", layout: "vertical", contents: [{ type: "text", text: "テスト配信", wrap: true }] } }),
-              });
-            } catch {
-              finalContent = content;
-            }
+            // 元の Flex を保ったまま、各 bubble の header にテストバナーを足す。
+            finalContent = addTestBannerToFlex(content);
           }
         }
 

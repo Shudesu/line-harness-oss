@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { api, type MileageHistoryItem, type MileageSummary } from '@/lib/api'
+import { Button } from '@cloudflare/kumo/components/button'
+import { InputArea } from '@cloudflare/kumo/components/input'
 
 interface FriendDetail {
   id: string
@@ -261,21 +263,23 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName, 
             {onSaveNotes ? (
               <div className="p-4">
                 <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">個別メモ</h4>
-                <textarea
-                  rows={3}
+                <InputArea
+                  minRows={3}
                   value={notesValue ?? ''}
-                  onChange={(e) => onNotesChange?.(e.target.value)}
+                  onValueChange={(value) => onNotesChange?.(value)}
                   placeholder="メモを入力..."
-                  className="w-full text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-green-500 resize-none"
+                  aria-label="個別メモ"
                 />
                 <div className="mt-1.5 flex justify-end">
-                  <button
+                  <Button
                     onClick={onSaveNotes}
                     disabled={savingNotes}
-                    className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors disabled:opacity-50"
+                    size="xs"
+                    variant="secondary"
+                    loading={savingNotes}
                   >
                     {savingNotes ? '保存中...' : 'メモ保存'}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : chatStatus?.notes ? (

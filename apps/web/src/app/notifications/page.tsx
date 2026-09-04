@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Banner } from '@cloudflare/kumo/components/banner'
 import Header from '@/components/layout/header'
 import InboxFilters from '@/components/inbox/inbox-filters'
 import InboxList from '@/components/inbox/inbox-list'
@@ -158,17 +159,15 @@ export default function InboxPage() {
         }}
       />
 
-      {error && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          {error}
-        </div>
-      )}
+      {error ? <Banner variant="alert" title="最新データを取得できませんでした" description={`${error}。前回取得した内容を表示しています。`} /> : null}
 
-      {truncated && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-          未対応が {FETCH_PAGE_SIZE} 件の表示上限に到達しました。古いデータが見えていない可能性があります。サーバ側ページネーション復帰を検討してください。
-        </div>
-      )}
+      {truncated ? (
+        <Banner
+          variant="error"
+          title="表示上限に到達しました"
+          description={`未対応が${FETCH_PAGE_SIZE}件を超えています。古いデータが見えていない可能性があります。`}
+        />
+      ) : null}
 
       <InboxList
         rows={pagedRows}

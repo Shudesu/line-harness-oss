@@ -9,6 +9,7 @@ import {
   jstNow,
   updateBroadcastLineRequestId,
   createBroadcastInsight,
+  setBroadcastLastError,
 } from '@line-crm/db';
 import type { Broadcast } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
@@ -31,8 +32,145 @@ import {
   type QuotaEnv,
 } from './quota.js';
 
+import {
+  allTargetGuardAudience,
+  getLinePlanQuotaShortfall,
+  isLineMonthlyLimit429,
+  LinePlanQuotaError,
+  notifyQuotaAlert,
+  readPlanQuotaSnapshot,
+} from './quota-alert.js';
+
 const MULTICAST_BATCH_SIZE = 500;
 const PERSONALIZED_PUSH_BATCH_SIZE = 10;
+
+/**
+ * LINE プラン月間クォータの送信前ガード (2026-09-01 事故対応)。
+ * 不足が確定したら broadcasts.last_error に理由を記録し、オペレーターへ通知した
+ * 上で LinePlanQuotaError を投げる。足りていれば何もしない。
+ * クォータ確認 API の失敗は fail-open (getLinePlanQuotaShortfall 内) — 送信は
+ * 止めない。audience は lazy 関数でも渡せる (上限なしプランなら COUNT が走らない)。
+ */
+async function assertLinePlanQuota(
+  db: D1Database,
+  lineClient: LineClient,
+  broadcast: Broadcast,
+  audience: number | (() => Promise<number>),
+): Promise<void> {
+  const shortfall = await getLinePlanQuotaShortfall(lineClient, audience);
+  if (!shortfall) return;
+
+  const accountId = broadcast.line_account_id ?? null;
+  let accountName: string | null = null;
+  if (accountId) {
+    try {
+      const { getLineAccountById } = await import('@line-crm/db');
+      accountName = (await getLineAccountById(db, accountId))?.name ?? null;
+    } catch {
+      // 名前解決は通知の見栄えのためだけ。失敗しても ID 表記で続行する。
+    }
+  }
+
+  const reason =
+    `LINEプラン月間クォータ不足のため送信を中止: ` +
+    `残り${shortfall.remaining}通 < 配信対象${shortfall.audience}人 ` +
+    `(上限${shortfall.limit}通・消費${shortfall.consumption}通)`;
+  await setBroadcastLastError(db, broadcast.id, reason);
+  // 単一アカウント運用 (line_account_id NULL) は通知キーとして 'default' を使う
+  // (env トークンの既定アカウントに相当)。pre-send 通知は dedup されないので、
+  // ban-monitor 側の実 ID キーと分かれていても通知が消えることはない。
+  await notifyQuotaAlert(db, {
+    lineAccountId: accountId ?? 'default',
+    accountName,
+    shortfall,
+    source: 'pre-send',
+    broadcastId: broadcast.id,
+    broadcastTitle: broadcast.title,
+  });
+  throw new LinePlanQuotaError(shortfall);
+}
+
+/**
+ * queue 経路用の送信前ガード。throw するとロック (batch_offset=-1) が残って
+ * recover 待ちになるため、不足時は draft へ戻して true を返す (理由は
+ * last_error + 通知に記録済み。draft なので次 tick 以降は拾われない)。
+ */
+async function revertQueuedBroadcastOnQuotaShortfall(
+  db: D1Database,
+  lineClient: LineClient,
+  broadcast: Broadcast,
+  audience: number | (() => Promise<number>),
+): Promise<boolean> {
+  try {
+    await assertLinePlanQuota(db, lineClient, broadcast, audience);
+    return false;
+  } catch (err) {
+    if (!(err instanceof LinePlanQuotaError)) throw err;
+    await db.prepare(
+      `UPDATE broadcasts SET status = 'draft', batch_offset = 0, batch_lock_at = NULL WHERE id = ?`,
+    ).bind(broadcast.id).run();
+    return true;
+  }
+}
+
+/**
+ * ガード通過後に LINE 本体がクォータ超過 429 を返したときの記録 + 通知。
+ * ここに来るのは送信前ガードが fail-open した (quota API の一時失敗) か、
+ * audience を過小見積もりしたケース — 記録しないと「配信が silent に draft へ
+ * 落ちた」という 2026-09-01 事故の形が内部経路で再演される (プロキシ経路には
+ * line-proxy.ts に同種の網がある)。best-effort: この関数の失敗が本来のエラー
+ * 処理 (draft 戻し) を壊さないよう例外はすべて握りつぶす。
+ */
+async function recordInternalUpstreamQuota429(
+  db: D1Database,
+  lineClient: LineClient,
+  broadcast: Broadcast,
+  outcome: { kind: 'reverted' } | { kind: 'partial'; successCount: number; totalCount: number },
+): Promise<void> {
+  try {
+    let snapshot: Awaited<ReturnType<typeof readPlanQuotaSnapshot>> = null;
+    try {
+      snapshot = await readPlanQuotaSnapshot(lineClient);
+    } catch {
+      // 残量詳細が取れなくても「超過した」事実は通知する (limit=0 の合成 shortfall)
+    }
+    // audience=0 は「対象人数は算出していない」印 (notifyQuotaAlert が人数の節を省く)。
+    const shortfall = snapshot
+      ? { ...snapshot, audience: 0 }
+      : { limit: 0, consumption: 0, remaining: 0, audience: 0 };
+
+    const accountId = broadcast.line_account_id ?? null;
+    let accountName: string | null = null;
+    if (accountId) {
+      try {
+        const { getLineAccountById } = await import('@line-crm/db');
+        accountName = (await getLineAccountById(db, accountId))?.name ?? null;
+      } catch {
+        // 名前解決は見栄えのためだけ。失敗しても ID 表記で続行する。
+      }
+    }
+
+    const quotaNote = snapshot ? ` (残り${snapshot.remaining}通 / 上限${snapshot.limit}通)` : '';
+    await setBroadcastLastError(
+      db,
+      broadcast.id,
+      outcome.kind === 'reverted'
+        ? `LINEがクォータ超過 (429) で送信を拒否したため下書きに戻しました${quotaNote}`
+        : `LINEがクォータ超過 (429) を返したため残りのバッチを中止しました` +
+            ` (送信済み${outcome.successCount}/${outcome.totalCount}人)${quotaNote}`,
+    );
+    await notifyQuotaAlert(db, {
+      lineAccountId: accountId ?? 'default',
+      accountName,
+      shortfall,
+      source: 'upstream-429',
+      broadcastId: broadcast.id,
+      broadcastTitle: broadcast.title,
+    });
+  } catch (err) {
+    console.error(`upstream 429 の記録に失敗 (broadcast ${broadcast.id}):`, err);
+  }
+}
 
 export async function processBroadcastSend(
   db: D1Database,
@@ -148,6 +286,9 @@ export async function processBroadcastSend(
   const message = buildMessage(finalType, finalContent, altText || undefined);
   let totalCount = 0;
   let successCount = 0;
+  // tag 経路のバッチ送信中に LINE の月間クォータ超過 429 に当たった印。
+  // partial 確定 (status='sent') 後に理由の記録と通知を行う。
+  let hitUpstreamQuota429 = false;
 
   try {
     if (broadcast.target_type === 'all') {
@@ -172,6 +313,9 @@ export async function processBroadcastSend(
         : await db
             .prepare('SELECT COUNT(*) as count FROM friends WHERE is_following = 1')
             .first<{ count: number }>();
+      // 送信前クォータガード: 残量が全員配信1回分に満たなければ中止する。
+      // throw → 下の catch が draft へ戻す (last_error に理由記録済み)。
+      await assertLinePlanQuota(db, lineClient, broadcast, allTargetGuardAudience(db, broadcastAccountId));
       // Use LINE broadcast API (sends to all followers)
       const retryKey = await createBroadcastRetryKey(
         broadcast.id,
@@ -191,6 +335,11 @@ export async function processBroadcastSend(
       const friends = await getFriendsByTag(db, broadcast.target_tag_id);
       const followingFriends = friends.filter((f) => f.is_following);
       totalCount = followingFriends.length;
+
+      // 送信前クォータガード (all と同じ)。バッチ途中でのクォータ切れによる
+      // 部分送信をここで未然に防ぐ (タグ対象は followingFriends が実母数なので
+      // そのまま渡す)。
+      await assertLinePlanQuota(db, lineClient, broadcast, totalCount);
 
       // Send in batches with stealth delays to mimic human patterns
       const now = jstNow();
@@ -235,6 +384,18 @@ export async function processBroadcastSend(
           );
           await db.batch(logStmts);
         } catch (err) {
+          // LINE 由来の月間クォータ超過はバッチ個別の一過性エラーではない —
+          // 残りのバッチも全て 429 になるので続行せず中止し、通知して残りを
+          // 諦める (status は 'sent' のまま partial として確定。draft へ戻すと
+          // リトライで送信済みバッチの友だちに重複配信される)。理由は
+          // updateBroadcastStatus('sent') が last_error を clear した後に書く。
+          if (isLineMonthlyLimit429(err)) {
+            console.error(
+              `Multicast aborted at batch ${i / MULTICAST_BATCH_SIZE}: LINE monthly quota exceeded`,
+            );
+            hitUpstreamQuota429 = true;
+            break;
+          }
           console.error(`Multicast batch ${i / MULTICAST_BATCH_SIZE} failed:`, err);
           // Continue with next batch; failed batch is not logged
         }
@@ -245,7 +406,21 @@ export async function processBroadcastSend(
 
     await createBroadcastInsight(db, broadcast.id);
     await updateBroadcastStatus(db, broadcastId, 'sent', { totalCount, successCount });
+    // 'sent' 遷移が last_error を clear するので、クォータ 429 の記録はその後に書く。
+    if (hitUpstreamQuota429) {
+      await recordInternalUpstreamQuota429(db, lineClient, broadcast, {
+        kind: 'partial',
+        successCount,
+        totalCount,
+      });
+    }
   } catch (err) {
+    // ガードを通過した後に LINE 本体がクォータ超過 429 を返したケース
+    // ('all' の broadcast API 等)。silent に draft へ落とすと 2026-09-01 事故の
+    // 再演になるため、理由の記録と通知を済ませてから戻す。
+    if (isLineMonthlyLimit429(err)) {
+      await recordInternalUpstreamQuota429(db, lineClient, broadcast, { kind: 'reverted' });
+    }
     // On failure, reset to draft so it can be retried
     await updateBroadcastStatus(db, broadcastId, 'draft');
     throw err;
@@ -481,6 +656,11 @@ async function processQueuedBroadcastBatches(
       totalCount: result.totalCount,
       successCount: result.successCount,
     });
+    // 'sent' 遷移は last_error を clear するので、クォータ不足による一部アカウント
+    // スキップの理由はその後に書き戻す (部分完了の caveat として UI に残す)。
+    if (result.quotaSkippedSummary) {
+      await setBroadcastLastError(db, broadcast.id, result.quotaSkippedSummary);
+    }
     return;
   }
 
@@ -529,6 +709,12 @@ async function processQueuedBroadcastBatches(
           .prepare('SELECT COUNT(*) as count FROM friends WHERE is_following = 1')
           .first<{ count: number }>();
     const followerCount = followerRow?.count ?? 0;
+    // 送信前クォータガード (queue 経路は draft 戻しで中止)。
+    if (await revertQueuedBroadcastOnQuotaShortfall(
+      db, lineClient, broadcast, allTargetGuardAudience(db, accountId),
+    )) {
+      return;
+    }
     const retryKey = await createBroadcastRetryKey(
       broadcast.id,
       'queued-broadcast',
@@ -546,6 +732,12 @@ async function processQueuedBroadcastBatches(
   if (batchOffset === 0) {
     await db.prepare('UPDATE broadcasts SET total_count = ? WHERE id = ?')
       .bind(friends.length, broadcast.id).run();
+
+    // 送信前クォータガード (fresh 開始時のみ — まだ1通も送っていないので draft へ
+    // 戻して安全に中止できる。resume 中の row は既存のバッチ単位失敗処理に任せる)。
+    if (await revertQueuedBroadcastOnQuotaShortfall(db, lineClient, broadcast, friends.length)) {
+      return;
+    }
   }
 
   const now = jstNow();

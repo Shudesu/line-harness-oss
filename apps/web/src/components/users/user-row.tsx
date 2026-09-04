@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Table } from '@cloudflare/kumo/components/table'
 
 const fmt = new Intl.DateTimeFormat('ja-JP', {
   year: 'numeric',
@@ -49,15 +50,15 @@ export default function UserRow({ row, accountColorMap }: Props) {
 
   return (
     <>
-      <tr
+      <Table.Row
         className="cursor-pointer border-b border-gray-100 hover:bg-gray-50"
         onClick={() => setExpanded((v) => !v)}
       >
-        <td className="px-4 py-3 font-mono text-xs text-gray-500">{idShort}</td>
-        <td className="px-4 py-3 text-sm font-medium text-gray-900">
+        <Table.Cell className="font-mono text-xs text-kumo-subtle">{idShort}</Table.Cell>
+        <Table.Cell className="font-medium text-kumo-strong">
           {row.displayName || <span className="text-gray-400">—</span>}
-        </td>
-        <td className="px-4 py-3">
+        </Table.Cell>
+        <Table.Cell>
           <div className="flex flex-wrap gap-1">
             {row.accounts.map((a) => {
               const color = accountColorMap.get(a.accountId) ?? ACCOUNT_BADGE_COLORS[0]
@@ -72,26 +73,26 @@ export default function UserRow({ row, accountColorMap }: Props) {
               )
             })}
           </div>
-        </td>
-        <td className="px-4 py-3 text-sm text-gray-600">
+        </Table.Cell>
+        <Table.Cell className="text-kumo-subtle">
           {row.xUsername ? `@${row.xUsername}` : <span className="text-gray-300">—</span>}
-        </td>
-        <td className="px-4 py-3 text-sm text-gray-600">
+        </Table.Cell>
+        <Table.Cell className="text-kumo-subtle">
           {row.emails[0] ?? <span className="text-gray-300">—</span>}
           {row.emails.length > 1 ? (
             <span className="text-gray-400"> +{row.emails.length - 1}</span>
           ) : null}
-        </td>
-        <td className="px-4 py-3 text-sm text-gray-600">
+        </Table.Cell>
+        <Table.Cell className="text-kumo-subtle">
           {row.phones[0] ?? <span className="text-gray-300">—</span>}
           {row.phones.length > 1 ? (
             <span className="text-gray-400"> +{row.phones.length - 1}</span>
           ) : null}
-        </td>
-      </tr>
+        </Table.Cell>
+      </Table.Row>
       {expanded && (
-        <tr className="border-b border-gray-100 bg-gray-50">
-          <td colSpan={6} className="px-6 py-4">
+        <Table.Row className="bg-kumo-control">
+          <Table.Cell colSpan={6} className="px-6 py-4">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <p className="mb-2 text-xs font-medium text-gray-500">登録アカウント詳細</p>
@@ -134,8 +135,8 @@ export default function UserRow({ row, accountColorMap }: Props) {
                 </div>
               </div>
             </div>
-          </td>
-        </tr>
+          </Table.Cell>
+        </Table.Row>
       )}
     </>
   )

@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Input } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
 
 interface SegmentRule {
   type: 'tag_exists' | 'tag_not_exists' | 'metadata_equals' | 'metadata_not_equals' | 'is_following'
@@ -74,90 +77,90 @@ export default function SegmentBuilder({ tags, accountId, initialConditions, onA
     <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-gray-700">配信対象を絞り込む</h3>
-        <select
+        <Select
+          size="sm"
           value={operator}
-          onChange={(e) => setOperator(e.target.value as 'AND' | 'OR')}
-          className="text-xs border border-gray-300 rounded px-2 py-1 bg-white"
-        >
-          <option value="AND">すべて満たす (AND)</option>
-          <option value="OR">いずれか満たす (OR)</option>
-        </select>
+          onValueChange={(value) => setOperator((value ?? 'AND') as 'AND' | 'OR')}
+          aria-label="条件の組み合わせ"
+          items={{ AND: 'すべて満たす (AND)', OR: 'いずれか満たす (OR)' }}
+        />
       </div>
 
       <div className="space-y-2 mb-3">
         {rules.map((rule, i) => (
           <div key={i} className="flex items-center gap-2 bg-white rounded border border-gray-200 p-2">
-            <select
+            <Select
+              size="sm"
               value={rule.type}
-              onChange={(e) => {
-                const type = e.target.value as SegmentRule['type']
+              onValueChange={(value) => {
+                const type = (value ?? 'tag_exists') as SegmentRule['type']
                 const defaultValue = type === 'is_following' ? true
                   : (type === 'metadata_equals' || type === 'metadata_not_equals') ? { key: '', value: '' }
                   : ''
                 updateRule(i, { type, value: defaultValue })
               }}
-              className="text-xs border border-gray-300 rounded px-2 py-1 bg-white min-w-[120px]"
-            >
-              {Object.entries(ruleTypeLabels).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+              className="min-w-[120px]"
+              aria-label={`ルール${i + 1}の種類`}
+              items={ruleTypeLabels}
+            />
 
             {(rule.type === 'tag_exists' || rule.type === 'tag_not_exists') && (
-              <select
+              <Select
+                size="sm"
                 value={typeof rule.value === 'string' ? rule.value : ''}
-                onChange={(e) => updateRule(i, { value: e.target.value })}
-                className="text-xs border border-gray-300 rounded px-2 py-1 bg-white flex-1"
-              >
-                <option value="">タグを選択...</option>
-                {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
+                onValueChange={(value) => updateRule(i, { value: value ?? '' })}
+                className="flex-1"
+                aria-label={`ルール${i + 1}のタグ`}
+                items={[{ value: '', label: 'タグを選択...' }, ...tags.map((tag) => ({ value: tag.id, label: tag.name }))]}
+              />
             )}
 
             {(rule.type === 'metadata_equals' || rule.type === 'metadata_not_equals') && (
               <>
-                <input
+                <Input
                   type="text"
                   placeholder="key"
                   value={typeof rule.value === 'object' && rule.value !== null ? (rule.value as { key: string }).key : ''}
                   onChange={(e) => updateRule(i, { value: { key: e.target.value, value: typeof rule.value === 'object' && rule.value !== null ? (rule.value as { value: string }).value : '' } })}
-                  className="text-xs border border-gray-300 rounded px-2 py-1 w-24"
+                  className="w-24"
+                  aria-label={`ルール${i + 1}のメタデータキー`}
                 />
-                <input
+                <Input
                   type="text"
                   placeholder="value"
                   value={typeof rule.value === 'object' && rule.value !== null ? (rule.value as { value: string }).value : ''}
                   onChange={(e) => updateRule(i, { value: { key: typeof rule.value === 'object' && rule.value !== null ? (rule.value as { key: string }).key : '', value: e.target.value } })}
-                  className="text-xs border border-gray-300 rounded px-2 py-1 w-24"
+                  className="w-24"
+                  aria-label={`ルール${i + 1}のメタデータ値`}
                 />
               </>
             )}
 
             {rule.type !== 'is_following' && (
-              <button onClick={() => removeRule(i)} className="text-red-400 hover:text-red-600 text-xs px-1 shrink-0">×</button>
+              <Button type="button" size="xs" shape="square" variant="ghost" onClick={() => removeRule(i)} aria-label={`ルール${i + 1}を削除`}>×</Button>
             )}
           </div>
         ))}
       </div>
 
       <div className="flex items-center justify-between">
-        <button onClick={addRule} className="text-xs text-blue-500 hover:text-blue-700">+ ルール追加</button>
+        <Button type="button" size="xs" variant="ghost" onClick={addRule}>+ ルール追加</Button>
         <span className="text-xs text-gray-500">
           {counting ? '計算中...' : count != null ? `該当: ${count.toLocaleString('ja-JP')}人` : ''}
         </span>
       </div>
 
       <div className="flex gap-2 mt-3 pt-3 border-t border-gray-200">
-        <button
+        <Button
+          type="button"
           onClick={() => onApply({ operator, rules })}
-          className="px-3 py-1.5 min-h-[44px] text-xs font-medium text-white rounded-md"
-          style={{ backgroundColor: '#06C755' }}
+          variant="primary"
         >
           適用
-        </button>
-        <button onClick={onCancel} className="px-3 py-1.5 min-h-[44px] text-xs font-medium text-gray-600 bg-gray-200 rounded-md">
+        </Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>
           キャンセル
-        </button>
+        </Button>
       </div>
     </div>
   )

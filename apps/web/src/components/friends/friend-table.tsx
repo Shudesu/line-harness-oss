@@ -1,10 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { Tag } from '@line-crm/shared'
 import type { FriendWithTags } from '@/lib/api'
 import { api } from '@/lib/api'
 import TagBadge from './tag-badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Table } from '@cloudflare/kumo/components/table'
 
 interface FriendTableProps {
   friends: FriendWithTags[]
@@ -65,39 +70,25 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
 
   if (friends.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-        <p className="text-gray-500">友だちが見つかりません</p>
-      </div>
+      <Empty title="友だちが見つかりません" description="検索条件や絞り込みを変更してください。" />
     )
   }
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-      {error && (
-        <div className="px-4 py-3 bg-red-50 border-b border-red-100 text-red-700 text-sm">
-          {error}
-        </div>
-      )}
+      {error && <Banner variant="error" title="タグ操作に失敗しました" description={error} />}
       <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px]">
-        <thead>
-          <tr className="bg-gray-50 border-b border-gray-200">
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              アイコン / 表示名
-            </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              ステータス
-            </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              タグ / 流入
-            </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              登録日
-            </th>
-            <th className="px-4 py-3" />
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
+      <Table className="w-full min-w-[640px]">
+        <Table.Header>
+          <Table.Row>
+            <Table.Head>アイコン / 表示名</Table.Head>
+            <Table.Head>ステータス</Table.Head>
+            <Table.Head>タグ / 流入</Table.Head>
+            <Table.Head>登録日</Table.Head>
+            <Table.Head />
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
           {friends.map((friend) => {
             const isExpanded = expandedId === friend.id
             const isAddingTag = addingTagForFriend === friend.id
@@ -106,14 +97,13 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
             )
 
             return (
-              <>
-                <tr
-                  key={friend.id}
+              <Fragment key={friend.id}>
+                <Table.Row
                   className="hover:bg-gray-50 cursor-pointer transition-colors"
                   onClick={() => toggleExpand(friend.id)}
                 >
                   {/* Avatar + Name */}
-                  <td className="px-4 py-3">
+                  <Table.Cell>
                     <div className="flex items-center gap-3">
                       {friend.pictureUrl ? (
                         <img
@@ -133,10 +123,10 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                         )}
                       </div>
                     </div>
-                  </td>
+                  </Table.Cell>
 
                   {/* Following status */}
-                  <td className="px-4 py-3">
+                  <Table.Cell>
                     {friend.isFollowing ? (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
                         フォロー中
@@ -146,10 +136,10 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                         ブロック/退会
                       </span>
                     )}
-                  </td>
+                  </Table.Cell>
 
                   {/* Tags + Ref */}
-                  <td className="px-4 py-3">
+                  <Table.Cell>
                     <div className="flex flex-wrap gap-1">
                       {(friend as unknown as { refCode?: string }).refCode && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
@@ -162,28 +152,28 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
                         <span className="text-xs text-gray-400">なし</span>
                       ) : null}
                     </div>
-                  </td>
+                  </Table.Cell>
 
                   {/* Registered date */}
-                  <td className="px-4 py-3 text-sm text-gray-500">
+                  <Table.Cell className="text-sm text-gray-500">
                     {formatDate(friend.createdAt)}
-                  </td>
+                  </Table.Cell>
 
                   {/* Expand indicator */}
-                  <td className="px-4 py-3 text-right">
+                  <Table.Cell className="text-right">
                     <svg
                       className={`w-4 h-4 text-gray-400 transition-transform inline-block ${isExpanded ? 'rotate-180' : ''}`}
                       fill="none" stroke="currentColor" viewBox="0 0 24 24"
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
-                  </td>
-                </tr>
+                  </Table.Cell>
+                </Table.Row>
 
                 {/* Expanded detail row */}
                 {isExpanded && (
-                  <tr key={`${friend.id}-detail`} className="bg-gray-50">
-                    <td colSpan={5} className="px-6 py-4">
+                  <Table.Row className="bg-gray-50">
+                    <Table.Cell colSpan={5} className="px-6 py-4">
                       <div className="space-y-3">
                         <div>
                           <p className="text-xs font-semibold text-gray-500 mb-1">LINE ユーザーID</p>
@@ -221,54 +211,55 @@ export default function FriendTable({ friends, allTags, onRefresh }: FriendTable
 
                           {isAddingTag ? (
                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                              <select
-                                className="text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-green-500"
+                              <Select
+                                label="追加するタグ"
+                                hideLabel
                                 value={selectedTagId}
-                                onChange={(e) => setSelectedTagId(e.target.value)}
-                              >
-                                <option value="">タグを選択...</option>
-                                {availableTags.map((tag) => (
-                                  <option key={tag.id} value={tag.id}>{tag.name}</option>
-                                ))}
-                              </select>
-                              <button
+                                onValueChange={(value) => setSelectedTagId(value ?? '')}
+                                placeholder="タグを選択..."
+                                items={Object.fromEntries(availableTags.map((tag) => [tag.id, tag.name]))}
+                              />
+                              <Button
+                                size="xs"
+                                variant="primary"
                                 onClick={() => handleAddTag(friend.id)}
                                 disabled={!selectedTagId || loading}
-                                className="px-3 py-1 text-xs font-medium rounded-md text-white disabled:opacity-50 transition-opacity"
-                                style={{ backgroundColor: '#06C755' }}
+                                loading={loading}
                               >
                                 追加
-                              </button>
-                              <button
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="secondary"
                                 onClick={() => { setAddingTagForFriend(null); setSelectedTagId('') }}
-                                className="px-3 py-1 text-xs font-medium rounded-md text-gray-600 bg-gray-200 hover:bg-gray-300 transition-colors"
                               >
                                 キャンセル
-                              </button>
+                              </Button>
                             </div>
                           ) : (
                             availableTags.length > 0 && (
-                              <button
+                              <Button
+                                size="xs"
+                                variant="ghost"
                                 onClick={(e) => { e.stopPropagation(); setAddingTagForFriend(friend.id) }}
-                                className="text-xs font-medium text-green-600 hover:text-green-700 flex items-center gap-1 transition-colors"
                               >
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                                 </svg>
                                 タグを追加
-                              </button>
+                              </Button>
                             )
                           )}
                         </div>
                       </div>
-                    </td>
-                  </tr>
+                    </Table.Cell>
+                  </Table.Row>
                 )}
-              </>
+              </Fragment>
             )
           })}
-        </tbody>
-      </table>
+        </Table.Body>
+      </Table>
       </div>
     </div>
   )

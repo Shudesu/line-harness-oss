@@ -31,8 +31,12 @@ describe('inflow link tag auto-assignment UI wiring', () => {
     expect(modal).toContain('tagId: route?.tagId ?? null');
     expect(modal).toContain('自動付与タグ（任意）');
     expect(modal).toContain('value={form.tagId ?? \'\'}');
-    expect(modal).toContain('tagId: e.target.value || null');
+    expect(modal).toContain(
+      'onValueChange={(value) => setForm({ ...form, tagId: value || null })}',
+    );
     expect(modal).toContain('友だち追加時にこのタグを自動付与します');
-    expect(modal).toContain('tags.map((tag) => (');
+    expect(modal).toContain(
+      'items={Object.fromEntries(tags.map((tag) => [tag.id, tag.name]))}',
+    );
   });
 });

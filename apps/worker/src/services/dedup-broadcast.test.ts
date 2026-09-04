@@ -338,6 +338,15 @@ class MockLineClient {
     this.calls.push({ method: 'push', args: [to, messages, retryKey, units, this.token] });
     return {};
   }
+  // 送信前プランクォータガード用。デフォルトは上限なしプラン (= ガード素通り)。
+  quota: { type: string; value?: number } = { type: 'none' };
+  quotaConsumption = 0;
+  async getMessageQuota() {
+    return this.quota;
+  }
+  async getMessageQuotaConsumption() {
+    return { totalUsage: this.quotaConsumption };
+  }
 }
 
 // fakeDb for send-side: handles `db.prepare(...).bind(...).run()` for the
@@ -451,11 +460,70 @@ describe('processMultiAccountDedupBroadcast', () => {
     );
 
     expect(result.failedAccountIds).toEqual([]);
+    expect(result.quotaSkippedSummary).toBeNull();
     expect(result.successCount).toBe(4);
     expect(result.totalCount).toBe(4);
     expect(clients).toHaveLength(2);
     expect(clients[0].calls).toHaveLength(1);
     expect(clients[1].calls).toHaveLength(1);
+  });
+
+  it('プランクォータ不足のアカウントは送信せずスキップし failed + last_error 要約に記録する', async () => {
+    const { db } = makeSendDb({
+      selectedCounts: [
+        { line_account_id: 'acc1', cnt: 2 },
+        { line_account_id: 'acc2', cnt: 2 },
+      ],
+      rankedRows: [
+        { friend_id: 'f1', line_user_id: 'u1', line_account_id: 'acc1' },
+        { friend_id: 'f2', line_user_id: 'u2', line_account_id: 'acc1' },
+        { friend_id: 'f3', line_user_id: 'u3', line_account_id: 'acc2' },
+        { friend_id: 'f4', line_user_id: 'u4', line_account_id: 'acc2' },
+      ],
+      accountMeta: [
+        { id: 'acc1', name: 'A1', country: 'JP' },
+        { id: 'acc2', name: 'A2', country: 'TH' },
+      ],
+    });
+
+    vi.mocked(getLineAccountById).mockImplementation(async (_db: D1Database, id: string) => {
+      if (id === 'acc1') return { id, channel_access_token: 'tok1', is_active: 1 } as never;
+      if (id === 'acc2') return { id, name: 'A2', channel_access_token: 'tok2', is_active: 1 } as never;
+      return null;
+    });
+
+    const clients: MockLineClient[] = [];
+    const factory = (token: string) => {
+      const c = new MockLineClient(token);
+      if (token === 'tok2') {
+        // acc2 は上限200通のプランで残り1通 (< 対象2人) → スキップされるべき
+        c.quota = { type: 'limited', value: 200 };
+        c.quotaConsumption = 199;
+      }
+      clients.push(c);
+      return c as unknown as LineClient;
+    };
+
+    const result = await processMultiAccountDedupBroadcast(
+      db,
+      {
+        id: 'b1',
+        account_ids: '["acc1","acc2"]',
+        dedup_priority: '["acc1","acc2"]',
+        message_type: 'text',
+        message_content: 'hello',
+      },
+      factory,
+    );
+
+    expect(result.failedAccountIds).toEqual(['acc2']);
+    expect(result.quotaSkippedSummary).toContain('A2');
+    expect(result.quotaSkippedSummary).toContain('残り1通');
+    // acc1 は通常配信、acc2 は multicast/push を一切呼ばれない
+    expect(result.successCount).toBe(2);
+    const acc2Client = clients.find((c) => c.token === 'tok2')!;
+    expect(acc2Client.calls).toHaveLength(0);
+    expect(result.complete).toBe(true);
   });
 
   it('one account multicast throws: other succeeds, failedAccountIds = [thrower]', async () => {

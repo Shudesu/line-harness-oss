@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
+import { Button } from '@cloudflare/kumo/components/button'
 
 interface TestSendSectionProps {
   broadcastId: string
@@ -54,14 +55,14 @@ export default function TestSendSection({ broadcastId, accountId, disabled }: Te
           <p className="text-xs text-gray-500 mb-2">
             送信先: {recipients.map(r => r.displayName).join(', ')} ({recipients.length}名)
           </p>
-          <button
+          <Button
             onClick={handleTestSend}
             disabled={disabled || sending || cooldown}
-            className="px-4 py-2 min-h-[44px] text-xs font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-            style={{ backgroundColor: '#3B82F6' }}
+            variant="primary"
+            loading={sending}
           >
             {sending ? 'テスト送信中...' : cooldown ? '送信済み' : 'テスト送信する'}
-          </button>
+          </Button>
           {result && (
             <p className={`text-xs mt-2 ${result.error ? 'text-red-600' : 'text-green-600'}`}>
               {result.error

@@ -14,6 +14,13 @@ import ScheduleInput, {
   type ScheduleValue,
 } from '@/components/scenarios/schedule-input'
 import BulkPreviewModal from '@/components/scenarios/bulk-preview-modal'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { Radio } from '@cloudflare/kumo/components/radio'
+import { Select } from '@cloudflare/kumo/components/select'
 
 type ScenarioWithSteps = Scenario & { steps: ScenarioStep[] }
 
@@ -157,6 +164,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
   const [stats, setStats] = useState<ScenarioStats | null>(null)
   const [templates, setTemplates] = useState<TemplateOpt[]>([])
   const [tags, setTags] = useState<TagOpt[]>([])
+  const [deleteStepTarget, setDeleteStepTarget] = useState<string | null>(null)
 
   const deliveryMode: DeliveryMode = (scenario?.deliveryMode ?? 'relative') as DeliveryMode
 
@@ -356,10 +364,10 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
   }
 
   const handleDeleteStep = async (stepId: string) => {
-    if (!confirm('このステップを削除してもよいですか？')) return
     try {
       await api.scenarios.deleteStep(id, stepId)
       if (editingStepId === stepId) closeStepForm()
+      setDeleteStepTarget(null)
       loadScenario()
     } catch {
       setError('ステップの削除に失敗しました')
@@ -397,10 +405,11 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
       <div className="space-y-3 max-w-lg">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">ステップ順序</label>
-          <input
+          <Input
+            label="ステップ順序"
             type="number"
             min={1}
-            className="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            className="w-32"
             value={stepForm.stepOrder}
             onChange={(e) => setStepForm({ ...stepForm, stepOrder: Number(e.target.value) })}
           />
@@ -413,40 +422,22 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
 
         {/* 入力モード切替: 直接入力 / テンプレート参照 */}
         <div className="space-y-2">
-          <label className="block text-xs font-medium text-gray-600">メッセージの指定方法</label>
-          <div className="flex gap-4 text-sm">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                checked={stepForm.inputMode === 'direct'}
-                onChange={() => setStepForm({ ...stepForm, inputMode: 'direct', templateId: null })}
-              />
-              <span>直接入力</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                checked={stepForm.inputMode === 'template'}
-                onChange={() => setStepForm({ ...stepForm, inputMode: 'template' })}
-              />
-              <span>テンプレートを使う</span>
-            </label>
-          </div>
+          <Radio.Group legend="メッセージの指定方法" value={stepForm.inputMode} onValueChange={(value) => setStepForm({ ...stepForm, inputMode: value, templateId: value === 'direct' ? null : stepForm.templateId })} className="flex gap-4">
+            <Radio.Item value="direct" label="直接入力" />
+            <Radio.Item value="template" label="テンプレートを使う" />
+          </Radio.Group>
         </div>
 
         {stepForm.inputMode === 'template' && (
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">テンプレート <span className="text-red-500">*</span></label>
-            <select
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+            <Select
+              label="テンプレート"
               value={stepForm.templateId ?? ''}
-              onChange={(e) => setStepForm({ ...stepForm, templateId: e.target.value || null })}
-            >
-              <option value="">-- 選択してください --</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}{t.category ? ` (${t.category})` : ''}</option>
-              ))}
-            </select>
+              onValueChange={(value) => setStepForm({ ...stepForm, templateId: value || null })}
+              placeholder="選択してください"
+              items={Object.fromEntries(templates.map((template) => [template.id, `${template.name}${template.category ? ` (${template.category})` : ''}`]))}
+            />
             <p className="text-xs text-amber-700 mt-1">
               ⓘ テンプレートが修正されると、このステップの内容も自動で同期されます
             </p>
@@ -457,24 +448,21 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
           <>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">メッセージタイプ</label>
-              <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+              <Select
+                label="メッセージタイプ"
                 value={stepForm.messageType}
-                onChange={(e) => setStepForm({ ...stepForm, messageType: e.target.value as MessageType })}
-              >
-                {messageTypeOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
+                onValueChange={(value) => setStepForm({ ...stepForm, messageType: (value ?? 'text') as MessageType })}
+                items={Object.fromEntries(messageTypeOptions.map((option) => [option.value, option.label]))}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容 <span className="text-red-500">*</span></label>
-              <textarea
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                rows={4}
+              <InputArea
+                label="メッセージ内容"
+                minRows={4}
                 placeholder="メッセージ内容を入力..."
                 value={stepForm.messageContent}
-                onChange={(e) => setStepForm({ ...stepForm, messageContent: e.target.value })}
+                onValueChange={(value) => setStepForm({ ...stepForm, messageContent: value })}
               />
             </div>
           </>
@@ -485,39 +473,33 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
           <h4 className="text-xs font-semibold text-gray-700">到達時のアクション</h4>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">到達したらタグ付与</label>
-            <select
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+            <Select
+              label="到達したらタグ付与"
               value={stepForm.onReachTagId ?? ''}
-              onChange={(e) => setStepForm({ ...stepForm, onReachTagId: e.target.value || null })}
-            >
-              <option value="">-- なし --</option>
-              {tags.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
+              onValueChange={(value) => setStepForm({ ...stepForm, onReachTagId: value || null })}
+              placeholder="なし"
+              items={Object.fromEntries(tags.map((tag) => [tag.id, tag.name]))}
+            />
             <p className="text-xs text-gray-400 mt-0.5">
               このステップが配信完了したら、選んだタグを友だちに付与します
             </p>
           </div>
         </div>
 
-        {stepError && <p className="text-xs text-red-600">{stepError}</p>}
+        {stepError && <Banner size="sm" variant="error" title="保存できませんでした" description={stepError} />}
 
         <div className="flex gap-2">
-          <button
+          <Button type="button" variant="primary" loading={stepSaving}
             onClick={handleSaveStep}
             disabled={stepSaving}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-            style={{ backgroundColor: '#06C755' }}
           >
-            {stepSaving ? '保存中...' : editingStepId ? '更新' : '追加'}
-          </button>
-          <button
+            {editingStepId ? '更新' : '追加'}
+          </Button>
+          <Button type="button" variant="secondary"
             onClick={closeStepForm}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
           >
             キャンセル
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -597,54 +579,46 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
           <div className="space-y-4 max-w-lg">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">シナリオ名 <span className="text-red-500">*</span></label>
-              <input
+              <Input
+                label="シナリオ名"
                 type="text"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                 value={editForm.name}
                 onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">説明</label>
-              <textarea
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                rows={2}
+              <InputArea
+                label="説明"
+                minRows={2}
                 value={editForm.description}
-                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                onValueChange={(value) => setEditForm({ ...editForm, description: value })}
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">トリガー</label>
-              <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+              <Select
+                label="トリガー"
                 value={editForm.triggerType}
-                onChange={(e) => setEditForm({ ...editForm, triggerType: e.target.value as ScenarioTriggerType })}
-              >
-                {triggerOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
+                onValueChange={(value) => setEditForm({ ...editForm, triggerType: (value ?? 'friend_add') as ScenarioTriggerType })}
+                items={Object.fromEntries(triggerOptions.map((option) => [option.value, option.label]))}
+              />
             </div>
             <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="editIsActive"
+              <Checkbox
+                label="有効"
                 checked={editForm.isActive}
-                onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
-                className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                onCheckedChange={(checked) => setEditForm({ ...editForm, isActive: checked })}
               />
-              <label htmlFor="editIsActive" className="text-sm text-gray-600">有効</label>
             </div>
             <div className="flex gap-2">
-              <button
+              <Button type="button" variant="primary" loading={saving}
                 onClick={handleSaveScenario}
                 disabled={saving}
-                className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-                style={{ backgroundColor: '#06C755' }}
               >
-                {saving ? '保存中...' : '保存'}
-              </button>
-              <button
+                保存
+              </Button>
+              <Button type="button" variant="secondary"
                 onClick={() => {
                   setEditing(false)
                   setEditForm({
@@ -654,10 +628,9 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                     isActive: scenario.isActive,
                   })
                 }}
-                className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 キャンセル
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
@@ -675,12 +648,11 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                 >
                   {scenario.isActive ? '有効' : '無効'}
                 </span>
-                <button
+                <Button type="button" size="xs" variant="ghost"
                   onClick={() => setEditing(true)}
-                  className="text-xs font-medium text-green-600 hover:text-green-700 px-3 py-1.5 rounded-md hover:bg-green-50 transition-colors"
                 >
                   編集
-                </button>
+                </Button>
               </div>
             </div>
             {scenario.description && (
@@ -700,20 +672,17 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-gray-800">ステップ一覧</h3>
           <div className="flex gap-2">
-            <button
+            <Button type="button" size="sm" variant="secondary"
               onClick={() => setPreviewOpen(true)}
               disabled={sortedSteps.length === 0}
-              className="px-3 py-1.5 min-h-[44px] text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-40"
             >
               一括プレビュー
-            </button>
-            <button
+            </Button>
+            <Button type="button" size="sm" variant="primary"
               onClick={openAddStep}
-              className="px-3 py-1.5 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-              style={{ backgroundColor: '#06C755' }}
             >
               + ステップ追加
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -736,8 +705,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-2 flex-wrap">
                       <span
-                        className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-white shrink-0"
-                        style={{ backgroundColor: '#06C755' }}
+                        className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-kumo-brand text-xs font-bold text-kumo-inverse shrink-0"
                       >
                         {step.stepOrder}
                       </span>
@@ -791,35 +759,31 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                   </div>
                   <div className="flex flex-col items-stretch gap-1 shrink-0">
                     <div className="flex gap-1">
-                      <button
+                      <Button type="button" size="xs" shape="square" variant="ghost" title="上へ"
                         onClick={() => handleMoveStep(step.id, 'up')}
                         disabled={idx === 0}
-                        className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                         aria-label="上へ"
                       >
                         ↑
-                      </button>
-                      <button
+                      </Button>
+                      <Button type="button" size="xs" shape="square" variant="ghost" title="下へ"
                         onClick={() => handleMoveStep(step.id, 'down')}
                         disabled={idx === sortedSteps.length - 1}
-                        className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
                         aria-label="下へ"
                       >
                         ↓
-                      </button>
+                      </Button>
                     </div>
-                    <button
+                    <Button type="button" size="xs" variant="ghost"
                       onClick={() => (editingStepId === step.id ? closeStepForm() : openEditStep(step))}
-                      className="text-xs text-green-600 hover:text-green-700 px-2 py-1 rounded hover:bg-green-50 transition-colors"
                     >
                       {editingStepId === step.id ? '閉じる' : '編集'}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteStep(step.id)}
-                      className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                    </Button>
+                    <Button type="button" size="xs" variant="destructive"
+                      onClick={() => setDeleteStepTarget(step.id)}
                     >
                       削除
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 {/* インライン編集フォーム: 編集対象ステップの行直下に展開 */}
@@ -835,6 +799,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
         scenarioId={id}
         onClose={() => setPreviewOpen(false)}
       />
+      <Dialog.Root role="alertdialog" open={deleteStepTarget !== null} onOpenChange={(open) => { if (!open) setDeleteStepTarget(null) }}><Dialog><Dialog.Title>このステップを削除しますか？</Dialog.Title><Dialog.Description className="mt-2">配信内容と到達時アクションを削除します。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteStepTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={() => { if (deleteStepTarget) void handleDeleteStep(deleteStepTarget) }}>削除</Button></div></Dialog></Dialog.Root>
     </div>
   )
 }
