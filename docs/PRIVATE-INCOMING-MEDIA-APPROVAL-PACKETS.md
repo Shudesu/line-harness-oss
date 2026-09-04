@@ -3006,3 +3006,29 @@ Residual boundary: the update blocks future origin access and verifies the
 observed edge path 77/77. Copies already retained by a browser or LINE client
 cannot be recalled by a Worker deploy or Cloudflare purge.
 ```
+
+### 5229-B4-R1 execution readback — completed 2026-09-04
+
+The R4 operator packet was verified at exact SHA-256
+`cb178bfbebbc5e1d440cfdecae30cfba4e09ad292463bb3427e8ba48d77fc34c`
+against Harness head `57278488d28b2995c2227c8cdfba3e03dedcf848` before execution.
+The bounded code-only deploy completed with one accepted content PUT, no retry,
+no redirect, and no automatic rollback. The new deployment
+`77264a6e-fecd-4717-9811-6be51faeaa3b` serves version
+`92f245da-84a7-41b1-ab10-845cab9947d0` at 100% traffic. Runtime identity is
+`0.19.0-5229.b4.ac10457` / worker hash
+`sha256:45aa5132adffe83e1710534efd914b116cb6a4d06df0926df4b28b71f9f51bf2`.
+
+Readback proved all 77 manifest-derived legacy public URLs return 404 with
+`private, no-store`, no cache hit, and no R2 body read. Private media remained
+available before and after mutation: anonymous HEAD 401, scoped HEAD 200,
+scoped GET 200, exact MIME/size/SHA-256 match. Version resources, all 20
+bindings, compatibility, assets, subdomain, schedules, Admin Page, and disabled
+cache were preserved. Settings, bindings, secrets, D1, direct R2, purge,
+restart, LINE, Drive, PR merge, and rollback writes were all zero.
+
+Sanitized receipt:
+`/Users/kensmba/.line-harness-5229-B4-R1-20260904/sanitized-summary.json`,
+mode 0600, SHA-256
+`d61637b67d8b824a35d79d4f7c047c1cbae4870bd6b30caeed16a21bbf788688`.
+An independent read-only audit returned PASS with no P0/P1/P2 findings.
