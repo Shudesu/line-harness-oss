@@ -1512,6 +1512,121 @@ booking.delete('/api/booking/admin/staff/:id/shifts/:shiftId', async (c) => {
   return c.json({ ok: true });
 });
 
+// ---------------------------------------------------------------------------
+// 予約不可時間 (休憩 / 外出 / 会議)
+// shifts と違い 1 日に複数行を許す (休憩 + 外出 の重ね掛け) ため、
+// upsert ではなく追加 / 削除で扱う。
+// ---------------------------------------------------------------------------
+
+booking.get('/api/booking/admin/staff/:id/time-off', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const from = c.req.query('from');
+  const to = c.req.query('to');
+  const sql = from && to
+    ? `SELECT id, work_date, start_time, end_time, reason
+         FROM staff_time_off
+        WHERE staff_id = ? AND work_date BETWEEN ? AND ?
+        ORDER BY work_date ASC, start_time ASC`
+    : `SELECT id, work_date, start_time, end_time, reason
+         FROM staff_time_off
+        WHERE staff_id = ?
+        ORDER BY work_date ASC, start_time ASC`;
+  const stmt = c.env.DB.prepare(sql);
+  const rows = await (from && to ? stmt.bind(staffId, from, to) : stmt.bind(staffId)).all();
+  const rules = await c.env.DB
+    .prepare(
+      `SELECT id, weekday, start_time, end_time, reason, is_active
+         FROM staff_time_off_rules
+        WHERE staff_id = ?
+        ORDER BY weekday ASC, start_time ASC`,
+    )
+    .bind(staffId)
+    .all();
+  return c.json({ time_off: rows.results, rules: rules.results });
+});
+
+booking.post('/api/booking/admin/staff/:id/time-off', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const b = await c.req.json<{
+    work_date: string;
+    start_time: string;
+    end_time: string;
+    reason?: string;
+  }>();
+  if (!b.work_date || !b.start_time || !b.end_time) {
+    return c.json({ error: 'missing_fields' }, 400);
+  }
+  if (b.start_time >= b.end_time) return c.json({ error: 'invalid_range' }, 422);
+  const id = crypto.randomUUID();
+  await c.env.DB
+    .prepare(
+      `INSERT INTO staff_time_off (id, staff_id, work_date, start_time, end_time, reason)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(id, staffId, b.work_date, b.start_time, b.end_time, b.reason ?? null)
+    .run();
+  return c.json({ ok: true, id });
+});
+
+booking.delete('/api/booking/admin/staff/:id/time-off/:timeOffId', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  await c.env.DB
+    .prepare(`DELETE FROM staff_time_off WHERE id = ? AND staff_id = ?`)
+    .bind(c.req.param('timeOffId'), staffId)
+    .run();
+  return c.json({ ok: true });
+});
+
+// 定例の予約不可時間 (毎週の休憩)。availability-rules と同じく全置換で扱う。
+booking.put('/api/booking/admin/staff/:id/time-off-rules', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const b = await c.req.json<{
+    rules: Array<{ weekday: number; start_time: string; end_time: string; reason?: string }>;
+  }>();
+  if (!Array.isArray(b.rules)) return c.json({ error: 'missing_fields' }, 400);
+  for (const r of b.rules) {
+    if (!Number.isInteger(r.weekday) || r.weekday < 0 || r.weekday > 6) {
+      return c.json({ error: 'invalid_weekday' }, 422);
+    }
+    if (!r.start_time || !r.end_time || r.start_time >= r.end_time) {
+      return c.json({ error: 'invalid_range' }, 422);
+    }
+  }
+  const stmts = [
+    c.env.DB.prepare(`DELETE FROM staff_time_off_rules WHERE staff_id = ?`).bind(staffId),
+    ...b.rules.map((r) =>
+      c.env.DB
+        .prepare(
+          `INSERT INTO staff_time_off_rules (id, staff_id, weekday, start_time, end_time, reason, is_active)
+           VALUES (?, ?, ?, ?, ?, ?, 1)`,
+        )
+        .bind(crypto.randomUUID(), staffId, r.weekday, r.start_time, r.end_time, r.reason ?? null),
+    ),
+  ];
+  await c.env.DB.batch(stmts);
+  return c.json({ ok: true, count: b.rules.length });
+});
+
 booking.post('/api/booking/admin/staff/:id/shifts/generate', async (c) => {
   const accountId = await resolveAccountIdAdmin(c);
   if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
