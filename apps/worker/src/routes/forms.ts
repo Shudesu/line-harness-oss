@@ -19,6 +19,7 @@ import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import { verifyCallerLineUserId } from '../services/liff-auth.js';
 import { pushViaHarnessProxy } from '../services/line-proxy-send.js';
 import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
+import { shouldSendFormReply } from '../services/form-reply-policy.js';
 import type {
   Form as DbForm,
   FormSubmission as DbFormSubmission,
@@ -81,6 +82,7 @@ function serializeForm(
     onSubmitScenarioId: row.on_submit_scenario_id,
     onSubmitMessageType: row.on_submit_message_type,
     onSubmitMessageContent: row.on_submit_message_content,
+    sendSubmitMessage: row.send_submit_message !== 0,
     onSubmitWebhookUrl: row.on_submit_webhook_url,
     onSubmitWebhookHeaders: row.on_submit_webhook_headers,
     onSubmitWebhookFailMessage: row.on_submit_webhook_fail_message,
@@ -230,6 +232,7 @@ forms.post('/api/forms', async (c) => {
       onSubmitScenarioId?: string | null;
       onSubmitMessageType?: 'text' | 'flex' | null;
       onSubmitMessageContent?: string | null;
+      sendSubmitMessage?: boolean;
       onSubmitWebhookUrl?: string | null;
       onSubmitWebhookHeaders?: string | null;
       onSubmitWebhookFailMessage?: string | null;
@@ -251,6 +254,7 @@ forms.post('/api/forms', async (c) => {
       onSubmitScenarioId: body.onSubmitScenarioId ?? null,
       onSubmitMessageType: body.onSubmitMessageType ?? null,
       onSubmitMessageContent: body.onSubmitMessageContent ?? null,
+      sendSubmitMessage: body.sendSubmitMessage,
       onSubmitWebhookUrl: body.onSubmitWebhookUrl ?? null,
       onSubmitWebhookHeaders: body.onSubmitWebhookHeaders ?? null,
       onSubmitWebhookFailMessage: body.onSubmitWebhookFailMessage ?? null,
@@ -280,6 +284,7 @@ forms.put('/api/forms/:id', async (c) => {
       onSubmitScenarioId?: string | null;
       onSubmitMessageType?: 'text' | 'flex' | null;
       onSubmitMessageContent?: string | null;
+      sendSubmitMessage?: boolean;
       onSubmitWebhookUrl?: string | null;
       onSubmitWebhookHeaders?: string | null;
       onSubmitWebhookFailMessage?: string | null;
@@ -299,6 +304,7 @@ forms.put('/api/forms/:id', async (c) => {
     if (body.onSubmitScenarioId !== undefined) updates.onSubmitScenarioId = body.onSubmitScenarioId;
     if (body.onSubmitMessageType !== undefined) updates.onSubmitMessageType = body.onSubmitMessageType;
     if (body.onSubmitMessageContent !== undefined) updates.onSubmitMessageContent = body.onSubmitMessageContent;
+    if (body.sendSubmitMessage !== undefined) updates.sendSubmitMessage = body.sendSubmitMessage;
     if (body.onSubmitWebhookUrl !== undefined) updates.onSubmitWebhookUrl = body.onSubmitWebhookUrl;
     if (body.onSubmitWebhookHeaders !== undefined) updates.onSubmitWebhookHeaders = body.onSubmitWebhookHeaders;
     if (body.onSubmitWebhookFailMessage !== undefined) updates.onSubmitWebhookFailMessage = body.onSubmitWebhookFailMessage;
@@ -637,8 +643,9 @@ forms.post('/api/forms/:id/submit', async (c) => {
         );
       }
 
-      // Send confirmation message with submitted data back to user
-      sideEffects.push(
+      // Send confirmation only when enabled. Operational forms can still save,
+      // tag, and call a webhook without consuming a LINE message per response.
+      if (shouldSendFormReply(form)) sideEffects.push(
         (async () => {
           console.log('Form reply: starting for friendId', friendId);
           const friend = await getFriendById(db, friendId!);

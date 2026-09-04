@@ -401,6 +401,10 @@ export interface Form {
   onSubmitScenarioId: string | null
   onSubmitMessageType: 'text' | 'flex' | null
   onSubmitMessageContent: string | null
+  sendSubmitMessage: boolean
+  onSubmitWebhookUrl: string | null
+  onSubmitWebhookHeaders: string | null
+  onSubmitWebhookFailMessage: string | null
   saveToMetadata: boolean
   isActive: boolean
   submitCount: number
@@ -419,6 +423,10 @@ export interface CreateFormInput {
   onSubmitScenarioId?: string | null
   onSubmitMessageType?: 'text' | 'flex' | null
   onSubmitMessageContent?: string | null
+  sendSubmitMessage?: boolean
+  onSubmitWebhookUrl?: string | null
+  onSubmitWebhookHeaders?: string | null
+  onSubmitWebhookFailMessage?: string | null
   saveToMetadata?: boolean
   ogTitle?: string | null
   ogDescription?: string | null
@@ -433,6 +441,10 @@ export interface UpdateFormInput {
   onSubmitScenarioId?: string | null
   onSubmitMessageType?: 'text' | 'flex' | null
   onSubmitMessageContent?: string | null
+  sendSubmitMessage?: boolean
+  onSubmitWebhookUrl?: string | null
+  onSubmitWebhookHeaders?: string | null
+  onSubmitWebhookFailMessage?: string | null
   saveToMetadata?: boolean
   isActive?: boolean
   ogTitle?: string | null

@@ -33,6 +33,10 @@ export function registerCreateForm(server: McpServer): void {
         .string()
         .optional()
         .describe("Custom message content to send after submission. If set, replaces the default confirmation Flex."),
+      sendSubmitMessage: z.boolean().default(true).describe("Whether to send a LINE confirmation after submission."),
+      onSubmitWebhookUrl: z.string().url().optional().describe("Webhook URL called once when the form is submitted."),
+      onSubmitWebhookHeaders: z.string().optional().describe("JSON object of headers for the submit webhook."),
+      onSubmitWebhookFailMessage: z.string().optional().describe("LINE message sent only when the webhook rejects the submission."),
       saveToMetadata: z
         .boolean()
         .default(true)
@@ -53,6 +57,10 @@ export function registerCreateForm(server: McpServer): void {
       onSubmitScenarioId,
       onSubmitMessageType,
       onSubmitMessageContent,
+      sendSubmitMessage,
+      onSubmitWebhookUrl,
+      onSubmitWebhookHeaders,
+      onSubmitWebhookFailMessage,
       saveToMetadata,
       ogTitle,
       ogDescription,
@@ -68,6 +76,10 @@ export function registerCreateForm(server: McpServer): void {
           onSubmitScenarioId,
           onSubmitMessageType,
           onSubmitMessageContent,
+          sendSubmitMessage,
+          onSubmitWebhookUrl,
+          onSubmitWebhookHeaders,
+          onSubmitWebhookFailMessage,
           saveToMetadata,
           ogTitle,
           ogDescription,
