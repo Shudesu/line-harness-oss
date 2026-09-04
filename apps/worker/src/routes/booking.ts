@@ -11,7 +11,8 @@
 // scheduled_at / decided_at / expires_at) are written from the Worker.
 
 import { Hono, type Context } from 'hono';
-import { getLineAccounts } from '@line-crm/db';
+import { getLineAccounts, getAccountSetting, setAccountSetting } from '@line-crm/db';
+import { LineClient } from '@line-crm/line-sdk';
 import type { Env } from '../index.js';
 import { resolveCorsOrigin } from '../middleware/admin-auth-config.js';
 import { canTransition, nextStatus, type BookingAction } from '../services/booking-state.js';
@@ -25,7 +26,12 @@ import {
   findIdempotencyResponse,
   saveIdempotencyResponse,
 } from '../services/booking-idempotency.js';
-import { sendBookingNotification } from '../services/booking-notifier.js';
+import {
+  sendBookingNotification,
+  BOOKING_NOTIFY_RECIPIENTS_KEY,
+  renderStaffNotificationText,
+  resolveStaffRecipients,
+} from '../services/booking-notifier.js';
 import { insertConfirmationReminders } from '../services/booking-confirm.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import {
@@ -290,6 +296,75 @@ async function notifyForBooking(
   });
 }
 
+/**
+ * 予約リクエストをスタッフの LINE へ通知する。
+ *
+ * 顧客通知 (notifyForBooking) と分けてあるのは宛先と文面が別物のため。
+ * 宛先が 1 件も設定されていなければ何もしない (既定は無効)。
+ *
+ * fire-and-forget で呼ぶこと。通知の失敗で予約自体を巻き戻さない。
+ */
+async function notifyStaffForBooking(db: D1Database, bookingId: string): Promise<void> {
+  const row = await db
+    .prepare(
+      `SELECT b.starts_at,
+              m.name          AS menu_name,
+              s.display_name  AS staff_name,
+              s.notify_friend_id,
+              la.id           AS line_account_id,
+              la.channel_access_token,
+              f.display_name  AS customer_name
+         FROM bookings b
+         INNER JOIN menus m ON m.id = b.menu_id
+         INNER JOIN staff s ON s.id = b.staff_id
+         INNER JOIN line_accounts la ON la.id = b.line_account_id
+         INNER JOIN friends f ON f.id = b.friend_id
+        WHERE b.id = ?`,
+    )
+    .bind(bookingId)
+    .first<{
+      starts_at: string;
+      menu_name: string;
+      staff_name: string;
+      notify_friend_id: string | null;
+      line_account_id: string;
+      channel_access_token: string;
+      customer_name: string | null;
+    }>();
+  if (!row) return;
+
+  const accountRecipients = await getAccountSetting(
+    db,
+    row.line_account_id,
+    BOOKING_NOTIFY_RECIPIENTS_KEY,
+  );
+  const friendIds = resolveStaffRecipients(row.notify_friend_id, accountRecipients);
+  if (friendIds.length === 0) return;
+
+  const placeholders = friendIds.map(() => '?').join(',');
+  const friends = await db
+    .prepare(
+      `SELECT line_user_id FROM friends
+        WHERE id IN (${placeholders}) AND is_following = 1`,
+    )
+    .bind(...friendIds)
+    .all<{ line_user_id: string }>();
+  if (!friends.results.length) return;
+
+  const text = renderStaffNotificationText({
+    menuName: row.menu_name,
+    staffName: row.staff_name,
+    startsAtJst: startsAtJst(row.starts_at),
+    hoursBefore: 0,
+    customerName: row.customer_name ?? '（表示名なし）',
+  });
+  const client = new LineClient(row.channel_access_token);
+  // 1 人失敗しても残りへ送る。通知は best-effort。
+  await Promise.allSettled(
+    friends.results.map((f) => client.pushMessage(f.line_user_id, [{ type: 'text', text }])),
+  );
+}
+
 // ================================================================
 // LIFF endpoints (/api/liff/booking/*)
 // ================================================================
@@ -519,6 +594,13 @@ booking.post('/api/liff/booking/requests', async (c) => {
   c.executionCtx.waitUntil(
     notifyForBooking(c.env.DB, bookingId, 'requested').catch((err) =>
       console.error('booking notify (requested) failed:', err),
+    ),
+  );
+
+  // スタッフへの通知。宛先未設定なら no-op なので既存インストールの挙動は変わらない。
+  c.executionCtx.waitUntil(
+    notifyStaffForBooking(c.env.DB, bookingId).catch((err) =>
+      console.error('[booking] staff notification failed', err),
     ),
   );
 
@@ -1028,12 +1110,15 @@ booking.put('/api/booking/admin/staff/:id', async (c) => {
     sort_order?: number;
     is_designation_optional?: boolean;
     is_active?: boolean;
+    /** 予約リクエストの通知先 friends.id。null で通知を止める。省略時は変更しない。 */
+    notify_friend_id?: string | null;
   }>();
   await c.env.DB
     .prepare(
       `UPDATE staff
           SET name = ?, display_name = ?, role = ?, profile_image_url = ?, bio = ?,
               sort_order = ?, is_designation_optional = ?, is_active = ?,
+              notify_friend_id = COALESCE(?, notify_friend_id),
               updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
         WHERE id = ? AND line_account_id = ?`,
     )
@@ -1046,10 +1131,19 @@ booking.put('/api/booking/admin/staff/:id', async (c) => {
       b.sort_order ?? 0,
       b.is_designation_optional ? 1 : 0,
       b.is_active === false ? 0 : 1,
+      // undefined = 変更しない (COALESCE で既存値を残す)、null = 明示的にクリア
+      b.notify_friend_id === undefined ? null : b.notify_friend_id,
       id,
       accountId,
     )
     .run();
+  // COALESCE では「明示的な null でクリア」が表現できないので別文で処理する
+  if (b.notify_friend_id === null) {
+    await c.env.DB
+      .prepare(`UPDATE staff SET notify_friend_id = NULL WHERE id = ? AND line_account_id = ?`)
+      .bind(id, accountId)
+      .run();
+  }
   return c.json({ ok: true });
 });
 
@@ -1510,6 +1604,29 @@ booking.delete('/api/booking/admin/staff/:id/shifts/:shiftId', async (c) => {
     .bind(shiftId, staffId)
     .run();
   return c.json({ ok: true });
+});
+
+booking.get('/api/booking/admin/notify-recipients', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const raw = await getAccountSetting(c.env.DB, accountId, BOOKING_NOTIFY_RECIPIENTS_KEY);
+  return c.json({ friend_ids: resolveStaffRecipients(null, raw) });
+});
+
+booking.put('/api/booking/admin/notify-recipients', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const b = await c.req.json<{ friend_ids: string[] }>();
+  if (!Array.isArray(b.friend_ids) || b.friend_ids.some((v) => typeof v !== 'string')) {
+    return c.json({ error: 'invalid_friend_ids' }, 422);
+  }
+  await setAccountSetting(
+    c.env.DB,
+    accountId,
+    BOOKING_NOTIFY_RECIPIENTS_KEY,
+    JSON.stringify(b.friend_ids),
+  );
+  return c.json({ ok: true, count: b.friend_ids.length });
 });
 
 booking.post('/api/booking/admin/staff/:id/shifts/generate', async (c) => {
