@@ -12,7 +12,7 @@ import { deployWorker, syncInstalledWorkerConfig } from "../steps/deploy-worker.
 import { ensureWorkersDevSubdomain } from "../steps/ensure-subdomain.js";
 import { deployAdmin } from "../steps/deploy-admin.js";
 import { fetchLatestRelease, type FetchedRelease } from "../steps/release-bundle.js";
-import { pinRepoToTag } from "../steps/clone-repo.js";
+import { installRepoDeps, pinRepoToTag } from "../steps/clone-repo.js";
 import { setSecrets } from "../steps/secrets.js";
 import { configureAdminAuth } from "../steps/admin-auth.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
@@ -415,6 +415,9 @@ async function runSetupInner(
         "(`npx create-line-harness update`) の対象外になります。開発用途向けです。",
       ].join("\n"),
     );
+    // Nothing else installs on this path: pinRepoToTag() is skipped, and
+    // ensureRepo() returns early for a checkout that already exists.
+    await installRepoDeps(repoDir);
   }
 
   // Step 2: Authenticate with Cloudflare
