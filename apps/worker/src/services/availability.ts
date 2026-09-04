@@ -210,6 +210,29 @@ export async function getAvailability(
     .bind(...staffIds)
     .all<{ staff_id: string; weekday: number; start_time: string; end_time: string }>();
 
+  // 予約不可時間 (休憩 / 外出 / 会議)。勤務区間を分割せず busy として差し引く。
+  // 曜日ルールと日付指定は排他ではなく重ねる — 定例の休憩に加えて臨時の外出が
+  // 入る、という積み方をするため (staff_shifts が曜日ルールを置き換えるのとは
+  // セマンティクスが異なる)。
+  const timeOff = await db
+    .prepare(
+      `SELECT staff_id, work_date, start_time, end_time
+         FROM staff_time_off
+        WHERE staff_id IN (${placeholders})
+          AND work_date BETWEEN ? AND ?`,
+    )
+    .bind(...staffIds, params.from, params.to)
+    .all<{ staff_id: string; work_date: string; start_time: string; end_time: string }>();
+
+  const timeOffRules = await db
+    .prepare(
+      `SELECT staff_id, weekday, start_time, end_time
+         FROM staff_time_off_rules
+        WHERE staff_id IN (${placeholders}) AND is_active = 1`,
+    )
+    .bind(...staffIds)
+    .all<{ staff_id: string; weekday: number; start_time: string; end_time: string }>();
+
   // Coarse range filter: from の前日 00:00 UTC 〜 to の翌日 00:00 UTC で十分な余裕
   const rangeStart = new Date(`${params.from}T00:00:00Z`);
   rangeStart.setUTCDate(rangeStart.getUTCDate() - 1);
@@ -280,6 +303,16 @@ export async function getAvailability(
           start: jstHHMM(new Date(b.starts_at)),
           end: jstHHMM(new Date(b.block_ends_at)),
         }));
+      for (const r of timeOffRules.results) {
+        if (r.staff_id === s.id && r.weekday === weekdayForDate(date)) {
+          dayBookings.push({ start: r.start_time, end: r.end_time });
+        }
+      }
+      for (const t of timeOff.results) {
+        if (t.staff_id === s.id && t.work_date === date) {
+          dayBookings.push({ start: t.start_time, end: t.end_time });
+        }
+      }
       const googleBusy = googleBusyByStaff.get(s.id);
       if (googleBusy) dayBookings.push(...googleBusyForJstDate(googleBusy, date));
       const daySlots = computeSlots({

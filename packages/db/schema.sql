@@ -1029,6 +1029,41 @@ CREATE INDEX IF NOT EXISTS idx_staff_availability_rules_staff
   ON staff_availability_rules (staff_id, weekday, is_active);
 
 -- ============================================================
+-- staff_time_off / staff_time_off_rules: 予約不可時間
+-- 勤務区間 (staff_shifts / staff_availability_rules) を分割するのではなく、
+-- 通し勤務から穴を空ける。休憩を挟む 2 部制と臨時の外出を同じ仕組みで表現する。
+-- 勤務時間側と違い、日付指定は曜日ルールを置き換えず「追加」される。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS staff_time_off (
+  id          TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  work_date   TEXT NOT NULL,    -- YYYY-MM-DD (JST)
+  start_time  TEXT NOT NULL,    -- HH:MM (JST)
+  end_time    TEXT NOT NULL,    -- HH:MM (JST)
+  reason      TEXT,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+CREATE INDEX IF NOT EXISTS idx_staff_time_off_staff_date
+  ON staff_time_off (staff_id, work_date);
+
+CREATE TABLE IF NOT EXISTS staff_time_off_rules (
+  id          TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  weekday     INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+  start_time  TEXT NOT NULL,
+  end_time    TEXT NOT NULL,
+  reason      TEXT,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+CREATE INDEX IF NOT EXISTS idx_staff_time_off_rules_staff
+  ON staff_time_off_rules (staff_id, weekday, is_active);
+
+-- ============================================================
 -- bookings: 予約本体
 -- ============================================================
 CREATE TABLE IF NOT EXISTS bookings (
