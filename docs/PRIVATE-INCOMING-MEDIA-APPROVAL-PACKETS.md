@@ -2958,8 +2958,8 @@ Implementation parent: Harness 3872515c877356959cb937f0f795788d3c522ed7
 Production source: v0.19 backport ac104571b1a3e053f4d573ebd8d31ffb88e2d6f9
   (exact descendant of 9f3c6c3; only index.ts, images.ts, images.test.ts differ)
 Executor/test SHA-256:
-  c9b75d927bcd95d4e1c38f078ba0a794b5c7f7988a83c1f2c951bbbcca4bdce3 /
-  7fc09f3f0bfb099d2298789067e544277520d529973d062b93b6ccb88dcecb60
+  c0a734c93ebca7aeec3363479ceaaa3f2f61a7e07ed4bdd92ea53fe474dc99ac /
+  ac4508c542ddc8f88f71ddff709e9dafca9ffd448f8025beb563b6d3306bc69f
 Artifact: SHA-256 bc5e139610376b126bb2fc61fa1fbb6b112ac4587b4f89db87b3d6d5bad02790,
   1,350,017 bytes, two independent wrangler dry-run builds byte-identical,
   runtime version 0.19.0-5229.b4.ac10457, worker identity
@@ -2972,19 +2972,21 @@ Behavior change:
 - ordinary non-incoming public image URLs remain unchanged
 
 Exact provider sequence, serial and no retry:
-1. two identical pre-write six-resource Cloudflare snapshots, two current
-   version-resource reads, exact current /admin/version readback, and current
-   scoped private denial/HEAD/GET with exact size/MIME/SHA-256 before mutation
-2. exactly one PUT to /workers/scripts/line-harness/content containing only
+1. one pre-write six-resource Cloudflare snapshot and current version-resource
+   read, exact current /admin/version readback, then current scoped private
+   denial/HEAD/GET with exact size/MIME/SHA-256
+2. a second identical six-resource snapshot and version-resource read as the
+   final drift check immediately adjacent to the mutation
+3. exactly one PUT to /workers/scripts/line-harness/content containing only
    metadata {main_module: worker.js} and one pinned worker.js module
-3. one six-resource post-write snapshot and new version-resource comparison;
+4. one six-resource post-write snapshot and new version-resource comparison;
    bindings/resources/compatibility/cache/assets/subdomain/schedules/Admin
    topology must remain semantically unchanged and cache must be absent/false
-4. bounded /admin/version propagation, anonymous private HEAD=401, scoped
+5. bounded /admin/version propagation, anonymous private HEAD=401, scoped
    authenticated private HEAD=200 and GET=200 with exact size/MIME/SHA-256
-5. exact manifest-derived 77 bare legacy URLs GET with Range bytes=0-0; all
+6. exact manifest-derived 77 bare legacy URLs GET with Range bytes=0-0; all
    must return fixed JSON 404, private/no-store, nosniff, and no cache-hit state
-6. one terminal deployments GET proving the new version remains 100% active
+7. one terminal deployments GET proving the new version remains 100% active
 
 Ceilings: Cloudflare GET at most 23, Worker runtime reads at most 96, content
 PUT exactly one on success and at most one always. Settings, binding, secret,

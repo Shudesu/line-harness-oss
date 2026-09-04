@@ -39,4 +39,15 @@ describe('worker B4-R1 code-only deploy controls', () => {
     expect(manifest.privateHeadPath).toContain('/api/incoming-media/');
     expect(manifest.privateContentPath).toBe(`${manifest.privateHeadPath}/content`);
   });
+
+  it('keeps the final full drift snapshot after private probes and immediately before PUT', () => {
+    const source = readFileSync(new URL('./worker-b4-r1-code-only-deploy-5229.ts', import.meta.url), 'utf8');
+    const privateGet = source.indexOf('validatePrivateGet(await requestWorker', source.indexOf("const privateHeaders"));
+    const finalSnapshot = source.indexOf('const finalPre = await getSnapshot', privateGet);
+    const mutation = source.indexOf("mutationStage = 'content_put_in_flight'", finalSnapshot);
+    expect(privateGet).toBeGreaterThan(0);
+    expect(finalSnapshot).toBeGreaterThan(privateGet);
+    expect(mutation).toBeGreaterThan(finalSnapshot);
+    expect(source.slice(finalSnapshot, mutation)).not.toContain('requestWorker(');
+  });
 });

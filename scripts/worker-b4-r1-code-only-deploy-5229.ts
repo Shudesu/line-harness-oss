@@ -411,13 +411,6 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
         preRuntime.worker_hash !== 'sha256:6420c520444baa670973197f6c336b23a511e9dcd8fdbdf24082b61ce24c2b1e') {
       throw new B4Stop('pre_runtime_drift');
     }
-    const finalPre = await getSnapshot(cloudflareToken, expiresAt, requestCf, ADMIN_NAME_SHA256);
-    const finalPreSemantic = parseVersionSemantic(
-      await requestCf(versionRequest(CURRENT_VERSION_ID)), CURRENT_VERSION_ID, CURRENT_SCRIPT_ETAG,
-    );
-    if (canonical(before.snapshot) !== canonical(finalPre.snapshot) ||
-        canonical(beforeSemantic) !== canonical(finalPreSemantic)) throw new B4Stop('pre_put_snapshot_drift');
-
     const privateHeaders = { Authorization: `Bearer ${credential}`, 'Accept-Encoding': 'identity' };
     const preUnauthenticated = await requestWorker({
       hostname: WORKER_HOST, method: 'HEAD', path: manifest.privateHeadPath,
@@ -435,6 +428,15 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
       hostname: WORKER_HOST, method: 'GET', path: manifest.privateContentPath,
       headers: privateHeaders, maxBytes: manifest.first.byte_size,
     }), manifest.first);
+
+    // Keep the second full provider snapshot immediately adjacent to the
+    // mutation. The private content probes above may be comparatively slow.
+    const finalPre = await getSnapshot(cloudflareToken, expiresAt, requestCf, ADMIN_NAME_SHA256);
+    const finalPreSemantic = parseVersionSemantic(
+      await requestCf(versionRequest(CURRENT_VERSION_ID)), CURRENT_VERSION_ID, CURRENT_SCRIPT_ETAG,
+    );
+    if (canonical(before.snapshot) !== canonical(finalPre.snapshot) ||
+        canonical(beforeSemantic) !== canonical(finalPreSemantic)) throw new B4Stop('pre_put_snapshot_drift');
 
     mutationStage = 'content_put_in_flight';
     mutationOutcome = 'unknown';
