@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   POLICY_CUTOFF_PREFIX,
+  REBUILD_EXEMPT_MIGRATIONS,
   checkMigration,
   filterMigrationsByPolicy,
+  isRebuildExempt,
 } from './check-migrations';
 
 describe('checkMigration', () => {
@@ -164,5 +166,25 @@ describe('filterMigrationsByPolicy', () => {
 
   it('returns an empty array when no files meet the cutoff', () => {
     expect(filterMigrationsByPolicy(['001_a.sql', '010_b.sql'])).toEqual([]);
+  });
+});
+
+describe('isRebuildExempt', () => {
+  it('許可リストのmigrationはフルパスでも判定されるべき', () => {
+    expect(isRebuildExempt('NNN_messages_log_delivery_type_test.sql')).toBe(true);
+    expect(
+      isRebuildExempt('packages/db/migrations/NNN_messages_log_delivery_type_test.sql'),
+    ).toBe(true);
+  });
+
+  it('許可リスト外のmigrationは対象外であるべき', () => {
+    expect(isRebuildExempt('052_future.sql')).toBe(false);
+    expect(isRebuildExempt('027_dedup_delivery.sql')).toBe(false);
+  });
+
+  it('許可リストの各エントリはcutoff以降のみを想定しているべき', () => {
+    for (const name of REBUILD_EXEMPT_MIGRATIONS) {
+      expect(name >= POLICY_CUTOFF_PREFIX).toBe(true);
+    }
   });
 });

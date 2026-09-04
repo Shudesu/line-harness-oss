@@ -142,6 +142,30 @@ const DEFAULT_MIGRATIONS_DIR = 'packages/db/migrations';
 export const POLICY_CUTOFF_PREFIX = '041';
 
 /**
+ * Rebuild exemptions — migrations allowed to use destructive constructs
+ * despite the additive-only policy.
+ *
+ * SQLite cannot ALTER a CHECK constraint, so aligning a legacy DB with the
+ * canonical schema (bootstrap.sql) occasionally requires the documented
+ * table-rebuild recipe: CREATE new → INSERT full copy → DROP old → RENAME.
+ * That recipe is data-preserving but trips the DROP TABLE / RENAME TO rules.
+ *
+ * Every entry here must:
+ *   - copy ALL rows into the replacement table (no data loss), and
+ *   - carry a comment block in the SQL explaining why the rebuild is
+ *     unavoidable and which canonical definition it converges to.
+ */
+export const REBUILD_EXEMPT_MIGRATIONS = new Set([
+  'NNN_messages_log_delivery_type_test.sql',
+]);
+
+/** Basename-aware membership test for REBUILD_EXEMPT_MIGRATIONS. */
+export function isRebuildExempt(fileOrName: string): boolean {
+  const base = fileOrName.split(/[\\/]/).pop() ?? fileOrName;
+  return REBUILD_EXEMPT_MIGRATIONS.has(base);
+}
+
+/**
  * Filter the list of migration filenames (basenames, not full paths) to those
  * that fall under the active policy. With `all = true`, returns the input
  * unchanged (escape hatch for ad-hoc full scans).
@@ -189,6 +213,10 @@ function main(rawArgs: string[]): void {
 
   const failures: { file: string; violation: string }[] = [];
   for (const file of files) {
+    if (isRebuildExempt(file)) {
+      stdout.write(`[EXEMPT] ${file}: rebuild allowlist (see REBUILD_EXEMPT_MIGRATIONS)\n`);
+      continue;
+    }
     const sql = readFileSync(file, 'utf8');
     const result = checkMigration(sql);
     if (!result.ok) {
