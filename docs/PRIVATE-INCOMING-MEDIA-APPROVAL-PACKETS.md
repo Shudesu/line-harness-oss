@@ -2958,7 +2958,7 @@ Implementation parent: Harness 3872515c877356959cb937f0f795788d3c522ed7
 Production source: v0.19 backport ac104571b1a3e053f4d573ebd8d31ffb88e2d6f9
   (exact descendant of 9f3c6c3; only index.ts, images.ts, images.test.ts differ)
 Executor/test SHA-256:
-  77c6a48305eef5713facdd46e22b09ca57d453962d60c19d72abdb070b88dc66 /
+  c9b75d927bcd95d4e1c38f078ba0a794b5c7f7988a83c1f2c951bbbcca4bdce3 /
   7fc09f3f0bfb099d2298789067e544277520d529973d062b93b6ccb88dcecb60
 Artifact: SHA-256 bc5e139610376b126bb2fc61fa1fbb6b112ac4587b4f89db87b3d6d5bad02790,
   1,350,017 bytes, two independent wrangler dry-run builds byte-identical,
@@ -2973,7 +2973,8 @@ Behavior change:
 
 Exact provider sequence, serial and no retry:
 1. two identical pre-write six-resource Cloudflare snapshots, two current
-   version-resource reads, and exact current /admin/version readback
+   version-resource reads, exact current /admin/version readback, and current
+   scoped private denial/HEAD/GET with exact size/MIME/SHA-256 before mutation
 2. exactly one PUT to /workers/scripts/line-harness/content containing only
    metadata {main_module: worker.js} and one pinned worker.js module
 3. one six-resource post-write snapshot and new version-resource comparison;
@@ -2985,7 +2986,7 @@ Exact provider sequence, serial and no retry:
    must return fixed JSON 404, private/no-store, nosniff, and no cache-hit state
 6. one terminal deployments GET proving the new version remains 100% active
 
-Ceilings: Cloudflare GET at most 23, Worker runtime reads at most 93, content
+Ceilings: Cloudflare GET at most 23, Worker runtime reads at most 96, content
 PUT exactly one on success and at most one always. Settings, binding, secret,
 D1, R2-direct, purge, restart, LINE, Drive, PR merge, retry, redirect, and
 automatic rollback are zero. A PUT ambiguity or any post-write mismatch sets

@@ -381,7 +381,7 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
     validateApprovalWindow(deps.now());
     if (spec.method !== 'GET' && spec.method !== 'HEAD') throw new B4Stop('worker_request_scope');
     runtimeReads += 1;
-    if (runtimeReads > 93) throw new B4Stop('request_ceiling');
+    if (runtimeReads > 96) throw new B4Stop('request_ceiling');
     const response = await deps.workerRequest(spec, expiresAt);
     validateApprovalWindow(deps.now());
     return response;
@@ -417,6 +417,24 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
     );
     if (canonical(before.snapshot) !== canonical(finalPre.snapshot) ||
         canonical(beforeSemantic) !== canonical(finalPreSemantic)) throw new B4Stop('pre_put_snapshot_drift');
+
+    const privateHeaders = { Authorization: `Bearer ${credential}`, 'Accept-Encoding': 'identity' };
+    const preUnauthenticated = await requestWorker({
+      hostname: WORKER_HOST, method: 'HEAD', path: manifest.privateHeadPath,
+      headers: { 'Accept-Encoding': 'identity' }, maxBytes: 1_024,
+    });
+    if (preUnauthenticated.status !== 401 || preUnauthenticated.body.length !== 0 ||
+        header(preUnauthenticated, 'cache-control') !== 'private, no-store') {
+      throw new B4Stop('pre_private_auth_denial');
+    }
+    validatePrivateHead(await requestWorker({
+      hostname: WORKER_HOST, method: 'HEAD', path: manifest.privateHeadPath,
+      headers: privateHeaders, maxBytes: 1_024,
+    }), manifest.first);
+    validatePrivateGet(await requestWorker({
+      hostname: WORKER_HOST, method: 'GET', path: manifest.privateContentPath,
+      headers: privateHeaders, maxBytes: manifest.first.byte_size,
+    }), manifest.first);
 
     mutationStage = 'content_put_in_flight';
     mutationOutcome = 'unknown';
@@ -469,7 +487,6 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
     });
     if (unauthenticated.status !== 401 || unauthenticated.body.length !== 0 ||
         header(unauthenticated, 'cache-control') !== 'private, no-store') throw new B4Stop('private_auth_denial');
-    const privateHeaders = { Authorization: `Bearer ${credential}`, 'Accept-Encoding': 'identity' };
     validatePrivateHead(await requestWorker({
       hostname: WORKER_HOST, method: 'HEAD', path: manifest.privateHeadPath,
       headers: privateHeaders, maxBytes: 1_024,
@@ -511,6 +528,8 @@ export async function run(raw: string[], deps: Dependencies): Promise<Record<str
       },
       runtime_readback: {
         version: runtime.version, worker_hash: runtime.worker_hash, version_attempts: versionPolls,
+        pre_write_private_unauthenticated_head: 401, pre_write_private_authenticated_head: 200,
+        pre_write_private_authenticated_get: 200, pre_write_private_content_sha256_match: true,
         private_unauthenticated_head: 401, private_authenticated_head: 200,
         private_authenticated_get: 200, private_content_sha256_match: true,
         legacy_public_get_404_count: closedCount, legacy_expected_count: 77,
