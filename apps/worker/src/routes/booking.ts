@@ -17,6 +17,10 @@ import { resolveCorsOrigin } from '../middleware/admin-auth-config.js';
 import { canTransition, nextStatus, type BookingAction } from '../services/booking-state.js';
 import { getAvailability } from '../services/availability.js';
 import {
+  countBookingsByStaffForDate,
+  orderAssignmentCandidates,
+} from '../services/staff-assignment.js';
+import {
   removeBookingFromGoogle,
   syncConfirmedBookingToGoogle,
   verifyStaffCalendarConnection,
@@ -436,29 +440,69 @@ booking.post('/api/liff/booking/requests', async (c) => {
   // リードタイム / 既存予約を、確定直前にもう一度突合する。
   const startJstDate = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
   const startJstHHMM = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(11, 16);
+  // 指名なし枠かどうかで扱いが変わる。指名なしの場合は実スタッフ全員の空きを見て、
+  // 確定時にその中の 1 名へ割り当てる (仮想スタッフに予約を入れると同時 1 件しか
+  // 受けられなくなるため)。
+  const requestedStaff = await c.env.DB
+    .prepare(
+      `SELECT is_designation_optional FROM staff
+        WHERE id = ? AND line_account_id = ? AND is_active = 1 AND deleted_at IS NULL`,
+    )
+    .bind(body.staff_id, accountId)
+    .first<{ is_designation_optional: number }>();
+  if (!requestedStaff) return c.json({ error: 'staff_not_found' }, 404);
+  const noDesignation = requestedStaff.is_designation_optional === 1;
+
   const latestAvailability = await getAvailability(c.env.DB, {
     lineAccountId: accountId,
     menuId: body.menu_id,
-    staffId: body.staff_id,
+    // 指名なしのときは全スタッフ分を受け取り、空いている実スタッフを候補にする
+    staffId: noDesignation ? undefined : body.staff_id,
     from: startJstDate,
     to: startJstDate,
     now: new Date(),
     minLeadTimeMinutes: DEFAULT_ACCOUNT_SETTINGS.min_lead_time_minutes,
     googleCredentials: googleCredentials(c.env),
   });
-  const slotMatched = latestAvailability.by_staff[0]?.slots.some(
-    (slot) => slot.date === startJstDate && slot.start === startJstHHMM,
-  );
-  if (!slotMatched) return c.json({ error: 'slot_not_available' }, 422);
+  const hasSlot = (entry: { staff_id: string; slots: Array<{ date: string; start: string }> }) =>
+    entry.slots.some((slot) => slot.date === startJstDate && slot.start === startJstHHMM);
 
-  const bookingId = crypto.randomUUID();
+  let candidateStaffIds: string[];
+  if (noDesignation) {
+    const free = latestAvailability.by_staff.filter(
+      (entry) => entry.staff_id !== body.staff_id && hasSlot(entry),
+    );
+    if (free.length === 0) return c.json({ error: 'slot_not_available' }, 422);
+    const counts = await countBookingsByStaffForDate(
+      c.env.DB,
+      free.map((e) => e.staff_id),
+      startJstDate,
+    );
+    candidateStaffIds = orderAssignmentCandidates(
+      free.map((e) => ({ staffId: e.staff_id, dayBookingCount: counts.get(e.staff_id) ?? 0 })),
+    );
+  } else {
+    if (!latestAvailability.by_staff[0] || !hasSlot(latestAvailability.by_staff[0])) {
+      return c.json({ error: 'slot_not_available' }, 422);
+    }
+    candidateStaffIds = [body.staff_id];
+  }
+
   const nowIso = new Date().toISOString();
   // 競合チェックと INSERT を 1 ステートメントで原子化する。
   // INSERT ... SELECT WHERE NOT EXISTS パターンで、同一スタッフの overlap 行がある場合は
-  // 0 行 INSERT に落とす。changes=0 を 409 として扱う。
-  const insertResult = await c.env.DB
-    .prepare(
-      `INSERT INTO bookings
+  // 0 行 INSERT に落とす。changes=0 は競合。
+  //
+  // 指名なしのときは候補を順に試す。表示時に空いていても確定までの間に他の予約が
+  // 入り得るため、1 人目が競合したら次の候補へ進む。全滅した場合のみ 409。
+  let bookingId = '';
+  let assignedStaffId = '';
+  let inserted = false;
+  for (const candidateStaffId of candidateStaffIds) {
+    const id = crypto.randomUUID();
+    const insertResult = await c.env.DB
+      .prepare(
+        `INSERT INTO bookings
         (id, line_account_id, friend_id, staff_id, menu_id,
          starts_at, ends_at, block_ends_at, status,
          customer_note, price_at_booking, requested_at)
@@ -470,27 +514,37 @@ booking.post('/api/liff/booking/requests', async (c) => {
              AND starts_at < ?
              AND block_ends_at > ?
         )`,
-    )
-    .bind(
-      bookingId,
-      accountId,
-      friendId,
-      body.staff_id,
-      body.menu_id,
-      startsAt.toISOString(),
-      endsAt.toISOString(),
-      blockEndsAt.toISOString(),
-      'requested' satisfies BookingStatus,
-      body.customer_note ?? null,
-      menuRow.price,
-      nowIso,
-      // NOT EXISTS subquery params
-      body.staff_id,
-      blockEndsAt.toISOString(),
-      startsAt.toISOString(),
-    )
-    .run();
-  if ((insertResult.meta?.changes ?? 0) === 0) {
+      )
+      .bind(
+        id,
+        accountId,
+        friendId,
+        candidateStaffId,
+        body.menu_id,
+        startsAt.toISOString(),
+        endsAt.toISOString(),
+        blockEndsAt.toISOString(),
+        'requested' satisfies BookingStatus,
+        body.customer_note ?? null,
+        // 顧客に提示した価格・所要時間を採用する。指名なしで別スタッフへ割り当てて
+        // も、表示と請求がずれないようにするため。
+        menuRow.price,
+        nowIso,
+        // NOT EXISTS subquery params
+        candidateStaffId,
+        blockEndsAt.toISOString(),
+        startsAt.toISOString(),
+      )
+      .run();
+    if ((insertResult.meta?.changes ?? 0) > 0) {
+      bookingId = id;
+      assignedStaffId = candidateStaffId;
+      inserted = true;
+      break;
+    }
+  }
+  if (!inserted) {
+
     const err = { error: 'slot_conflict' };
     await saveIdempotencyResponse(c.env.DB, {
       key: idemKey,
@@ -510,7 +564,7 @@ booking.post('/api/liff/booking/requests', async (c) => {
       source: 'booking',
       sourceEventId: bookingId,
       friendId,
-      metadata: { bookingType: 'salon', menuId: body.menu_id, staffId: body.staff_id },
+      metadata: { bookingType: 'salon', menuId: body.menu_id, staffId: assignedStaffId },
       occurredAt: nowIso,
     }),
   );

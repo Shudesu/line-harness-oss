@@ -387,3 +387,100 @@ describe('getAvailability', () => {
     expect(result.by_staff).toEqual([]);
   });
 });
+
+describe('getAvailability — 指名なし枠', () => {
+  const MENU = {
+    duration_minutes: 60,
+    buffer_after_minutes: 0,
+    override_duration: null,
+    override_price: null,
+  };
+  const params = {
+    lineAccountId: 'A1',
+    menuId: 'M1',
+    from: '2026-05-09',
+    to: '2026-05-09',
+    now: new Date('2026-05-08T00:00:00Z'),
+    minLeadTimeMinutes: 60,
+  };
+
+  test('実スタッフの空きの和集合になる（重複は除く）', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: [
+        { id: 'ANY', display_name: '指名なし', is_designation_optional: 1 },
+        { id: 'S1', display_name: '山田', is_designation_optional: 0 },
+        { id: 'S2', display_name: '田中', is_designation_optional: 0 },
+      ],
+      shifts: [
+        { staff_id: 'S1', work_date: '2026-05-09', start_time: '09:00', end_time: '11:00' },
+        { staff_id: 'S2', work_date: '2026-05-09', start_time: '10:00', end_time: '12:00' },
+      ],
+      bookings: [],
+    });
+    const result = await getAvailability(db, { ...params, staffId: 'ANY' });
+    expect(result.by_staff).toHaveLength(1);
+    expect(result.by_staff[0].staff_id).toBe('ANY');
+    // S1 (09:00-11:00): 09:00 09:30 10:00 / S2 (10:00-12:00): 10:00 10:30 11:00
+    // → 和集合を時刻順に、10:00 の重複は 1 つに畳む
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual([
+      '09:00', '09:30', '10:00', '10:30', '11:00',
+    ]);
+  });
+
+  test('1 人が埋まっていてももう 1 人が空いていれば枠は残る', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: [
+        { id: 'ANY', display_name: '指名なし', is_designation_optional: 1 },
+        { id: 'S1', display_name: '山田', is_designation_optional: 0 },
+        { id: 'S2', display_name: '田中', is_designation_optional: 0 },
+      ],
+      shifts: [
+        { staff_id: 'S1', work_date: '2026-05-09', start_time: '09:00', end_time: '11:00' },
+        { staff_id: 'S2', work_date: '2026-05-09', start_time: '09:00', end_time: '11:00' },
+      ],
+      bookings: [
+        // S1 の 09:00-10:00 が埋まっている
+        { staff_id: 'S1', starts_at: '2026-05-09T00:00:00.000Z', block_ends_at: '2026-05-09T01:00:00.000Z' },
+      ],
+    });
+    const result = await getAvailability(db, { ...params, staffId: 'ANY' });
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['09:00', '09:30', '10:00']);
+  });
+
+  test('指名なし枠は自分のシフトを持たなくてよい', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: [
+        { id: 'ANY', display_name: '指名なし', is_designation_optional: 1 },
+        { id: 'S1', display_name: '山田', is_designation_optional: 0 },
+      ],
+      shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '12:00' }],
+      bookings: [],
+    });
+    const result = await getAvailability(db, { ...params, staffId: 'ANY' });
+    expect(result.by_staff[0].has_working_hours).toBe(true);
+    expect(result.by_staff[0].slots.length).toBe(3);
+  });
+
+  test('実スタッフを指名したときは自分の枠だけ返る', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: [
+        { id: 'ANY', display_name: '指名なし', is_designation_optional: 1 },
+        { id: 'S1', display_name: '山田', is_designation_optional: 0 },
+        { id: 'S2', display_name: '田中', is_designation_optional: 0 },
+      ],
+      shifts: [
+        { staff_id: 'S1', work_date: '2026-05-09', start_time: '09:00', end_time: '10:00' },
+        { staff_id: 'S2', work_date: '2026-05-09', start_time: '14:00', end_time: '16:00' },
+      ],
+      bookings: [],
+    });
+    const result = await getAvailability(db, { ...params, staffId: 'S2' });
+    expect(result.by_staff).toHaveLength(1);
+    expect(result.by_staff[0].staff_id).toBe('S2');
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['14:00', '14:30', '15:00']);
+  });
+});
