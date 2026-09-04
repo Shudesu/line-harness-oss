@@ -7,6 +7,10 @@ const lineClientMocks = vi.hoisted(() => ({
   pushMessage: vi.fn(),
 }));
 
+const incomingImageMocks = vi.hoisted(() => ({
+  fetchAndStoreIncomingImage: vi.fn(),
+}));
+
 // Stub the DB graph — these tests focus on webhook guard behavior and the
 // first-contact friend registration path without touching real D1/LINE.
 vi.mock('@line-crm/db', () => ({
@@ -27,6 +31,7 @@ vi.mock('@line-crm/db', () => ({
   getEntryRouteByRefCode: vi.fn(),
   getMessageTemplateById: vi.fn(),
   getTemplateById: vi.fn(),
+  applyMileageRulesForEvent: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('@line-crm/line-sdk', async () => {
@@ -53,6 +58,8 @@ vi.mock('../services/step-delivery.js', () => ({
   resolveMetadata: vi.fn(),
   messageToLogPayload: vi.fn(),
 }));
+
+vi.mock('../services/incoming-image.js', () => incomingImageMocks);
 
 import { verifySignature } from '@line-crm/line-sdk';
 import {
@@ -480,5 +487,83 @@ describe('POST /webhook — first-contact existing friends', () => {
     expect(addTagToFriend).not.toHaveBeenCalled();
     expect(getEntryRouteByRefCode).not.toHaveBeenCalled();
     expect(getMessageTemplateById).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — private incoming image preservation', () => {
+  test('preserves a group image before the user-only friend path and creates no friend', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(getLineAccounts).mockResolvedValue([{
+      id: 'acc-group',
+      channel_id: 'channel-group',
+      name: 'Group account',
+      channel_access_token: 'group-token',
+      channel_secret: 'env-default-secret',
+      login_channel_id: null,
+      login_channel_secret: null,
+      is_active: 1,
+      country: null,
+      role: null,
+      display_order: 0,
+      token_expires_at: null,
+      liff_id: null,
+      og_site_name: null,
+      og_default_image_url: null,
+      og_default_description: null,
+      created_at: '2026-08-31T12:00:00+09:00',
+      updated_at: '2026-08-31T12:00:00+09:00',
+    }]);
+    incomingImageMocks.fetchAndStoreIncomingImage.mockResolvedValue({
+      originalContentUrl: 'https://worker.example.com/api/incoming-media/acc-group/msg-group/content',
+      previewImageUrl: 'https://worker.example.com/api/incoming-media/acc-group/msg-group/content',
+    });
+
+    const db = {} as D1Database;
+    const r2 = {} as R2Bucket;
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+    const res = await setupApp().request('/webhook', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Line-Signature': 'A'.repeat(43) + '=',
+      },
+      body: JSON.stringify({
+        destination: 'bot',
+        events: [{
+          type: 'message',
+          replyToken: 'reply-token',
+          message: { type: 'image', id: 'msg-group', contentProvider: { type: 'line' } },
+          timestamp: Date.now(),
+          source: { type: 'group', groupId: 'C-group', userId: 'U-sender' },
+          webhookEventId: 'event-group',
+          deliveryContext: { isRedelivery: false },
+          mode: 'active',
+        }],
+      }),
+    }, {
+      ...baseEnv,
+      DB: db,
+      IMAGES: r2,
+      WORKER_URL: 'https://worker.example.com',
+    }, executionCtx);
+
+    expect(res.status).toBe(200);
+    const processing = vi.mocked(executionCtx.waitUntil).mock.calls[0]?.[0] as Promise<unknown>;
+    await processing;
+    expect(incomingImageMocks.fetchAndStoreIncomingImage).toHaveBeenCalledWith({
+      db,
+      r2,
+      workerUrl: 'https://worker.example.com',
+      channelAccessToken: 'group-token',
+      accountId: 'acc-group',
+      messageId: 'msg-group',
+      source: { type: 'group', id: 'C-group', senderUserId: 'U-sender' },
+    });
+    expect(getFriendByLineUserId).not.toHaveBeenCalled();
+    expect(upsertFriend).not.toHaveBeenCalled();
   });
 });
