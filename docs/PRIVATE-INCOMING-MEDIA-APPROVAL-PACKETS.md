@@ -2948,3 +2948,58 @@ The incident image that was absent at 14:54 was independently found in Drive
 with creation time 15:12 JST under `月次添付物/2026年08月/その他`. Its 455,769
 bytes exactly match the retained Harness object by SHA-256, so no duplicate
 Drive upload was performed.
+
+## Packet 5229-B4-R1-20260904 — code-only permanent public-route closure
+
+```text
+Approval source/interval: KEN continuation approval received in this task,
+  [2026-09-04T00:50:00.301Z, 2026-09-04T02:50:00.301Z)
+Implementation parent: Harness 3872515c877356959cb937f0f795788d3c522ed7
+Production source: v0.19 backport ac104571b1a3e053f4d573ebd8d31ffb88e2d6f9
+  (exact descendant of 9f3c6c3; only index.ts, images.ts, images.test.ts differ)
+Executor/test SHA-256:
+  77c6a48305eef5713facdd46e22b09ca57d453962d60c19d72abdb070b88dc66 /
+  7fc09f3f0bfb099d2298789067e544277520d529973d062b93b6ccb88dcecb60
+Artifact: SHA-256 bc5e139610376b126bb2fc61fa1fbb6b112ac4587b4f89db87b3d6d5bad02790,
+  1,350,017 bytes, two independent wrangler dry-run builds byte-identical,
+  runtime version 0.19.0-5229.b4.ac10457, worker identity
+  sha256:45aa5132adffe83e1710534efd914b116cb6a4d06df0926df4b28b71f9f51bf2.
+
+Behavior change:
+- every normalized incoming-* key returns generic 404 before R2 access
+- closure is unconditional and does not read a runtime binding
+- the 404 is private/no-store and nosniff
+- ordinary non-incoming public image URLs remain unchanged
+
+Exact provider sequence, serial and no retry:
+1. two identical pre-write six-resource Cloudflare snapshots, two current
+   version-resource reads, and exact current /admin/version readback
+2. exactly one PUT to /workers/scripts/line-harness/content containing only
+   metadata {main_module: worker.js} and one pinned worker.js module
+3. one six-resource post-write snapshot and new version-resource comparison;
+   bindings/resources/compatibility/cache/assets/subdomain/schedules/Admin
+   topology must remain semantically unchanged and cache must be absent/false
+4. bounded /admin/version propagation, anonymous private HEAD=401, scoped
+   authenticated private HEAD=200 and GET=200 with exact size/MIME/SHA-256
+5. exact manifest-derived 77 bare legacy URLs GET with Range bytes=0-0; all
+   must return fixed JSON 404, private/no-store, nosniff, and no cache-hit state
+6. one terminal deployments GET proving the new version remains 100% active
+
+Ceilings: Cloudflare GET at most 23, Worker runtime reads at most 93, content
+PUT exactly one on success and at most one always. Settings, binding, secret,
+D1, R2-direct, purge, restart, LINE, Drive, PR merge, retry, redirect, and
+automatic rollback are zero. A PUT ambiguity or any post-write mismatch sets
+reconciliation_required; the executor never retries or rolls back. Rolling
+back to the prior version would reopen 77 URLs and therefore requires a
+separate exact approval.
+
+Evidence: /Users/kensmba/.line-harness-5229-B4-R1-20260904 mode 0700 with
+exactly one sanitized-summary.json mode 0600. The receipt keeps only aggregate
+counts, digests, deployment/version identifiers, mutation outcome, and config
+anchors. It never keeps token/header values, account/message/key/path/URL,
+customer bytes, or provider bodies.
+
+Residual boundary: the update blocks future origin access and verifies the
+observed edge path 77/77. Copies already retained by a browser or LINE client
+cannot be recalled by a Worker deploy or Cloudflare purge.
+```
