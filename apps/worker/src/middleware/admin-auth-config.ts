@@ -263,12 +263,12 @@ export function resolveCorsOrigin(
   // sees only an opaque CORS block. Surface an actionable hint in the Worker
   // logs (`wrangler tail`) — bounded to avoid amplification (see below).
   if (allowedOrigins.length === 0) {
-    warnMissingAdminOrigin(env, origin, requestUrl);
+    warnMissingAdminOrigin(env, normalizedOrigin, requestUrl);
   }
   return '';
 }
 
-// The "ADMIN_ORIGIN is empty" hint is emitted at most once per isolate (keyed on
+// The missing-ADMIN_ORIGIN hint is emitted at most once per isolate (keyed on
 // the `env` binding object, which the runtime reuses across requests) so a flood
 // of cross-origin requests — scanners, CSRF probes — cannot amplify it into log
 // spam / Workers Logs cost.
@@ -292,11 +292,23 @@ function warnMissingAdminOrigin(
   }
   if (!pathname.startsWith('/api/auth/')) return;
 
+  // `allowedOrigins` is empty for two different reasons and the operator has to
+  // tell them apart. ADMIN_ORIGIN may be genuinely unset, or set to a value that
+  // `parseAllowedOrigins` dropped because it is not an absolute origin — a bare
+  // host (a forgotten `https://`) is the common slip. Reporting "empty" in the
+  // second case sends the operator to `wrangler secret list`, which shows the
+  // secret *is* there: a dead end.
+  const configured = (env.ADMIN_ORIGIN ?? '').trim();
+  const cause = configured
+    ? `ADMIN_ORIGIN is set ("${configured.slice(0, 128)}") but no entry parses as ` +
+      `an absolute origin — did you omit the "https://" scheme?`
+    : 'ADMIN_ORIGIN is empty.';
+
   warnedEnvs.add(env);
   console.warn(
-    `[admin-auth] CORS rejected origin "${origin.slice(0, 256)}" on ${pathname} ` +
-      `but ADMIN_ORIGIN is empty. Set ADMIN_ORIGIN to your admin URL (and ` +
-      `ADMIN_ALLOW_CROSS_SITE=true for the default Pages↔Workers topology). ` +
+    `[admin-auth] CORS rejected origin "${origin.slice(0, 256)}" on ` +
+      `${pathname.slice(0, 128)}. ${cause} Set ADMIN_ORIGIN to your admin URL ` +
+      `(and ADMIN_ALLOW_CROSS_SITE=true for the default Pages↔Workers topology). ` +
       `See docs/ADMIN-AUTH.md.`,
   );
 }

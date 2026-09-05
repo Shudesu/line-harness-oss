@@ -215,15 +215,26 @@ setup that aborted earlier (for example the Worker-deploy failure fixed in
 `create-line-harness@0.1.27`, issue #177) never reaches that step and leaves the
 Worker without them.
 
-**Confirm.** The Worker logs a hint on every rejected request — tail them and
-retry the login:
+**Confirm.** The Worker logs this hint **once per isolate**, so a flood of
+probes cannot spam your logs — but it also means the isolate serving you may
+have emitted it already. Start the tail first, then force a fresh isolate
+(redeploy the Worker, or wait for the running one to be evicted) and retry the
+login:
 
 ```bash
 npx wrangler tail <worker-name>
-# → [admin-auth] CORS rejected origin "https://<admin>.pages.dev" on /api/auth/login but ADMIN_ORIGIN is empty. ...
+# → [admin-auth] CORS rejected origin "https://<admin>.pages.dev" on /api/auth/login. ADMIN_ORIGIN is empty. ...
 ```
 
-You can also list the Worker's secrets and check `ADMIN_ORIGIN` is absent:
+Because the hint is capped per isolate, an unauthenticated cross-origin probe
+that arrives first consumes it, so the line you see may name a scanner's origin
+rather than your own. Treat the quoted origin as untrusted — the actionable part
+is the `ADMIN_ORIGIN` diagnosis that follows it.
+
+You can also list the Worker's secrets. A *present* `ADMIN_ORIGIN` is not proof
+the setting is good: a value without the `https://` scheme is dropped while
+parsing and produces exactly the same CORS block. The log line above tells the
+two cases apart — it reports the configured value when one is set but unusable.
 
 ```bash
 npx wrangler secret list --name <worker-name>
