@@ -1229,11 +1229,25 @@ liffRoutes.post('/api/liff/link', async (c) => {
     const matchedAccount = matchedLoginChannelId
       ? dbAccounts.find((a) => a.login_channel_id === matchedLoginChannelId) ?? null
       : null;
-    const friend = await getFriendByLineUserIdForAccount(
+    let friend = await getFriendByLineUserIdForAccount(
       db, lineUserId, matchedAccount?.id ?? null,
     );
     if (!friend) {
-      return c.json({ success: false, error: 'Friend not found' }, 404);
+      // Follow-webhook race: on a first-ever friend add, LINE-side friendship
+      // already exists when the LIFF loads, but the follow event may not have
+      // reached this Worker yet (measured 6s behind in production). Returning
+      // 404 here silently dropped the ref attribution — the entry-route tag /
+      // scenario push for that visit never fired, and the follow handler's
+      // ~1s ref_code retry window had nothing to read because this endpoint
+      // is the one that writes it. Create the row ourselves — exactly what
+      // /auth/callback already does via upsertFriend — and let the follow
+      // webhook wire line_account_id when it arrives.
+      friend = await upsertFriend(db, {
+        lineUserId,
+        displayName: body.displayName ?? verified.name ?? 'Unknown',
+        pictureUrl: null,
+        statusMessage: null,
+      });
     }
 
     let linkedUserId = (friend as unknown as Record<string, unknown>).user_id as string | null;
