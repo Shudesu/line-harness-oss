@@ -192,3 +192,61 @@ credential.
   `Referrer-Policy: no-referrer` so the token does not leak onward.
 - The resulting session is indistinguishable from an API-key login, including
   CSRF handling and the 7-day cookie lifetime. `POST /api/auth/logout` ends it.
+
+## Troubleshooting
+
+### Admin login fails with a CORS error (`No 'Access-Control-Allow-Origin'`)
+
+**Symptom.** The login page shows a connection/failure message and the browser
+console logs:
+
+```text
+Access to fetch at 'https://<worker>.workers.dev/api/auth/login'
+from origin 'https://<admin>.pages.dev' has been blocked by CORS policy:
+No 'Access-Control-Allow-Origin' header is present on the requested resource.
+```
+
+**Cause.** `ADMIN_ORIGIN` is not set on the Worker, so the admin Pages origin is
+not on the credentialed-CORS allowlist and the Worker returns no
+`Access-Control-Allow-Origin` header (see `resolveCorsOrigin` in
+`apps/worker/src/middleware/admin-auth-config.ts`). `create-line-harness` sets
+`ADMIN_ORIGIN` / `ADMIN_ALLOW_CROSS_SITE` **after** deploying the admin, so a
+setup that aborted earlier (for example the Worker-deploy failure fixed in
+`create-line-harness@0.1.27`, issue #177) never reaches that step and leaves the
+Worker without them.
+
+**Confirm.** The Worker logs this hint **once per isolate**, so a flood of
+probes cannot spam your logs — but it also means the isolate serving you may
+have emitted it already. Start the tail first, then force a fresh isolate
+(redeploy the Worker, or wait for the running one to be evicted) and retry the
+login:
+
+```bash
+npx wrangler tail <worker-name>
+# → [admin-auth] CORS rejected origin "https://<admin>.pages.dev" on /api/auth/login. ADMIN_ORIGIN is empty. ...
+```
+
+Because the hint is capped per isolate, an unauthenticated cross-origin probe
+that arrives first consumes it, so the line you see may name a scanner's origin
+rather than your own. Treat the quoted origin as untrusted — the actionable part
+is the `ADMIN_ORIGIN` diagnosis that follows it.
+
+You can also list the Worker's secrets. A *present* `ADMIN_ORIGIN` is not proof
+the setting is good: a value without the `https://` scheme is dropped while
+parsing and produces exactly the same CORS block. The log line above tells the
+two cases apart — it reports the configured value when one is set but unusable.
+
+```bash
+npx wrangler secret list --name <worker-name>
+```
+
+**Fix (existing install).** Add the two secrets — they persist across redeploys
+(use your real admin URL, including any `-<suffix>` in the Pages project name):
+
+```bash
+printf '%s' 'https://<admin>.pages.dev' | npx wrangler secret put ADMIN_ORIGIN --name <worker-name>
+printf '%s' 'true' | npx wrangler secret put ADMIN_ALLOW_CROSS_SITE --name <worker-name>
+```
+
+Reload the admin page and log in again. Alternatively, re-run
+`npx create-line-harness@latest` (≥ `0.1.27`), which sets these automatically.

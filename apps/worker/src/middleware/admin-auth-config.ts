@@ -246,7 +246,69 @@ export function resolveCorsOrigin(
     return normalizedOrigin;
   }
 
-  return allowedOrigins.some((allowedOrigin) => isAllowedAdminOrigin(normalizedOrigin, allowedOrigin))
-    ? normalizedOrigin
-    : '';
+  if (
+    allowedOrigins.some((allowedOrigin) =>
+      isAllowedAdminOrigin(normalizedOrigin, allowedOrigin),
+    )
+  ) {
+    return normalizedOrigin;
+  }
+
+  // Rejected. Never reflect the origin here — that would defeat the
+  // credentialed-CORS allowlist. But a cross-origin *admin auth* request that is
+  // rejected while the allowlist is empty is almost always a forgotten
+  // ADMIN_ORIGIN: `create-line-harness` sets it after deploying the admin, so a
+  // setup that aborted earlier (e.g. the Worker-deploy failure fixed in
+  // create-line-harness@0.1.27, issue #177) leaves it unset and the browser then
+  // sees only an opaque CORS block. Surface an actionable hint in the Worker
+  // logs (`wrangler tail`) — bounded to avoid amplification (see below).
+  if (allowedOrigins.length === 0) {
+    warnMissingAdminOrigin(env, normalizedOrigin, requestUrl);
+  }
+  return '';
+}
+
+// The missing-ADMIN_ORIGIN hint is emitted at most once per isolate (keyed on
+// the `env` binding object, which the runtime reuses across requests) so a flood
+// of cross-origin requests — scanners, CSRF probes — cannot amplify it into log
+// spam / Workers Logs cost.
+const warnedEnvs = new WeakSet<object>();
+
+function warnMissingAdminOrigin(
+  env: AdminAuthEnv,
+  origin: string,
+  requestUrl: string,
+): void {
+  if (warnedEnvs.has(env)) return;
+
+  // Only the admin auth routes are the real signal; a stray cross-origin hit on
+  // a data route (e.g. a scanner probing /api/friends) is not the operator's
+  // missing-config symptom, so stay quiet there.
+  let pathname = '';
+  try {
+    pathname = new URL(requestUrl).pathname;
+  } catch {
+    return;
+  }
+  if (!pathname.startsWith('/api/auth/')) return;
+
+  // `allowedOrigins` is empty for two different reasons and the operator has to
+  // tell them apart. ADMIN_ORIGIN may be genuinely unset, or set to a value that
+  // `parseAllowedOrigins` dropped because it is not an absolute origin — a bare
+  // host (a forgotten `https://`) is the common slip. Reporting "empty" in the
+  // second case sends the operator to `wrangler secret list`, which shows the
+  // secret *is* there: a dead end.
+  const configured = (env.ADMIN_ORIGIN ?? '').trim();
+  const cause = configured
+    ? `ADMIN_ORIGIN is set ("${configured.slice(0, 128)}") but no entry parses as ` +
+      `an absolute origin — did you omit the "https://" scheme?`
+    : 'ADMIN_ORIGIN is empty.';
+
+  warnedEnvs.add(env);
+  console.warn(
+    `[admin-auth] CORS rejected origin "${origin.slice(0, 256)}" on ` +
+      `${pathname.slice(0, 128)}. ${cause} Set ADMIN_ORIGIN to your admin URL ` +
+      `(and ADMIN_ALLOW_CROSS_SITE=true for the default Pages↔Workers topology). ` +
+      `See docs/ADMIN-AUTH.md.`,
+  );
 }
