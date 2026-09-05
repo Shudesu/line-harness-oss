@@ -17,6 +17,7 @@ import { setSecrets } from "../steps/secrets.js";
 import { configureAdminAuth } from "../steps/admin-auth.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
 import { generateApiKey } from "../lib/crypto.js";
+import { buildLineIdentitySql, quoteSqlString } from "../lib/line-account-sql.js";
 import {
   getAccountIds,
   setAccountId,
@@ -670,8 +671,8 @@ async function runSetupInner(
     // Two separate temp files so we can clean each one immediately and never
     // hold both plaintext credentials on disk simultaneously.
     const insertSqlFile = join(tmpdir(), `clh-line-account-${randomUUID()}.sql`);
-    const loginSqlFile = join(tmpdir(), `clh-line-login-${randomUUID()}.sql`);
-    const q = (val: string) => `'${val.replace(/'/g, "''")}'`;
+    const identitySqlFile = join(tmpdir(), `clh-line-identity-${randomUUID()}.sql`);
+    const q = quoteSqlString;
     let insertErr: unknown = null;
 
     try {
@@ -724,12 +725,21 @@ ON CONFLICT(channel_id) DO UPDATE SET
       process.exit(1);
     }
 
-    // Step B (best-effort): set login_channel_id. May fail on older
-    // schemas that don't have the column — that's fine, the dashboard
-    // can set it later.
+    // Step B (best-effort): set the non-secret identifiers — login_channel_id
+    // and liff_id. Both columns arrived in the same later migration
+    // (008_multi_account), so this may fail on an older schema — that's fine,
+    // the dashboard can set them later.
+    //
+    // liff_id has to be written here: the LIFF endpoints resolve the owning
+    // account with `WHERE liff_id = ?`, so leaving it NULL makes the booking
+    // and event screens answer `unknown_liff` (404) on a fresh install.
     try {
-      const loginSql = `UPDATE line_accounts SET login_channel_id = ${q(state.lineLoginChannelId!)} WHERE channel_id = ${q(state.lineChannelId!)};`;
-      writeFileSync(loginSqlFile, loginSql, { mode: 0o600 });
+      const identitySql = buildLineIdentitySql({
+        channelId: state.lineChannelId!,
+        loginChannelId: state.lineLoginChannelId!,
+        liffId: state.liffId!,
+      });
+      writeFileSync(identitySqlFile, identitySql, { mode: 0o600 });
       try {
         await wrangler([
           "d1",
@@ -737,13 +747,13 @@ ON CONFLICT(channel_id) DO UPDATE SET
           state.d1DatabaseName!,
           "--remote",
           "--file",
-          loginSqlFile,
+          identitySqlFile,
         ]);
       } finally {
-        try { rmSync(loginSqlFile, { force: true }); } catch { /* best-effort */ }
+        try { rmSync(identitySqlFile, { force: true }); } catch { /* best-effort */ }
       }
     } catch {
-      // Non-critical — login_channel_id can be set from the dashboard.
+      // Non-critical — both identifiers can be set from the dashboard.
     }
 
     s.stop("LINE アカウント登録完了");
