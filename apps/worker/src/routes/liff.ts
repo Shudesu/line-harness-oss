@@ -569,23 +569,31 @@ liffRoutes.get('/auth/line', async (c) => {
  * Same query params as /auth/line. No HTML rendering, no smart logic.
  */
 liffRoutes.get('/auth/oauth', async (c) => {
-  const ref = c.req.query('ref') || '';
-  const redirect = c.req.query('redirect') || '';
-  const formId = c.req.query('form') || '';
-  const gateParam = c.req.query('gate') || '';
-  const xhParam = c.req.query('xh') || '';
-  const gclid = c.req.query('gclid') || '';
-  const fbclid = c.req.query('fbclid') || '';
-  const twclid = c.req.query('twclid') || '';
-  const ttclid = c.req.query('ttclid') || '';
-  const utmSource = c.req.query('utm_source') || '';
-  const utmMedium = c.req.query('utm_medium') || '';
-  const utmCampaign = c.req.query('utm_campaign') || '';
-  const accountParam = c.req.query('account') || '';
-  const uidParam = c.req.query('uid') || '';
-  const igParam = c.req.query('ig') || '';
-  const igaParam = c.req.query('iga') || '';
-  const iganParam = c.req.query('igan') || '';
+  // When opened via LIFF, original query params arrive as liff.state=/path?ref=xxx&...
+  // (a path prefix may precede the query string). Parse only the part after the
+  // first "?" so downstream code can read params via q() as normal.
+  const liffStateRaw = c.req.query('liff.state') || '';
+  const liffStateQuery = liffStateRaw.includes('?') ? liffStateRaw.slice(liffStateRaw.indexOf('?') + 1) : liffStateRaw;
+  const liffStateParams = new URLSearchParams(liffStateQuery);
+  const q = (key: string) => c.req.query(key) || liffStateParams.get(key) || '';
+
+  const ref = q('ref');
+  const redirect = q('redirect');
+  const formId = q('form');
+  const gateParam = q('gate');
+  const xhParam = q('xh');
+  const gclid = q('gclid');
+  const fbclid = q('fbclid');
+  const twclid = q('twclid');
+  const ttclid = q('ttclid');
+  const utmSource = q('utm_source');
+  const utmMedium = q('utm_medium');
+  const utmCampaign = q('utm_campaign');
+  const accountParam = q('account');
+  const uidParam = q('uid');
+  const igParam = q('ig');
+  const igaParam = q('iga');
+  const iganParam = q('igan');
   let poolAccount = '';
   const baseUrl = new URL(c.req.url).origin;
 
@@ -595,7 +603,7 @@ liffRoutes.get('/auth/oauth', async (c) => {
     const account = await getLineAccountByChannelId(c.env.DB, accountParam);
     if (account?.login_channel_id) channelId = account.login_channel_id;
   } else {
-    const poolSlug = c.req.query('pool') || 'main';
+    const poolSlug = q('pool') || 'main';
     const pool = await getTrafficPoolBySlug(c.env.DB, poolSlug);
     if (pool) {
       const account = await getRandomPoolAccount(c.env.DB, pool.id);
