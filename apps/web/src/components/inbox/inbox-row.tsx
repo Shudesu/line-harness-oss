@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { Badge } from '@cloudflare/kumo/components/badge'
 
 export interface InboxRowData {
   friendId: string
@@ -53,7 +54,7 @@ function ImageThumb({ raw }: { raw: string }) {
   } catch {
     // ignore
   }
-  if (!src) return <span className="text-sm text-gray-600">🖼 画像</span>
+  if (!src) return <span className="text-sm text-kumo-default">🖼 画像</span>
   return (
     <span className="inline-flex items-center gap-2">
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -61,9 +62,9 @@ function ImageThumb({ raw }: { raw: string }) {
         src={src}
         alt=""
         loading="lazy"
-        className="h-12 w-12 flex-shrink-0 rounded object-cover ring-1 ring-gray-200"
+        className="h-12 w-12 flex-shrink-0 rounded object-cover ring-1 ring-kumo-line"
       />
-      <span className="text-sm text-gray-500">🖼 画像</span>
+      <span className="text-sm text-kumo-subtle">🖼 画像</span>
     </span>
   )
 }
@@ -83,7 +84,7 @@ export default function InboxRow({ row }: Props) {
   return (
     <Link
       href={`/chats?friend=${encodeURIComponent(row.friendId)}&unanswered=1`}
-      className="flex items-start gap-3 border-b border-gray-100 px-4 py-3 hover:bg-gray-50"
+      className="flex items-start gap-3 border-b border-kumo-line px-4 py-3 hover:bg-kumo-tint"
     >
       {row.pictureUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -93,20 +94,16 @@ export default function InboxRow({ row }: Props) {
           className="h-10 w-10 flex-shrink-0 rounded-full object-cover"
         />
       ) : (
-        <div className="h-10 w-10 flex-shrink-0 rounded-full bg-gray-200" />
+        <div className="h-10 w-10 flex-shrink-0 rounded-full bg-kumo-fill" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-gray-900">
+          <span className="truncate text-sm font-medium text-kumo-strong">
             {row.displayName || '(名前なし)'}
           </span>
-          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-            {row.accountName}
-          </span>
+          <Badge variant="success">{row.accountName}</Badge>
           {machineAfterIncoming && (
-            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">
-              auto 返答済
-            </span>
+            <Badge variant="info">auto返答済</Badge>
           )}
         </div>
         {row.lastIncomingType === 'image' ? (
@@ -114,7 +111,7 @@ export default function InboxRow({ row }: Props) {
             <ImageThumb raw={row.lastIncomingContent} />
           </div>
         ) : (
-          <p className="mt-0.5 truncate text-sm text-gray-600">
+          <p className="mt-0.5 truncate text-sm text-kumo-default">
             {formatPreview(row.lastIncomingType, row.lastIncomingContent)}
           </p>
         )}
@@ -122,7 +119,7 @@ export default function InboxRow({ row }: Props) {
       <div className="flex-shrink-0 text-right">
         <span
           className={`text-xs tabular-nums ${
-            isOverdue ? 'font-semibold text-rose-600' : 'text-gray-500'
+            isOverdue ? 'font-semibold text-kumo-danger' : 'text-kumo-subtle'
           }`}
         >
           {formatElapsed(row.lastIncomingAt)}

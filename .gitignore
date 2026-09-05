@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-mcp/
+*.tsbuildinfo
 .next/
 .wrangler/
 .vercel/
@@ -11,7 +13,19 @@ dist/
 *.toml.bak
 .env.production
 .env.staging
+# Wrangler local secrets — matches apps/worker/.dev.vars and any other worker's copy at any depth
+.dev.vars
+.dev.vars.*
 apps/web/out/
 apps/worker/dist/
 .worktrees/
 .claude/worktrees/
+.line-harness-setup.json
+.line-harness-config.json
+
+# Wrangler local secrets — matches apps/worker/.dev.vars and any other worker's copy at any depth
+.dev.vars
+.dev.vars.*
+
+# Claude Code local dev-server config (machine-local paths)
+.claude/launch.json

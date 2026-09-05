@@ -10,6 +10,7 @@ on:
       - 'packages/db/**'
       - 'packages/shared/**'
       - 'packages/line-sdk/**'
+      - 'packages/update-engine/**'
       - '.github/workflows/deploy-cloudflare-worker.yml'
 
 jobs:

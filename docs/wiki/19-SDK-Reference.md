@@ -1,6 +1,6 @@
 # 19. SDK リファレンス
 
-`@line-harness/sdk` -- LINE Harness の AI ネイティブ TypeScript SDK。全リソースへのプログラムアクセスとワークフローヘルパーを提供。
+`@line-harness/sdk` -- L Harness の AI ネイティブ TypeScript SDK。全リソースへのプログラムアクセスとワークフローヘルパーを提供。
 
 ---
 

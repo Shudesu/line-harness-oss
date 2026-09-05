@@ -4,16 +4,31 @@ import { Fragment, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { api, fetchApi } from '@/lib/api'
+import { getApiBase } from '@/lib/api-base'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import type { EntryRoute, TrafficPool, Scenario, Tag } from '@line-crm/shared'
 import EditRouteModal from './_components/edit-route-modal'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 interface MessageTemplate {
   id: string
   name: string
   messageType: string
   messageContent: string
+}
+
+interface TrackedLinkRow {
+  id: string
+  name: string
+  scenarioId: string | null
+  isActive: boolean
 }
 
 interface RefRouteStats {
@@ -44,7 +59,12 @@ interface RefDetail {
   friends: RefFriend[]
 }
 
-const WORKER_BASE = process.env.NEXT_PUBLIC_API_URL ?? ''
+// 呼び出し時 (call time) に解決する — モジュールスコープの定数にすると、静的
+// 書き出し（window 未定義）の時点で値が確定してしまい、共有ビルドではプレース
+// ホルダーが焼き付いたまま固定される（友だち追加 QR が壊れる原因になった）。
+function workerBase(): string {
+  return getApiBase() ?? ''
+}
 
 export default function InflowLinksPage() {
   const { selectedAccountId } = useAccount()
@@ -52,6 +72,7 @@ export default function InflowLinksPage() {
   const [pools, setPools] = useState<TrafficPool[]>([])
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
+  const [trackedLinks, setTrackedLinks] = useState<TrackedLinkRow[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [summary, setSummary] = useState<RefSummaryData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -84,7 +105,7 @@ export default function InflowLinksPage() {
     // ref_code のみ」に絞れる。pool_id NULL のリンクが多い現状ではアカ別の
     // pool 紐付け判定よりも、こちらの実流入ベースの方が運用実態に合う。
     const summaryQuery = selectedAccountId ? `?lineAccountId=${selectedAccountId}` : ''
-    const [r, p, s, t, tagRes, sum] = await Promise.all([
+    const [r, p, s, t, tagRes, sum, tl] = await Promise.all([
       api.entryRoutes.list(),
       api.pools.list(),
       api.scenarios.list(),
@@ -93,6 +114,7 @@ export default function InflowLinksPage() {
       fetchApi<{ success: boolean; data: RefSummaryData }>(
         `/api/analytics/ref-summary${summaryQuery}`,
       ).catch(() => ({ success: false, data: null })),
+      api.trackedLinks.list().catch(() => ({ success: false, data: null })),
     ])
     if (r.success) setRoutes(r.data)
     else setError('リファラルリンクの取得に失敗しました')
@@ -101,6 +123,16 @@ export default function InflowLinksPage() {
     if (t.success) setTemplates(t.data)
     if (tagRes.success) setTags(tagRes.data)
     if ('success' in sum && sum.success && sum.data) setSummary(sum.data)
+    if (tl.success && tl.data) {
+      setTrackedLinks(
+        tl.data.map((row) => ({
+          id: row.id,
+          name: row.name,
+          scenarioId: row.scenarioId,
+          isActive: row.isActive,
+        })),
+      )
+    }
 
     // Load pool→accounts mapping after we know the pool list. Done in a 2nd
     // round-trip so the table can render with summary stats immediately; the
@@ -133,7 +165,7 @@ export default function InflowLinksPage() {
   }, [selectedAccountId])
 
   const onCopy = async (refCode: string, id: string) => {
-    const url = `${WORKER_BASE}/r/${refCode}`
+    const url = `${workerBase()}/r/${refCode}`
     try {
       await navigator.clipboard.writeText(url)
       setCopiedId(id)
@@ -183,24 +215,48 @@ export default function InflowLinksPage() {
   const statsByRef = new Map<string, RefRouteStats>()
   summary?.routes.forEach((r) => statsByRef.set(r.refCode, r))
 
-  // Merge entry_routes (CRUD 対象) と summary.routes (実流入のあった refs)。
-  // X Harness など外部システムが発行する UUID ref は entry_routes に登録
-  // されないので、summary 側から拾わないと一覧に出てこない。
+  // Merge entry_routes (CRUD 対象), tracked_links (modern path), と
+  // summary.routes (実流入のあった refs)。優先順位 = worker の applyRefAttribution
+  // と同じ: entry_routes → tracked_links → orphan。
+  //
+  // tracked_links は entry_routes と別テーブルで管理されている。Worker は両方を
+  // フォールバック検索するので tracked_links 登録済み ref も「設定済み」扱いに
+  // すべき (Pool は仕様上持たないため "—" 表示)。これがないと「(未登録)」と
+  // 表示されるが裏では tracked_links のシナリオが発火している、という UI の嘘
+  // になる。
   type Row = {
-    /** entry_routes に登録があれば id。未登録 (X Harness 等) は null。 */
+    source: 'entry_route' | 'tracked_link' | 'orphan'
+    /** entry_routes に登録があれば id。tracked_link / orphan は null。 */
     entryRouteId: string | null
     refCode: string
     name: string
     poolId: string | null
     tagId: string | null
     scenarioId: string | null
-    runAccountFriendAddScenarios: boolean
+    /** entry_route のみ意味を持つ (並走/上書き)。他は null。 */
+    runAccountFriendAddScenarios: boolean | null
     stats: RefRouteStats | undefined
-    registered: boolean
   }
   const rowsByRef = new Map<string, Row>()
+  // 「inactive entry_route を譲るべき相手」の refCode 集合。entry_routes と
+  // tracked_links の両方に同じ refCode があった場合、worker の
+  // getEntryRouteByRefCode は is_active=1 のみ拾うので、inactive な entry_route
+  // は applyRefAttribution で通過されず tracked_links にフォールバックされる。
+  // 判定軸は「active tracked_link が存在するか」だけ。実流入 (statsByRef) の
+  // 有無に依存させると、最初のクリック前は衝突判定が空回りして UI が嘘の
+  // entry_route データを見せてしまう (worker は初回クリックでもう tracked_link
+  // を使う)。
+  const activeTrackedLinkRefCodes = new Set(
+    trackedLinks.filter((tl) => tl.isActive).map((tl) => tl.id),
+  )
   for (const r of routes) {
+    // Inactive entry_route + active tracked_link が同 refCode に共存する場合、
+    // 実際に発火するのは tracked_link。停止中 entry_route の Pool/scenario を
+    // 表示すると「設定されてるのに違う挙動」の謎が生まれるのでこのケースだけ
+    // 譲る。tracked_link が無ければ inactive でも従来通り表示する。
+    if (!r.isActive && activeTrackedLinkRefCodes.has(r.refCode)) continue
     rowsByRef.set(r.refCode, {
+      source: 'entry_route',
       entryRouteId: r.id,
       refCode: r.refCode,
       name: r.name,
@@ -209,21 +265,43 @@ export default function InflowLinksPage() {
       scenarioId: r.scenarioId,
       runAccountFriendAddScenarios: r.runAccountFriendAddScenarios,
       stats: statsByRef.get(r.refCode),
-      registered: true,
+    })
+  }
+  for (const tl of trackedLinks) {
+    if (rowsByRef.has(tl.id)) continue // entry_routes が優先
+    // /inflow-links は「友だち獲得経路」のページ。tracked_links は /t/:id クリック
+    // 計測用にも大量に作られるので、実際に友だちの ref_code に焼かれたもの
+    // (= summary に出現するもの) のみ表示する。それ以外は無関係なノイズ。
+    if (!statsByRef.has(tl.id)) continue
+    // worker の applyRefAttribution は isActive=false の tracked_link を skip する
+    // ので UI も合わせて非表示。これがないと「Tracked Link 登録済み」緑バッジ +
+    // シナリオ名が出ているのにシナリオが流れない、という嘘になる。inactive で
+    // 実流入だけある ref は orphan 行 (「未登録」アンバー) として正しく表示される。
+    if (!tl.isActive) continue
+    rowsByRef.set(tl.id, {
+      source: 'tracked_link',
+      entryRouteId: null,
+      refCode: tl.id,
+      name: tl.name,
+      poolId: null, // tracked_links は pool を持たない
+      tagId: null,
+      scenarioId: tl.scenarioId,
+      runAccountFriendAddScenarios: null,
+      stats: statsByRef.get(tl.id),
     })
   }
   for (const s of summary?.routes ?? []) {
     if (rowsByRef.has(s.refCode)) continue
     rowsByRef.set(s.refCode, {
+      source: 'orphan',
       entryRouteId: null,
       refCode: s.refCode,
       name: s.name ?? '(未登録)',
       poolId: null,
       tagId: null,
       scenarioId: null,
-      runAccountFriendAddScenarios: true,
+      runAccountFriendAddScenarios: null,
       stats: s,
-      registered: false,
     })
   }
 
@@ -250,7 +328,9 @@ export default function InflowLinksPage() {
   const accountFilteredRows = selectedAccountId
     ? allRows.filter((r) => {
         if ((r.stats?.friendCount ?? 0) > 0) return true
-        if (!r.registered) return false
+        if (r.source === 'orphan') return false
+        // entry_route / tracked_link は pool 所属判定にフォールバック
+        // (tracked_link は poolId=null なので mainPool 所属チェックになる)
         return poolRoutesToAccount(r.poolId, selectedAccountId)
       })
     : allRows
@@ -309,76 +389,56 @@ export default function InflowLinksPage() {
             ? `（全 ${allRows.length} 件中、選択中アカ）`
             : ''}
         </span>
-        <button
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
           onClick={() => setEditing('new')}
-          className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
         >
           + 新規リンク
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm mb-4">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="リンクを読み込めませんでした" description={error} />
       )}
 
       {loading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          読み込み中...
-        </div>
+        <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>
       ) : sortedRows.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          {selectedAccountId
+        <Empty
+          title="リファラルリンクがありません"
+          description={selectedAccountId
             ? '選択中のアカウントに紐づくリファラルリンクはありません。'
-            : 'リファラルリンクがありません。「+ 新規リンク」から作成してください。'}
-        </div>
+            : '「+ 新規リンク」から作成してください。'}
+        />
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[1080px]">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  名前
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  ref コード
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  送り先 Pool
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  起動シナリオ
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  自動付与タグ
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  モード
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                  友だち数
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                  クリック数
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  最新追加
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  URL
-                </th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
+        <LayerCard className="overflow-x-auto p-0">
+          <Table className="min-w-[1080px]">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>名前</Table.Head>
+                <Table.Head>ref コード</Table.Head>
+                <Table.Head>送り先 Pool</Table.Head>
+                <Table.Head>起動シナリオ</Table.Head>
+                <Table.Head>自動付与タグ</Table.Head>
+                <Table.Head>モード</Table.Head>
+                <Table.Head className="text-right">友だち数</Table.Head>
+                <Table.Head className="text-right">クリック数</Table.Head>
+                <Table.Head>最新追加</Table.Head>
+                <Table.Head>URL</Table.Head>
+                <Table.Head />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {sortedRows.map((r) => {
                 const pool = pools.find((p) => p.id === r.poolId)
                 const sc = scenarios.find((s) => s.id === r.scenarioId)
                 const tag = tags.find((t) => t.id === r.tagId)
-                const editTarget = r.registered
-                  ? routes.find((e) => e.id === r.entryRouteId) ?? null
-                  : null
+                const editTarget =
+                  r.source === 'entry_route'
+                    ? routes.find((e) => e.id === r.entryRouteId) ?? null
+                    : null
                 const isExpanded = expandedRef === r.refCode
                 return (
                   <FragmentRow
@@ -389,8 +449,8 @@ export default function InflowLinksPage() {
                     refDetail={refDetail}
                     refCode={r.refCode}
                   >
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                      {r.registered && r.entryRouteId ? (
+                    <Table.Cell className="font-medium text-kumo-strong">
+                      {r.source === 'entry_route' && r.entryRouteId ? (
                         <Link
                           href={`/inflow-links/detail?id=${r.entryRouteId}`}
                           className="text-blue-600 hover:underline"
@@ -398,24 +458,35 @@ export default function InflowLinksPage() {
                         >
                           {r.name}
                         </Link>
+                      ) : r.source === 'tracked_link' ? (
+                        <span className="text-gray-700">
+                          {r.name}
+                          <span title="tracked_links 登録済み — クリック計測 + シナリオ起動が設定されています。Pool 振り分けは持ちません。">
+                            <Badge className="ml-2" variant="success">Tracked Link</Badge>
+                          </span>
+                        </span>
                       ) : (
                         <span className="text-gray-700">
                           {r.name}
-                          <span
-                            className="ml-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
-                            title="entry_routes に未登録 — X Harness など外部システムが発行した ref。流入実績のみ集計。"
-                          >
-                            未登録
+                          <span title="entry_routes / tracked_links いずれにも未登録 — X Harness など外部システムが発行した ref。流入実績のみ集計。">
+                            <Badge className="ml-2" variant="warning">未登録</Badge>
                           </span>
                         </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-mono text-blue-600 break-all">
+                    </Table.Cell>
+                    <Table.Cell className="font-mono text-kumo-link break-all">
                       {r.refCode}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-default">
                       {pool ? (
                         pool.name
+                      ) : r.source === 'tracked_link' ? (
+                        <span
+                          className="text-gray-400"
+                          title="tracked_links は Pool 振り分けを持ちません (グローバルデフォルトに従う)。"
+                        >
+                          —
+                        </span>
                       ) : (
                         <span
                           className="text-gray-400"
@@ -424,9 +495,9 @@ export default function InflowLinksPage() {
                           未設定
                         </span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700">{sc?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-sm text-gray-700">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-default">{sc?.name ?? '—'}</Table.Cell>
+                    <Table.Cell className="text-kumo-default">
                       {tag ? (
                         <span
                           className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
@@ -440,51 +511,73 @@ export default function InflowLinksPage() {
                       ) : (
                         <span className="text-gray-400">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {r.registered ? (r.runAccountFriendAddScenarios ? '並走' : '上書き') : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-subtle">
+                      {r.source === 'entry_route'
+                        ? r.runAccountFriendAddScenarios
+                          ? '並走'
+                          : '上書き'
+                        : r.source === 'tracked_link'
+                          ? // tracked_links は account-level friend_add scenarios を
+                            // 抑制する仕組みを持たない (runAccountFriendAddScenarios
+                            // フラグは entry_routes 専用)。worker 上は常に並走挙動。
+                            '並走'
+                          : '—'}
+                    </Table.Cell>
+                    <Table.Cell className="text-right font-semibold text-kumo-strong">
                       {r.stats?.friendCount ?? 0}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-600">
+                    </Table.Cell>
+                    <Table.Cell className="text-right text-kumo-subtle">
                       {r.stats?.clickCount ?? 0}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-subtle">
                       {formatDate(r.stats?.latestAt ?? null)}
-                    </td>
-                    <td className="px-4 py-3 text-sm" onClick={(e) => e.stopPropagation()}>
-                      <button
+                    </Table.Cell>
+                    <Table.Cell onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
                         onClick={() => onCopy(r.refCode, r.refCode)}
-                        className="text-xs text-blue-500 hover:text-blue-700"
                       >
                         {copiedId === r.refCode ? 'コピー済' : 'コピー'}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      </Button>
+                    </Table.Cell>
+                    <Table.Cell className="text-right" onClick={(e) => e.stopPropagation()}>
                       {editTarget ? (
-                        <button
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
                           onClick={() => setEditing(editTarget)}
-                          className="text-xs text-gray-600 hover:underline"
                         >
                           編集
-                        </button>
+                        </Button>
+                      ) : r.source === 'tracked_link' ? (
+                        // tracked_links は別管理 (Web app に編集 UI 未提供)。
+                        // entry_routes への "昇格登録" は worker 優先順位的に
+                        // tracked_link を上書きすることになり混乱の元なので、
+                        // ここではアクション非表示にして tracked_links 側の
+                        // 編集導線 (MCP / API) に委ねる。
+                        <span className="text-xs text-gray-400">—</span>
                       ) : (
-                        <button
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
                           onClick={() => setEditing({ register: r.refCode })}
-                          className="text-xs text-blue-600 hover:underline"
                           title="未登録 ref を entry_routes に登録します。流入実績はそのまま引き継がれます。"
                         >
                           登録
-                        </button>
+                        </Button>
                       )}
-                    </td>
+                    </Table.Cell>
                   </FragmentRow>
                 )
               })}
-            </tbody>
-          </table>
-        </div>
+            </Table.Body>
+          </Table>
+        </LayerCard>
       )}
 
       {editing && (
@@ -538,12 +631,12 @@ function FragmentRow({
   const friends = isExpanded && refDetail?.refCode === refCode ? refDetail.friends : null
   return (
     <Fragment>
-      <tr className="hover:bg-gray-50 cursor-pointer" onClick={onToggle}>
+      <Table.Row className="cursor-pointer" onClick={onToggle}>
         {children}
-      </tr>
+      </Table.Row>
       {isExpanded && (
-        <tr>
-          <td colSpan={11} className="px-6 py-4 bg-gray-50 border-t border-gray-100">
+        <Table.Row>
+          <Table.Cell colSpan={11} className="px-6 py-4 bg-kumo-control">
             {refDetailLoading ? (
               <p className="text-sm text-gray-400">読み込み中…</p>
             ) : !friends ? (
@@ -579,8 +672,8 @@ function FragmentRow({
                 </div>
               </div>
             )}
-          </td>
-        </tr>
+          </Table.Cell>
+        </Table.Row>
       )}
     </Fragment>
   )

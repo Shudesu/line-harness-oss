@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+  isAllowedAdminOrigin,
   isCrossSite,
   parseAllowedOrigins,
   registrableDomain,
@@ -8,14 +9,16 @@ import {
   type AdminAuthEnv,
 } from './admin-auth-config.js';
 
-const PAGES = 'https://line-crm-admin.pages.dev';
-const WORKERS = 'https://line-crm-worker.line-crm-api.workers.dev';
+const PAGES = 'https://your-admin.pages.dev';
+const WORKERS = 'https://your-worker.your-subdomain.workers.dev';
 
 describe('registrableDomain', () => {
   test('treats each *.pages.dev / *.workers.dev host as its own site', () => {
-    expect(registrableDomain('line-crm-admin.pages.dev')).toBe('line-crm-admin.pages.dev');
-    expect(registrableDomain('line-crm-worker.line-crm-api.workers.dev')).toBe(
-      'line-crm-api.workers.dev',
+    // 実環境のドメイン実値は使わない: OSS sync の secret redaction (sed) が
+    // テストリテラルを書き換えて input/expected の整合が壊れるため、中立な例で書く。
+    expect(registrableDomain('my-admin.pages.dev')).toBe('my-admin.pages.dev');
+    expect(registrableDomain('my-worker.my-subdomain.workers.dev')).toBe(
+      'my-subdomain.workers.dev',
     );
   });
 
@@ -138,6 +141,16 @@ describe('resolveCorsOrigin — allowed / blocked', () => {
     expect(resolveCorsOrigin(env, PAGES, requestUrl)).toBe(PAGES);
   });
 
+  test('echoes a Cloudflare Pages preview URL for the allowlisted admin project', () => {
+    const preview = 'https://abc123.your-admin.pages.dev';
+    expect(resolveCorsOrigin(env, preview, requestUrl)).toBe(preview);
+  });
+
+  test('blocks a Cloudflare Pages URL from another project', () => {
+    const otherProject = 'https://abc123.someone-else-admin.pages.dev';
+    expect(resolveCorsOrigin(env, otherProject, requestUrl)).toBe('');
+  });
+
   test('blocks an unknown origin (empty string → no ACAO header)', () => {
     expect(resolveCorsOrigin(env, 'https://evil.example.com', requestUrl)).toBe('');
   });
@@ -202,6 +215,20 @@ describe('resolveCorsOrigin — empty-allowlist diagnostic (#179)', () => {
     resolveCorsOrigin(env, 'https://another.example.com', `${WORKERS}/api/auth/session`);
     resolveCorsOrigin(env, PAGES, `${WORKERS}/api/auth/login`);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('isAllowedAdminOrigin — Cloudflare Pages previews', () => {
+  test('allows production and preview origins for the same Pages project', () => {
+    expect(isAllowedAdminOrigin('https://your-admin.pages.dev', PAGES)).toBe(true);
+    expect(isAllowedAdminOrigin('https://preview.your-admin.pages.dev', PAGES)).toBe(true);
+    expect(isAllowedAdminOrigin(PAGES, 'https://preview.your-admin.pages.dev')).toBe(true);
+  });
+
+  test('does not widen custom domains to arbitrary subdomains', () => {
+    expect(
+      isAllowedAdminOrigin('https://preview.admin.example.com', 'https://admin.example.com'),
+    ).toBe(false);
   });
 });
 

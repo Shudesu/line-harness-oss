@@ -8,7 +8,7 @@ name: Release
 #   1. Install deps (frozen lockfile).
 #   2. Run unit tests (scripts/* + per-package).
 #   3. Migration safety check (additive-only policy).
-#   4. Build Worker, Admin, LIFF.
+#   4. Build Worker script, Worker Assets, Admin, LIFF.
 #   5. Compute SHA256 hashes via inject-version, then rebuild Worker with
 #      _version.ts embedded so /_version reflects the shipping bundle.
 #   6. Produce `bundle.tar.gz` via scripts/release/build-bundle.ts.
@@ -73,7 +73,19 @@ jobs:
         run: pnpm test:scripts
 
       - name: Build shared workspace packages
-        run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db --filter @line-harness/update-engine build
+        run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-crm/db --filter @line-harness/update-engine --filter @line-harness/sdk build
+
+      - name: Run every workspace typecheck
+        run: pnpm -r --workspace-concurrency=1 --if-present run typecheck
+
+      - name: Run every populated workspace test suite
+        run: |
+          pnpm --filter @line-crm/db test
+          pnpm --filter @line-harness/update-engine test
+          pnpm --filter create-line-harness test
+          pnpm --filter worker test
+          pnpm --filter web test
+          pnpm --filter liff test
 
       - name: Capture build metadata
         id: build-meta
@@ -93,17 +105,45 @@ jobs:
         # silently shipping a stale dist.
         run: pnpm --filter liff build
 
-      - name: Build Worker (first pass — produces dist for hashing)
+      - name: Build Worker Assets
+        # This is the full Worker-served client (forms, booking, webinar,
+        # affiliate, etc.). It is intentionally distinct from apps/liff.
         run: pnpm --filter worker build
+
+      - name: Write CI wrangler config for artifact builds
+        # The repo's wrangler.toml ships placeholder account/database ids for
+        # OSS consumers. Artifact builds only need the entrypoint + compat
+        # settings; bindings/assets do not change the built script bytes.
+        run: |
+          cat > apps/worker/wrangler.ci.toml <<'TOML'
+          name = "line-harness"
+          main = "src/index.ts"
+          compatibility_date = "2024-12-01"
+          compatibility_flags = ["nodejs_compat"]
+          TOML
+
+      - name: Build Worker artifact (first pass — for identity hashing)
+        # `wrangler deploy --dry-run --outdir` emits EXACTLY the single-file
+        # module wrangler would upload — the same build path every real
+        # deployment uses (GH Actions deploy + create-line-harness). The
+        # vite build is NOT usable here: it splits the worker into
+        # index.js + assets/*.js chunks, and a bundle that ships only
+        # index.js deploys a broken re-export stub.
+        run: |
+          pnpm --filter worker exec wrangler deploy --dry-run \
+            --config wrangler.ci.toml --outdir dist-release
 
       - name: Compute hashes + inject _version.ts
         id: hashes
         run: |
-          # Worker bundle path produced by @cloudflare/vite-plugin —
-          # the plugin emits under dist/<wrangler-name-with-underscores>/.
+          # Hash the wrangler-built single-file artifact. This value is
+          # baked into _version.ts as the Worker's self-reported identity
+          # (worker_hash); the final artifact's byte hash is computed
+          # separately as worker_bundle_hash after the rebuild.
           json=$(pnpm tsx apps/worker/scripts/inject-version.ts \
             --version "${{ steps.version.outputs.version }}" \
-            --worker apps/worker/dist/line_harness/index.js \
+            --worker apps/worker/dist-release/index.js \
+            --worker-assets apps/worker/dist/client \
             --admin apps/web/out \
             --liff apps/liff/dist \
             --out apps/worker/src/_version.ts)
@@ -116,21 +156,36 @@ jobs:
           worker_hash=$(node -e "console.log(JSON.parse(process.argv[1]).workerHash)" "$json")
           admin_hash=$(node -e "console.log(JSON.parse(process.argv[1]).adminHash)" "$json")
           liff_hash=$(node -e "console.log(JSON.parse(process.argv[1]).liffHash)" "$json")
+          worker_assets_hash=$(node -e "console.log(JSON.parse(process.argv[1]).workerAssetsHash)" "$json")
           released_at=$(node -e "console.log(JSON.parse(process.argv[1]).releasedAt)" "$json")
 
           echo "worker_hash=${worker_hash}" >> "$GITHUB_OUTPUT"
           echo "admin_hash=${admin_hash}" >> "$GITHUB_OUTPUT"
           echo "liff_hash=${liff_hash}" >> "$GITHUB_OUTPUT"
+          echo "worker_assets_hash=${worker_assets_hash}" >> "$GITHUB_OUTPUT"
           echo "released_at=${released_at}" >> "$GITHUB_OUTPUT"
 
-      - name: Rebuild Worker (with embedded _version.ts)
-        run: pnpm --filter worker build
+      - name: Rebuild Worker artifact (with embedded _version.ts)
+        run: |
+          rm -rf apps/worker/dist-release
+          pnpm --filter worker exec wrangler deploy --dry-run \
+            --config wrangler.ci.toml --outdir dist-release
+
+      - name: Compute worker_bundle_hash (detached hash of the final artifact)
+        # The artifact embeds its own identity hash, so its byte hash can
+        # never equal worker_hash — download verification needs this
+        # detached value instead.
+        id: bundlehash
+        run: |
+          worker_bundle_hash=$(node -e "const{createHash}=require('node:crypto');const{readFileSync}=require('node:fs');console.log('sha256:'+createHash('sha256').update(readFileSync('apps/worker/dist-release/index.js')).digest('hex'))")
+          echo "worker_bundle_hash=${worker_bundle_hash}" >> "$GITHUB_OUTPUT"
 
       - name: Build release bundle
         run: |
           mkdir -p dist
           pnpm tsx scripts/release/build-bundle.ts \
-            --worker-js apps/worker/dist/line_harness/index.js \
+            --worker-js apps/worker/dist-release/index.js \
+            --worker-assets apps/worker/dist/client \
             --admin apps/web/out \
             --liff apps/liff/dist \
             --migrations packages/db/migrations \
@@ -142,15 +197,15 @@ jobs:
           size=$(stat -c%s dist/bundle.tar.gz)
           echo "size=${size}" >> "$GITHUB_OUTPUT"
 
-      - name: Determine new migrations for this release
+      - name: Determine cumulative migrations for safe upgrades
         id: migrations
         run: |
-          # For v0.1.0-rc1 (first tagged release) the manifest is empty —
-          # we list only migrations introduced by Phase 1 (>=041).
-          # Subsequent releases should diff against the previous tag; this
-          # is intentionally conservative for the initial cut.
+          # Include the supported additive bridge from 037 onward. v0.14.1's
+          # base+setup already establishes 001-036, while two older files use
+          # destructive table rebuilds and must never be replayed statement by
+          # statement. The checksum ledger makes this cumulative set safe.
           migrations_json=$(ls packages/db/migrations \
-            | awk '/^04[1-9]_|^0[5-9][0-9]_|^[1-9][0-9][0-9]_/' \
+            | awk '/^03[7-9]_|^0[4-9][0-9]_|^[1-9][0-9][0-9]_/' \
             | jq -R . | jq -sc .)
           if [ -z "$migrations_json" ] || [ "$migrations_json" = "null" ]; then
             migrations_json="[]"
@@ -170,6 +225,8 @@ jobs:
             "version": "${{ steps.version.outputs.version }}",
             "released_at": "${{ steps.hashes.outputs.released_at }}",
             "worker_hash": "${{ steps.hashes.outputs.worker_hash }}",
+            "worker_bundle_hash": "${{ steps.bundlehash.outputs.worker_bundle_hash }}",
+            "worker_assets_hash": "${{ steps.hashes.outputs.worker_assets_hash }}",
             "admin_hash": "${{ steps.hashes.outputs.admin_hash }}",
             "liff_hash": "${{ steps.hashes.outputs.liff_hash }}",
             "bundle_url": "${bundle_url}",

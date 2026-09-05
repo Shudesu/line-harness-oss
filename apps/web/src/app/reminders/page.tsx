@@ -5,6 +5,11 @@ import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
 
 interface Reminder {
   id: string
@@ -107,6 +112,7 @@ export default function RemindersPage() {
   })
   const [stepSaving, setStepSaving] = useState(false)
   const [stepFormError, setStepFormError] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<{ kind: 'reminder' | 'step'; id: string } | null>(null)
 
   const loadReminders = useCallback(async () => {
     setLoading(true)
@@ -198,7 +204,6 @@ export default function RemindersPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('このリマインダーを削除してもよいですか？')) return
     try {
       await api.reminders.delete(id)
       if (expandedId === id) {
@@ -241,7 +246,6 @@ export default function RemindersPage() {
 
   const handleDeleteStep = async (stepId: string) => {
     if (!expandedId) return
-    if (!confirm('このステップを削除してもよいですか？')) return
     try {
       await api.reminders.deleteStep(expandedId, stepId)
       loadDetail(expandedId)
@@ -255,13 +259,13 @@ export default function RemindersPage() {
       <Header
         title="リマインダ配信"
         action={
-          <button
+          <Button
+            type="button"
+            variant="primary"
             onClick={() => setShowCreate(true)}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
           >
             + 新規リマインダー
-          </button>
+          </Button>
         }
       />
 
@@ -279,9 +283,10 @@ export default function RemindersPage() {
           <div className="space-y-4 max-w-lg">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">リマインダー名 <span className="text-red-500">*</span></label>
-              <input
+              <Input
+                label="リマインダー名"
                 type="text"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                required
                 placeholder="例: セミナー参加リマインダー"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -289,32 +294,29 @@ export default function RemindersPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">説明</label>
-              <textarea
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                rows={2}
+              <InputArea
+                label="説明"
+                minRows={2}
                 placeholder="リマインダーの説明 (省略可)"
                 value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                onValueChange={(value) => setForm({ ...form, description: value })}
               />
             </div>
 
-            {formError && <p className="text-xs text-red-600">{formError}</p>}
+            {formError && <Banner size="sm" variant="error" title="作成できませんでした" description={formError} />}
 
             <div className="flex gap-2">
-              <button
+              <Button type="button" variant="primary" loading={saving}
                 onClick={handleCreate}
                 disabled={saving}
-                className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-                style={{ backgroundColor: '#06C755' }}
               >
-                {saving ? '作成中...' : '作成'}
-              </button>
-              <button
+                作成
+              </Button>
+              <Button type="button" variant="secondary"
                 onClick={() => { setShowCreate(false); setFormError('') }}
-                className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 キャンセル
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -383,23 +385,22 @@ export default function RemindersPage() {
                   <div className="border-t border-gray-200 p-5">
                     {/* Actions */}
                     <div className="flex flex-wrap items-center gap-2 mb-4">
-                      <button
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={reminder.isActive ? 'secondary' : 'primary'}
                         onClick={(e) => { e.stopPropagation(); handleToggleActive(reminder.id, reminder.isActive) }}
-                        className={`px-3 py-1.5 min-h-[44px] text-xs font-medium rounded-md transition-colors ${
-                          reminder.isActive
-                            ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            : 'text-white hover:opacity-90'
-                        }`}
-                        style={!reminder.isActive ? { backgroundColor: '#06C755' } : undefined}
                       >
                         {reminder.isActive ? '無効にする' : '有効にする'}
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDelete(reminder.id) }}
-                        className="px-3 py-1.5 min-h-[44px] text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'reminder', id: reminder.id }) }}
                       >
                         削除
-                      </button>
+                      </Button>
                     </div>
 
                     {/* Steps */}
@@ -415,13 +416,11 @@ export default function RemindersPage() {
                           <h4 className="text-xs font-semibold text-gray-700">
                             ステップ ({expandedData.steps.length}件)
                           </h4>
-                          <button
+                          <Button type="button" size="sm" variant="primary"
                             onClick={() => { setShowStepForm(true); setStepFormError('') }}
-                            className="px-3 py-1 min-h-[44px] text-xs font-medium text-white rounded-md transition-opacity hover:opacity-90"
-                            style={{ backgroundColor: '#06C755' }}
                           >
                             + ステップ追加
-                          </button>
+                          </Button>
                         </div>
 
                         {expandedData.steps.length === 0 ? (
@@ -448,12 +447,15 @@ export default function RemindersPage() {
                                       {step.messageContent}
                                     </p>
                                   </div>
-                                  <button
-                                    onClick={() => handleDeleteStep(step.id)}
-                                    className="ml-2 shrink-0 min-h-[44px] min-w-[44px] text-xs text-red-400 hover:text-red-600 transition-colors"
+                                  <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="destructive"
+                                    onClick={() => setPendingDelete({ kind: 'step', id: step.id })}
+                                    className="ml-2 shrink-0"
                                   >
                                     削除
-                                  </button>
+                                  </Button>
                                 </div>
                               ))}
                           </div>
@@ -466,9 +468,9 @@ export default function RemindersPage() {
                             <div className="space-y-3 max-w-lg">
                               <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1">オフセット (分)</label>
-                                <input
+                                <Input
+                                  label="オフセット (分)"
                                   type="number"
-                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                                   placeholder="例: -60 (1時間前), +30 (30分後)"
                                   value={stepForm.offsetMinutes}
                                   onChange={(e) => setStepForm({ ...stepForm, offsetMinutes: Number(e.target.value) })}
@@ -479,44 +481,38 @@ export default function RemindersPage() {
                               </div>
                               <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1">メッセージタイプ</label>
-                                <select
-                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                                <Select
+                                  label="メッセージタイプ"
                                   value={stepForm.messageType}
-                                  onChange={(e) => setStepForm({ ...stepForm, messageType: e.target.value })}
-                                >
-                                  <option value="text">テキスト</option>
-                                  <option value="image">画像</option>
-                                  <option value="flex">Flex</option>
-                                </select>
+                                  onValueChange={(value) => setStepForm({ ...stepForm, messageType: value ?? 'text' })}
+                                  items={{ text: 'テキスト', image: '画像', flex: 'Flex' }}
+                                />
                               </div>
                               <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容 <span className="text-red-500">*</span></label>
-                                <textarea
-                                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-                                  rows={3}
+                                <InputArea
+                                  label="メッセージ内容"
+                                  minRows={3}
                                   placeholder="メッセージ内容を入力"
                                   value={stepForm.messageContent}
-                                  onChange={(e) => setStepForm({ ...stepForm, messageContent: e.target.value })}
+                                  onValueChange={(value) => setStepForm({ ...stepForm, messageContent: value })}
                                 />
                               </div>
 
-                              {stepFormError && <p className="text-xs text-red-600">{stepFormError}</p>}
+                              {stepFormError && <Banner size="sm" variant="error" title="追加できませんでした" description={stepFormError} />}
 
                               <div className="flex gap-2">
-                                <button
+                                <Button type="button" variant="primary" loading={stepSaving}
                                   onClick={handleAddStep}
                                   disabled={stepSaving}
-                                  className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-                                  style={{ backgroundColor: '#06C755' }}
                                 >
-                                  {stepSaving ? '追加中...' : '追加'}
-                                </button>
-                                <button
+                                  追加
+                                </Button>
+                                <Button type="button" variant="secondary"
                                   onClick={() => { setShowStepForm(false); setStepFormError('') }}
-                                  className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                                 >
                                   キャンセル
-                                </button>
+                                </Button>
                               </div>
                             </div>
                           </div>
@@ -530,6 +526,16 @@ export default function RemindersPage() {
           })}
         </div>
       )}
+      <Dialog.Root role="alertdialog" open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null) }}>
+        <Dialog>
+          <Dialog.Title>{pendingDelete?.kind === 'step' ? 'このステップを削除しますか？' : 'このリマインダーを削除しますか？'}</Dialog.Title>
+          <Dialog.Description className="mt-2">削除した内容は元に戻せません。</Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setPendingDelete(null)}>キャンセル</Button>
+            <Button type="button" variant="destructive" onClick={() => { if (!pendingDelete) return; const target = pendingDelete; setPendingDelete(null); if (target.kind === 'step') void handleDeleteStep(target.id); else void handleDelete(target.id) }}>削除</Button>
+          </div>
+        </Dialog>
+      </Dialog.Root>
       <CcPromptButton prompts={ccPrompts} />
     </div>
   )

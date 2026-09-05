@@ -105,24 +105,36 @@ export default function ImageUploader({ mode, value, onChange, label }: ImageUpl
   return (
     <div className="space-y-2">
       {label && <div className="text-sm font-medium text-gray-700">{label}</div>}
-      {mode === 'url' && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => setManualUrlMode((v) => !v)}
-            className="text-xs text-emerald-700 underline"
-          >
-            {manualUrlMode ? '画像アップロードに戻す' : 'URL を直接入力'}
-          </button>
-        </div>
-      )}
-      {mode === 'url' && manualUrlMode ? (
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setManualUrlMode((v) => !v)}
+          className="text-xs text-emerald-700 underline"
+        >
+          {manualUrlMode ? '画像アップロードに戻す' : 'URL を直接入力'}
+        </button>
+      </div>
+      {manualUrlMode ? (
         <input
           type="url"
-          value={value?.mode === 'url' ? value.url : ''}
+          value={
+            value === null
+              ? ''
+              : value.mode === 'url'
+                ? value.url
+                : value.originalContentUrl
+          }
           onChange={(e) => {
             const url = e.target.value
-            onChange(url ? { mode: 'url', url } : null)
+            if (!url) {
+              onChange(null)
+              return
+            }
+            if (mode === 'url') {
+              onChange({ mode: 'url', url })
+            } else {
+              onChange({ mode: 'line-image', originalContentUrl: url, previewImageUrl: url })
+            }
           }}
           placeholder="https://... (外部 CDN / R2 URL)"
           className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"

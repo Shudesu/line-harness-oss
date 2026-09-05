@@ -1,6 +1,6 @@
 🌐 [日本語](README.md) | [English](README.en.md) | [简体中文](README.zh-CN.md) | [한국어](README.ko.md) | **Español**
 
-# LINE Harness
+# L Harness
 
 > ### **[Pruébalo gratis en LINE](https://shudesu.github.io/line-harness-oss/)** 👈
 
@@ -9,15 +9,15 @@ Funciona sobre el plan gratuito de Cloudflare. **Costo de servidor: $0/mes**. Op
 
 ### ▶️ [Ver el tutorial en YouTube (~20 min)](https://youtu.be/DiRuGaeq1sM)
 
-[![Haz clic para reproducir en YouTube — Guía de configuración de LINE Harness](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+[![Haz clic para reproducir en YouTube — Guía de configuración de L Harness](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
 
 **Versión actual**: v0.13.2 ・ Licencia MIT ・ TypeScript / Cloudflare Workers + D1
 
 ---
 
-## ¿Por qué LINE Harness?
+## ¿Por qué L Harness?
 
-| | SaaS propietario A | SaaS propietario B | **LINE Harness** |
+| | SaaS propietario A | SaaS propietario B | **L Harness** |
 |---|---|---|---|
 | Costo mensual | ¥20,000+ | ¥10,000+ | **$0** |
 | Mensajería por pasos | ✅ | ✅ | ✅ |
@@ -83,6 +83,14 @@ Tarda unos 5 minutos. Al finalizar, el panel en `https://<your-name>-admin.pages
 - **Formularios (LIFF)** — formularios completados dentro de LINE, respuestas guardadas como metadata
 - **Reservas de calendario** — sistema de booking integrado con Google Calendar vía LIFF
 - **Gestión de staff** — roles Owner / Admin / Staff, claves de API individuales
+
+### Seguimiento de afiliados (ASP)
+- **Emisión self-serve de enlaces** — los afiliados generan sus propios enlaces LIFF de tracking sin intervención del administrador
+- **Gestión de campañas** — comisión fija por campaña, varias campañas en paralelo
+- **Tracking cronológico** — registra clic → alta como contacto → conversión en orden, atribución last-touch
+- **Flujo de aprobación** — aprueba o rechaza las conversiones atribuidas para confirmar la comisión, con marcas de cuentas duplicadas para detectar posible fraude
+- **Notificaciones push por LINE** — push automático al afiliado cuando se confirma la conversión
+- Detalles: [docs/wiki/27-Affiliate-ASP.md](docs/wiki/27-Affiliate-ASP.md)
 
 ### Automatización
 - **Reglas IF-THEN** — 7 tipos de triggers × 6 tipos de acciones
@@ -155,4 +163,4 @@ Issues y PRs son bienvenidos. Por favor envíalos a `Shudesu/line-harness-oss` (
 
 ---
 
-> **LINE Harness** por [@Shudesu](https://github.com/Shudesu) — un CRM open source para LINE nativo de IA
+> **L Harness** por [@Shudesu](https://github.com/Shudesu) — un CRM open source para LINE nativo de IA

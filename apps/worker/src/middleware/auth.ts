@@ -2,6 +2,7 @@ import type { Context, Next } from 'hono';
 import { getStaffByApiKey } from '@line-crm/db';
 import type { Env } from '../index.js';
 import type { AdminSameSite } from './admin-auth-config.js';
+import { safeDecode } from '../utils/safe-decode.js';
 
 export const ADMIN_AUTH_COOKIE = 'lh_admin_session';
 export const CSRF_COOKIE = 'lh_csrf';
@@ -11,19 +12,6 @@ export const CSRF_HEADER = 'x-csrf-token';
 const SESSION_MAX_AGE = 604800;
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-
-/**
- * decodeURIComponent throws on malformed percent escapes (e.g. `%`). Cookie
- * headers are client-controlled, so fall back to the raw value rather than
- * letting the exception turn a request into a 500.
- */
-function safeDecode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
 
 function parseCookieHeader(cookieHeader: string | undefined): Record<string, string> {
   if (!cookieHeader) return {};
@@ -136,6 +124,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   // くる。Worker は API 以外のパスを ASSETS バインディングから配信するので、
   // /api/ で始まらないパスは認証 skip して static asset として返す。
   // (admin は別ホスト、Worker の non-API path はすべて LIFF/SPA 経由)
+  const method = c.req.method.toUpperCase();
   if (!path.startsWith('/api/')) {
     // ただし内部用エンドポイント (/webhook, /auth, /setup) は元の skip 判定に任せる
     if (
@@ -150,6 +139,32 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
       return next();
     }
   }
+
+  // A form definition is public because the LIFF client must render it before
+  // submission. Authenticate opportunistically so the same GET can still
+  // return the full admin representation to SDK/admin callers, while an
+  // unauthenticated LIFF caller receives the redacted public representation.
+  // Crucially, this exception is method-aware: PUT/DELETE on the same path
+  // must continue through the normal admin authentication below.
+  const isPublicFormDefinition =
+    method === 'GET' && /^\/api\/forms\/[^/]+$/.test(path);
+  if (isPublicFormDefinition) {
+    const token = bearerToken(c) ?? cookieToken(c);
+    const staff = await authenticateApiToken(c, token);
+    if (staff) c.set('staff', staff);
+    return next();
+  }
+
+  // These LIFF actions perform their own LINE ID-token verification inside
+  // the route. They cannot use the admin auth gate because their Bearer token
+  // is a LINE ID token, not a Harness staff API key.
+  const isPublicFormAction =
+    method === 'POST' &&
+    (/^\/api\/forms\/[^/]+\/submit$/.test(path) ||
+      /^\/api\/forms\/[^/]+\/opened$/.test(path) ||
+      /^\/api\/forms\/[^/]+\/partial$/.test(path));
+  if (isPublicFormAction) return next();
+
   if (
     path === '/webhook' ||
     path === '/docs' ||
@@ -173,12 +188,13 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path === '/setup' ||
     path === '/api/integrations/stripe/webhook' ||
     path.match(/^\/api\/webhooks\/incoming\/[^/]+\/receive$/) ||
-    path.match(/^\/api\/forms\/[^/]+\/submit$/) ||
-    path.match(/^\/api\/forms\/[^/]+\/opened$/) ||
-    path.match(/^\/api\/forms\/[^/]+\/partial$/) ||
-    path.match(/^\/api\/forms\/[^/]+$/) || // GET form definition (public for LIFF)
     path === '/api/meet-callback' || // Meet Harness completion callback
-    path === '/api/qr' // Public QR proxy — used by desktop landing pages
+    // Google OAuth redirects without admin headers. Route verifies a signed, expiring state.
+    (path === '/api/booking/google-calendar/oauth/callback' && method === 'GET') ||
+    path === '/api/qr' || // Public QR proxy — used by desktop landing pages
+    path === '/api/health' || // Liveness probe (update CLI / self-update verify)
+    // Public lead form. Origin validation and field validation happen in-route.
+    (path === '/api/public/media-inquiries' && method === 'POST')
   ) {
     return next();
   }

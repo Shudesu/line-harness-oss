@@ -21131,7 +21131,7 @@ function registerExampleTool(server2) {
     "send_myservice_notification",
     "Send a MyService-related notification (appointment reminder, etc.) to a LINE friend.",
     {
-      friendId: external_exports.string().describe("LINE Harness friend ID"),
+      friendId: external_exports.string().describe("L Harness friend ID"),
       notificationType: external_exports.enum(["appointment_reminder", "membership_expiry", "custom"]).describe("Type of notification to send"),
       message: external_exports.string().optional().describe('Custom message text (required for "custom" type)'),
       customerId: external_exports.string().optional().describe("MyService customer ID (for auto-generating message content)")

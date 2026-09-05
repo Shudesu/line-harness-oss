@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import MenuList from '../components/MenuList.js';
 import StaffList from '../components/StaffList.js';
 import DateTimePicker from '../components/DateTimePicker.js';
 import Confirm from '../components/Confirm.js';
 import Done from '../components/Done.js';
-import type { MenuItem, StaffItem } from '../lib/api.js';
+import { useSalonContext } from '../lib/context.js';
+import { createApi, type MenuItem, type StaffItem } from '../lib/api.js';
 
 type Step = 'menu' | 'staff' | 'datetime' | 'confirm' | 'done';
 
@@ -18,14 +19,47 @@ const STEPS: Array<{ key: Step; label: string }> = [
 export default function Booking({
   peekMode,
   exitPeek,
+  initialMenuId,
 }: {
   peekMode: boolean;
   exitPeek: () => void;
+  initialMenuId?: string | null;
 }) {
+  const ctx = useSalonContext();
   const [step, setStep] = useState<Step>('menu');
   const [menu, setMenu] = useState<MenuItem | null>(null);
   const [staff, setStaff] = useState<StaffItem | null>(null);
   const [slot, setSlot] = useState<{ date: string; start: string } | null>(null);
+  // ?menu_id=... が指定されたら、メニュー一覧をスキップして staff から開始。
+  // 該当 menu が無効/未公開だった場合は通常フローに fallback（黙って全
+  // メニュー一覧を出す方が「初回オリエン直リンク経由なのに別メニュー
+  // を選ばれる」事故より安全）。
+  const [deepLinkResolving, setDeepLinkResolving] = useState(Boolean(initialMenuId));
+
+  useEffect(() => {
+    if (!initialMenuId) return;
+    let cancelled = false;
+    createApi(ctx)
+      .menus()
+      .then((res) => {
+        if (cancelled) return;
+        const hit = res.menus.find((m) => m.id === initialMenuId);
+        if (hit) {
+          setMenu(hit);
+          setStep('staff');
+        }
+      })
+      .catch(() => {
+        // 解決失敗時は通常の menu 一覧フローへ。MenuList が同 API を
+        // 再度叩くのでここで UI エラーを出す必要は無い。
+      })
+      .finally(() => {
+        if (!cancelled) setDeepLinkResolving(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ctx, initialMenuId]);
 
   function exitPeekToBooking() {
     const url = new URL(window.location.href);
@@ -104,7 +138,10 @@ export default function Booking({
         </div>
       )}
 
-      {step === 'menu' && (
+      {step === 'menu' && deepLinkResolving && (
+        <div className="py-12 text-center text-sm text-gray-500">読み込み中…</div>
+      )}
+      {step === 'menu' && !deepLinkResolving && (
         <MenuList
           onSelect={(m) => {
             if (menu?.id !== m.id) {

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
   getTrackedLinks,
   getTrackedLinkById,
+  getTrackedLinkByIdOrShortCode,
   createTrackedLink,
   updateTrackedLink,
   deleteTrackedLink,
@@ -9,25 +10,37 @@ import {
   getLinkClicks,
   getFriendByLineUserId,
 } from '@line-crm/db';
-import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
+import { enrollFriendInScenario } from '@line-crm/db';
+import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import type { TrackedLink } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { isLinkPreviewBot } from '../lib/og-bot.js';
+import { buildOgHtml } from '../lib/og-html.js';
+import { resolveOgForTrackedLink } from '../lib/og-resolver.js';
+import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const trackedLinks = new Hono<Env>();
 
 function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
-  const trackingUrl = `${baseUrl}/t/${row.id}`;
+  // Prefer the short code (baseUrl may be a branded short domain).
+  const trackingUrl = `${baseUrl}/t/${row.short_code ?? row.id}`;
   return {
     id: row.id,
     name: row.name,
     originalUrl: row.original_url,
     trackingUrl,
+    shortCode: row.short_code,
     tagId: row.tag_id,
     scenarioId: row.scenario_id,
     introTemplateId: row.intro_template_id,
     rewardTemplateId: row.reward_template_id,
+    lineAccountId: row.line_account_id,
     isActive: Boolean(row.is_active),
     clickCount: row.click_count,
+    ogTitle: row.og_title,
+    ogDescription: row.og_description,
+    ogImageUrl: row.og_image_url,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -38,11 +51,40 @@ function getBaseUrl(c: { req: { url: string } }): string {
   return `${url.protocol}//${url.host}`;
 }
 
+/** Base for admin-facing trackingUrl: branded short domain or the request origin. */
+async function resolveApiLinkBase(c: { env: { DB: D1Database }; req: { url: string } }): Promise<string> {
+  return resolveTrackedLinkBaseUrl(c.env.DB, getBaseUrl(c));
+}
+
+/**
+ * Resolve the LINE account that owns a tracked link.
+ * Priority: tracked_links.line_account_id → scenario_id → scenarios.line_account_id.
+ * Returns null for legacy/unowned links (callers fall back to env defaults).
+ */
+async function resolveLinkAccount(
+  db: D1Database,
+  link: TrackedLink,
+): Promise<Record<string, unknown> | null> {
+  let accountId: string | null = link.line_account_id ?? null;
+  if (!accountId && link.scenario_id) {
+    const scRow = await db
+      .prepare(`SELECT line_account_id FROM scenarios WHERE id = ?`)
+      .bind(link.scenario_id)
+      .first<{ line_account_id: string | null }>();
+    accountId = scRow?.line_account_id ?? null;
+  }
+  if (!accountId) return null;
+  return db
+    .prepare(`SELECT * FROM line_accounts WHERE id = ?`)
+    .bind(accountId)
+    .first<Record<string, unknown>>();
+}
+
 // GET /api/tracked-links — list all
 trackedLinks.get('/api/tracked-links', async (c) => {
   try {
     const items = await getTrackedLinks(c.env.DB);
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({ success: true, data: items.map((item) => serializeTrackedLink(item, base)) });
   } catch (err) {
     console.error('GET /api/tracked-links error:', err);
@@ -59,7 +101,7 @@ trackedLinks.get('/api/tracked-links/:id', async (c) => {
       return c.json({ success: false, error: 'Tracked link not found' }, 404);
     }
     const clicks = await getLinkClicks(c.env.DB, id);
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({
       success: true,
       data: {
@@ -88,6 +130,10 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId?: string | null;
       introTemplateId?: string | null;
       rewardTemplateId?: string | null;
+      lineAccountId?: string | null;
+      ogTitle?: string | null;
+      ogDescription?: string | null;
+      ogImageUrl?: string | null;
     }>();
 
     if (!body.name || !body.originalUrl) {
@@ -101,9 +147,13 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId: body.scenarioId ?? null,
       introTemplateId: body.introTemplateId ?? null,
       rewardTemplateId: body.rewardTemplateId ?? null,
+      lineAccountId: body.lineAccountId ?? null,
+      ogTitle: body.ogTitle ?? null,
+      ogDescription: body.ogDescription ?? null,
+      ogImageUrl: body.ogImageUrl ?? null,
     });
 
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({ success: true, data: serializeTrackedLink(link, base) }, 201);
   } catch (err) {
     console.error('POST /api/tracked-links error:', err);
@@ -121,14 +171,18 @@ trackedLinks.patch('/api/tracked-links/:id', async (c) => {
       scenarioId?: string | null;
       introTemplateId?: string | null;
       rewardTemplateId?: string | null;
+      lineAccountId?: string | null;
       isActive?: boolean;
+      ogTitle?: string | null;
+      ogDescription?: string | null;
+      ogImageUrl?: string | null;
     }>();
 
     const link = await updateTrackedLink(c.env.DB, id, body);
     if (!link) {
       return c.json({ success: false, error: 'Tracked link not found' }, 404);
     }
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({ success: true, data: serializeTrackedLink(link, base) });
   } catch (err) {
     console.error('PATCH /api/tracked-links/:id error:', err);
@@ -226,28 +280,50 @@ function buildAppRedirectHtml(destinationUrl: string): string {
 }
 
 // GET /t/:linkId — click tracking redirect (no auth, fast redirect)
+// :linkId accepts both the legacy UUID and the 7-char short code.
 trackedLinks.get('/t/:linkId', async (c) => {
   const linkId = c.req.param('linkId');
   const lineUserId = c.req.query('lu') ?? null;
   let friendId = c.req.query('f') ?? null;
 
   // Look up the link first
-  const link = await getTrackedLinkById(c.env.DB, linkId);
+  const link = await getTrackedLinkByIdOrShortCode(c.env.DB, linkId);
 
   if (!link || !link.is_active) {
     return c.json({ success: false, error: 'Link not found' }, 404);
+  }
+
+  // Bot UA (LINE/X/Facebook 等のリンクプレビュー) → OGP HTML を返して終了。
+  // クリック記録もスキップ（bot のアクセスは CV ではない）。
+  const ua = c.req.header('user-agent') || '';
+  if (isLinkPreviewBot(ua)) {
+    const canonical = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
+    // link.line_account_id 優先、無ければ scenario 経由でアカウントを解決する。
+    // どちらも無いリンクは account=null（og:site_name='LINE' フォールバック）。
+    const account = await resolveLinkAccount(c.env.DB, link);
+    const og = resolveOgForTrackedLink(link, account as any, canonical);
+    return c.html(buildOgHtml(og));
   }
 
   const useAppRedirect = isAppLinkDomain(link.original_url);
 
   // If no user ID yet, check if this is LINE's in-app browser → redirect to LIFF for identification
   // Skip LIFF redirect for app-link domains (they'll come from Safari via externalBrowser)
-  const ua = c.req.header('user-agent') || '';
+  //
+  // LIFF はリンクを所有するアカウントのものを使う。グローバル env.LIFF_URL 固定だと
+  // 他アカウントの友だちに①の同意画面が出る（未同意チャネルの LIFF に飛ぶため）。
   const isLineApp = /\bLine\b/i.test(ua);
-  if (!useAppRedirect && !lineUserId && !friendId && isLineApp && c.env.LIFF_URL) {
-    const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
-    const liffRedirect = `${c.env.LIFF_URL}?redirect=${encodeURIComponent(directUrl)}`;
-    return c.redirect(liffRedirect, 302);
+  if (!useAppRedirect && !lineUserId && !friendId && isLineApp) {
+    let liffBase: string | null = null;
+    const account = await resolveLinkAccount(c.env.DB, link);
+    const liffId = (account?.liff_id as string | null | undefined) ?? null;
+    if (liffId) liffBase = `https://liff.line.me/${liffId}`;
+    if (!liffBase && c.env.LIFF_URL) liffBase = c.env.LIFF_URL;
+    if (liffBase) {
+      const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
+      const liffRedirect = `${liffBase}?redirect=${encodeURIComponent(directUrl)}`;
+      return c.redirect(liffRedirect, 302);
+    }
   }
 
   // Resolve friendId from LINE user ID if provided
@@ -263,15 +339,34 @@ trackedLinks.get('/t/:linkId', async (c) => {
   ctx.waitUntil(
     (async () => {
       try {
-        // Record the click
-        await recordLinkClick(c.env.DB, linkId, friendId);
+        // Record the click (link.id, not the raw param — it may be a short code)
+        const click = await recordLinkClick(c.env.DB, link.id, friendId);
+
+        if (friendId) {
+          await awardActivityMileage(c.env.DB, {
+            eventType: 'link_clicked',
+            source: 'tracked_link',
+            sourceEventId: click.id,
+            friendId,
+            subjectKey: link.id,
+            metadata: { trackedLinkId: link.id, linkName: link.name },
+            occurredAt: click.clicked_at,
+          });
+        }
 
         // Run automatic actions if a friend is identified
         if (friendId) {
           const actions: Promise<unknown>[] = [];
 
           if (link.tag_id) {
-            actions.push(addTagToFriend(c.env.DB, friendId, link.tag_id));
+            // Guarded attach: fires tag_added scenario enrollment only when
+            // the tag is NEWLY applied — an in-app /t click must start a
+            // tag-triggered campaign exactly like the /auth/line ref path
+            // does, and stay silent on re-clicks.
+            actions.push(attachTagAndFireSideEffects(c.env.DB, friendId, link.tag_id, {
+              defaultAccessToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
+              workerUrl: c.env.WORKER_URL,
+            }));
           }
 
           if (link.scenario_id) {

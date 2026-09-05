@@ -1,5 +1,5 @@
 -- Migration 008: Multi-account support
--- Run: wrangler d1 execute line-crm --file=packages/db/migrations/008_multi_account.sql --remote
+-- Run: wrangler d1 execute your-database --file=packages/db/migrations/008_multi_account.sql --remote
 
 -- Add line_account_id to friends (track which account each friend belongs to)
 ALTER TABLE friends ADD COLUMN line_account_id TEXT REFERENCES line_accounts(id);

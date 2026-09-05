@@ -47,7 +47,7 @@ export type AdminAuthEnv = {
 
 /**
  * Public-suffix-style multi-tenant hosts where every subdomain is its own
- * registrable site. `line-crm-admin.pages.dev` and `x.workers.dev` are
+ * registrable site. `your-admin.pages.dev` and `x.workers.dev` are
  * therefore cross-site to each other. Not a full PSL — just the suffixes this
  * deployment topology actually uses.
  */
@@ -135,6 +135,38 @@ export function parseAllowedOrigins(env: AdminAuthEnv): string[] {
     .filter((value): value is string => Boolean(value));
 }
 
+function isCloudflarePagesOrigin(value: URL): boolean {
+  return value.hostname.toLowerCase().endsWith('.pages.dev');
+}
+
+/**
+ * Cloudflare Pages exposes both the production project origin
+ * (`https://project.pages.dev`) and deployment/branch preview origins such as
+ * `https://hash.project.pages.dev`. Operators often click the preview URL that
+ * Wrangler prints immediately after deploy, so treat origins inside the same
+ * Pages project as equivalent for the admin allowlist.
+ */
+export function isAllowedAdminOrigin(origin: string, allowedOrigin: string): boolean {
+  const normalizedOrigin = normalizeOrigin(origin);
+  const normalizedAllowed = normalizeOrigin(allowedOrigin);
+  if (!normalizedOrigin || !normalizedAllowed) return false;
+  if (stripTrailingSlash(normalizedOrigin) === stripTrailingSlash(normalizedAllowed)) {
+    return true;
+  }
+
+  try {
+    const candidate = new URL(normalizedOrigin);
+    const allowed = new URL(normalizedAllowed);
+    if (candidate.protocol !== allowed.protocol) return false;
+    if (!isCloudflarePagesOrigin(candidate) || !isCloudflarePagesOrigin(allowed)) {
+      return false;
+    }
+    return registrableDomain(candidate.hostname) === registrableDomain(allowed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function resolveAdminAuthConfig(
   env: AdminAuthEnv,
   opts: { requestOrigin?: string } = {},
@@ -204,10 +236,23 @@ export function resolveCorsOrigin(
   }
 
   const { allowedOrigins } = resolveAdminAuthConfig(env);
-  const allowed = new Set(
-    [...allowedOrigins, requestOrigin].filter(Boolean).map(stripTrailingSlash),
-  );
-  if (allowed.has(stripTrailingSlash(origin))) return origin;
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) return '';
+
+  if (
+    requestOrigin &&
+    stripTrailingSlash(normalizedOrigin) === stripTrailingSlash(requestOrigin)
+  ) {
+    return normalizedOrigin;
+  }
+
+  if (
+    allowedOrigins.some((allowedOrigin) =>
+      isAllowedAdminOrigin(normalizedOrigin, allowedOrigin),
+    )
+  ) {
+    return normalizedOrigin;
+  }
 
   // Rejected. Never reflect the origin here — that would defeat the
   // credentialed-CORS allowlist. But a cross-origin *admin auth* request that is

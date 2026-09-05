@@ -1,6 +1,6 @@
 # 20. API リファレンス
 
-LINE Harness REST API の完全なエンドポイント一覧。
+L Harness REST API の完全なエンドポイント一覧。
 
 ---
 

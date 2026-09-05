@@ -5,7 +5,7 @@ import { getClient } from "../client.js";
 export function registerListConversations(server: McpServer): void {
   server.tool(
     "list_conversations",
-    "List unreplied conversations (friends who sent an incoming message with no subsequent human reply). Excludes automated outgoing (broadcast/scenario/auto_reply/reminder). Results sorted by longest wait first.",
+    "List unreplied conversations (friends who sent an incoming message with no subsequent human reply). Excludes automated outgoing (broadcast/scenario/auto_reply/reminder) and conversations marked resolved in the admin UI. Results sorted by longest wait first.",
     {
       lineAccountId: z
         .string()

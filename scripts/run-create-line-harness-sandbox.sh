@@ -154,7 +154,7 @@ export PATH="$PNPM_HOME:$PATH"
 
 cd "$SANDBOX_WORK"
 
-echo "LINE Harness sandbox is ready."
+echo "L Harness sandbox is ready."
 echo "  sandbox root: $SANDBOX_ROOT"
 echo "  sandbox home: $SANDBOX_HOME"
 echo "  working dir : $SANDBOX_WORK"

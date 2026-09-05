@@ -102,6 +102,7 @@ interface DueEventReminderRow {
   event_name: string;
   venue_name: string | null;
   venue_url: string | null;
+  reminder_message_extra: string | null;
   starts_at: string;
   channel_access_token: string;
   line_user_id: string;
@@ -132,7 +133,8 @@ export async function processDueEventReminders(
   const due = await db
     .prepare(
       `SELECT r.id, r.booking_id, r.kind, r.retry_count,
-              e.name AS event_name, e.venue_name, e.venue_url, e.reminder_hours_before,
+              e.name AS event_name, e.venue_name, e.venue_url,
+              e.reminder_message_extra, e.reminder_hours_before,
               s.starts_at,
               la.channel_access_token,
               f.line_user_id
@@ -181,6 +183,7 @@ export async function processDueEventReminders(
           venueName: row.venue_name,
           venueUrl: row.venue_url,
           hoursBefore: row.reminder_hours_before ?? 0,
+          reminderExtra: row.reminder_message_extra,
         },
       });
       await db

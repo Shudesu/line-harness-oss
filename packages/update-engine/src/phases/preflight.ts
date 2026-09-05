@@ -43,9 +43,13 @@ export async function runPreflight(
   await verifyToken(ctx.creds);
 
   // 3. Verify each CF resource the update will touch actually exists.
+  //    The LIFF Pages project is optional — CLI installs serve the LIFF
+  //    SPA from Worker assets and set liffPagesProject to ''.
   await verifyWorker(ctx.creds, ctx.workerName);
   await verifyPagesProject(ctx.creds, ctx.adminPagesProject);
-  await verifyPagesProject(ctx.creds, ctx.liffPagesProject);
+  if (ctx.liffPagesProject) {
+    await verifyPagesProject(ctx.creds, ctx.liffPagesProject);
+  }
 
   // 4. D1 reachability — a trivial SELECT 1 confirms the database is
   //    online AND our token has query rights. Failure mentions the D1

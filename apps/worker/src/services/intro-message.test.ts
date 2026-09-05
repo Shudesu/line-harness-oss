@@ -109,7 +109,7 @@ describe('DEFAULT_FORM_LINK_FLEX', () => {
   it('formUrl がボタンの uri にセットされる', () => {
     const url = 'https://liff.line.me/abc?page=form&id=xyz';
     const flex = DEFAULT_FORM_LINK_FLEX(url);
-    expect(flex.type).toBe('flex');
+    if (flex.type !== 'flex') throw new Error(`expected flex, got ${flex.type}`);
     expect(flex.altText).toBe('🎁 特典を受け取る');
     const contents = flex.contents as { footer: { contents: Array<{ action: { uri: string } }> } };
     expect(contents.footer.contents[0].action.uri).toBe(url);

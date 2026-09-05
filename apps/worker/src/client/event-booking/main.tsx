@@ -58,6 +58,8 @@ interface MyBooking {
   cancel_deadline_hours_before: number | null;
   slot_starts_at: string;
   slot_ends_at: string;
+  event_description: string | null;
+  confirmation_message_extra: string | null;
 }
 
 function buildAuthHeaders(ctx: EventBookingContext, extra: Record<string, string> = {}): Record<string, string> {
@@ -216,11 +218,11 @@ function EventDetailScreen({
     return (
       <div className="pb-24 eb-fade-in">
         {event.image_url ? (
-          <img src={event.image_url} alt="" className="w-full h-52 object-cover bg-gray-100" />
+          <img src={event.image_url} alt="" className="w-full h-auto bg-gray-100" />
         ) : (
           <div className="w-full h-52 bg-gradient-to-br from-green-100 to-green-200" />
         )}
-        <div className="px-4 -mt-6">
+        <div className="px-4 mt-4">
           <div className="eb-card eb-card-success">
             <div className="text-2xl mb-2">✅</div>
             <div className="text-base font-bold text-gray-900 mb-1">予約済みです</div>
@@ -239,12 +241,12 @@ function EventDetailScreen({
   return (
     <div className="pb-24 eb-fade-in">
       {event.image_url ? (
-        <img src={event.image_url} alt="" className="w-full h-52 object-cover bg-gray-100" />
+        <img src={event.image_url} alt="" className="w-full h-auto bg-gray-100" />
       ) : (
         <div className="w-full h-52 bg-gradient-to-br from-green-100 to-green-200" />
       )}
 
-      <div className="px-4 -mt-6">
+      <div className="px-4 mt-4">
         <div className="eb-card">
           <h1 className="text-lg font-bold text-gray-900 leading-snug">{event.name}</h1>
           {event.venue_name && (
@@ -496,11 +498,24 @@ function canCancel(b: MyBooking): boolean {
   return deadlineMs > Date.now();
 }
 
-function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
-  const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
+async function cancelBookingApi(ctx: EventBookingContext, bookingId: string): Promise<void> {
+  await apiPost(`/api/liff/events/me/${bookingId}/cancel`, {}, ctx);
+}
+
+type HistoryTab = 'upcoming' | 'past';
+
+function HistoryScreen({
+  ctx,
+  initialTab,
+  onOpenDetail,
+}: {
+  ctx: EventBookingContext;
+  initialTab?: HistoryTab;
+  onOpenDetail: (bookingId: string, tab: HistoryTab) => void;
+}) {
+  const [tab, setTab] = useState<HistoryTab>(initialTab ?? 'upcoming');
   const [items, setItems] = useState<MyBooking[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
@@ -521,29 +536,6 @@ function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  async function cancel(b: MyBooking) {
-    if (!confirm(`「${b.event_name}」の予約をキャンセルしますか？`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await apiPost(`/api/liff/events/me/${b.id}/cancel`, {}, ctx);
-      await refresh();
-    } catch (err) {
-      const e = err as { body?: { error?: string } };
-      const msg = (() => {
-        switch (e.body?.error) {
-          case 'cancel_deadline_passed': return 'キャンセル期限を過ぎています。';
-          case 'cancel_not_allowed': return 'このイベントは LIFF からのキャンセル不可です。LINE で運営にご連絡ください。';
-          case 'invalid_state': return 'この予約はキャンセルできない状態です。';
-          default: return err instanceof Error ? err.message : String(err);
-        }
-      })();
-      setError(msg);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="pb-20 eb-fade-in">
       <div className="sticky top-12 z-10 bg-white border-b border-gray-200">
@@ -561,7 +553,7 @@ function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
           ))}
         </div>
       </div>
-      <div className="px-4 py-4 space-y-3">
+      <div className="px-4 py-4 space-y-4">
         {error && <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-sm">{error}</div>}
         {loading ? (
           <Spinner />
@@ -573,37 +565,176 @@ function HistoryScreen({ ctx }: { ctx: EventBookingContext }) {
           items.map((b) => {
             const s = STATUS_LABEL[b.status] ?? { text: b.status, cls: 'bg-gray-100' };
             return (
-              <div key={b.id} className="eb-card !p-0 overflow-hidden">
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => onOpenDetail(b.id, tab)}
+                className="eb-card !p-0 overflow-hidden w-full text-left hover:bg-gray-50 active:bg-gray-100 transition-colors"
+              >
                 <div className="flex">
                   {b.event_image_url ? (
                     <img src={b.event_image_url} alt="" className="w-24 h-24 object-cover bg-gray-100 shrink-0" />
                   ) : (
                     <div className="w-24 h-24 bg-gradient-to-br from-green-100 to-green-200 shrink-0" />
                   )}
-                  <div className="flex-1 p-3 min-w-0">
+                  <div className="flex-1 p-4 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="font-semibold text-sm line-clamp-2 text-gray-900">{b.event_name}</div>
                       <span className={`eb-badge ${s.cls} shrink-0`}>{s.text}</span>
                     </div>
-                    <div className="text-xs text-gray-600 mt-1">{formatJp(b.slot_starts_at)}</div>
-                    {b.venue_name && <div className="text-xs text-gray-500 truncate">📍 {b.venue_name}</div>}
+                    <div className="text-xs text-gray-600 mt-1.5">{formatJp(b.slot_starts_at)}</div>
+                    {b.venue_name && <div className="text-xs text-gray-500 truncate mt-0.5">📍 {b.venue_name}</div>}
                   </div>
+                  <div className="flex items-center pr-3 text-gray-400 shrink-0">›</div>
                 </div>
-                {canCancel(b) && (
-                  <div className="border-t border-gray-100 px-3 py-2 text-right">
-                    <button
-                      onClick={() => cancel(b)}
-                      disabled={busy}
-                      className="text-sm text-red-600 disabled:opacity-50"
-                    >
-                      キャンセルする
-                    </button>
-                  </div>
-                )}
-              </div>
+              </button>
             );
           })
         )}
+      </div>
+    </div>
+  );
+}
+
+function BookingDetailScreen({
+  ctx,
+  bookingId,
+  onBack,
+}: {
+  ctx: EventBookingContext;
+  bookingId: string;
+  onBack: () => void;
+}) {
+  const [booking, setBooking] = useState<MyBooking | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const found = await apiGet<MyBooking>(
+          `/api/liff/events/me/${bookingId}`,
+          ctx,
+        );
+        if (cancelled) return;
+        setBooking(found);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ctx, bookingId]);
+
+  async function handleCancel() {
+    if (!booking) return;
+    if (!confirm(`「${booking.event_name}」の予約をキャンセルしますか？`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await cancelBookingApi(ctx, booking.id);
+      onBack();
+    } catch (err) {
+      const e = err as { body?: { error?: string } };
+      const msg = (() => {
+        switch (e.body?.error) {
+          case 'cancel_deadline_passed': return 'キャンセル期限を過ぎています。';
+          case 'cancel_not_allowed': return 'このイベントは LIFF からのキャンセル不可です。LINE で運営にご連絡ください。';
+          case 'invalid_state': return 'この予約はキャンセルできない状態です。';
+          default: return err instanceof Error ? err.message : String(err);
+        }
+      })();
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="pb-24 eb-fade-in">
+        <div className="px-4 py-6"><Spinner /></div>
+      </div>
+    );
+  }
+  if (!booking) {
+    return (
+      <div className="pb-24 eb-fade-in">
+        <div className="px-4 py-6 space-y-3">
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-sm">{error}</div>}
+          <button onClick={onBack} className="eb-primary-btn">予約履歴へ戻る</button>
+        </div>
+      </div>
+    );
+  }
+
+  const showExtra = booking.status === 'confirmed'
+    && booking.confirmation_message_extra != null
+    && booking.confirmation_message_extra.trim().length > 0;
+  const cancellable = canCancel(booking);
+
+  return (
+    <div className="pb-24 eb-fade-in">
+      {booking.event_image_url ? (
+        <img src={booking.event_image_url} alt="" className="w-full h-auto bg-gray-100" />
+      ) : (
+        <div className="w-full h-52 bg-gradient-to-br from-green-100 to-green-200" />
+      )}
+      <div className="px-4 mt-4 space-y-4">
+        <div className="eb-card space-y-2">
+          <h1 className="text-lg font-bold text-gray-900 leading-snug">{booking.event_name}</h1>
+          <div className="text-sm text-gray-700">📅 {formatJp(booking.slot_starts_at)}</div>
+          {booking.venue_name && (
+            <div className="text-sm text-gray-700">📍 {booking.venue_name}</div>
+          )}
+          {booking.venue_url && (
+            <a
+              href={booking.venue_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-sm text-blue-600 break-all underline"
+            >
+              {booking.venue_url}
+            </a>
+          )}
+          {booking.event_description && (
+            <div className="mt-2 text-sm text-gray-800 whitespace-pre-wrap">
+              {booking.event_description}
+            </div>
+          )}
+        </div>
+
+        {showExtra && (
+          <div className="eb-card bg-yellow-50 border border-yellow-200">
+            <div className="text-sm font-semibold text-yellow-900 mb-2">ご予約者向け情報</div>
+            <div className="text-sm text-gray-800 whitespace-pre-wrap break-all">
+              {booking.confirmation_message_extra}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-sm">{error}</div>
+        )}
+
+        {cancellable && (
+          <button
+            onClick={handleCancel}
+            disabled={busy}
+            className="w-full py-3 border border-red-300 text-red-600 rounded-xl text-sm font-medium disabled:opacity-50 hover:bg-red-50 active:bg-red-100 transition-colors"
+          >
+            {busy ? 'キャンセル中...' : 'この予約をキャンセルする'}
+          </button>
+        )}
+
+        <button onClick={onBack} className="w-full py-3 text-sm text-gray-500">
+          ← 予約履歴へ戻る
+        </button>
       </div>
     </div>
   );
@@ -615,7 +746,8 @@ type Screen =
   | { kind: 'detail'; eventId: string }
   | { kind: 'confirm'; event: EventDetail; slot: EventSlot }
   | { kind: 'done'; status: string }
-  | { kind: 'history' };
+  | { kind: 'history'; tab?: HistoryTab }
+  | { kind: 'booking-detail'; bookingId: string; fromTab: HistoryTab };
 
 function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
   const [screen, setScreen] = useState<Screen>(initial);
@@ -626,6 +758,7 @@ function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
       case 'confirm': return 'ご予約内容の確認';
       case 'done': return '完了';
       case 'history': return '予約履歴';
+      case 'booking-detail': return '予約詳細';
     }
   })();
 
@@ -658,7 +791,22 @@ function App({ ctx, initial }: { ctx: EventBookingContext; initial: Screen }) {
         {screen.kind === 'done' && (
           <DoneScreen status={screen.status} onGoHistory={() => setScreen({ kind: 'history' })} />
         )}
-        {screen.kind === 'history' && <HistoryScreen ctx={ctx} />}
+        {screen.kind === 'history' && (
+          <HistoryScreen
+            ctx={ctx}
+            initialTab={screen.tab}
+            onOpenDetail={(bookingId, tab) =>
+              setScreen({ kind: 'booking-detail', bookingId, fromTab: tab })
+            }
+          />
+        )}
+        {screen.kind === 'booking-detail' && (
+          <BookingDetailScreen
+            ctx={ctx}
+            bookingId={screen.bookingId}
+            onBack={() => setScreen({ kind: 'history', tab: screen.fromTab })}
+          />
+        )}
       </main>
     </div>
   );

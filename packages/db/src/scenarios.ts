@@ -2,7 +2,7 @@ import { jstNow } from './utils.js';
 import { computeNextDeliveryAt } from './scenario-schedule.js';
 export type ScenarioTriggerType = 'friend_add' | 'tag_added' | 'manual';
 export type MessageType = 'text' | 'image' | 'flex';
-export type FriendScenarioStatus = 'active' | 'paused' | 'completed';
+export type FriendScenarioStatus = 'active' | 'paused' | 'completed' | 'delivering';
 export type DeliveryMode = 'relative' | 'elapsed' | 'absolute_time';
 
 export interface Scenario {
@@ -496,6 +496,24 @@ export async function recoverStuckDeliveries(db: D1Database): Promise<number> {
     .bind(jstNow(), threshold)
     .run();
   return result.meta.changes ?? 0;
+}
+
+/**
+ * Stop a claimed delivery without losing its enrollment state.
+ * Used for permanent recipient/payload failures and for account-bound
+ * scenarios that do not have a safe destination friend for that account.
+ */
+export async function pauseFriendScenarioDelivery(
+  db: D1Database,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE friend_scenarios SET status = 'paused', updated_at = ?
+       WHERE id = ? AND status = 'delivering'`,
+    )
+    .bind(jstNow(), id)
+    .run();
 }
 
 export async function advanceFriendScenario(

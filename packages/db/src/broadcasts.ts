@@ -21,6 +21,11 @@ export interface Broadcast {
   failed_account_ids: string | null;
   dedup_progress: string | null;
   batch_lock_at: string | null;
+  track_links: number;
+  line_account_id?: string | null;
+  alt_text?: string | null;
+  /** 直近の送信失敗理由 (クォータ不足ガード等)。送信成功で NULL に戻る。 */
+  last_error?: string | null;
 }
 
 export async function getBroadcasts(db: D1Database, accountId?: string): Promise<Broadcast[]> {
@@ -75,6 +80,7 @@ WHERE b.id = ?`,
 }
 
 export interface CreateBroadcastInput {
+  id?: string;
   title: string;
   messageType: BroadcastMessageType;
   messageContent: string;
@@ -83,13 +89,16 @@ export interface CreateBroadcastInput {
   scheduledAt?: string | null;
   accountIds?: string[];
   dedupPriority?: string[];
+  trackLinks?: boolean;
+  lineAccountId?: string | null;
+  altText?: string | null;
 }
 
 export async function createBroadcast(
   db: D1Database,
   input: CreateBroadcastInput,
 ): Promise<Broadcast> {
-  const id = crypto.randomUUID();
+  const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
 
   const initialStatus: BroadcastStatus = input.scheduledAt ? 'scheduled' : 'draft';
@@ -97,8 +106,8 @@ export async function createBroadcast(
   await db
     .prepare(
       `INSERT INTO broadcasts
-         (id, title, message_type, message_content, target_type, target_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?)`,
+         (id, title, message_type, message_content, target_type, target_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, track_links, line_account_id, alt_text, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -111,6 +120,9 @@ export async function createBroadcast(
       input.scheduledAt ?? null,
       input.accountIds ? JSON.stringify(input.accountIds) : null,
       input.dedupPriority ? JSON.stringify(input.dedupPriority) : null,
+      input.trackLinks === false ? 0 : 1,
+      input.lineAccountId ?? null,
+      input.altText ?? null,
       now,
     )
     .run();
@@ -128,6 +140,7 @@ export type UpdateBroadcastInput = Partial<
     | 'target_tag_id'
     | 'status'
     | 'scheduled_at'
+    | 'track_links'
   >
 >;
 
@@ -166,6 +179,10 @@ export async function updateBroadcast(
   if (updates.scheduled_at !== undefined) {
     fields.push('scheduled_at = ?');
     values.push(updates.scheduled_at);
+  }
+  if (updates.track_links !== undefined) {
+    fields.push('track_links = ?');
+    values.push(updates.track_links ? 1 : 0);
   }
 
   if (fields.length > 0) {
@@ -349,17 +366,26 @@ export async function getQueuedBroadcasts(db: D1Database): Promise<Broadcast[]> 
 /**
  * ロック解除: batch_offset=-1 のまま停滞したブロードキャストを復旧する。
  *
- * 2 系統:
- * 1) 未着手 (success_count=0): segment / multi-account-dedup どちらでも、30分経過で
- *    batch_offset=0 に戻して次の cron で再投入する。
- * 2) multi-account-dedup の途中停滞 (success_count > 0): dedup_progress カラムが
- *    per-account の進捗を保持しているので、success_count > 0 でも安全に re-enter できる。
- *    30分経過で batch_offset=0 に戻し、processMultiAccountDedupBroadcast が
- *    保存済み offset から resume する。
- *
- * 30分閾値 = 0.021日 (julianday). Worker の30秒制限を充分超えてから revoke する。
+ * 2 系統 (idempotency 保護の有無で revoke 閾値を変える):
+ * 1) 未着手 (success_count=0): segment / multi-account-dedup どちらでも、batch_offset=0 に
+ *    戻して次の cron で再投入する。まだ送信実績が無く重複防止情報も無いため、最初の
+ *    multicast / 最初の per-batch write が in-flight の間に revoke すると最初の 500 人を
+ *    二重送信し得る。「Worker が確実に死んでいる」と言える長め (30分) の閾値を使う。
+ * 2) multi-account-dedup の途中停滞 (success_count > 0 かつ dedup_progress あり):
+ *    dedup_progress が sentIdentKeys を保持するので再投入しても既送は skip され二重送信
+ *    しない (idempotent)。dedup は分割送信 (chunking) で 1 chunk あたり高々 ~15s しか
+ *    -1 ロックを保持しないので、3分以上 -1 のまま = その chunk を実行していた Worker は
+ *    既に死んでいる、と安全に判定できる。よって短い (3分) 閾値で素早く crash recovery
+ *    してよい。success_count > 0 だが dedup_progress=NULL の row (resume 機能 deploy 前の
+ *    停滞 / 030 migration 直後の在庫) は ID 集合が無く安全に再開できないため両系統とも
+ *    対象外にし、手動対応 (D1 で sent に書き換え等) に委ねる。
  */
 export async function recoverStalledBroadcasts(db: D1Database): Promise<void> {
+  // 進捗ゼロ (success_count=0) の lock 用。idempotency 保護が無いので長め。0.021日 ≈ 30分。
+  const STALL_LOCK_REVOKE_DAYS_NO_PROGRESS = 0.021;
+  // dedup_progress あり (success_count>0) の再開可能 lock 用。chunking で 1 実行が短いため
+  // 安全に短くできる。0.0021日 ≈ 3.0分。cron 間隔(5分)より短いので次の tick で resume。
+  const STALL_LOCK_REVOKE_DAYS_RESUMABLE = 0.0021;
   // 1) 未着手 (segment / dedup どちらも対象)
   //    閾値は batch_lock_at (= ロック取得時刻) のみ。created_at にフォールバック
   //    すると jstNow() の `+09:00` suffix で 9 時間ズレるバグが出るので使わない。
@@ -371,15 +397,15 @@ export async function recoverStalledBroadcasts(db: D1Database): Promise<void> {
        AND sent_at IS NULL AND success_count = 0
        AND (segment_conditions IS NOT NULL OR account_ids IS NOT NULL)
        AND batch_lock_at IS NOT NULL
-       AND julianday('now', '+9 hours') - julianday(batch_lock_at) > 0.021`,
+       AND julianday('now', '+9 hours') - julianday(batch_lock_at) > ${STALL_LOCK_REVOKE_DAYS_NO_PROGRESS}`,
     )
     .run();
 
-  // 2) dedup の途中停滞 — dedup_progress があれば安全に再開可能。
-  //    success_count > 0 だが dedup_progress=NULL のケース (resume 機能 deploy 前に
-  //    途中停滞した古い row、または 030 migration apply 直後の在庫) は除外する。
-  //    ID 集合がないため安全な再開ができず、resume すると全件再送 → 重複配信事故。
-  //    そういう row は status='sent' に向けた手動対応が必要 (D1 で sent に書き換える等)。
+  // 2) dedup の途中停滞 (success_count > 0 かつ dedup_progress あり) — idempotent に
+  //    再開できる row だけを短い閾値で素早く resume する。success_count=0 の row は
+  //    系統 1) が長い閾値で扱う。success_count > 0 だが dedup_progress=NULL のケース
+  //    (resume 機能 deploy 前の停滞 / 030 migration 直後の在庫) は ID 集合が無く安全な
+  //    再開ができず、resume すると全件再送 → 重複配信事故になるため両系統とも対象外。
   //
   //    閾値は batch_lock_at (= ロック取得時刻) のみ。created_at にフォールバック
   //    すると jstNow() の `+09:00` suffix で 9 時間ズレるバグが出るので使わない。
@@ -390,9 +416,27 @@ export async function recoverStalledBroadcasts(db: D1Database): Promise<void> {
        WHERE status = 'sending' AND batch_offset = -1
        AND sent_at IS NULL
        AND target_type = 'multi-account-dedup'
-       AND (success_count = 0 OR dedup_progress IS NOT NULL)
+       AND success_count > 0 AND dedup_progress IS NOT NULL
        AND batch_lock_at IS NOT NULL
-       AND julianday('now', '+9 hours') - julianday(batch_lock_at) > 0.021`,
+       AND julianday('now', '+9 hours') - julianday(batch_lock_at) > ${STALL_LOCK_REVOKE_DAYS_RESUMABLE}`,
+    )
+    .run();
+
+  // 3) Personalized standard broadcasts are also safely resumable. They use
+  // one stable LINE retry key per broadcast+friend+rendered content and check
+  // messages_log before each push. Restarting from offset 0 is intentional:
+  // logged recipients are skipped, while a push accepted just before a crash
+  // is acknowledged by LINE as retry-key 409 and then logged once.
+  await db
+    .prepare(
+      `UPDATE broadcasts SET batch_offset = 0, batch_lock_at = NULL
+       WHERE status = 'sending' AND batch_offset = -1
+       AND sent_at IS NULL
+       AND target_type != 'multi-account-dedup'
+       AND segment_conditions IS NOT NULL
+       AND instr(replace(message_content, ' ', ''), '{{name}}') > 0
+       AND batch_lock_at IS NOT NULL
+       AND julianday('now', '+9 hours') - julianday(batch_lock_at) > ${STALL_LOCK_REVOKE_DAYS_RESUMABLE}`,
     )
     .run();
 }
@@ -436,6 +480,13 @@ export async function updateBroadcastStatus(
     fields.push('dedup_progress = NULL');
     // batch_lock_at もクリア (sent 後は recover の対象外なので影響はないが綺麗に).
     fields.push('batch_lock_at = NULL');
+    // 送信が成功した以上、過去の失敗理由 (クォータ不足等) は解消済み。
+    fields.push('last_error = NULL');
+  }
+  if (status === 'sending') {
+    // 新しい送信試行の開始。前回試行の失敗理由を残すと、今回別の原因で失敗した
+    // ときに古い理由 (例: クォータ不足) が実際の原因を偽装する。
+    fields.push('last_error = NULL');
   }
   // 注: status='draft' では dedup_progress / batch_lock_at をクリアしない。
   // 失敗 rollback (processBroadcastSend の catch) で draft に戻すケースで partial
@@ -456,6 +507,17 @@ export async function updateBroadcastStatus(
   await db
     .prepare(`UPDATE broadcasts SET ${fields.join(', ')} WHERE id = ?`)
     .bind(...values)
+    .run();
+}
+
+/** 送信失敗理由を記録する (成功時のクリアは updateBroadcastStatus('sent') が行う)。 */
+export async function setBroadcastLastError(
+  db: D1Database,
+  broadcastId: string,
+  error: string,
+): Promise<void> {
+  await db.prepare(`UPDATE broadcasts SET last_error = ? WHERE id = ?`)
+    .bind(error, broadcastId)
     .run();
 }
 

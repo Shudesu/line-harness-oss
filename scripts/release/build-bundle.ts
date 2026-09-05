@@ -3,19 +3,21 @@
  * Release bundle builder.
  *
  * Produces a single tarball `bundle.tar.gz` whose top-level entries are the
- * 4 trees that the upgrade flow needs to ship:
+ * 5 trees that the upgrade flow needs to ship:
  *
  *   worker/index.js          (single bundled Worker JS)
+ *   worker-assets/*          (Workers Assets LIFF client)
  *   admin/*                  (Admin static export)
  *   liff/*                   (LIFF static export)
  *   migrations/*.sql         (D1 migrations)
  *
  * Library API:
- *   buildBundle({ workerJs, adminDir, liffDir, migrationsDir, outPath })
+ *   buildBundle({ workerJs, workerAssetsDir, adminDir, liffDir, migrationsDir, outPath })
  *
  * CLI:
  *   tsx scripts/release/build-bundle.ts \
  *     --worker-js apps/worker/dist/index.js \
+ *     --worker-assets apps/worker/dist/client \
  *     --admin apps/web/out \
  *     --liff apps/liff/dist \
  *     --migrations packages/db/migrations \
@@ -31,6 +33,7 @@ import { argv, exit, stderr, stdout } from 'node:process';
 
 export interface BuildBundleArgs {
   workerJs: string;
+  workerAssetsDir: string;
   adminDir: string;
   liffDir: string;
   migrationsDir: string;
@@ -38,7 +41,7 @@ export interface BuildBundleArgs {
 }
 
 export function buildBundle(args: BuildBundleArgs): void {
-  const { workerJs, adminDir, liffDir, migrationsDir, outPath } = args;
+  const { workerJs, workerAssetsDir, adminDir, liffDir, migrationsDir, outPath } = args;
 
   // Staging dir lives in os.tmpdir() so it never pollutes the repo.
   const staging = mkdtempSync(join(tmpdir(), 'line-harness-bundle-'));
@@ -49,13 +52,16 @@ export function buildBundle(args: BuildBundleArgs): void {
     mkdirSync(workerOutDir, { recursive: true });
     cpSync(workerJs, join(workerOutDir, 'index.js'));
 
-    // 2. admin/ (recursive copy of the static export).
+    // 2. worker-assets/ (the Worker-served LIFF client).
+    cpSync(workerAssetsDir, join(staging, 'worker-assets'), { recursive: true });
+
+    // 3. admin/ (recursive copy of the static export).
     cpSync(adminDir, join(staging, 'admin'), { recursive: true });
 
-    // 3. liff/ (recursive copy of the LIFF dist).
+    // 4. liff/ (recursive copy of the LIFF Pages dist).
     cpSync(liffDir, join(staging, 'liff'), { recursive: true });
 
-    // 4. migrations/ (recursive copy of D1 migrations).
+    // 5. migrations/ (recursive copy of D1 migrations).
     cpSync(migrationsDir, join(staging, 'migrations'), { recursive: true });
 
     // Ensure outPath parent exists (e.g. `dist/` on first build).
@@ -64,7 +70,7 @@ export function buildBundle(args: BuildBundleArgs): void {
 
     // Build the tarball. -C makes paths inside the tar relative to staging.
     execSync(
-      `tar czf ${shellQuote(absOut)} -C ${shellQuote(staging)} worker admin liff migrations`,
+      `tar czf ${shellQuote(absOut)} -C ${shellQuote(staging)} worker worker-assets admin liff migrations`,
       { stdio: 'inherit' },
     );
 
@@ -88,6 +94,7 @@ function shellQuote(p: string): string {
 
 interface CliArgs {
   workerJs?: string;
+  workerAssets?: string;
   admin?: string;
   liff?: string;
   migrations?: string;
@@ -110,6 +117,10 @@ function parseArgs(args: string[]): CliArgs {
       case 'worker-js':
       case 'workerJs':
         out.workerJs = value;
+        break;
+      case 'worker-assets':
+      case 'workerAssets':
+        out.workerAssets = value;
         break;
       case 'admin':
         out.admin = value;
@@ -136,7 +147,7 @@ function requireArg<T extends keyof CliArgs>(args: CliArgs, key: T): NonNullable
   if (v === undefined) {
     stderr.write(`build-bundle: --${String(key)} is required\n`);
     stderr.write(
-      'Usage: tsx scripts/release/build-bundle.ts --worker-js <file> --admin <dir> --liff <dir> --migrations <dir> --out <file>\n',
+      'Usage: tsx scripts/release/build-bundle.ts --worker-js <file> --worker-assets <dir> --admin <dir> --liff <dir> --migrations <dir> --out <file>\n',
     );
     exit(2);
   }
@@ -146,6 +157,7 @@ function requireArg<T extends keyof CliArgs>(args: CliArgs, key: T): NonNullable
 function main(rawArgs: string[]): void {
   const args = parseArgs(rawArgs);
   const workerJs = requireArg(args, 'workerJs');
+  const workerAssets = requireArg(args, 'workerAssets');
   const admin = requireArg(args, 'admin');
   const liff = requireArg(args, 'liff');
   const migrations = requireArg(args, 'migrations');
@@ -153,6 +165,7 @@ function main(rawArgs: string[]): void {
 
   buildBundle({
     workerJs,
+    workerAssetsDir: workerAssets,
     adminDir: admin,
     liffDir: liff,
     migrationsDir: migrations,

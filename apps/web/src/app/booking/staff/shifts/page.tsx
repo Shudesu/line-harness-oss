@@ -5,19 +5,30 @@ import { useSearchParams } from 'next/navigation'
 import Header from '@/components/layout/header'
 import { bookingApi, type BookingShift, type BookingStaff } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 type DayKey = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat'
-const DAYS: Array<{ key: DayKey; label: string; tone: string }> = [
-  { key: 'sun', label: '日', tone: 'text-red-500' },
-  { key: 'mon', label: '月', tone: '' },
-  { key: 'tue', label: '火', tone: '' },
-  { key: 'wed', label: '水', tone: '' },
-  { key: 'thu', label: '木', tone: '' },
-  { key: 'fri', label: '金', tone: '' },
-  { key: 'sat', label: '土', tone: 'text-blue-500' },
+const DAYS: Array<{ key: DayKey; weekday: number; label: string; tone: string }> = [
+  { key: 'sun', weekday: 0, label: '日', tone: 'text-red-500' },
+  { key: 'mon', weekday: 1, label: '月', tone: '' },
+  { key: 'tue', weekday: 2, label: '火', tone: '' },
+  { key: 'wed', weekday: 3, label: '水', tone: '' },
+  { key: 'thu', weekday: 4, label: '木', tone: '' },
+  { key: 'fri', weekday: 5, label: '金', tone: '' },
+  { key: 'sat', weekday: 6, label: '土', tone: 'text-blue-500' },
 ]
 
-const DEFAULT_TEMPLATE: Record<DayKey, { start: string; end: string } | null> = {
+type WeeklyTemplate = Record<DayKey, { start: string; end: string } | null>
+const DEFAULT_TEMPLATE: WeeklyTemplate = {
   sun: null,
   mon: { start: '10:00', end: '19:00' },
   tue: { start: '10:00', end: '19:00' },
@@ -29,240 +40,260 @@ const DEFAULT_TEMPLATE: Record<DayKey, { start: string; end: string } | null> = 
 
 export default function StaffShiftsPage() {
   const sp = useSearchParams()
-  const id = sp.get('staff_id') ?? ''
+  const staffId = sp.get('staff_id') ?? ''
+  const googleResult = sp.get('google')
   const { selectedAccountId } = useAccount()
   const [staffMember, setStaffMember] = useState<BookingStaff | null>(null)
   const [shifts, setShifts] = useState<BookingShift[]>([])
+  const [template, setTemplate] = useState<WeeklyTemplate>(DEFAULT_TEMPLATE)
+  const [calendarId, setCalendarId] = useState('')
+  const [calendarConnected, setCalendarConnected] = useState(false)
+  const [serviceAccountEmail, setServiceAccountEmail] = useState<string | null>(null)
+  const [serviceAccountConfigured, setServiceAccountConfigured] = useState(false)
+  const [oauthConfigured, setOauthConfigured] = useState(false)
+  const [hasSavedWorkingHours, setHasSavedWorkingHours] = useState(true)
   const [loading, setLoading] = useState(true)
+  const [savingRules, setSavingRules] = useState(false)
+  const [savingCalendar, setSavingCalendar] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [tpl, setTpl] = useState(DEFAULT_TEMPLATE)
-  const [weeks, setWeeks] = useState(4)
-  // toISOString は UTC なので 00:00〜09:00 JST に開いた場合、初期値が前日になる。
-  // JST 基準の YYYY-MM-DD に補正。
-  const [fromDate, setFromDate] = useState(
-    new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10),
-  )
-  const [generating, setGenerating] = useState(false)
-  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<'disconnect' | string | null>(null)
 
   const load = useCallback(async () => {
-    if (!selectedAccountId || !id) return
+    if (!selectedAccountId || !staffId) return
     setLoading(true)
     setError(null)
-    // 前 staff/account の表示が残ったまま fetch 失敗 → stale な staff 名・shift
-    // 削除ボタンが現 URL に紐付いて見えてしまうのを防ぐ。
-    setShifts([])
-    setStaffMember(null)
     try {
-      const [r, sList] = await Promise.all([
-        bookingApi.getShifts(selectedAccountId, id),
+      const [staff, dated, rules, calendar] = await Promise.all([
         bookingApi.listStaff(selectedAccountId),
+        bookingApi.getShifts(selectedAccountId, staffId),
+        bookingApi.getAvailabilityRules(selectedAccountId, staffId),
+        bookingApi.getGoogleCalendar(selectedAccountId, staffId),
       ])
-      setShifts(r.shifts)
-      setStaffMember(sList.staff.find((s) => s.id === id) ?? null)
+      setStaffMember(staff.staff.find((item) => item.id === staffId) ?? null)
+      setShifts(dated.shifts)
+      // 期限切れの日付別シフトや無効化済みルールだけでは予約枠は生まれない。
+      // availability 計算と同じ「使える受付時間」の定義で警告を判定する。
+      const todayJst = new Date(Date.now() + 9 * 60 * 60_000).toISOString().slice(0, 10)
+      setHasSavedWorkingHours(
+        rules.rules.some((rule) => rule.is_active === 1) ||
+        dated.shifts.some((shift) => shift.work_date >= todayJst),
+      )
+      if (rules.rules.length > 0) {
+        const next: WeeklyTemplate = {
+          sun: null, mon: null, tue: null, wed: null, thu: null, fri: null, sat: null,
+        }
+        for (const day of DAYS) {
+          const rule = rules.rules.find((item) => item.weekday === day.weekday)
+          if (rule) next[day.key] = { start: rule.start_time, end: rule.end_time }
+        }
+        setTemplate(next)
+      }
+      setCalendarId(calendar.connection?.calendar_id ?? '')
+      setCalendarConnected(Boolean(calendar.connection))
+      setServiceAccountEmail(calendar.service_account.email)
+      setServiceAccountConfigured(calendar.service_account.configured)
+      setOauthConfigured(calendar.oauth.configured)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [id, selectedAccountId])
+  }, [selectedAccountId, staffId])
+
+  useEffect(() => { void load() }, [load])
 
   useEffect(() => {
-    load()
-  }, [load])
+    if (googleResult === 'connected') setSuccess('Googleカレンダーに接続しました。予定ありの時間は予約枠から自動で除外されます。')
+    if (googleResult === 'denied') setError('Googleカレンダーへのアクセスが許可されませんでした。')
+    if (googleResult === 'error') setError('Googleカレンダーへ接続できませんでした。もう一度お試しください。')
+  }, [googleResult])
 
-  async function generate() {
-    if (!selectedAccountId) return
-    // staff_id 不在ガード: 古いブックマークや URL 手編集での POST `/staff//shifts/generate`
-    // を防ぐ。エラーを表示してユーザーに staff 一覧へ戻るよう促す。
-    if (!id) {
-      setError('staff_id が指定されていません。スタッフ一覧から開き直してください。')
-      return
-    }
-    setGenerating(true)
+  async function saveRules() {
+    if (!selectedAccountId || !staffId) return
+    setSavingRules(true)
     setError(null)
+    setSuccess(null)
     try {
-      const r = await bookingApi.generateShifts(selectedAccountId, id, {
-        from_date: fromDate,
-        weeks,
-        weekly_template: tpl,
+      const rules = DAYS.flatMap((day) => {
+        const value = template[day.key]
+        return value
+          ? [{ weekday: day.weekday, start_time: value.start, end_time: value.end }]
+          : []
       })
-      setSavedAt(Date.now())
-      console.info(`generated ${r.inserted} shifts`)
-      await load()
+      await bookingApi.putAvailabilityRules(selectedAccountId, staffId, rules)
+      const todayJst = new Date(Date.now() + 9 * 60 * 60_000).toISOString().slice(0, 10)
+      setHasSavedWorkingHours(rules.length > 0 || shifts.some((shift) => shift.work_date >= todayJst))
+      setSuccess('毎週の受付時間を保存しました。今後は期限切れせず、自動で枠が作られます。')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setGenerating(false)
+      setSavingRules(false)
     }
+  }
+
+  async function connectCalendar() {
+    if (!selectedAccountId || !staffId) return
+    setSavingCalendar(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      if (oauthConfigured) {
+        const result = await bookingApi.startGoogleCalendarOAuth(selectedAccountId, staffId)
+        window.location.assign(result.authorization_url)
+        return
+      }
+      if (!calendarId.trim()) return
+      await bookingApi.putGoogleCalendar(selectedAccountId, staffId, calendarId.trim())
+      setCalendarConnected(true)
+      setSuccess('Googleカレンダーに接続しました。予定ありの時間は予約枠から自動で除外されます。')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingCalendar(false)
+    }
+  }
+
+  async function disconnectCalendar() {
+    if (!selectedAccountId || !staffId) return
+    await bookingApi.deleteGoogleCalendar(selectedAccountId, staffId)
+    setCalendarConnected(false)
+    setCalendarId('')
+    setSuccess('Googleカレンダー連携を解除しました。')
+    setPendingAction(null)
   }
 
   async function deleteShift(shiftId: string) {
     if (!selectedAccountId) return
-    if (!confirm('このシフトを削除しますか？')) return
-    await bookingApi.deleteShift(selectedAccountId, id, shiftId)
+    await bookingApi.deleteShift(selectedAccountId, staffId, shiftId)
+    setPendingAction(null)
     await load()
   }
 
   return (
     <div>
       <Header
-        title="シフト管理"
-        description={
-          staffMember
-            ? `「${staffMember.display_name}」の出勤シフト`
-            : '曜日テンプレから一括生成、または個別編集'
-        }
+        title="受付時間・Googleカレンダー"
+        description={staffMember ? `「${staffMember.display_name}」の予約可能時間を自動管理` : '予約可能時間を自動管理'}
       />
 
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-      {savedAt && Date.now() - savedAt < 3000 && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
-          シフトを生成しました
-        </div>
-      )}
+      {error && <Banner className="mb-4" variant="error" title="操作を完了できませんでした" description={error} />}
+      {success && <Banner className="mb-4" variant="default" title="完了しました" description={success} />}
 
-      {!selectedAccountId ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          サイドバーでアカウントを選択してください
-        </div>
-      ) : !id ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          staff_id が指定されていません。
-          <a href="/booking/staff" className="ml-1 text-blue-600 underline">
-            スタッフ一覧
-          </a>
-          から開き直してください。
-        </div>
+      {!selectedAccountId || !staffId ? (
+        <Empty title="対象スタッフが未選択です" description="スタッフ一覧から対象スタッフを選んでください。" />
+      ) : loading ? (
+        <LayerCard className="p-12"><Loader className="mx-auto" /></LayerCard>
       ) : (
-        <div className="grid lg:grid-cols-2 gap-4">
-          {/* テンプレ生成 */}
-          <section className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h2 className="text-sm font-semibold">曜日テンプレから一括生成</h2>
-              <p className="text-xs text-gray-500 mt-1">
-                既に同じ日のシフトがあれば skip されます
-              </p>
+        <div className="space-y-4">
+          {!hasSavedWorkingHours && (
+            <Banner variant="alert" title="受付時間がまだ保存されていません" description="下の内容を確認して「受付時間を保存」を押すまで、このスタッフの予約枠は表示されません。" />
+          )}
+          <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="border-b border-gray-200 bg-gray-50 px-5 py-4">
+              <h2 className="font-semibold text-gray-900">毎週の受付時間</h2>
+              <p className="mt-1 text-sm text-gray-500">一度保存すれば、将来の日付にも自動で適用されます。週数や終了日はありません。</p>
             </div>
-            <div className="p-4 space-y-2">
-              {DAYS.map((d) => {
-                const cur = tpl[d.key]
+            <div className="space-y-3 p-5">
+              {DAYS.map((day) => {
+                const current = template[day.key]
                 return (
-                  <div key={d.key} className="flex items-center gap-3 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={cur !== null}
-                      onChange={(e) =>
-                        setTpl({
-                          ...tpl,
-                          [d.key]: e.target.checked ? { start: '10:00', end: '19:00' } : null,
-                        })
-                      }
-                      className="w-4 h-4"
+                  <div key={day.key} className="flex min-h-11 flex-wrap items-center gap-3 rounded-lg border border-gray-100 px-3 py-2">
+                    <Checkbox
+                      aria-label={`${day.label}曜日を受付日にする`}
+                      checked={current !== null}
+                      onCheckedChange={(checked) => setTemplate((previous) => ({
+                        ...previous,
+                        [day.key]: checked ? { start: '10:00', end: '19:00' } : null,
+                      }))}
                     />
-                    <span className={`w-6 font-medium ${d.tone}`}>{d.label}</span>
-                    {cur ? (
+                    <span className={`w-7 font-medium ${day.tone}`}>{day.label}</span>
+                    {current ? (
                       <>
-                        <input
-                          type="time"
-                          value={cur.start}
-                          onChange={(e) => setTpl({ ...tpl, [d.key]: { ...cur, start: e.target.value } })}
-                          className="border border-gray-300 rounded-lg px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-green-500"
-                        />
+                        <Input aria-label={`${day.label}曜日の開始時刻`} type="time" value={current.start} onChange={(event) => setTemplate((previous) => ({ ...previous, [day.key]: { ...current, start: event.target.value } }))} className="w-32 tabular-nums" />
                         <span className="text-gray-400">〜</span>
-                        <input
-                          type="time"
-                          value={cur.end}
-                          onChange={(e) => setTpl({ ...tpl, [d.key]: { ...cur, end: e.target.value } })}
-                          className="border border-gray-300 rounded-lg px-2 py-1 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-green-500"
-                        />
+                        <Input aria-label={`${day.label}曜日の終了時刻`} type="time" value={current.end} onChange={(event) => setTemplate((previous) => ({ ...previous, [day.key]: { ...current, end: event.target.value } }))} className="w-32 tabular-nums" />
                       </>
-                    ) : (
-                      <span className="text-xs text-gray-400">休み</span>
-                    )}
+                    ) : <span className="text-sm text-gray-400">受付しない</span>}
                   </div>
                 )
               })}
-              <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-gray-100 mt-3">
-                <label className="text-xs text-gray-600 flex items-center gap-2">
-                  開始日
-                  <input
-                    type="date"
-                    value={fromDate}
-                    onChange={(e) => setFromDate(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </label>
-                <label className="text-xs text-gray-600 flex items-center gap-2">
-                  週数
-                  <input
-                    type="number"
-                    value={weeks}
-                    onChange={(e) => setWeeks(Number(e.target.value))}
-                    className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-16 tabular-nums focus:outline-none focus:ring-2 focus:ring-green-500"
-                    min={1}
-                    max={52}
-                  />
-                </label>
-                <button
-                  onClick={generate}
-                  disabled={generating}
-                  className="ml-auto px-4 py-1.5 text-sm font-medium text-white rounded-lg disabled:opacity-50"
-                  style={{ backgroundColor: '#06C755' }}
-                >
-                  {generating ? '生成中…' : '生成'}
-                </button>
+              <div className="flex justify-end pt-2">
+                <Button type="button" variant="primary" loading={savingRules} onClick={saveRules} disabled={savingRules}>受付時間を保存</Button>
               </div>
             </div>
           </section>
 
-          {/* 登録済みシフト */}
-          <section className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <h2 className="text-sm font-semibold">登録済みシフト ({shifts.length} 日)</h2>
+          <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="border-b border-gray-200 bg-gray-50 px-5 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-gray-900">Googleカレンダー連携</h2>
+                  <p className="mt-1 text-sm text-gray-500">予定との重複を防ぎ、確定した予約をGoogleカレンダーにも登録します。</p>
+                </div>
+                <Badge variant={calendarConnected ? 'success' : 'neutral'}>{calendarConnected ? '接続済み' : '未接続'}</Badge>
+              </div>
             </div>
-            {loading ? (
-              <div className="p-12 text-center text-sm text-gray-500">読み込み中…</div>
-            ) : shifts.length === 0 ? (
-              <div className="p-12 text-center text-sm text-gray-500">まだシフトがありません</div>
-            ) : (
-              <div className="max-h-[600px] overflow-y-auto">
-                <table className="w-full">
-                  <thead className="sticky top-0">
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">日付</th>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">開始</th>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">終了</th>
-                      <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {shifts.map((s) => (
-                      <tr key={s.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 text-sm tabular-nums">{s.work_date}</td>
-                        <td className="px-4 py-2 text-sm tabular-nums">{s.start_time}</td>
-                        <td className="px-4 py-2 text-sm tabular-nums">{s.end_time}</td>
-                        <td className="px-4 py-2 text-right">
-                          <button
-                            onClick={() => deleteShift(s.id)}
-                            className="text-xs text-red-600 hover:underline"
-                          >
-                            削除
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="space-y-4 p-5">
+              {oauthConfigured ? (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                  Googleアカウント本人の許可で安全に接続します。サービスアカウントキーやカレンダー共有は不要です。
+                </div>
+              ) : !serviceAccountConfigured && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  管理者によるGoogle OAuthまたはサービスアカウント設定が必要です。
+                </div>
+              )}
+              {!oauthConfigured && serviceAccountEmail && (
+                <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-900">
+                  Googleカレンダーの「設定と共有」で、次のメールアドレスに「予定の変更」権限を付けて共有してください。<br />
+                  <code className="mt-2 inline-block break-all rounded bg-white px-2 py-1 text-xs">{serviceAccountEmail}</code>
+                </div>
+              )}
+              {!oauthConfigured && <div>
+                <Input
+                  label="GoogleカレンダーID"
+                  value={calendarId}
+                  onChange={(event) => setCalendarId(event.target.value)}
+                  placeholder="例: example@gmail.com または xxx@group.calendar.google.com"
+                />
+                <span className="mt-1.5 block text-xs text-gray-500">Googleカレンダー → 設定と共有 → カレンダーの統合 → カレンダーID</span>
+              </div>}
+              <div className="flex justify-end gap-2">
+                {calendarConnected && <Button type="button" variant="destructive" onClick={() => setPendingAction('disconnect')}>連携解除</Button>}
+                <Button type="button" variant="primary" loading={savingCalendar} onClick={connectCalendar} disabled={savingCalendar || (!oauthConfigured && (!calendarId.trim() || !serviceAccountConfigured))}>
+                  {oauthConfigured ? (calendarConnected ? 'Googleアカウントを再接続' : 'Googleアカウントで接続') : (calendarConnected ? '再接続して確認' : '接続して確認')}
+                </Button>
+              </div>
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="border-b border-gray-200 bg-gray-50 px-5 py-4">
+              <h2 className="font-semibold text-gray-900">日付別の応急枠 ({shifts.length}件)</h2>
+              <p className="mt-1 text-sm text-gray-500">以前に作成した枠です。同じ日付では毎週設定よりこちらを優先します。</p>
+            </div>
+            {shifts.length === 0 ? <Empty title="応急枠はありません" description="毎週の受付時間が通常の予約枠として使われます。" /> : (
+              <div className="max-h-72 overflow-y-auto">
+                <Table>
+                  <Table.Header><Table.Row><Table.Head>日付</Table.Head><Table.Head>時間</Table.Head><Table.Head className="text-right">操作</Table.Head></Table.Row></Table.Header>
+                  <Table.Body>{shifts.map((shift) => <Table.Row key={shift.id}><Table.Cell className="tabular-nums">{shift.work_date}</Table.Cell><Table.Cell className="tabular-nums">{shift.start_time}〜{shift.end_time}</Table.Cell><Table.Cell className="text-right"><Button type="button" size="xs" variant="destructive" onClick={() => setPendingAction(shift.id)}>削除</Button></Table.Cell></Table.Row>)}</Table.Body>
+                </Table>
               </div>
             )}
           </section>
         </div>
       )}
+      <Dialog.Root role="alertdialog" open={pendingAction !== null} onOpenChange={(open) => { if (!open) setPendingAction(null) }}>
+        <Dialog>
+          <Dialog.Title>{pendingAction === 'disconnect' ? 'Googleカレンダー連携を解除しますか？' : '応急枠を削除しますか？'}</Dialog.Title>
+          <Dialog.Description className="mt-2">{pendingAction === 'disconnect' ? '予定との重複防止と予約登録が停止します。' : 'この日付だけに設定された予約枠を削除します。'}</Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setPendingAction(null)}>キャンセル</Button>
+            <Button type="button" variant="destructive" onClick={() => pendingAction === 'disconnect' ? void disconnectCalendar() : pendingAction ? void deleteShift(pendingAction) : undefined}>実行する</Button>
+          </div>
+        </Dialog>
+      </Dialog.Root>
     </div>
   )
 }

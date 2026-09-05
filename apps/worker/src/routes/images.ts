@@ -75,6 +75,11 @@ images.post('/api/images', async (c) => {
 // GET /images/:key — serve image (public, no auth)
 images.get('/images/:key', async (c) => {
   const key = c.req.param('key');
+  // Public route: only flat "{uuid}.{ext}" keys are servable. Anything with a
+  // path separator (e.g. archive/ objects) must 404.
+  if (key.includes('/') || key.includes('\\')) {
+    return c.json({ success: false, error: 'Image not found' }, 404);
+  }
   const object = await c.env.IMAGES.get(key);
 
   if (!object) {

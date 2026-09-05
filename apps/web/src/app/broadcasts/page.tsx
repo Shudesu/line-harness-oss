@@ -1,14 +1,28 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import dynamic from 'next/dynamic'
+import { PlusIcon, TrashIcon } from '@phosphor-icons/react'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
+import { Tabs } from '@cloudflare/kumo/components/tabs'
 import type { Tag } from '@line-crm/shared'
 import { api, type ApiBroadcast, type BroadcastInsight } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
-import BroadcastForm from '@/components/broadcasts/broadcast-form'
-import BroadcastDetail from '@/components/broadcasts/broadcast-detail'
 import CcPromptButton from '@/components/cc-prompt-button'
+
+const BroadcastForm = dynamic(() => import('@/components/broadcasts/broadcast-form'))
+const BroadcastDetail = dynamic(() => import('@/components/broadcasts/broadcast-detail'))
 
 const ccPrompts = [
   {
@@ -29,36 +43,21 @@ const ccPrompts = [
   },
 ]
 
-const statusConfig: Record<
-  ApiBroadcast['status'],
-  { label: string; className: string }
-> = {
-  draft: { label: '下書き', className: 'bg-gray-100 text-gray-600' },
-  scheduled: { label: '予約済み', className: 'bg-blue-100 text-blue-700' },
-  sending: { label: '送信中', className: 'bg-yellow-100 text-yellow-700' },
-  sent: { label: '送信完了', className: 'bg-green-100 text-green-700' },
+const statusConfig: Record<ApiBroadcast['status'], { label: string; variant: BadgeVariant }> = {
+  draft: { label: '下書き', variant: 'neutral' },
+  scheduled: { label: '予約済み', variant: 'info' },
+  sending: { label: '送信中', variant: 'warning' },
+  sent: { label: '送信完了', variant: 'success' },
 }
 
 function formatDatetime(iso: string | null): string {
   if (!iso) return '-'
-  return new Date(iso).toLocaleString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return new Date(iso).toLocaleString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 export default function BroadcastsPage() {
-  const searchParams = useSearchParams()
-  const detailId = searchParams.get('id')
-
-  // If ?id=xxx is present, show detail view
-  if (detailId) {
-    return <BroadcastDetail broadcastId={detailId} />
-  }
-
+  const detailId = useSearchParams().get('id')
+  if (detailId) return <BroadcastDetail broadcastId={detailId} />
   return <BroadcastList />
 }
 
@@ -74,23 +73,22 @@ function BroadcastList() {
   const [insights, setInsights] = useState<Record<string, BroadcastInsight>>({})
   const [fetchingInsight, setFetchingInsight] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<BroadcastTab>('all')
+  const [deleteTarget, setDeleteTarget] = useState<ApiBroadcast | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const loadInsight = async (id: string) => {
     try {
       const res = await api.broadcasts.getInsight(id)
-      if (res.success && res.data) {
-        setInsights(prev => ({ ...prev, [id]: res.data! }))
-      }
-    } catch { /* ignore */ }
+      if (res.success && res.data) setInsights((current) => ({ ...current, [id]: res.data! }))
+    } catch { /* non-blocking */ }
   }
 
   const handleFetchInsight = async (id: string) => {
     setFetchingInsight(id)
     try {
       const res = await api.broadcasts.fetchInsight(id)
-      if (res.success && res.data) {
-        setInsights(prev => ({ ...prev, [id]: res.data }))
-      }
+      if (res.success && res.data) setInsights((current) => ({ ...current, [id]: res.data }))
+      else if (!res.success) setError(res.error)
     } catch {
       setError('インサイトの取得に失敗しました')
     } finally {
@@ -116,267 +114,134 @@ function BroadcastList() {
     }
   }, [selectedAccountId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { void load() }, [load])
+  useEffect(() => { broadcasts.filter((item) => item.status === 'sent').forEach((item) => { void loadInsight(item.id) }) }, [broadcasts])
 
-  // 送信済みbroadcastのinsightを読み込み
-  useEffect(() => {
-    broadcasts.filter(b => b.status === 'sent').forEach(b => loadInsight(b.id))
-  }, [broadcasts])
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('この配信を削除してもよいですか？')) return
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setError('')
     try {
-      await api.broadcasts.delete(id)
-      load()
+      const response = await api.broadcasts.delete(deleteTarget.id)
+      if (!response.success) setError(response.error)
+      else await load()
+      setDeleteTarget(null)
     } catch {
       setError('削除に失敗しました')
+    } finally {
+      setDeleting(false)
     }
   }
 
-  const getTagName = (tagId: string | null) => {
-    if (!tagId) return null
-    return tags.find((t) => t.id === tagId)?.name ?? null
-  }
-
-  // タブで分類: 単アカ配信 (multi-account-dedup 以外) と 複アカ重複除外配信 を分ける。
-  // 全件タブは未フィルタ。サイドバー account context のフィルタは API 側で済んでる。
-  const dedupCount = broadcasts.filter((b) => b.targetType === 'multi-account-dedup').length
+  const getTagName = (tagId: string | null) => tagId ? tags.find((tag) => tag.id === tagId)?.name ?? null : null
+  const dedupCount = broadcasts.filter((item) => item.targetType === 'multi-account-dedup').length
   const singleCount = broadcasts.length - dedupCount
-  const visibleBroadcasts = broadcasts.filter((b) => {
-    if (activeTab === 'all') return true
-    if (activeTab === 'dedup') return b.targetType === 'multi-account-dedup'
-    return b.targetType !== 'multi-account-dedup'
-  })
+  const visibleBroadcasts = broadcasts.filter((item) => activeTab === 'all' || (activeTab === 'dedup' ? item.targetType === 'multi-account-dedup' : item.targetType !== 'multi-account-dedup'))
 
   return (
     <div>
       <Header
         title="一斉配信"
-        action={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規配信
-          </button>
-        }
+        description="配信対象を選び、メッセージをすぐ送信または予約します。"
+        action={<Button type="button" variant={showCreate ? 'secondary' : 'primary'} icon={showCreate ? undefined : PlusIcon} onClick={() => setShowCreate((current) => !current)}>{showCreate ? '作成を閉じる' : '新規配信'}</Button>}
       />
 
-      {/* Error */}
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
+      {error ? <Banner className="mb-4" variant="error" title="操作を完了できませんでした" description={error} /> : null}
 
-      {/* Create form */}
-      {showCreate && (
-        <BroadcastForm
-          tags={tags}
-          onSuccess={() => { setShowCreate(false); load() }}
-          onCancel={() => setShowCreate(false)}
+      {showCreate ? <BroadcastForm tags={tags} onSuccess={() => { setShowCreate(false); void load() }} onCancel={() => setShowCreate(false)} /> : null}
+
+      {!loading && broadcasts.length > 0 ? (
+        <Tabs
+          className="mb-4 w-fit"
+          variant="underline"
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as BroadcastTab)}
+          tabs={[
+            { value: 'all', label: `全部 (${broadcasts.length})` },
+            { value: 'single', label: `単アカ配信 (${singleCount})` },
+            { value: 'dedup', label: `複アカ重複除外 (${dedupCount})` },
+          ]}
         />
-      )}
+      ) : null}
 
-      {/* Tabs */}
-      {!loading && broadcasts.length > 0 && (
-        <div className="mb-4 flex gap-1 border-b border-gray-200">
-          {([
-            { id: 'all', label: '全部', count: broadcasts.length },
-            { id: 'single', label: '単アカ配信', count: singleCount },
-            { id: 'dedup', label: '複アカ重複除外', count: dedupCount },
-          ] as const).map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-green-500 text-gray-900'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-              style={activeTab === tab.id ? { borderColor: '#06C755' } : undefined}
-            >
-              {tab.label}
-              <span className="ml-1.5 inline-flex items-center justify-center px-1.5 py-0 rounded-full bg-gray-100 text-xs text-gray-600 min-w-[20px]">
-                {tab.count}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Loading */}
       {loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="px-4 py-4 border-b border-gray-100 flex items-center gap-4 animate-pulse">
-              <div className="flex-1 space-y-2">
-                <div className="h-3 bg-gray-200 rounded w-48" />
-                <div className="h-2 bg-gray-100 rounded w-32" />
-              </div>
-              <div className="h-5 bg-gray-100 rounded-full w-16" />
-              <div className="h-3 bg-gray-100 rounded w-24" />
-            </div>
-          ))}
-        </div>
-      ) : broadcasts.length === 0 && !showCreate ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">配信がありません。「新規配信」から作成してください。</p>
-        </div>
+        <LayerCard className="flex min-h-48 items-center justify-center gap-2 text-sm text-kumo-subtle"><Loader size="sm" />配信を読み込み中</LayerCard>
+      ) : broadcasts.length === 0 ? (
+        <Empty size="sm" title="配信がありません" description="新規配信から最初のメッセージを作成してください。" contents={<Button type="button" variant="primary" icon={PlusIcon} onClick={() => setShowCreate(true)}>新規配信</Button>} />
       ) : visibleBroadcasts.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">
-            {activeTab === 'dedup' ? '複数アカ重複除外配信はまだありません。' : 'このタブに該当する配信はありません。'}
-          </p>
-        </div>
+        <Empty size="sm" title="このタブに配信はありません" description={activeTab === 'dedup' ? '複数アカウントの重複除外配信はまだありません。' : '別のタブを選択してください。'} />
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <LayerCard className="overflow-hidden p-0">
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px]">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  配信タイトル
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  ステータス
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  配信対象
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  予約日時
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  送信完了日時
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  実績
-                </th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {visibleBroadcasts.map((broadcast) => {
-                const statusInfo = statusConfig[broadcast.status]
-                const tagName = getTagName(broadcast.targetTagId)
-                const isDedup = broadcast.targetType === 'multi-account-dedup'
-
-                return (
-                  <tr key={broadcast.id} className="hover:bg-gray-50 transition-colors">
-                    {/* Title */}
-                    <td className="px-4 py-3">
-                      <div>
+            <Table className="min-w-[860px]">
+              <Table.Header>
+                <Table.Row>
+                  <Table.Head>配信タイトル</Table.Head>
+                  <Table.Head>状態</Table.Head>
+                  <Table.Head>配信対象</Table.Head>
+                  <Table.Head>予約日時</Table.Head>
+                  <Table.Head>送信完了日時</Table.Head>
+                  <Table.Head>実績</Table.Head>
+                  <Table.Head><span className="sr-only">操作</span></Table.Head>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {visibleBroadcasts.map((broadcast) => {
+                  const status = statusConfig[broadcast.status]
+                  const tagName = getTagName(broadcast.targetTagId)
+                  const isDedup = broadcast.targetType === 'multi-account-dedup'
+                  const insight = insights[broadcast.id]
+                  return (
+                    <Table.Row key={broadcast.id}>
+                      <Table.Cell>
                         <div className="flex items-center gap-2">
-                          <a href={`/broadcasts?id=${broadcast.id}`} className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline">
-                            {broadcast.title}
-                          </a>
-                          {isDedup && (
-                            <span className="inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium bg-purple-100 text-purple-700">
-                              複アカ
-                            </span>
-                          )}
+                          <Link href={`/broadcasts?id=${broadcast.id}`} className="font-medium text-kumo-link hover:underline">{broadcast.title}</Link>
+                          {isDedup ? <Badge variant="purple">複アカ</Badge> : null}
                         </div>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {broadcast.messageType === 'text' ? 'テキスト' : broadcast.messageType === 'image' ? '画像' : 'Flex'}
-                        </p>
-                      </div>
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusInfo.className}`}>
-                        {statusInfo.label}
-                      </span>
-                    </td>
-
-                    {/* Target */}
-                    <td className="px-4 py-3 text-sm text-gray-600">
-                      {isDedup ? (
-                        <span className="text-purple-700">重複除外{tagName ? `: ${tagName}` : ''}</span>
-                      ) : broadcast.targetType === 'all' ? (
-                        '全員'
-                      ) : tagName ? (
-                        <span>タグ: {tagName}</span>
-                      ) : (
-                        'タグ指定'
-                      )}
-                    </td>
-
-                    {/* Scheduled */}
-                    <td className="px-4 py-3 text-sm text-gray-500">
-                      {formatDatetime(broadcast.scheduledAt)}
-                    </td>
-
-                    {/* Sent */}
-                    <td className="px-4 py-3 text-sm text-gray-500">
-                      {formatDatetime(broadcast.sentAt)}
-                    </td>
-
-                    {/* Stats & Insight */}
-                    <td className="px-4 py-3 text-sm text-gray-500">
-                      {broadcast.status === 'sent' ? (
-                        <div>
-                          {broadcast.totalCount > 0 && (
-                            <p>{broadcast.successCount.toLocaleString('ja-JP')} / {broadcast.totalCount.toLocaleString('ja-JP')} 件</p>
-                          )}
-                          {insights[broadcast.id] ? (
-                            <div className="mt-1 space-y-0.5">
-                              {insights[broadcast.id].delivered != null && (
-                                <p className="text-xs">配信: <span className="font-medium text-gray-700">{insights[broadcast.id].delivered!.toLocaleString('ja-JP')}</span></p>
-                              )}
-                              {insights[broadcast.id].uniqueImpression != null && (
-                                <p className="text-xs">開封: <span className="font-medium text-blue-600">{insights[broadcast.id].uniqueImpression!.toLocaleString('ja-JP')}</span>
-                                  {insights[broadcast.id].openRate != null && (
-                                    <span className="text-gray-400"> ({(insights[broadcast.id].openRate! * 100).toFixed(1)}%)</span>
-                                  )}
-                                </p>
-                              )}
-                              {insights[broadcast.id].uniqueClick != null && (
-                                <p className="text-xs">クリック: <span className="font-medium text-green-600">{insights[broadcast.id].uniqueClick!.toLocaleString('ja-JP')}</span>
-                                  {insights[broadcast.id].clickRate != null && (
-                                    <span className="text-gray-400"> ({(insights[broadcast.id].clickRate! * 100).toFixed(1)}%)</span>
-                                  )}
-                                </p>
-                              )}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => handleFetchInsight(broadcast.id)}
-                              disabled={fetchingInsight === broadcast.id}
-                              className="mt-1 text-xs text-blue-500 hover:text-blue-700 disabled:opacity-50"
-                            >
-                              {fetchingInsight === broadcast.id ? '取得中...' : 'インサイトを取得'}
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {(broadcast.status === 'draft' || broadcast.status === 'scheduled') && (
-                          <button
-                            onClick={() => handleDelete(broadcast.id)}
-                            className="px-3 py-1 min-h-[44px] text-xs font-medium text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
-                          >
-                            削除
-                          </button>
+                        <p className="mt-0.5 text-xs text-kumo-subtle">{broadcast.messageType === 'text' ? 'テキスト' : broadcast.messageType === 'image' ? '画像' : 'Flex'}</p>
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Badge variant={status.variant} appearance="dot">{status.label}</Badge>
+                        {broadcast.lastError ? (
+                          <p className="mt-1 max-w-56 text-xs text-kumo-danger" title={broadcast.lastError}>{broadcast.lastError}</p>
+                        ) : null}
+                      </Table.Cell>
+                      <Table.Cell>{isDedup ? `重複除外${tagName ? `：${tagName}` : ''}` : broadcast.targetType === 'all' ? '全員' : tagName ? `タグ：${tagName}` : 'タグ指定'}</Table.Cell>
+                      <Table.Cell className="text-kumo-subtle">{formatDatetime(broadcast.scheduledAt)}</Table.Cell>
+                      <Table.Cell className="text-kumo-subtle">{formatDatetime(broadcast.sentAt)}</Table.Cell>
+                      <Table.Cell>
+                        {broadcast.status !== 'sent' ? '-' : insight ? (
+                          <div className="space-y-0.5 text-xs text-kumo-subtle">
+                            {insight.delivered != null ? <p>配信 <strong className="text-kumo-strong">{insight.delivered.toLocaleString('ja-JP')}</strong></p> : null}
+                            {insight.uniqueImpression != null ? <p>開封 <strong className="text-kumo-info">{insight.uniqueImpression.toLocaleString('ja-JP')}</strong>{insight.openRate != null ? ` (${(insight.openRate * 100).toFixed(1)}%)` : ''}</p> : null}
+                            {insight.uniqueClick != null ? <p>クリック <strong className="text-kumo-success">{insight.uniqueClick.toLocaleString('ja-JP')}</strong>{insight.clickRate != null ? ` (${(insight.clickRate * 100).toFixed(1)}%)` : ''}</p> : null}
+                          </div>
+                        ) : (
+                          <Button type="button" size="xs" variant="ghost" loading={fetchingInsight === broadcast.id} onClick={() => void handleFetchInsight(broadcast.id)}>インサイト取得</Button>
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      </Table.Cell>
+                      <Table.Cell className="text-right">
+                        {broadcast.status === 'draft' || broadcast.status === 'scheduled' ? <Button type="button" size="xs" variant="secondary-destructive" icon={TrashIcon} onClick={() => setDeleteTarget(broadcast)}>削除</Button> : null}
+                      </Table.Cell>
+                    </Table.Row>
+                  )
+                })}
+              </Table.Body>
+            </Table>
           </div>
-        </div>
+        </LayerCard>
       )}
+
+      <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null) }}>
+        <Dialog size="base" className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">配信を削除しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">「{deleteTarget?.title ?? ''}」を削除します。この操作は取り消せません。</Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
+            <Dialog.Close render={(props) => <Button {...props} type="button" variant="secondary" disabled={deleting}>キャンセル</Button>} />
+            <Button type="button" variant="destructive" loading={deleting} onClick={() => void handleDelete()}>削除する</Button>
+          </div>
+        </Dialog>
+      </Dialog.Root>
 
       <CcPromptButton prompts={ccPrompts} />
     </div>

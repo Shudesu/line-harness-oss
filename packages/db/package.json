@@ -7,22 +7,22 @@
   "types": "./src/index.ts",
   "files": [
     "src",
-    "bootstrap-meta.json",
-    "bootstrap.sql",
     "schema.sql",
-    "migrations"
+    "migrations",
+    "bootstrap-meta.json",
+    "bootstrap.sql"
   ],
   "scripts": {
-    "generate:bootstrap": "node ./scripts/generate-bootstrap.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate:bootstrap": "node ./scripts/generate-bootstrap.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "^12.9.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.0.0"
+    "vitest": "^2.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.9.0"
   },
   "keywords": [
     "line",

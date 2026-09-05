@@ -65,6 +65,7 @@ function check(key: string, max: number, windowMs: number): { ok: boolean; remai
 const UNAUTHENTICATED_PATTERNS: Array<string | RegExp> = [
   '/webhook',
   /^\/api\/forms\/[^/]+\/submit$/,
+  '/api/public/media-inquiries',
 ];
 
 function isUnauthenticatedPath(path: string): boolean {

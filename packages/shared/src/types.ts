@@ -85,8 +85,18 @@ export interface Tag {
   name: string;
   /** 表示色 (HEX: #RRGGBB) */
   color: string;
+  /** このタグを初めて獲得したときに付与するマイル */
+  mileageReward?: number;
+  /** 紹介された友だちがこのタグを獲得したとき、紹介者へ付与するマイル */
+  referralMileageReward?: number;
+  /** 今後の行動マイル倍率。10000 = 1.0倍、null = 倍率タグとして使わない */
+  mileageMultiplierBps?: number | null;
+  /** 複数の倍率タグがある場合の優先順位（大きい値を採用） */
+  mileageMultiplierPriority?: number;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
+  /** このタグが付与されている友だち数 (GET /api/tags のみ付与) */
+  friendCount?: number;
 }
 
 // -----------------------------------------------------------------------------
@@ -261,6 +271,8 @@ export interface Broadcast {
   totalCount: number;
   /** 配信成功人数 */
   successCount: number;
+  /** 直近の送信失敗理由 (クォータ不足ガード等)。送信成功で null に戻る */
+  lastError?: string | null;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
 }
@@ -394,6 +406,12 @@ export interface LineAccount {
   role: string | null;
   /** サイドバーアカ切替および /accounts ページの並び順 (drag-drop で更新). */
   displayOrder: number;
+  /** OGP: og:site_name。空欄時は name がフォールバックとして使われる。 */
+  ogSiteName: string | null;
+  /** OGP: アカウント全体のデフォルト og:description。個別レコードで未設定時に使用。 */
+  ogDefaultDescription: string | null;
+  /** OGP: アカウント全体のデフォルト og:image。個別レコードで未設定時に使用。 */
+  ogDefaultImageUrl: string | null;
 }
 
 // -----------------------------------------------------------------------------
@@ -803,6 +821,7 @@ export type AutomationEventType =
   | "score_threshold"
   | "cv_fire"
   | "message_received"
+  | "postback_received"
   | "calendar_booked";
 
 export interface AutomationAction {
@@ -819,6 +838,10 @@ export interface Automation {
   actions: AutomationAction[];
   isActive: boolean;
   priority: number;
+  // null = global automation (fires for every account, per event-bus.ts:149).
+  // UUID = bound to that line_account_id. Surfaced so account-scoped UIs can
+  // distinguish a rule that affects every account from one they own.
+  lineAccountId: string | null;
   createdAt: string;
   updatedAt: string;
 }

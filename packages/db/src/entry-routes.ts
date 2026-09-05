@@ -265,6 +265,13 @@ export async function recordRefTracking(
     )
     .run();
 
+  if (opts.friendId) {
+    await db
+      .prepare(`UPDATE friends SET last_ref_code = ?, last_ref_at = ? WHERE id = ?`)
+      .bind(opts.refCode, now, opts.friendId)
+      .run();
+  }
+
   return (await db
     .prepare(`SELECT * FROM ref_tracking WHERE id = ?`)
     .bind(id)

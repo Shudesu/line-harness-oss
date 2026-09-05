@@ -3,9 +3,10 @@ import {
   getStripeEvents,
   getStripeEventByStripeId,
   createStripeEvent,
-  jstNow,
+  addTagToFriend,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const stripe = new Hono<Env>();
 
@@ -137,12 +138,25 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
           .bind(`purchased_${productId}`)
           .first<{ id: string }>();
         if (tag) {
-          await db
-            .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
-            .bind(friendId, tag.id, jstNow())
-            .run();
+          await addTagToFriend(db, friendId, tag.id);
         }
       }
+
+      await awardActivityMileage(db, {
+        eventType: 'purchase_completed',
+        source: 'stripe',
+        sourceEventId: body.id,
+        friendId,
+        subjectKey: productId || 'first_purchase',
+        metadata: {
+          stripeEventId: body.id,
+          paymentIntentId: obj.id,
+          productId: productId ?? null,
+          amount: obj.amount ?? null,
+          currency: obj.currency ?? null,
+        },
+        occurredAt: event.processed_at,
+      });
 
       // イベントバスに発火（自動化ルール用）
       const { fireEvent } = await import('../services/event-bus.js');
@@ -155,10 +169,7 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
         .prepare(`SELECT id FROM tags WHERE name = 'subscription_cancelled'`)
         .first<{ id: string }>();
       if (cancelledTag) {
-        await db
-          .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
-          .bind(friendId, cancelledTag.id, jstNow())
-          .run();
+        await addTagToFriend(db, friendId, cancelledTag.id);
       }
     }
 

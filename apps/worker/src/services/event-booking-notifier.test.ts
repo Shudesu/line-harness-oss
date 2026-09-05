@@ -74,3 +74,82 @@ describe('renderEventNotificationText', () => {
     expect(text).not.toContain('https://');
   });
 });
+
+describe('renderEventNotificationText — custom extra append', () => {
+  const extraConf = '\n当日の Zoom URL: https://us02web.zoom.us/j/123';
+  const extraRem = '開始 10 分前に同じ URL からご入室ください';
+
+  test('received_confirmed に confirmationExtra を末尾追記', () => {
+    const text = renderEventNotificationText('received_confirmed', {
+      ...baseCtx,
+      confirmationExtra: extraConf,
+    });
+    expect(text).toContain('予約が確定しました');
+    expect(text.endsWith(extraConf.trim())).toBe(true);
+    expect(text).toContain('\n\n' + extraConf.trim());
+  });
+
+  test('confirmed (後追い承認) にも confirmationExtra を追記', () => {
+    const text = renderEventNotificationText('confirmed', {
+      ...baseCtx,
+      confirmationExtra: extraConf,
+    });
+    expect(text.endsWith(extraConf.trim())).toBe(true);
+  });
+
+  test('received_pending には confirmationExtra を追記しない', () => {
+    const text = renderEventNotificationText('received_pending', {
+      ...baseCtx,
+      confirmationExtra: extraConf,
+    });
+    expect(text).not.toContain(extraConf.trim());
+  });
+
+  test('rejected / cancelled_by_admin にも confirmationExtra を追記しない', () => {
+    const rj = renderEventNotificationText('rejected', { ...baseCtx, confirmationExtra: extraConf });
+    const ca = renderEventNotificationText('cancelled_by_admin', { ...baseCtx, confirmationExtra: extraConf });
+    expect(rj).not.toContain(extraConf.trim());
+    expect(ca).not.toContain(extraConf.trim());
+  });
+
+  test('reminder_day_before に reminderExtra を末尾追記', () => {
+    const text = renderEventNotificationText('reminder_day_before', {
+      ...baseCtx,
+      reminderExtra: extraRem,
+    });
+    expect(text).toContain('明日イベントが開催');
+    expect(text.endsWith(extraRem)).toBe(true);
+  });
+
+  test('reminder_hours_before に reminderExtra を末尾追記', () => {
+    const text = renderEventNotificationText('reminder_hours_before', {
+      ...baseCtx,
+      hoursBefore: 2,
+      reminderExtra: extraRem,
+    });
+    expect(text).toContain('まもなくイベント開始');
+    expect(text.endsWith(extraRem)).toBe(true);
+  });
+
+  test('extra が null / 空文字なら追記しない', () => {
+    const nullText = renderEventNotificationText('received_confirmed', {
+      ...baseCtx,
+      confirmationExtra: null,
+    });
+    const emptyText = renderEventNotificationText('received_confirmed', {
+      ...baseCtx,
+      confirmationExtra: '',
+    });
+    const baseText = renderEventNotificationText('received_confirmed', baseCtx);
+    expect(nullText).toBe(baseText);
+    expect(emptyText).toBe(baseText);
+  });
+
+  test('reminder kind に confirmationExtra を渡しても無視', () => {
+    const text = renderEventNotificationText('reminder_day_before', {
+      ...baseCtx,
+      confirmationExtra: extraConf,
+    });
+    expect(text).not.toContain(extraConf.trim());
+  });
+});

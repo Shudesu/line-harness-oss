@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import type { CfApiCreds } from '../types.js';
 import { authHeader, pagesProjectApiBase, throwHttpError } from './_shared.js';
+import { hashWorkerAsset } from './asset-hash.js';
 
 /**
  * Cloudflare Pages Direct Upload API.
@@ -16,16 +16,14 @@ import { authHeader, pagesProjectApiBase, throwHttpError } from './_shared.js';
  * Step 3 is skipped entirely when the server already has every file hash —
  * common for incremental redeploys where only a handful of bundles changed.
  *
- * CF docs reference blake3 for the missing-files check, but SHA-256 works
- * too and is available in every JS runtime we care about (Node, Workers).
- * We pick SHA-256 for portability.
+ * Pages asset keys must match Wrangler byte-for-byte: the first 32 hex
+ * characters of BLAKE3(base64(file bytes) + extension). The API can accept a
+ * deployment manifest containing other-looking hashes and still mark the
+ * deploy stage successful, but the resulting deployment returns HTTP 500
+ * because those keys do not resolve to uploaded assets.
  */
 
 import type { Buffer as NodeBuffer } from 'node:buffer';
-
-function sha256Hex(buf: NodeBuffer): string {
-  return createHash('sha256').update(buf).digest('hex');
-}
 
 /**
  * Map a file path to a sensible Content-Type for upload metadata. CF uses
@@ -112,29 +110,102 @@ interface UploadEntry {
   base64: true;
 }
 
+// Keep batches small by count. A count cap is useful for Admin bundles with
+// many tiny chunks; the byte cap below handles a few unusually large assets.
+const ASSET_UPLOAD_BATCH_SIZE = 50;
+// Match Wrangler's Pages uploader: a bucket contains at most 40 MiB of raw
+// file data. Base64 expands this on the wire, but the API limit is defined in
+// terms of the source files Wrangler buckets.
+const ASSET_UPLOAD_MAX_RAW_BYTES = 40 * 1024 * 1024;
+const ASSET_UPLOAD_MAX_ATTEMPTS = 5;
+const ASSET_UPLOAD_RETRY_BASE_MS = 1000;
+const DEPLOYMENT_VERIFY_ATTEMPTS = 3;
+const DEPLOYMENT_VERIFY_DELAY_MS = 3000;
+
+function isRetryableUploadStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Confirm that a newly-created Pages deployment actually serves files.
+ *
+ * The Pages deployment API can report a successful deploy stage even when
+ * the manifest refers to asset keys that were never stored; that deployment
+ * then returns HTTP 500 for every path. CLI callers use this before reporting
+ * Admin/LIFF success to the operator.
+ */
+export async function verifyPagesDeploymentUrl(
+  url: string,
+  options: { attempts?: number; delayMs?: number } = {},
+): Promise<void> {
+  const attempts = options.attempts ?? DEPLOYMENT_VERIFY_ATTEMPTS;
+  const delayMs = options.delayMs ?? DEPLOYMENT_VERIFY_DELAY_MS;
+  let last: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        redirect: 'follow',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+      if (response.ok) return;
+      last = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      last = error;
+    }
+    if (attempt < attempts) await delay(delayMs);
+  }
+
+  const reason = last instanceof Error ? last.message : String(last);
+  throw new Error(`Pages deployment health check failed: ${reason} (${url})`);
+}
+
 /**
  * Push a batch of missing assets to CF. The payload is `key → base64
  * content` plus a small metadata blob (just the Content-Type for now).
  * Callers must skip this entirely when the missing-hashes list is
- * empty — the API errors on an empty `payload` array.
+ * empty — the API errors on an empty top-level array.
  */
 async function uploadAssets(
   jwt: string,
   entries: UploadEntry[],
 ): Promise<void> {
-  const res = await fetch(
-    'https://api.cloudflare.com/client/v4/pages/assets/upload',
-    {
-      method: 'POST',
-      headers: {
-        ...authHeader(jwt),
-        'Content-Type': 'application/json',
+  for (let attempt = 1; attempt <= ASSET_UPLOAD_MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(
+      'https://api.cloudflare.com/client/v4/pages/assets/upload',
+      {
+        method: 'POST',
+        headers: {
+          ...authHeader(jwt),
+          'Content-Type': 'application/json',
+        },
+        // Pages expects the upload entries as the top-level JSON array.
+        // `{ payload: entries }` is not the Direct Upload wire format and can
+        // surface as an opaque HTTP 500 from the assets Worker.
+        body: JSON.stringify(entries),
       },
-      body: JSON.stringify({ payload: entries }),
-    },
-  );
-  if (!res.ok) {
-    await throwHttpError('POST pages assets upload failed', res);
+    );
+    if (res.ok) return;
+
+    if (
+      !isRetryableUploadStatus(res.status) ||
+      attempt === ASSET_UPLOAD_MAX_ATTEMPTS
+    ) {
+      await throwHttpError('POST pages assets upload failed', res);
+    }
+
+    // Drain the failed response before retrying so its connection can be
+    // reused. The body is only diagnostic; failure to read it is harmless.
+    try {
+      await res.text();
+    } catch {
+      /* ignore */
+    }
+    await delay(ASSET_UPLOAD_RETRY_BASE_MS * 2 ** (attempt - 1));
   }
 }
 
@@ -173,7 +244,10 @@ export async function deployPagesProject(opts: {
   const byHash = new Map<string, { path: string; content: NodeBuffer }>();
   const pathToHash = new Map<string, string>();
   for (const [path, content] of files) {
-    const hash = sha256Hex(content);
+    // Pages and Workers Assets deliberately share Wrangler's asset-key
+    // algorithm. The extension is part of the hash input, so the path must be
+    // provided even when two files have identical bytes.
+    const hash = hashWorkerAsset(path, content);
     pathToHash.set(path, hash);
     // First-write wins if two files share a hash — same content, doesn't matter which we pick.
     if (!byHash.has(hash)) {
@@ -205,7 +279,27 @@ export async function deployPagesProject(opts: {
         base64: true,
       });
     }
-    await uploadAssets(jwt, entries);
+    let batch: UploadEntry[] = [];
+    let batchRawBytes = 0;
+    for (const entry of entries) {
+      // Derive the original byte count from base64 without decoding it.
+      const padding = entry.value.endsWith('==') ? 2 : entry.value.endsWith('=') ? 1 : 0;
+      const rawBytes = Math.floor((entry.value.length * 3) / 4) - padding;
+      if (
+        batch.length > 0 &&
+        (batch.length >= ASSET_UPLOAD_BATCH_SIZE ||
+          batchRawBytes + rawBytes > ASSET_UPLOAD_MAX_RAW_BYTES)
+      ) {
+        await uploadAssets(jwt, batch);
+        batch = [];
+        batchRawBytes = 0;
+      }
+      batch.push(entry);
+      batchRawBytes += rawBytes;
+    }
+    if (batch.length > 0) {
+      await uploadAssets(jwt, batch);
+    }
   }
 
   // Step 5: create the deployment with a manifest of "/{path}" → hash

@@ -127,7 +127,7 @@ describe('publishRichMenuGroup', () => {
     const r2 = makeMockR2();
     const result = await publishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'menu', isDefaultForAll: false,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'menu', isDefaultForAll: false, selected: false,
         pages: [{
           id: 'p1', orderIndex: 0, name: 'p1',
           imageR2Key: 'rich-menus/test/p1.png', imageContentType: 'image/png',
@@ -151,7 +151,7 @@ describe('publishRichMenuGroup', () => {
     const r2 = makeMockR2();
     const result = await publishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
         pages: [
           { id: 'p1', orderIndex: 0, name: 'p1', imageR2Key: 'a.png', imageContentType: 'image/png', lineRichMenuId: null, areas: [] },
           { id: 'p2', orderIndex: 1, name: 'p2', imageR2Key: 'b.png', imageContentType: 'image/png', lineRichMenuId: null, areas: [] },
@@ -170,7 +170,7 @@ describe('publishRichMenuGroup', () => {
     const r2 = makeMockR2();
     await publishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: true,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: true, selected: true,
         pages: [{
           id: 'p1', orderIndex: 0, name: 'p1',
           imageR2Key: 'a.png', imageContentType: 'image/png',
@@ -183,6 +183,7 @@ describe('publishRichMenuGroup', () => {
     expect(line.calls).toContain('set-default');
     // 有効化時は clear-default を呼ばない
     expect(line.calls).not.toContain('clear-default');
+    expect(line.createRichMenu).toHaveBeenCalledWith(expect.objectContaining({ selected: true }));
   });
 
   it('isDefaultForAll=false かつ LINE current default が own page と一致 → clear-default を呼ぶ (Round 2 P1)', async () => {
@@ -191,7 +192,7 @@ describe('publishRichMenuGroup', () => {
     const r2 = makeMockR2();
     await publishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
         pages: [{
           id: 'p1', orderIndex: 0, name: 'p1',
           imageR2Key: 'a.png', imageContentType: 'image/png',
@@ -212,7 +213,7 @@ describe('publishRichMenuGroup', () => {
     const r2 = makeMockR2();
     await publishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
         pages: [{
           id: 'p1', orderIndex: 0, name: 'p1',
           imageR2Key: 'a.png', imageContentType: 'image/png',
@@ -234,7 +235,7 @@ describe('publishRichMenuGroup', () => {
     const r2 = makeMockR2();
     const result = await publishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
         pages: [{
           id: 'p1', orderIndex: 0, name: 'p1',
           imageR2Key: 'a.png', imageContentType: 'image/png',
@@ -254,7 +255,7 @@ describe('publishRichMenuGroup', () => {
     await expect(
       publishRichMenuGroup(
         {
-          id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+          id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
           pages: [{
             id: 'p1', orderIndex: 0, name: 'p1',
             imageR2Key: 'missing.png', imageContentType: 'image/png',
@@ -273,7 +274,7 @@ describe('publishRichMenuGroup', () => {
     await expect(
       publishRichMenuGroup(
         {
-          id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+          id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
           pages: [{
             id: 'p1', orderIndex: 0, name: 'p1',
             imageR2Key: null, imageContentType: null,
@@ -292,7 +293,7 @@ describe('unpublishRichMenuGroup', () => {
     const line = makeMockLineClient({ currentDefault: 'lm-old-1' });
     const result = await unpublishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: true,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: true, selected: true,
         pages: [
           { id: 'p1', orderIndex: 0, name: 'p1', imageR2Key: null, imageContentType: null, lineRichMenuId: 'lm-old-1', areas: [] },
           { id: 'p2', orderIndex: 1, name: 'p2', imageR2Key: null, imageContentType: null, lineRichMenuId: 'lm-old-2', areas: [] },
@@ -316,7 +317,7 @@ describe('unpublishRichMenuGroup', () => {
     const line = makeMockLineClient({ currentDefault: 'lm-other-group' });
     await unpublishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
         pages: [
           { id: 'p1', orderIndex: 0, name: 'p1', imageR2Key: null, imageContentType: null, lineRichMenuId: 'lm-mine', areas: [] },
         ],
@@ -333,7 +334,7 @@ describe('unpublishRichMenuGroup', () => {
     });
     const result = await unpublishRichMenuGroup(
       {
-        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false,
+        id: 'gid12345-aaaa', size: 'large', chatBarText: 'm', isDefaultForAll: false, selected: false,
         pages: [
           { id: 'p1', orderIndex: 0, name: 'p1', imageR2Key: null, imageContentType: null, lineRichMenuId: null, areas: [] },
         ],

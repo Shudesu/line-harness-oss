@@ -13,7 +13,11 @@ export interface VerifyUrls {
   workerHealthUrl: string;
   /** Admin Pages root URL (e.g. `https://admin.example.pages.dev/`). */
   adminUrl: string;
-  /** LIFF Pages root URL (e.g. `https://liff.example.pages.dev/`). */
+  /**
+   * LIFF Pages root URL (e.g. `https://liff.example.pages.dev/`), or ''
+   * for worker-assets installs — the LIFF probe is skipped when empty
+   * (the Worker /health probe already covers the serving script).
+   */
   liffUrl: string;
 }
 
@@ -54,8 +58,12 @@ export async function runVerify(
 
   // 1. Worker /health — most common failure mode (new bundle crashed on
   //    boot), so probe first and surface the URL in the error message.
+  //    ANY response below 500 counts as alive: bundles released before the
+  //    public /api/health route answer 401 (auth middleware) or 404, and a
+  //    Worker that routes a request to either has provably booted. Only
+  //    5xx / network errors indicate a broken deploy worth rolling back.
   try {
-    await fetchWithRetry(urls.workerHealthUrl);
+    await fetchWithRetry(urls.workerHealthUrl, (r) => r.status < 500);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`Worker /health failed: ${reason} (${urls.workerHealthUrl})`);
@@ -80,12 +88,15 @@ export async function runVerify(
 
   // 4. LIFF Pages — customer-facing UI. Last because a failure here is
   //    the most "user visible" and we want the other probes to have
-  //    succeeded before we even report this one missing.
-  try {
-    await fetchWithRetry(urls.liffUrl);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`LIFF URL failed: ${reason} (${urls.liffUrl})`);
+  //    succeeded before we even report this one missing. Skipped for
+  //    worker-assets installs (no separate LIFF deployment to probe).
+  if (urls.liffUrl) {
+    try {
+      await fetchWithRetry(urls.liffUrl);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`LIFF URL failed: ${reason} (${urls.liffUrl})`);
+    }
   }
 
   await ev.emit({ step: 'verify', status: 'done' });
@@ -94,12 +105,14 @@ export async function runVerify(
 /**
  * Fetch with retry — 3 attempts, 3s delay between attempts.
  *
- * Treats both rejected promises (network errors) and non-2xx responses as
- * retryable. The final error preserves the underlying cause so the caller
- * can wrap it with a URL-naming message.
+ * Treats both rejected promises (network errors) and non-accepted
+ * responses as retryable. `accept` decides what counts as success
+ * (default: 2xx). The final error preserves the underlying cause so the
+ * caller can wrap it with a URL-naming message.
  */
 async function fetchWithRetry(
   url: string,
+  accept: (r: Response) => boolean = (r) => r.ok,
   retries = RETRIES,
   delayMs = RETRY_DELAY_MS,
 ): Promise<Response> {
@@ -107,7 +120,7 @@ async function fetchWithRetry(
   for (let i = 0; i < retries; i++) {
     try {
       const r = await fetch(url);
-      if (r.ok) return r;
+      if (accept(r)) return r;
       last = new Error(`HTTP ${r.status}`);
     } catch (e) {
       last = e;

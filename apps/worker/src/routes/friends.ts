@@ -6,8 +6,11 @@ import {
   addTagToFriend,
   removeTagFromFriend,
   getFriendTags,
+  getFormSubmissionsByFriend,
   getScenarios,
   enrollFriendInScenario,
+  getMileageSummaryForFriend,
+  getMileageHistoryForFriend,
   jstNow,
 } from '@line-crm/db';
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
@@ -36,6 +39,7 @@ function serializeFriend(row: DbFriend) {
     isFollowing: Boolean(row.is_following),
     metadata: JSON.parse(row.metadata || '{}'),
     refCode: (row as unknown as Record<string, unknown>).ref_code as string | null,
+    lineAccountId: ((row as unknown as Record<string, unknown>).line_account_id as string | null) ?? null,
     userId: row.user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -389,15 +393,40 @@ friends.get('/api/friends/ref-stats', async (c) => {
   }
 });
 
+// GET /api/friends/:id/mileage - admin wallet summary + recent ledger history
+friends.get('/api/friends/:id/mileage', async (c) => {
+  try {
+    const friendId = c.req.param('id');
+    const friend = await getFriendById(c.env.DB, friendId);
+    if (!friend) {
+      return c.json({ success: false, error: 'Friend not found' }, 404);
+    }
+
+    const requestedLimit = Number.parseInt(c.req.query('limit') ?? '', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 10;
+    const [summary, history] = await Promise.all([
+      getMileageSummaryForFriend(c.env.DB, friendId),
+      getMileageHistoryForFriend(c.env.DB, friendId, { limit }),
+    ]);
+    return c.json({ success: true, data: { summary, history } });
+  } catch (err) {
+    console.error('GET /api/friends/:id/mileage error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/friends/:id - get single friend with tags
 friends.get('/api/friends/:id', async (c) => {
   try {
     const id = c.req.param('id');
     const db = c.env.DB;
 
-    const [friend, tags] = await Promise.all([
+    const [friend, tags, formSubmissions] = await Promise.all([
       getFriendById(db, id),
       getFriendTags(db, id),
+      getFormSubmissionsByFriend(db, id, 10),
     ]);
 
     if (!friend) {
@@ -409,6 +438,14 @@ friends.get('/api/friends/:id', async (c) => {
       data: {
         ...serializeFriend(friend),
         tags: tags.map(serializeTag),
+        formSubmissions: formSubmissions.map((submission) => ({
+          id: submission.id,
+          formId: submission.form_id,
+          formName: submission.form_name,
+          fields: JSON.parse(submission.form_fields || '[]') as unknown[],
+          data: JSON.parse(submission.data || '{}') as Record<string, unknown>,
+          createdAt: submission.created_at,
+        })),
       },
     });
   } catch (err) {
@@ -472,7 +509,7 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
   }
 });
 
-// PUT /api/friends/:id/metadata - merge metadata fields
+// PUT /api/friends/:id/metadata - merge metadata fields (null deletes a key)
 friends.put('/api/friends/:id/metadata', async (c) => {
   try {
     const friendId = c.req.param('id');
@@ -486,6 +523,12 @@ friends.put('/api/friends/:id/metadata', async (c) => {
     const body = await c.req.json<Record<string, unknown>>();
     const existing = JSON.parse(friend.metadata || '{}');
     const merged = { ...existing, ...body };
+    // Explicit null deletes the key. A merge-only endpoint has no way to remove
+    // a field once written, so a typo'd or one-off key would be stuck on the
+    // friend forever (storing null instead just leaves visible dead entries).
+    for (const [key, value] of Object.entries(body)) {
+      if (value === null) delete merged[key];
+    }
     const now = jstNow();
 
     await db
@@ -542,6 +585,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
       messageType?: string;
       content: string;
       altText?: string;
+      trackLinks?: boolean;
     }>();
 
     if (!body.content) {
@@ -556,21 +600,43 @@ friends.post('/api/friends/:id/messages', async (c) => {
 
     const { LineClient } = await import('@line-crm/line-sdk');
     // Resolve access token from friend's account (multi-account support)
-    let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
-    if ((friend as unknown as Record<string, unknown>).line_account_id) {
-      const { getLineAccountById } = await import('@line-crm/db');
-      const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-      if (account) accessToken = account.channel_access_token;
-    }
+    // 送信アカウントを1回だけ決めて、トークンと**リンクの持ち主**の両方に同じ行を使う。
+    // トークンだけ差し替えて ID を取りこぼすと、送信は正しいアカウントから出るのに
+    // 本文中の URL は「持ち主なし」のトラッキングリンクとして登録され、
+    // アカウント単位の OGP・LIFF フォールバックと分析が送信元と食い違う
+    // （Codex review round 3 の指摘）。
+    const { getLineAccountById, resolveDefaultLineAccount } = await import('@line-crm/db');
+    const rawFriendAccountId =
+      ((friend as unknown as Record<string, unknown>).line_account_id as string | null) ?? null;
+    const sendAccount = rawFriendAccountId
+      ? await getLineAccountById(db, rawFriendAccountId)
+      : await resolveDefaultLineAccount(db);
+    const friendAccountId = sendAccount?.id ?? rawFriendAccountId;
+    const accessToken = sendAccount?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN;
     const lineClient = new LineClient(accessToken);
     const messageType = body.messageType ?? 'text';
 
     // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
-    const { autoTrackContent } = await import('../services/auto-track.js');
-    const tracked = await autoTrackContent(
-      db, messageType, body.content,
-      c.env.WORKER_URL || new URL(c.req.url).origin,
-    );
+    // trackLinks=false で明示的に短縮 OFF (URL をそのまま送る)
+    const sendWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+    let tracked = { messageType, content: body.content };
+    if (body.trackLinks !== false) {
+      const { autoTrackContent } = await import('../services/auto-track.js');
+      tracked = await autoTrackContent(
+        db, messageType, body.content,
+        sendWorkerUrl,
+        { lineAccountId: friendAccountId },
+      );
+    }
+    // 1:1 送信なので /t リンクに f=<friendId> を焼き込み、LIFF 識別ホップなしで
+    // クリック帰属できるようにする（既存 /t リンクにも効くので trackLinks に関わらず実施）
+    {
+      const { appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+      tracked = {
+        ...tracked,
+        content: await appendFriendToTrackedLinks(db, tracked.content, sendWorkerUrl, friend.id),
+      };
+    }
 
     const message = buildMessage(tracked.messageType, tracked.content, body.altText);
     await lineClient.pushMessage(friend.line_user_id, [message]);

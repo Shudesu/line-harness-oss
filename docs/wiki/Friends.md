@@ -2,7 +2,7 @@
 
 ## 概要
 
-LINE Harness の友だち管理は、LINE公式アカウントのフォロワー（友だち）を自動的に追跡・管理するシステムです。Webhook で友だち追加イベントを受信すると自動的にプロフィール情報を取得してDBに登録します。
+L Harness の友だち管理は、LINE公式アカウントのフォロワー（友だち）を自動的に追跡・管理するシステムです。Webhook で友だち追加イベントを受信すると自動的にプロフィール情報を取得してDBに登録します。
 
 ## データモデル
 
@@ -242,7 +242,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/friends/FRIEND_
 
 ## UUID クロスアカウント連携
 
-LINE userId は公式アカウントごとに異なるため、同一人物でもアカウントが異なれば別の userId になります。LINE Harness は内部 UUID (`users` テーブル) を用いて複数アカウント間のユーザーを紐づけます。
+LINE userId は公式アカウントごとに異なるため、同一人物でもアカウントが異なれば別の userId になります。L Harness は内部 UUID (`users` テーブル) を用いて複数アカウント間のユーザーを紐づけます。
 
 ### ⚠️ 重要: 友だち追加方法による UUID 取得の違い
 

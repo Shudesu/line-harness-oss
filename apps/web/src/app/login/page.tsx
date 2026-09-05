@@ -1,6 +1,11 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { getApiBase } from '@/lib/api-base'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
 
 export default function LoginPage() {
   const [apiKey, setApiKey] = useState('')
@@ -14,7 +19,7 @@ export default function LoginPage() {
     setError('')
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL
+      const apiUrl = getApiBase()
       if (!apiUrl) {
         setError('NEXT_PUBLIC_API_URL is not set in build env')
         setLoading(false)
@@ -66,10 +71,10 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#06C755' }}>
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
+    <div className="min-h-screen flex items-center justify-center bg-kumo-brand p-4">
+      <LayerCard className="w-full max-w-sm p-8 shadow-xl">
         <div className="text-center mb-6">
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg mx-auto mb-3" style={{ backgroundColor: '#06C755' }}>
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-kumo-brand text-kumo-inverse font-bold text-lg mx-auto mb-3">
             H
           </div>
           <h1 className="text-xl font-bold text-gray-900">L Harness</h1>
@@ -78,31 +83,29 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin}>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-            <input
+            <Input
+              label="API Key"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="APIキーを入力"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
               autoFocus
             />
           </div>
 
-          {error && (
-            <p className="text-sm text-red-600 mb-4">{error}</p>
-          )}
+          {error && <Banner className="mb-4" size="sm" variant="error" title="ログインできませんでした" description={error} />}
 
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            loading={loading}
             disabled={loading || !apiKey}
-            className="w-full py-3 text-white font-medium rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
+            className="w-full"
           >
-            {loading ? 'ログイン中...' : 'ログイン'}
-          </button>
+            ログイン
+          </Button>
         </form>
-      </div>
+      </LayerCard>
     </div>
   )
 }

@@ -19,6 +19,7 @@ function makeTmpDir(prefix = 'build-bundle-test-'): string {
 interface Fixture {
   root: string;
   workerJs: string;
+  workerAssetsDir: string;
   adminDir: string;
   liffDir: string;
   migrationsDir: string;
@@ -32,6 +33,11 @@ function makeFixture(): Fixture {
   const workerJs = join(root, 'worker-dist', 'index.js');
   mkdirSync(join(root, 'worker-dist'), { recursive: true });
   writeFileSync(workerJs, '// fake worker bundle\nexport default {};\n');
+
+  const workerAssetsDir = join(root, 'worker-client');
+  mkdirSync(join(workerAssetsDir, 'assets'), { recursive: true });
+  writeFileSync(join(workerAssetsDir, 'index.html'), '<html><body>worker client</body></html>');
+  writeFileSync(join(workerAssetsDir, 'assets', 'client.js'), 'console.log("client");');
 
   // Admin static export.
   const adminDir = join(root, 'admin-out');
@@ -55,7 +61,7 @@ function makeFixture(): Fixture {
   // exercises the `mkdirSync(dirname(outPath), { recursive: true })` branch.
   const outPath = join(root, 'dist', 'bundle.tar.gz');
 
-  return { root, workerJs, adminDir, liffDir, migrationsDir, outPath };
+  return { root, workerJs, workerAssetsDir, adminDir, liffDir, migrationsDir, outPath };
 }
 
 describe('buildBundle', () => {
@@ -72,6 +78,7 @@ describe('buildBundle', () => {
   it('creates a tarball at outPath (and mkdirs the parent dir)', () => {
     buildBundle({
       workerJs: fx.workerJs,
+      workerAssetsDir: fx.workerAssetsDir,
       adminDir: fx.adminDir,
       liffDir: fx.liffDir,
       migrationsDir: fx.migrationsDir,
@@ -85,6 +92,7 @@ describe('buildBundle', () => {
   it('tarball contains worker/admin/liff/migrations entries with the expected relative paths', () => {
     buildBundle({
       workerJs: fx.workerJs,
+      workerAssetsDir: fx.workerAssetsDir,
       adminDir: fx.adminDir,
       liffDir: fx.liffDir,
       migrationsDir: fx.migrationsDir,
@@ -98,6 +106,8 @@ describe('buildBundle', () => {
 
     // Each of the 4 trees must appear at the top level of the archive.
     expect(listing).toContain('worker/index.js');
+    expect(listing).toContain('worker-assets/index.html');
+    expect(listing).toContain('worker-assets/assets/client.js');
     expect(listing).toContain('admin/index.html');
     expect(listing).toContain('admin/assets/app.js');
     expect(listing).toContain('liff/index.html');
@@ -118,6 +128,7 @@ describe('buildBundle', () => {
 
     buildBundle({
       workerJs: fx.workerJs,
+      workerAssetsDir: fx.workerAssetsDir,
       adminDir: fx.adminDir,
       liffDir: fx.liffDir,
       migrationsDir: fx.migrationsDir,
@@ -133,6 +144,7 @@ describe('buildBundle', () => {
 
     // Worker/admin/liff still present.
     expect(listing).toContain('worker/index.js');
+    expect(listing).toContain('worker-assets/index.html');
     expect(listing).toContain('admin/index.html');
     expect(listing).toContain('liff/index.html');
 

@@ -23,6 +23,7 @@ interface Fixture {
   tmpDir: string;
   tarball: string;
   workerBytes: Buffer;
+  workerAssetIndex: Buffer;
   adminIndex: Buffer;
   adminSubApp: Buffer;
   liffIndex: Buffer;
@@ -36,23 +37,27 @@ function buildFixture(): Fixture {
 
   // Build directory tree.
   const workerDir = join(stageDir, 'worker');
+  const workerAssetsDir = join(stageDir, 'worker-assets');
   const adminDir = join(stageDir, 'admin');
   const adminSubDir = join(adminDir, 'sub');
   const liffDir = join(stageDir, 'liff');
   const migrationsDir = join(stageDir, 'migrations');
   mkdirSync(workerDir);
+  mkdirSync(workerAssetsDir);
   mkdirSync(adminDir);
   mkdirSync(adminSubDir);
   mkdirSync(liffDir);
   mkdirSync(migrationsDir);
 
   const workerBytes = Buffer.from('// worker bundle\nconsole.log("hi");\n', 'utf8');
+  const workerAssetIndex = Buffer.from('<html>worker assets</html>\n', 'utf8');
   const adminIndex = Buffer.from('<html>admin</html>\n', 'utf8');
   const adminSubApp = Buffer.from('// nested admin app\n', 'utf8');
   const liffIndex = Buffer.from('<html>liff</html>\n', 'utf8');
   const migration = Buffer.from('-- migration 041\nSELECT 1;\n', 'utf8');
 
   writeFileSync(join(workerDir, 'index.js'), workerBytes);
+  writeFileSync(join(workerAssetsDir, 'index.html'), workerAssetIndex);
   writeFileSync(join(adminDir, 'index.html'), adminIndex);
   writeFileSync(join(adminSubDir, 'app.js'), adminSubApp);
   writeFileSync(join(liffDir, 'index.html'), liffIndex);
@@ -62,7 +67,7 @@ function buildFixture(): Fixture {
   // COPYFILE_DISABLE=1 suppresses macOS AppleDouble (._*) sidecar files which
   // would otherwise leak into the archive and break hash-determinism tests.
   const tarball = join(tmpDir, 'bundle.tar.gz');
-  execSync(`tar czf ${tarball} -C ${stageDir} worker admin liff migrations`, {
+  execSync(`tar czf ${tarball} -C ${stageDir} worker worker-assets admin liff migrations`, {
     stdio: 'pipe',
     env: { ...process.env, COPYFILE_DISABLE: '1' },
   });
@@ -71,6 +76,7 @@ function buildFixture(): Fixture {
     tmpDir,
     tarball,
     workerBytes,
+    workerAssetIndex,
     adminIndex,
     adminSubApp,
     liffIndex,
@@ -118,6 +124,7 @@ describe('parseBundleStream', () => {
     const parsed = await parseBundleStream(stream);
 
     expect(parsed.workerJs.equals(fixture.workerBytes)).toBe(true);
+    expect(parsed.workerAssetFiles.get('index.html')?.equals(fixture.workerAssetIndex)).toBe(true);
     expect(parsed.adminFiles.get('index.html')?.equals(fixture.adminIndex)).toBe(true);
     expect(parsed.liffFiles.get('index.html')?.equals(fixture.liffIndex)).toBe(true);
     expect(parsed.migrations.get('041_x.sql')?.equals(fixture.migration)).toBe(true);
@@ -155,6 +162,7 @@ describe('verifyBundleHashes', () => {
 
     const re = /^sha256:[0-9a-f]{64}$/;
     expect(hashes.worker).toMatch(re);
+    expect(hashes.workerAssets).toMatch(re);
     expect(hashes.admin).toMatch(re);
     expect(hashes.liff).toMatch(re);
   });
@@ -171,6 +179,7 @@ describe('verifyBundleHashes', () => {
 
     // Worker hash: plain SHA256 of bytes, prefixed sha256:
     expect(hashes.worker).toBe(refHashBuffer(fixture.workerBytes));
+    expect(hashes.workerAssets).toBe(refHashContentMap(parsed.workerAssetFiles));
 
     // Admin/LIFF: directory-style hash (sorted keys, NUL-delimited)
     expect(hashes.admin).toBe(refHashContentMap(parsed.adminFiles));
@@ -190,6 +199,7 @@ describe('verifyBundleHashes', () => {
 describe('assertHashesMatch', () => {
   const computed = {
     worker: 'sha256:aaa',
+    workerAssets: 'sha256:assets',
     admin: 'sha256:bbb',
     liff: 'sha256:ccc',
   };
@@ -198,6 +208,7 @@ describe('assertHashesMatch', () => {
     expect(
       assertHashesMatch(computed, {
         worker_hash: 'sha256:aaa',
+        worker_assets_hash: 'sha256:assets',
         admin_hash: 'sha256:bbb',
         liff_hash: 'sha256:ccc',
       }),
@@ -222,6 +233,17 @@ describe('assertHashesMatch', () => {
         liff_hash: 'sha256:ccc',
       }),
     ).toThrow(/bundle admin hash mismatch/);
+  });
+
+  it('throws on worker assets hash mismatch', () => {
+    expect(() =>
+      assertHashesMatch(computed, {
+        worker_hash: 'sha256:aaa',
+        worker_assets_hash: 'sha256:WRONG',
+        admin_hash: 'sha256:bbb',
+        liff_hash: 'sha256:ccc',
+      }),
+    ).toThrow(/worker assets hash mismatch/);
   });
 
   it('throws on liff hash mismatch', () => {

@@ -293,13 +293,14 @@ describe('injectVersion.write', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('writes a _version.ts file with all 5 exports', () => {
+  it('writes a _version.ts file with all artifact exports', () => {
     const outPath = join(dir, '_version.ts');
     injectVersion.write(outPath, {
       version: '0.8.0',
       workerHash: 'sha256:aaaa',
       adminHash: 'sha256:bbbb',
       liffHash: 'sha256:cccc',
+      workerAssetsHash: 'sha256:dddd',
       releasedAt: '2026-05-12T03:00:00Z',
     });
 
@@ -309,6 +310,7 @@ describe('injectVersion.write', () => {
     expect(content).toContain('export const WORKER_HASH = "sha256:aaaa"');
     expect(content).toContain('export const ADMIN_HASH = "sha256:bbbb"');
     expect(content).toContain('export const LIFF_HASH = "sha256:cccc"');
+    expect(content).toContain('export const WORKER_ASSETS_HASH = "sha256:dddd"');
     expect(content).toContain('export const RELEASED_AT = "2026-05-12T03:00:00Z"');
   });
 });

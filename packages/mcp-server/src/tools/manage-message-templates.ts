@@ -1,27 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-
-function getApiConfig() {
-  const apiUrl = process.env.LINE_HARNESS_API_URL;
-  const apiKey = process.env.LINE_HARNESS_API_KEY;
-  if (!apiUrl || !apiKey) throw new Error("LINE_HARNESS_API_URL and LINE_HARNESS_API_KEY required");
-  return { apiUrl, apiKey };
-}
-
-async function apiCall(path: string, method = "GET", body?: unknown) {
-  const { apiUrl, apiKey } = getApiConfig();
-  const res = await fetch(`${apiUrl}${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(`API ${res.status}: ${JSON.stringify(data)}`);
-  return data;
-}
+import { apiCall, toToolResult } from "../api-call.js";
 
 export function registerManageMessageTemplates(server: McpServer): void {
   server.tool(
@@ -37,22 +16,19 @@ export function registerManageMessageTemplates(server: McpServer): void {
     async ({ action, templateId, name, messageType, messageContent }) => {
       try {
         if (action === "list") {
-          const data = await apiCall("/api/message-templates");
-          return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+          return toToolResult(await apiCall("/api/message-templates"));
         }
 
         if (action === "get") {
           if (!templateId) throw new Error("templateId is required for get");
-          const data = await apiCall(`/api/message-templates/${templateId}`);
-          return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+          return toToolResult(await apiCall(`/api/message-templates/${templateId}`));
         }
 
         if (action === "create") {
           if (!name || !messageType || !messageContent) {
             throw new Error("name, messageType, and messageContent are required for create");
           }
-          const data = await apiCall("/api/message-templates", "POST", { name, messageType, messageContent });
-          return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+          return toToolResult(await apiCall("/api/message-templates", "POST", { name, messageType, messageContent }));
         }
 
         if (action === "update") {
@@ -61,14 +37,12 @@ export function registerManageMessageTemplates(server: McpServer): void {
           if (name !== undefined) body.name = name;
           if (messageType !== undefined) body.messageType = messageType;
           if (messageContent !== undefined) body.messageContent = messageContent;
-          const data = await apiCall(`/api/message-templates/${templateId}`, "PUT", body);
-          return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+          return toToolResult(await apiCall(`/api/message-templates/${templateId}`, "PUT", body));
         }
 
         if (action === "delete") {
           if (!templateId) throw new Error("templateId is required for delete");
-          const data = await apiCall(`/api/message-templates/${templateId}`, "DELETE");
-          return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+          return toToolResult(await apiCall(`/api/message-templates/${templateId}`, "DELETE"));
         }
 
         throw new Error(`Unknown action: ${action}`);

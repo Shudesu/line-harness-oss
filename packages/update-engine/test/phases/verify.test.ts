@@ -169,6 +169,54 @@ describe('runVerify', () => {
     expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
+  // Regression: worker bundles released before the public /api/health
+  // route existed answer 401 (auth middleware) or 404 to the health probe.
+  // Any response below 500 proves the Worker booted and is routing — it
+  // must NOT fail verify (which would trigger a pointless rollback).
+  it.each([401, 404])(
+    'Worker health %i (pre-health-route bundle) — treated as alive, verify proceeds',
+    async (status) => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === WORKER_HEALTH_URL) return notOk(status);
+        if (url.includes(D1_QUERY_SUBSTR)) return ok({ success: true, result: [] });
+        return ok();
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const { events, emitter } = collectEvents();
+      await runVerify(sampleCtx(), sampleUrls(), emitter);
+
+      expect(events).toEqual([
+        { step: 'verify', status: 'running' },
+        { step: 'verify', status: 'done' },
+      ]);
+      // No retries: the first sub-500 response settles the worker probe.
+      const callUrls = (fetchMock.mock.calls as Array<[string]>).map(([u]) => u);
+      expect(callUrls.filter((u) => u === WORKER_HEALTH_URL).length).toBe(1);
+    },
+  );
+
+  it('Admin URL 401 still fails — permissive check applies to the worker probe only', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === WORKER_HEALTH_URL) return ok();
+      if (url.includes(D1_QUERY_SUBSTR)) return ok({ success: true, result: [] });
+      if (url === ADMIN_URL) return notOk(401);
+      return ok();
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { emitter } = collectEvents();
+    const promise = runVerify(sampleCtx(), sampleUrls(), emitter);
+    const settled = promise.catch((e) => e);
+
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
+
+    const err = (await settled) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/Admin/);
+  });
+
   it('Worker /health fails after 3 retries — throws, done event NOT emitted', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (url === WORKER_HEALTH_URL) return notOk(500);

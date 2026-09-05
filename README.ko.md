@@ -1,6 +1,6 @@
 🌐 [日本語](README.md) | [English](README.en.md) | [简体中文](README.zh-CN.md) | **한국어** | [Español](README.es.md)
 
-# LINE Harness
+# L Harness
 
 > ### **[LINE에서 무료 체험하기](https://shudesu.github.io/line-harness-oss/)** 👈
 
@@ -9,15 +9,15 @@ Cloudflare 무료 플랜에서 동작. **서버 비용 0원**. Claude Code 에�
 
 ### ▶️ [YouTube 에서 영상 보기 (약 20분)](https://youtu.be/DiRuGaeq1sM)
 
-[![클릭하여 YouTube 재생 — LINE Harness 도입 가이드](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+[![클릭하여 YouTube 재생 — L Harness 도입 가이드](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
 
 **현재 버전**: v0.13.2 ・ MIT License ・ TypeScript / Cloudflare Workers + D1
 
 ---
 
-## 왜 LINE Harness?
+## 왜 L Harness?
 
-| | 폐쇄형 SaaS A | 폐쇄형 SaaS B | **LINE Harness** |
+| | 폐쇄형 SaaS A | 폐쇄형 SaaS B | **L Harness** |
 |---|---|---|---|
 | 월 요금 | ¥20,000+ | ¥10,000+ | **0 원** |
 | 스텝 메시지 | ✅ | ✅ | ✅ |
@@ -83,6 +83,14 @@ CLI 가 다음을 모두 처리합니다:
 - **폼 (LIFF)** — LINE 내에서 완결되는 폼, 답변 → 메타데이터 자동 저장
 - **캘린더 예약** — Google Calendar 연동 LIFF 예약 시스템
 - **스태프 관리** — Owner / Admin / Staff 3단계 역할, 개별 API 키 발급
+
+### 제휴 추적 (ASP)
+- **셀프서브 링크 발급** — 제휴 파트너가 관리자 개입 없이 LIFF 추적 링크를 직접 발급
+- **캠페인 관리** — 캠페인별 고정 보수 설정, 여러 캠페인 병렬 운영
+- **시계열 추적** — 클릭 → 친구 추가 → CV를 순서대로 기록, last-touch 귀속으로 성과 연결
+- **승인 플로우** — 귀속된 성과를 승인/거절하여 보수를 확정, 중복 계정 플래그로 부정 의심 성과를 가시화
+- **LINE 푸시 알림** — 성과 확정 시 제휴 파트너에게 자동 푸시 알림
+- 상세: [docs/wiki/27-Affiliate-ASP.md](docs/wiki/27-Affiliate-ASP.md)
 
 ### 자동화
 - **IF-THEN 규칙** — 트리거 7종 × 액션 6종
@@ -155,4 +163,4 @@ Issue / PR 환영. `Shudesu/line-harness-oss` (이 저장소) 로 보내주세�
 
 ---
 
-> **LINE Harness** by [@Shudesu](https://github.com/Shudesu) — AI 네이티브 시대의 오픈소스 LINE CRM
+> **L Harness** by [@Shudesu](https://github.com/Shudesu) — AI 네이티브 시대의 오픈소스 LINE CRM

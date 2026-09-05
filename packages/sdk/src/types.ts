@@ -37,6 +37,8 @@ export interface Friend {
   isFollowing: boolean
   metadata: Record<string, unknown>
   tags: Tag[]
+  /** 所属する LINE アカウント (multi-account 環境)。 */
+  lineAccountId?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -226,6 +228,8 @@ export interface Broadcast {
   successCount: number
   lineRequestId?: string | null
   aggregationUnit?: string | null
+  /** リンク自動短縮 (auto-track) の ON/OFF。false なら URL をそのまま送信する。 */
+  trackLinks?: boolean
   createdAt: string
 }
 
@@ -256,6 +260,8 @@ export interface CreateBroadcastInput {
   targetTagId?: string
   scheduledAt?: string
   altText?: string
+  /** false でリンク自動短縮 (auto-track) を無効化し、URL をそのまま送信する。省略時は true。 */
+  trackLinks?: boolean
 }
 
 export interface UpdateBroadcastInput {
@@ -265,6 +271,7 @@ export interface UpdateBroadcastInput {
   targetType?: 'all' | 'tag'
   targetTagId?: string | null
   scheduledAt?: string | null
+  trackLinks?: boolean
 }
 
 // ─── Rich Menu ──────────────────────────────────────────
@@ -321,12 +328,18 @@ export interface TrackedLink {
   name: string
   originalUrl: string
   trackingUrl: string
+  /** 7文字の短縮コード（/t/<code>）。旧リンクは null（UUID URL のみ）。 */
+  shortCode?: string | null
   tagId: string | null
   scenarioId: string | null
   introTemplateId: string | null
   rewardTemplateId: string | null
+  lineAccountId: string | null
   isActive: boolean
   clickCount: number
+  ogTitle: string | null
+  ogDescription: string | null
+  ogImageUrl: string | null
   createdAt: string
   updatedAt: string
 }
@@ -349,6 +362,11 @@ export interface CreateTrackedLinkInput {
   scenarioId?: string | null
   introTemplateId?: string | null
   rewardTemplateId?: string | null
+  /** リンクを所有する LINE アカウント。/t の LIFF リダイレクト先の解決に使う。 */
+  lineAccountId?: string | null
+  ogTitle?: string | null
+  ogDescription?: string | null
+  ogImageUrl?: string | null
 }
 
 export interface UpdateTrackedLinkInput {
@@ -357,7 +375,11 @@ export interface UpdateTrackedLinkInput {
   scenarioId?: string | null
   introTemplateId?: string | null
   rewardTemplateId?: string | null
+  lineAccountId?: string | null
   isActive?: boolean
+  ogTitle?: string | null
+  ogDescription?: string | null
+  ogImageUrl?: string | null
 }
 
 // ─── Forms ──────────────────────────────────────────────
@@ -382,6 +404,9 @@ export interface Form {
   saveToMetadata: boolean
   isActive: boolean
   submitCount: number
+  ogTitle: string | null
+  ogDescription: string | null
+  ogImageUrl: string | null
   createdAt: string
   updatedAt: string
 }
@@ -395,6 +420,9 @@ export interface CreateFormInput {
   onSubmitMessageType?: 'text' | 'flex' | null
   onSubmitMessageContent?: string | null
   saveToMetadata?: boolean
+  ogTitle?: string | null
+  ogDescription?: string | null
+  ogImageUrl?: string | null
 }
 
 export interface UpdateFormInput {
@@ -407,6 +435,9 @@ export interface UpdateFormInput {
   onSubmitMessageContent?: string | null
   saveToMetadata?: boolean
   isActive?: boolean
+  ogTitle?: string | null
+  ogDescription?: string | null
+  ogImageUrl?: string | null
 }
 
 export interface FormSubmission {

@@ -34,6 +34,7 @@ export interface VersionData {
   workerHash: string;
   adminHash: string;
   liffHash: string;
+  workerAssetsHash: string;
   releasedAt: string;
 }
 
@@ -92,6 +93,7 @@ function write(outPath: string, v: VersionData): void {
     `export const WORKER_HASH = ${JSON.stringify(v.workerHash)};`,
     `export const ADMIN_HASH = ${JSON.stringify(v.adminHash)};`,
     `export const LIFF_HASH = ${JSON.stringify(v.liffHash)};`,
+    `export const WORKER_ASSETS_HASH = ${JSON.stringify(v.workerAssetsHash)};`,
     `export const RELEASED_AT = ${JSON.stringify(v.releasedAt)};`,
     '',
   ].join('\n');
@@ -112,6 +114,7 @@ interface CliArgs {
   worker?: string;
   admin?: string;
   liff?: string;
+  workerAssets?: string;
   out?: string;
   releasedAt?: string;
 }
@@ -140,6 +143,10 @@ function parseArgs(args: string[]): CliArgs {
         break;
       case 'liff':
         out.liff = value;
+        break;
+      case 'worker-assets':
+      case 'workerAssets':
+        out.workerAssets = value;
         break;
       case 'out':
         out.out = value;
@@ -178,17 +185,33 @@ function main(rawArgs: string[]): void {
   const workerPath = requireArg(args, 'worker');
   const adminPath = requireArg(args, 'admin');
   const liffPath = requireArg(args, 'liff');
+  const workerAssetsPath = requireArg(args, 'workerAssets');
   const outPath = requireArg(args, 'out');
   const releasedAt = args.releasedAt ?? new Date().toISOString();
 
   const workerHash = hashArtifact('worker', workerPath);
   const adminHash = hashArtifact('admin', adminPath);
   const liffHash = hashArtifact('liff', liffPath);
+  const workerAssetsHash = hashArtifact('worker-assets', workerAssetsPath);
 
-  write(outPath, { version, workerHash, adminHash, liffHash, releasedAt });
+  write(outPath, {
+    version,
+    workerHash,
+    adminHash,
+    liffHash,
+    workerAssetsHash,
+    releasedAt,
+  });
 
   stdout.write(
-    JSON.stringify({ version, workerHash, adminHash, liffHash, releasedAt }) + '\n',
+    JSON.stringify({
+      version,
+      workerHash,
+      adminHash,
+      liffHash,
+      workerAssetsHash,
+      releasedAt,
+    }) + '\n',
   );
 }
 

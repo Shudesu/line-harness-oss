@@ -54,6 +54,10 @@ interface Rule {
 // Order matters: more specific rules first so messages are useful.
 const RULES: Rule[] = [
   {
+    label: 'CREATE TRIGGER is unsupported by the safe statement splitter',
+    pattern: /\bCREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\b/i,
+  },
+  {
     label: 'DROP TABLE is forbidden (additive-only migrations)',
     pattern: /\bDROP\s+TABLE\b/i,
   },

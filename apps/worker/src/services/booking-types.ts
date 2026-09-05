@@ -91,6 +91,10 @@ export interface AvailabilityByStaff {
   staff_id: string;
   display_name: string;
   slots: AvailabilitySlot[];
+  // Whether the staff has any working hours (dated shift in the requested
+  // range, or an active weekly rule). Lets clients tell "not configured yet"
+  // apart from "fully booked" when slots is empty.
+  has_working_hours: boolean;
 }
 
 export interface AccountSettings {

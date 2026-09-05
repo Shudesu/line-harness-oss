@@ -1,30 +1,43 @@
 {
   "name": "line-oss-crm",
-  "version": "0.15.0",
+  "version": "0.24.0",
   "private": true,
   "description": "Open-source LINE Official Account CRM/marketing automation",
+  "homepage": "https://the-harness.com/line-harness/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shudesu/line-harness-oss.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Shudesu/line-harness-oss/issues"
+  },
+  "author": {
+    "name": "野田修一 (Shudesu)",
+    "url": "https://the-harness.com/noda-shuichi/"
+  },
   "scripts": {
     "dev:worker": "pnpm --filter worker dev",
     "dev:web": "pnpm --filter web dev",
     "build": "pnpm -r build",
-    "sandbox:create-line-harness": "bash scripts/run-create-line-harness-sandbox.sh",
     "deploy:worker": "pnpm --filter worker deploy",
     "deploy:web": "pnpm --filter web build",
-    "db:migrate": "wrangler d1 execute line-crm --file=packages/db/schema.sql",
-    "db:migrate:local": "wrangler d1 execute line-crm --file=packages/db/schema.sql --local",
+    "db:migrate": "wrangler d1 execute your-database --file=packages/db/schema.sql",
+    "db:migrate:local": "wrangler d1 execute your-database --file=packages/db/schema.sql --local",
     "deploy:setup": "node packages/create-line-harness/dist/index.js",
     "deploy:update": "node packages/create-line-harness/dist/index.js update",
+    "sandbox:create-line-harness": "bash scripts/run-create-line-harness-sandbox.sh",
     "test:scripts": "vitest run --config vitest.config.ts",
-    "build:bundle": "tsx scripts/release/build-bundle.ts"
+    "build:bundle": "tsx scripts/release/build-bundle.ts",
+    "build:wfp-bundle": "tsx scripts/release/build-wfp-bundle.ts"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^2.1.0",
-    "wrangler": "4"
+    "wrangler": "4",
+    "tsx": "^4.21.0",
+    "vitest": "^2.1.0"
   }
 }

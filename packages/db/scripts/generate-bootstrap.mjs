@@ -43,6 +43,61 @@ function applyMigrationFile(db, fileName) {
   }
 }
 
+/**
+ * sqlite_master が返す DDL は素の `CREATE TABLE ...` / `CREATE INDEX ...` で、
+ * 既存 DB に流すと 1 文目の "table already exists" でファイル全体が失敗する。
+ * セットアップのリトライ時 (D1 が既に存在するケース) にも bootstrap.sql を
+ * そのまま適用できるよう、書き出し時に IF NOT EXISTS を差し込む。
+ */
+function makeIdempotent(sql) {
+  return sql.replace(
+    /^CREATE\s+(TABLE|VIEW|TRIGGER|(?:UNIQUE\s+)?INDEX)\s+(?!IF\s+NOT\s+EXISTS\b)/i,
+    (_match, kind) => `CREATE ${kind.replace(/\s+/g, " ")} IF NOT EXISTS `,
+  );
+}
+
+function sqlLiteral(value) {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") return String(value);
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+/**
+ * bootstrap.sql は sqlite_master だけでは seed data を保持できない。
+ * 新規インストールでも migration と同じ組み込み自動返信を利用できるよう、
+ * builtin ID の auto_replies だけを決定的な順序で書き出す。
+ */
+function buildBuiltinAutoReplySeeds(db) {
+  const rows = db
+    .prepare(
+      `SELECT id, keyword, match_type, response_type, response_content,
+              template_id, line_account_id, is_active, created_at
+         FROM auto_replies
+        WHERE id LIKE 'builtin-%'
+        ORDER BY id`,
+    )
+    .all();
+  if (rows.length === 0) return "";
+
+  const columns = [
+    "id",
+    "keyword",
+    "match_type",
+    "response_type",
+    "response_content",
+    "template_id",
+    "line_account_id",
+    "is_active",
+    "created_at",
+  ];
+  return rows
+    .map((row) => {
+      const values = columns.map((column) => sqlLiteral(row[column])).join(", ");
+      return `INSERT OR IGNORE INTO auto_replies (${columns.join(", ")})\nVALUES (${values});`;
+    })
+    .join("\n\n");
+}
+
 function buildBootstrapSql() {
   const sqlitePath = join(
     tmpdir(),
@@ -85,11 +140,12 @@ function buildBootstrapSql() {
     ].join("\n");
 
     const body = rows
-      .map((row) => `${String(row.sql).trim()};`)
+      .map((row) => `${makeIdempotent(String(row.sql).trim())};`)
       .join("\n\n");
+    const builtinSeeds = buildBuiltinAutoReplySeeds(db);
 
     return {
-      sql: `${header}${body}\n`,
+      sql: `${header}${body}${builtinSeeds ? `\n\n${builtinSeeds}` : ""}\n`,
       meta: {
         includedMigrations: migrationFiles,
         migrationCount: migrationFiles.length,

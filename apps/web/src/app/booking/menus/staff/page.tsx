@@ -5,6 +5,14 @@ import { useSearchParams } from 'next/navigation'
 import Header from '@/components/layout/header'
 import { bookingApi, type BookingMenu, type BookingStaff, type StaffMenuMatrix } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 // このメニューを各スタッフが提供するか／料金所要を上書きするかの一括編集 UI。
 // staff_menus は staff_id × menu_id 主キー。スタッフごとに個別 PUT で書く。
@@ -108,44 +116,35 @@ export default function MenuStaffMatrix() {
             : 'このメニューを提供できるスタッフ・上書き料金/所要分'
         }
         action={
-          <button
+          <Button
+            type="button"
+            variant="primary"
+            loading={saving}
             onClick={saveAll}
             // error がある間も無効化: 失敗時に古い rows が残る可能性があるので
             // 「保存して再取得」のショートサーキットを防ぎ、ユーザーが再読み込みする導線へ。
             disabled={saving || !selectedAccountId || loading || Boolean(error)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
           >
-            {saving ? '保存中…' : '保存'}
-          </button>
+            保存
+          </Button>
         }
       />
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="設定を読み込めませんでした" description={error} />
       )}
       {savedAt && Date.now() - savedAt < 3000 && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
-          保存しました
-        </div>
+        <Banner className="mb-4" variant="default" title="保存しました" />
       )}
 
       {!selectedAccountId ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          サイドバーでアカウントを選択してください
-        </div>
+        <Empty title="アカウントが未選択です" description="サイドバーで操作するアカウントを選択してください。" />
       ) : loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          読み込み中…
-        </div>
+        <LayerCard className="p-12"><Loader className="mx-auto" /></LayerCard>
       ) : staff.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          先にスタッフを登録してください
-        </div>
+        <Empty title="スタッフがいません" description="先に予約スタッフを登録してください。" />
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <LayerCard className="overflow-hidden p-0">
           {menu && (
             <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs text-gray-600">
               基本: {menu.duration_minutes}分 / ¥{menu.base_price.toLocaleString()}
@@ -153,23 +152,16 @@ export default function MenuStaffMatrix() {
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[600px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">スタッフ</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">提供する</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">所要分（上書き）</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">料金（上書き）</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
+            <Table className="min-w-[600px]">
+              <Table.Header><Table.Row><Table.Head>スタッフ</Table.Head><Table.Head className="text-center">提供する</Table.Head><Table.Head>所要分（上書き）</Table.Head><Table.Head>料金（上書き）</Table.Head></Table.Row></Table.Header>
+              <Table.Body>
                 {staff.map((s) => {
                   const row = rows[s.id]
                   if (!row) return null
                   const offered = Boolean(row.is_offered)
                   return (
-                    <tr key={s.id} className={offered ? '' : 'opacity-60'}>
-                      <td className="px-4 py-3 text-sm">
+                    <Table.Row key={s.id} className={offered ? '' : 'opacity-60'}>
+                      <Table.Cell>
                         <div className="flex items-center gap-2">
                           {s.profile_image_url ? (
                             <img src={s.profile_image_url} alt="" className="w-8 h-8 rounded-full object-cover" />
@@ -185,17 +177,17 @@ export default function MenuStaffMatrix() {
                             ) : null}
                           </div>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <input
-                          type="checkbox"
+                      </Table.Cell>
+                      <Table.Cell className="text-center">
+                        <Checkbox
+                          aria-label={`${s.display_name}がこのメニューを提供する`}
                           checked={offered}
-                          onChange={(e) => update(s.id, { is_offered: e.target.checked ? 1 : 0 })}
-                          className="w-4 h-4"
+                          onCheckedChange={(checked) => update(s.id, { is_offered: checked ? 1 : 0 })}
                         />
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <input
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Input
+                          aria-label={`${s.display_name}の所要時間`}
                           type="number"
                           value={row.override_duration_minutes ?? ''}
                           onChange={(e) =>
@@ -205,13 +197,14 @@ export default function MenuStaffMatrix() {
                           }
                           disabled={!offered}
                           placeholder={menu ? `${menu.duration_minutes}` : '-'}
-                          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-24 tabular-nums focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-50 disabled:text-gray-400"
+                          className="w-24 tabular-nums"
                         />
                         <span className="ml-1 text-xs text-gray-400">分</span>
-                      </td>
-                      <td className="px-4 py-3 text-sm">
+                      </Table.Cell>
+                      <Table.Cell>
                         <span className="text-xs text-gray-400 mr-1">¥</span>
-                        <input
+                        <Input
+                          aria-label={`${s.display_name}の料金`}
                           type="number"
                           value={row.override_price ?? ''}
                           onChange={(e) =>
@@ -221,16 +214,16 @@ export default function MenuStaffMatrix() {
                           }
                           disabled={!offered}
                           placeholder={menu ? menu.base_price.toString() : '-'}
-                          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-28 tabular-nums focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-gray-50 disabled:text-gray-400"
+                          className="inline-flex w-28 tabular-nums"
                         />
-                      </td>
-                    </tr>
+                      </Table.Cell>
+                    </Table.Row>
                   )
                 })}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table>
           </div>
-        </div>
+        </LayerCard>
       )}
     </div>
   )

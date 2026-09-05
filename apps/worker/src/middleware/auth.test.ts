@@ -13,14 +13,15 @@ vi.mock('@line-crm/db', () => ({
   }),
 }));
 
-const PAGES = 'https://line-crm-admin.pages.dev';
-const WORKERS = 'https://line-crm-worker.line-crm-api.workers.dev';
+const PAGES = 'https://your-admin.pages.dev';
+const WORKERS = 'https://your-worker.your-subdomain.workers.dev';
 
 function env(overrides: Partial<Env['Bindings']> = {}): Env['Bindings'] {
   return {
     DB: {} as D1Database,
     IMAGES: {} as R2Bucket,
     ASSETS: {} as Fetcher,
+    TENANT_SCHEDULER: {} as Env['Bindings']['TENANT_SCHEDULER'],
     LINE_CHANNEL_SECRET: 'secret',
     LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
     API_KEY: 'env-key',
@@ -48,6 +49,14 @@ function app() {
   a.route('/', adminAuth);
   a.get('/api/protected', (c) => c.json({ success: true, data: c.get('staff') }));
   a.post('/api/protected', (c) => c.json({ success: true, data: c.get('staff') }));
+  a.get('/api/forms/:id', (c) => c.json({ success: true, staff: c.get('staff') ?? null }));
+  a.put('/api/forms/:id', (c) => c.json({ success: true }));
+  a.delete('/api/forms/:id', (c) => c.json({ success: true }));
+  a.post('/api/forms/:id/submit', (c) => c.json({ success: true }));
+  a.post('/api/forms/:id/partial', (c) => c.json({ success: true }));
+  a.post('/api/forms/:id/opened', (c) => c.json({ success: true }));
+  a.get('/api/booking/google-calendar/oauth/callback', (c) => c.text('oauth-callback'));
+  a.post('/api/booking/google-calendar/oauth/callback', (c) => c.text('wrong-method'));
   return a;
 }
 
@@ -159,6 +168,61 @@ describe('protected API access', () => {
   });
 });
 
+describe('public form method boundaries', () => {
+  test('allows unauthenticated GET of a form definition', async () => {
+    const res = await app().request('/api/forms/form-1', {}, crossSiteEnv());
+    expect(res.status).toBe(200);
+    expect((await res.json() as { staff: unknown }).staff).toBeNull();
+  });
+
+  test('authenticates an admin GET so the route can return private settings', async () => {
+    const res = await app().request('/api/forms/form-1', {
+      headers: { Authorization: 'Bearer env-key' },
+    }, crossSiteEnv());
+    expect(res.status).toBe(200);
+    expect((await res.json() as { staff: { role: string } }).staff.role).toBe('owner');
+  });
+
+  test.each(['PUT', 'DELETE'])('%s on the same form path requires admin auth', async (method) => {
+    const res = await app().request('/api/forms/form-1', { method }, crossSiteEnv());
+    expect(res.status).toBe(401);
+  });
+
+  test.each(['submit', 'partial', 'opened'])(
+    'allows POST /%s through to route-level LIFF authentication',
+    async (action) => {
+      const res = await app().request(`/api/forms/form-1/${action}`, {
+        method: 'POST',
+      }, crossSiteEnv());
+      expect(res.status).toBe(200);
+    },
+  );
+
+  test('does not exempt the wrong method on a public action path', async () => {
+    const res = await app().request('/api/forms/form-1/submit', {
+      method: 'DELETE',
+    }, crossSiteEnv());
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('Google OAuth callback boundary', () => {
+  test('allows only unauthenticated GET callback through to signed-state validation', async () => {
+    const get = await app().request(
+      '/api/booking/google-calendar/oauth/callback?state=signed&code=code',
+      {},
+      crossSiteEnv(),
+    );
+    expect(get.status).toBe(200);
+    expect(await get.text()).toBe('oauth-callback');
+
+    const post = await app().request('/api/booking/google-calendar/oauth/callback', {
+      method: 'POST',
+    }, crossSiteEnv());
+    expect(post.status).toBe(401);
+  });
+});
+
 describe('CSRF protection', () => {
   test('cookie-authenticated POST without an X-CSRF-Token is rejected', async () => {
     const res = await app().request('/api/protected', {
@@ -239,6 +303,30 @@ describe('CORS allowed / blocked origins', () => {
       headers: { Origin: PAGES, Cookie: 'lh_admin_session=staff-key' },
     }, crossSiteEnv());
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(PAGES);
+    expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+  });
+
+  test('Cloudflare Pages preview origin for the admin project is echoed back', async () => {
+    const preview = 'https://abc123.your-admin.pages.dev';
+    const res = await app().request('/api/protected', {
+      headers: { Origin: preview, Cookie: 'lh_admin_session=staff-key' },
+    }, crossSiteEnv());
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(preview);
+    expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+  });
+
+  test('login preflight succeeds from a Cloudflare Pages preview origin', async () => {
+    const preview = 'https://abc123.your-admin.pages.dev';
+    const res = await app().request('/api/auth/login', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: preview,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    }, crossSiteEnv());
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(preview);
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
   });
 

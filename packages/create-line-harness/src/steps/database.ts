@@ -58,6 +58,117 @@ const isBenignSchemaError = (err: unknown): boolean => {
   );
 };
 
+/**
+ * 行末セミコロン + 改行で SQL を文に割る。packages/db/scripts/generate-bootstrap.mjs
+ * と同じ分割規則。文字列リテラル内に「セミコロン + 改行」を含む SQL は誤分割される
+ * ため、seed を追加するときはリテラルを 1 行に収めること (現在の bootstrap.sql の
+ * INSERT は 1 行で、この条件を満たす)。
+ */
+function splitSqlStatements(sql: string): string[] {
+  return sql
+    .split(/;\s*(?:\r?\n|$)/)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+}
+
+/**
+ * 文の種類を判定するために先頭の行コメントを落とす。migration ファイルは各文の前に
+ * 意図を `--` で書いているので、これを剥がさないと文の頭が SQL キーワードにならない。
+ */
+function stripLeadingComments(statement: string): string {
+  return statement.replace(/^(?:\s*--[^\n]*\n)+/, "").trim();
+}
+
+/**
+ * 文単位フォールバックで絶対に流してはいけない文。
+ *
+ * 027/029 はテーブルを作り直す migration で、CREATE TABLE ..._new → INSERT SELECT →
+ * DROP TABLE → RENAME という形をとる。これを既存 DB で再実行すると、その migration
+ * 時点の列しかコピーされないため、後続 migration が足した列 (broadcasts の
+ * dedup_progress / batch_lock_at / track_links など) と実データが消し飛ぶ。
+ * ファイル一括で流す通常経路では 1 文目の duplicate column で全体がロールバック
+ * されるので害が出ないが、文単位に割るとそれが素通りしてしまう。
+ */
+const DESTRUCTIVE_STATEMENT =
+  /\b(?:DROP\s+TABLE|DELETE\s+FROM|ALTER\s+TABLE\s+\S+\s+RENAME)\b|^CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\b)/i;
+
+/**
+ * 何度流しても結果が変わらない「足すだけ」の文。フォールバックの主目的である
+ * 欠けた列・テーブル・index の補完がこれに当たる。CTE 付きの `WITH ... INSERT OR
+ * IGNORE` も 062 の backfill で使われているので含める。
+ */
+const IDEMPOTENT_STATEMENT =
+  /^(?:ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN\b|CREATE\s+(?:TABLE|VIEW|TRIGGER|(?:UNIQUE\s+)?INDEX)\s+IF\s+NOT\s+EXISTS\b|(?:WITH\b[\s\S]*?)?INSERT\s+OR\s+IGNORE\s+INTO\b)/i;
+
+/** ADD COLUMN の直後に置かれる「新しい列を既存行に埋める」タイプの backfill。 */
+const BACKFILL_UPDATE = /^UPDATE\s+\S+\s+SET\b/i;
+
+/**
+ * SQL ファイルを D1 に適用する。
+ *
+ * `wrangler d1 execute --file` はファイル内の全ステートメントを 1 バッチとして送る
+ * ため、1 文でも失敗するとファイル全体がロールバックされる。既存 DB への再適用では
+ * 「既にある列/テーブル」に当たるのが普通なので、それだけで同一ファイル内の他の DDL
+ * まで巻き添えで失われる。実際 issue #294 はこれで、046 が duplicate column で落ちた
+ * 結果 tracked_links.line_account_id が付かず、050 が "no such column" で停止していた。
+ *
+ * そこでファイル単位で失敗し、かつ内容が benign (既存重複) なら、文単位に割り直して
+ * IDEMPOTENT_STATEMENT に当たるものだけを流す。欠けていた列・テーブル・index は
+ * 埋まり、データ移行を伴う文は触らない。正常系は従来どおりファイル 1 回で終わるので、
+ * 往復が増えるのは修復が要る DB のときだけ。
+ */
+async function applySqlFile(
+  databaseName: string,
+  filePath: string,
+  contextLabel: string,
+): Promise<void> {
+  try {
+    await runD1WithRetry(
+      ["d1", "execute", databaseName, "--remote", "--file", filePath],
+      contextLabel,
+    );
+    return;
+  } catch (err) {
+    if (!isBenignSchemaError(err)) throw err;
+  }
+
+  let skipped = 0;
+  // このファイルで実際に列を足したか。足していれば、それを埋める backfill UPDATE も
+  // 流す必要がある (050 の dedup_key など)。逆に列が既にあった = backfill も適用済み
+  // なので、UPDATE を流し直すと 029 のように既存の値を上書きしてしまう。
+  let addedColumn = false;
+  for (const statement of splitSqlStatements(readFileSync(filePath, "utf8"))) {
+    const head = stripLeadingComments(statement);
+    // 末尾のコメントブロックだけが 1 文として切り出されることがある。実行対象でも
+    // 取りこぼしでもないので、スキップ件数には数えない。
+    if (!head) continue;
+    const isAddColumn = /^ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN\b/i.test(head);
+    const runnable =
+      !DESTRUCTIVE_STATEMENT.test(head) &&
+      (IDEMPOTENT_STATEMENT.test(head) ||
+        (addedColumn && BACKFILL_UPDATE.test(head)));
+
+    if (!runnable) {
+      skipped++;
+      continue;
+    }
+    try {
+      await runD1WithRetry(
+        ["d1", "execute", databaseName, "--remote", "--command", statement],
+        contextLabel,
+      );
+      if (isAddColumn) addedColumn = true;
+    } catch (err) {
+      if (!isBenignSchemaError(err)) throw err;
+    }
+  }
+  if (skipped > 0) {
+    p.log.warn(
+      `${contextLabel}: 既に適用済みの内容が含まれるため、データを書き換える ${skipped} 文はスキップしました（テーブル定義の追加のみ再適用）。`,
+    );
+  }
+}
+
 async function verifyLatestSchema(databaseName: string): Promise<void> {
   const verify = await runD1WithRetry(
     [
@@ -157,6 +268,10 @@ export async function createDatabase(
     .sort();
   const bootstrapMeta = loadBootstrapMeta(repoDir);
   const includedMigrations = new Set(bootstrapMeta?.includedMigrations ?? []);
+  // bootstrap.sql は「空の D1 を一発で完成形にする」ためのもので、既存 DB には使えない。
+  // CREATE TABLE IF NOT EXISTS は既存テーブルを素通りするので欠けた列を補えず、その列を
+  // 使う index 作成で落ちるだけになる。既存 DB の修復は下の schema.sql + 全 migration 経路
+  // (applySqlFile が文単位に割って ALTER TABLE を通す) が担当する。
   const canUseBootstrap =
     createdNow &&
     existsSync(bootstrapFile) &&
@@ -173,85 +288,49 @@ export async function createDatabase(
         : `テーブル作成中（bootstrap + ${pendingMigrations.length} migrations）...`;
     s.start(label);
     try {
-      await runD1WithRetry(
-        [
-          "d1",
-          "execute",
-          databaseName,
-          "--remote",
-          "--file",
-          bootstrapFile,
-        ],
-        "bootstrap 適用",
-      );
+      await applySqlFile(databaseName, bootstrapFile, "bootstrap 適用");
     } catch (err) {
-      if (!isBenignSchemaError(err)) {
-        s.stop("bootstrap 適用に失敗");
-        throw err;
-      }
+      s.stop("bootstrap 適用に失敗");
+      throw err;
     }
 
     for (const file of pendingMigrations) {
       try {
-        await runD1WithRetry(
-          [
-            "d1",
-            "execute",
-            databaseName,
-            "--remote",
-            "--file",
-            join(migrationsDir, file),
-          ],
+        await applySqlFile(
+          databaseName,
+          join(migrationsDir, file),
           `bootstrap 後 migration 適用: ${file}`,
         );
       } catch (err) {
-        if (!isBenignSchemaError(err)) {
-          s.stop(`migration 失敗: ${file}`);
-          throw err;
-        }
+        s.stop(`migration 失敗: ${file}`);
+        throw err;
       }
     }
   } else {
+    // 既存 D1 (createdNow=false) はここに来る。前回のセットアップが途中で落ちた DB でも、
+    // applySqlFile が失敗ファイルを文単位に割り直して ALTER TABLE を通すので、欠けた列が
+    // 埋まって最新スキーマまで回復する。
     const totalFiles = 1 + migrationFiles.length;
-    s.start(`テーブル作成中（${totalFiles} files）...`);
+    const verb = createdNow ? "テーブル作成中" : "テーブル修復中";
+    s.start(`${verb}（${totalFiles} files）...`);
 
     try {
-      await runD1WithRetry(
-        [
-          "d1",
-          "execute",
-          databaseName,
-          "--remote",
-          "--file",
-          schemaFile,
-        ],
-        "ベーススキーマ適用",
-      );
+      await applySqlFile(databaseName, schemaFile, "ベーススキーマ適用");
     } catch (err) {
-      if (!isBenignSchemaError(err)) {
-        s.stop("ベーススキーマ適用に失敗");
-        throw err;
-      }
+      s.stop("ベーススキーマ適用に失敗");
+      throw err;
     }
 
     for (const file of migrationFiles) {
       try {
-        await runD1WithRetry(
-          [
-            "d1",
-            "execute",
-            databaseName,
-            "--remote",
-            "--file",
-            join(migrationsDir, file),
-          ],
+        await applySqlFile(
+          databaseName,
+          join(migrationsDir, file),
           `migration 適用: ${file}`,
         );
       } catch (err) {
-        if (!isBenignSchemaError(err)) {
-          s.stop(`migration 失敗: ${file}`);
-          throw err;
-        }
+        s.stop(`migration 失敗: ${file}`);
+        throw err;
       }
     }
   }

@@ -3,8 +3,18 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
+import type { AccountDeliveryHealth } from '@/lib/api'
+import { getApiBase } from '@/lib/api-base'
 import CcPromptButton from '@/components/cc-prompt-button'
 import { useAccount } from '@/contexts/account-context'
+import Header from '@/components/layout/header'
+import { formatCount, HarnessStatCard, HarnessStatCell } from '@/components/ui/harness-ui'
+import type { HarnessStatCellTone } from '@/components/ui/harness-ui'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
 
 const ccPrompts = [
   {
@@ -34,40 +44,214 @@ interface DashboardStats {
   scoringRuleCount: number | null
 }
 
-interface StatCardProps {
-  title: string
-  value: number | null
-  loading: boolean
-  icon: React.ReactNode
-  href: string
-  accentColor?: string
-}
+// 友だち追加リンクの即時取得カード。/r/dashboard は OS 対応ランディング経由で
+// LINE アプリを直接開く流入口（モバイル: LIFF Universal Link / PC: QR）。
+// UUID 付与・アカウント解決は LIFF 側 /api/liff/link が担い、ref=dashboard が
+// friends.ref_code に流入元として記録される。/auth/line?account= を配らないのは
+// モバイルブラウザで Web 版 LINE ログインが挟まり離脱を生むため
+// (公式の lin.ee 直リンクだと計測も UUID 紐づけも失われるのは従来どおり)。
+function FriendAddLinkCard() {
+  const { selectedAccount } = useAccount()
+  const [copied, setCopied] = useState(false)
+  const base = (getApiBase() ?? '').replace(/\/$/, '')
+  const link = selectedAccount
+    ? `${base}/r/dashboard?account=${encodeURIComponent(selectedAccount.channelId)}`
+    : `${base}/r/dashboard`
 
-function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }: StatCardProps) {
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch {
+      // clipboard requires a secure context; the input below allows manual copy
+    }
+  }
+
   return (
-    <Link href={href} className="block bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow group">
-      <div className="flex items-start justify-between">
+    <LayerCard className="mb-6 p-4">
+      <div className="flex items-center justify-between mb-2">
         <div>
-          <p className="text-sm font-medium text-gray-500 mb-2">{title}</p>
-          {loading ? (
-            <div className="h-8 w-20 bg-gray-100 rounded animate-pulse" />
-          ) : (
-            <p className="text-3xl font-bold text-gray-900">
-              {value !== null ? value.toLocaleString('ja-JP') : '-'}
-            </p>
-          )}
-        </div>
-        <div
-          className="w-10 h-10 rounded-lg flex items-center justify-center text-white shrink-0"
-          style={{ backgroundColor: accentColor }}
-        >
-          {icon}
+          <p className="text-sm font-semibold text-gray-800">友だち追加リンク</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {selectedAccount
+              ? `${selectedAccount.displayName || selectedAccount.name} への追加リンク (UUID計測つき)`
+              : 'デフォルトアカウントへの追加リンク (UUID計測つき)'}
+          </p>
         </div>
       </div>
-      <p className="text-xs text-gray-400 mt-3 group-hover:text-green-600 transition-colors">
-        詳細を見る →
-      </p>
-    </Link>
+      <div className="flex items-stretch gap-2">
+        <Input
+          aria-label="友だち追加リンク"
+          readOnly
+          value={link}
+          onFocus={(e) => e.currentTarget.select()}
+          className="flex-1 font-mono text-xs"
+        />
+        <Button
+          type="button"
+          onClick={onCopy}
+          variant="primary"
+          size="sm"
+          className="shrink-0"
+        >
+          {copied ? 'コピーしました ✓' : 'コピー'}
+        </Button>
+      </div>
+    </LayerCard>
+  )
+}
+
+/** "+5" / "−3" / "±0"; null (insight not ready) renders as em dash. */
+function formatDelta(value: number | null): string {
+  if (value === null) return '—'
+  if (value > 0) return `+${value.toLocaleString('ja-JP')}`
+  if (value < 0) return `−${Math.abs(value).toLocaleString('ja-JP')}`
+  return '±0'
+}
+
+/** "20260901" → "9/1" for the compact as-of label. */
+function formatInsightDate(yyyyMmDd: string | null): string | null {
+  if (!yyyyMmDd || !/^\d{8}$/.test(yyyyMmDd)) return null
+  return `${Number(yyyyMmDd.slice(4, 6))}/${Number(yyyyMmDd.slice(6, 8))}`
+}
+
+/** Success/danger tone for a day-over-day delta; ±0 and unknown stay muted. */
+function deltaTone(delta: number | null, upIsGood: boolean): HarnessStatCellTone | undefined {
+  if (delta === null || delta === 0) return undefined
+  return (upIsGood ? delta > 0 : delta < 0) ? 'positive' : 'negative'
+}
+
+/**
+ * Quota cell contents. Precedence, most-specific first: unlimited plan →
+ * remaining computable → fetch failed. A limited plan whose consumption call
+ * failed lands in the last branch (value —, alert) so a broken quota fetch is
+ * as loud as a real shortage — the 2026-09-01 incident was invisible data.
+ */
+function quotaCell(account: AccountDeliveryHealth): { value: string; sub?: string; alert: boolean } {
+  const { quota, quotaAlert, errors } = account
+  if (quota.type === 'none') {
+    return { value: '∞', sub: '上限なしプラン', alert: false }
+  }
+  if (quota.remaining !== null) {
+    return {
+      value: formatCount(quota.remaining),
+      sub: `上限 ${formatCount(quota.limit)} ・消費 ${formatCount(quota.consumption)}`,
+      alert: quotaAlert,
+    }
+  }
+  const fetchFailed = errors.includes('quota') || errors.includes('consumption')
+  return { value: '—', sub: fetchFailed ? '取得失敗（要確認）' : undefined, alert: fetchFailed }
+}
+
+/** Sub line for the insight cells: delta when ready, otherwise why not. */
+function insightSub(account: AccountDeliveryHealth, delta: number | null): string {
+  if (account.insight.status === 'ready') return `前日比 ${formatDelta(delta)}`
+  return account.insight.status === 'unready' ? 'LINE集計待ち' : '取得失敗'
+}
+
+// 2026-09-01 の一斉配信事故（2アカウントがクォータ不足で全滅、UI 上どこにも
+// 出ていなかった）を受けたセクション。クォータはリアルタイム、友だち/ブロックの
+// インサイトは LINE 側の集計が前日分までなので as-of がずれる点をラベルで明示する。
+function DeliveryHealthSection() {
+  const [health, setHealth] = useState<AccountDeliveryHealth[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await api.lineAccounts.deliveryHealth()
+        if (cancelled) return
+        if (res.success) {
+          setHealth(res.data.accounts)
+        } else {
+          setError('配信健全性の取得に失敗しました')
+        }
+      } catch {
+        if (!cancelled) setError('配信健全性の取得に失敗しました')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!loading && !error && (health?.length ?? 0) === 0) return null
+
+  return (
+    <section className="mb-6" aria-label="配信健全性">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-kumo-strong">アカウント別 配信健全性</h2>
+        <p className="text-[11px] text-kumo-subtle">クォータ=リアルタイム / 友だち・ブロック=前日時点</p>
+      </div>
+
+      {error ? (
+        <Banner variant="alert" title="配信健全性を読み込めませんでした" description={error} />
+      ) : null}
+
+      {loading ? (
+        <LayerCard className="p-4">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-20 animate-pulse rounded-lg bg-gray-100" />
+            ))}
+          </div>
+        </LayerCard>
+      ) : (
+        <div className="space-y-3">
+          {health?.map((account) => {
+            const asOf = formatInsightDate(account.insight.date)
+            const quota = quotaCell(account)
+            return (
+              <LayerCard key={account.lineAccountId} className="p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <p className="text-sm font-semibold text-kumo-strong">{account.name}</p>
+                  {account.quotaAlert ? (
+                    <Badge variant="error">クォータ不足: 全員配信不可</Badge>
+                  ) : account.errors.length > 0 ? (
+                    <Badge variant="neutral">一部データ取得失敗</Badge>
+                  ) : account.insight.status === 'unready' ? (
+                    <Badge variant="neutral">インサイト集計待ち</Badge>
+                  ) : (
+                    <Badge variant="success">正常</Badge>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                  <HarnessStatCell
+                    title="配信クォータ 残り"
+                    value={quota.value}
+                    sub={quota.sub}
+                    alert={quota.alert}
+                  />
+                  <HarnessStatCell
+                    title={asOf ? `友だち数 (${asOf})` : '友だち数'}
+                    value={formatCount(account.insight.followers)}
+                    sub={insightSub(account, account.insight.followersDelta)}
+                    subTone={deltaTone(account.insight.followersDelta, true)}
+                  />
+                  <HarnessStatCell
+                    title={asOf ? `ブロック数 (${asOf})` : 'ブロック数'}
+                    value={formatCount(account.insight.blocks)}
+                    sub={insightSub(account, account.insight.blocksDelta)}
+                    subTone={deltaTone(account.insight.blocksDelta, false)}
+                  />
+                  <HarnessStatCell
+                    title="今月の配信済み通数"
+                    value={formatCount(account.messagesThisMonth)}
+                    sub="push配信のみ・月初から"
+                  />
+                </div>
+              </LayerCard>
+            )
+          })}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -95,7 +279,7 @@ export default function DashboardPage() {
           api.broadcasts.list(),
           api.templates.list(),
           api.automations.list(),
-          api.scoring.rules(),
+          api.mileage.rules(),
         ])
 
         setStats({
@@ -136,20 +320,19 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">ダッシュボード</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {selectedAccount
-            ? `${selectedAccount.displayName || selectedAccount.name} の管理画面`
-            : 'LINE公式アカウント CRM 管理画面'}
-        </p>
-      </div>
+      <Header
+        title="ダッシュボード"
+        product="LINE"
+        description={selectedAccount
+          ? `${selectedAccount.displayName || selectedAccount.name} の管理画面`
+          : 'LINE公式アカウント CRM 管理画面'}
+      />
 
-      {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
+      {error && <Banner className="mb-6" variant="error" title="データを読み込めませんでした" description={error} />}
+
+      <DeliveryHealthSection />
+
+      <FriendAddLinkCard />
 
       {/* Demo banner */}
       <a
@@ -163,19 +346,18 @@ export default function DashboardPage() {
             <p className="text-sm font-bold text-gray-900">LINE で体験する</p>
             <p className="text-xs text-gray-500 mt-0.5">友だち追加でステップ配信・フォーム・自動返信を体験</p>
           </div>
-          <span className="text-xs px-3 py-1.5 rounded-full text-white font-medium" style={{ backgroundColor: '#06C755' }}>
-            友だち追加
-          </span>
+          <Badge variant="success">友だち追加</Badge>
         </div>
       </a>
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
-        <StatCard
+        <HarnessStatCard
           title="友だち数"
           value={stats.friendCount}
           loading={loading}
           href="/friends"
+          accentColor="var(--color-kumo-brand)"
           icon={
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -183,7 +365,7 @@ export default function DashboardPage() {
             </svg>
           }
         />
-        <StatCard
+        <HarnessStatCard
           title="アクティブシナリオ数"
           value={stats.activeScenarioCount}
           loading={loading}
@@ -196,7 +378,7 @@ export default function DashboardPage() {
             </svg>
           }
         />
-        <StatCard
+        <HarnessStatCard
           title="配信数 (合計)"
           value={stats.broadcastCount}
           loading={loading}
@@ -213,7 +395,7 @@ export default function DashboardPage() {
 
       {/* Round 3 summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
-        <StatCard
+        <HarnessStatCard
           title="テンプレート数"
           value={stats.templateCount}
           loading={loading}
@@ -226,7 +408,7 @@ export default function DashboardPage() {
             </svg>
           }
         />
-        <StatCard
+        <HarnessStatCard
           title="アクティブルール数"
           value={stats.automationCount}
           loading={loading}
@@ -239,8 +421,8 @@ export default function DashboardPage() {
             </svg>
           }
         />
-        <StatCard
-          title="スコアリングルール数"
+        <HarnessStatCard
+          title="マイル付与ルール数"
           value={stats.scoringRuleCount}
           loading={loading}
           href="/scoring"
@@ -262,7 +444,7 @@ export default function DashboardPage() {
             href="/friends"
             className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-green-300 hover:bg-green-50 transition-colors group"
           >
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0" style={{ backgroundColor: '#06C755' }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-kumo-inverse shrink-0 bg-kumo-brand">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -310,7 +492,7 @@ export default function DashboardPage() {
             href="/chats"
             className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-green-300 hover:bg-green-50 transition-colors group"
           >
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0" style={{ backgroundColor: '#06C755' }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-kumo-inverse shrink-0 bg-kumo-brand">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />

@@ -1,6 +1,12 @@
 'use client'
 
 import { useState } from 'react'
+import { PlusIcon } from '@phosphor-icons/react'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Select } from '@cloudflare/kumo/components/select'
 import type { Tag } from '@line-crm/shared'
 import type { FriendListItem } from '@/lib/api'
 import { api } from '@/lib/api'
@@ -63,19 +69,13 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
 
   if (friends.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-        <p className="text-gray-500">友だちが見つかりません</p>
-      </div>
+      <Empty size="sm" title="友だちが見つかりません" description="検索条件や絞り込みを変更してお試しください。" />
     )
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-      {error && (
-        <div className="px-4 py-3 bg-red-50 border-b border-red-100 text-red-700 text-sm">
-          {error}
-        </div>
-      )}
+    <LayerCard className="overflow-hidden p-0">
+      {error ? <Banner variant="error" title="タグを更新できませんでした" description={error} /> : null}
 
       {/* Header sits inside the same overflow container as the body so the
           column labels stay aligned with their values when the user scrolls
@@ -83,7 +83,7 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
           and the body forced to min-w-[900px]). */}
       <div className="overflow-x-auto">
         <div className="min-w-[900px]">
-          <div className="hidden lg:grid grid-cols-[80px_220px_120px_1fr_280px] gap-3 px-4 py-2 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+          <div className="hidden grid-cols-[80px_220px_120px_1fr_280px] gap-3 border-b border-kumo-line bg-kumo-tint px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-kumo-subtle lg:grid">
             <div>対応マーク</div>
             <div>名前</div>
             <div>シナリオ</div>
@@ -105,12 +105,12 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
                 />
 
                 {isExpanded && (
-                  <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 space-y-3">
+                  <div className="space-y-3 border-b border-kumo-line bg-kumo-tint px-6 py-4">
                     <div>
-                      <p className="text-xs font-semibold text-gray-500 mb-1">LINE ユーザーID</p>
-                      <p className="text-xs text-gray-600 font-mono break-all select-all">{friend.lineUserId}</p>
+                      <p className="mb-1 text-xs font-semibold text-kumo-subtle">LINE ユーザーID</p>
+                      <p className="select-all break-all font-mono text-xs text-kumo-default">{friend.lineUserId}</p>
                     </div>
-                    <p className="text-xs font-semibold text-gray-500 mb-2">タグ管理</p>
+                    <p className="mb-2 text-xs font-semibold text-kumo-subtle">タグ管理</p>
                     <div className="flex flex-wrap gap-1.5 mb-2">
                       {friend.tags.map((tag) => (
                         <TagBadge
@@ -122,43 +122,45 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
                     </div>
 
                     {isAddingTag ? (
-                      <div className="flex items-center gap-2">
-                        <select
-                          className="text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-green-500"
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Select
+                          size="sm"
+                          aria-label="追加するタグ"
                           value={selectedTagId}
-                          onChange={(e) => setSelectedTagId(e.target.value)}
-                        >
-                          <option value="">タグを選択...</option>
-                          {availableTags.map((tag) => (
-                            <option key={tag.id} value={tag.id}>{tag.name}</option>
-                          ))}
-                        </select>
-                        <button
+                          onValueChange={(value) => setSelectedTagId(value ?? '')}
+                          placeholder="タグを選択"
+                          items={availableTags.map((tag) => ({ value: tag.id, label: tag.name }))}
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="primary"
                           onClick={() => handleAddTag(friend.id)}
                           disabled={!selectedTagId || loading}
-                          className="px-3 py-1 text-xs font-medium rounded-md text-white disabled:opacity-50 transition-opacity"
-                          style={{ backgroundColor: '#06C755' }}
+                          loading={loading}
                         >
                           追加
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
                           onClick={() => { setAddingTagForFriend(null); setSelectedTagId('') }}
-                          className="px-3 py-1 text-xs font-medium rounded-md text-gray-600 bg-gray-200 hover:bg-gray-300 transition-colors"
                         >
                           キャンセル
-                        </button>
+                        </Button>
                       </div>
                     ) : (
                       availableTags.length > 0 && (
-                        <button
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          icon={PlusIcon}
                           onClick={() => setAddingTagForFriend(friend.id)}
-                          className="text-xs font-medium text-green-600 hover:text-green-700 flex items-center gap-1 transition-colors"
                         >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                          </svg>
                           タグを追加
-                        </button>
+                        </Button>
                       )
                     )}
                   </div>
@@ -168,6 +170,6 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
           })}
         </div>
       </div>
-    </div>
+    </LayerCard>
   )
 }

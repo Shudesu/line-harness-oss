@@ -1,6 +1,6 @@
 # Security Policy
 
-LINE Harness handles LINE accounts, message delivery, customer records, API
+L Harness handles LINE accounts, message delivery, customer records, API
 keys, Cloudflare credentials, and webhook traffic. Security reports must be
 handled privately first.
 
@@ -32,7 +32,7 @@ When reporting, include:
 - Logs with secrets and personal data removed.
 
 Reports with a working reproduction and clear impact are prioritized. Scanner
-output without demonstrated LINE Harness impact may be treated as hardening
+output without demonstrated L Harness impact may be treated as hardening
 rather than a vulnerability.
 
 ## What Counts As Security-Sensitive

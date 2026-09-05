@@ -1,7 +1,7 @@
 /**
- * LINE Harness Plugin: MyService
+ * L Harness Plugin: MyService
  *
- * Cloudflare Worker that syncs data from MyService → LINE Harness
+ * Cloudflare Worker that syncs data from MyService → L Harness
  * and sends notifications based on external conditions.
  *
  * Replace "MyService" with your actual service name throughout this template.
@@ -29,7 +29,7 @@ export default {
   ): Promise<void> {
     console.log('[MyService Plugin] Cron triggered')
 
-    // Step 1: Sync external data → LINE Harness tags/metadata
+    // Step 1: Sync external data → L Harness tags/metadata
     await syncExternalData(env)
 
     // Step 2: Check conditions and send notifications

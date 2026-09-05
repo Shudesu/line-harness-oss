@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { runRollback } from '../../src/phases/rollback.js';
+import {
+  encodeWorkerSnapshot,
+  runRollback,
+} from '../../src/phases/rollback.js';
 import type { RollbackSnapshot } from '../../src/phases/rollback.js';
 import { createEventEmitter } from '../../src/events.js';
 import type {
@@ -169,7 +172,12 @@ describe('runRollback', () => {
     const fd = putCall![1]!.body as FormData;
     const metadataBlob = fd.get('metadata') as Blob;
     const metadata = JSON.parse(await metadataBlob.text());
-    expect(metadata.bindings).toEqual(existingBindings);
+    // Textless secret_text bindings can't be re-sent (CF rejects them with
+    // 10021) — they're carried over via keep_bindings instead.
+    expect(metadata.bindings).toEqual([
+      { type: 'd1', name: 'DB', database_id: D1_ID },
+    ]);
+    expect(metadata.keep_bindings).toEqual(['secret_text', 'secret_key']);
 
     // Both Pages rollbacks were invoked.
     const adminRb = calls.find(([url]) =>
@@ -180,6 +188,39 @@ describe('runRollback', () => {
     );
     expect(adminRb).toBeDefined();
     expect(liffRb).toBeDefined();
+  });
+
+  it('restores a saved Worker version so code and assets roll back together', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (
+        url.endsWith(`/workers/scripts/${WORKER_NAME}/deployments`) &&
+        method === 'POST'
+      ) {
+        const body = JSON.parse(init?.body as string);
+        expect(body.versions).toEqual([
+          { version_id: 'OLD_WORKER_VERSION', percentage: 100 },
+        ]);
+        return ok({ success: true });
+      }
+      if (url.includes('/rollback')) return ok({ success: true });
+      throw new Error(`unrouted: ${method} ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { emitter } = collectEvents();
+    await runRollback(
+      sampleCtx(),
+      sampleSnap({
+        snapshotWorkerBundleUrl: encodeWorkerSnapshot({
+          bundleUrl: SNAPSHOT_WORKER_URL,
+          versionId: 'OLD_WORKER_VERSION',
+        }),
+      }),
+      emitter,
+    );
+
+    expect(fetchMock.mock.calls.some(([url]) => url === SNAPSHOT_WORKER_URL)).toBe(false);
   });
 
   it('throws when fetching snapshotWorkerBundleUrl returns non-200', async () => {

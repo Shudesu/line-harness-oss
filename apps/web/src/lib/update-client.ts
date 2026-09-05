@@ -9,6 +9,7 @@ import {
   findLatestUpgrade as engineFindLatestUpgrade,
   compareSemver as engineCompareSemver,
 } from '@line-harness/update-engine/pure'
+import { getApiBase } from './api-base'
 
 // Re-export so consumers can import all upgrade-related types from one place
 export type { Manifest, CurrentVersion, ForkStatus, ReleaseEntry }
@@ -16,15 +17,21 @@ export const detectFork = engineDetectFork
 export const findLatestUpgrade = engineFindLatestUpgrade
 export const compareSemver = engineCompareSemver
 
-// The Worker is on a separate origin from the static admin export, so admin
-// fetches must go through `NEXT_PUBLIC_API_URL` like the rest of `lib/api.ts`.
-// Failing fast at module load mirrors api.ts so dev builds with missing env
-// surface immediately instead of producing 404s at runtime.
-const API_URL = process.env.NEXT_PUBLIC_API_URL
-if (!API_URL) {
-  throw new Error(
-    'NEXT_PUBLIC_API_URL is not set. update-client cannot reach the Worker.',
-  )
+// Admin fetches resolve their base origin the same way as the rest of
+// `lib/api.ts` — see `getApiBase()` in `./api-base` for the precedence rule.
+// Resolved lazily on each call rather than cached in a module-scope constant:
+// this module also runs once in Node during the static export pass (where
+// `window` is undefined), and a module-scope `const` would freeze whatever
+// `getApiBase()` returned during that Node pass — the unresolved placeholder
+// for a shared build — for the lifetime of the page.
+function apiUrl(): string {
+  const url = getApiBase()
+  if (!url) {
+    throw new Error(
+      'NEXT_PUBLIC_API_URL is not set. update-client cannot reach the Worker.',
+    )
+  }
+  return url
 }
 
 /**
@@ -36,7 +43,7 @@ if (!API_URL) {
  * server-side `MANIFEST_URL`; the browser should only talk to `/admin/manifest`.
  */
 export function getManifestUrl(): string {
-  return `${API_URL}/admin/manifest`
+  return `${apiUrl()}/admin/manifest`
 }
 
 function adminKey(): string {
@@ -46,7 +53,7 @@ function adminKey(): string {
 }
 
 export async function getCurrentVersion(): Promise<CurrentVersion> {
-  const r = await fetch(`${API_URL}/admin/version`)
+  const r = await fetch(`${apiUrl()}/admin/version`)
   if (!r.ok) throw new Error(`version fetch failed ${r.status}`)
   const j = (await r.json()) as {
     version: string
@@ -69,7 +76,7 @@ export async function getManifest(): Promise<Manifest> {
 }
 
 export async function startUpdate(): Promise<{ updateId: string }> {
-  const r = await fetch(`${API_URL}/admin/update/start`, {
+  const r = await fetch(`${apiUrl()}/admin/update/start`, {
     method: 'POST',
     headers: { 'x-admin-api-key': adminKey() },
   })
@@ -86,7 +93,7 @@ export async function getUpdateStatus(id: string): Promise<{
   events: unknown[]
   error: string | null
 }> {
-  const r = await fetch(`${API_URL}/admin/update/status/${id}`, {
+  const r = await fetch(`${apiUrl()}/admin/update/status/${id}`, {
     headers: { 'x-admin-api-key': adminKey() },
   })
   if (!r.ok) throw new Error(`status ${r.status}`)
@@ -110,7 +117,7 @@ export function openUpdateStream(
   // work via fetch and the dashboard can poll status as a fallback.
   // Phase 9 polish task: switch the gate to a cookie set at login OR add a
   // signed query-param token. See task plan for `feat/upgrade-flow`.
-  const es = new EventSource(`${API_URL}/admin/update/stream/${id}`)
+  const es = new EventSource(`${apiUrl()}/admin/update/stream/${id}`)
   es.addEventListener('progress', (m) =>
     onEvent(JSON.parse((m as MessageEvent).data)),
   )

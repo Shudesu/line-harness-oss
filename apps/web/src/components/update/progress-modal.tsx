@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { openUpdateStream, getUpdateStatus } from '@/lib/update-client'
 import type { UpdateEvent } from '@line-harness/update-engine'
+import { Button } from '@cloudflare/kumo/components/button'
 
 /**
  * ProgressModal — live timeline for an in-flight update.
@@ -162,13 +163,15 @@ export function ProgressModal({
                 )}
               </p>
             )}
-            <button
+            <Button
               type="button"
               onClick={onClose}
-              className="mt-3 text-sm px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+              className="mt-3"
+              size="sm"
+              variant="secondary"
             >
               閉じる
-            </button>
+            </Button>
           </div>
         )}
       </div>

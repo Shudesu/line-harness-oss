@@ -9,7 +9,7 @@ setup.get('/setup', (c) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LINE Harness 導入ガイド</title>
+<title>L Harness 導入ガイド</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -224,7 +224,7 @@ setup.get('/setup', (c) => {
 </head>
 <body>
   <div class="header">
-    <h1>LINE Harness 導入ガイド</h1>
+    <h1>L Harness 導入ガイド</h1>
     <p>3ステップで LINE CRM を構築</p>
   </div>
 

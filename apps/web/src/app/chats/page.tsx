@@ -3,12 +3,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { parseStickerMessageContent, stickerFallback } from '@line-crm/shared'
 import { api, fetchApi } from '@/lib/api'
+import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
 import { useAccount } from '@/contexts/account-context'
-import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
 import ImageUploader, { type ImageUploaderValue } from '@/components/shared/image-uploader'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Input } from '@cloudflare/kumo/components/input'
+import { Radio } from '@cloudflare/kumo/components/radio'
+import { Select } from '@cloudflare/kumo/components/select'
 
 interface Chat {
   id: string
@@ -34,6 +39,18 @@ interface ChatMessage {
   createdAt: string
 }
 
+// リッチメニューのタブ切替 (richmenuswitch) は、webhook が postback data
+// `switch-to-<切替先ページUUID>` を incoming text として messages_log に記録する
+// (rich-menu-publisher.ts / webhook.ts 参照)。生の data を吹き出しで見せると
+// ノイズなので、チャット表示ではシステム行「リッチメニュー切替」に置き換える。
+// source カラムでは判別できない — migration 028 の backfill が既存の postback
+// incoming を 'user' に倒しているため、content パターンで判定する。
+const RICH_MENU_SWITCH_RE =
+  /^switch-to-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+function isRichMenuSwitch(msg: { direction: string; messageType: string; content: string }): boolean {
+  return msg.direction === 'incoming' && msg.messageType === 'text' && RICH_MENU_SWITCH_RE.test(msg.content)
+}
+
 interface ChatDetail extends Chat {
   friendName: string
   friendPictureUrl: string | null
@@ -56,6 +73,8 @@ const statusFilters: { key: StatusFilter; label: string }[] = [
 ]
 
 const SHOW_LOADING_PREF_KEY = 'lh_chat_show_loading_indicator'
+// 一覧の1ページ件数。worker 側 /api/chats のデフォルト LIMIT と揃える。
+const CHAT_PAGE_SIZE = 300
 const LOADING_SECONDS_PREF_KEY = 'lh_chat_loading_seconds'
 const LOADING_REFRESH_INTERVAL_MS = 4000
 
@@ -188,28 +207,6 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
 
   function renderContent(msg: MessageLog) {
     if (msg.messageType === 'text') return msg.content
-    if (msg.messageType === 'flex') {
-      try {
-        const parsed = JSON.parse(msg.content)
-        // Extract ALL text from flex (up to 200 chars)
-        const texts: string[] = []
-        const collectText = (obj: Record<string, unknown>) => {
-          if (texts.join(' ').length > 200) return
-          if (obj.type === 'text' && typeof obj.text === 'string') {
-            const t = (obj.text as string).trim()
-            if (t && !t.startsWith('{{')) texts.push(t)
-          }
-          for (const key of ['header', 'body', 'footer']) {
-            if (obj[key]) collectText(obj[key] as Record<string, unknown>)
-          }
-          if (Array.isArray(obj.contents)) {
-            for (const c of obj.contents) collectText(c as Record<string, unknown>)
-          }
-        }
-        collectText(parsed)
-        return texts.slice(0, 4).join('\n') || '[Flex Message]'
-      } catch { return '[Flex Message]' }
-    }
     if (msg.messageType === 'sticker') {
       return <StickerMessageImage content={msg.content} />
     }
@@ -219,11 +216,11 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-4 border-b border-gray-200 flex items-center gap-3">
-        <button onClick={onBack} className="lg:hidden text-gray-400 hover:text-gray-600">
+        <Button type="button" size="xs" shape="square" variant="ghost" title="戻る" onClick={onBack} className="lg:hidden">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-        </button>
+        </Button>
         {friend?.pictureUrl ? (
           <img src={friend.pictureUrl} alt="" className="w-8 h-8 rounded-full" />
         ) : (
@@ -242,25 +239,50 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
         ) : messages.length === 0 ? (
           <p className="text-center text-gray-400 text-sm">メッセージ履歴がありません</p>
         ) : (
-          messages.map((msg) => (
+          messages.map((msg, idx) => {
+            // チャット詳細画面と同じく、リッチメニュー切替 postback はシステム行。
+            // 連続タップは先頭の1行だけ残す。
+            if (isRichMenuSwitch(msg)) {
+              if (idx > 0 && isRichMenuSwitch(messages[idx - 1])) return null
+              return (
+                <div key={msg.id} className="flex justify-center">
+                  <span className="text-[11px] text-gray-400 bg-gray-100 px-2.5 py-0.5 rounded-full">
+                    リッチメニュー切替
+                  </span>
+                </div>
+              )
+            }
+            return (
             <div key={msg.id} className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
-                msg.direction === 'outgoing'
-                  ? 'bg-green-500 text-white'
-                  : 'bg-gray-100 text-gray-900'
-              }`}>
-                <div className="text-sm whitespace-pre-wrap break-words">{renderContent(msg)}</div>
-                <p className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-200' : 'text-gray-400'}`}>
-                  {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
+              {/* flex はチャット詳細画面と同じくバブルに包まず素のカードで描画する */}
+              {msg.messageType === 'flex' ? (
+                <div className="max-w-[92%] min-w-0">
+                  <FlexPreviewComponent content={msg.content} />
+                  <p className="text-xs mt-1 text-gray-400">
+                    {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              ) : (
+                <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                  msg.direction === 'outgoing'
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gray-100 text-gray-900'
+                }`}>
+                  <div className="text-sm whitespace-pre-wrap break-words">{renderContent(msg)}</div>
+                  <p className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-200' : 'text-gray-400'}`}>
+                    {new Date(msg.createdAt).toLocaleString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              )}
             </div>
-          ))
+            )
+          })
         )}
       </div>
       <div className="px-4 py-3 border-t border-gray-200">
         <div className="flex gap-2">
-          <input
+          <Input
+            aria-label="メッセージ"
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -275,16 +297,14 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
               }
             }}
             placeholder="メッセージを入力..."
-            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            className="flex-1"
           />
-          <button
+          <Button type="button" variant="primary" loading={sending}
             onClick={handleSend}
             disabled={!message.trim() || sending}
-            className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
           >
-            {sending ? '...' : '送信'}
-          </button>
+            送信
+          </Button>
         </div>
       </div>
     </div>
@@ -319,6 +339,8 @@ export default function ChatsPage() {
   // Send mode: 'enter' = Enter sends, Shift+Enter = newline; 'shift-enter' = reverse
   const [sendMode, setSendMode] = useState<'enter' | 'shift-enter'>('enter')
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMoreChats, setHasMoreChats] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState('')
   const [messageContent, setMessageContent] = useState('')
@@ -334,6 +356,13 @@ export default function ChatsPage() {
   const isComposingRef = useRef(false)
   const messagesScrollRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // OAM(公式LINEマネージャー)風レイアウト: 添付・設定・メモは折りたたみ、
+  // メッセージ表示領域を最大化する
+  const [showImagePicker, setShowImagePicker] = useState(false)
+  const [showComposerSettings, setShowComposerSettings] = useState(false)
+  const [showMobileMemo, setShowMobileMemo] = useState(false)
+  const composerSettingsRef = useRef<HTMLDivElement | null>(null)
+  const composerSettingsButtonRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     try {
@@ -358,24 +387,75 @@ export default function ChatsPage() {
     }
   }, [showLoadingIndicator, loadingSeconds])
 
+  // ページング用カーソル。表示リストは楽観更新で並び替わるため、
+  // 「サーバから最後に受け取った行」を ref で保持して次ページの起点にする
+  // (offset 方式だと新着で行が押し下げられた分が欠落する)。
+  const nextCursorRef = useRef<{ at: string; id: string } | null>(null)
+
+  const buildListParams = useCallback((cursor: { at: string; id: string } | null) => {
+    const params: {
+      status?: string; accountId?: string; unansweredOnly?: boolean;
+      limit?: number; beforeAt?: string; beforeId?: string;
+    } = {}
+    if (statusFilter !== 'all' && !unansweredOnly) params.status = statusFilter
+    if (selectedAccountId) params.accountId = selectedAccountId
+    if (unansweredOnly) params.unansweredOnly = true
+    else params.limit = CHAT_PAGE_SIZE
+    if (cursor) {
+      params.beforeAt = cursor.at
+      params.beforeId = cursor.id
+    }
+    return params
+  }, [statusFilter, selectedAccountId, unansweredOnly])
+
   const loadChats = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const params: { status?: string; accountId?: string; unansweredOnly?: boolean } = {}
-      if (statusFilter !== 'all' && !unansweredOnly) params.status = statusFilter
-      if (selectedAccountId) params.accountId = selectedAccountId
-      if (unansweredOnly) params.unansweredOnly = true
-      const chatRes = await api.chats.list(params)
+      const chatRes = await api.chats.list(buildListParams(null))
       if (chatRes.success) {
-        setChats(chatRes.data as unknown as Chat[])
+        const rows = chatRes.data as unknown as Chat[]
+        setChats(rows)
+        const last = rows[rows.length - 1]
+        nextCursorRef.current = last?.lastMessageAt ? { at: last.lastMessageAt, id: last.id } : null
+        // ページ丁度いっぱい返ってきた = 続きがある可能性が高い (unansweredOnly は全件返る)
+        setHasMoreChats(!unansweredOnly && rows.length === CHAT_PAGE_SIZE)
       }
     } catch {
       setError('チャットの読み込みに失敗しました。もう一度お試しください。')
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, selectedAccountId, unansweredOnly])
+  }, [buildListParams, unansweredOnly])
+
+  // 「さらに読み込む」— サーバ由来カーソルの続きを取得して末尾に追加する。
+  // 楽観更新との競合に備えて既存 id は除外し、重複表示を防ぐ。
+  const loadMoreChats = useCallback(async () => {
+    if (loadingMore) return
+    const cursor = nextCursorRef.current
+    if (!cursor) {
+      setHasMoreChats(false)
+      return
+    }
+    setLoadingMore(true)
+    try {
+      const chatRes = await api.chats.list(buildListParams(cursor))
+      if (chatRes.success) {
+        const rows = chatRes.data as unknown as Chat[]
+        setChats((prev) => {
+          const seen = new Set(prev.map((c) => c.id))
+          return [...prev, ...rows.filter((r) => !seen.has(r.id))]
+        })
+        const last = rows[rows.length - 1]
+        nextCursorRef.current = last?.lastMessageAt ? { at: last.lastMessageAt, id: last.id } : null
+        setHasMoreChats(rows.length === CHAT_PAGE_SIZE)
+      }
+    } catch {
+      setError('チャットの追加読み込みに失敗しました。')
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [loadingMore, buildListParams])
 
   // Friends list (for the "new direct message" modal) — loaded lazily in the background
   // Previously fetched 800 friends in parallel with chats, which blocked the initial render.
@@ -521,11 +601,48 @@ export default function ChatsPage() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [messageContent])
 
+  // チャットを開いたら入力欄に自動フォーカスする — 「クリックしてもフォーカスが
+  // 入らない」報告への対処で、そもそもクリックを不要にする。モバイルでは
+  // ソフトキーボードが勝手に開いてしまうためデスクトップ (lg+) のみ。
+  useEffect(() => {
+    if (!chatDetail?.id) return
+    if (typeof window === 'undefined') return
+    if (!window.matchMedia('(min-width: 1024px)').matches) return
+    textareaRef.current?.focus()
+  }, [chatDetail?.id])
+
   const handleSelectChat = (chatId: string) => {
     setSelectedChatId(chatId)
     setMessageContent('')
     setPendingImage(null)
+    setShowImagePicker(false)
+    setShowComposerSettings(false)
+    setShowMobileMemo(false)
   }
+
+  // ⚙ 設定ポップオーバーは浮いた要素なので、外側クリックと Escape で閉じる。
+  // トグルボタン自身は除外する — ここで閉じると onClick のトグルが即座に開き直してしまう。
+  // 📎 の画像アップローダーはポップオーバーではなくインライン展開で、選択操作の途中に
+  // 閉じられると困るため対象にしない (pendingImage がある間は開いたままが正しい)。
+  useEffect(() => {
+    if (!showComposerSettings) return
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (composerSettingsRef.current?.contains(target)) return
+      if (composerSettingsButtonRef.current?.contains(target)) return
+      setShowComposerSettings(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowComposerSettings(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showComposerSettings])
 
   const triggerLoadingAnimation = useCallback(async (chatId: string) => {
     if (!showLoadingIndicator) return
@@ -541,8 +658,10 @@ export default function ChatsPage() {
         body: JSON.stringify({ loadingSeconds }),
       })
     } catch (err) {
-      const detail = err instanceof Error ? err.message : 'unknown'
-      setError(`ローディング表示の開始に失敗しました: ${detail}`)
+      // ベストエフォート機能なので UI エラーにはしない。入力欄フォーカスの
+      // たびに発火するため、setError でバナーを挿入するとその瞬間に
+      // レイアウトが動き、クリックしようとした入力欄が逃げる (実害あり)。
+      console.warn('[chats] loading indicator request failed:', err)
     }
   }, [showLoadingIndicator, loadingSeconds])
 
@@ -591,7 +710,11 @@ export default function ChatsPage() {
             lastMessageDirection: 'outgoing' as const,
             lastMessageType: 'image' as const,
           } : c)
-          let filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
+          // 未対応モード時は status filter を skip (worker 側で status を絞ってないため
+          // 楽観更新で applied するとリストが歪む — Codex Round 1)
+          let filtered = currentUnansweredOnly
+            ? updated
+            : (currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter))
           if (currentUnansweredOnly) {
             // 未対応モードでは、自分が返信したばかりの chat はもう未対応ではないのでリストから除外
             filtered = filtered.filter((c) => c.id !== sendingChatId)
@@ -635,15 +758,18 @@ export default function ChatsPage() {
             ...c,
             lastMessageAt: now,
             status: 'in_progress' as const,
-            // 一覧の preview も即時更新する。incoming 優先ロジックで上書きされ得るが、
-            // 楽観 UI では「operator が今送った文面」が一瞬見えるのが期待動作。
-            // 次回 loadChats() で server 側の真の最新 (incoming 優先) に reconcile される。
+            // 一覧の preview も即時更新する。server 側も direction/source を問わず
+            // 実際の最新メッセージを返すため、次回 loadChats() 後も同じ表示になる。
             lastMessageContent: content,
             lastMessageDirection: 'outgoing' as const,
             lastMessageType: 'text' as const,
           } : c)
           // Drop rows that no longer match the current tab (e.g. replying from 未読 moves chat to in_progress)
-          let filtered = currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter)
+          // 未対応モード時は status filter を skip (worker 側で status を絞ってないため
+          // 楽観更新で applied するとリストが歪む — Codex Round 1)
+          let filtered = currentUnansweredOnly
+            ? updated
+            : (currentFilter === 'all' ? updated : updated.filter((c) => c.status === currentFilter))
           if (currentUnansweredOnly) {
             // 未対応モードでは、自分が返信したばかりの chat はもう未対応ではないのでリストから除外
             filtered = filtered.filter((c) => c.id !== sendingChatId)
@@ -655,6 +781,8 @@ export default function ChatsPage() {
           })
         })
       }
+      // 手動返信で未対応が 1 件減るので、サイドバーのバッジを即時更新させる
+      window.dispatchEvent(new Event(UNANSWERED_REFRESH_EVENT))
     } catch {
       setError('メッセージの送信に失敗しました。')
     } finally {
@@ -669,6 +797,8 @@ export default function ChatsPage() {
       await api.chats.update(selectedChatId, { status: newStatus })
       loadChatDetail(selectedChatId)
       loadChats()
+      // 解決済/未読の切替は未対応バッジに影響するので即時更新させる
+      window.dispatchEvent(new Event(UNANSWERED_REFRESH_EVENT))
     } catch {
       setError('ステータスの更新に失敗しました。')
     }
@@ -701,46 +831,42 @@ export default function ChatsPage() {
   }
 
   return (
-    <div>
-      <Header title="オペレーターチャット" />
-
+    // OAM(公式LINEマネージャー)風フルスクリーンレイアウト:
+    // app-shell がこのページをフルブリード (余白なし・高さ = シェルの残り全部)
+    // で描画するので、ここは flex-1 で受けるだけ。viewport 単位の高さ計算は
+    // 使わない — バナーやモバイル URL バーの分ずれてコンポーザーがはみ出すため。
+    <div className="flex flex-col flex-1 min-h-0 bg-white">
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <div className="m-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
           {error}
         </div>
       )}
 
-      <div className="flex gap-4 h-[calc(100vh-120px)] lg:h-[calc(100vh-180px)]">
+      <div className="flex flex-1 min-h-0">
         {/* Left Panel: Chat List */}
-        <div className={`w-full lg:w-96 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
+        <div className={`w-full lg:w-80 xl:w-96 lg:flex-shrink-0 bg-white border-r border-gray-200 flex-col overflow-hidden ${selectedChatId ? 'hidden lg:flex' : 'flex'}`}>
           {/* タブ (全て / 未読 / 対応中 / 解決済) は意図的に削除。直近メッセージが見やすい LINE 風一覧を優先。 */}
 
           {/* Filter row */}
           <div className="px-3 py-2 border-b border-gray-100 flex flex-wrap items-center gap-2">
             {statusFilters.map((f) => (
-              <button
+              <Button type="button" size="xs" variant={statusFilter === f.key ? 'primary' : 'ghost'}
                 key={f.key}
                 onClick={() => setStatusFilter(f.key)}
                 disabled={unansweredOnly}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                  statusFilter === f.key
-                    ? 'bg-green-500 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                } ${unansweredOnly ? 'opacity-40 cursor-not-allowed' : ''}`}
+                className={unansweredOnly ? 'opacity-40' : ''}
               >
                 {f.label}
-              </button>
+              </Button>
             ))}
-            <label className="flex items-center gap-1.5 text-xs font-medium whitespace-nowrap ml-auto cursor-pointer select-none">
-              <input
-                type="checkbox"
+            <div className="ml-auto whitespace-nowrap">
+              <Checkbox
+                label="🔥 未対応のみ"
                 checked={unansweredOnly}
-                onChange={(e) => setUnansweredOnly(e.target.checked)}
-                className="rounded"
+                onCheckedChange={setUnansweredOnly}
               />
-              🔥 未対応のみ
-            </label>
+            </div>
           </div>
 
           {/* Chat List */}
@@ -772,6 +898,7 @@ export default function ChatsPage() {
                   // 最新メッセージの本文 preview。flex/image は文字列で見せても意味が薄いので type 表記に置換。
                   const previewRaw = chat.lastMessageContent ?? ''
                   const preview = (() => {
+                    if (RICH_MENU_SWITCH_RE.test(previewRaw)) return 'リッチメニュー切替'
                     if (chat.lastMessageType === 'image') return '📷 画像'
                     if (chat.lastMessageType === 'flex') return '📋 Flexメッセージ'
                     if (chat.lastMessageType === 'sticker') return '🎨 スタンプ'
@@ -825,13 +952,22 @@ export default function ChatsPage() {
                     </button>
                   )
                 })}
+                {hasMoreChats && !unansweredOnly && (
+                  <Button type="button" variant="ghost" loading={loadingMore}
+                    onClick={() => { void loadMoreChats() }}
+                    disabled={loadingMore}
+                    className="w-full px-4 py-3 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50 border-b border-gray-100"
+                  >
+                    {loadingMore ? '読み込み中...' : 'さらに読み込む'}
+                  </Button>
+                )}
               </>
             )}
           </div>
         </div>
 
-        {/* Right Panel: Chat Detail */}
-        <div className={`flex-1 bg-white rounded-lg shadow-sm border border-gray-200 flex-col overflow-hidden ${selectedChatId || selectedFriendId ? 'flex' : 'hidden lg:flex'}`}>
+        {/* Center Panel: Chat Detail */}
+        <div className={`flex-1 min-w-0 bg-white flex-col overflow-hidden ${selectedChatId || selectedFriendId ? 'flex' : 'hidden lg:flex'}`}>
           {selectedFriendId && !selectedChatId ? (
             /* Direct message to friend without existing chat */
             <DirectMessagePanel
@@ -850,10 +986,11 @@ export default function ChatsPage() {
             </div>
           ) : chatDetail ? (
             <>
-              {/* Chat Header */}
-              <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between gap-2">
+              {/* Chat Header — flex-shrink-0: 低いビューポートでもヘッダーとコンポーザーは
+                  高さを保ち、縮むのはメッセージ一覧だけにする */}
+              <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <button
+                  <Button type="button" size="xs" shape="square" variant="ghost" title="戻る"
                     onClick={() => setSelectedChatId(null)}
                     className="lg:hidden flex-shrink-0 p-1 -ml-1 text-gray-500 hover:text-gray-700"
                     aria-label="戻る"
@@ -861,7 +998,7 @@ export default function ChatsPage() {
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                     </svg>
-                  </button>
+                  </Button>
                   {chatDetail.friendPictureUrl && (
                     <img src={chatDetail.friendPictureUrl} alt="" className="w-8 h-8 rounded-full flex-shrink-0" />
                   )}
@@ -877,70 +1014,112 @@ export default function ChatsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* メモはPC(xl+)では右サイドバーに常設。狭い画面のみトグルで表示する */}
+                  <Button type="button" size="sm" variant={showMobileMemo ? 'primary' : 'secondary'}
+                    onClick={() => setShowMobileMemo((v) => !v)}
+                    className="xl:hidden"
+                    title="メモを表示"
+                  >
+                    📝 メモ
+                  </Button>
                   {unansweredOnly && chats.length > 1 && (
-                    <button
-                      type="button"
+                  <Button type="button" size="sm" variant="primary"
                       onClick={() => {
                         const idx = chats.findIndex((c) => c.id === selectedChatId)
-                        if (idx < 0) return
-                        const next = chats[(idx + 1) % chats.length]
+                        // idx < 0 = current chat is no longer in the list (e.g. just sent a reply)
+                        // → fall back to the head of the list so the queue keeps moving
+                        const nextIdx = idx < 0 ? 0 : (idx + 1) % chats.length
+                        const next = chats[nextIdx]
                         if (next && next.id !== selectedChatId) {
                           setSelectedChatId(next.id)
                         }
                       }}
-                      className="rounded-md bg-emerald-600 px-3 py-1.5 min-h-[44px] lg:min-h-0 text-sm font-medium text-white hover:bg-emerald-700"
                       title="次の未対応 friend に進む"
                     >
                       次の未対応 →
-                    </button>
+                    </Button>
                   )}
                   {chatDetail.status !== 'unread' && (
-                    <button
+                    <Button type="button" size="sm" variant="destructive"
                       onClick={() => handleStatusUpdate('unread')}
-                      className="px-3 py-1 min-h-[44px] lg:min-h-0 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
                     >
                       未読に戻す
-                    </button>
+                    </Button>
                   )}
                   {chatDetail.status !== 'in_progress' && (
-                    <button
+                    <Button type="button" size="sm" variant="secondary"
                       onClick={() => handleStatusUpdate('in_progress')}
-                      className="px-3 py-1 min-h-[44px] lg:min-h-0 text-xs font-medium text-yellow-700 bg-yellow-50 hover:bg-yellow-100 rounded-md transition-colors"
                     >
                       対応中にする
-                    </button>
+                    </Button>
                   )}
                   {chatDetail.status !== 'resolved' && (
-                    <button
+                    <Button type="button" size="sm" variant="primary"
                       onClick={() => handleStatusUpdate('resolved')}
-                      className="px-3 py-1 min-h-[44px] lg:min-h-0 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
                     >
                       解決済にする
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
 
               {/* Messages — LINE-style chat bubbles */}
-              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
+              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
                 {(!chatDetail.messages || chatDetail.messages.length === 0) ? (
                   <div className="text-center py-8">
                     <p className="text-white/60 text-sm">メッセージはまだありません。</p>
                   </div>
                 ) : (
                   (chatDetail.messages ?? []).map((msg, idx) => {
-                    const prevMsg = idx > 0 ? (chatDetail.messages ?? [])[idx - 1] : null
+                    const allMsgs = chatDetail.messages ?? []
+                    const prevMsg = idx > 0 ? allMsgs[idx - 1] : null
                     const showDateSep = !prevMsg || !sameYmd(prevMsg.createdAt, msg.createdAt)
                     const isOutgoing = msg.direction === 'outgoing'
 
-                    // メッセージ表示の分岐
-                    let bubbleContent: React.ReactNode
-                    if (msg.messageType === 'flex') {
-                      bubbleContent = (
-                        <div className="max-w-[300px]">
-                          <FlexPreviewComponent content={msg.content} maxWidth={280} />
+                    // リッチメニュー切替の postback はバブルにせずシステム行で表示。
+                    // 同日内の連続タップは先頭の1行に ×N でまとめる（タブを行き来する
+                    // だけで数十行埋まるのを防ぐ）。
+                    if (isRichMenuSwitch(msg)) {
+                      const isRunContinuation =
+                        prevMsg != null && isRichMenuSwitch(prevMsg) && sameYmd(prevMsg.createdAt, msg.createdAt)
+                      if (isRunContinuation) {
+                        return null
+                      }
+                      let runLength = 1
+                      for (let j = idx + 1; j < allMsgs.length; j++) {
+                        if (isRichMenuSwitch(allMsgs[j]) && sameYmd(allMsgs[j].createdAt, msg.createdAt)) runLength++
+                        else break
+                      }
+                      return (
+                        <div key={msg.id}>
+                          {showDateSep && (
+                            <div className="flex justify-center my-3">
+                              <span className="text-[11px] text-white/85 bg-black/20 px-2.5 py-0.5 rounded-full">
+                                {formatYmdSlash(msg.createdAt)}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex justify-center my-1.5">
+                            <span className="text-[11px] text-white/70 bg-black/15 px-2.5 py-0.5 rounded-full">
+                              リッチメニュー切替{runLength > 1 ? ` ×${runLength}` : ''}
+                              {' · '}
+                              {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
                         </div>
                       )
+                    }
+
+                    // メッセージ表示の分岐。
+                    // flex は LINE 本体と同じく吹き出し (背景色つきバブル) に包まない。
+                    // カード自体が完成された UI なので、緑バブルに入れると余白と背景が
+                    // 二重になる上、狭い max-w に押し込まれて崩れる。
+                    // sticker はバブルに残す — 画像 404 時のテキストフォールバックが
+                    // 裸だと青背景に無彩色文字で浮いてしまう (Codex Review 指摘)。
+                    const isBareContent = msg.messageType === 'flex'
+                    let bubbleContent: React.ReactNode
+                    if (msg.messageType === 'flex') {
+                      bubbleContent = <FlexPreviewComponent content={msg.content} />
                     } else if (msg.messageType === 'image') {
                       try {
                         const parsed = JSON.parse(msg.content)
@@ -977,18 +1156,26 @@ export default function ChatsPage() {
                             )
                           )}
 
-                          <div className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}>
-                            {/* メッセージバブル */}
-                            <div
-                              className={`max-w-[320px] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
-                                isOutgoing
-                                  ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl text-white'
-                                  : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
-                              }`}
-                              style={isOutgoing ? { backgroundColor: '#06C755' } : undefined}
-                            >
-                              {bubbleContent}
-                            </div>
+                          {/* w-full が要る: 吹き出しの max-w が % 指定なので、
+                              親の幅が確定していないとパーセントを解決できず
+                              min-content（1 文字幅）まで潰れて縦一列に改行される */}
+                          <div className={`flex flex-col w-full min-w-0 ${isOutgoing ? 'items-end' : 'items-start'}`}>
+                            {/* メッセージバブル。flex / sticker はバブル chrome なしで直接置く */}
+                            {isBareContent ? (
+                              <div className="max-w-[92%] lg:max-w-[80%] min-w-0">
+                                {bubbleContent}
+                              </div>
+                            ) : (
+                              <div
+                                className={`max-w-[75%] lg:max-w-[60%] px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                                  isOutgoing
+                                    ? 'rounded-tl-2xl rounded-tr-md rounded-bl-2xl rounded-br-2xl bg-kumo-brand text-kumo-inverse'
+                                    : 'rounded-tl-md rounded-tr-2xl rounded-bl-2xl rounded-br-2xl bg-white text-gray-900'
+                                }`}
+                              >
+                                {bubbleContent}
+                              </div>
+                            )}
                             {/* 時刻 */}
                             <span className="text-xs text-white/50 mt-0.5 px-1">
                               {new Date(msg.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
@@ -1001,77 +1188,91 @@ export default function ChatsPage() {
                 )}
               </div>
 
-              {/* Notes */}
-              <div className="px-4 py-2 border-t border-gray-200 bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="メモを入力..."
-                    className="flex-1 text-xs border border-gray-300 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-green-500"
-                  />
-                  <button
-                    onClick={handleSaveNotes}
-                    disabled={savingNotes}
-                    className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors disabled:opacity-50"
-                  >
-                    {savingNotes ? '保存中...' : 'メモ保存'}
-                  </button>
+              {/* Notes — PC(xl+)は右サイドバーに常設。狭い画面のみトグル表示 */}
+              {showMobileMemo && (
+                <div className="xl:hidden px-4 py-2 border-t border-gray-200 bg-gray-50">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      aria-label="友だちメモ"
+                      type="text"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="メモを入力..."
+                      className="flex-1 text-xs"
+                    />
+                    <Button type="button" size="xs" variant="secondary" loading={savingNotes}
+                      onClick={handleSaveNotes}
+                      disabled={savingNotes}
+                    >
+                      メモ保存
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Send Message Form */}
-              <div className="px-4 py-3 border-t border-gray-200">
-                <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-600">
-                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={showLoadingIndicator}
-                      onChange={(e) => setShowLoadingIndicator(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                    />
-                    入力中ローディングを表示
-                  </label>
-                  <select
-                    value={loadingSeconds}
-                    onChange={(e) => setLoadingSeconds(Number.parseInt(e.target.value, 10))}
-                    disabled={!showLoadingIndicator}
-                    className="border border-gray-300 rounded-md px-2 py-1 bg-white disabled:bg-gray-100 disabled:text-gray-400"
+              {/* Send Message Form — OAM風コンパクト構成。
+                  画像添付は 📎、ローディング/送信キー設定は ⚙ に格納し、
+                  通常時は入力欄1行だけにしてメッセージ表示領域を最大化する */}
+              {/* z-30 + bg-white: 何かの浮遊要素が万一重なってもコンポーザーが
+                  最前面でクリックを受ける。onClick はボタン/入力要素以外の余白
+                  クリックを入力欄フォーカスに変換する (当たり判定を行全体に拡大) */}
+              <div
+                className="relative z-30 bg-white flex-shrink-0 px-4 pt-3 pb-5 border-t border-gray-200"
+                onClick={(e) => {
+                  const t = e.target as HTMLElement
+                  if (t.closest('button, textarea, input, select, label, a')) return
+                  textareaRef.current?.focus()
+                }}
+              >
+                {showComposerSettings && (
+                  <div
+                    ref={composerSettingsRef}
+                    role="dialog"
+                    aria-label="送信設定"
+                    className="absolute bottom-full left-2 z-20 mb-1 w-72 rounded-lg border border-gray-200 bg-white p-3 shadow-lg space-y-3 text-xs text-gray-600"
                   >
-                    {[5, 10, 15, 20, 30, 45, 60].map((sec) => (
-                      <option key={sec} value={sec}>{sec}秒</option>
-                    ))}
-                  </select>
-                  <span className="text-gray-500">送信キー:</span>
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={sendMode === 'enter'}
-                      onChange={() => setSendMode('enter')}
-                      className="accent-green-600"
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                          label="入力中ローディングを表示"
+                          checked={showLoadingIndicator}
+                          onCheckedChange={setShowLoadingIndicator}
+                        />
+                      <Select
+                        aria-label="ローディング秒数"
+                        value={loadingSeconds}
+                        onValueChange={(value) => setLoadingSeconds(Number.parseInt(String(value ?? 10), 10))}
+                        disabled={!showLoadingIndicator}
+                        items={Object.fromEntries([5, 10, 15, 20, 30, 45, 60].map((sec) => [sec, `${sec}秒`]))}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Radio.Group legend="送信キー" value={sendMode} onValueChange={setSendMode} className="flex gap-3"><Radio.Item value="enter" label="Enter" /><Radio.Item value="shift-enter" label="Shift+Enter" /></Radio.Group>
+                    </div>
+                  </div>
+                )}
+                {(showImagePicker || pendingImage) && (
+                  <div className="mb-2">
+                    <ImageUploader
+                      mode="line-image"
+                      value={pendingImage}
+                      onChange={setPendingImage}
+                      label="画像を送る (任意)"
                     />
-                    <span>Enter</span>
-                  </label>
-                  <label className="flex items-center gap-1 cursor-pointer">
-                    <input
-                      type="radio"
-                      checked={sendMode === 'shift-enter'}
-                      onChange={() => setSendMode('shift-enter')}
-                      className="accent-green-600"
-                    />
-                    <span>Shift+Enter</span>
-                  </label>
-                </div>
-                <div className="mb-2">
-                  <ImageUploader
-                    mode="line-image"
-                    value={pendingImage}
-                    onChange={setPendingImage}
-                    label="画像を送る (任意)"
-                  />
-                </div>
-                <div className="flex items-end gap-2">
+                  </div>
+                )}
+                {/* 標準的なチャットコンポーザー (Slack / ChatGPT 型):
+                    1枚の枠の中に「上: textarea 全幅 / 下: ツールバー行」。
+                    - textarea が幅いっぱい = クリックターゲット最大
+                    - アイコン/送信は独立した下段行 = 入力領域と重ならない
+                    - 枠内のどこをクリックしても入力欄にフォーカス */}
+                <div
+                  className="rounded-2xl border border-gray-300 bg-white cursor-text transition-colors focus-within:border-green-500 focus-within:ring-2 focus-within:ring-green-100"
+                  onClick={(e) => {
+                    const t = e.target as HTMLElement
+                    if (t.closest('button, textarea, input, select, label, a')) return
+                    textareaRef.current?.focus()
+                  }}
+                >
                   <textarea
                     ref={textareaRef}
                     rows={2}
@@ -1095,16 +1296,51 @@ export default function ChatsPage() {
                     onBlur={() => setIsMessageInputFocused(false)}
                     onKeyDown={handleKeyDown}
                     placeholder="メッセージを入力..."
-                    className="flex-1 text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 resize-none overflow-y-auto"
+                    className="block w-full resize-none border-0 bg-transparent px-4 pt-3 pb-1 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0"
                   />
-                  <button
-                    onClick={handleSendMessage}
-                    disabled={sending || (!messageContent.trim() && !pendingImage)}
-                    className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ backgroundColor: '#06C755' }}
-                  >
-                    {sending ? '送信中...' : '送信'}
-                  </button>
+                  <div className="flex items-center gap-0.5 px-2 pb-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      shape="square"
+                      variant={showImagePicker || pendingImage ? 'primary' : 'ghost'}
+                      onClick={() => setShowImagePicker((v) => !v)}
+                      title="画像を添付"
+                      aria-label="画像を添付"
+                    >
+                      <svg className="w-5 h-5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      shape="square"
+                      variant={showComposerSettings ? 'primary' : 'ghost'}
+                      ref={composerSettingsButtonRef}
+                      onClick={() => setShowComposerSettings((v) => !v)}
+                      aria-expanded={showComposerSettings}
+                      title="送信設定 (ローディング表示・送信キー)"
+                      aria-label="送信設定"
+                    >
+                      <svg className="w-5 h-5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </Button>
+                    <span className="ml-auto mr-2 hidden sm:inline text-[11px] text-gray-300 select-none">
+                      {sendMode === 'enter' ? 'Enter で送信' : 'Shift+Enter で送信'}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      loading={sending}
+                      onClick={handleSendMessage}
+                      disabled={sending || (!messageContent.trim() && !pendingImage)}
+                    >
+                      送信
+                    </Button>
+                  </div>
                 </div>
               </div>
             </>
@@ -1119,6 +1355,8 @@ export default function ChatsPage() {
           直接渡せる (chat list SQL が `id: f.id` で friend_id を返す)。
         */}
         {(selectedChatId || selectedFriendId) && (
+          // xl 未満で 3 カラムにすると中央のチャット列が 160px 前後まで潰れ、
+          // コンポーザーが収まらなくなる。サイドバーは xl 以上でのみ出す。
           <div className="hidden xl:flex">
             <FriendInfoSidebar
               friendId={selectedFriendId || selectedChatId}
@@ -1127,11 +1365,23 @@ export default function ChatsPage() {
                   ? { status: chatDetail.status, notes: chatDetail.notes }
                   : undefined
               }
+              {...(selectedChatId && chatDetail && chatDetail.id === selectedChatId
+                ? {
+                    notesValue: notes,
+                    onNotesChange: setNotes,
+                    onSaveNotes: handleSaveNotes,
+                    savingNotes,
+                  }
+                : {})}
             />
           </div>
         )}
       </div>
-      <CcPromptButton prompts={ccPrompts} />
+      {/* コンポーザーが画面下端まで来るレイアウトなので、既定位置 (bottom-6 right-6) だと
+          送信ボタンに重なってクリックを奪う。xl 以上では友だち詳細サイドバーの上に
+          浮くので無害だが、サイドバーが消える xl 未満では入力欄の真上に来てしまい、
+          複数行入力で伸びた textarea のクリックを奪う。xl 未満では表示しない。 */}
+      <CcPromptButton prompts={ccPrompts} positionClassName="max-xl:hidden bottom-24 right-6" />
     </div>
   )
 }

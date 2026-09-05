@@ -1,6 +1,6 @@
-# LINE Harness Plugin Template
+# L Harness Plugin Template
 
-A template for building integrations that connect external services to LINE Harness.
+A template for building integrations that connect external services to L Harness.
 
 Use this as a starting point when building a plugin for services like MedicalForce, HotPepper, Shopify, or any other platform.
 
@@ -9,11 +9,11 @@ Use this as a starting point when building a plugin for services like MedicalFor
 | File | Purpose |
 |---|---|
 | `src/index.ts` | CF Worker entry point with cron + webhook handlers |
-| `src/sync.ts` | Sync external data to LINE Harness (tags, metadata) |
+| `src/sync.ts` | Sync external data to L Harness (tags, metadata) |
 | `src/notify.ts` | Send LINE messages based on external conditions |
 | `src/external-api.ts` | External API client stub |
 | `mcp-server/index.ts` | MCP server for AI agent integration |
-| `mcp-server/tools/example-tool.ts` | Example MCP tools combining external API + LINE Harness |
+| `mcp-server/tools/example-tool.ts` | Example MCP tools combining external API + L Harness |
 
 ## Getting Started
 
@@ -27,7 +27,7 @@ cp -r packages/plugin-template packages/plugin-yourservice
 
 3. **Implement the external API client** in `src/external-api.ts` — replace the stub with real API calls.
 
-4. **Customize sync logic** in `src/sync.ts` — define which data maps to LINE Harness tags and metadata.
+4. **Customize sync logic** in `src/sync.ts` — define which data maps to L Harness tags and metadata.
 
 5. **Customize notifications** in `src/notify.ts` — define when and what messages to send.
 
@@ -43,8 +43,8 @@ pnpm install
 
 | Variable | Description |
 |---|---|
-| `LINE_HARNESS_API_URL` | Your LINE Harness API base URL |
-| `LINE_HARNESS_API_KEY` | API key for LINE Harness (set as secret) |
+| `LINE_HARNESS_API_URL` | Your L Harness API base URL |
+| `LINE_HARNESS_API_KEY` | API key for L Harness (set as secret) |
 | `EXTERNAL_API_KEY` | API key for the external service (set as secret) |
 | `LINE_ACCOUNT_ID` | (Optional) LINE account ID for multi-account setups |
 
@@ -118,12 +118,12 @@ Add more tools by creating files in `mcp-server/tools/` and registering them in 
 ```
 External Service (MyService)
     │
-    ├── Cron sync ──→ LINE Harness API (tags, metadata)
-    ├── Webhooks ───→ CF Worker → LINE Harness API (messages)
-    └── MCP tools ──→ AI Agent → LINE Harness SDK
+    ├── Cron sync ──→ L Harness API (tags, metadata)
+    ├── Webhooks ───→ CF Worker → L Harness API (messages)
+    └── MCP tools ──→ AI Agent → L Harness SDK
 ```
 
-The plugin acts as a bridge: it reads data from the external service and writes to LINE Harness via the SDK. It never touches LINE's Messaging API directly — that is handled by LINE Harness.
+The plugin acts as a bridge: it reads data from the external service and writes to L Harness via the SDK. It never touches LINE's Messaging API directly — that is handled by L Harness.
 
 ## Adding New MCP Tools
 

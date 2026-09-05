@@ -68,3 +68,101 @@ describe('notFoundHandler — root / request', () => {
     expect(assets.fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('notFoundHandler — SPA fallback', () => {
+  // アセットストアに実ファイルが無いパス (LIFF の深いルート) は 404 で返るが、
+  // HTML を要求する GET ナビゲーションに限り index.html を返す。
+  function makeAssets(): Fetcher {
+    return {
+      fetch: vi.fn(async (req: Request) => {
+        const path = new URL(req.url).pathname;
+        if (path === '/') return new Response('<html>index</html>', { status: 200 });
+        return new Response(null, { status: 404 });
+      }),
+    } as unknown as Fetcher;
+  }
+
+  it('serves root index.html for a deep-link GET that accepts HTML (/webinar/:slug)', async () => {
+    const assets = makeAssets();
+    const fetchApp = makeApp({ DB: {} as D1Database, ASSETS: assets });
+    const res = await fetchApp('/webinar/harness-day2?liffId=x', {
+      headers: { accept: 'text/html,application/xhtml+xml' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<html>index</html>');
+    // 3 fetches: exact path (404) → /webinar/index.html (404, no such surface) → / (200).
+    expect(assets.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps 404 for non-HTML requests (missing asset file)', async () => {
+    const assets = makeAssets();
+    const fetchApp = makeApp({ DB: {} as D1Database, ASSETS: assets });
+    const res = await fetchApp('/assets/missing.js', {
+      headers: { accept: '*/*' },
+    });
+    expect(res.status).toBe(404);
+    expect(assets.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps 404 for non-GET methods even when HTML is accepted', async () => {
+    const assets = makeAssets();
+    const fetchApp = makeApp({ DB: {} as D1Database, ASSETS: assets });
+    const res = await fetchApp('/webinar/harness-day2', {
+      method: 'POST',
+      headers: { accept: 'text/html' },
+    });
+    expect(res.status).toBe(404);
+    expect(assets.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('notFoundHandler — three-surfaces bundle prefix fallback (2026-08-24)', () => {
+  // three-surfaces bundle 以降、このオリジンは root（LIFF アプリ）以外にも
+  // /<adminBasePath>（admin）・/liff-app（apps/liff）という別サーフェスを配信する。
+  // ここでは各サーフェスの deep link が自分自身の index.html に落ちること —
+  // root の LIFF アプリの index.html に誤って着地しないこと — を確認する。
+  function makeMultiSurfaceAssets(indexPaths: readonly string[]): Fetcher {
+    return {
+      fetch: vi.fn(async (req: Request) => {
+        const path = new URL(req.url).pathname;
+        if (indexPaths.includes(path)) {
+          return new Response(`<html>${path}</html>`, { status: 200 });
+        }
+        return new Response(null, { status: 404 });
+      }),
+    } as unknown as Fetcher;
+  }
+
+  it('falls back to /console/index.html for an admin deep link, not the root LIFF app', async () => {
+    const assets = makeMultiSurfaceAssets(['/', '/console/index.html']);
+    const fetchApp = makeApp({ DB: {} as D1Database, ASSETS: assets });
+    const res = await fetchApp('/console/friends/123', {
+      headers: { accept: 'text/html' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<html>/console/index.html</html>');
+    // exact path (404) → /console/index.html (200) — must NOT also try root.
+    expect(assets.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to /liff-app/index.html for an apps/liff deep link, not the root LIFF app', async () => {
+    const assets = makeMultiSurfaceAssets(['/', '/liff-app/index.html']);
+    const fetchApp = makeApp({ DB: {} as D1Database, ASSETS: assets });
+    const res = await fetchApp('/liff-app/webinar/harness-day2', {
+      headers: { accept: 'text/html' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<html>/liff-app/index.html</html>');
+    expect(assets.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('still falls back to root index.html for the root LIFF app itself (no matching prefix dir)', async () => {
+    const assets = makeMultiSurfaceAssets(['/', '/console/index.html', '/liff-app/index.html']);
+    const fetchApp = makeApp({ DB: {} as D1Database, ASSETS: assets });
+    const res = await fetchApp('/events/some-event-id', {
+      headers: { accept: 'text/html' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<html>/</html>');
+  });
+});

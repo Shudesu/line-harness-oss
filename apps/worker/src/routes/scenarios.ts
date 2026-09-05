@@ -13,6 +13,7 @@ import {
   computeNextDeliveryAt,
 } from '@line-crm/db';
 import { computeScenarioStats } from '../services/scenario-stats.js';
+import { SUPPORTED_CONDITION_TYPES, isSupportedConditionType } from '../services/step-delivery.js';
 import { resolveStepContent } from '@line-crm/db';
 import type {
   Scenario as DbScenario,
@@ -69,6 +70,48 @@ function serializeStep(row: DbScenarioStep) {
 
 const VALID_DELIVERY_MODES: readonly DeliveryMode[] = ['relative', 'elapsed', 'absolute_time'];
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Validate scenario step condition_type / condition_value pair.
+ * Rejects unknown condition_type values up-front (write-time) so users get an
+ * actionable error instead of the silent over-delivery seen in OSS issue #120.
+ */
+function validateStepCondition(
+  conditionType: unknown,
+  conditionValue: unknown,
+): { ok: true } | { ok: false; error: string } {
+  if (conditionType == null || conditionType === '') return { ok: true };
+  if (!isSupportedConditionType(conditionType)) {
+    return {
+      ok: false,
+      error: `Unsupported conditionType "${String(conditionType)}" (supported: ${SUPPORTED_CONDITION_TYPES.join(', ')})`,
+    };
+  }
+  // conditionType が「あり」のとき conditionValue は必ず非空文字列。
+  // body の TS 型は実行時には強制されないので、明示的に runtime check しないと
+  // 数値・オブジェクトが SQL バインドに乗って 0件マッチ → tag_not_exists が全友だちに当たる、
+  // のような OSS issue #120 と同じ over-delivery を再現してしまう。
+  if (typeof conditionValue !== 'string' || conditionValue === '') {
+    return { ok: false, error: 'conditionValue must be a non-empty string when conditionType is set' };
+  }
+  if (conditionType === 'metadata_equals' || conditionType === 'metadata_not_equals') {
+    try {
+      const parsed = JSON.parse(conditionValue) as unknown;
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed) ||
+        typeof (parsed as { key?: unknown }).key !== 'string' ||
+        !('value' in (parsed as Record<string, unknown>))
+      ) {
+        return { ok: false, error: 'conditionValue for metadata_* must be JSON {"key": "...", "value": ...}' };
+      }
+    } catch {
+      return { ok: false, error: 'conditionValue for metadata_* must be valid JSON' };
+    }
+  }
+  return { ok: true };
+}
 
 interface StepScheduleBody {
   delayMinutes?: number;
@@ -136,6 +179,8 @@ scenarios.get('/api/scenarios', async (c) => {
     const lineAccountId = c.req.query('lineAccountId');
     let items: DbScenarioWithStepCount[];
     if (lineAccountId) {
+      // NULL line_account_id = global scenario (webhook.ts:211 / liff.ts:878 fire it for every
+      // account). Include both account-bound and global rows so the list mirrors the engine.
       const result = await c.env.DB
         .prepare(
           `SELECT s.*, COUNT(ss.id) as step_count
@@ -321,6 +366,9 @@ scenarios.post('/api/scenarios/:id/steps', async (c) => {
     const v = validateStepSchedule(scenarioRow.delivery_mode, body);
     if (!v.ok) return c.json({ success: false, error: v.error }, 400);
 
+    const cv = validateStepCondition(body.conditionType, body.conditionValue);
+    if (!cv.ok) return c.json({ success: false, error: cv.error }, 400);
+
     // templateId / onReachTagId 参照整合性チェック
     if (body.templateId != null) {
       const tpl = await c.env.DB
@@ -379,6 +427,25 @@ scenarios.put('/api/scenarios/:id/steps/:stepId', async (c) => {
       templateId?: string | null;
       onReachTagId?: string | null;
     }>();
+
+    // conditionType / conditionValue の partial-update 検証（OSS issue #120 回帰防止）。
+    // どちらかが touched なときだけ走らせる。effective 値は、body に来た値を優先しつつ
+    // 既存行で穴埋めして組み立て、validateStepCondition で pair を検証する。
+    // これにより「type だけ flipping、value は既存」のような partial 更新を壊さずに、
+    // 未知 type や JSON 異形を確実に弾ける。
+    if (body.conditionType !== undefined || body.conditionValue !== undefined) {
+      const existingCond = await c.env.DB
+        .prepare(`SELECT condition_type, condition_value FROM scenario_steps WHERE id = ? AND scenario_id = ?`)
+        .bind(stepId, scenarioId)
+        .first<{ condition_type: string | null; condition_value: string | null }>();
+      if (!existingCond) {
+        return c.json({ success: false, error: 'Step not found' }, 404);
+      }
+      const effectiveType = body.conditionType !== undefined ? body.conditionType : existingCond.condition_type;
+      const effectiveValue = body.conditionValue !== undefined ? body.conditionValue : existingCond.condition_value;
+      const cv = validateStepCondition(effectiveType, effectiveValue);
+      if (!cv.ok) return c.json({ success: false, error: cv.error }, 400);
+    }
 
     // templateId / onReachTagId 参照整合性チェック (null は解除を意図、bypass)
     // templateId が指定された場合は内容も取得して snapshot 更新に使う。
@@ -701,6 +768,105 @@ scenarios.get('/api/scenarios/:id/stats', async (c) => {
     return c.json({ success: true, data: stats });
   } catch (err) {
     console.error('GET /api/scenarios/:id/stats error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/scenarios/:id/enrollments — 個票（今どこで、なぜ止まっているか）
+//
+// 「進行中1・到達0」のような状態のとき、**先が見えないと原因を特定できない**。
+// 実際に、条件付きステップで配信が進まない事象の切り分けに人間のフィードバック
+// 3往復とクライアント JS のリバースエンジニアリングが必要になった（2026-08-25 の実戦報告）。
+//
+// 書いた結果を読み取れる API を対で用意する、という方針の1本目。
+// stats（集計）では「何人が進行中か」しか分からないが、ここでは1人ずつ
+// 「現在ステップ・次の配信予定・今のステップに条件が付いているか」まで返す。
+scenarios.get('/api/scenarios/:id/enrollments', async (c) => {
+  try {
+    const scenarioId = c.req.param('id');
+    const scenario = await c.env.DB
+      .prepare(`SELECT id FROM scenarios WHERE id = ?`)
+      .bind(scenarioId)
+      .first<{ id: string }>();
+    if (!scenario) {
+      return c.json({ success: false, error: 'Scenario not found' }, 404);
+    }
+
+    const status = (c.req.query('status') ?? '').trim();
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 100) || 100, 1), 500);
+
+    // current_step_order は「最後に配信した step_order」で、次に配信するのは
+    // それより大きい最小の step_order（step-delivery.ts の find と同じ基準）。
+    // ここで LEFT JOIN しておくと「次に何が起きるはずか」がそのまま読める。
+    const rows = await c.env.DB
+      .prepare(
+        `SELECT fs.id, fs.friend_id, fs.status, fs.current_step_order,
+                fs.started_at, fs.next_delivery_at, fs.updated_at,
+                f.display_name, f.line_user_id,
+                ns.id AS next_step_id, ns.step_order AS next_step_order,
+                ns.condition_type AS next_condition_type,
+                ns.condition_value AS next_condition_value,
+                ns.next_step_on_false AS next_step_on_false,
+                ns.delay_minutes AS next_delay_minutes
+           FROM friend_scenarios fs
+           JOIN friends f ON f.id = fs.friend_id
+           LEFT JOIN scenario_steps ns
+                  ON ns.scenario_id = fs.scenario_id
+                 AND ns.step_order = (
+                       SELECT MIN(step_order) FROM scenario_steps
+                        WHERE scenario_id = fs.scenario_id
+                          AND step_order > fs.current_step_order)
+          WHERE fs.scenario_id = ?
+            AND (? = '' OR fs.status = ?)
+          ORDER BY fs.updated_at DESC
+          LIMIT ?`,
+      )
+      .bind(scenarioId, status, status, limit)
+      .all<Record<string, unknown>>();
+
+    const data = (rows.results ?? []).map((r) => {
+      const nextStepOrder = r.next_step_order as number | null;
+      const conditionType = r.next_condition_type as string | null;
+      // なぜ今止まって見えるのかを、判定ではなく**事実**として返す。
+      // 「条件が false だから待っている」と書くと、実際は順次進む実装
+      // （step-delivery.ts の nextStepOnFalse null 分岐）と食い違って
+      // 誤診を誘発するので、条件の有無と次回予定だけを素直に出す。
+      const waiting =
+        r.status === 'active' && nextStepOrder !== null
+          ? conditionType
+            ? `次のステップ(order=${nextStepOrder})に条件 ${conditionType} が設定されています`
+            : `次のステップ(order=${nextStepOrder})の配信待ちです`
+          : r.status === 'active' && nextStepOrder === null
+            ? '次のステップがありません（このtickで完了扱いになります）'
+            : null;
+      return {
+        id: r.id,
+        friendId: r.friend_id,
+        friendName: r.display_name,
+        lineUserId: r.line_user_id,
+        status: r.status,
+        currentStepOrder: r.current_step_order,
+        startedAt: r.started_at,
+        nextDeliveryAt: r.next_delivery_at,
+        updatedAt: r.updated_at,
+        nextStep: nextStepOrder === null
+          ? null
+          : {
+              id: r.next_step_id,
+              stepOrder: nextStepOrder,
+              delayMinutes: r.next_delay_minutes,
+              conditionType,
+              conditionValue: r.next_condition_value,
+              // null = 条件 false のとき順次次のステップへ進む（分岐しない）
+              nextStepOnFalse: r.next_step_on_false,
+            },
+        note: waiting,
+      };
+    });
+
+    return c.json({ success: true, data });
+  } catch (err) {
+    console.error('GET /api/scenarios/:id/enrollments error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

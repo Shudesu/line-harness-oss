@@ -17,6 +17,23 @@ export class WranglerError extends Error {
     const text = `${this.message}\n${this.stderr}`.toLowerCase();
     const hints: string[] = [];
 
+    // Deploying with `workers_dev = true` fails on accounts that never
+    // registered their workers.dev subdomain. Wrangler tries to prompt for
+    // registration, but our piped (non-TTY) invocation cannot answer it, so
+    // users only ever see the raw error — guide them to the dashboard.
+    const needsWorkersDevSubdomain = text.includes(
+      "register a workers.dev subdomain",
+    );
+    if (needsWorkersDevSubdomain) {
+      hints.push(
+        [
+          "workers.dev サブドメインが未登録です。ブラウザで以下の URL を開いてサブドメインを登録してください:",
+          `  ${workersOnboardingUrl(_accountId)}`,
+          "登録が終わったら、同じコマンドを再実行すれば途中から再開されます。",
+          "（登録直後は DNS 反映に数分かかる場合があります。デプロイが失敗する場合は少し待ってから再実行してください）",
+        ].join("\n"),
+      );
+    }
     if (text.includes("code: 10034") || text.includes("code:10034")) {
       hints.push(
         "Cloudflare アカウントのメール認証が完了していません。Cloudflare ダッシュボードに届く確認メールを開いて認証してください。",
@@ -34,13 +51,28 @@ export class WranglerError extends Error {
     if (text.includes("not authenticated") || text.includes("you are not authenticated")) {
       hints.push("OAuth トークンが切れています。`npx wrangler logout && npx wrangler login` で再ログインしてください。");
     }
-    if (text.includes("non-interactive") || text.includes("cloudflare_api_token")) {
+    if (
+      !needsWorkersDevSubdomain &&
+      (text.includes("non-interactive") || text.includes("cloudflare_api_token"))
+    ) {
+      // Skipped for the subdomain case: wrangler's registration prompt is
+      // what trips the non-interactive error there, and reporting it as a
+      // CLI bug would send users down the wrong path.
       hints.push(
         "wrangler が CI モード判定に陥っています（TTY 不在）。create-line-harness 側のバグの可能性が高いので、Issue で報告してください。",
       );
     }
     if (text.includes("d1_create_too_many_databases") || text.includes("too many databases")) {
       hints.push("D1 の無料枠を使い切っています。古い D1 を削除するか有料プランへ。");
+    }
+    if (text.includes("register a workers.dev subdomain")) {
+      hints.push(
+        [
+          "workers.dev サブドメインが未登録です。同じコマンドを再実行すると CLI 内で登録できます。",
+          "うまくいかない場合は Cloudflare ダッシュボード（https://dash.cloudflare.com/ → Workers & Pages）で登録してください。",
+          "登録直後は DNS 反映に数分かかるため、失敗する場合は数分待ってから再実行してください。",
+        ].join("\n"),
+      );
     }
 
     return hints.length > 0 ? hints.join("\n") : null;
@@ -55,6 +87,17 @@ let _accountId: string | undefined;
  */
 export function setAccountId(accountId: string): void {
   _accountId = accountId;
+}
+
+/**
+ * Dashboard page where the user registers their workers.dev subdomain.
+ * Without an account ID, `?to=/:account/...` lets the dashboard resolve the
+ * account (showing a picker if the user has several).
+ */
+export function workersOnboardingUrl(accountId?: string): string {
+  return accountId
+    ? `https://dash.cloudflare.com/${accountId}/workers/onboarding`
+    : "https://dash.cloudflare.com/?to=/:account/workers/onboarding";
 }
 
 export interface WranglerOptions {

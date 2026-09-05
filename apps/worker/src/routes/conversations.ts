@@ -20,6 +20,19 @@ conversations.get('/api/conversations', async (c) => {
         ? `AND ((strftime('%s', 'now') - strftime('%s', li.at)) / 3600.0) <= ?`
         : '';
 
+    // friend ごとの最新 chats 行の status (bare-column + 単一 MAX の argmax)。
+    // unanswered-inbox.ts の CANDIDATES_SQL と同じ resolved 除外。管理画面で
+    // 「解決済」にした会話が MCP (list_conversations) 側だけ要対応で残ると
+    // 判定が乖離するため、こちらにも同条件を入れる。main / count の両クエリで
+    // 共有し、片方だけ編集されて total と items が食い違うのを防ぐ。
+    const latestChatCte = `
+      latest_chat AS (
+        SELECT friend_id, status, MAX(created_at) AS created_at
+        FROM chats
+        GROUP BY friend_id
+      )`;
+    const whereNotResolved = `AND COALESCE(lc.status, 'unread') != 'resolved'`;
+
     const sql = `
       -- conversations queue (要対応の自発メッセージ) は postback (rich menu tap) を除外する。
       -- postback は button 押下で「人間の返信を要する自発メッセージ」ではないため。
@@ -48,7 +61,8 @@ conversations.get('/api/conversations', async (c) => {
         ) lm ON lm.friend_id = ml.friend_id AND lm.mx = ml.created_at
         WHERE ml.direction = 'incoming'
           AND (ml.source IS NULL OR ml.source != 'postback')
-      )
+      ),
+      ${latestChatCte}
       SELECT
         f.id AS friend_id,
         f.line_user_id,
@@ -64,8 +78,10 @@ conversations.get('/api/conversations', async (c) => {
       INNER JOIN last_incoming li ON li.friend_id = f.id
       LEFT JOIN last_human lh ON lh.friend_id = f.id
       LEFT JOIN latest_msg lm ON lm.friend_id = f.id
+      LEFT JOIN latest_chat lc ON lc.friend_id = f.id
       WHERE f.is_following = 1
         AND (lh.at IS NULL OR lh.at < li.at)
+        ${whereNotResolved}
         AND ((strftime('%s', 'now') - strftime('%s', li.at)) / 3600.0) >= ?
         ${whereMaxHours}
         ${whereAccount}
@@ -93,12 +109,15 @@ conversations.get('/api/conversations', async (c) => {
       last_human AS (
         SELECT friend_id, MAX(created_at) AS at FROM messages_log
         WHERE direction = 'outgoing' AND source = 'manual' GROUP BY friend_id
-      )
+      ),
+      ${latestChatCte}
       SELECT COUNT(*) AS total FROM friends f
       INNER JOIN last_incoming li ON li.friend_id = f.id
       LEFT JOIN last_human lh ON lh.friend_id = f.id
+      LEFT JOIN latest_chat lc ON lc.friend_id = f.id
       WHERE f.is_following = 1
         AND (lh.at IS NULL OR lh.at < li.at)
+        ${whereNotResolved}
         AND ((strftime('%s', 'now') - strftime('%s', li.at)) / 3600.0) >= ?
         ${whereMaxHours}
         ${whereAccount}
@@ -236,6 +255,11 @@ conversations.get('/api/conversations/:friendId', async (c) => {
           : m.delivery_type === 'reply' ? 'auto_reply'
           : 'manual'
       ),
+      // Already selected above for the source inference — expose it so callers
+      // can attribute a send back to its broadcast (source='broadcast' alone
+      // says a broadcast sent it, not which one).
+      broadcastId: m.broadcast_id ?? null,
+      scenarioStepId: m.scenario_step_id ?? null,
       createdAt: m.created_at,
     }));
 

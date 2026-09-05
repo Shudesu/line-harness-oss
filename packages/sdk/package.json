@@ -1,7 +1,7 @@
 {
   "name": "@line-harness/sdk",
-  "version": "0.15.0",
-  "description": "AI-native SDK for LINE Harness — programmatic LINE official account automation",
+  "version": "0.24.0",
+  "description": "AI-native SDK for L Harness — programmatic LINE official account automation",
   "type": "module",
   "exports": {
     ".": {
@@ -33,6 +33,18 @@
     "ai"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Shudesu/line-harness-oss.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/Shudesu/line-harness-oss#readme",
+  "bugs": {
+    "url": "https://github.com/Shudesu/line-harness-oss/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",

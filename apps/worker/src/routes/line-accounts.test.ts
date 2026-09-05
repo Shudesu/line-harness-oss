@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, vi } from 'vitest';
+import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 
 // Mock @line-crm/db so we can assert on the values the route forwards to the
@@ -13,11 +13,17 @@ const dbMocks = {
   updateLineAccountFields: vi.fn(),
   updateLineAccountOrder: vi.fn(),
   deleteLineAccount: vi.fn(),
+  getAccountSetting: vi.fn(),
+  setAccountSetting: vi.fn(),
+  jstNow: vi.fn(() => '2026-08-10T12:00:00.000+09:00'),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
 const lineClientMocks = {
   getFollowersInsight: vi.fn(),
+  getFollowerIds: vi.fn(),
+  getMessageQuota: vi.fn(),
+  getMessageQuotaConsumption: vi.fn(),
 };
 vi.mock('@line-crm/line-sdk', () => ({
   LineClient: vi.fn().mockImplementation(() => lineClientMocks),
@@ -79,6 +85,87 @@ const fakeAccount = {
 beforeEach(() => {
   for (const fn of Object.values(dbMocks)) fn.mockReset();
   lineClientMocks.getFollowersInsight.mockReset();
+  lineClientMocks.getFollowerIds.mockReset();
+  lineClientMocks.getMessageQuota.mockReset();
+  lineClientMocks.getMessageQuotaConsumption.mockReset();
+  dbMocks.getAccountSetting.mockResolvedValue(null);
+  dbMocks.setAccountSetting.mockResolvedValue(undefined);
+  dbMocks.jstNow.mockReturnValue('2026-08-10T12:00:00.000+09:00');
+  lineClientMocks.getFollowerIds.mockResolvedValue({ userIds: [] });
+});
+
+describe('GET /api/line-accounts/:id', () => {
+  const secretAccount = {
+    ...fakeAccount,
+    channel_access_token: 'plaintext-channel-token-WXYZ',
+    channel_secret: 'plaintext-channel-secret-1234',
+    login_channel_secret: 'plaintext-login-secret-5678',
+  };
+
+  // An API key handed to an MCP agent is owner-role. Returning the plaintext
+  // channel token here would let a leaked key take over the LINE channel itself.
+  test('masks secrets for owner instead of returning them in full', async () => {
+    dbMocks.getLineAccountById.mockResolvedValue(secretAccount);
+
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts/acc-1');
+
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    expect(raw).not.toContain('plaintext-channel-token');
+    expect(raw).not.toContain('plaintext-channel-secret');
+    expect(raw).not.toContain('plaintext-login-secret');
+
+    const body = JSON.parse(raw) as { data: Record<string, unknown> };
+    expect(body.data.channelAccessToken).toBe('****WXYZ');
+    expect(body.data.channelSecret).toBe('****1234');
+    expect(body.data.loginChannelSecret).toBe('****5678');
+  });
+
+  test('omits secret fields entirely for staff role', async () => {
+    dbMocks.getLineAccountById.mockResolvedValue(secretAccount);
+
+    const app = setupApp('staff');
+    const res = await app.request('/api/line-accounts/acc-1');
+
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(body.data.channelAccessToken).toBeUndefined();
+    expect(body.data.channelSecret).toBeUndefined();
+    expect(body.data.loginChannelSecret).toBeUndefined();
+  });
+
+  // An update that touches only non-secret fields still returns the row, so an
+  // unmasked PUT response would hand back the *stored* token — the same read
+  // path the GET masking closes.
+  test('PUT response masks secrets the caller did not supply', async () => {
+    dbMocks.getLineAccountById.mockResolvedValue(secretAccount);
+    dbMocks.updateLineAccountFields.mockResolvedValue(secretAccount);
+    dbMocks.updateLineAccount.mockResolvedValue(secretAccount);
+
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts/acc-1', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '名前だけ変更' }),
+    });
+
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    expect(raw).not.toContain('plaintext-channel-token');
+    expect(raw).not.toContain('plaintext-channel-secret');
+    expect(raw).not.toContain('plaintext-login-secret');
+  });
+
+  // Masking null would render as "****" and read as "configured" in the UI.
+  test('keeps unset secrets null rather than masking them into a value', async () => {
+    dbMocks.getLineAccountById.mockResolvedValue({ ...secretAccount, login_channel_secret: null });
+
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts/acc-1');
+
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(body.data.loginChannelSecret).toBeNull();
+  });
 });
 
 describe('GET /api/line-accounts/:id/follower-insight', () => {
@@ -127,6 +214,222 @@ describe('GET /api/line-accounts/:id/follower-insight', () => {
 
     expect(res.status).toBe(400);
     expect(lineClientMocks.getFollowersInsight).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/line-accounts/delivery-health', () => {
+  // Freeze time so insight dates are deterministic and the followers-insight
+  // mock can be keyed on the requested date (order-independent):
+  // 2026-09-02T03:00Z = 2026-09-02 12:00 JST → yesterday 20260901, before 20260831.
+  const YESTERDAY = '20260901';
+  const DAY_BEFORE = '20260831';
+  beforeEach(() => {
+    vi.useFakeTimers({ now: new Date('2026-09-02T03:00:00Z'), toFake: ['Date'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** SQL-sniffing D1 stub: monthly log rows / all-target broadcasts / friend count. */
+  function makeCountsDb(counts: { log?: number; broadcast?: number; friends?: number }): D1Database {
+    return {
+      prepare: (sql: string) => ({
+        bind: () => ({
+          first: async () => {
+            if (sql.includes('FROM messages_log')) return { count: counts.log ?? 0 };
+            if (sql.includes('FROM broadcasts')) return { count: counts.broadcast ?? 0 };
+            if (sql.includes('FROM friends')) return { count: counts.friends ?? 0 };
+            return null;
+          },
+        }),
+      }),
+    } as unknown as D1Database;
+  }
+
+  function mockInsightByDate(
+    byDate: Record<string, { status: string; followers?: number; targetedReaches?: number; blocks?: number }>,
+  ) {
+    lineClientMocks.getFollowersInsight.mockImplementation((date: string) =>
+      byDate[date] ? Promise.resolve(byDate[date]) : Promise.reject(new Error(`no insight for ${date}`)),
+    );
+  }
+
+  test('returns quota, insight deltas, monthly count and flags quota shortage', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([fakeAccount]);
+    lineClientMocks.getMessageQuota.mockResolvedValue({ type: 'limited', value: 300 });
+    lineClientMocks.getMessageQuotaConsumption.mockResolvedValue({ totalUsage: 260 });
+    mockInsightByDate({
+      [YESTERDAY]: { status: 'ready', followers: 120, targetedReaches: 100, blocks: 8 },
+      [DAY_BEFORE]: { status: 'ready', followers: 115, targetedReaches: 96, blocks: 5 },
+    });
+
+    const app = setupApp('owner', makeCountsDb({ log: 40, broadcast: 2, friends: 110 }));
+    const res = await app.request('/api/line-accounts/delivery-health');
+
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    expect(raw).not.toContain(fakeAccount.channel_access_token);
+    expect(raw).not.toContain(fakeAccount.channel_secret);
+
+    const body = JSON.parse(raw) as {
+      success: boolean;
+      data: { insightDate: string; accounts: Array<Record<string, unknown>> };
+    };
+    expect(body.success).toBe(true);
+    expect(body.data.insightDate).toBe(YESTERDAY);
+    expect(body.data.accounts).toHaveLength(1);
+    expect(body.data.accounts[0]).toMatchObject({
+      lineAccountId: 'acc-1',
+      name: 'メイン',
+      quota: { type: 'limited', limit: 300, consumption: 260, remaining: 40 },
+      // remaining 40 < targetedReaches 100 → an all-target send cannot complete
+      quotaAlert: true,
+      insight: {
+        status: 'ready',
+        date: YESTERDAY,
+        followers: 120,
+        targetedReaches: 100,
+        blocks: 8,
+        followersDelta: 5,
+        blocksDelta: 3,
+      },
+      // 40 log rows + 2 all-target broadcast recipients
+      messagesThisMonth: 42,
+      errors: [],
+    });
+  });
+
+  test('unlimited plan (type=none) yields null limit and no alert', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([fakeAccount]);
+    lineClientMocks.getMessageQuota.mockResolvedValue({ type: 'none' });
+    lineClientMocks.getMessageQuotaConsumption.mockResolvedValue({ totalUsage: 5000 });
+    mockInsightByDate({
+      [YESTERDAY]: { status: 'ready', followers: 10, targetedReaches: 9, blocks: 1 },
+      [DAY_BEFORE]: { status: 'ready', followers: 10, targetedReaches: 9, blocks: 1 },
+    });
+
+    const app = setupApp('owner', makeCountsDb({}));
+    const res = await app.request('/api/line-accounts/delivery-health');
+
+    const body = (await res.json()) as { data: { accounts: Array<Record<string, unknown>> } };
+    expect(body.data.accounts[0]).toMatchObject({
+      quota: { type: 'none', limit: null, consumption: 5000, remaining: null },
+      quotaAlert: false,
+    });
+  });
+
+  test('failing quota calls degrade to null with errors recorded; unready insight is a distinct status', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([fakeAccount]);
+    lineClientMocks.getMessageQuota.mockRejectedValue(new Error('LINE API error: 401'));
+    lineClientMocks.getMessageQuotaConsumption.mockRejectedValue(new Error('LINE API error: 401'));
+    mockInsightByDate({
+      [YESTERDAY]: { status: 'unready' },
+      [DAY_BEFORE]: { status: 'unready' },
+    });
+
+    const app = setupApp('owner', makeCountsDb({ log: 3 }));
+    const res = await app.request('/api/line-accounts/delivery-health');
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { accounts: Array<Record<string, unknown>> } };
+    expect(body.data.accounts[0]).toMatchObject({
+      quota: { type: null, limit: null, consumption: null, remaining: null },
+      quotaAlert: false,
+      insight: {
+        status: 'unready',
+        date: null,
+        followers: null,
+        targetedReaches: null,
+        blocks: null,
+        followersDelta: null,
+        blocksDelta: null,
+      },
+      messagesThisMonth: 3,
+    });
+    // Fulfilled-but-unready is NOT an error — only the real failures are.
+    expect(body.data.accounts[0].errors).toEqual(['quota', 'consumption']);
+  });
+
+  test('quota exhaustion still alerts when the insight is unready (DB friend-count fallback)', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([fakeAccount]);
+    lineClientMocks.getMessageQuota.mockResolvedValue({ type: 'limited', value: 300 });
+    lineClientMocks.getMessageQuotaConsumption.mockResolvedValue({ totalUsage: 280 });
+    mockInsightByDate({
+      [YESTERDAY]: { status: 'unready' },
+      [DAY_BEFORE]: { status: 'unready' },
+    });
+
+    // remaining 20 < 50 following friends in DB → alert even without insight
+    const app = setupApp('owner', makeCountsDb({ friends: 50 }));
+    const res = await app.request('/api/line-accounts/delivery-health');
+
+    const body = (await res.json()) as { data: { accounts: Array<Record<string, unknown>> } };
+    expect(body.data.accounts[0]).toMatchObject({
+      quota: { remaining: 20 },
+      quotaAlert: true,
+    });
+  });
+
+  test('remaining 0 alerts even when no audience estimate is available', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([fakeAccount]);
+    lineClientMocks.getMessageQuota.mockResolvedValue({ type: 'limited', value: 300 });
+    lineClientMocks.getMessageQuotaConsumption.mockResolvedValue({ totalUsage: 300 });
+    mockInsightByDate({
+      [YESTERDAY]: { status: 'unready' },
+      [DAY_BEFORE]: { status: 'unready' },
+    });
+
+    const app = setupApp('owner', makeCountsDb({ friends: 0 }));
+    const res = await app.request('/api/line-accounts/delivery-health');
+
+    const body = (await res.json()) as { data: { accounts: Array<Record<string, unknown>> } };
+    expect(body.data.accounts[0]).toMatchObject({
+      quota: { remaining: 0 },
+      quotaAlert: true,
+    });
+  });
+
+  test('a failing day-before insight call is recorded in errors, deltas stay null', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([fakeAccount]);
+    lineClientMocks.getMessageQuota.mockResolvedValue({ type: 'limited', value: 300 });
+    lineClientMocks.getMessageQuotaConsumption.mockResolvedValue({ totalUsage: 10 });
+    mockInsightByDate({
+      [YESTERDAY]: { status: 'ready', followers: 120, targetedReaches: 100, blocks: 8 },
+      // DAY_BEFORE missing → the mock rejects that call
+    });
+
+    const app = setupApp('owner', makeCountsDb({ friends: 100 }));
+    const res = await app.request('/api/line-accounts/delivery-health');
+
+    const body = (await res.json()) as { data: { accounts: Array<Record<string, unknown>> } };
+    expect(body.data.accounts[0]).toMatchObject({
+      insight: {
+        status: 'ready',
+        followers: 120,
+        followersDelta: null,
+        blocksDelta: null,
+      },
+    });
+    expect(body.data.accounts[0].errors).toEqual(['prevInsight']);
+  });
+
+  test('skips inactive accounts', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([
+      fakeAccount,
+      { ...fakeAccount, id: 'acc-2', name: '停止中', is_active: 0 },
+    ]);
+    lineClientMocks.getMessageQuota.mockResolvedValue({ type: 'limited', value: 200 });
+    lineClientMocks.getMessageQuotaConsumption.mockResolvedValue({ totalUsage: 0 });
+    mockInsightByDate({
+      [YESTERDAY]: { status: 'unready' },
+      [DAY_BEFORE]: { status: 'unready' },
+    });
+
+    const app = setupApp('owner', makeCountsDb({}));
+    const res = await app.request('/api/line-accounts/delivery-health');
+
+    const body = (await res.json()) as { data: { accounts: Array<{ lineAccountId: string }> } };
+    expect(body.data.accounts.map((a) => a.lineAccountId)).toEqual(['acc-1']);
   });
 });
 
@@ -494,5 +797,42 @@ describe('PUT /api/line-accounts/:id', () => {
       country: '日本',
       role: '本店',
     });
+  });
+});
+
+describe('GET /api/line-accounts monthly send stat', () => {
+  test('month window starts at JST month start (bound param), not UTC date()', async () => {
+    dbMocks.getLineAccounts.mockResolvedValue([fakeAccount]);
+    // fetchBotProfile hits the network; fail it fast (it degrades to {}).
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
+    try {
+      const executed: { sql: string; params: unknown[] }[] = [];
+      const db = {
+        prepare(sql: string) {
+          const stmt = {
+            params: [] as unknown[],
+            bind(...p: unknown[]) { stmt.params = p; return stmt; },
+            async first() {
+              executed.push({ sql, params: stmt.params });
+              return { count: 0 };
+            },
+          };
+          return stmt;
+        },
+      } as unknown as D1Database;
+
+      const res = await setupApp('owner', db).request('/api/line-accounts');
+      expect(res.status).toBe(200);
+
+      const ml = executed.find((e) => e.sql.includes('FROM messages_log'))!;
+      expect(ml).toBeDefined();
+      // date('now') is UTC in SQLite: between 00:00 and 09:00 JST on the 1st
+      // it still points at the previous month. The route must bind a JST
+      // month-start string in the created_at format instead.
+      expect(ml.sql).not.toContain("date('now', 'start of month')");
+      expect(ml.params[0]).toMatch(/^\d{4}-\d{2}-01T00:00:00\.000$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -77,6 +77,7 @@ interface SlotRow {
   is_active: number;
   sort_order: number;
   deleted_at: string | null;
+  [k: string]: unknown;
 }
 
 interface BookingRow {
@@ -85,6 +86,7 @@ interface BookingRow {
   status: string;
   slot_id?: string;
   friend_id?: string;
+  [k: string]: unknown;
 }
 
 interface LineAccount {
@@ -135,6 +137,18 @@ function makeEventDb(state: {
             const [id] = bound as [string];
             const acc = (state.accounts ?? []).find((a) => a.id === id);
             return (acc ? { channel_access_token: acc.channel_access_token ?? '' } : null) as T | null;
+          }
+          // immediate booking notification: SELECT la.channel_access_token, e.confirmation_message_extra
+          //   FROM line_accounts la JOIN events e ON e.id = ? WHERE la.id = ?
+          if (sql.startsWith('SELECT la.channel_access_token, e.confirmation_message_extra')) {
+            const [event_id, account_id] = bound as [string, string];
+            const acc = (state.accounts ?? []).find((a) => a.id === account_id);
+            const ev = state.events.find((x) => x.id === event_id);
+            if (!acc || !ev) return null as T | null;
+            return {
+              channel_access_token: acc.channel_access_token ?? '',
+              confirmation_message_extra: (ev as Record<string, unknown>).confirmation_message_extra ?? null,
+            } as T;
           }
           // SELECT id [, user_id] FROM friends WHERE line_user_id = ? AND line_account_id = ?
           if (sql.includes('FROM friends')) {
@@ -191,6 +205,7 @@ function makeEventDb(state: {
               event_name: e.name,
               venue_name: e.venue_name,
               venue_url: e.venue_url,
+              confirmation_message_extra: (e as Record<string, unknown>).confirmation_message_extra ?? null,
               slot_starts_at: s.starts_at,
               channel_access_token: la.channel_access_token ?? '',
               line_user_id: f.line_user_id,
@@ -299,6 +314,37 @@ function makeEventDb(state: {
               slot_starts_at: s?.starts_at ?? null,
             } as T;
           }
+          // booking detail: SELECT b.id, ... e.description AS event_description, CASE WHEN ... END AS confirmation_message_extra
+          //   FROM event_bookings b JOIN events e JOIN event_slots s WHERE b.id = ? AND b.friend_id = ? AND b.line_account_id = ?
+          if (sql.includes('FROM event_bookings b') && sql.includes('event_description') && sql.includes('cancel_deadline_hours_before')) {
+            const [bookingId, friend_id, account_id] = bound as [string, string, string];
+            const b = (state.bookings ?? []).find(
+              (x) => x.id === bookingId && (x as Record<string, unknown>).friend_id === friend_id && (x as Record<string, unknown>).line_account_id === account_id,
+            );
+            if (!b) return null as T | null;
+            const e = state.events.find((x) => x.id === b.event_id);
+            const s = (state.slots ?? []).find((x) => x.id === (b as Record<string, unknown>).slot_id);
+            if (!e || !s) return null as T | null;
+            return {
+              id: b.id,
+              event_id: b.event_id,
+              status: b.status,
+              customer_note: (b as Record<string, unknown>).customer_note ?? null,
+              requested_at: null,
+              decided_at: null,
+              cancelled_at: null,
+              event_name: e.name,
+              event_image_url: e.image_url,
+              venue_name: e.venue_name,
+              venue_url: e.venue_url,
+              cancel_deadline_hours_before: e.cancel_deadline_hours_before,
+              event_description: (e as Record<string, unknown>).description ?? null,
+              confirmation_message_extra: b.status === 'confirmed' ? ((e as Record<string, unknown>).confirmation_message_extra ?? null) : null,
+              slot_starts_at: s.starts_at,
+              slot_ends_at: s.ends_at,
+            } as T;
+          }
+          // self-cancel JOIN: SELECT b.id, b.status, e.cancel_deadline_hours_before, s.starts_at
           if (sql.includes('FROM event_bookings b') && sql.includes('cancel_deadline_hours_before')) {
             const [bookingId, friend_id, account_id] = bound as [string, string, string];
             const b = (state.bookings ?? []).find(
@@ -1687,6 +1733,69 @@ describe('LIFF GET /api/liff/events/me', () => {
     liffAuthMocks.verifyCallerLineUserId.mockResolvedValue(null);
     const app = setupApp(state);
     const res = await app.request('/api/liff/events/me?liffId=L1');
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('LIFF GET /api/liff/events/me/:bookingId', () => {
+  test('returns booking detail for owner friend', async () => {
+    const futureMs = Date.now() + 7 * 24 * 3600_000;
+    const state = {
+      events: [baseEvent({ id: 'e1', line_account_id: 'la1', is_published: 1, name: 'テストイベント' })],
+      slots: [{ id: 's1', event_id: 'e1', starts_at: new Date(futureMs).toISOString(), ends_at: new Date(futureMs + 7200_000).toISOString(), capacity: null, is_active: 1, sort_order: 0, deleted_at: null }],
+      bookings: [{ id: 'b1', event_id: 'e1', slot_id: 's1', friend_id: 'f1', line_account_id: 'la1', status: 'confirmed' } as BookingRow & Record<string, unknown>],
+      accounts: [{ id: 'la1', liff_id: 'L1', is_active: 1 }],
+      friends: [{ id: 'f1', line_account_id: 'la1', line_user_id: 'U1' }],
+    };
+    liffAuthMocks.verifyCallerLineUserId.mockResolvedValue('U1');
+    const app = setupApp(state);
+    const res = await app.request('/api/liff/events/me/b1?liffId=L1', {
+      headers: { 'Authorization': 'Bearer t' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; event_name: string };
+    expect(body.id).toBe('b1');
+    expect(body.event_name).toBe('テストイベント');
+  });
+
+  test('404 for cross-friend booking access', async () => {
+    const futureMs = Date.now() + 7 * 24 * 3600_000;
+    const state = {
+      events: [baseEvent({ id: 'e1', line_account_id: 'la1', is_published: 1 })],
+      slots: [{ id: 's1', event_id: 'e1', starts_at: new Date(futureMs).toISOString(), ends_at: new Date(futureMs + 7200_000).toISOString(), capacity: null, is_active: 1, sort_order: 0, deleted_at: null }],
+      bookings: [{ id: 'b1', event_id: 'e1', slot_id: 's1', friend_id: 'f2', line_account_id: 'la1', status: 'confirmed' } as BookingRow & Record<string, unknown>],
+      accounts: [{ id: 'la1', liff_id: 'L1', is_active: 1 }],
+      friends: [{ id: 'f1', line_account_id: 'la1', line_user_id: 'U1' }],
+    };
+    liffAuthMocks.verifyCallerLineUserId.mockResolvedValue('U1');
+    const app = setupApp(state);
+    const res = await app.request('/api/liff/events/me/b1?liffId=L1', {
+      headers: { 'Authorization': 'Bearer t' },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test('404 for non-existent booking id', async () => {
+    const state = {
+      events: [baseEvent({ id: 'e1', line_account_id: 'la1', is_published: 1 })],
+      slots: [],
+      bookings: [],
+      accounts: [{ id: 'la1', liff_id: 'L1', is_active: 1 }],
+      friends: [{ id: 'f1', line_account_id: 'la1', line_user_id: 'U1' }],
+    };
+    liffAuthMocks.verifyCallerLineUserId.mockResolvedValue('U1');
+    const app = setupApp(state);
+    const res = await app.request('/api/liff/events/me/nonexistent?liffId=L1', {
+      headers: { 'Authorization': 'Bearer t' },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test('401 unauthorized', async () => {
+    const state = { events: [], accounts: [{ id: 'la1', liff_id: 'L1', is_active: 1 }] };
+    liffAuthMocks.verifyCallerLineUserId.mockResolvedValue(null);
+    const app = setupApp(state);
+    const res = await app.request('/api/liff/events/me/b1?liffId=L1');
     expect(res.status).toBe(401);
   });
 });

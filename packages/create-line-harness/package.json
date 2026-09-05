@@ -1,7 +1,7 @@
 {
   "name": "create-line-harness",
-  "version": "0.1.27",
-  "description": "Set up LINE Harness \u2014 AI-operated LINE CRM \u2014 with one command",
+  "version": "0.2.11",
+  "description": "Set up L Harness — AI-operated LINE CRM — with one command",
   "type": "module",
   "bin": {
     "create-line-harness": "./dist/index.js"
@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "prepublishOnly": "node ./scripts/guard-source-publish.mjs"
+    "prepublishOnly": "node ./scripts/guard-source-publish.mjs",
+    "test": "vitest run"
   },
   "keywords": [
     "line",
@@ -25,20 +26,21 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Shudesu/line-harness.git",
+    "url": "https://github.com/Shudesu/line-harness-oss.git",
     "directory": "packages/create-line-harness"
   },
   "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^0.9.1",
-    "@line-harness/update-engine": "workspace:^0.0.2",
+    "@line-harness/update-engine": "workspace:^0.0.12",
     "execa": "^9.5.2",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
     "tsup": "^8.4.0",
     "typescript": "^5.9.3",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=20"

@@ -2,7 +2,7 @@
 
 ## 概要
 
-LINE Harnessのフォーム機能は、LINE内で動作するアンケート・回答フォームを提供する。LIFF (LINE Front-end Framework) を利用してLINEアプリ内にWebフォームを表示し、回答データを収集する。フォーム送信時に自動でタグ付与・シナリオ登録・メタデータ保存を実行できる。
+L Harnessのフォーム機能は、LINE内で動作するアンケート・回答フォームを提供する。LIFF (LINE Front-end Framework) を利用してLINEアプリ内にWebフォームを表示し、回答データを収集する。フォーム送信時に自動でタグ付与・シナリオ登録・メタデータ保存を実行できる。
 
 L社の「回答フォーム」に相当する機能。
 
@@ -158,12 +158,12 @@ LIFF SDKがユーザーのプロフィール（`lineUserId`）を取得し、フ
 
 ## カレンダー予約LIFF
 
-LINE HarnessはGoogle Calendar連携機能も備えており、LIFF内で予約フォームを表示できる。詳細は `calendar_bookings` テーブルと `/api/calendar/*` エンドポイントを参照。
+L HarnessはGoogle Calendar連携機能も備えており、LIFF内で予約フォームを表示できる。詳細は `calendar_bookings` テーブルと `/api/calendar/*` エンドポイントを参照。
 
 予約フォームでは:
 1. 空き枠をGoogle Calendar APIから取得して表示
 2. ユーザーが日時を選択
-3. 予約データをLINE Harness + Google Calendarに保存
+3. 予約データをL Harness + Google Calendarに保存
 4. 友だちにリマインダーを自動登録可能（12-Reminders.md参照）
 
 ---

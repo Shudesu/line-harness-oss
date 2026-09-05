@@ -1,7 +1,7 @@
 /**
- * Example MCP tool: lookup a customer in MyService and show their LINE Harness profile.
+ * Example MCP tool: lookup a customer in MyService and show their L Harness profile.
  *
- * This demonstrates how to combine data from the external API and LINE Harness SDK
+ * This demonstrates how to combine data from the external API and L Harness SDK
  * into a single tool that AI agents can call.
  */
 
@@ -28,7 +28,7 @@ function getClients() {
 export function registerExampleTool(server: McpServer): void {
   /**
    * Tool: lookup_customer
-   * Looks up a customer in MyService and enriches with LINE Harness data.
+   * Looks up a customer in MyService and enriches with L Harness data.
    */
   server.tool(
     'lookup_customer',
@@ -108,7 +108,7 @@ export function registerExampleTool(server: McpServer): void {
     'send_myservice_notification',
     'Send a MyService-related notification (appointment reminder, etc.) to a LINE friend.',
     {
-      friendId: z.string().describe('LINE Harness friend ID'),
+      friendId: z.string().describe('L Harness friend ID'),
       notificationType: z
         .enum(['appointment_reminder', 'membership_expiry', 'custom'])
         .describe('Type of notification to send'),

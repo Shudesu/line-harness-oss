@@ -4,3 +4,4 @@
 src/_version.ts
 # override Task 2's ignore — we commit a dev stub that build-time overwrites
 !src/_version.ts
+wrangler.lhc.toml

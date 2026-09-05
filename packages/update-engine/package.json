@@ -1,7 +1,12 @@
 {
   "name": "@line-harness/update-engine",
-  "version": "0.0.2",
-  "description": "Self-update engine for LINE Harness — shared between Worker (cloud-side self-update) and CLI (npx create-line-harness update)",
+  "version": "0.0.12",
+  "description": "Self-update engine for L Harness — shared between Worker (cloud-side self-update) and CLI (npx create-line-harness update)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Shudesu/line-harness-oss.git",
+    "directory": "packages/update-engine"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -40,6 +45,7 @@
     "vitest": "^2.0.0"
   },
   "dependencies": {
+    "@noble/hashes": "^2.0.1",
     "tar-stream": "^3.2.0"
   }
 }

@@ -1,23 +1,30 @@
 name = "line-harness"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
-# nodejs_compat is required by @line-harness/update-engine which pulls in
-# `node:stream` (Readable.fromWeb), `node:zlib` (createGunzip), `node:crypto`
-# (createHash), and the `tar-stream` package for bundle parsing during the
-# /admin/update/* self-update flow. Without this flag the route imports
-# fail at runtime. compatibility_date 2024-09-23+ is required for the flag.
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 # ═══════════════════════════════════════════════════════════════
-# デフォルト = テスト環境 (noda@)
+# デフォルト = テスト環境
 # 使い方: npx wrangler deploy
 # ═══════════════════════════════════════════════════════════════
 account_id = "YOUR_DEV_ACCOUNT_ID"
 
+# Workers Cache pilot. Enabled only for the private test Worker; production is
+# explicitly disabled below until cache hit rate and auth isolation are proven.
+# Only routes with an explicit public Cache-Control header are eligible because
+# src/middleware/cache-policy.ts marks every other response no-store.
+[cache]
+enabled = true
+
 [assets]
 directory = "dist/client"
 binding = "ASSETS"
+# Worker を先に走らせて bot UA → OGP HTML 差し込みを可能にする。
+# 通常 UA のときは Worker の notFound 内で c.env.ASSETS.fetch(req) を呼んで
+# SPA を返す。これが無いと static asset path が Worker をバイパスして
+# 直接配信され、bot 判定が効かない。
+run_worker_first = true
 
 [[d1_databases]]
 binding = "DB"
@@ -28,14 +35,41 @@ database_id = "YOUR_DEV_D1_DATABASE_ID"
 binding = "IMAGES"
 bucket_name = "line-harness-images"
 
+# ═══════════════════════════════════════════════════════════════
+# TenantScheduler DO — 定期ジョブ (配信・リマインド・insight 取得) を自走させる。
+# binding name "TENANT_SCHEDULER" と class_name "TenantScheduler" は
+# scripts/lib/tenant-wrangler.ts (テナント自動プロビジョニング) にも
+# 同名で書く必要がある — 片方だけ変えると「デプロイは成功するが alarm は
+# 一生 armed されない」という気づきにくい壊れ方をするので要注意。
+# 実装: apps/worker/src/durable-objects/tenant-scheduler.ts
+# ═══════════════════════════════════════════════════════════════
+[[durable_objects.bindings]]
+name = "TENANT_SCHEDULER"
+class_name = "TenantScheduler"
+
+# SQLite ストレージ (alarm 状態を持つ) を使う新規 DO クラスなので
+# new_sqlite_classes での migration 登録が必要。
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TenantScheduler"]
+
+# Cron Trigger は引き続き残す。DO alarm と共存させる (自己ホスト環境が
+# cron のみで運用を続けられるようにするため)。両方が同じ分に発火しても、
+# scheduled() が呼ぶジョブ本体は元々 (6時間境界で2 trigger が同時に鳴る
+# 現行構成のもと) 同時実行に耐える楽観ロック/claim パターンで書かれている。
 [triggers]
-crons = ["*/5 * * * *", "0 */6 * * *"]
+crons = ["* * * * *", "0 */6 * * *"]
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 5 self-update vars — consumed by /admin/update/*. Secrets
 # (CF_API_TOKEN, ADMIN_API_KEY) must be set via `wrangler secret put`
 # and are intentionally absent from this file.
+# 注: [env.production] には意図的に置かない。本番は GitHub Actions デプロイ
+# 運用のため self-update は使わず、vars/secrets 不在で route は実行時ガードで
+# 不活性になる (本番挙動を変えないための判断, 2026-07-07)。
 # ═══════════════════════════════════════════════════════════════
+# LOG_RETENTION_DAYS: days to keep messages_log rows (archived to R2 first).
+# Unset = keep forever (default). Set per-deployment, not here.
 [vars]
 WORKER_NAME = "line-harness"
 ADMIN_PAGES_PROJECT = "line-harness-admin"
@@ -50,14 +84,19 @@ CF_ACCOUNT_ID = "YOUR_DEV_ACCOUNT_ID"
 # ═══════════════════════════════════════════════════════════════
 # 本番環境
 # 使い方: npx wrangler deploy --env production --name your-worker-name
-# D1:     npx wrangler d1 execute line-crm --env production --remote --file ...
+# D1:     npx wrangler d1 execute your-database --env production --remote --file ...
 # ═══════════════════════════════════════════════════════════════
 [env.production]
 account_id = "YOUR_ACCOUNT_ID"
+compatibility_flags = ["nodejs_compat"]
+
+[env.production.cache]
+enabled = false
 
 [env.production.assets]
 directory = "dist/client"
 binding = "ASSETS"
+run_worker_first = true
 
 [[env.production.d1_databases]]
 binding = "DB"
@@ -68,19 +107,11 @@ database_id = "YOUR_D1_DATABASE_ID"
 binding = "IMAGES"
 bucket_name = "line-harness-images"
 
-[env.production.triggers]
-crons = ["*/5 * * * *", "0 */6 * * *"]
+# バインディングは環境ごとに継承されないので production にも明示する。
+# name / class_name はデフォルト環境と揃えること (上の注意書き参照)。
+[[env.production.durable_objects.bindings]]
+name = "TENANT_SCHEDULER"
+class_name = "TenantScheduler"
 
-# Phase 5 self-update vars for production. Worker / Pages / D1 names point at
-# the prod resources. Secrets (CF_API_TOKEN, ADMIN_API_KEY) live in the
-# production secret store, set via `wrangler secret put --env production`.
-[env.production.vars]
-WORKER_NAME = "your-worker-name"
-ADMIN_PAGES_PROJECT = "line-harness-admin"
-LIFF_PAGES_PROJECT = "line-harness-liff"
-D1_DATABASE_ID = "YOUR_D1_DATABASE_ID"
-MANIFEST_URL = "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json"
-WORKER_PUBLIC_URL = "https://your-worker-name.workers.dev"
-ADMIN_PUBLIC_URL = "https://line-harness-admin.pages.dev"
-LIFF_PUBLIC_URL = "https://line-harness-liff.pages.dev"
-CF_ACCOUNT_ID = "YOUR_ACCOUNT_ID"
+[env.production.triggers]
+crons = ["* * * * *", "0 */6 * * *"]

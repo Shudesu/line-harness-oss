@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Radio } from '@cloudflare/kumo/components/radio'
+import { Select } from '@cloudflare/kumo/components/select'
 
 type Tag = { id: string; name: string; color: string }
 
@@ -29,6 +35,7 @@ export function ApplyToTagModal({ groupId, groupName, onClose }: Props) {
     message?: string
     mode?: string
   } | null>(null)
+  const [confirmDefault, setConfirmDefault] = useState(false)
 
   useEffect(() => {
     api.tags
@@ -41,19 +48,13 @@ export function ApplyToTagModal({ groupId, groupName, onClose }: Props) {
       })
   }, [])
 
-  async function apply() {
+  async function apply(confirmed = false) {
     // 「全員のデフォルト」は影響範囲が大きいので強い確認。
-    if (mode.kind === 'set-default') {
-      if (
-        !confirm(
-          'このリッチメニューを「LINE 公式アカウントの全員のデフォルト」に設定します。\n\n' +
-            '・新規友だちも含め、特別な設定をしていない全員に表示されます\n' +
-            '・同アカウント内で他のメニューがデフォルトに設定されていた場合、そちらは解除されます\n\n' +
-            '続行しますか？',
-        )
-      )
-        return
+    if (mode.kind === 'set-default' && !confirmed) {
+      setConfirmDefault(true)
+      return
     }
+    setConfirmDefault(false)
     setPhase('running')
     setError(null)
     try {
@@ -74,84 +75,48 @@ export function ApplyToTagModal({ groupId, groupName, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-        <div className="p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-1">
+    <Dialog.Root open onOpenChange={(open) => { if (!open && phase !== 'running') onClose() }}>
+      <Dialog className="w-full max-w-md p-6">
+          <Dialog.Title>
             友だちにこのメニューを表示
-          </h2>
+          </Dialog.Title>
           <p className="text-sm text-gray-500 mb-5 break-all">「{groupName}」</p>
 
           {phase === 'config' && (
             <>
-              <div className="space-y-3 mb-5">
-                <RadioOption
-                  checked={mode.kind === 'all-followers'}
-                  onChange={() => setMode({ kind: 'all-followers' })}
-                  label="このアカウントの全員に適用"
-                  description="現時点で friend 状態の友だち全員に LINE のメニューを link します。新規友だちには適用されません。"
-                />
-                <RadioOption
-                  checked={mode.kind === 'tag'}
-                  onChange={() =>
-                    setMode({
-                      kind: 'tag',
-                      tagId: tags[0]?.id ?? '',
-                    })
-                  }
-                  label="タグで絞り込んで適用"
-                  description="指定したタグを持つ友だちだけに表示します。"
-                  disabled={tags.length === 0}
-                >
+              <Radio.Group value={mode.kind} onValueChange={(value) => value === 'tag' ? setMode({ kind: 'tag', tagId: tags[0]?.id ?? '' }) : setMode({ kind: value as 'all-followers' | 'set-default' })} className="mb-5 space-y-3">
+                <Radio.Item value="all-followers" label="このアカウントの全員に適用" description="現時点で友だち状態の全員に表示します。新規友だちには適用されません。" />
+                <div className="rounded-lg border border-kumo-line p-3"><Radio.Item value="tag" label="タグで絞り込んで適用" description="指定したタグを持つ友だちだけに表示します。" disabled={tags.length === 0} /><div className="ml-7">
                   {mode.kind === 'tag' && (
-                    <select
+                    <Select
+                      label="対象タグ"
                       value={mode.tagId}
-                      onChange={(e) =>
-                        setMode({ kind: 'tag', tagId: e.target.value })
-                      }
-                      className="mt-2 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                    >
-                      {tags.length === 0 ? (
-                        <option value="">タグがありません</option>
-                      ) : (
-                        tags.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))
-                      )}
-                    </select>
+                      onValueChange={(value) => setMode({ kind: 'tag', tagId: value ?? '' })}
+                      className="mt-2"
+                      items={Object.fromEntries(tags.map((tag) => [tag.id, tag.name]))}
+                    />
                   )}
-                </RadioOption>
-                <RadioOption
-                  checked={mode.kind === 'set-default'}
-                  onChange={() => setMode({ kind: 'set-default' })}
-                  label="全員のデフォルトに設定する"
-                  description="LINE 公式アカウントのデフォルトメニューにします。新規友だちも含め全員に自動で表示されます。同アカ内の他メニューのデフォルト設定は解除されます。"
-                  warn
-                />
-              </div>
+                </div></div>
+                <Radio.Item value="set-default" label="全員のデフォルトに設定する" description="新規友だちも含め全員に自動表示し、他メニューのデフォルト設定は解除します。" />
+              </Radio.Group>
               <div className="flex justify-end gap-2">
-                <button
+                <Button type="button" variant="secondary"
                   onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   キャンセル
-                </button>
-                <button
-                  onClick={apply}
+                </Button>
+                <Button type="button" variant="primary"
+                  onClick={() => void apply()}
                   disabled={mode.kind === 'tag' && !mode.tagId}
-                  className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity hover:opacity-90"
-                  style={{ backgroundColor: '#06C755' }}
                 >
                   実行する
-                </button>
+                </Button>
               </div>
             </>
           )}
 
           {phase === 'running' && (
-            <div className="text-center py-10 text-sm text-gray-500">
+            <div className="text-center py-10 text-sm text-gray-500"><Loader className="mx-auto mb-2" />
               <div className="mb-2">適用中...</div>
               <div className="text-xs text-gray-400">
                 LINE Messaging API に送信しています
@@ -161,96 +126,36 @@ export function ApplyToTagModal({ groupId, groupName, onClose }: Props) {
 
           {phase === 'done' && result && (
             <>
-              <div className="bg-green-50 border border-green-200 text-green-800 text-sm p-4 rounded-lg mb-4">
-                <div className="font-medium mb-1">✓ 完了しました</div>
-                <div className="text-xs">
-                  {result.message ??
-                    `${result.total} 名の友だちに適用しました (${result.chunks} chunk)`}
-                </div>
-              </div>
+              <Banner className="mb-4" variant="default" title="完了しました" description={result.message ?? `${result.total} 名の友だちに適用しました (${result.chunks} chunk)`} />
               <div className="flex justify-end">
-                <button
+                <Button type="button" variant="primary"
                   onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-                  style={{ backgroundColor: '#06C755' }}
                 >
                   閉じる
-                </button>
+                </Button>
               </div>
             </>
           )}
 
           {phase === 'error' && (
             <>
-              <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-4 rounded-lg mb-4">
-                {error}
-              </div>
+              <Banner className="mb-4" variant="error" title="適用できませんでした" description={error ?? undefined} />
               <div className="flex justify-end gap-2">
-                <button
+                <Button type="button" variant="secondary"
                   onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   閉じる
-                </button>
-                <button
+                </Button>
+                <Button type="button" variant="primary"
                   onClick={() => setPhase('config')}
-                  className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-                  style={{ backgroundColor: '#06C755' }}
                 >
                   やり直す
-                </button>
+                </Button>
               </div>
             </>
           )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function RadioOption({
-  checked,
-  onChange,
-  label,
-  description,
-  warn,
-  disabled,
-  children,
-}: {
-  checked: boolean
-  onChange: () => void
-  label: string
-  description: string
-  warn?: boolean
-  disabled?: boolean
-  children?: React.ReactNode
-}) {
-  return (
-    <label
-      className={`block border rounded-lg p-3 transition-colors ${
-        disabled
-          ? 'opacity-50 cursor-not-allowed border-gray-200'
-          : checked
-            ? warn
-              ? 'border-amber-400 bg-amber-50 cursor-pointer'
-              : 'border-green-500 bg-green-50 cursor-pointer'
-            : 'border-gray-200 hover:bg-gray-50 cursor-pointer'
-      }`}
-    >
-      <div className="flex items-start gap-3">
-        <input
-          type="radio"
-          checked={checked}
-          onChange={onChange}
-          disabled={disabled}
-          className="mt-1"
-        />
-        <div className="flex-1">
-          <div className="text-sm font-medium text-gray-900">{label}</div>
-          <p className="text-xs text-gray-600 mt-0.5">{description}</p>
-          {children}
-        </div>
-      </div>
-    </label>
+        <Dialog.Root role="alertdialog" open={confirmDefault} onOpenChange={setConfirmDefault}><Dialog><Dialog.Title>全員のデフォルトに設定しますか？</Dialog.Title><Dialog.Description className="mt-2">新規友だちを含む全員に表示され、同じアカウントの他メニューのデフォルト設定は解除されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setConfirmDefault(false)}>キャンセル</Button><Button type="button" variant="primary" onClick={() => void apply(true)}>設定する</Button></div></Dialog></Dialog.Root>
+      </Dialog>
+    </Dialog.Root>
   )
 }

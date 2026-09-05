@@ -18,6 +18,13 @@ type Status =
 
 const updateBannerEnabled = process.env.NEXT_PUBLIC_UPDATE_BANNER_ENABLED !== 'false'
 
+// inject-version を通さないビルド (自前 CI/CD やローカル dev) のバージョン placeholder。
+// この場合「manifest に無い」のは当たり前なので fork 警告バナーは出さない。
+const DEV_VERSION = '0.0.0-dev'
+
+export const MANUAL_UPDATE_GUIDE_URL =
+  'https://github.com/Shudesu/line-harness-oss/blob/main/docs/wiki/26-Manual-Update.md'
+
 export function UpdateBanner() {
   const [status, setStatus] = useState<Status>({ kind: 'loading' })
 
@@ -27,10 +34,12 @@ export function UpdateBanner() {
     let cancelled = false
     ;(async () => {
       try {
-        const [current, manifest] = await Promise.all([
-          getCurrentVersion(),
-          getManifest(),
-        ])
+        const current = await getCurrentVersion()
+        if (cancelled) return
+        // バージョン未埋め込みビルドでは manifest 照合自体が無意味なので
+        // バナーを出さない (自前デプロイ運用では正常な状態)。
+        if (current.version === DEV_VERSION) return
+        const manifest = await getManifest()
         if (cancelled) return
         const fork = detectFork(current, manifest)
         if (fork.kind === 'fork') {
@@ -74,17 +83,24 @@ export function UpdateBanner() {
   }
 
   if (status.kind === 'fork') {
+    // 「改造検知」のような警告調は使わない: カスタマイズ運用は正当な使い方で、
+    // ここで伝えるべきは「自動更新の対象外」という事実だけ (詳細 reason は title に)。
     return (
-      <div className="bg-amber-100 text-amber-900 px-4 py-2 border-b text-sm">
-        改造を検知しました (v{status.version}, {status.reason}).{' '}
+      <div
+        className="bg-amber-50 text-amber-900 px-4 py-2 border-b text-sm"
+        title={status.reason}
+      >
+        カスタマイズ版で動作中です（v{status.version}）。そのままお使いいただけます。
+        更新したい場合は{' '}
         <a
           className="underline"
-          href="https://theharness.com/wiki/updates/manual"
+          href={MANUAL_UPDATE_GUIDE_URL}
           target="_blank"
           rel="noreferrer"
         >
-          手動更新ガイド →
-        </a>
+          手動アップデートガイド
+        </a>{' '}
+        をご覧ください。
       </div>
     )
   }

@@ -13,20 +13,101 @@
 import { Hono, type Context } from 'hono';
 import { getLineAccounts } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { resolveCorsOrigin } from '../middleware/admin-auth-config.js';
 import { canTransition, nextStatus, type BookingAction } from '../services/booking-state.js';
-import { computeSlots, getAvailability } from '../services/availability.js';
+import { getAvailability } from '../services/availability.js';
+import {
+  removeBookingFromGoogle,
+  syncConfirmedBookingToGoogle,
+  verifyStaffCalendarConnection,
+} from '../services/booking-calendar-sync.js';
 import {
   findIdempotencyResponse,
   saveIdempotencyResponse,
 } from '../services/booking-idempotency.js';
 import { sendBookingNotification } from '../services/booking-notifier.js';
+import { insertConfirmationReminders } from '../services/booking-confirm.js';
+import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import {
   DEFAULT_ACCOUNT_SETTINGS,
   IDEMPOTENCY_TTL_MINUTES,
   type BookingStatus,
 } from '../services/booking-types.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
+import { GoogleCalendarClient } from '../services/google-calendar.js';
+import {
+  buildGoogleOAuthAuthorizationUrl,
+  exchangeGoogleOAuthCode,
+  googleOAuthConfigured,
+  revokeGoogleOAuthToken,
+  signGoogleOAuthState,
+  verifyGoogleOAuthState,
+} from '../services/google-oauth.js';
 
 const booking = new Hono<Env>();
+const GOOGLE_OAUTH_CALLBACK_PATH = '/api/booking/google-calendar/oauth/callback';
+const GOOGLE_OAUTH_STATE_TTL_MS = 10 * 60_000;
+
+function googleCredentials(env: Env['Bindings']) {
+  return {
+    email: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    privateKey: env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+    oauthClientId: env.GOOGLE_OAUTH_CLIENT_ID,
+    oauthClientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET,
+  };
+}
+
+function googleOAuthRedirectUri(requestUrl: string): string {
+  return new URL(GOOGLE_OAUTH_CALLBACK_PATH, requestUrl).toString();
+}
+
+/**
+ * `adminOrigin` comes from the browser's `Origin` request header when the
+ * admin UI kicked off the OAuth flow (see the `signGoogleOAuthState` call
+ * site below) — an Origin header is, by HTTP spec, always scheme+host only,
+ * never a path. `env.ADMIN_PUBLIC_URL` is the opposite: since the
+ * three-surfaces bundle (2026-08-24) it carries the admin's basePath (e.g.
+ * `https://tenant.example/console`) for single-origin installs where admin now lives
+ * on a subpath of the same origin the Worker itself serves.
+ *
+ * Exported for direct unit testing (codex review round 2: `new URL(path,
+ * base)` REPLACES `base`'s pathname entirely for a path-absolute `path` —
+ * building this the naive way silently dropped ADMIN_PUBLIC_URL's own path,
+ * sending a single-origin install's Google Calendar connect flow back to the
+ * root — the LIFF app, not admin — instead of the settings page it started
+ * from).
+ */
+export function adminCalendarReturnUrl(
+  env: Env['Bindings'],
+  staffId: string | null,
+  result: 'connected' | 'denied' | 'error',
+  adminOrigin?: string,
+): string {
+  const adminPublicUrl = (() => {
+    try {
+      return env.ADMIN_PUBLIC_URL ? new URL(env.ADMIN_PUBLIC_URL) : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  // Prefer ADMIN_PUBLIC_URL (it carries the basePath) whenever it's on the
+  // same origin as the captured Origin header — true for every single-origin install,
+  // where both ultimately name the same consolidated origin. Different
+  // origin (legacy separate-Pages admin) or no ADMIN_PUBLIC_URL at all →
+  // fall back to adminOrigin, then ADMIN_PUBLIC_URL, then the historical
+  // hardcoded default — same fallback order as before, just base-selection,
+  // not URL construction.
+  const base =
+    adminOrigin && adminPublicUrl && adminOrigin === adminPublicUrl.origin
+      ? env.ADMIN_PUBLIC_URL!
+      : (adminOrigin ?? env.ADMIN_PUBLIC_URL ?? 'https://your-admin.pages.dev');
+  const baseUrl = new URL(base);
+  const basePath = baseUrl.pathname === '/' ? '' : baseUrl.pathname.replace(/\/+$/, '');
+  const url = new URL(`${basePath}/booking/staff/shifts`, baseUrl.origin);
+  if (staffId) url.searchParams.set('staff_id', staffId);
+  url.searchParams.set('google', result);
+  return url.toString();
+}
 
 // ----------------------------------------------------------------
 // Helpers
@@ -36,6 +117,18 @@ const JST_OFFSET_MS = 9 * 3600_000;
 function startsAtJst(utcIso: string): string {
   const jst = new Date(new Date(utcIso).getTime() + JST_OFFSET_MS).toISOString();
   return `${jst.slice(0, 10)} ${jst.slice(11, 16)}`;
+}
+
+// UTC [start, end) bounds covering a JST calendar day (YYYY-MM-DD in JST).
+// The JST day runs [date 00:00 JST, date+1 00:00 JST) = [date-1 15:00Z, date 15:00Z).
+// Used to fetch a staff member's existing bookings for slot computation.
+// (Replaces a broken `${date}T-09:00:00.000Z`.replace('-09','00') that corrupted
+//  any date string containing '-09'/'-11'/'-12' and dropped JST 00:00-09:00.)
+export function jstDayWindowUtc(jstDate: string): { startUtc: string; endUtc: string } {
+  return {
+    startUtc: new Date(`${jstDate}T00:00:00+09:00`).toISOString(),
+    endUtc: `${jstDate}T15:00:00Z`,
+  };
 }
 
 async function resolveAccountIdFromLiff(c: Context<Env>): Promise<string | null> {
@@ -262,6 +355,7 @@ booking.get('/api/liff/booking/availability', async (c) => {
     to,
     now: new Date(),
     minLeadTimeMinutes: DEFAULT_ACCOUNT_SETTINGS.min_lead_time_minutes,
+    googleCredentials: googleCredentials(c.env),
   });
   return c.json(result);
 });
@@ -313,6 +407,7 @@ booking.post('/api/liff/booking/requests', async (c) => {
   const menuRow = await c.env.DB
     .prepare(
       `SELECT m.id, m.duration_minutes, m.buffer_after_minutes, m.base_price,
+              m.auto_tag_id,
               COALESCE(sm.override_duration_minutes, m.duration_minutes) AS dur,
               COALESCE(sm.override_price, m.base_price) AS price,
               sm.is_offered
@@ -322,7 +417,7 @@ booking.post('/api/liff/booking/requests', async (c) => {
           AND m.deleted_at IS NULL AND m.is_active = 1`,
     )
     .bind(body.menu_id, body.staff_id, accountId)
-    .first<{ duration_minutes: number; buffer_after_minutes: number; dur: number; price: number; is_offered: number | null }>();
+    .first<{ duration_minutes: number; buffer_after_minutes: number; auto_tag_id: string | null; dur: number; price: number; is_offered: number | null }>();
   if (!menuRow || menuRow.is_offered !== 1) {
     return c.json({ error: 'menu_not_offered' }, 422);
   }
@@ -337,41 +432,24 @@ booking.post('/api/liff/booking/requests', async (c) => {
   const endsAt = new Date(startsAt.getTime() + menuRow.dur * 60_000);
   const blockEndsAt = new Date(endsAt.getTime() + menuRow.buffer_after_minutes * 60_000);
 
-  // Server-side availability 再検証: シフト内 / リードタイム / 既存予約と非衝突を保証する。
-  // UI フィルタだけでは公開 API への直 POST で営業時間外予約を作れてしまうため必須。
+  // Server-side availability 再検証: 曜日受付時間 / Google Calendar /
+  // リードタイム / 既存予約を、確定直前にもう一度突合する。
   const startJstDate = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
   const startJstHHMM = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(11, 16);
-  const shift = await c.env.DB
-    .prepare(`SELECT start_time, end_time FROM staff_shifts WHERE staff_id = ? AND work_date = ?`)
-    .bind(body.staff_id, startJstDate)
-    .first<{ start_time: string; end_time: string }>();
-  if (!shift) return c.json({ error: 'out_of_shift' }, 422);
-  const existingBookings = await c.env.DB
-    .prepare(
-      `SELECT starts_at, block_ends_at FROM bookings
-        WHERE staff_id = ? AND status IN ('requested','confirmed')
-          AND starts_at < ? AND block_ends_at > ?`,
-    )
-    .bind(
-      body.staff_id,
-      `${startJstDate}T15:00:00Z`,
-      `${startJstDate}T-09:00:00.000Z`.replace('-09', '00'),
-    )
-    .all<{ starts_at: string; block_ends_at: string }>();
-  const slotsToday = computeSlots({
-    working: [{ start: shift.start_time, end: shift.end_time }],
-    busy: existingBookings.results.map((b) => ({
-      start: new Date(new Date(b.starts_at).getTime() + 9 * 3600_000).toISOString().slice(11, 16),
-      end: new Date(new Date(b.block_ends_at).getTime() + 9 * 3600_000).toISOString().slice(11, 16),
-    })),
-    menu: { duration_minutes: menuRow.dur, buffer_after_minutes: menuRow.buffer_after_minutes },
-    granularityMinutes: 30,
+  const latestAvailability = await getAvailability(c.env.DB, {
+    lineAccountId: accountId,
+    menuId: body.menu_id,
+    staffId: body.staff_id,
+    from: startJstDate,
+    to: startJstDate,
+    now: new Date(),
+    minLeadTimeMinutes: DEFAULT_ACCOUNT_SETTINGS.min_lead_time_minutes,
+    googleCredentials: googleCredentials(c.env),
   });
-  const slotMatched = slotsToday.some((s) => s.start === startJstHHMM);
+  const slotMatched = latestAvailability.by_staff[0]?.slots.some(
+    (slot) => slot.date === startJstDate && slot.start === startJstHHMM,
+  );
   if (!slotMatched) return c.json({ error: 'slot_not_available' }, 422);
-  // リードタイム: 現在時刻 + DEFAULT min_lead_time_minutes より前の枠は受け付けない
-  const minLeadAt = new Date(Date.now() + DEFAULT_ACCOUNT_SETTINGS.min_lead_time_minutes * 60_000);
-  if (startsAt < minLeadAt) return c.json({ error: 'lead_time_violation' }, 422);
 
   const bookingId = crypto.randomUUID();
   const nowIso = new Date().toISOString();
@@ -426,12 +504,39 @@ booking.post('/api/liff/booking/requests', async (c) => {
     return c.json(err, 409);
   }
 
+  c.executionCtx.waitUntil(
+    awardActivityMileage(c.env.DB, {
+      eventType: 'booking_created',
+      source: 'booking',
+      sourceEventId: bookingId,
+      friendId,
+      metadata: { bookingType: 'salon', menuId: body.menu_id, staffId: body.staff_id },
+      occurredAt: nowIso,
+    }),
+  );
+
   // Fire-and-forget notification — failures must not roll back the booking.
   c.executionCtx.waitUntil(
     notifyForBooking(c.env.DB, bookingId, 'requested').catch((err) =>
       console.error('booking notify (requested) failed:', err),
     ),
   );
+
+  // notifyForBooking と同じく fire-and-forget。タグ付与失敗は予約成功扱い。
+  // attachTagAndFireSideEffects は POST /api/friends/:id/tags と同じ side effects
+  // (tag_added シナリオ enrollment + tag_change イベント) を発火する。
+  // INSERT OR IGNORE で重複を吸収し、新規付与のときだけ side effects を打つ。
+  if (menuRow.auto_tag_id) {
+    const tagId = menuRow.auto_tag_id;
+    c.executionCtx.waitUntil(
+      attachTagAndFireSideEffects(c.env.DB, friendId, tagId, {
+        defaultAccessToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
+        workerUrl: c.env.WORKER_URL,
+      })
+        .then(() => undefined)
+        .catch((err) => console.error('booking auto-tag failed:', err)),
+    );
+  }
 
   const responseBody = { booking_id: bookingId, status: 'requested' };
   await saveIdempotencyResponse(c.env.DB, {
@@ -481,7 +586,7 @@ booking.get('/api/liff/booking/me', async (c) => {
          INNER JOIN staff s ON s.id = b.staff_id
         WHERE b.friend_id = ? AND b.line_account_id = ?
           AND (b.status NOT IN ('requested','confirmed') OR b.starts_at < ?)
-        ORDER BY b.starts_at DESC
+        ORDER BY b.requested_at DESC
         LIMIT 50`,
     )
     .bind(friendId, accountId, new Date().toISOString())
@@ -505,7 +610,7 @@ booking.get('/api/booking/admin/menus', async (c) => {
     .prepare(
       `SELECT id, name, category_label, description,
               duration_minutes, buffer_after_minutes,
-              base_price, sort_order, is_active
+              base_price, sort_order, is_active, auto_tag_id
          FROM menus
         WHERE line_account_id = ? AND deleted_at IS NULL
         ORDER BY sort_order ASC, id ASC`,
@@ -526,14 +631,23 @@ booking.post('/api/booking/admin/menus', async (c) => {
     buffer_after_minutes?: number;
     base_price: number;
     sort_order?: number;
+    auto_tag_id?: string | null;
   }>();
+  const autoTagId = (b.auto_tag_id ?? '').trim() === '' ? null : (b.auto_tag_id as string);
+  if (autoTagId) {
+    const tagExists = await c.env.DB
+      .prepare(`SELECT 1 FROM tags WHERE id = ?`)
+      .bind(autoTagId)
+      .first<{ 1: number }>();
+    if (!tagExists) return c.json({ error: 'tag_not_found' }, 400);
+  }
   const id = crypto.randomUUID();
   await c.env.DB
     .prepare(
       `INSERT INTO menus
         (id, line_account_id, name, category_label, description,
-         duration_minutes, buffer_after_minutes, base_price, sort_order)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+         duration_minutes, buffer_after_minutes, base_price, sort_order, auto_tag_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
     )
     .bind(
       id,
@@ -545,6 +659,7 @@ booking.post('/api/booking/admin/menus', async (c) => {
       b.buffer_after_minutes ?? 0,
       b.base_price,
       b.sort_order ?? 0,
+      autoTagId,
     )
     .run();
   return c.json({ id }, 201);
@@ -563,29 +678,70 @@ booking.put('/api/booking/admin/menus/:id', async (c) => {
     base_price: number;
     sort_order?: number;
     is_active?: boolean;
+    auto_tag_id?: string | null;
   }>();
-  await c.env.DB
-    .prepare(
-      `UPDATE menus
-          SET name = ?, category_label = ?, description = ?,
-              duration_minutes = ?, buffer_after_minutes = ?,
-              base_price = ?, sort_order = ?, is_active = ?,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
-        WHERE id = ? AND line_account_id = ?`,
-    )
-    .bind(
-      b.name,
-      b.category_label ?? null,
-      b.description ?? null,
-      b.duration_minutes,
-      b.buffer_after_minutes ?? 0,
-      b.base_price,
-      b.sort_order ?? 0,
-      b.is_active === false ? 0 : 1,
-      id,
-      accountId,
-    )
-    .run();
+  // PUT は古いクライアントが auto_tag_id フィールドを送らない場合がある。`undefined` を
+  // null として書き込むと既存設定を消してしまうため、key 存在チェックで「明示的に送られた
+  // ときだけ」更新する。
+  const hasAutoTagId = Object.prototype.hasOwnProperty.call(b, 'auto_tag_id');
+  const autoTagId = hasAutoTagId
+    ? ((b.auto_tag_id ?? '').trim() === '' ? null : (b.auto_tag_id as string))
+    : null;
+  if (hasAutoTagId && autoTagId) {
+    const tagExists = await c.env.DB
+      .prepare(`SELECT 1 FROM tags WHERE id = ?`)
+      .bind(autoTagId)
+      .first<{ 1: number }>();
+    if (!tagExists) return c.json({ error: 'tag_not_found' }, 400);
+  }
+  if (hasAutoTagId) {
+    await c.env.DB
+      .prepare(
+        `UPDATE menus
+            SET name = ?, category_label = ?, description = ?,
+                duration_minutes = ?, buffer_after_minutes = ?,
+                base_price = ?, sort_order = ?, is_active = ?, auto_tag_id = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+          WHERE id = ? AND line_account_id = ?`,
+      )
+      .bind(
+        b.name,
+        b.category_label ?? null,
+        b.description ?? null,
+        b.duration_minutes,
+        b.buffer_after_minutes ?? 0,
+        b.base_price,
+        b.sort_order ?? 0,
+        b.is_active === false ? 0 : 1,
+        autoTagId,
+        id,
+        accountId,
+      )
+      .run();
+  } else {
+    await c.env.DB
+      .prepare(
+        `UPDATE menus
+            SET name = ?, category_label = ?, description = ?,
+                duration_minutes = ?, buffer_after_minutes = ?,
+                base_price = ?, sort_order = ?, is_active = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+          WHERE id = ? AND line_account_id = ?`,
+      )
+      .bind(
+        b.name,
+        b.category_label ?? null,
+        b.description ?? null,
+        b.duration_minutes,
+        b.buffer_after_minutes ?? 0,
+        b.base_price,
+        b.sort_order ?? 0,
+        b.is_active === false ? 0 : 1,
+        id,
+        accountId,
+      )
+      .run();
+  }
   return c.json({ ok: true });
 });
 
@@ -606,16 +762,218 @@ booking.delete('/api/booking/admin/menus/:id', async (c) => {
 
 // ---- Staff CRUD ----
 
+// Admin mirror of the LIFF menu-staff lookup — used by the iOS app's
+// proxy-booking flow (operator books on behalf of a friend from chat).
+booking.get('/api/booking/admin/menus/:id/staff', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const menuId = c.req.param('id');
+  const rows = await c.env.DB
+    .prepare(
+      `SELECT s.id, s.display_name, s.role, s.profile_image_url, s.bio,
+              s.is_designation_optional,
+              COALESCE(sm.override_price, m.base_price) AS price,
+              COALESCE(sm.override_duration_minutes, m.duration_minutes) AS duration_minutes
+         FROM staff s
+         INNER JOIN staff_menus sm ON sm.staff_id = s.id AND sm.menu_id = ?2 AND sm.is_offered = 1
+         INNER JOIN menus m ON m.id = ?2
+        WHERE s.line_account_id = ?1 AND s.is_active = 1 AND s.deleted_at IS NULL
+        ORDER BY s.is_designation_optional DESC, s.sort_order ASC, s.id ASC`,
+    )
+    .bind(accountId, menuId)
+    .all();
+  return c.json({ staff: rows.results });
+});
+
+// Admin mirror of the LIFF availability lookup. minLeadTimeMinutes is 0:
+// the operator is on the phone with the customer and may book a slot
+// starting within the lead-time window that customers themselves cannot.
+booking.get('/api/booking/admin/availability', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const menuId = c.req.query('menu_id');
+  const staffId = c.req.query('staff_id') || undefined;
+  const from = c.req.query('from');
+  const to = c.req.query('to');
+  if (!menuId || !from || !to) {
+    return c.json({ error: 'missing_params' }, 400);
+  }
+  const fromD = new Date(`${from}T00:00:00Z`);
+  const toD = new Date(`${to}T00:00:00Z`);
+  if ((toD.getTime() - fromD.getTime()) / 86400_000 > 28) {
+    return c.json({ error: 'range_too_wide' }, 400);
+  }
+  const result = await getAvailability(c.env.DB, {
+    lineAccountId: accountId,
+    menuId,
+    staffId,
+    from,
+    to,
+    now: new Date(),
+    minLeadTimeMinutes: 0,
+    googleCredentials: googleCredentials(c.env),
+  });
+  return c.json(result);
+});
+
+// Proxy booking: the operator creates a CONFIRMED booking on behalf of a
+// friend, straight from the iOS chat screen. Same shift/slot/conflict
+// validation as the LIFF flow, but NO min-lead-time check (the operator
+// may book a slot starting sooner than customers are allowed to).
+booking.post('/api/booking/admin/bookings', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const body = await c.req.json<{
+    friend_id: string;
+    menu_id: string;
+    staff_id: string;
+    starts_at: string; // UTC ISO8601
+    customer_note?: string;
+  }>();
+  if (!body.friend_id || !body.menu_id || !body.staff_id || !body.starts_at) {
+    return c.json({ error: 'missing_params' }, 400);
+  }
+
+  const friend = await c.env.DB
+    .prepare(`SELECT id, is_following FROM friends WHERE id = ? AND line_account_id = ?`)
+    .bind(body.friend_id, accountId)
+    .first<{ id: string; is_following: number }>();
+  if (!friend) return c.json({ error: 'friend_not_found' }, 404);
+  if (friend.is_following === 0) return c.json({ error: 'cannot_book' }, 403);
+
+  // staff が同じ account に属することを保証（別 tenant の staff への予約を防ぐ）。
+  if (!(await assertStaffInAccount(c.env.DB, body.staff_id, accountId))) {
+    return c.json({ error: 'staff_not_found' }, 404);
+  }
+
+  const menuRow = await c.env.DB
+    .prepare(
+      `SELECT m.id, m.duration_minutes, m.buffer_after_minutes, m.base_price,
+              COALESCE(sm.override_duration_minutes, m.duration_minutes) AS dur,
+              COALESCE(sm.override_price, m.base_price) AS price,
+              sm.is_offered
+         FROM menus m
+         LEFT JOIN staff_menus sm ON sm.menu_id = m.id AND sm.staff_id = ?2
+        WHERE m.id = ?1 AND m.line_account_id = ?3
+          AND m.deleted_at IS NULL AND m.is_active = 1`,
+    )
+    .bind(body.menu_id, body.staff_id, accountId)
+    .first<{ duration_minutes: number; buffer_after_minutes: number; dur: number; price: number; is_offered: number | null }>();
+  if (!menuRow || menuRow.is_offered !== 1) {
+    return c.json({ error: 'menu_not_offered' }, 422);
+  }
+
+  const startsAt = new Date(body.starts_at);
+  if (Number.isNaN(startsAt.getTime())) {
+    return c.json({ error: 'invalid_starts_at' }, 422);
+  }
+  if (startsAt < new Date()) {
+    return c.json({ error: 'past_datetime' }, 422);
+  }
+  const endsAt = new Date(startsAt.getTime() + menuRow.dur * 60_000);
+  const blockEndsAt = new Date(endsAt.getTime() + menuRow.buffer_after_minutes * 60_000);
+
+  // Recurring-hours + Google Calendar + internal-booking validation.
+  const startJstDate = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
+  const startJstHHMM = new Date(startsAt.getTime() + 9 * 3600_000).toISOString().slice(11, 16);
+  const latestAvailability = await getAvailability(c.env.DB, {
+    lineAccountId: accountId,
+    menuId: body.menu_id,
+    staffId: body.staff_id,
+    from: startJstDate,
+    to: startJstDate,
+    now: new Date(),
+    minLeadTimeMinutes: 0,
+    googleCredentials: googleCredentials(c.env),
+  });
+  if (!latestAvailability.by_staff[0]?.slots.some(
+    (slot) => slot.date === startJstDate && slot.start === startJstHHMM,
+  )) {
+    return c.json({ error: 'slot_not_available' }, 422);
+  }
+
+  const bookingId = crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+  const insertResult = await c.env.DB
+    .prepare(
+      `INSERT INTO bookings
+        (id, line_account_id, friend_id, staff_id, menu_id,
+         starts_at, ends_at, block_ends_at, status,
+         customer_note, price_at_booking, requested_at, decided_at)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM bookings
+           WHERE staff_id = ?
+             AND status IN ('requested','confirmed')
+             AND starts_at < ?
+             AND block_ends_at > ?
+        )`,
+    )
+    .bind(
+      bookingId,
+      accountId,
+      body.friend_id,
+      body.staff_id,
+      body.menu_id,
+      startsAt.toISOString(),
+      endsAt.toISOString(),
+      blockEndsAt.toISOString(),
+      'confirmed' satisfies BookingStatus,
+      body.customer_note ?? null,
+      menuRow.price,
+      nowIso,
+      nowIso,
+      // NOT EXISTS subquery params
+      body.staff_id,
+      blockEndsAt.toISOString(),
+      startsAt.toISOString(),
+    )
+    .run();
+  if ((insertResult.meta?.changes ?? 0) === 0) {
+    return c.json({ error: 'slot_conflict' }, 409);
+  }
+
+  await insertConfirmationReminders(c.env.DB, {
+    bookingId,
+    startsAt,
+    now: new Date(),
+  });
+  let calendarSync: 'not_configured' | 'synced' | 'failed' = 'not_configured';
+  try {
+    const synced = await syncConfirmedBookingToGoogle(
+      c.env.DB,
+      googleCredentials(c.env),
+      bookingId,
+    );
+    calendarSync = synced.synced ? 'synced' : 'not_configured';
+  } catch (error) {
+    calendarSync = 'failed';
+    console.error('Google Calendar sync (proxy-create) failed:', error);
+  }
+  c.executionCtx.waitUntil(
+    notifyForBooking(c.env.DB, bookingId, 'approved').catch((err) =>
+      console.error('booking notify (proxy-create) failed:', err),
+    ),
+  );
+  return c.json({ booking_id: bookingId, status: 'confirmed', calendar_sync: calendarSync }, 201);
+});
+
 booking.get('/api/booking/admin/staff', async (c) => {
   const accountId = await resolveAccountIdAdmin(c);
   if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
   const rows = await c.env.DB
     .prepare(
-      `SELECT id, name, display_name, role, profile_image_url, bio,
-              sort_order, is_designation_optional, is_active
-         FROM staff
-        WHERE line_account_id = ? AND deleted_at IS NULL
-        ORDER BY sort_order ASC, id ASC`,
+      `SELECT s.id, s.name, s.display_name, s.role, s.profile_image_url, s.bio,
+              s.sort_order, s.is_designation_optional, s.is_active,
+              (EXISTS (SELECT 1 FROM staff_availability_rules r
+                        WHERE r.staff_id = s.id AND r.is_active = 1)
+               OR EXISTS (SELECT 1 FROM staff_shifts ss
+                           WHERE ss.staff_id = s.id
+                             AND ss.work_date >= date('now', '+9 hours'))
+              ) AS has_working_hours
+         FROM staff s
+        WHERE s.line_account_id = ? AND s.deleted_at IS NULL
+        ORDER BY s.sort_order ASC, s.id ASC`,
     )
     .bind(accountId)
     .all();
@@ -784,6 +1142,311 @@ booking.put('/api/booking/admin/staff/:id/menus', async (c) => {
 
 // ---- shifts ----
 
+booking.get('/api/booking/admin/staff/:id/availability-rules', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const rows = await c.env.DB
+    .prepare(
+      `SELECT id, weekday, start_time, end_time, is_active
+         FROM staff_availability_rules
+        WHERE staff_id = ?
+        ORDER BY weekday ASC`,
+    )
+    .bind(staffId)
+    .all();
+  return c.json({ rules: rows.results });
+});
+
+booking.put('/api/booking/admin/staff/:id/availability-rules', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const body = await c.req.json<{
+    rules: Array<{ weekday: number; start_time: string; end_time: string }>;
+  }>();
+  if (!Array.isArray(body.rules)) return c.json({ error: 'invalid_rules' }, 400);
+  const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const weekdays = new Set<number>();
+  for (const rule of body.rules) {
+    if (!Number.isInteger(rule.weekday) || rule.weekday < 0 || rule.weekday > 6) {
+      return c.json({ error: 'invalid_weekday' }, 422);
+    }
+    if (weekdays.has(rule.weekday)) return c.json({ error: 'duplicate_weekday' }, 422);
+    weekdays.add(rule.weekday);
+    if (!hhmm.test(rule.start_time) || !hhmm.test(rule.end_time) || rule.start_time >= rule.end_time) {
+      return c.json({ error: 'invalid_time_range' }, 422);
+    }
+  }
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare(`DELETE FROM staff_availability_rules WHERE staff_id = ?`).bind(staffId),
+    ...body.rules.map((rule) =>
+      c.env.DB
+        .prepare(
+          `INSERT INTO staff_availability_rules
+            (id, staff_id, weekday, start_time, end_time, is_active)
+           VALUES (?, ?, ?, ?, ?, 1)`,
+        )
+        .bind(crypto.randomUUID(), staffId, rule.weekday, rule.start_time, rule.end_time),
+    ),
+  ];
+  await c.env.DB.batch(statements);
+  return c.json({ ok: true, count: body.rules.length });
+});
+
+// OAuth start is admin-authenticated and CSRF protected. Only the signed, short-lived
+// state crosses Google's authorization page; API_KEY and client secret never leave Worker.
+booking.post('/api/booking/admin/staff/:id/google-calendar/oauth/start', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const credentials = googleCredentials(c.env);
+  if (!googleOAuthConfigured(credentials)) {
+    return c.json({ error: 'google_oauth_not_configured' }, 503);
+  }
+  const state = await signGoogleOAuthState({
+    accountId,
+    staffId,
+    expiresAt: Date.now() + GOOGLE_OAUTH_STATE_TTL_MS,
+    adminOrigin: (() => {
+      const origin = c.req.header('Origin');
+      return resolveCorsOrigin(c.env, origin, c.req.url) === origin ? origin : undefined;
+    })(),
+  }, c.env.API_KEY);
+  const authorizationUrl = buildGoogleOAuthAuthorizationUrl({
+    clientId: credentials.oauthClientId!,
+    redirectUri: googleOAuthRedirectUri(c.req.url),
+    state,
+  });
+  return c.json({ authorization_url: authorizationUrl });
+});
+
+// Google redirects here without an admin Authorization header. authMiddleware has a narrow
+// GET-only exception for this exact path; signed state binds the callback to staff/account.
+booking.get(GOOGLE_OAUTH_CALLBACK_PATH, async (c) => {
+  let staffId: string | null = null;
+  let adminOrigin: string | undefined;
+  try {
+    const state = c.req.query('state');
+    if (!state) throw new Error('google_oauth_state_missing');
+    const payload = await verifyGoogleOAuthState(state, c.env.API_KEY);
+    staffId = payload.staffId;
+    adminOrigin = payload.adminOrigin;
+    if (c.req.query('error')) {
+      return c.redirect(adminCalendarReturnUrl(c.env, staffId, 'denied', adminOrigin));
+    }
+    const code = c.req.query('code');
+    const credentials = googleCredentials(c.env);
+    if (!code || !googleOAuthConfigured(credentials)) {
+      throw new Error('google_oauth_callback_invalid');
+    }
+    if (!(await assertStaffInAccount(c.env.DB, payload.staffId, payload.accountId))) {
+      throw new Error('google_oauth_staff_invalid');
+    }
+    const token = await exchangeGoogleOAuthCode({
+      code,
+      clientId: credentials.oauthClientId!,
+      clientSecret: credentials.oauthClientSecret!,
+      redirectUri: googleOAuthRedirectUri(c.req.url),
+    });
+
+    // Verify the granted account immediately before persisting the long-lived token.
+    const client = new GoogleCalendarClient({ calendarId: 'primary', accessToken: token.accessToken });
+    const now = new Date();
+    await client.getFreeBusy(now.toISOString(), new Date(now.getTime() + 60_000).toISOString());
+
+    const existing = await c.env.DB
+      .prepare(
+        `SELECT id FROM google_calendar_connections
+          WHERE line_account_id = ? AND staff_id = ? LIMIT 1`,
+      )
+      .bind(payload.accountId, payload.staffId)
+      .first<{ id: string }>();
+    const connectionId = existing?.id ?? crypto.randomUUID();
+    const nowIso = now.toISOString();
+    if (existing) {
+      await c.env.DB
+        .prepare(
+          `UPDATE google_calendar_connections
+              SET calendar_id='primary', auth_type='oauth', access_token=?, refresh_token=?,
+                  api_key=NULL, is_active=1, last_verified_at=?, last_error=NULL, updated_at=?
+            WHERE id=? AND line_account_id=? AND staff_id=?`,
+        )
+        .bind(
+          token.accessToken,
+          token.refreshToken,
+          nowIso,
+          nowIso,
+          connectionId,
+          payload.accountId,
+          payload.staffId,
+        )
+        .run();
+    } else {
+      await c.env.DB
+        .prepare(
+          `INSERT INTO google_calendar_connections
+            (id, calendar_id, line_account_id, staff_id, access_token, refresh_token,
+             auth_type, is_active, last_verified_at, created_at, updated_at)
+           VALUES (?, 'primary', ?, ?, ?, ?, 'oauth', 1, ?, ?, ?)`,
+        )
+        .bind(
+          connectionId,
+          payload.accountId,
+          payload.staffId,
+          token.accessToken,
+          token.refreshToken,
+          nowIso,
+          nowIso,
+          nowIso,
+        )
+        .run();
+    }
+    return c.redirect(adminCalendarReturnUrl(c.env, staffId, 'connected', adminOrigin));
+  } catch (error) {
+    console.error('Google Calendar OAuth callback failed:', error);
+    return c.redirect(adminCalendarReturnUrl(c.env, staffId, 'error', adminOrigin));
+  }
+});
+
+booking.get('/api/booking/admin/staff/:id/google-calendar', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const connection = await c.env.DB
+    .prepare(
+      `SELECT id, calendar_id, auth_type, is_active, last_verified_at, last_error
+         FROM google_calendar_connections
+        WHERE line_account_id = ? AND staff_id = ? AND is_active = 1
+        LIMIT 1`,
+    )
+    .bind(accountId, staffId)
+    .first();
+  return c.json({
+    connection,
+    service_account: {
+      configured: Boolean(
+        c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && c.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+      ),
+      email: c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ?? null,
+    },
+    oauth: {
+      configured: googleOAuthConfigured(googleCredentials(c.env)),
+    },
+  });
+});
+
+booking.put('/api/booking/admin/staff/:id/google-calendar', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const body = await c.req.json<{ calendar_id?: string }>();
+  const calendarId = body.calendar_id?.trim();
+  if (!calendarId || calendarId.length > 1024 || /[\r\n]/.test(calendarId)) {
+    return c.json({ error: 'invalid_calendar_id' }, 422);
+  }
+  const existing = await c.env.DB
+    .prepare(
+      `SELECT id FROM google_calendar_connections
+        WHERE line_account_id = ? AND staff_id = ? LIMIT 1`,
+    )
+    .bind(accountId, staffId)
+    .first<{ id: string }>();
+  const connectionId = existing?.id ?? crypto.randomUUID();
+  try {
+    await verifyStaffCalendarConnection({
+      id: connectionId,
+      calendar_id: calendarId,
+      auth_type: 'service_account',
+      access_token: null,
+      refresh_token: null,
+    }, googleCredentials(c.env));
+  } catch (error) {
+    console.error('Google Calendar verification failed:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message === 'google_service_account_not_configured' ? 503 : 422;
+    return c.json({ error: status === 503 ? 'service_account_not_configured' : 'calendar_not_accessible' }, status);
+  }
+  const now = new Date().toISOString();
+  if (existing) {
+    await c.env.DB
+      .prepare(
+        `UPDATE google_calendar_connections
+            SET calendar_id = ?, auth_type = 'service_account',
+                access_token = NULL, refresh_token = NULL, is_active = 1,
+                last_verified_at = ?, last_error = NULL, updated_at = ?
+          WHERE id = ? AND line_account_id = ? AND staff_id = ?`,
+      )
+      .bind(calendarId, now, now, connectionId, accountId, staffId)
+      .run();
+  } else {
+    await c.env.DB
+      .prepare(
+        `INSERT INTO google_calendar_connections
+          (id, calendar_id, line_account_id, staff_id, auth_type, is_active,
+           last_verified_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'service_account', 1, ?, ?, ?)`,
+      )
+      .bind(connectionId, calendarId, accountId, staffId, now, now, now)
+      .run();
+  }
+  return c.json({ ok: true, calendar_id: calendarId, last_verified_at: now });
+});
+
+booking.delete('/api/booking/admin/staff/:id/google-calendar', async (c) => {
+  const accountId = await resolveAccountIdAdmin(c);
+  if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
+  const staffId = c.req.param('id');
+  if (!(await assertStaffInAccount(c.env.DB, staffId, accountId))) {
+    return c.json({ error: 'staff_not_found_in_account' }, 404);
+  }
+  const connection = await c.env.DB
+    .prepare(
+      `SELECT auth_type, access_token, refresh_token
+         FROM google_calendar_connections
+        WHERE line_account_id = ? AND staff_id = ? AND is_active = 1
+        LIMIT 1`,
+    )
+    .bind(accountId, staffId)
+    .first<{
+      auth_type: string;
+      access_token: string | null;
+      refresh_token: string | null;
+    }>();
+  if (connection?.auth_type === 'oauth') {
+    const token = connection.refresh_token ?? connection.access_token;
+    if (token) {
+      await revokeGoogleOAuthToken(token).catch((error) =>
+        console.error('Google OAuth revoke failed during disconnect:', error));
+    }
+  }
+  await c.env.DB
+    .prepare(
+      `UPDATE google_calendar_connections
+          SET is_active = 0, access_token = NULL, refresh_token = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+        WHERE line_account_id = ? AND staff_id = ? AND is_active = 1`,
+    )
+    .bind(accountId, staffId)
+    .run();
+  return c.json({ ok: true });
+});
+
 booking.get('/api/booking/admin/staff/:id/shifts', async (c) => {
   const accountId = await resolveAccountIdAdmin(c);
   if (!accountId) return c.json({ error: 'missing_account_id' }, 400);
@@ -906,8 +1569,8 @@ booking.get('/api/booking/admin/requests', async (c) => {
          INNER JOIN staff s ON s.id = b.staff_id
          LEFT JOIN friends f ON f.id = b.friend_id
         WHERE b.line_account_id = ?
-        ORDER BY b.starts_at ASC
-        LIMIT 200`
+        ORDER BY b.requested_at DESC
+        LIMIT 500`
     : `SELECT b.*,
               m.name AS menu_name,
               s.display_name AS staff_name,
@@ -917,8 +1580,8 @@ booking.get('/api/booking/admin/requests', async (c) => {
          INNER JOIN staff s ON s.id = b.staff_id
          LEFT JOIN friends f ON f.id = b.friend_id
         WHERE b.line_account_id = ? AND b.status = ?
-        ORDER BY b.starts_at ASC
-        LIMIT 200`;
+        ORDER BY b.starts_at DESC
+        LIMIT 500`;
   const stmt = c.env.DB.prepare(sql);
   const rows = await (status === 'all' || !status
     ? (status === 'all' ? stmt.bind(accountId) : stmt.bind(accountId, 'requested'))
@@ -955,34 +1618,15 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
   }
 
   if (next === 'confirmed') {
-    const startsAt = new Date(row.starts_at);
-    const now = new Date();
-    const dayBefore = new Date(startsAt.getTime() - 86400_000);
-    const hoursBefore = new Date(
-      startsAt.getTime() - DEFAULT_ACCOUNT_SETTINGS.reminder_hours_before * 3600_000,
-    );
-    // すでに過去になっているリマインダは作らない。当日承認時に「明日のご予約」が即送信される事故防止。
-    const reminderInserts = [];
-    if (dayBefore > now) {
-      reminderInserts.push(
-        c.env.DB
-          .prepare(
-            `INSERT INTO booking_reminders (id, booking_id, kind, scheduled_at) VALUES (?,?,?,?)`,
-          )
-          .bind(crypto.randomUUID(), id, 'day_before', dayBefore.toISOString()),
-      );
-    }
-    if (hoursBefore > now) {
-      reminderInserts.push(
-        c.env.DB
-          .prepare(
-            `INSERT INTO booking_reminders (id, booking_id, kind, scheduled_at) VALUES (?,?,?,?)`,
-          )
-          .bind(crypto.randomUUID(), id, 'hours_before', hoursBefore.toISOString()),
-      );
-    }
-    if (reminderInserts.length > 0) {
-      await c.env.DB.batch(reminderInserts);
+    await insertConfirmationReminders(c.env.DB, {
+      bookingId: id,
+      startsAt: new Date(row.starts_at),
+      now: new Date(),
+    });
+    try {
+      await syncConfirmedBookingToGoogle(c.env.DB, googleCredentials(c.env), id);
+    } catch (error) {
+      console.error('Google Calendar sync (approve) failed:', error);
     }
     c.executionCtx.waitUntil(
       notifyForBooking(c.env.DB, id, 'approved').catch((err) =>
@@ -1002,6 +1646,11 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
       )
       .bind(id)
       .run();
+    c.executionCtx.waitUntil(
+      removeBookingFromGoogle(c.env.DB, googleCredentials(c.env), id).catch((error) =>
+        console.error('Google Calendar delete failed:', error),
+      ),
+    );
   }
 
   return c.json({ status: next });

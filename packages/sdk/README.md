@@ -1,6 +1,6 @@
 # @line-harness/sdk
 
-AI-native SDK for LINE Harness — programmatic LINE official account automation.
+AI-native SDK for L Harness — programmatic LINE official account automation.
 
 Replaces L社/U社 with a fully API-driven approach designed for AI agents (Claude Code).
 
@@ -120,7 +120,7 @@ try {
 ## Requirements
 
 - Node.js 18+ (uses native `fetch`)
-- A deployed LINE Harness Worker API
+- A deployed L Harness Worker API
 
 ## License
 

@@ -39,6 +39,7 @@ import {
   nextStatus,
   type EventBookingAction,
 } from '../services/event-booking-state.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const events = new Hono<Env>();
 
@@ -77,6 +78,8 @@ interface EventInput {
   reminder_hours_before?: number | null;
   is_published?: number;
   sort_order?: number;
+  confirmation_message_extra?: string | null;
+  reminder_message_extra?: string | null;
 }
 
 function validateEventInput(
@@ -94,6 +97,14 @@ function validateEventInput(
     const d = body.description;
     if (typeof d !== 'string' || d.length > EVENT_DESCRIPTION_MAX) {
       return { ok: false, code: 'invalid_description' };
+    }
+  }
+  for (const key of ['confirmation_message_extra', 'reminder_message_extra'] as const) {
+    if (has(key) && body[key] != null) {
+      const v = body[key];
+      if (typeof v !== 'string' || v.length > 2000) {
+        return { ok: false, code: `invalid_${key}` };
+      }
     }
   }
   for (const key of ['cancel_deadline_hours_before', 'reminder_hours_before', 'max_bookings_per_friend'] as const) {
@@ -163,8 +174,10 @@ events.post('/api/events/admin/events', async (c) => {
          max_bookings_per_friend, requires_approval, cancel_deadline_hours_before,
          reminder_day_before_enabled, reminder_hours_before,
          is_published, sort_order,
-         target_type, account_ids, dedup_priority
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         target_type, account_ids, dedup_priority,
+         confirmation_message_extra, reminder_message_extra,
+         og_title, og_description, og_image_url
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -185,6 +198,11 @@ events.post('/api/events/admin/events', async (c) => {
       targetType,
       accountIds ? JSON.stringify(accountIds) : null,
       dedupPriority ? JSON.stringify(dedupPriority) : null,
+      (body.confirmation_message_extra as string | null | undefined) ?? null,
+      (body.reminder_message_extra as string | null | undefined) ?? null,
+      (body.og_title as string | null | undefined) ?? null,
+      (body.og_description as string | null | undefined) ?? null,
+      (body.og_image_url as string | null | undefined) ?? null,
     )
     .run();
   const row = await c.env.DB
@@ -286,6 +304,11 @@ events.put('/api/events/admin/events/:id', async (c) => {
     'is_published',
     'sort_order',
     'target_type',
+    'confirmation_message_extra',
+    'reminder_message_extra',
+    'og_title',
+    'og_description',
+    'og_image_url',
   ] as const;
   const setClauses: string[] = [];
   const setValues: unknown[] = [];
@@ -643,6 +666,38 @@ events.get('/api/liff/events/me', async (c) => {
   return c.json({ items: results ?? [] });
 });
 
+events.get('/api/liff/events/me/:bookingId', async (c) => {
+  const account_id = await resolveAccountIdFromLiff(c);
+  if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
+  const callerLineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+  if (!callerLineUserId) return bad(c, 'unauthorized', 401);
+  const friend = await c.env.DB
+    .prepare(`SELECT id FROM friends WHERE line_user_id = ? AND line_account_id = ?`)
+    .bind(callerLineUserId, account_id)
+    .first<{ id: string }>();
+  if (!friend) return bad(c, 'not_found', 404);
+
+  const row = await c.env.DB
+    .prepare(
+      `SELECT b.id, b.event_id, b.status, b.customer_note, b.requested_at, b.decided_at, b.cancelled_at,
+              e.name AS event_name, e.image_url AS event_image_url,
+              e.venue_name, e.venue_url, e.cancel_deadline_hours_before,
+              e.description AS event_description,
+              CASE WHEN b.status = 'confirmed' THEN e.confirmation_message_extra ELSE NULL END AS confirmation_message_extra,
+              s.starts_at AS slot_starts_at, s.ends_at AS slot_ends_at
+         FROM event_bookings b
+         JOIN events e ON e.id = b.event_id
+         JOIN event_slots s ON s.id = b.slot_id
+        WHERE b.id = ?
+          AND b.friend_id = ?
+          AND b.line_account_id = ?`,
+    )
+    .bind(c.req.param('bookingId'), friend.id, account_id)
+    .first();
+  if (!row) return bad(c, 'not_found', 404);
+  return c.json(row);
+});
+
 events.post('/api/liff/events/me/:bookingId/cancel', async (c) => {
   const account_id = await resolveAccountIdFromLiff(c);
   if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
@@ -816,15 +871,13 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
     .bind(callerLineUserId, account_id)
     .first<{ id: string; user_id: string | null; picture_url: string | null }>();
   if (!friend) return bad(c, 'friend_not_found', 404);
-  const bookingFriend = friend;
-  const bookingLineUserId = callerLineUserId;
 
   // Reserve idempotency key BEFORE the booking work to dedupe concurrent
   // double-taps (the key is held for the full TTL window).
   const reservation = await reserveEventIdempotency(c.env.DB, {
     key: idemKey,
     lineAccountId: account_id,
-    friendId: bookingFriend.id,
+    friendId: friend.id,
     ttlMinutes: EVENT_IDEMPOTENCY_TTL_MINUTES,
     now: new Date(),
   });
@@ -844,7 +897,7 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
     await finalizeEventIdempotencyResponse(c.env.DB, {
       key: idemKey,
       lineAccountId: account_id,
-      friendId: bookingFriend.id,
+      friendId: friend.id,
       status,
       body,
     });
@@ -860,6 +913,11 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   }
 
   async function runBookingFlow(): Promise<Response> {
+  // Hoisted function declarations lose narrowing of outer-scope `const`
+  // captures; re-assert here to keep `friend` / `callerLineUserId` non-null.
+  // The outer scope already returned on null, so these throws are unreachable.
+  if (friend == null) throw new Error('runBookingFlow: friend missing');
+  if (callerLineUserId == null) throw new Error('runBookingFlow: callerLineUserId missing');
 
   const event = await c.env.DB
     .prepare(
@@ -918,7 +976,7 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   // identity_key 算出: broadcasts dedup と同じ式 (url_token > uid > solo)。
   // computeIdentityKey は friends.picture_url の url_token を最優先、なければ
   // user_id (UUID)、ともになければ自分自身のみ ('solo:'+id) にフォールバック。
-  const identityKey = computeIdentityKey(bookingFriend);
+  const identityKey = computeIdentityKey(friend);
 
   // 同一人物 (cross-account) の active 予約数を identity_key ベースでカウント。
   // 重複制限ロジック:
@@ -968,7 +1026,7 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
          (id, line_account_id, event_id, slot_id, friend_id, status, customer_note, requested_at, identity_key)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(id, account_id, event.id, slot.id, bookingFriend.id, status, body.customer_note ?? null, nowIso, identityKey)
+    .bind(id, account_id, event.id, slot.id, friend.id, status, body.customer_note ?? null, nowIso, identityKey)
     .run();
 
   // Verify capacity again. If there is a race winner ahead of us — i.e. an
@@ -1037,6 +1095,15 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
     }
   }
 
+  await awardActivityMileage(c.env.DB, {
+    eventType: 'booking_created',
+    source: 'event_booking',
+    sourceEventId: id,
+    friendId: friend.id,
+    metadata: { bookingType: 'event', eventId: event.id, slotId: slot.id },
+    occurredAt: nowIso,
+  });
+
   if (status === 'confirmed') {
     const reminders = computeRemindersForBooking({
       starts_at_utc: slot.starts_at,
@@ -1049,21 +1116,27 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   // best-effort notification: do not fail the booking if push fails.
   try {
     const acc = await c.env.DB
-      .prepare(`SELECT channel_access_token FROM line_accounts WHERE id = ?`)
-      .bind(account_id)
-      .first<{ channel_access_token: string }>();
+      .prepare(
+        `SELECT la.channel_access_token, e.confirmation_message_extra
+           FROM line_accounts la
+           JOIN events e ON e.id = ?
+          WHERE la.id = ?`,
+      )
+      .bind(event.id, account_id)
+      .first<{ channel_access_token: string; confirmation_message_extra: string | null }>();
     if (acc?.channel_access_token) {
       const kind: EventNotificationKind =
         status === 'requested' ? 'received_pending' : 'received_confirmed';
       await sendEventBookingNotification({
         channelAccessToken: acc.channel_access_token,
-        toLineUserId: bookingLineUserId,
+        toLineUserId: callerLineUserId,
         kind,
         ctx: {
           eventName: event.name,
           startsAtJst: startsAtJst(slot.starts_at),
           venueName: event.venue_name,
           venueUrl: event.venue_url,
+          confirmationExtra: acc.confirmation_message_extra,
         },
       });
     }
@@ -1192,6 +1265,7 @@ async function notifyBookingFriend(
     const row = await db
       .prepare(
         `SELECT e.name AS event_name, e.venue_name, e.venue_url,
+                e.confirmation_message_extra,
                 s.starts_at AS slot_starts_at,
                 la.channel_access_token,
                 f.line_user_id
@@ -1207,6 +1281,7 @@ async function notifyBookingFriend(
         event_name: string;
         venue_name: string | null;
         venue_url: string | null;
+        confirmation_message_extra: string | null;
         slot_starts_at: string;
         channel_access_token: string;
         line_user_id: string;
@@ -1221,6 +1296,7 @@ async function notifyBookingFriend(
         startsAtJst: startsAtJst(row.slot_starts_at),
         venueName: row.venue_name,
         venueUrl: row.venue_url,
+        confirmationExtra: row.confirmation_message_extra,
       },
     });
   } catch (e) {

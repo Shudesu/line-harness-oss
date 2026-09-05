@@ -11,6 +11,7 @@ import {
   createChat,
   getFriendById,
   getLineAccountById,
+  resolveDefaultAccessToken,
   updateChat,
   jstNow,
 } from '@line-crm/db';
@@ -67,8 +68,10 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
   if (existing) return existing as ChatLike;
   const friend = await getFriendById(db, id);
   if (!friend) return null;
+  // 最新行を選ぶ (unanswered-inbox / conversations の latest_chat CTE と同じ基準)。
+  // 最古行を選ぶと、旧重複データがある DB で読み手と別の行に status を書いてしまう。
   const byFriend = await db
-    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at ASC LIMIT 1`)
+    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at DESC LIMIT 1`)
     .bind(friend.id)
     .first<ChatLike>();
   if (byFriend) return byFriend;
@@ -82,38 +85,44 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
   const newId = crypto.randomUUID();
   const now = jstNow();
   const lastMessageAt = lastMsg?.last ?? null;
-  // 同時実行で二重挿入されないように WHERE NOT EXISTS で原子挿入。挿入結果に関わらず最古行を返して収束。
+  // 同時実行で二重挿入されないように WHERE NOT EXISTS + OR IGNORE で原子挿入。
+  // 挿入結果に関わらず最新行を返して収束。
   await db
     .prepare(
-      `INSERT INTO chats (id, friend_id, status, last_message_at, created_at, updated_at)
+      `INSERT OR IGNORE INTO chats (id, friend_id, status, last_message_at, created_at, updated_at)
        SELECT ?, ?, 'resolved', ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM chats WHERE friend_id = ?)`,
     )
     .bind(newId, friend.id, lastMessageAt, now, now, friend.id)
     .run();
   return (await db
-    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at ASC LIMIT 1`)
+    .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at DESC LIMIT 1`)
     .bind(friend.id)
     .first<ChatLike>())!;
 }
 
+/**
+ * `envAccessToken` は「最後の砦」であって既定値ではない —
+ * `resolveDefaultAccessToken` の doc comment を参照。friend にアカウントが
+ * 紐付いていなくても、テナントに有効なアカウントが1本しか無ければそれを使う。
+ */
 async function resolveFriendAndAccessToken(
   db: D1Database,
   friendId: string,
-  defaultAccessToken: string,
+  envAccessToken: string,
 ) {
   const friend = await getFriendById(db, friendId);
   if (!friend) {
-    return { friend: null, accessToken: defaultAccessToken };
+    return { friend: null, accessToken: await resolveDefaultAccessToken(db, envAccessToken) };
   }
 
   if (!friend.line_account_id) {
-    return { friend, accessToken: defaultAccessToken };
+    return { friend, accessToken: await resolveDefaultAccessToken(db, envAccessToken) };
   }
 
   const account = await getLineAccountById(db, friend.line_account_id);
   if (!account) {
-    return { friend, accessToken: defaultAccessToken };
+    return { friend, accessToken: await resolveDefaultAccessToken(db, envAccessToken) };
   }
 
   return { friend, accessToken: account.channel_access_token };
@@ -188,12 +197,12 @@ chats.get('/api/chats', async (c) => {
     const unansweredOnly =
       c.req.query('unansweredOnly') === 'true' || c.req.query('unansweredOnly') === '1';
 
-    let unansweredIds: Set<string> | null = null;
+    let unansweredMap: Map<string, { lastIncomingAt: string; lastIncomingContent: string; lastIncomingType: string }> | null = null;
     if (unansweredOnly) {
-      const { getUnansweredFriendIds } = await import('../services/unanswered-inbox.js');
-      unansweredIds = await getUnansweredFriendIds(c.env.DB);
-      // 空 Set のとき = 未対応ゼロ。早期 return で空配列を返す。
-      if (unansweredIds.size === 0) {
+      const { getUnansweredRowsMap } = await import('../services/unanswered-inbox.js');
+      unansweredMap = await getUnansweredRowsMap(c.env.DB);
+      // 空 Map のとき = 未対応ゼロ。早期 return で空配列を返す。
+      if (unansweredMap.size === 0) {
         return c.json({ success: true, data: [] });
       }
     }
@@ -205,75 +214,108 @@ chats.get('/api/chats', async (c) => {
     // recent_msg CTE で friend_id ごとに最新の messages_log 行をひとつ取得し、本文 preview と
     // direction (incoming/outgoing) を一覧に出す。
     //
-    // パフォーマンス対策:
-    //   1. lineAccountId 指定時は scoped_friends CTE で先に対象 friend を絞ってから messages_log
-    //      を ranking する (アカ別 inbox が他アカの履歴をスキャンしないように)。
-    //   2. content は text のみ先頭 200 文字まで切り詰めて返す (flex/image など raw JSON を返すと
-    //      broadcast 後の rows で multi-MB レスポンスになる)。
+    // パフォーマンス対策 (2026-07-06 本番実測で全面改修):
+    //   旧実装は messages_log (96k 行) を ROW_NUMBER × 2 + GROUP BY で 3 回スキャンし、
+    //   さらに LIMIT なしで全 friend (10k 行) を返していた → 本番 D1 実測 3.47 秒 / 781k rows_read。
+    //   新実装は (a) ROW_NUMBER を argmax GROUP BY に置換 (SQLite の bare-column +
+    //   単一 MAX() は max 行の値を返す documented 挙動)、(b) CTE を MATERIALIZED して
+    //   二重評価を防止、(c) page CTE で先に対象 friend を limit 件に確定してから
+    //   preview を計算、(d) デフォルト LIMIT 300 (最終行は last_message_at DESC)。
+    //   同条件の本番実測: 459ms / 165k rows_read (LIMIT 300 時)。
+    //   - content は text のみ先頭 200 文字まで切り詰めて返す (flex/image など raw JSON を
+    //     返すと broadcast 後の rows で multi-MB レスポンスになる)。
+    //   - lineAccountId 指定時は messages_log スキャンを対象アカの friend に絞る。
     const accountFilterSql = lineAccountId
       ? `friend_id IN (SELECT id FROM friends WHERE line_account_id = ?)`
       : `1=1`;
-    let sql = `
-      WITH activity AS (
+
+    // unansweredOnly は取得後に unansweredMap と突合して絞るため全件必要。
+    // SQLite は LIMIT に負値を渡すと「無制限」になる (documented 挙動)。
+    const NO_LIMIT = -1;
+    const limitParam = Number.parseInt(c.req.query('limit') ?? '', 10);
+    const limit = unansweredOnly
+      ? NO_LIMIT
+      : Number.isFinite(limitParam)
+        ? Math.min(1000, Math.max(1, limitParam))
+        : 300;
+    // カーソルページング: (last_message_at, friend_id) の複合カーソルより古い行を返す。
+    // offset 方式は「取得の合間に新着で行が押し下げられた分が欠落する」構造問題が
+    // あるため採用しない。friend_id は同時刻 (broadcast 一斉配信等) のタイブレーク。
+    const beforeAt = c.req.query('beforeAt') || undefined;
+    const beforeId = c.req.query('beforeId') || undefined;
+    const useCursor = !unansweredOnly && Boolean(beforeAt && beforeId);
+
+    const conditions: string[] = [];
+    const conditionBindings: unknown[] = [];
+    if (status) {
+      conditions.push(`COALESCE(c.status, 'resolved') = ?`);
+      conditionBindings.push(status);
+    }
+    if (operatorId) {
+      conditions.push('c.operator_id = ?');
+      conditionBindings.push(operatorId);
+    }
+    if (lineAccountId) {
+      conditions.push('f.line_account_id = ?');
+      conditionBindings.push(lineAccountId);
+    }
+    // status / operator filter は chats を参照するので、その時だけ page CTE 側でも
+    // chats を lookup する (無条件時は 全friend × chats lookup を省く)。
+    const pageNeedsChats = Boolean(status || operatorId);
+
+    // preview は direction/source を問わず **実際の最新メッセージ** を表示する。
+    // incoming を常に優先すると、プロキシ経由の manual/external 送信が messages_log に
+    // 正しく保存されていても、一覧には何日も前の incoming とその日時が残って見える。
+    // また page の並び順は最新 any なのにレスポンスの lastMessageAt だけ過去の incoming に
+    // なるため、フロントが作るページング cursor と SQL のソートキーも食い違っていた。
+    // 未対応モードだけは取得後に unansweredMap の incoming で明示的に上書きする。
+    // text 以外 (flex/image/sticker 等) は content を NULL にして payload size を抑える
+    // (フロントは type で 📋 Flex / 📷 画像 等のラベルを出すので content は不要)。
+    // any_agg の bare column (content 等) は「単一 MAX() を含む集約は max 行の
+    // 値を返す」という SQLite の documented 挙動で argmax として使っている。
+    // 集約は page 確定後の friend に絞って実行する (全 friend 分の content を
+    // materialize しない)。last_any は並び順決定専用のスリムな全走査 1 回のみ。
+    const sql = `
+      WITH last_any AS MATERIALIZED (
         SELECT friend_id, MAX(created_at) AS last_message_at
         FROM messages_log
         WHERE (delivery_type IS NULL OR delivery_type != 'test')
           AND ${accountFilterSql}
         GROUP BY friend_id
-        UNION ALL
-        SELECT friend_id, last_message_at
-        FROM chats
-        WHERE ${accountFilterSql}
       ),
-      deduped AS (
-        SELECT friend_id, MAX(last_message_at) AS last_message_at
-        FROM activity
-        GROUP BY friend_id
+      deduped AS MATERIALIZED (
+        SELECT friend_id, MAX(last_message_at) AS last_message_at FROM (
+          SELECT friend_id, last_message_at FROM last_any
+          UNION ALL
+          SELECT friend_id, last_message_at FROM chats WHERE ${accountFilterSql}
+        ) GROUP BY friend_id
       ),
-      -- preview は **最新の incoming (ユーザー発)** を優先する。auto_reply / scenario 等の
-      -- outbound が直後に書き込まれて preview を上書きすると「ユーザーが何と言ったか」が
-      -- 一覧から見えなくなる (operator triage の主目的が損なわれる)。
-      -- incoming が無い (broadcast push など outbound only) chat は最新 outbound にフォールバック。
-      -- text 以外 (flex/image/sticker 等) は content を NULL にして payload size を抑える
-      -- (フロントは type で 📋 Flex / 📷 画像 等のラベルを出すので content は不要)。
-      -- preview は **常に最新メッセージ** を表示する。postback (rich menu tap) も含む。
-      -- preview text と displayed time を揃えるための単純化 (deprioritize すると
-      -- 「最新は postback だが preview は古い text」の time mismatch が起きるため)。
-      -- 注: postback.data が opaque な JSON token だと一覧で人間には読めない値が出るが、
-      -- それは admin が rich menu の postback.data を人間向け文言にすべき config 問題。
-      -- (LINE 仕様: postback.displayText は admin が設定可能、それを data に揃えるのが推奨)
-      ranked_in AS (
+      page AS MATERIALIZED (
+        SELECT d.friend_id, d.last_message_at
+        FROM deduped d
+        INNER JOIN friends f ON f.id = d.friend_id
+        ${pageNeedsChats ? `LEFT JOIN chats c ON c.id = (
+          SELECT id FROM chats WHERE friend_id = f.id ORDER BY created_at DESC LIMIT 1
+        )` : ''}
+        WHERE 1=1
+        ${conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : ''}
+        ${useCursor ? 'AND (d.last_message_at < ? OR (d.last_message_at = ? AND d.friend_id < ?))' : ''}
+        ORDER BY d.last_message_at DESC, d.friend_id DESC
+        LIMIT ?
+      ),
+      any_agg AS (
         SELECT friend_id,
           CASE WHEN message_type = 'text' THEN SUBSTR(content, 1, 200) ELSE NULL END AS content,
-          direction, message_type, created_at,
-          ROW_NUMBER() OVER (PARTITION BY friend_id ORDER BY created_at DESC) AS rn
-        FROM messages_log
-        WHERE direction = 'incoming'
-          AND (delivery_type IS NULL OR delivery_type != 'test')
-          AND ${accountFilterSql}
-      ),
-      ranked_any AS (
-        SELECT friend_id,
-          CASE WHEN message_type = 'text' THEN SUBSTR(content, 1, 200) ELSE NULL END AS content,
-          direction, message_type, created_at,
-          ROW_NUMBER() OVER (PARTITION BY friend_id ORDER BY created_at DESC) AS rn
+          direction, message_type,
+          MAX(created_at) AS created_at
         FROM messages_log
         WHERE (delivery_type IS NULL OR delivery_type != 'test')
-          AND ${accountFilterSql}
+          AND friend_id IN (SELECT friend_id FROM page)
+        GROUP BY friend_id
       ),
-      -- ra (any direction の最新) を master にして、ri (incoming の最新) を LEFT JOIN。
-      -- COALESCE で ri 優先 → incoming があればそれ、無ければ outbound にフォールバック。
-      -- created_at も preview の元メッセージに合わせて返す (一覧の時刻と preview text が
-      -- 別メッセージを指して mismatch する事故を防ぐ)。
       recent_msg AS (
-        SELECT
-          ra.friend_id,
-          COALESCE(ri.content, ra.content) AS content,
-          COALESCE(ri.direction, ra.direction) AS direction,
-          COALESCE(ri.message_type, ra.message_type) AS message_type,
-          COALESCE(ri.created_at, ra.created_at) AS preview_at
-        FROM (SELECT * FROM ranked_any WHERE rn = 1) ra
-        LEFT JOIN (SELECT * FROM ranked_in WHERE rn = 1) ri ON ra.friend_id = ri.friend_id
+        SELECT friend_id, content, direction, message_type, created_at AS preview_at
+        FROM any_agg
       )
       SELECT
         f.id AS id,
@@ -285,53 +327,30 @@ chats.get('/api/chats', async (c) => {
         c.operator_id,
         COALESCE(c.status, 'resolved') AS status,
         c.notes,
-        -- last_message_at は preview メッセージの時刻に揃える (一覧 row の時刻表示と preview が
-        -- 別メッセージを指す mismatch を防ぐ)。preview が無い (chats 行のみ存在) ケースは
-        -- d.last_message_at にフォールバック。
         COALESCE(rm.preview_at, d.last_message_at) AS last_message_at,
         rm.content AS last_message_content,
         rm.direction AS last_message_direction,
         rm.message_type AS last_message_type,
         COALESCE(c.created_at, d.last_message_at) AS created_at,
         COALESCE(c.updated_at, d.last_message_at) AS updated_at
-      FROM deduped d
+      FROM page d
       INNER JOIN friends f ON f.id = d.friend_id
       LEFT JOIN chats c ON c.id = (
         SELECT id FROM chats WHERE friend_id = f.id ORDER BY created_at DESC LIMIT 1
       )
       LEFT JOIN recent_msg rm ON rm.friend_id = f.id
+      ORDER BY d.last_message_at DESC, d.friend_id DESC
     `;
-    // accountFilterSql に '?' が複数 (4 箇所) あるので、bindings は事前に積んでおく。
-    const ctePrebindings: unknown[] = lineAccountId
-      ? [lineAccountId, lineAccountId, lineAccountId, lineAccountId]
-      : [];
-    const conditions: string[] = [];
-    const bindings: unknown[] = [];
 
-    if (status) {
-      conditions.push(`COALESCE(c.status, 'resolved') = ?`);
-      bindings.push(status);
-    }
-    if (operatorId) {
-      conditions.push('c.operator_id = ?');
-      bindings.push(operatorId);
-    }
-    if (lineAccountId) {
-      conditions.push('f.line_account_id = ?');
-      bindings.push(lineAccountId);
-    }
-
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
-    }
-    sql += ' ORDER BY d.last_message_at DESC';
-
-    // CTE 内 placeholder (4 個) → 外側 WHERE placeholder の順に bind する
-    const allBindings = [...ctePrebindings, ...bindings];
-    const stmt = allBindings.length > 0
-      ? c.env.DB.prepare(sql).bind(...allBindings)
-      : c.env.DB.prepare(sql);
-    const result = await stmt.all();
+    // placeholder 順 = SQL 出現順: last_any(account) → deduped 内 chats(account) →
+    // page 条件 → cursor (beforeAt ×2 + beforeId) → LIMIT。
+    // any_agg は page で friend が確定済みのため account filter 不要。
+    const allBindings: unknown[] = [];
+    if (lineAccountId) allBindings.push(lineAccountId, lineAccountId);
+    allBindings.push(...conditionBindings);
+    if (useCursor) allBindings.push(beforeAt, beforeAt, beforeId);
+    allBindings.push(limit);
+    const result = await c.env.DB.prepare(sql).bind(...allBindings).all();
 
     let data = result.results.map((ch: Record<string, unknown>) => ({
       id: ch.id as string,
@@ -349,8 +368,26 @@ chats.get('/api/chats', async (c) => {
       updatedAt: ch.updated_at,
     }));
 
-    if (unansweredIds) {
-      data = data.filter((row) => unansweredIds!.has(row.id));
+    if (unansweredMap) {
+      // 未対応 row の preview / timestamp で上書きして Inbox と一貫させる
+      data = data
+        .filter((row) => unansweredMap!.has(row.id as string))
+        .map((row) => {
+          const u = unansweredMap!.get(row.id as string)!;
+          return {
+            ...row,
+            lastMessageAt: u.lastIncomingAt,
+            lastMessageContent: u.lastIncomingType === 'text' ? u.lastIncomingContent : null,
+            lastMessageDirection: 'incoming' as const,
+            lastMessageType: u.lastIncomingType,
+          };
+        })
+        // 上書きで lastMessageAt が変わったので resort
+        .sort((a, b) => {
+          const aAt = typeof a.lastMessageAt === 'string' ? a.lastMessageAt : '';
+          const bAt = typeof b.lastMessageAt === 'string' ? b.lastMessageAt : '';
+          return bAt.localeCompare(aAt);
+        });
     }
 
     return c.json({ success: true, data });

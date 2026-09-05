@@ -1,6 +1,6 @@
 {
   "name": "worker",
-  "version": "0.15.0",
+  "version": "0.24.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,6 +17,7 @@
     "@line-crm/line-sdk": "workspace:*",
     "@line-crm/shared": "workspace:*",
     "@line-harness/update-engine": "workspace:*",
+    "hls.js": "^1.6.16",
     "hono": "^4.6.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

@@ -4,7 +4,7 @@ For bugs and feature requests, use GitHub Issues in this repository.
 
 For setup questions, please include:
 
-- LINE Harness version.
+- L Harness version.
 - Node.js and pnpm versions.
 - Cloudflare Workers, Pages, and D1 setup status.
 - The command you ran.

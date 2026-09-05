@@ -6,6 +6,16 @@ import Header from '@/components/layout/header'
 import ImageUploader from '@/components/shared/image-uploader'
 import { bookingApi, type BookingStaff } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 const EMPTY: Partial<BookingStaff> = {
   name: '',
@@ -24,6 +34,7 @@ export default function BookingStaffPage() {
   const [editing, setEditing] = useState<Partial<BookingStaff> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<BookingStaff | null>(null)
 
   const load = useCallback(async () => {
     if (!selectedAccountId) return
@@ -56,10 +67,11 @@ export default function BookingStaffPage() {
     await load()
   }
 
-  async function remove(id: string) {
+  async function remove() {
     if (!selectedAccountId) return
-    if (!confirm('このスタッフを削除しますか？（既存予約は維持されます）')) return
-    await bookingApi.deleteStaff(selectedAccountId, id)
+    if (!deleteTarget) return
+    await bookingApi.deleteStaff(selectedAccountId, deleteTarget.id)
+    setDeleteTarget(null)
     await load()
   }
 
@@ -69,53 +81,36 @@ export default function BookingStaffPage() {
         title="予約スタッフ"
         description="予約担当スタッフの管理（指名なし枠も含む）"
         action={
-          <button
+          <Button
+            type="button"
+            variant="primary"
             onClick={() => setEditing(EMPTY)}
             disabled={!selectedAccountId}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
           >
             + 新規スタッフ
-          </button>
+          </Button>
         }
       />
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="スタッフを読み込めませんでした" description={error} />
       )}
 
       {!selectedAccountId ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          サイドバーでアカウントを選択してください
-        </div>
+        <Empty title="アカウントが未選択です" description="サイドバーで操作するアカウントを選択してください。" />
       ) : loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          読み込み中…
-        </div>
+        <LayerCard className="p-12"><Loader className="mx-auto" /></LayerCard>
       ) : items.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          まだスタッフがいません。右上の「+ 新規スタッフ」から追加してください。
-        </div>
+        <Empty title="まだスタッフがいません" description="右上の「+ 新規スタッフ」から追加してください。" />
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <LayerCard className="overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">スタッフ</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">役職</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">指名なし枠</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">並び順</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">有効</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
+            <Table className="min-w-[640px]">
+              <Table.Header><Table.Row><Table.Head>スタッフ</Table.Head><Table.Head>役職</Table.Head><Table.Head className="text-center">指名なし枠</Table.Head><Table.Head className="text-center">受付時間</Table.Head><Table.Head className="text-right">並び順</Table.Head><Table.Head className="text-center">有効</Table.Head><Table.Head className="text-right">操作</Table.Head></Table.Row></Table.Header>
+              <Table.Body>
                 {items.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-sm">
+                  <Table.Row key={s.id}>
+                    <Table.Cell>
                       <div className="flex items-center gap-3">
                         {s.profile_image_url ? (
                           <img
@@ -135,41 +130,59 @@ export default function BookingStaffPage() {
                           )}
                         </div>
                       </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{s.role ?? '-'}</td>
-                    <td className="px-4 py-3 text-center">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-subtle">{s.role ?? '-'}</Table.Cell>
+                    <Table.Cell className="text-center">
                       {s.is_designation_optional ? (
-                        <span className="inline-block px-2 py-0.5 rounded bg-purple-100 text-purple-700 text-xs">指名なし</span>
+                        <Badge variant="info">指名なし</Badge>
                       ) : (
                         <span className="text-xs text-gray-300">-</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-right tabular-nums text-gray-500">{s.sort_order}</td>
-                    <td className="px-4 py-3 text-center">
-                      {s.is_active ? (
-                        <span className="inline-block px-2 py-0.5 rounded bg-green-100 text-green-800 text-xs">ON</span>
+                    </Table.Cell>
+                    <Table.Cell className="text-center">
+                      {s.has_working_hours === 0 ? (
+                        <Link
+                          href={`/booking/staff/shifts?staff_id=${s.id}`}
+                          className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-xs hover:bg-amber-200"
+                          title="受付時間を保存するまで、このスタッフの予約枠は表示されません"
+                        >
+                          未設定
+                        </Link>
+                      ) : s.has_working_hours === 1 ? (
+                        <Badge variant="success">設定済み</Badge>
                       ) : (
-                        <span className="inline-block px-2 py-0.5 rounded bg-gray-100 text-gray-500 text-xs">OFF</span>
+                        <span className="text-xs text-gray-300">-</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
+                    </Table.Cell>
+                    <Table.Cell className="text-right tabular-nums text-kumo-subtle">{s.sort_order}</Table.Cell>
+                    <Table.Cell className="text-center">
+                      {s.is_active ? (
+                        <Badge variant="success">ON</Badge>
+                      ) : (
+                        <Badge variant="neutral">OFF</Badge>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell className="text-right">
                       <div className="inline-flex gap-2 text-xs">
-                        <button onClick={() => setEditing(s)} className="text-blue-600 hover:underline">編集</button>
+                        <Button type="button" size="xs" variant="ghost" onClick={() => setEditing(s)}>編集</Button>
                         <Link href={`/booking/staff/shifts?staff_id=${s.id}`} className="text-blue-600 hover:underline">
                           シフト
                         </Link>
-                        <button onClick={() => remove(s.id)} className="text-red-600 hover:underline">削除</button>
+                        <Button type="button" size="xs" variant="destructive" onClick={() => setDeleteTarget(s)}>削除</Button>
                       </div>
-                    </td>
-                  </tr>
+                    </Table.Cell>
+                  </Table.Row>
                 ))}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table>
           </div>
-        </div>
+        </LayerCard>
       )}
 
       {editing && <Modal staff={editing} onSave={save} onClose={() => setEditing(null)} />}
+      <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <Dialog><Dialog.Title>スタッフを削除しますか？</Dialog.Title><Dialog.Description className="mt-2">「{deleteTarget?.display_name}」を削除します。既存予約は維持されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={remove}>削除</Button></div></Dialog>
+      </Dialog.Root>
     </div>
   )
 }
@@ -204,110 +217,78 @@ function Modal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-base font-semibold">{form.id ? 'スタッフ編集' : '新規スタッフ'}</h2>
-        </div>
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
+      <Dialog className="w-full max-w-md max-h-[90vh] overflow-y-auto p-0">
+        <div className="px-6 py-4 border-b border-kumo-line"><Dialog.Title>{form.id ? 'スタッフ編集' : '新規スタッフ'}</Dialog.Title></div>
         <div className="px-6 py-4 space-y-4">
-          <Field label="内部名（管理用）" required>
-            <input
+            <Input
+              label="内部名（管理用）"
               type="text"
               value={form.name ?? ''}
               onChange={(e) => set('name', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              required
               placeholder="例: yamada-taro"
             />
-          </Field>
-          <Field label="表示名" required>
-            <input
+            <Input
+              label="表示名"
               type="text"
               value={form.display_name ?? ''}
               onChange={(e) => set('display_name', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              required
               placeholder="顧客に表示される名前"
             />
-          </Field>
-          <Field label="役職">
-            <input
+            <Input
+              label="役職"
               type="text"
               value={form.role ?? ''}
               onChange={(e) => set('role', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               placeholder="例: トップスタイリスト"
             />
-          </Field>
           <ImageUploader
             mode="url"
             value={form.profile_image_url ? { mode: 'url', url: form.profile_image_url } : null}
             onChange={(v) => set('profile_image_url', v?.mode === 'url' ? v.url : '')}
             label="プロフィール画像"
           />
-          <Field label="紹介文">
-            <textarea
+            <InputArea
+              label="紹介文"
               value={form.bio ?? ''}
-              onChange={(e) => set('bio', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-              rows={2}
+              onValueChange={(value) => set('bio', value)}
+              minRows={2}
             />
-          </Field>
-          <Field label="並び順">
-            <input
+            <Input
+              label="並び順"
               type="number"
               value={form.sort_order ?? 0}
               onChange={(e) => set('sort_order', Number(e.target.value))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 tabular-nums"
+              className="tabular-nums"
             />
-          </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <Checkbox
+              label="「指名なし」枠（仮想スタッフ）"
               checked={Boolean(form.is_designation_optional)}
-              onChange={(e) => set('is_designation_optional', e.target.checked ? 1 : 0)}
-              className="rounded"
+              onCheckedChange={(checked) => set('is_designation_optional', checked ? 1 : 0)}
             />
-            <span>「指名なし」枠（仮想スタッフ）</span>
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <Checkbox
+              label="有効（顧客に表示する）"
               checked={Boolean(form.is_active)}
-              onChange={(e) => set('is_active', e.target.checked ? 1 : 0)}
-              className="rounded"
+              onCheckedChange={(checked) => set('is_active', checked ? 1 : 0)}
             />
-            <span>有効（顧客に表示する）</span>
-          </label>
-          {err && <p className="text-xs text-red-600">{err}</p>}
+          {err && <Banner size="sm" variant="error" title="保存できませんでした" description={err} />}
         </div>
         <div className="px-6 py-4 border-t border-gray-200 flex gap-2 justify-end">
-          <button
+          <Button type="button" variant="secondary"
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
           >
             キャンセル
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="primary" loading={saving}
             onClick={submit}
             disabled={saving}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
           >
-            {saving ? '保存中…' : '保存'}
-          </button>
+            保存
+          </Button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-xs font-medium text-gray-600 mb-1">
-        {label}
-        {required && <span className="text-red-500 ml-0.5">*</span>}
-      </span>
-      {children}
-    </label>
+      </Dialog>
+    </Dialog.Root>
   )
 }

@@ -43,6 +43,10 @@ function stubDB(canned: {
   // 応答ありルールの evidence-based 判定をテストするには autoReplyOutgoings を渡す。
   autoReplies?: AutoReplyRow[];
   autoReplyOutgoings?: AutoReplyOutgoing[];
+  // 旧 fixture 互換: 期待値メモとして残されている純粋データ。stubDB は使わない。
+  total?: number;
+  byAccount?: unknown[];
+  oldestWait?: unknown;
 }) {
   const incomings: RecentIncoming[] =
     canned.recentIncomings ??

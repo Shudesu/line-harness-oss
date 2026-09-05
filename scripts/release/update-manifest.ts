@@ -29,6 +29,9 @@ export interface ReleaseEntry {
   worker_hash: string;
   admin_hash: string;
   liff_hash: string;
+  worker_assets_hash?: string;
+  /** Byte hash of the final bundled worker/index.js. */
+  worker_bundle_hash?: string;
   bundle_url: string;
   bundle_size_bytes: number;
   required_secrets: string[];

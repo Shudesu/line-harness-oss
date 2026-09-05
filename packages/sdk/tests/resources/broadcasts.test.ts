@@ -87,6 +87,33 @@ describe('BroadcastsResource', () => {
     expect(result).toEqual(broadcast)
   })
 
+  it('create(input) sends idempotency key as a header, not in the JSON body', async () => {
+    const http = mockHttp({ post: vi.fn().mockResolvedValue({
+      success: true,
+      data: { id: 'bc-stable' },
+    }) })
+    const resource = new BroadcastsResource(http)
+
+    await resource.create({
+      title: 'Personalized notice',
+      messageType: 'text',
+      messageContent: '{{name}}さんへ',
+      targetType: 'all',
+      idempotencyKey: '11111111-2222-4333-8444-555555555555',
+    })
+
+    expect(http.post).toHaveBeenCalledWith(
+      '/api/broadcasts',
+      {
+        title: 'Personalized notice',
+        messageType: 'text',
+        messageContent: '{{name}}さんへ',
+        targetType: 'all',
+      },
+      { 'Idempotency-Key': '11111111-2222-4333-8444-555555555555' },
+    )
+  })
+
   it('update(id, input) calls PUT /api/broadcasts/:id with input', async () => {
     const updatedBroadcast = {
       id: 'bc-1',

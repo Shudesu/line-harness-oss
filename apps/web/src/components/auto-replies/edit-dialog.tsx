@@ -1,6 +1,13 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
 import { api } from '@/lib/api'
 import ImageUploader from '@/components/shared/image-uploader'
 
@@ -24,11 +31,11 @@ interface Props {
 
 type ResponseMode = 'silent' | 'template' | 'inline-text' | 'inline-flex' | 'inline-image'
 
-function detectMode(d: AutoReplyDraft): ResponseMode {
-  if (d.responseType === 'silent') return 'silent'
-  if (d.templateId) return 'template'
-  if (d.responseType === 'flex') return 'inline-flex'
-  if (d.responseType === 'image') return 'inline-image'
+function detectMode(draft: AutoReplyDraft): ResponseMode {
+  if (draft.responseType === 'silent') return 'silent'
+  if (draft.templateId) return 'template'
+  if (draft.responseType === 'flex') return 'inline-flex'
+  if (draft.responseType === 'image') return 'inline-image'
   return 'inline-text'
 }
 
@@ -42,27 +49,27 @@ export default function EditDialog({ draft, templates, onClose, onSaved }: Props
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const flexTemplates = templates.filter((t) => t.messageType === 'flex')
-  const textTemplates = templates.filter((t) => t.messageType === 'text')
-  const imageTemplates = templates.filter((t) => t.messageType === 'image')
+  const templateItems = Object.fromEntries(
+    templates.map((template) => [template.id, `${template.messageType.toUpperCase()} — ${template.name}`]),
+  )
 
   const handleSave = async () => {
-    if (!keyword.trim()) { setError('keyword を入力してください'); return }
-    if (mode === 'template' && !templateId) { setError('template を選んでください'); return }
+    if (!keyword.trim()) { setError('キーワードを入力してください'); return }
+    if (mode === 'template' && !templateId) { setError('テンプレートを選んでください'); return }
     if ((mode === 'inline-text' || mode === 'inline-flex' || mode === 'inline-image') && !responseContent.trim()) {
-      setError('内容を入力してください'); return
+      setError('返信内容を入力してください'); return
     }
     setError('')
     setSaving(true)
     try {
       const body: {
-        keyword: string;
-        matchType: 'exact' | 'contains';
-        responseType: string;
-        responseContent: string;
-        templateId: string | null;
-        lineAccountId: string | null;
-        isActive: boolean;
+        keyword: string
+        matchType: 'exact' | 'contains'
+        responseType: string
+        responseContent: string
+        templateId: string | null
+        lineAccountId: string | null
+        isActive: boolean
       } = {
         keyword,
         matchType,
@@ -70,142 +77,122 @@ export default function EditDialog({ draft, templates, onClose, onSaved }: Props
           mode === 'silent' ? 'silent'
           : mode === 'inline-flex' ? 'flex'
           : mode === 'inline-image' ? 'image'
-          : mode === 'template' ? 'text' /* placeholder, override below if template found */
           : 'text',
-        // template mode でも response_content / response_type を残す。template が
-        // 削除された (ON DELETE SET NULL) ときの inline fallback として機能する。
         responseContent: mode === 'silent' ? '' : responseContent,
         templateId: mode === 'template' ? templateId : null,
         lineAccountId: draft.lineAccountId,
         isActive,
       }
       if (mode === 'template' && templateId) {
-        const tpl = templates.find((t) => t.id === templateId)
-        if (tpl) {
-          body.responseType = tpl.messageType
-          // template が削除された (ON DELETE SET NULL) ときの inline fallback として
-          // 現時点の template content をスナップショット保存する。これがないと
-          // template 削除後に webhook が空メッセージ送信になる。
-          body.responseContent = tpl.messageContent
+        const template = templates.find((candidate) => candidate.id === templateId)
+        if (template) {
+          body.responseType = template.messageType
+          body.responseContent = template.messageContent
         }
       }
-      if (draft.id) {
-        await api.autoReplies.update(draft.id, body)
-      } else {
-        await api.autoReplies.create(body)
-      }
+      if (draft.id) await api.autoReplies.update(draft.id, body)
+      else await api.autoReplies.create(body)
       onSaved()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '保存に失敗しました')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '保存に失敗しました')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="px-5 py-4 border-b">
-          <h3 className="text-base font-semibold">{draft.id ? '自動返信ルール 編集' : '新規 自動返信ルール'}</h3>
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
+      <Dialog size="lg" className="max-h-[90vh] overflow-y-auto p-0">
+        <div className="border-b border-kumo-line px-6 py-4">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">
+            {draft.id ? '自動返信ルールを編集' : '新しい自動返信ルール'}
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 text-sm text-kumo-subtle">
+            キーワードの一致条件と返信方法を設定します。
+          </Dialog.Description>
         </div>
-        <div className="p-5 space-y-4">
+
+        <div className="space-y-5 p-6">
+          <Input
+            label="キーワード"
+            type="text"
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+            placeholder="例: コスト比較"
+          />
+
           <div>
-            <label className="block text-xs text-gray-600 mb-1">keyword</label>
-            <input
-              type="text"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              placeholder="例: コスト比較"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">マッチ方法</label>
+            <p className="mb-2 text-sm font-medium text-kumo-default">一致方法</p>
             <div className="flex gap-2">
-              {(['exact', 'contains'] as const).map((mt) => (
-                <button
-                  key={mt}
-                  onClick={() => setMatchType(mt)}
-                  className={`px-3 py-1.5 text-xs rounded-md ${matchType === mt ? 'text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                  style={matchType === mt ? { backgroundColor: '#06C755' } : undefined}
+              {(['exact', 'contains'] as const).map((value) => (
+                <Button
+                  key={value}
+                  type="button"
+                  size="sm"
+                  variant={matchType === value ? 'primary' : 'secondary'}
+                  onClick={() => setMatchType(value)}
+                  aria-pressed={matchType === value}
                 >
-                  {mt === 'exact' ? '完全一致' : '包含'}
-                </button>
+                  {value === 'exact' ? '完全一致' : '包含'}
+                </Button>
               ))}
             </div>
           </div>
+
           <div>
-            <label className="block text-xs text-gray-600 mb-1">応答方法</label>
+            <p className="mb-2 text-sm font-medium text-kumo-default">返信方法</p>
             <div className="flex flex-wrap gap-2">
               {([
-                { key: 'silent', label: 'silent (返信なし)' },
-                { key: 'template', label: 'テンプレートから' },
-                { key: 'inline-text', label: 'テキスト直書き' },
-                { key: 'inline-flex', label: 'Flex JSON 直書き' },
-                { key: 'inline-image', label: '画像 (image JSON)' },
+                { key: 'silent', label: '返信なし' },
+                { key: 'template', label: 'テンプレート' },
+                { key: 'inline-text', label: 'テキスト' },
+                { key: 'inline-flex', label: 'Flex JSON' },
+                { key: 'inline-image', label: '画像' },
               ] as const).map(({ key, label }) => (
-                <button
+                <Button
                   key={key}
+                  type="button"
+                  size="sm"
+                  variant={mode === key ? 'primary' : 'secondary'}
                   onClick={() => setMode(key)}
-                  className={`px-3 py-1.5 text-xs rounded-md ${mode === key ? 'text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                  style={mode === key ? { backgroundColor: '#06C755' } : undefined}
+                  aria-pressed={mode === key}
                 >
                   {label}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
-          {mode === 'template' && (
+
+          {mode === 'template' ? (
             <div>
-              <label className="block text-xs text-gray-600 mb-1">template</label>
-              <select
+              <Select
+                label="テンプレート"
                 value={templateId ?? ''}
-                onChange={(e) => setTemplateId(e.target.value || null)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-              >
-                <option value="">-- 選択 --</option>
-                {flexTemplates.length > 0 && (
-                  <optgroup label="Flex">
-                    {flexTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {textTemplates.length > 0 && (
-                  <optgroup label="テキスト">
-                    {textTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {imageTemplates.length > 0 && (
-                  <optgroup label="画像">
-                    {imageTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-              {templates.length === 0 && (
-                <p className="text-[11px] text-amber-600 mt-1">
-                  テンプレートがありません。<a href="/templates" className="underline">/templates</a> で作成してください。
-                </p>
-              )}
-            </div>
-          )}
-          {(mode === 'inline-text' || mode === 'inline-flex') && (
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                {mode === 'inline-flex' ? 'Flex JSON' : 'テキスト'}
-              </label>
-              <textarea
-                rows={mode === 'inline-flex' ? 8 : 4}
-                value={responseContent}
-                onChange={(e) => setResponseContent(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
+                onValueChange={(value) => setTemplateId(value || null)}
+                placeholder="選択してください"
+                items={templateItems}
               />
+              {templates.length === 0 ? (
+                <p className="mt-2 text-xs text-kumo-warning">
+                  テンプレートがありません。<Link href="/templates" className="underline">テンプレート管理</Link>で作成してください。
+                </p>
+              ) : null}
             </div>
-          )}
-          {mode === 'inline-image' && (
+          ) : null}
+
+          {mode === 'inline-text' || mode === 'inline-flex' ? (
+            <InputArea
+              label={mode === 'inline-flex' ? 'Flex JSON' : 'テキスト'}
+              value={responseContent}
+              onValueChange={setResponseContent}
+              minRows={mode === 'inline-flex' ? 8 : 4}
+              maxRows={14}
+              autoResize
+              className="font-mono"
+            />
+          ) : null}
+
+          {mode === 'inline-image' ? (
             <ImageUploader
               mode="line-image"
               value={(() => {
@@ -218,14 +205,14 @@ export default function EditDialog({ draft, templates, onClose, onSaved }: Props
                       previewImageUrl: parsed.previewImageUrl ?? parsed.originalContentUrl,
                     }
                   }
-                } catch { /* ignore */ }
+                } catch { /* invalid JSON is treated as no selected image */ }
                 return null
               })()}
-              onChange={(v) => {
-                if (v?.mode === 'line-image') {
+              onChange={(value) => {
+                if (value?.mode === 'line-image') {
                   setResponseContent(JSON.stringify({
-                    originalContentUrl: v.originalContentUrl,
-                    previewImageUrl: v.previewImageUrl,
+                    originalContentUrl: value.originalContentUrl,
+                    previewImageUrl: value.previewImageUrl,
                   }))
                 } else {
                   setResponseContent('')
@@ -233,30 +220,17 @@ export default function EditDialog({ draft, templates, onClose, onSaved }: Props
               }}
               label="返信画像"
             />
-          )}
-          <label className="inline-flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isActive}
-              onChange={(e) => setIsActive(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-            />
-            <span className="text-xs text-gray-600">有効</span>
-          </label>
-          {error && <p className="text-xs text-red-600">{error}</p>}
+          ) : null}
+
+          <Checkbox label="このルールを有効にする" checked={isActive} onCheckedChange={setIsActive} />
+          {error ? <Banner size="sm" variant="error" title="保存できませんでした" description={error} /> : null}
         </div>
-        <div className="px-5 py-3 border-t flex gap-2 justify-end">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md">キャンセル</button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-3 py-1.5 text-xs font-medium text-white rounded-md disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            {saving ? '保存中...' : '保存'}
-          </button>
+
+        <div className="flex justify-end gap-2 border-t border-kumo-line px-6 py-4">
+          <Button type="button" variant="secondary" disabled={saving} onClick={onClose}>キャンセル</Button>
+          <Button type="button" variant="primary" loading={saving} onClick={handleSave}>保存</Button>
         </div>
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }

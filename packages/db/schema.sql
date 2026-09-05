@@ -14,6 +14,13 @@ CREATE TABLE IF NOT EXISTS friends (
   user_id          TEXT,
   ig_igsid         TEXT,
   score            INTEGER NOT NULL DEFAULT 0,
+  last_ref_code    TEXT,
+  last_ref_at      TEXT,
+  first_followed_at TEXT,
+  current_follow_started_at TEXT,
+  last_followed_at TEXT,
+  last_unfollowed_at TEXT,
+  unfollow_count   INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
@@ -21,15 +28,20 @@ CREATE TABLE IF NOT EXISTS friends (
 CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
+CREATE INDEX IF NOT EXISTS idx_friends_follow_tenure ON friends(is_following, current_follow_started_at);
 
 -- ============================================================
 -- Tags
 -- ============================================================
 CREATE TABLE IF NOT EXISTS tags (
-  id         TEXT PRIMARY KEY,
-  name       TEXT UNIQUE NOT NULL,
-  color      TEXT NOT NULL DEFAULT '#3B82F6',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id                          TEXT PRIMARY KEY,
+  name                        TEXT UNIQUE NOT NULL,
+  color                       TEXT NOT NULL DEFAULT '#3B82F6',
+  mileage_reward              INTEGER NOT NULL DEFAULT 0 CHECK (mileage_reward >= 0),
+  referral_mileage_reward     INTEGER NOT NULL DEFAULT 0 CHECK (referral_mileage_reward >= 0),
+  mileage_multiplier_bps      INTEGER CHECK (mileage_multiplier_bps IS NULL OR mileage_multiplier_bps BETWEEN 1000 AND 100000),
+  mileage_multiplier_priority INTEGER NOT NULL DEFAULT 0,
+  created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 -- ============================================================
@@ -123,7 +135,9 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   dedup_priority     TEXT CHECK (dedup_priority IS NULL OR json_valid(dedup_priority)),
   failed_account_ids TEXT CHECK (failed_account_ids IS NULL OR json_valid(failed_account_ids)),
   dedup_progress     TEXT CHECK (dedup_progress IS NULL OR json_valid(dedup_progress)),
-  batch_lock_at      TEXT
+  batch_lock_at      TEXT,
+  track_links        INTEGER NOT NULL DEFAULT 1,
+  last_error         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts (status);
@@ -236,17 +250,20 @@ CREATE INDEX IF NOT EXISTS idx_users_external_id ON users (external_id);
 -- Round 2: LINE Account Management (Multi-Account)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS line_accounts (
-  id                   TEXT PRIMARY KEY,
-  channel_id           TEXT NOT NULL UNIQUE,
-  name                 TEXT NOT NULL,
-  channel_access_token TEXT NOT NULL,
-  channel_secret       TEXT NOT NULL,
-  is_active            INTEGER NOT NULL DEFAULT 1,
-  country              TEXT,
-  role                 TEXT,
-  display_order        INTEGER NOT NULL DEFAULT 0,
-  created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id                     TEXT PRIMARY KEY,
+  channel_id             TEXT NOT NULL UNIQUE,
+  name                   TEXT NOT NULL,
+  channel_access_token   TEXT NOT NULL,
+  channel_secret         TEXT NOT NULL,
+  is_active              INTEGER NOT NULL DEFAULT 1,
+  country                TEXT,
+  role                   TEXT,
+  display_order          INTEGER NOT NULL DEFAULT 0,
+  og_site_name           TEXT,
+  og_default_image_url   TEXT,
+  og_default_description TEXT,
+  created_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_line_accounts_display_order
@@ -267,13 +284,17 @@ CREATE TABLE IF NOT EXISTS conversion_points (
 -- Round 2: Conversion Events (CV Records)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS conversion_events (
-  id                  TEXT PRIMARY KEY,
-  conversion_point_id TEXT NOT NULL REFERENCES conversion_points (id) ON DELETE CASCADE,
-  friend_id           TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
-  user_id             TEXT,
-  affiliate_code      TEXT,
-  metadata            TEXT,
-  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id                   TEXT PRIMARY KEY,
+  conversion_point_id  TEXT NOT NULL REFERENCES conversion_points (id) ON DELETE CASCADE,
+  friend_id            TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
+  user_id              TEXT,
+  affiliate_code       TEXT,
+  metadata             TEXT,
+  affiliate_id         TEXT REFERENCES affiliates (id),
+  attributed_ref_code  TEXT,
+  approval_status      TEXT CHECK (approval_status IN ('pending','approved','rejected')),
+  approved_at          TEXT,
+  created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversion_events_point ON conversion_events (conversion_point_id);
@@ -289,8 +310,184 @@ CREATE TABLE IF NOT EXISTS affiliates (
   code            TEXT NOT NULL UNIQUE,
   commission_rate REAL NOT NULL DEFAULT 0,
   is_active       INTEGER NOT NULL DEFAULT 1,
+  friend_id       TEXT REFERENCES friends (id),
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_affiliates_friend ON affiliates (friend_id) WHERE friend_id IS NOT NULL;
+
+-- ============================================================
+-- Round 2: Affiliate Offers (案件) (migration 047)
+-- Must be defined before affiliate_links so the offer_id FK resolves.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS affiliate_offers (
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  description     TEXT,
+  reward_amount   INTEGER NOT NULL DEFAULT 0,
+  reward_miles    INTEGER NOT NULL DEFAULT 0,
+  mileage_program_id TEXT NOT NULL DEFAULT 'default' REFERENCES mileage_programs (id),
+  line_account_id TEXT REFERENCES line_accounts (id),
+  tag_id          TEXT REFERENCES tags (id),
+  scenario_id     TEXT REFERENCES scenarios (id),
+  is_active       INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL
+);
+
+-- ============================================================
+-- Round 2: Affiliate Self-Serve Links (migration 046)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS affiliate_links (
+  id              TEXT PRIMARY KEY,
+  affiliate_id    TEXT NOT NULL REFERENCES affiliates (id),
+  ref_code        TEXT NOT NULL UNIQUE,
+  label           TEXT,
+  line_account_id TEXT REFERENCES line_accounts (id),
+  offer_id        TEXT REFERENCES affiliate_offers (id),
+  is_active       INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL,
+  click_count     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_affiliate_links_affiliate ON affiliate_links (affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_affiliate_links_offer ON affiliate_links (offer_id);
+
+-- ============================================================
+-- Mileage Foundation (migration 061)
+-- Generic events feed an append-only ledger. Balances are derived, never
+-- overwritten, so every grant/reversal remains auditable.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS mileage_programs (
+  id         TEXT PRIMARY KEY,
+  code       TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'active'
+             CHECK (status IN ('active','paused','archived')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO mileage_programs (id, code, name, status, created_at, updated_at)
+VALUES (
+  'default', 'default', 'Harnessマイル', 'active',
+  strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'),
+  strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+);
+
+CREATE TABLE IF NOT EXISTS engagement_events (
+  id                TEXT PRIMARY KEY,
+  program_id        TEXT NOT NULL REFERENCES mileage_programs(id),
+  idempotency_key   TEXT NOT NULL,
+  event_type        TEXT NOT NULL,
+  source            TEXT NOT NULL,
+  source_event_id   TEXT,
+  actor_user_id     TEXT REFERENCES users(id),
+  actor_friend_id   TEXT REFERENCES friends(id),
+  subject_user_id   TEXT REFERENCES users(id),
+  subject_friend_id TEXT REFERENCES friends(id),
+  identity_provider TEXT,
+  identity_subject  TEXT,
+  metadata          TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+  occurred_at       TEXT NOT NULL,
+  created_at        TEXT NOT NULL,
+  UNIQUE (program_id, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_engagement_events_actor_user
+  ON engagement_events(program_id, actor_user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_engagement_events_actor_friend
+  ON engagement_events(program_id, actor_friend_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_engagement_events_source
+  ON engagement_events(source, source_event_id);
+
+CREATE TABLE IF NOT EXISTS mileage_rules (
+  id             TEXT PRIMARY KEY,
+  program_id     TEXT NOT NULL REFERENCES mileage_programs(id),
+  name           TEXT NOT NULL,
+  event_type     TEXT NOT NULL,
+  source         TEXT,
+  amount         INTEGER NOT NULL CHECK (amount > 0),
+  initial_status TEXT NOT NULL DEFAULT 'available'
+                 CHECK (initial_status IN ('pending','available')),
+  conditions     TEXT CHECK (conditions IS NULL OR json_valid(conditions)),
+  is_active      INTEGER NOT NULL DEFAULT 1,
+  valid_from     TEXT,
+  valid_until    TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mileage_rules_match
+  ON mileage_rules(program_id, event_type, source, is_active);
+
+INSERT OR IGNORE INTO mileage_rules
+  (id, program_id, name, event_type, source, amount, initial_status,
+   conditions, is_active, created_at, updated_at)
+VALUES
+  ('builtin-message-received', 'default', 'メッセージ送信', 'message_received', 'line', 1,
+   'available', '{"dailyCapActions":5}', 1,
+   strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'), strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  ('builtin-link-clicked', 'default', 'リンククリック', 'link_clicked', 'tracked_link', 2,
+   'available', '{"dailyCapActions":5,"uniquePerSubjectPerDay":true}', 1,
+   strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'), strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  ('builtin-form-submitted', 'default', 'フォーム送信', 'form_submitted', 'form', 10,
+   'available', '{"uniquePerSubject":true}', 1,
+   strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'), strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  ('builtin-booking-created', 'default', '予約', 'booking_created', NULL, 20,
+   'available', NULL, 1,
+   strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'), strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'));
+
+CREATE TABLE IF NOT EXISTS mileage_ledger (
+  id                    TEXT PRIMARY KEY,
+  program_id            TEXT NOT NULL REFERENCES mileage_programs(id),
+  beneficiary_user_id   TEXT REFERENCES users(id),
+  beneficiary_friend_id TEXT REFERENCES friends(id),
+  engagement_event_id   TEXT REFERENCES engagement_events(id),
+  mileage_rule_id       TEXT REFERENCES mileage_rules(id),
+  entry_type            TEXT NOT NULL
+                        CHECK (entry_type IN ('grant','reversal','spend','expiration','adjustment')),
+  status                TEXT NOT NULL DEFAULT 'available'
+                        CHECK (status IN ('pending','available','void')),
+  amount                INTEGER NOT NULL CHECK (amount != 0),
+  reason                TEXT NOT NULL,
+  source                TEXT NOT NULL,
+  source_event_id       TEXT,
+  idempotency_key       TEXT NOT NULL,
+  reverses_entry_id     TEXT REFERENCES mileage_ledger(id),
+  metadata              TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+  occurred_at           TEXT NOT NULL,
+  created_at            TEXT NOT NULL,
+  UNIQUE (program_id, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_user
+  ON mileage_ledger(program_id, beneficiary_user_id, status, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_friend
+  ON mileage_ledger(program_id, beneficiary_friend_id, status, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_source
+  ON mileage_ledger(program_id, source, source_event_id);
+CREATE INDEX IF NOT EXISTS idx_mileage_ledger_rule
+  ON mileage_ledger(program_id, mileage_rule_id, occurred_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mileage_ledger_one_reversal
+  ON mileage_ledger(reverses_entry_id)
+  WHERE reverses_entry_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS mileage_event_queue (
+  engagement_event_id   TEXT PRIMARY KEY REFERENCES engagement_events(id) ON DELETE CASCADE,
+  status                TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending','processing','processed','failed')),
+  attempts              INTEGER NOT NULL DEFAULT 0,
+  available_at          TEXT NOT NULL,
+  processing_started_at TEXT,
+  processed_at          TEXT,
+  last_error            TEXT,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mileage_event_queue_due
+  ON mileage_event_queue(status, available_at, created_at);
+
 
 -- ============================================================
 -- Round 2: Affiliate Clicks
@@ -335,14 +532,24 @@ CREATE TABLE IF NOT EXISTS outgoing_webhooks (
 CREATE TABLE IF NOT EXISTS google_calendar_connections (
   id            TEXT PRIMARY KEY,
   calendar_id   TEXT NOT NULL,
+  line_account_id TEXT,
+  staff_id      TEXT,
   access_token  TEXT,
   refresh_token TEXT,
   api_key       TEXT,
   auth_type     TEXT NOT NULL DEFAULT 'api_key',
   is_active     INTEGER NOT NULL DEFAULT 1,
+  last_verified_at TEXT,
+  last_error    TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_google_calendar_connections_staff
+  ON google_calendar_connections (line_account_id, staff_id, is_active);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_google_calendar_connections_active_staff
+  ON google_calendar_connections (staff_id)
+  WHERE staff_id IS NOT NULL AND is_active = 1;
 
 CREATE TABLE IF NOT EXISTS calendar_bookings (
   id             TEXT PRIMARY KEY,
@@ -360,6 +567,42 @@ CREATE TABLE IF NOT EXISTS calendar_bookings (
 
 CREATE INDEX IF NOT EXISTS idx_calendar_bookings_friend ON calendar_bookings (friend_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_bookings_start ON calendar_bookings (start_at);
+
+-- Google Meet 個別相談（外部カレンダー予定と LINE 友だちの対応）
+CREATE TABLE IF NOT EXISTS meet_consultations (
+  id                TEXT PRIMARY KEY,
+  external_event_id TEXT NOT NULL UNIQUE,
+  friend_id         TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
+  title             TEXT NOT NULL,
+  starts_at         TEXT NOT NULL,
+  ends_at           TEXT NOT NULL,
+  meet_url          TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'confirmed'
+                    CHECK (status IN ('confirmed', 'cancelled', 'completed')),
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_meet_consultations_friend ON meet_consultations (friend_id);
+CREATE INDEX IF NOT EXISTS idx_meet_consultations_start ON meet_consultations (status, starts_at);
+
+CREATE TABLE IF NOT EXISTS meet_consultation_reminders (
+  id               TEXT PRIMARY KEY,
+  consultation_id  TEXT NOT NULL REFERENCES meet_consultations (id) ON DELETE CASCADE,
+  kind             TEXT NOT NULL CHECK (kind IN ('day_before', 'hour_before')),
+  scheduled_at     TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending', 'failed', 'sent', 'cancelled')),
+  retry_count      INTEGER NOT NULL DEFAULT 0,
+  sent_at          TEXT,
+  last_error       TEXT,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE (consultation_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meet_consultation_reminders_due
+  ON meet_consultation_reminders (status, scheduled_at);
 
 -- ============================================================
 -- Round 3: リマインダ配信
@@ -469,7 +712,43 @@ CREATE TABLE IF NOT EXISTS chats (
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_chats_friend ON chats (friend_id);
+-- 1 friend = 1 chat 行 (048_chats_friend_unique)。
+-- schema.sql は既存 DB への差分適用 (pnpm db:migrate) にも使われるため、UNIQUE
+-- インデックス作成前に旧重複行を最新行へ寄せる。新規 DB では no-op。
+-- マージ規則は migrations/048_chats_friend_unique.sql と同一に保つこと。
+UPDATE chats SET
+  status = (
+    SELECT c2.status FROM chats c2
+    WHERE c2.friend_id = chats.friend_id
+    ORDER BY c2.updated_at DESC, c2.rowid DESC LIMIT 1
+  ),
+  operator_id = (
+    SELECT c2.operator_id FROM chats c2
+    WHERE c2.friend_id = chats.friend_id AND c2.operator_id IS NOT NULL
+    ORDER BY c2.updated_at DESC, c2.rowid DESC LIMIT 1
+  ),
+  notes = (
+    SELECT c2.notes FROM chats c2
+    WHERE c2.friend_id = chats.friend_id AND c2.notes IS NOT NULL
+    ORDER BY c2.updated_at DESC, c2.rowid DESC LIMIT 1
+  ),
+  last_message_at = (
+    SELECT MAX(c2.last_message_at) FROM chats c2
+    WHERE c2.friend_id = chats.friend_id
+  )
+WHERE EXISTS (
+  SELECT 1 FROM chats c2
+  WHERE c2.friend_id = chats.friend_id AND c2.rowid != chats.rowid
+);
+DELETE FROM chats
+WHERE EXISTS (
+  SELECT 1 FROM chats c2
+  WHERE c2.friend_id = chats.friend_id
+    AND (c2.created_at > chats.created_at
+         OR (c2.created_at = chats.created_at AND c2.rowid > chats.rowid))
+);
+DROP INDEX IF EXISTS idx_chats_friend;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_friend_unique ON chats (friend_id);
 CREATE INDEX IF NOT EXISTS idx_chats_operator ON chats (operator_id);
 CREATE INDEX IF NOT EXISTS idx_chats_status ON chats (status);
 
@@ -484,7 +763,8 @@ CREATE TABLE IF NOT EXISTS notification_rules (
   channels     TEXT NOT NULL DEFAULT '["webhook"]',
   is_active    INTEGER NOT NULL DEFAULT 1,
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  line_account_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -496,11 +776,13 @@ CREATE TABLE IF NOT EXISTS notifications (
   channel         TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
   metadata        TEXT,
-  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  line_account_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications (status);
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_event_account ON notifications (event_type, line_account_id, created_at);
 
 -- ============================================================
 -- Round 3: Stripe決済連携
@@ -532,7 +814,8 @@ CREATE TABLE IF NOT EXISTS account_health_logs (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_health_logs_account ON account_health_logs (line_account_id);
+CREATE INDEX IF NOT EXISTS idx_health_logs_account_created_at
+  ON account_health_logs (line_account_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS account_migrations (
   id               TEXT PRIMARY KEY,
@@ -669,9 +952,11 @@ CREATE TABLE IF NOT EXISTS menus (
   sort_order            INTEGER NOT NULL DEFAULT 0,
   is_active             INTEGER NOT NULL DEFAULT 1,
   deleted_at            TEXT,
+  auto_tag_id           TEXT,                  -- 予約申込時に friend に自動付与するタグ
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
+  FOREIGN KEY (line_account_id) REFERENCES line_accounts(id),
+  FOREIGN KEY (auto_tag_id) REFERENCES tags(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_menus_account_sort ON menus (line_account_id, sort_order);
 
@@ -725,6 +1010,23 @@ CREATE TABLE IF NOT EXISTS staff_shifts (
   FOREIGN KEY (staff_id) REFERENCES staff(id)
 );
 CREATE INDEX IF NOT EXISTS idx_shifts_staff_date ON staff_shifts (staff_id, work_date);
+
+-- 曜日ごとの受付時間。日付を有限生成しないため期限切れにならない。
+-- staff_shifts に同日のレコードがある場合は、日付指定の例外としてそちらを優先する。
+CREATE TABLE IF NOT EXISTS staff_availability_rules (
+  id          TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  weekday     INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+  start_time  TEXT NOT NULL,
+  end_time    TEXT NOT NULL,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE (staff_id, weekday),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+CREATE INDEX IF NOT EXISTS idx_staff_availability_rules_staff
+  ON staff_availability_rules (staff_id, weekday, is_active);
 
 -- ============================================================
 -- bookings: 予約本体
@@ -800,6 +1102,7 @@ CREATE TABLE IF NOT EXISTS rich_menu_groups (
   size               TEXT NOT NULL CHECK (size IN ('large','compact')),
   default_page_id    TEXT,
   is_default_for_all INTEGER NOT NULL DEFAULT 0,
+  selected           INTEGER NOT NULL DEFAULT 0,
   status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
   publishing_at      TEXT,
   created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),

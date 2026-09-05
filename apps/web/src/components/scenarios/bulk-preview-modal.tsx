@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Input } from '@cloudflare/kumo/components/input'
 
 interface Props {
   open: boolean
@@ -18,7 +22,7 @@ interface PreviewStep {
 }
 
 function nowJstAsLocalInput(): string {
-  // JST clock-time as YYYY-MM-DDTHH:MM for <input type="datetime-local">
+  // JST clock-time as YYYY-MM-DDTHH:MM for the datetime-local field.
   const d = new Date(Date.now() + 9 * 60 * 60_000)
   return d.toISOString().slice(0, 16)
 }
@@ -47,37 +51,35 @@ export default function BulkPreviewModal({ open, scenarioId, onClose }: Props) {
   if (!open) return null
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[80vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
+      <Dialog className="max-h-[80vh] w-full max-w-2xl overflow-y-auto p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">一括プレビュー</h2>
-          <button
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">一括プレビュー</Dialog.Title>
+          <Button
+            type="button"
             onClick={onClose}
-            className="text-sm text-gray-500 hover:bg-gray-100 px-2 py-1 rounded"
+            size="xs"
+            shape="square"
+            variant="ghost"
+            aria-label="閉じる"
           >
             ✕
-          </button>
+          </Button>
         </div>
 
         <div className="mb-4">
           <label className="block text-xs font-medium text-gray-600 mb-1">
             起点 (購読開始日時)
           </label>
-          <input
+          <Input
             type="datetime-local"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
             value={startAt}
             onChange={(e) => setStartAt(e.target.value)}
+            aria-label="購読開始日時"
           />
         </div>
 
-        {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+        {error && <Banner className="mb-3" size="sm" variant="error" title="プレビューを表示できませんでした" description={error} />}
 
         {loading ? (
           <p className="text-sm text-gray-400">読み込み中...</p>
@@ -105,14 +107,15 @@ export default function BulkPreviewModal({ open, scenarioId, onClose }: Props) {
         )}
 
         <div className="mt-6 flex justify-end">
-          <button
+          <Button
+            type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+            variant="secondary"
           >
             閉じる
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }

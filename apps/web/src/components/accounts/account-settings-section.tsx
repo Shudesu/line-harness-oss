@@ -1,6 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Input } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
 import { api } from '@/lib/api'
 import { COUNTRY_OPTIONS, countryFlag } from '@/lib/country-flag'
 
@@ -54,57 +58,37 @@ export default function AccountSettingsSection({
   }
 
   return (
-    <div className="space-y-3 mt-3 pt-3 border-t border-gray-100">
-      <p className="text-xs font-medium text-gray-600">アカウント設定</p>
+    <div className="mt-3 space-y-3 border-t border-kumo-line pt-3">
+      <p className="text-xs font-medium text-kumo-default">アカウント設定</p>
 
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">国/地域</label>
-        <div className="flex gap-2 items-center">
-          <select
-            value={select}
-            onChange={(e) => setSelect(e.target.value)}
-            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm flex-1"
-          >
-            <option value="">未設定</option>
-            {COUNTRY_OPTIONS.map((c) => (
-              <option key={c} value={c}>{c} {countryFlag(c)}</option>
-            ))}
-          </select>
-          {select === 'その他' && (
-            <input
-              type="text"
+      <div className="flex items-end gap-2">
+          <Select
+            className="min-w-0 flex-1"
+            label="国/地域"
+            value={select || '__unset__'}
+            onValueChange={(value) => setSelect(value === '__unset__' || value === null ? '' : value)}
+            items={[
+              { value: '__unset__', label: '未設定' },
+              ...COUNTRY_OPTIONS.map((country) => ({ value: country, label: `${country} ${countryFlag(country)}` })),
+            ]}
+          />
+          {select === 'その他' ? (
+            <Input
+              className="min-w-0 flex-1"
+              label="国・地域名"
               value={other}
-              onChange={(e) => setOther(e.target.value)}
+              onValueChange={setOther}
               placeholder="例: インドネシア"
-              className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm flex-1"
             />
-          )}
-          {countryFlag(computedCountry()) && (
-            <span className="text-base">{countryFlag(computedCountry())}</span>
-          )}
-        </div>
+          ) : null}
+          {countryFlag(computedCountry()) ? <span className="pb-2 text-base">{countryFlag(computedCountry())}</span> : null}
       </div>
 
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">役割</label>
-        <input
-          type="text"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          placeholder="本店 / プロモ / 実験 など"
-          className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-        />
-      </div>
+      <Input label="役割" value={role} onValueChange={setRole} placeholder="本店 / プロモ / 実験 など" />
 
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {error ? <Banner variant="error" title="保存できません" description={error} /> : null}
 
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-medium disabled:opacity-50"
-      >
-        {saving ? '保存中...' : '保存'}
-      </button>
+      <Button type="button" size="sm" variant="secondary" loading={saving} onClick={() => void handleSave()}>設定を保存</Button>
     </div>
   )
 }

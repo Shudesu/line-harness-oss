@@ -54,6 +54,30 @@ describe('HttpClient', () => {
     vi.unstubAllGlobals()
   })
 
+  it('merges caller-supplied POST headers with authentication headers', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true, data: { id: '1' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await http.post('/api/broadcasts', { title: 'Notice' }, {
+      'Idempotency-Key': '11111111-2222-4333-8444-555555555555',
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.example.com/api/broadcasts',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-key',
+          'Content-Type': 'application/json',
+          'Idempotency-Key': '11111111-2222-4333-8444-555555555555',
+        }),
+      }),
+    )
+    vi.unstubAllGlobals()
+  })
+
   it('throws LineHarnessError on 4xx/5xx', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,

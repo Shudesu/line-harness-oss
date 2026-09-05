@@ -9,7 +9,10 @@ import { ensureAuth, getAccountId } from "../steps/auth.js";
 import { promptLineCredentials } from "../steps/prompt.js";
 import { createDatabase } from "../steps/database.js";
 import { deployWorker, syncInstalledWorkerConfig } from "../steps/deploy-worker.js";
+import { ensureWorkersDevSubdomain } from "../steps/ensure-subdomain.js";
 import { deployAdmin } from "../steps/deploy-admin.js";
+import { fetchLatestRelease, type FetchedRelease } from "../steps/release-bundle.js";
+import { pinRepoToTag } from "../steps/clone-repo.js";
 import { setSecrets } from "../steps/secrets.js";
 import { configureAdminAuth } from "../steps/admin-auth.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
@@ -21,6 +24,9 @@ import {
   WranglerError,
   type CloudflareAccount,
 } from "../lib/wrangler.js";
+
+const MANIFEST_URL =
+  "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json";
 
 interface SetupState {
   projectName?: string;
@@ -35,9 +41,17 @@ interface SetupState {
   r2BucketName?: string;
   workerName?: string;
   accountId?: string;
+  /** line_accounts.id of the row registered in Step 12 (NOT the CF account id) */
+  lineAccountId?: string;
   botBasicId?: string;
   workerUrl?: string;
   adminUrl?: string;
+  /**
+   * Release version selected on the FIRST run of this setup. Resumed runs
+   * re-pin to it (never float to a newer `latest`) so every step —
+   * schema/migrations, Worker bundle, admin files — comes from one release.
+   */
+  releaseVersion?: string;
   /**
    * Pristine apps/worker/wrangler.toml content captured before we started
    * substituting account/database IDs. Restored on exit so the cloned repo
@@ -286,8 +300,20 @@ async function verifyAccount(
   p.log.success("アカウント依存ステップをリセットしました。新しいアカウントで再構築します。");
 }
 
-export async function runSetup(repoDir: string): Promise<void> {
-  p.intro(pc.bgCyan(pc.black(" LINE Harness セットアップ ")));
+export interface SetupOptions {
+  /**
+   * Deploy the Worker/Admin from a local source build instead of the
+   * official release bundle. Development escape hatch: the install reports
+   * 0.0.0-dev and automatic updates never apply to it.
+   */
+  fromSource?: boolean;
+}
+
+export async function runSetup(
+  repoDir: string,
+  options: SetupOptions = {},
+): Promise<void> {
+  p.intro(pc.bgCyan(pc.black(" L Harness セットアップ ")));
 
   const state = loadState(repoDir);
 
@@ -336,7 +362,7 @@ export async function runSetup(repoDir: string): Promise<void> {
   process.once("SIGTERM", onSignal);
 
   try {
-    await runSetupInner(state, repoDir);
+    await runSetupInner(state, repoDir, options);
     cleanupSuccess();
   } catch (error) {
     cleanupFailure();
@@ -362,9 +388,34 @@ export async function runSetup(repoDir: string): Promise<void> {
 async function runSetupInner(
   state: SetupState,
   repoDir: string,
+  options: SetupOptions,
 ): Promise<void> {
   // Step 1: Check dependencies
   await checkDeps();
+
+  // Step 1.5: Resolve + download the official release, and pin the clone
+  // to its tag so schema/migrations/client assets match the Worker we
+  // deploy. Runs before auth (network-only) and re-runs on resume — the
+  // bundle is small and re-verifying beats trusting a stale download.
+  // Resumes re-pin to the release the first run selected (persisted in
+  // state) so completed steps and remaining steps never mix releases.
+  let release: FetchedRelease | null = null;
+  if (!options.fromSource) {
+    release = await fetchLatestRelease(MANIFEST_URL, state.releaseVersion);
+    if (state.releaseVersion !== release.release.version) {
+      state.releaseVersion = release.release.version;
+      saveState(repoDir, state);
+    }
+    await pinRepoToTag(repoDir, release.release.version);
+  } else {
+    p.log.warn(
+      [
+        "--from-source: ソースからビルドしてデプロイします。",
+        "この構成はバージョン情報が焼き込まれず (0.0.0-dev)、自動アップデート",
+        "(`npx create-line-harness update`) の対象外になります。開発用途向けです。",
+      ].join("\n"),
+    );
+  }
 
   // Step 2: Authenticate with Cloudflare
   await ensureAuth();
@@ -557,9 +608,20 @@ async function runSetupInner(
     }
   }
 
-  // Step 10: Deploy Worker (includes LIFF build via @cloudflare/vite-plugin)
+  // Step 10: Deploy Worker (includes LIFF build via @cloudflare/vite-plugin).
+  // The Worker script itself ships from the official release bundle so its
+  // version stamp matches the manifest; only the client assets are built
+  // locally.
   state.workerName = state.projectName!;
   if (!isDone(state, "worker")) {
+    // New accounts have no workers.dev subdomain and `wrangler deploy` dies
+    // on it non-interactively — check + register (interactively) first.
+    // Not persisted as a step: the check is one cheap GET and re-running it
+    // covers account switches on resume.
+    await ensureWorkersDevSubdomain({
+      accountId: state.accountId!,
+      defaultName: state.projectName!,
+    });
     const { workerUrl } = await deployWorker({
       repoDir,
       d1DatabaseId: state.d1DatabaseId!,
@@ -569,6 +631,7 @@ async function runSetupInner(
       liffId: state.liffId!,
       r2BucketName: state.r2BucketName!,
       botBasicId: state.botBasicId || "",
+      bundleWorkerJs: release?.bundle.workerJs,
     });
     state.workerUrl = workerUrl;
     markDone(state, "worker");
@@ -625,7 +688,7 @@ async function runSetupInner(
       // the CLI working against older databases that resumed an old install.
       const insertSql = `
 INSERT INTO line_accounts (id, channel_id, name, channel_access_token, channel_secret, is_active, created_at, updated_at)
-VALUES (${q(id)}, ${q(state.lineChannelId!)}, ${q("LINE Harness")}, ${q(state.lineChannelAccessToken!)}, ${q(state.lineChannelSecret!)}, 1, ${q(jstNowStr)}, ${q(jstNowStr)})
+VALUES (${q(id)}, ${q(state.lineChannelId!)}, ${q("L Harness")}, ${q(state.lineChannelAccessToken!)}, ${q(state.lineChannelSecret!)}, 1, ${q(jstNowStr)}, ${q(jstNowStr)})
 ON CONFLICT(channel_id) DO UPDATE SET
   channel_access_token = excluded.channel_access_token,
   channel_secret = excluded.channel_secret,
@@ -700,6 +763,7 @@ ON CONFLICT(channel_id) DO UPDATE SET
       workerUrl: state.workerUrl!,
       apiKey: state.apiKey!,
       projectName: adminProjectName,
+      adminFiles: release?.bundle.adminFiles,
     });
     state.adminUrl = adminUrl;
     markDone(state, "admin");
@@ -733,10 +797,14 @@ ON CONFLICT(channel_id) DO UPDATE SET
       workerPublicUrl: state.workerUrl!,
       adminPagesProject: adminProjectName,
       adminPublicUrl: state.adminUrl!,
-      liffPagesProject: `${state.workerName}-liff`,
+      // Worker-assets install: the LIFF SPA is served by the Worker, no
+      // LIFF Pages project exists. '' makes the worker-side self-update
+      // skip LIFF Pages steps instead of failing on a missing project.
+      liffPagesProject: "",
       liffPublicUrl: state.workerUrl!,
-      manifestUrl:
-        "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json",
+      manifestUrl: MANIFEST_URL,
+      workerDeployMode: release ? "bundle" : "source",
+      bundleWorkerJs: release?.bundle.workerJs,
     });
     markDone(state, "workerConfig");
     saveState(repoDir, state);
@@ -749,7 +817,39 @@ ON CONFLICT(channel_id) DO UPDATE SET
     message: "MCP 設定を .mcp.json に追加しますか？（Claude Code / Cursor 用）",
   });
   if (addMcp && !p.isCancel(addMcp)) {
-    generateMcpConfig({ workerUrl: state.workerUrl!, apiKey: state.apiKey! });
+    // Resolve the line_accounts.id via wrangler (same authenticated path as
+    // Step 12) so generateMcpConfig doesn't have to HTTP the fresh worker —
+    // new workers.dev subdomains can take minutes to DNS-resolve. The upsert
+    // in Step 12 is ON CONFLICT(channel_id), so a resumed install may keep a
+    // pre-existing row id — always SELECT instead of trusting a generated id.
+    if (!state.lineAccountId && state.d1DatabaseName && state.lineChannelId) {
+      try {
+        const q = (val: string) => `'${val.replace(/'/g, "''")}'`;
+        const out = await wrangler([
+          "d1",
+          "execute",
+          state.d1DatabaseName,
+          "--remote",
+          "--json",
+          "--command",
+          `SELECT id FROM line_accounts WHERE channel_id = ${q(state.lineChannelId)} LIMIT 1`,
+        ]);
+        const jsonStart = out.indexOf("[");
+        const parsed = jsonStart >= 0 ? JSON.parse(out.slice(jsonStart)) : null;
+        const id = parsed?.[0]?.results?.[0]?.id;
+        if (typeof id === "string" && id) {
+          state.lineAccountId = id;
+          saveState(repoDir, state);
+        }
+      } catch {
+        // best-effort — generateMcpConfig falls back to the worker API
+      }
+    }
+    await generateMcpConfig({
+      workerUrl: state.workerUrl!,
+      apiKey: state.apiKey!,
+      accountId: state.lineAccountId,
+    });
   }
 
   // Step 15: Show completion screen
@@ -823,12 +923,20 @@ ON CONFLICT(channel_id) DO UPDATE SET
     adminProject: adminProjectName,
     adminPublicUrl,
     liffPublicUrl: state.workerUrl,
-    // liffProject is intentionally omitted — current setup serves LIFF
-    // from the Worker via [assets], not a separate Pages project.
-    manifestUrl:
-      "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json",
+    // '' = worker-assets install: LIFF is served by the Worker via
+    // [assets], no separate Pages project exists.
+    liffProject: "",
+    manifestUrl: MANIFEST_URL,
+    workerDeployMode: release ? "bundle" : "source",
+    ...(release ? { installedVersion: release.release.version } : {}),
   };
   writeFileSync(configPath, JSON.stringify(fullConfig, null, 2) + "\n");
 
-  p.outro(pc.green("LINE Harness を使い始めましょう 🎉"));
+  p.outro(
+    pc.green(
+      release
+        ? `L Harness v${release.release.version} を使い始めましょう 🎉（更新: npx create-line-harness update）`
+        : "L Harness を使い始めましょう 🎉",
+    ),
+  );
 }

@@ -1,9 +1,27 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { getApiBase } from '@/lib/api-base'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL!
-const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY!
+// 呼び出し時 (call time) に解決する — モジュールスコープの定数にすると、静的
+// 書き出し（window 未定義）の時点で値が確定してしまい、共有ビルドではプレース
+// ホルダーが焼き付いたまま固定される。
+function apiUrl(): string {
+  return getApiBase()!
+}
+// self-update を構成した環境 (create-line-harness セットアップ) でのみ設定される。
+// 未設定 = 自動アップデート非構成環境なので、この画面は fetch せず案内のみ表示する。
+const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY
+const MANUAL_UPDATE_GUIDE_URL =
+  'https://github.com/Shudesu/line-harness-oss/blob/main/docs/wiki/26-Manual-Update.md' 
 
 interface Row {
   id: string
@@ -16,9 +34,15 @@ interface Row {
   rollback_expires_at: number | null
 }
 
-async function fetchHistory(): Promise<Row[]> {
-  const r = await fetch(`${API_URL}/admin/update/history`, {
-    headers: { 'x-admin-api-key': ADMIN_KEY },
+type LoadState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; rows: Row[] }
+  | { kind: 'unconfigured' }
+  | { kind: 'error'; message: string }
+
+async function fetchHistory(adminKey: string): Promise<Row[]> {
+  const r = await fetch(`${apiUrl()}/admin/update/history`, {
+    headers: { 'x-admin-api-key': adminKey },
   })
   if (!r.ok) throw new Error(`history fetch ${r.status}`)
   const j = (await r.json()) as { history: Row[] }
@@ -26,41 +50,68 @@ async function fetchHistory(): Promise<Row[]> {
 }
 
 export default function UpdatesPage() {
-  const [rows, setRows] = useState<Row[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [state, setState] = useState<LoadState>({ kind: 'loading' })
 
   useEffect(() => {
-    fetchHistory()
-      .then(setRows)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+    if (!ADMIN_KEY) {
+      setState({ kind: 'unconfigured' })
+      return
+    }
+    fetchHistory(ADMIN_KEY)
+      .then((rows) => setState({ kind: 'ready', rows }))
+      .catch((e) => {
+        // 401/403 = キー不一致 or 未構成。ネットワーク失敗も含め、
+        // 運用者を驚かせる赤エラーではなく状況の説明を出す。
+        const msg = e instanceof Error ? e.message : String(e)
+        if (/ 40[13]$/.test(msg)) setState({ kind: 'unconfigured' })
+        else setState({ kind: 'error', message: msg })
+      })
   }, [])
+
+  const rows = state.kind === 'ready' ? state.rows : []
 
   return (
     <div className="max-w-3xl mx-auto p-6">
       <h1 className="text-xl font-semibold mb-4">アップデート履歴</h1>
-      {error && (
-        <div className="text-red-700 bg-red-50 p-3 rounded mb-4 text-sm">
-          履歴取得に失敗: {error}
-        </div>
+      {state.kind === 'loading' && <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>}
+      {state.kind === 'unconfigured' && (
+        <Banner className="mb-4" variant="secondary" title="自動アップデートは未構成">
+          この環境では自動アップデートが構成されていないため、履歴はありません。
+          <br />
+          自動アップデートは <code className="text-xs">create-line-harness</code>{' '}
+          でセットアップした環境で利用できます。自前でデプロイしている場合は{' '}
+          <a
+            className="underline"
+            href={MANUAL_UPDATE_GUIDE_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            手動アップデートガイド
+          </a>{' '}
+          をご覧ください。
+        </Banner>
       )}
-      {!error && rows.length === 0 && (
-        <p className="text-gray-500 text-sm">履歴はまだありません。</p>
+      {state.kind === 'error' && (
+        <Banner className="mb-4" variant="alert" title="履歴を取得できませんでした" description={`${state.message}。時間をおいて再読み込みしてください。`} />
+      )}
+      {state.kind === 'ready' && rows.length === 0 && (
+        <Empty title="履歴はまだありません" description="アップデートを実行するとここに記録されます。" />
       )}
       {rows.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-gray-600 border-b">
-              <tr>
-                <th className="py-2 pr-4">開始</th>
-                <th className="py-2 pr-4">From → To</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2">Rollback</th>
-              </tr>
-            </thead>
-            <tbody>
+        <LayerCard className="overflow-x-auto p-0">
+          <Table>
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>開始</Table.Head>
+                <Table.Head>From → To</Table.Head>
+                <Table.Head>Status</Table.Head>
+                <Table.Head>Rollback</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {rows.map((r) => (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="py-2 pr-4">
+                <Table.Row key={r.id}>
+                  <Table.Cell>
                     {new Date(r.started_at).toLocaleString('ja-JP', {
                       year: 'numeric',
                       month: '2-digit',
@@ -68,47 +119,43 @@ export default function UpdatesPage() {
                       hour: '2-digit',
                       minute: '2-digit',
                     })}
-                  </td>
-                  <td className="py-2 pr-4 font-mono text-xs">
+                  </Table.Cell>
+                  <Table.Cell className="font-mono text-xs">
                     {r.from_version} → {r.to_version}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded ${statusClass(r.status)}`}
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="py-2">
+                  </Table.Cell>
+                  <Table.Cell><Badge variant={statusVariant(r.status)}>{r.status}</Badge></Table.Cell>
+                  <Table.Cell>
                     {r.status === 'success' &&
                     r.rollback_expires_at &&
                     Date.now() < r.rollback_expires_at ? (
-                      <button
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
                         onClick={() =>
                           alert('rollback not implemented in MVP — use CLI')
                         }
-                        className="underline text-blue-600 text-xs"
                       >
                         Rollback
-                      </button>
+                      </Button>
                     ) : (
                       <span className="text-gray-400 text-xs">—</span>
                     )}
-                  </td>
-                </tr>
+                  </Table.Cell>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Body>
+          </Table>
+        </LayerCard>
       )}
     </div>
   )
 }
 
-function statusClass(s: string): string {
-  if (s === 'success') return 'bg-green-100 text-green-800'
-  if (s === 'rolled_back') return 'bg-amber-100 text-amber-800'
-  if (s === 'failed') return 'bg-red-100 text-red-800'
-  if (s === 'running') return 'bg-blue-100 text-blue-800'
-  return 'bg-gray-100 text-gray-800'
+function statusVariant(s: string): BadgeVariant {
+  if (s === 'success') return 'success'
+  if (s === 'rolled_back') return 'warning'
+  if (s === 'failed') return 'error'
+  if (s === 'running') return 'info'
+  return 'neutral'
 }

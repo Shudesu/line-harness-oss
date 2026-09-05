@@ -35,6 +35,7 @@ export type GroupInput = {
   size: 'large' | 'compact';
   chatBarText: string;
   isDefaultForAll: boolean;
+  selected: boolean;
   pages: PageInput[];
 };
 
@@ -122,7 +123,7 @@ export async function publishRichMenuGroup(
     // 1. richmenu 作成
     const created = await line.createRichMenu({
       size: dimensions,
-      selected: false,
+      selected: group.selected,
       name: `${group.id.slice(0, 8)} - ${page.name}`,
       chatBarText: group.chatBarText,
       areas: page.areas.map((a) => ({

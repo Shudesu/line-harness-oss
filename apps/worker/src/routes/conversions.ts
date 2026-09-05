@@ -7,7 +7,13 @@ import {
   trackConversion,
   getConversionEvents,
   getConversionReport,
+  getConversionApprovalQueue,
+  setConversionApproval,
+  getConversionApprovalNotifyInfo,
+  syncAffiliateConversionMileage,
 } from '@line-crm/db';
+import { IDENTITY_KEY_SQL } from '../lib/identity-key.js';
+import { notifyAffiliateApproval } from '../services/affiliate-notifier.js';
 import type { Env } from '../index.js';
 
 const conversions = new Hono<Env>();
@@ -163,6 +169,113 @@ conversions.get('/api/conversions/report', async (c) => {
     return c.json({ success: true, data: report });
   } catch (err) {
     console.error('GET /api/conversions/report error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ── Approval Queue (ASP Phase 2) ─────────────────────────────────────────────
+
+const APPROVAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
+
+// GET /api/conversions/approvals?status=pending|approved|rejected
+// Affiliate-attributed CVs awaiting/holding an approval decision. duplicateFlag
+// reuses the Phase 1 identity_key heuristic scoped per affiliate.
+conversions.get('/api/conversions/approvals', async (c) => {
+  try {
+    const status = c.req.query('status') ?? 'pending';
+    if (!APPROVAL_STATUSES.has(status)) {
+      return c.json(
+        { success: false, error: 'status must be pending, approved, or rejected' },
+        400,
+      );
+    }
+
+    const limit = Math.min(500, Math.max(1, Number.parseInt(c.req.query('limit') ?? '', 10) || 200));
+    const offset = Math.max(0, Number.parseInt(c.req.query('offset') ?? '', 10) || 0);
+
+    const rows = await getConversionApprovalQueue(c.env.DB, {
+      status: status as 'pending' | 'approved' | 'rejected',
+      identityKeySql: IDENTITY_KEY_SQL,
+      limit,
+      offset,
+    });
+
+    return c.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('GET /api/conversions/approvals error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// PATCH /api/conversions/events/:id/approval - approve/reject an attributed CV
+conversions.patch('/api/conversions/events/:id/approval', async (c) => {
+  try {
+    const body = await c.req
+      .json<{ status?: string }>()
+      .catch(() => ({}) as { status?: string });
+
+    if (body.status !== 'approved' && body.status !== 'rejected') {
+      return c.json(
+        { success: false, error: 'status must be approved or rejected' },
+        400,
+      );
+    }
+
+    const updated = await setConversionApproval(
+      c.env.DB,
+      c.req.param('id'),
+      body.status,
+    );
+    if (updated === false) {
+      // Missing event OR non-attributed CV (approval flow only applies to
+      // affiliate-attributed rows) — both surface as 404.
+      return c.json(
+        { success: false, error: 'Attributed conversion event not found' },
+        404,
+      );
+    }
+
+    // Mileage projection is retry-safe and runs even for `already_set`. This is
+    // deliberate: if an earlier request updated the approval row but failed
+    // before writing the ledger, the operator's retry repairs the partial work.
+    await syncAffiliateConversionMileage(
+      c.env.DB,
+      c.req.param('id'),
+      body.status,
+    );
+
+    if (updated === 'already_set') {
+      // Idempotent re-click: the status is already set to the requested value.
+      // Return 200 so the UI does not show an error to the operator.
+      return c.json({
+        success: true,
+        data: { id: c.req.param('id'), approvalStatus: body.status },
+      });
+    }
+
+    // ASP: notify the attributed affiliate on approval only (never on reject).
+    // Best-effort — notifyAffiliateApproval swallows its own errors, but guard
+    // the info lookup too so a push failure can never fail the approval request.
+    if (body.status === 'approved') {
+      try {
+        const info = await getConversionApprovalNotifyInfo(c.env.DB, c.req.param('id'));
+        if (info) {
+          await notifyAffiliateApproval(
+            c.env.DB,
+            c.env,
+            info.affiliateId,
+            info.offerName,
+            info.rewardAmount,
+          );
+        }
+      } catch (err) {
+        console.error('Affiliate approval notify failed (non-blocking):', err);
+      }
+    }
+
+    return c.json({ success: true, data: { id: c.req.param('id'), approvalStatus: body.status } });
+  } catch (err) {
+    console.error('PATCH /api/conversions/events/:id/approval error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

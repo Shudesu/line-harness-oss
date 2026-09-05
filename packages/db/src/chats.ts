@@ -102,9 +102,15 @@ export async function createChat(
 ): Promise<ChatRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO chats (id, friend_id, operator_id, last_message_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.friendId, input.operatorId ?? null, now, now, now).run();
-  return (await getChatById(db, id))!;
+  // 1 friend = 1 chat 行 (idx_chats_friend_unique)。同時実行でも重複しないよう
+  // WHERE NOT EXISTS + OR IGNORE で原子挿入し、挿入の成否に関わらず既存行を返して収束する。
+  await db.prepare(
+    `INSERT OR IGNORE INTO chats (id, friend_id, operator_id, last_message_at, created_at, updated_at)
+     SELECT ?, ?, ?, ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM chats WHERE friend_id = ?)`,
+  )
+    .bind(id, input.friendId, input.operatorId ?? null, now, now, now, input.friendId).run();
+  return (await getChatByFriendId(db, input.friendId))!;
 }
 
 export async function updateChat(
@@ -127,13 +133,12 @@ export async function updateChat(
 
 /** 友だちからメッセージ受信時にチャットを作成/更新 */
 export async function upsertChatOnMessage(db: D1Database, friendId: string): Promise<ChatRow> {
-  const existing = await getChatByFriendId(db, friendId);
   const now = jstNow();
-  if (existing) {
-    // resolvedだった場合はunreadに戻す
-    const newStatus = existing.status === 'resolved' ? 'unread' : existing.status;
-    await updateChat(db, existing.id, { status: newStatus, lastMessageAt: now });
-    return (await getChatById(db, existing.id))!;
-  }
-  return createChat(db, { friendId });
+  // createChat はレースで負けた場合も相手が作った行を返すので、必ずその行に対して
+  // 受信時の更新 (resolved→unread, last_message_at) を適用する。挿入直後の自行にも
+  // 適用されるが no-op 相当なので害はない。
+  const chat = (await getChatByFriendId(db, friendId)) ?? (await createChat(db, { friendId }));
+  const newStatus = chat.status === 'resolved' ? 'unread' : chat.status;
+  await updateChat(db, chat.id, { status: newStatus, lastMessageAt: now });
+  return (await getChatById(db, chat.id))!;
 }

@@ -20,6 +20,14 @@ export interface SavedInstallConfig {
   adminPublicUrl?: string;
   liffProject?: string;
   liffPublicUrl?: string;
+  /**
+   * 'bundle' — Worker deployed from the official release bundle
+   * (main = dist/release/index.js + no_bundle, version-stamped).
+   * 'source' / absent — legacy install built from src/index.ts.
+   */
+  workerDeployMode?: "bundle" | "source";
+  /** Release version deployed by setup/adoption (informational). */
+  installedVersion?: string;
 }
 
 export interface InstalledWranglerConfig {
@@ -31,9 +39,11 @@ export interface InstalledWranglerConfig {
   workerPublicUrl: string;
   adminPagesProject: string;
   adminPublicUrl: string;
+  /** '' = worker-assets install (no LIFF Pages project). */
   liffPagesProject: string;
   liffPublicUrl: string;
   manifestUrl: string;
+  workerDeployMode: "bundle" | "source";
 }
 
 export function isGeneratedInstalledWranglerToml(content: string): boolean {
@@ -65,7 +75,11 @@ export function resolveInstalledWranglerConfig(
   }
 
   const adminPublicUrl = config.adminPublicUrl ?? config.adminUrl;
-  const liffPagesProject = config.liffProject ?? `${workerName ?? "line-harness"}-liff`;
+  // Worker-assets installs have no LIFF Pages project — '' tells the
+  // worker-side self-update to skip every LIFF Pages step. (The old
+  // `${workerName}-liff` fallback pointed self-update at a project that
+  // was never created and made its LIFF deploy step fail.)
+  const liffPagesProject = config.liffProject ?? "";
   const liffPublicUrl = config.liffPublicUrl ?? workerPublicUrl;
 
   if (
@@ -94,23 +108,36 @@ export function resolveInstalledWranglerConfig(
     liffPagesProject,
     liffPublicUrl,
     manifestUrl: config.manifestUrl ?? DEFAULT_MANIFEST_URL,
+    workerDeployMode: config.workerDeployMode === "bundle" ? "bundle" : "source",
   };
 }
 
 export function renderInstalledWranglerToml(
   config: InstalledWranglerConfig,
 ): string {
+  // Bundle installs deploy the official release artifact byte-for-byte:
+  // `no_bundle` stops wrangler from re-bundling (which would invalidate the
+  // version stamp's honesty), and the artifact path is refreshed by
+  // setup/update so a manual `wrangler deploy` re-ships the same release.
+  const mainSection =
+    config.workerDeployMode === "bundle"
+      ? `main = "dist/release/index.js"\nno_bundle = true`
+      : `main = "src/index.ts"`;
+
   return `${GENERATED_MARKER}
 name = "${config.workerName}"
-main = "src/index.ts"
+${mainSection}
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 account_id = "${config.accountId}"
 
+# Worker runs before static assets so bot UAs get OGP HTML injection;
+# normal UAs fall through to the SPA via env.ASSETS.fetch().
 [assets]
 directory = "dist/client"
 binding = "ASSETS"
+run_worker_first = true
 
 [[d1_databases]]
 binding = "DB"

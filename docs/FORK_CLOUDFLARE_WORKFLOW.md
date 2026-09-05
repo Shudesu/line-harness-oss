@@ -1,8 +1,8 @@
 # Fork + Cloudflare 運用ガイド
 
-LINE Harness は、fork した repo を自分の本番環境として育てる運用を推奨します。
+L Harness は、fork した repo を自分の本番環境として育てる運用を推奨します。
 
-## 全体像
+## 目指す形
 
 ```text
 Shudesu/line-harness-oss
@@ -15,7 +15,11 @@ your-name/line-harness-oss
   upstream/*     本流取り込み PR
 ```
 
-この形にすると、本流の新機能を取り込みながら、自分専用の機能も同じ repo で育てられます。
+この形にすると、次の 3 つを両立できます。
+
+- 本流の新機能を取り込める
+- 自分専用の改造を PR として管理できる
+- main に入ったものだけ Cloudflare に自動反映できる
 
 ## 初回セットアップ
 
@@ -35,17 +39,17 @@ pnpm install
 npx wrangler login
 ```
 
-4. セットアップ CLI を実行
+4. D1 / R2 / Worker / Pages を作る
 
 ```bash
 npx create-line-harness@latest
 ```
 
-CLI は Cloudflare Workers、D1、R2、Pages を前提にセットアップします。
+セットアップ CLI は Cloudflare を前提に、Worker API、D1、R2、管理画面 Pages を作ります。
 
-## GitHub Actions を有効化する
+## GitHub に設定する値
 
-fork の `Settings > Secrets and variables > Actions` に値を入れます。
+fork の GitHub repo で `Settings > Secrets and variables > Actions` を開きます。
 
 Secrets:
 
@@ -61,14 +65,11 @@ Variables:
 
 | 名前 | 用途 |
 | --- | --- |
-| `LINE_HARNESS_CLOUDFLARE_DEPLOY` | `true` にすると fork の deploy workflow が有効 |
-| `WORKER_NAME` | Worker 名。未設定なら `your-worker-name` |
-| `PAGES_PROJECT_NAME` | Pages project 名。未設定なら `your-admin-name` |
 | `VITE_LIFF_ID` | LIFF ID |
 | `VITE_BOT_BASIC_ID` | LINE bot basic ID |
 | `VITE_CALENDAR_CONNECTION_ID` | Google Calendar 連携を使う場合だけ設定 |
 
-Worker secrets は Cloudflare 側へ入れます。
+Worker secrets は `wrangler secret put` で Cloudflare 側に設定します。
 
 ```bash
 npx wrangler secret put API_KEY
@@ -91,13 +92,23 @@ pnpm --filter worker test
 git push -u origin feature/my-automation
 ```
 
-GitHub で PR を作り、問題なければ fork の `main` に merge します。`main` に入ると Cloudflare deploy workflow が走ります。
+GitHub で PR を作り、問題なければ fork の `main` に merge します。
+
+`main` に merge されたら GitHub Actions が Cloudflare に自動 deploy します。ローカルPCを開きっぱなしにする必要はありません。
 
 ## 本流アップデートの取り込み
 
-fork の `Actions > Update from upstream > Run workflow` を実行します。
+fork に入っている `Update from upstream` workflow を手動実行します。
 
-workflow は `Shudesu/line-harness-oss/main` を fetch し、fork の `main` に取り込む PR を作ります。PR が clean なら merge してください。conflict が出た場合は、その PR 上で直します。
+GitHub:
+
+1. `Actions`
+2. `Update from upstream`
+3. `Run workflow`
+
+workflow は `Shudesu/line-harness-oss/main` を fetch して、fork の `main` に取り込む PR を作ります。
+
+PR が clean なら merge します。conflict した場合は、その PR 上で直します。
 
 ## 事故を防ぐルール
 
@@ -109,8 +120,12 @@ workflow は `Shudesu/line-harness-oss/main` を fetch し、fork の `main` に
 
 ## ローカル開発との違い
 
-ローカル開発は「試す場所」です。本番運用は fork の `main` と Cloudflare です。
+ローカル開発は「試す場所」です。
+
+本番運用は fork の `main` と Cloudflare です。
 
 ```text
 local branch -> PR -> fork main -> GitHub Actions -> Cloudflare
 ```
+
+この流れに寄せるほど、本流アップデート、自分専用機能、デプロイ履歴が全部 GitHub に残ります。

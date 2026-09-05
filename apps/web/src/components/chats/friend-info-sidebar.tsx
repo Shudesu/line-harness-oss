@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { api } from '@/lib/api'
+import { api, type MileageHistoryItem, type MileageSummary } from '@/lib/api'
+import { Button } from '@cloudflare/kumo/components/button'
+import { InputArea } from '@cloudflare/kumo/components/input'
 
 interface FriendDetail {
   id: string
@@ -12,6 +14,14 @@ interface FriendDetail {
   refCode: string | null
   createdAt: string
   tags: Array<{ id: string; name: string; color: string }>
+  formSubmissions: Array<{
+    id: string
+    formId: string
+    formName: string
+    fields: Array<{ name: string; label: string }>
+    data: Record<string, unknown>
+    createdAt: string
+  }>
 }
 
 interface ChatStatusInfo {
@@ -25,6 +35,11 @@ interface Props {
   chatStatus?: ChatStatusInfo
   /** 担当者名 (ChatDetail で operatorId → name 変換済を渡す想定) */
   operatorName?: string | null
+  /** 編集可能メモ (OAMのノート相当)。onSaveNotes が渡された時のみ編集UIを出す */
+  notesValue?: string
+  onNotesChange?: (value: string) => void
+  onSaveNotes?: () => void
+  savingNotes?: boolean
 }
 
 function formatDate(iso: string | null): string {
@@ -51,10 +66,15 @@ function renderValue(value: unknown): string {
   }
 }
 
-export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }: Props) {
+export default function FriendInfoSidebar({ friendId, chatStatus, operatorName, notesValue, onNotesChange, onSaveNotes, savingNotes }: Props) {
   const [friend, setFriend] = useState<FriendDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  type MileageState =
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'data'; summary: MileageSummary; history: MileageHistoryItem[] }
+  const [mileage, setMileage] = useState<MileageState>({ kind: 'loading' })
 
   useEffect(() => {
     if (!friendId) {
@@ -76,6 +96,26 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
       setError(err instanceof Error ? err.message : String(err))
     }).finally(() => {
       if (!cancelled) setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [friendId])
+
+  useEffect(() => {
+    if (!friendId) {
+      setMileage({ kind: 'loading' })
+      return
+    }
+    let cancelled = false
+    setMileage({ kind: 'loading' })
+    api.friends.mileage(friendId, 10).then((res) => {
+      if (cancelled) return
+      if (res.success && res.data) {
+        setMileage({ kind: 'data', ...res.data })
+      } else {
+        setMileage({ kind: 'error' })
+      }
+    }).catch(() => {
+      if (!cancelled) setMileage({ kind: 'error' })
     })
     return () => { cancelled = true }
   }, [friendId])
@@ -112,7 +152,7 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
   if (!friendId) return null
 
   return (
-    <div className="w-full lg:w-80 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col overflow-hidden">
+    <div className="w-full lg:w-72 xl:w-80 2xl:w-96 lg:flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
         <h3 className="text-sm font-semibold text-gray-700">友だち詳細</h3>
       </div>
@@ -154,6 +194,51 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
               </div>
             </div>
 
+            {/* Harness Mileage — canonical user identity across LINE accounts */}
+            <div className="p-4">
+              <h4 className="text-[11px] font-medium text-gray-500 mb-2">マイル</h4>
+              {mileage.kind === 'loading' ? (
+                <div className="h-24 animate-pulse rounded-xl bg-gray-100" />
+              ) : mileage.kind === 'error' ? (
+                <p className="text-[11px] text-red-500 italic">マイルの取得に失敗しました</p>
+              ) : (
+                <div className="overflow-hidden rounded-xl bg-gradient-to-br from-gray-900 via-gray-700 to-amber-800 p-3.5 text-white shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] font-semibold text-white/70">{mileage.summary.programName}</p>
+                      <p className="mt-0.5 text-2xl font-bold tabular-nums">
+                        {mileage.summary.available.toLocaleString('ja-JP')}
+                        <span className="ml-1 text-[11px] font-semibold text-white/70">mile</span>
+                      </p>
+                      <p className="text-[10px] text-white/60">利用可能</p>
+                    </div>
+                    {mileage.summary.pending > 0 && (
+                      <span className="rounded-full bg-white/15 px-2 py-1 text-[10px] font-medium">
+                        確定待ち {mileage.summary.pending.toLocaleString('ja-JP')}
+                      </span>
+                    )}
+                  </div>
+
+                  {mileage.history.length > 0 ? (
+                    <div className="mt-3 space-y-1.5 border-t border-white/15 pt-2.5">
+                      {mileage.history.slice(0, 3).map((item) => (
+                        <div key={item.id} className="flex items-center justify-between gap-2 text-[10px]">
+                          <span className="min-w-0 truncate text-white/75">{item.reason}</span>
+                          <span className={`shrink-0 font-semibold tabular-nums ${item.amount > 0 ? 'text-amber-200' : 'text-white/80'}`}>
+                            {item.amount > 0 ? '+' : ''}{item.amount.toLocaleString('ja-JP')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 border-t border-white/15 pt-2.5 text-[10px] text-white/50">
+                      まだマイル履歴はありません
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Status / Operator */}
             {(chatStatus?.status || operatorName) && (
               <div className="p-4 space-y-2">
@@ -174,13 +259,35 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
               </div>
             )}
 
-            {/* Notes */}
-            {chatStatus?.notes && (
+            {/* Notes — OAMのノート相当。編集ハンドラが渡された時は編集UI、なければ従来の読み取り表示 */}
+            {onSaveNotes ? (
+              <div className="p-4">
+                <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">個別メモ</h4>
+                <InputArea
+                  minRows={3}
+                  value={notesValue ?? ''}
+                  onValueChange={(value) => onNotesChange?.(value)}
+                  placeholder="メモを入力..."
+                  aria-label="個別メモ"
+                />
+                <div className="mt-1.5 flex justify-end">
+                  <Button
+                    onClick={onSaveNotes}
+                    disabled={savingNotes}
+                    size="xs"
+                    variant="secondary"
+                    loading={savingNotes}
+                  >
+                    {savingNotes ? '保存中...' : 'メモ保存'}
+                  </Button>
+                </div>
+              </div>
+            ) : chatStatus?.notes ? (
               <div className="p-4">
                 <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">個別メモ</h4>
                 <p className="text-xs text-gray-700 whitespace-pre-wrap break-words">{chatStatus.notes}</p>
               </div>
-            )}
+            ) : null}
 
             {/* Tags */}
             <div className="p-4">
@@ -238,6 +345,39 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
                     </div>
                   ))}
                 </dl>
+              </div>
+            )}
+
+            {/* Form answers — save_to_metadata の設定に関係なく回答履歴を表示 */}
+            {friend.formSubmissions?.length > 0 && (
+              <div className="p-4">
+                <h4 className="text-[11px] font-medium text-gray-500 mb-2">フォーム回答</h4>
+                <div className="space-y-3">
+                  {friend.formSubmissions.map((submission) => {
+                    const labels = new Map(submission.fields.map((field) => [field.name, field.label]))
+                    const answers = Object.entries(submission.data).filter(([key]) => !key.startsWith('_'))
+                    return (
+                      <div key={submission.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs font-medium text-gray-700 break-words">{submission.formName}</p>
+                          <time className="shrink-0 text-[10px] text-gray-400">
+                            {formatDate(submission.createdAt)}
+                          </time>
+                        </div>
+                        <dl className="mt-2 space-y-2">
+                          {answers.map(([key, value]) => (
+                            <div key={key}>
+                              <dt className="text-[10px] text-gray-400">{labels.get(key) ?? key}</dt>
+                              <dd className="mt-0.5 whitespace-pre-wrap break-words text-xs text-gray-700">
+                                {renderValue(value)}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
 

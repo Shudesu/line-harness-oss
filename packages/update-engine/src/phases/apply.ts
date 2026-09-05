@@ -1,9 +1,19 @@
 import type { UpdateContext } from '../types.js';
 import type { EventEmitter } from '../events.js';
 import type { ParsedBundle } from '../bundle.js';
-import { executeD1Query } from '../cf-api/d1.js';
 import { listWorkerBindings, putWorkerScript } from '../cf-api/workers.js';
+import { uploadWorkerAssets } from '../cf-api/assets.js';
 import { deployPagesProject } from '../cf-api/pages.js';
+import { materializeAdminFiles } from '../materialize.js';
+import { applyD1Migrations } from '../migrations.js';
+
+/**
+ * Compatibility flags the L Harness Worker requires. The script upload
+ * API replaces metadata wholesale, so these must be re-sent on every PUT —
+ * omitting them would strip `nodejs_compat` and break `node:*` imports.
+ * Kept in lockstep with apps/worker/wrangler.toml.
+ */
+const WORKER_COMPATIBILITY_FLAGS = ['nodejs_compat'];
 
 /**
  * Result of a successful apply phase.
@@ -49,19 +59,24 @@ export async function runApply(
   // bundle's map iteration order) so customers can rely on numeric
   // prefixes (e.g. 041_x.sql before 042_y.sql) controlling apply order
   // even if the tarball was built non-deterministically.
-  for (const name of ctx.target.migrations) {
-    const sql = bundle.migrations.get(name);
-    if (!sql) {
-      throw new Error(`migration ${name} missing in bundle`);
-    }
-    await ev.emit({ step: 'migration', status: 'running', name });
-    await executeD1Query({
-      creds: ctx.creds,
-      databaseId: ctx.d1DatabaseId,
-      sql: sql.toString('utf-8'),
-    });
-    await ev.emit({ step: 'migration', status: 'done', name });
-  }
+  await applyD1Migrations({
+    creds: ctx.creds,
+    databaseId: ctx.d1DatabaseId,
+    names: ctx.target.migrations,
+    migrations: bundle.migrations,
+    onMigrationStart: (name) =>
+      ev.emit({ step: 'migration', status: 'running', name }),
+    onMigrationDone: (result) =>
+      ev.emit({
+        step: 'migration',
+        status: 'done',
+        name: result.alreadyApplied
+          ? `${result.name} (already applied)`
+          : result.adopted
+            ? `${result.name} (adopted, not executed)`
+            : result.name,
+      }),
+  });
 
   // Step 2: Worker. List-then-PUT preserves the customer's secret_text,
   // plain_text, D1, R2 and KV bindings — CF wipes bindings on every
@@ -72,11 +87,33 @@ export async function runApply(
     creds: ctx.creds,
     scriptName: ctx.workerName,
   });
+  if (bundle.workerAssetFiles.size === 0 && !ctx.liffPagesProject) {
+    throw new Error(
+      'release bundle has no worker-assets files; worker-assets installs cannot be updated safely',
+    );
+  }
+  const assetsJwt = bundle.workerAssetFiles.size > 0
+    ? await uploadWorkerAssets({
+        creds: ctx.creds,
+        scriptName: ctx.workerName,
+        files: bundle.workerAssetFiles,
+      })
+    : null;
   await putWorkerScript({
     creds: ctx.creds,
     scriptName: ctx.workerName,
     scriptContent: bundle.workerJs,
     bindings,
+    compatibilityFlags: WORKER_COMPATIBILITY_FLAGS,
+    ...(assetsJwt
+      ? {
+          assets: {
+            jwt: assetsJwt,
+            binding: 'ASSETS',
+            runWorkerFirst: true,
+          },
+        }
+      : { keepAssets: true }),
   });
   await ev.emit({
     step: 'worker',
@@ -86,11 +123,16 @@ export async function runApply(
 
   // Step 3: Admin Pages. Done before LIFF because admin is internal-only
   // and any breakage here is contained — LIFF is what customers see.
+  // The bundle's admin build has `https://__LH_WORKER_URL__` baked in as
+  // its API origin; rewrite it to this install's Worker URL first.
   await ev.emit({ step: 'admin', status: 'running' });
+  const adminFiles = ctx.workerPublicUrl
+    ? materializeAdminFiles(bundle.adminFiles, ctx.workerPublicUrl)
+    : bundle.adminFiles;
   const adminResult = await deployPagesProject({
     creds: ctx.creds,
     projectName: ctx.adminPagesProject,
-    files: bundle.adminFiles,
+    files: adminFiles,
   });
   await ev.emit({
     step: 'admin',
@@ -100,7 +142,17 @@ export async function runApply(
 
   // Step 4: LIFF Pages. Last so the customer-facing UI swap only happens
   // once everything beneath it (schema + Worker + admin) is already
-  // live on the new version.
+  // live on the new version. Skipped entirely for CLI installs
+  // (liffPagesProject === ''), where the LIFF SPA is served by the Worker's
+  // own assets and there is no Pages project to deploy to.
+  if (!ctx.liffPagesProject) {
+    await ev.emit({ step: 'liff', status: 'done', name: 'skipped (worker-assets install)' });
+    return {
+      adminDeploymentId: adminResult.deploymentId,
+      liffDeploymentId: '',
+    };
+  }
+
   await ev.emit({ step: 'liff', status: 'running' });
   const liffResult = await deployPagesProject({
     creds: ctx.creds,

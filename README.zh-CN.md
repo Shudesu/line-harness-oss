@@ -1,6 +1,6 @@
 🌐 [日本語](README.md) | [English](README.en.md) | **简体中文** | [한국어](README.ko.md) | [Español](README.es.md)
 
-# LINE Harness
+# L Harness
 
 > ### **[在 LINE 上免费体验](https://shudesu.github.io/line-harness-oss/)** 👈
 
@@ -9,15 +9,15 @@
 
 ### ▶️ [在 YouTube 观看视频教程（约 20 分钟）](https://youtu.be/DiRuGaeq1sM)
 
-[![点击在 YouTube 播放 — LINE Harness 配置教程](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+[![点击在 YouTube 播放 — L Harness 配置教程](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
 
 **当前版本**: v0.13.2 ・ MIT 许可证 ・ TypeScript / Cloudflare Workers + D1
 
 ---
 
-## 为什么选择 LINE Harness？
+## 为什么选择 L Harness？
 
-| | 闭源 SaaS A | 闭源 SaaS B | **LINE Harness** |
+| | 闭源 SaaS A | 闭源 SaaS B | **L Harness** |
 |---|---|---|---|
 | 月费 | ¥20,000+ | ¥10,000+ | **0 日元** |
 | 步骤群发 | ✅ | ✅ | ✅ |
@@ -83,6 +83,14 @@ CLI 自动完成以下全部步骤：
 - **表单 (LIFF)** — LINE 内部完成，答案自动存为 metadata
 - **日程预约** — 基于 Google Calendar 的 LIFF 预约系统
 - **员工管理** — Owner / Admin / Staff 三级角色，独立 API key
+
+### 联盟营销追踪（ASP）
+- **自助链接发放** — 联盟伙伴无需管理员介入即可自行生成 LIFF 追踪链接
+- **活动管理** — 按活动设置固定奖励金额，多活动并行运营
+- **时序追踪** — 依次记录点击 → 添加好友 → 转化，以 last-touch 归因关联成果
+- **审核流程** — 审批/驳回归因转化以确认奖励，并通过重复账号标记提示可疑成果
+- **LINE 推送通知** — 转化确认时自动向联盟伙伴发送 push 通知
+- 详情: [docs/wiki/27-Affiliate-ASP.md](docs/wiki/27-Affiliate-ASP.md)
 
 ### 自动化
 - **IF-THEN 规则** — 7 种触发器 × 6 种动作
@@ -155,4 +163,4 @@ MIT License. 商用、修改、再分发自由。
 
 ---
 
-> **LINE Harness** by [@Shudesu](https://github.com/Shudesu) — AI 原生时代的开源 LINE CRM
+> **L Harness** by [@Shudesu](https://github.com/Shudesu) — AI 原生时代的开源 LINE CRM

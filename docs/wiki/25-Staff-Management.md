@@ -1,6 +1,6 @@
 # 25. スタッフ管理 (Staff Management)
 
-LINE Harness のスタッフ管理機能。APIキーごとにロール（owner / admin / staff）を割り当て、操作権限を制御する。
+L Harness のスタッフ管理機能。APIキーごとにロール（owner / admin / staff）を割り当て、操作権限を制御する。
 
 ---
 

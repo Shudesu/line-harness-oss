@@ -21,7 +21,7 @@ declare const liff: {
 };
 
 const UUID_STORAGE_KEY = 'lh_uuid';
-const FORM_VERSION = '2.0.0'; // cache buster
+const FORM_VERSION = '2.1.0'; // cache buster
 
 interface FormField {
   name: string;
@@ -40,9 +40,43 @@ interface FormDef {
   fields: FormField[];
   isActive: boolean;
   hideProfile?: boolean;
-  onSubmitWebhookUrl?: string | null;
-  onSubmitWebhookHeaders?: string | null;
+  hasSubmitWebhook: boolean;
+  webhookOrigin: string | null;
+  webhookGateId: string | null;
+  onSubmitMessageContent?: string | null;
   onSubmitWebhookFailMessage?: string | null;
+  consultationWebinarSlug?: string | null;
+}
+
+interface ConsultationSlot {
+  date: string;
+  start: string;
+  end: string;
+  startsAt: string;
+}
+
+interface ConsultationAvailability {
+  calendarReady: boolean;
+  fallbackUrl: string | null;
+  menu: { id: string; name: string; durationMinutes: number };
+  staff: { id: string; name: string };
+  slots: ConsultationSlot[];
+  existingBooking: {
+    bookingId: string;
+    status: string;
+    startsAt: string;
+    meetUrl: string | null;
+  } | null;
+}
+
+interface BookedConsultation {
+  bookingId: string;
+  status: 'confirmed';
+  startsAt: string;
+  endsAt: string;
+  meetUrl: string;
+  externalEventId: string;
+  created: boolean;
 }
 
 interface XFollowerSuggestion {
@@ -87,13 +121,20 @@ function escapeHtml(str: string): string {
 }
 
 function apiCall(path: string, options?: RequestInit): Promise<Response> {
+  const idToken = liff.getIDToken();
   return fetch(path, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
       ...options?.headers,
     },
   });
+}
+
+function getGateId(): string | null {
+  const gateParam = new URLSearchParams(window.location.search).get('gate');
+  return gateParam || state.formDef?.webhookGateId || null;
 }
 
 function getApp(): HTMLElement {
@@ -362,6 +403,30 @@ function injectStyles(): void {
     .form-success .check { width: 64px; height: 64px; border-radius: 50%; background: #06C755; color: #fff; font-size: 32px; line-height: 64px; margin: 0 auto 16px; }
     .form-success h2 { font-size: 20px; color: #06C755; margin-bottom: 12px; }
     .form-success p { font-size: 14px; color: #666; line-height: 1.6; }
+    .consultation-card { background:#fff; border-radius:16px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+    .consultation-head { text-align:center; margin-bottom:20px; }
+    .consultation-head .calendar-icon { font-size:32px; line-height:1; }
+    .consultation-head h2 { margin:8px 0 6px; font-size:21px; color:#1f2937; }
+    .consultation-head p { margin:0; font-size:13px; line-height:1.6; color:#6b7280; }
+    .consultation-date { margin-top:18px; }
+    .consultation-date h3 { margin:0 0 8px; font-size:14px; color:#374151; }
+    .consultation-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+    .slot-btn { border:1.5px solid #06C755; border-radius:9px; padding:11px 4px; background:#fff; color:#049f45; font-size:14px; font-weight:700; cursor:pointer; }
+    .slot-btn:active { background:#ecfdf3; }
+    .slot-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .consultation-status { margin:14px 0 0; text-align:center; font-size:13px; color:#dc2626; font-weight:600; }
+    .consultation-loading { text-align:center; padding:44px 20px; }
+    .consultation-loading h2 { margin:14px 0 6px; font-size:20px; color:#1f2937; }
+    .consultation-loading p { margin:0; color:#6b7280; font-size:14px; }
+    .consultation-spinner { width:30px; height:30px; margin:0 auto; border:3px solid #d1fae5; border-top-color:#06C755; border-radius:50%; animation:x-spin .8s linear infinite; }
+    .consultation-empty { margin:16px 0 0; padding:18px; border-radius:12px; background:#f9fafb; text-align:center; color:#6b7280; font-size:14px; }
+    .consultation-primary { display:block; width:100%; box-sizing:border-box; margin-top:16px; padding:13px 16px; border:0; border-radius:999px; background:#06C755; color:#fff; text-align:center; text-decoration:none; font-size:15px; font-weight:700; cursor:pointer; }
+    .consultation-secondary { display:block; margin:14px auto 0; border:0; background:transparent; color:#6b7280; font-size:13px; text-decoration:underline; cursor:pointer; }
+    .consultation-confirmed { text-align:center; }
+    .consultation-confirmed .check { font-size:38px; }
+    .consultation-confirmed h2 { margin:8px 0; color:#1f2937; font-size:21px; }
+    .consultation-confirmed .time { margin:14px 0; padding:13px; border-radius:12px; background:#ecfdf3; color:#166534; font-size:17px; font-weight:700; }
+    .consultation-confirmed .note { color:#6b7280; font-size:12px; line-height:1.6; }
   `;
   document.head.appendChild(style);
 }
@@ -384,7 +449,7 @@ function render(): void {
   // Split fields: survey fields (page 1) vs x_username field (page 2)
   const surveyFields = formDef.fields.filter((f) => f.name !== 'x_username');
   const xUsernameField = formDef.fields.find((f) => f.name === 'x_username');
-  const hasTwoPages = !!xUsernameField && !!formDef.onSubmitWebhookUrl;
+  const hasTwoPages = !!xUsernameField && formDef.hasSubmitWebhook;
 
   const surveyFieldsHtml = surveyFields.map(renderField).join('');
   const xFieldHtml = xUsernameField ? renderField(xUsernameField) : '';
@@ -395,7 +460,7 @@ function render(): void {
       <div class="form-page">
         <div class="form-header">
           <h1>${escapeHtml(formDef.name).replace(/\\n|\n/g, '<br>')}</h1>
-          ${formDef.description && !formDef.onSubmitWebhookUrl ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
+          ${formDef.description && !formDef.hasSubmitWebhook ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
           ${profileHtml}
         </div>
         <!-- Page 1: Survey -->
@@ -465,11 +530,7 @@ function render(): void {
       try {
         await apiCall(`/api/forms/${formDef.id}/partial`, {
           method: 'POST',
-          body: JSON.stringify({
-            lineUserId: state.profile?.userId,
-            friendId: state.friendId,
-            data: surveyData,
-          }),
+          body: JSON.stringify({ data: surveyData }),
         });
       } catch { /* non-blocking */ }
 
@@ -501,7 +562,7 @@ function render(): void {
       <div class="form-page">
         <div class="form-header">
           <h1>${escapeHtml(formDef.name).replace(/\\n|\n/g, '<br>')}</h1>
-          ${formDef.description && !formDef.onSubmitWebhookUrl ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
+          ${formDef.description && !formDef.hasSubmitWebhook ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
           ${profileHtml}
         </div>
         <form id="liff-form" class="form-body" novalidate>
@@ -615,6 +676,221 @@ function renderSuccess(): void {
     setTimeout(() => {
       try { liff.closeWindow(); } catch { /* ignore */ }
     }, 3000);
+  }
+}
+
+function consultationDateTime(startsAt: string): string {
+  return new Date(startsAt).toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function consultationDateLabel(date: string): string {
+  return new Date(`${date}T00:00:00+09:00`).toLocaleDateString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  });
+}
+
+function safeHttpsUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function closeFormWindow(): void {
+  if (liff.isInClient()) {
+    liff.closeWindow();
+  } else {
+    window.close();
+  }
+}
+
+function renderConsultationConfirmed(booking: BookedConsultation): void {
+  const app = getApp();
+  const meetUrl = safeHttpsUrl(booking.meetUrl);
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card consultation-confirmed">
+        <div class="check">✅</div>
+        <h2>個別相談が確定しました</h2>
+        <div class="time">${escapeHtml(consultationDateTime(booking.startsAt))}</div>
+        ${meetUrl ? `<a class="consultation-primary" href="${escapeHtml(meetUrl)}" target="_blank" rel="noreferrer">Google Meetを確認する</a>` : ''}
+        <p class="note">LINEにも参加リンクを送りました。前日と開始1時間前にもお知らせします。</p>
+        <button class="consultation-secondary" id="closeConsultationBtn">閉じる</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+function renderConsultationFallback(
+  webinarSlug: string,
+  message: string,
+  fallbackUrl: string | null = null,
+): void {
+  const app = getApp();
+  const safeFallbackUrl = safeHttpsUrl(fallbackUrl);
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card">
+        <div class="consultation-head">
+          <div class="calendar-icon">📅</div>
+          <h2>回答を受け付けました</h2>
+          <p>${escapeHtml(message)}</p>
+        </div>
+        ${safeFallbackUrl ? `<a class="consultation-primary" href="${escapeHtml(safeFallbackUrl)}">予約カレンダーを開く</a>` : '<button class="consultation-primary" id="retryConsultationBtn">空き枠を再読み込み</button>'}
+        <button class="consultation-secondary" id="closeConsultationBtn">あとで予約する</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('retryConsultationBtn')?.addEventListener('click', () => {
+    void renderConsultationBooking(webinarSlug);
+  });
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+function renderConsultationSlots(
+  webinarSlug: string,
+  availability: ConsultationAvailability,
+): void {
+  const existing = availability.existingBooking;
+  if (existing?.status === 'confirmed' && existing.meetUrl) {
+    renderConsultationConfirmed({
+      bookingId: existing.bookingId,
+      status: 'confirmed',
+      startsAt: existing.startsAt,
+      endsAt: '',
+      meetUrl: existing.meetUrl,
+      externalEventId: '',
+      created: false,
+    });
+    return;
+  }
+
+  if (!availability.calendarReady) {
+    renderConsultationFallback(
+      webinarSlug,
+      '空き枠を自動取得できませんでした。予約カレンダーから日時を選んでください。',
+      availability.fallbackUrl,
+    );
+    return;
+  }
+
+  const grouped = availability.slots.reduce<Record<string, ConsultationSlot[]>>((all, slot) => {
+    (all[slot.date] ??= []).push(slot);
+    return all;
+  }, {});
+  const slotHtml = Object.entries(grouped).map(([date, slots]) => `
+    <section class="consultation-date">
+      <h3>${escapeHtml(consultationDateLabel(date))}</h3>
+      <div class="consultation-grid">
+        ${slots.map((slot) => `<button class="slot-btn" data-starts-at="${escapeHtml(slot.startsAt)}">${escapeHtml(slot.start)}</button>`).join('')}
+      </div>
+    </section>
+  `).join('');
+
+  const app = getApp();
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card">
+        <div class="consultation-head">
+          <div class="calendar-icon">📅</div>
+          <h2>このまま相談日時を確定</h2>
+          <p>空いている15分枠だけを表示しています。<br>選ぶとGoogle Meetまで自動発行されます。</p>
+        </div>
+        ${slotHtml || '<div class="consultation-empty">現在、選べる枠がありません。</div>'}
+        <p class="consultation-status" id="consultationStatus" hidden></p>
+        <button class="consultation-secondary" id="closeConsultationBtn">あとで予約する</button>
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll<HTMLButtonElement>('.slot-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const startsAt = button.dataset.startsAt;
+      if (!startsAt) return;
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.slot-btn'));
+      const status = document.getElementById('consultationStatus');
+      buttons.forEach((item) => { item.disabled = true; });
+      const original = button.textContent;
+      button.textContent = '確定中...';
+      if (status) status.hidden = true;
+      try {
+        const response = await apiCall(
+          `/api/liff/webinars/${encodeURIComponent(webinarSlug)}/consultation-book`,
+          { method: 'POST', body: JSON.stringify({ startsAt }) },
+        );
+        const json = await response.json() as {
+          ok?: boolean;
+          data?: BookedConsultation;
+          error?: string;
+        };
+        if (!response.ok || !json.ok || !json.data) {
+          if (response.status === 409) {
+            await renderConsultationBooking(webinarSlug);
+            return;
+          }
+          throw new Error(json.error || '日程を確定できませんでした');
+        }
+        renderConsultationConfirmed(json.data);
+      } catch {
+        buttons.forEach((item) => { item.disabled = false; });
+        button.textContent = original;
+        if (status) {
+          status.textContent = '日程を確定できませんでした。もう一度お試しください。';
+          status.hidden = false;
+        }
+      }
+    });
+  });
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+async function renderConsultationBooking(webinarSlug: string): Promise<void> {
+  const app = getApp();
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card consultation-loading">
+        <div class="consultation-spinner"></div>
+        <h2>回答を受け付けました</h2>
+        <p>実際の空き枠を確認しています...</p>
+      </div>
+    </div>
+  `;
+  window.scrollTo(0, 0);
+  try {
+    const response = await apiCall(
+      `/api/liff/webinars/${encodeURIComponent(webinarSlug)}/consultation-slots`,
+    );
+    const json = await response.json() as {
+      ok?: boolean;
+      data?: ConsultationAvailability;
+      error?: string;
+    };
+    if (!response.ok || !json.ok || !json.data) {
+      throw new Error(json.error || 'availability_failed');
+    }
+    renderConsultationSlots(webinarSlug, json.data);
+  } catch {
+    renderConsultationFallback(
+      webinarSlug,
+      '空き枠を読み込めませんでした。通信環境を確認して、もう一度お試しください。',
+    );
   }
 }
 
@@ -741,7 +1017,7 @@ async function submitForm(): Promise<void> {
     console.log('Form data collected:', JSON.stringify(data));
 
     // Webhook gate — pre-verified by /repliers endpoint
-    if (state.formDef.onSubmitWebhookUrl) {
+    if (state.formDef.hasSubmitWebhook) {
       // Check that user was selected from pre-verified repliers list
       const xField = ((data.x_username as string) ?? '').trim().replace(/^@/, '');
       if (!xField || xField !== state.verifiedXUsername) {
@@ -775,8 +1051,7 @@ async function submitForm(): Promise<void> {
       const rawMsg = state.formDef.onSubmitMessageContent || '条件をクリアしました！';
       const successMsg = rawMsg.trimStart().startsWith('{') ? '特典をLINEでお送りしました！' : rawMsg;
       // Fall through to submit below, then show webhook success
-      const webhookBody: Record<string, unknown> = { data: { ...data }, _skipWebhook: true };
-      if (state.profile?.userId) webhookBody.lineUserId = state.profile.userId;
+      const webhookBody: Record<string, unknown> = { data: { ...data } };
       if (state.refTrackedLinkId) webhookBody.trackedLinkId = state.refTrackedLinkId;
 
       const webhookSubmitRes = await apiCall(`/api/forms/${state.formDef.id}/submit`, {
@@ -799,9 +1074,7 @@ async function submitForm(): Promise<void> {
     }
 
     const body: Record<string, unknown> = { data };
-    if (state.profile?.userId) body.lineUserId = state.profile.userId;
     if (state.refTrackedLinkId) body.trackedLinkId = state.refTrackedLinkId;
-    // Note: state.friendId is users.id (UUID), not friends.id — don't send as friendId
     console.log('Submitting to:', `/api/forms/${state.formDef.id}/submit`);
 
     const res = await apiCall(`/api/forms/${state.formDef.id}/submit`, {
@@ -817,7 +1090,11 @@ async function submitForm(): Promise<void> {
       throw new Error(`${res.status}: ${errMsg}`);
     }
 
-    renderSuccess();
+    if (state.formDef.consultationWebinarSlug) {
+      await renderConsultationBooking(state.formDef.consultationWebinarSlug);
+    } else {
+      renderSuccess();
+    }
   } catch (err) {
     state.submitting = false;
     if (submitBtn) {
@@ -849,33 +1126,10 @@ function attachXAutocomplete(): void {
   let focusedIndex = -1;
   let replierPool: XFollowerSuggestion[] = [];
 
-  // Extract gateId from URL param (priority) or onSubmitWebhookUrl
-  function getGateId(): string | null {
-    const urlParams = new URLSearchParams(window.location.search);
-    const gateParam = urlParams.get('gate');
-    if (gateParam) return gateParam;
-    const url = state.formDef?.onSubmitWebhookUrl ?? '';
-    const m = url.match(/engagement-gates\/([^/]+)\/verify/);
-    return m ? m[1] : null;
-  }
-
-  // Parse webhook headers once for reuse in X Harness API calls
-  function getWebhookHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {};
-    if (state.formDef?.onSubmitWebhookHeaders) {
-      try {
-        Object.assign(headers, JSON.parse(state.formDef.onSubmitWebhookHeaders));
-      } catch { /* ignore */ }
-    }
-    return headers;
-  }
-
   // Prefetch repliers on form load
   const gateIdForPool = getGateId();
   if (state.xHarnessBaseUrl && gateIdForPool) {
-    fetch(`${state.xHarnessBaseUrl}/api/engagement-gates/${encodeURIComponent(gateIdForPool)}/repliers`, {
-      headers: getWebhookHeaders(),
-    })
+    fetch(`${state.xHarnessBaseUrl}/api/engagement-gates/${encodeURIComponent(gateIdForPool)}/repliers`)
       .then(r => r.json())
       .then((json: { success: boolean; data?: XFollowerSuggestion[] }) => {
         replierPool = json.data ?? [];
@@ -1017,7 +1271,7 @@ function attachXAutocomplete(): void {
 
     try {
       const url = `${state.xHarnessBaseUrl}/api/engagement-gates/${encodeURIComponent(gateId)}/verify?username=${encodeURIComponent(clean)}`;
-      const res = await fetch(url, { headers: getWebhookHeaders() });
+      const res = await fetch(url);
       if (!res.ok) throw new Error('verify failed');
       const json = await res.json() as { success: boolean; data?: VerifyResult };
       const verifyData = json.data;
@@ -1227,17 +1481,15 @@ export async function initForm(formId: string | null): Promise<void> {
 
     state.formDef = json.data;
 
-    // Extract X Harness base URL: from URL param (priority) or webhook URL
+    // Use only the trusted origin derived from the stored webhook. The raw
+    // webhook path/query and secret headers never reach the browser.
     const urlParams = new URLSearchParams(window.location.search);
     const xhParam = urlParams.get('xh');
-    if (xhParam) {
-      state.xHarnessBaseUrl = xhParam.replace(/\/$/, '');
-    } else if (json.data.onSubmitWebhookUrl) {
-      const baseUrlMatch = json.data.onSubmitWebhookUrl.match(/^(https?:\/\/[^/]+)/);
-      if (baseUrlMatch) {
-        state.xHarnessBaseUrl = baseUrlMatch[1];
-      }
-    }
+    const requestedOrigin = xhParam?.replace(/\/$/, '') ?? null;
+    state.xHarnessBaseUrl =
+      requestedOrigin && requestedOrigin === json.data.webhookOrigin
+        ? requestedOrigin
+        : json.data.webhookOrigin;
 
     // Capture tracked link ref so submit can attribute reward to this campaign
     const refParam = urlParams.get('ref');
@@ -1250,13 +1502,9 @@ export async function initForm(formId: string | null): Promise<void> {
     // Record form open event (fire-and-forget)
     apiCall(`/api/forms/${state.formDef!.id}/opened`, {
       method: 'POST',
-      body: JSON.stringify({
-        lineUserId: state.profile?.userId,
-        friendId: state.friendId,
-      }),
+      body: JSON.stringify({}),
     }).catch(() => { /* silent */ });
   } catch (err) {
     renderFormError(err instanceof Error ? err.message : 'エラーが発生しました');
   }
 }
-
