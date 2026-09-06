@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { computeUsersGrouped, type UsersGroupedOptions } from '../services/users-grouped.js';
+import { requireRole } from '../middleware/role-guard.js';
 
 export const usersGrouped = new Hono<Env>();
 
-usersGrouped.get('/api/users-grouped', async (c) => {
+usersGrouped.get('/api/users-grouped', requireRole('owner', 'admin'), async (c) => {
   try {
     const q = c.req.query('q');
     const onlyDups = c.req.query('onlyDups') === '1';
@@ -25,7 +26,9 @@ usersGrouped.get('/api/users-grouped', async (c) => {
     const result = await computeUsersGrouped(c.env.DB, opts);
     return c.json({ success: true, data: result });
   } catch (err) {
-    console.error('GET /api/users-grouped error:', err);
+    console.error('GET /api/users-grouped failed', {
+      errorType: err instanceof Error ? err.name : typeof err,
+    });
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
