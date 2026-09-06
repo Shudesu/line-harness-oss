@@ -10,6 +10,7 @@ import {
   recordRefTracking,
   addTagToFriend,
   getLineAccountByChannelId,
+  getScenarioById,
   getLineAccountById,
   getLineAccounts,
   getTrafficPoolBySlug,
@@ -923,8 +924,28 @@ liffRoutes.get('/auth/callback', async (c) => {
     // Auto-enroll in friend_add scenarios + immediate delivery.
     // Skip entirely when the referral link explicitly overrides account-level
     // friend_add scenarios (entry_routes.run_account_friend_add_scenarios = 0).
-    const referralRouteForOverride =
+    let referralRouteForOverride =
       ref && !ref.startsWith('xh:') ? await getEntryRouteByRefCode(db, ref) : null;
+
+    // Same cross-account rule as the follow webhook: a route belonging to a
+    // different account must not suppress THIS account's own friend_add welcome
+    // (its scenario is already blocked by scenarioAllowedForFriendAccount).
+    if (referralRouteForOverride?.scenario_id && accountParam) {
+      const overrideAccount = await getLineAccountByChannelId(db, accountParam);
+      const routeScenario = await getScenarioById(db, referralRouteForOverride.scenario_id);
+      if (
+        overrideAccount &&
+        routeScenario?.line_account_id &&
+        routeScenario.line_account_id !== overrideAccount.id
+      ) {
+        console.error(
+          `[liff] referral route override ignored: ref=${ref} belongs to account ` +
+            `${routeScenario.line_account_id}, not ${overrideAccount.id}`,
+        );
+        referralRouteForOverride = null;
+      }
+    }
+
     const runAccountScenariosLiff =
       !referralRouteForOverride || referralRouteForOverride.run_account_friend_add_scenarios !== 0;
 
