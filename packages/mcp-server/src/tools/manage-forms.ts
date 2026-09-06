@@ -16,13 +16,17 @@ export function registerManageForms(server: McpServer): void {
       onSubmitScenarioId: z.string().nullable().optional().describe("Scenario to enroll on submit (for update)"),
       onSubmitMessageType: z.enum(["text", "flex"]).nullable().optional().describe("Custom message type to send after form submission (for update). Supports template variables: {{name}}, {{auth_url:CHANNEL_ID}}"),
       onSubmitMessageContent: z.string().nullable().optional().describe("Custom message content to send after form submission (for update). If set, replaces the default confirmation Flex."),
+      sendSubmitMessage: z.boolean().optional().describe("Whether to send a LINE confirmation after submission. Set false to save/tag/webhook without sending a LINE message."),
+      onSubmitWebhookUrl: z.string().url().nullable().optional().describe("Webhook URL called once when the form is submitted, or null to clear."),
+      onSubmitWebhookHeaders: z.string().nullable().optional().describe("JSON object of headers for the submit webhook, or null to clear."),
+      onSubmitWebhookFailMessage: z.string().nullable().optional().describe("LINE message sent only when the webhook rejects the submission, or null to disable."),
       saveToMetadata: z.boolean().optional().describe("Save responses to friend metadata (for update)"),
       isActive: z.boolean().optional().describe("Active status (for update)"),
       ogTitle: z.string().nullable().optional().describe("OGP title override for the form's LIFF page preview, or null to clear (for update)"),
       ogDescription: z.string().nullable().optional().describe("OGP description override for the form's LIFF page preview, or null to clear (for update)"),
       ogImageUrl: z.string().nullable().optional().describe("OGP image URL override for the form's LIFF page preview, or null to clear (for update)"),
     },
-    async ({ action, formId, name, description, fields, onSubmitTagId, onSubmitScenarioId, onSubmitMessageType, onSubmitMessageContent, saveToMetadata, isActive, ogTitle, ogDescription, ogImageUrl }) => {
+    async ({ action, formId, name, description, fields, onSubmitTagId, onSubmitScenarioId, onSubmitMessageType, onSubmitMessageContent, sendSubmitMessage, onSubmitWebhookUrl, onSubmitWebhookHeaders, onSubmitWebhookFailMessage, saveToMetadata, isActive, ogTitle, ogDescription, ogImageUrl }) => {
       try {
         const client = getClient();
         if (action === "list") {
@@ -43,6 +47,10 @@ export function registerManageForms(server: McpServer): void {
           if (onSubmitScenarioId !== undefined) input.onSubmitScenarioId = onSubmitScenarioId;
           if (onSubmitMessageType !== undefined) input.onSubmitMessageType = onSubmitMessageType;
           if (onSubmitMessageContent !== undefined) input.onSubmitMessageContent = onSubmitMessageContent;
+          if (sendSubmitMessage !== undefined) input.sendSubmitMessage = sendSubmitMessage;
+          if (onSubmitWebhookUrl !== undefined) input.onSubmitWebhookUrl = onSubmitWebhookUrl;
+          if (onSubmitWebhookHeaders !== undefined) input.onSubmitWebhookHeaders = onSubmitWebhookHeaders;
+          if (onSubmitWebhookFailMessage !== undefined) input.onSubmitWebhookFailMessage = onSubmitWebhookFailMessage;
           if (saveToMetadata !== undefined) input.saveToMetadata = saveToMetadata;
           if (isActive !== undefined) input.isActive = isActive;
           if (ogTitle !== undefined) input.ogTitle = ogTitle;

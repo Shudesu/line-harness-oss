@@ -1,0 +1,1 @@
+ALTER TABLE forms ADD COLUMN send_submit_message INTEGER NOT NULL DEFAULT 1;
