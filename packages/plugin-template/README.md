@@ -2,6 +2,8 @@
 
 A template for building integrations that connect external services to L Harness.
 
+**開発用テンプレートです。** 外部APIはサンプルで、署名検証や通知のイベント単位の重複防止は実装が必要です。定期実行・通知・Webhook受付は初期状態では無効です。すぐに条件を変えて使いたい場合は[条件タグ付けプラグイン](../../examples/plugins/tag-rules/README.md)を選んでください。
+
 Use this as a starting point when building a plugin for services like MedicalForce, HotPepper, Shopify, or any other platform.
 
 ## What This Template Includes
@@ -20,7 +22,8 @@ Use this as a starting point when building a plugin for services like MedicalFor
 1. **Copy this template** into a new directory:
 
 ```bash
-cp -r packages/plugin-template packages/plugin-yourservice
+pnpm plugin:create ../plugin-yourservice integration
+cd ../plugin-yourservice
 ```
 
 2. **Rename** all occurrences of `MyService` / `myservice` to your service name.
@@ -31,10 +34,11 @@ cp -r packages/plugin-template packages/plugin-yourservice
 
 5. **Customize notifications** in `src/notify.ts` — define when and what messages to send.
 
-6. **Install dependencies**:
+6. **Install dependencies** (the generated project is independent of the main repository):
 
 ```bash
-pnpm install
+npm install
+npm run typecheck
 ```
 
 ## Configuration
@@ -58,6 +62,8 @@ wrangler secret put EXTERNAL_API_KEY
 ### Cron Schedule
 
 Edit `wrangler.toml` to change the sync frequency:
+
+Cron is disabled by default. Implement and test the external API before enabling it. Notification examples in `src/notify.ts` are not called until you explicitly wire them in; replace their illustrative friend-level dedup tags with event-level persistence and retry handling before use.
 
 ```toml
 [triggers]

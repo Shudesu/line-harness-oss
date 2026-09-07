@@ -2,6 +2,8 @@
 
 AI-native SDK for L Harness — programmatic LINE official account automation.
 
+独自の配信・自動処理・外部連携を作るなら、[プラグイン開発ガイド](../../docs/plugins/README.md)から始められます。本体とは別のリポジトリ・WorkerでSDKを使うことで、本体更新による独自ソースの上書きを避けられます。
+
 Replaces L社/U社 with a fully API-driven approach designed for AI agents (Claude Code).
 
 ## Install
