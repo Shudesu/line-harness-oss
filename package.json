@@ -16,6 +16,7 @@
     "url": "https://the-harness.com/noda-shuichi/"
   },
   "scripts": {
+    "plugin:create": "node examples/plugins/create-plugin.mjs",
     "dev:worker": "pnpm --filter worker dev",
     "dev:web": "pnpm --filter web dev",
     "build": "pnpm -r build",

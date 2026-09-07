@@ -333,6 +333,10 @@ export default function DashboardPage() {
       <DeliveryHealthSection />
 
       <FriendAddLinkCard />
+      <Link href="/plugins" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-5 transition-colors hover:bg-emerald-100">
+        <div><p className="text-xs font-semibold text-emerald-700">PLUGIN MARKET · BETA</p><p className="mt-1 font-bold text-gray-900">その数行を、あなたのプラグインに。</p><p className="mt-1 text-sm text-gray-600">配信・自動処理・外部連携を、本体の外へ。</p></div>
+        <span className="text-sm font-semibold text-emerald-800">マーケットを見る →</span>
+      </Link>
 
       {/* Demo banner */}
       <a

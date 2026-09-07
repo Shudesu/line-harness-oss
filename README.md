@@ -21,6 +21,26 @@ L Harness本体のソフトウェア利用料は **0円** です。LINE公式ア
 
 ---
 
+## プラグインマーケット β
+
+**その数行を、あなたのプラグインに。** 配信ルール・自動処理・外部サービス連携を、本体とは別のリポジトリ・Workerへ切り出せます。本体更新による独自コードの上書きを避けながら、SDKを通じて機能を拡張します。
+
+管理画面の「プラグインマーケット」から拡張と開発リソースを探せます。β版は導入ガイド付きのカタログで、各プラグインを個別にセットアップする方式です。
+
+- [開発ガイド・ひな形の作成](docs/plugins/README.md)
+- [公式プラグイン第1弾：条件タグ付け](examples/plugins/tag-rules/README.md)
+- [マーケットへの掲載申請](https://github.com/Shudesu/line-harness-oss/issues/new?template=plugin-submission.yml)
+- [アップデートニュース原稿](docs/release-notes/plugin-market-beta.md)
+
+```bash
+# 本体リポジトリのルートで実行（Node.js 22以上）
+pnpm plugin:create ../my-plugin
+```
+
+独自ソースが上書きされないことと、API互換性は別です。本体・SDKを更新するときは、テスト環境で接続を確認してください。
+
+---
+
 ## 公式情報・検証資料
 
 L Harnessの表示名、開発者、運営法人、公開コード、研究資料の関係は以下を正本とします。各Researchサイトは開発元が運営する一次情報であり、独立した第三者レビューではありません。

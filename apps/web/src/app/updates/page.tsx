@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { getApiBase } from '@/lib/api-base'
 import { Badge } from '@cloudflare/kumo/components/badge'
 import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
@@ -73,6 +74,7 @@ export default function UpdatesPage() {
   return (
     <div className="max-w-3xl mx-auto p-6">
       <h1 className="text-xl font-semibold mb-4">アップデート履歴</h1>
+      <Link href="/news" className="mb-6 block rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">新機能を知る：アップデートニュース →</Link>
       {state.kind === 'loading' && <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>}
       {state.kind === 'unconfigured' && (
         <Banner className="mb-4" variant="secondary" title="自動アップデートは未構成">

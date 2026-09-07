@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "line-harness-plugin-tag-rules",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // 検証後に ["0 * * * *"] にすると毎時実行。初期状態では定期実行しません。
+  "triggers": { "crons": [] },
+  "vars": {
+    "LINE_HARNESS_API_URL": "https://your-line-harness.example.com",
+    "LINE_ACCOUNT_ID": "",
+    "TARGET_TAG_ID": "",
+    "DRY_RUN": "true"
+  }
+}
