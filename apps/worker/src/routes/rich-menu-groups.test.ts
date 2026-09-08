@@ -255,6 +255,60 @@ describe('POST /api/rich-menu-groups', () => {
     expect(res.status).toBe(400);
   });
 
+  test('rejects message action with empty text', async () => {
+    const app = setupApp();
+    const res = await app.request('/api/rich-menu-groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: 'a', name: 'x', chatBarText: 'x', size: 'large',
+        pages: [{ name: 'p1', orderIndex: 0, areas: [
+          { boundsX: 0, boundsY: 0, boundsWidth: 1, boundsHeight: 1,
+            actionType: 'message', actionData: { text: '' } },
+        ] }],
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/text/i);
+  });
+
+  test('rejects uri action with invalid url', async () => {
+    const app = setupApp();
+    const res = await app.request('/api/rich-menu-groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: 'a', name: 'x', chatBarText: 'x', size: 'large',
+        pages: [{ name: 'p1', orderIndex: 0, areas: [
+          { boundsX: 0, boundsY: 0, boundsWidth: 1, boundsHeight: 1,
+            actionType: 'uri', actionData: { uri: 'not-a-url' } },
+        ] }],
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/uri/i);
+  });
+
+  test('rejects postback action with empty data', async () => {
+    const app = setupApp();
+    const res = await app.request('/api/rich-menu-groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: 'a', name: 'x', chatBarText: 'x', size: 'large',
+        pages: [{ name: 'p1', orderIndex: 0, areas: [
+          { boundsX: 0, boundsY: 0, boundsWidth: 1, boundsHeight: 1,
+            actionType: 'postback', actionData: { data: '' } },
+        ] }],
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/data/i);
+  });
+
   test('forwards parsed input to createRichMenuGroup', async () => {
     dbMocks.createRichMenuGroup.mockResolvedValue({
       id: 'new-1', account_id: 'a', name: 'x', chat_bar_text: 'x', size: 'large',

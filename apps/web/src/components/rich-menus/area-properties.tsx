@@ -103,9 +103,13 @@ export function AreaProperties({ area, pages, onUpdate, onDelete }: Props) {
             placeholder="https://..."
             className="mt-0.5 block w-full border border-gray-300 rounded px-2 py-1 text-sm"
           />
-          <p className="mt-1 text-[11px] text-gray-500">
-            LINE 配信用 URL は tracked link (短縮 URL) 経由を推奨。
-          </p>
+          {!(data.uri as string)?.trim() ? (
+            <p className="mt-1 text-[11px] text-red-600">URL は必須です（未入力のままだと登録時にエラーになります）</p>
+          ) : (
+            <p className="mt-1 text-[11px] text-gray-500">
+              LINE 配信用 URL は tracked link (短縮 URL) 経由を推奨。
+            </p>
+          )}
         </label>
       )}
 
@@ -117,6 +121,9 @@ export function AreaProperties({ area, pages, onUpdate, onDelete }: Props) {
             onChange={(e) => onUpdate({ actionData: { ...data, text: e.target.value } })}
             className="mt-0.5 block w-full border border-gray-300 rounded px-2 py-1 text-sm"
           />
+          {!(data.text as string)?.trim() && (
+            <p className="mt-1 text-[11px] text-red-600">送信テキストは必須です（未入力のままだと登録時にエラーになります）</p>
+          )}
         </label>
       )}
 
@@ -129,6 +136,9 @@ export function AreaProperties({ area, pages, onUpdate, onDelete }: Props) {
               onChange={(e) => onUpdate({ actionData: { ...data, data: e.target.value } })}
               className="mt-0.5 block w-full border border-gray-300 rounded px-2 py-1 text-sm"
             />
+            {!(data.data as string)?.trim() && (
+              <p className="mt-1 text-[11px] text-red-600">postback data は必須です（未入力のままだと登録時にエラーになります）</p>
+            )}
           </label>
           <label className="block">
             <span className="text-xs text-gray-500">displayText (任意)</span>

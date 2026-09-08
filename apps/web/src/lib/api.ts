@@ -151,16 +151,22 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /**
  * Non-2xx API responses. message keeps the legacy `API error: <status>` shape
- * (existing catch blocks render e.message), while `status` lets callers
- * branch on the code without parsing the string.
+ * as a fallback (existing catch blocks render e.message), but prefers the
+ * server's own `{ success: false, error: "..." }` body when present, so the
+ * real cause (e.g. a LINE API rejection) reaches the UI instead of being
+ * discarded. `status` lets callers branch on the code without parsing the
+ * string.
  */
 export class ApiError extends Error {
   readonly status: number
+  /** Raw `error` string from the server's JSON body, when it had one. */
+  readonly serverMessage: string | null
 
-  constructor(status: number) {
-    super(`API error: ${status}`)
+  constructor(status: number, serverMessage: string | null = null) {
+    super(serverMessage || `API error: ${status}`)
     this.name = 'ApiError'
     this.status = status
+    this.serverMessage = serverMessage
   }
 }
 
@@ -181,7 +187,21 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
       ...options?.headers,
     },
   })
-  if (!res.ok) throw new ApiError(res.status)
+  if (!res.ok) {
+    // Best-effort: most routes return `{ success: false, error: "..." }`.
+    // Body may be missing/non-JSON (e.g. an uncaught exception hitting
+    // Hono's default handler) — fall back to the generic status message.
+    let serverMessage: string | null = null
+    try {
+      const body = await res.clone().json()
+      if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+        serverMessage = (body as { error: string }).error
+      }
+    } catch {
+      // non-JSON body — ignore, fall back to generic message
+    }
+    throw new ApiError(res.status, serverMessage)
+  }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }

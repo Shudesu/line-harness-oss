@@ -104,6 +104,10 @@ function parseAreaInput(raw: unknown): Parsed<RichMenuAreaInput> {
   if (!r.actionData || typeof r.actionData !== 'object') {
     return { ok: false, error: 'area.actionData must be object' };
   }
+  const actionType = r.actionType as RichMenuAreaInput['actionType'];
+  const actionData = r.actionData as Record<string, unknown>;
+  const actionDataError = validateActionData(actionType, actionData);
+  if (actionDataError) return { ok: false, error: actionDataError };
   return {
     ok: true,
     value: {
@@ -111,10 +115,61 @@ function parseAreaInput(raw: unknown): Parsed<RichMenuAreaInput> {
       boundsY: r.boundsY as number,
       boundsWidth: r.boundsWidth as number,
       boundsHeight: r.boundsHeight as number,
-      actionType: r.actionType as RichMenuAreaInput['actionType'],
-      actionData: r.actionData as Record<string, unknown>,
+      actionType,
+      actionData,
     },
   };
+}
+
+// area.actionData の中身をアクション種別ごとに検証する。
+// これを怠ると空文字等が LINE API にそのまま渡り、publish 時に LINE 側の
+// 400 として初めて失敗が判明する (原因が publish 失敗のログに紛れて追いにくい)。
+// ここで弾いておけば保存時点でユーザーにわかりやすいエラーを返せる。
+function validateActionData(
+  actionType: RichMenuAreaInput['actionType'],
+  data: Record<string, unknown>,
+): string | null {
+  switch (actionType) {
+    case 'message': {
+      const text = data.text;
+      if (typeof text !== 'string' || text.trim().length === 0) {
+        return 'action.text (送信テキスト) は必須です';
+      }
+      if (text.length > 300) {
+        return 'action.text (送信テキスト) は300文字以内で入力してください';
+      }
+      return null;
+    }
+    case 'uri': {
+      const uri = data.uri;
+      if (typeof uri !== 'string' || uri.trim().length === 0) {
+        return 'action.uri (URL) は必須です';
+      }
+      try {
+        const parsed = new URL(uri);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return 'action.uri (URL) は http(s):// 形式で入力してください';
+        }
+      } catch {
+        return 'action.uri (URL) の形式が正しくありません';
+      }
+      return null;
+    }
+    case 'postback': {
+      const postbackData = data.data;
+      if (typeof postbackData !== 'string' || postbackData.trim().length === 0) {
+        return 'action.data (postback data) は必須です';
+      }
+      return null;
+    }
+    case 'richmenuswitch': {
+      const targetPageId = data.targetPageId;
+      if (typeof targetPageId !== 'string' || targetPageId.trim().length === 0) {
+        return 'action.targetPageId (遷移先ページ) を選択してください';
+      }
+      return null;
+    }
+  }
 }
 
 function parsePageInput(raw: unknown): Parsed<RichMenuPageInput> {
