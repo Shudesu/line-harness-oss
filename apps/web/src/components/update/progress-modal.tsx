@@ -1,15 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { openUpdateStream, getUpdateStatus } from '@/lib/update-client'
 import type { UpdateEvent } from '@line-harness/update-engine'
-import { Button } from '@cloudflare/kumo/components/button'
+import { buildProgressRows } from './progress-rows'
+import { ProgressModalView, type UpdateFinalState } from './progress-modal-view'
 
 /**
  * ProgressModal — live timeline for an in-flight update.
  *
  * Subscribes to `GET /admin/update/stream/:id` (SSE) via the update-client
- * helper and renders each `progress` event as a row. When a `complete` frame
+ * helper and groups `progress` events into phase rows and migration details. When a `complete` frame
  * lands the modal pivots to a terminal panel (success / rolled_back / failed)
  * with a 閉じる button that calls `onClose`.
  *
@@ -29,10 +30,7 @@ import { Button } from '@cloudflare/kumo/components/button'
  * cannot reschedule itself after unmount (avoids the "set state after
  * unmount" warning + a timer leak on fast modal close).
  */
-interface FinalState {
-  status: 'success' | 'rolled_back' | 'failed'
-  error: string | null
-}
+type FinalState = UpdateFinalState
 
 export function ProgressModal({
   updateId,
@@ -41,9 +39,11 @@ export function ProgressModal({
   updateId: string
   onClose: () => void
 }) {
+  const titleId = useId()
   const [events, setEvents] = useState<UpdateEvent[]>([])
   const [final, setFinal] = useState<FinalState | null>(null)
   const [mode, setMode] = useState<'sse' | 'polling'>('sse')
+  const rows = useMemo(() => buildProgressRows(events), [events])
 
   useEffect(() => {
     let es: EventSource | null = null
@@ -114,88 +114,5 @@ export function ProgressModal({
     }
   }, [updateId])
 
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-        <h2 className="text-lg font-semibold mb-3">
-          アップデート中{' '}
-          {mode === 'polling' && (
-            <span className="text-xs text-gray-500">(polling)</span>
-          )}
-        </h2>
-        <ul className="space-y-1 font-mono text-sm">
-          {events.length === 0 && (
-            <li className="text-gray-500">接続中...</li>
-          )}
-          {events.map((e, i) => (
-            <li key={i} className="flex items-center gap-2">
-              <span className="w-5 inline-block">{iconFor(e.status)}</span>
-              <span>
-                {labelFor(e.step)}
-                {e.name ? ` — ${e.name}` : ''}
-                {e.error ? ` (${e.error})` : ''}
-              </span>
-            </li>
-          ))}
-        </ul>
-        {final && (
-          <div className="mt-4 p-3 rounded bg-gray-50">
-            {final.status === 'success' && (
-              <p className="text-green-700 font-semibold">完了しました 🎉</p>
-            )}
-            {final.status === 'rolled_back' && (
-              <p className="text-amber-700">
-                失敗。前バージョンに復旧済み。
-                {final.error && (
-                  <span className="block text-xs mt-1 text-gray-600">
-                    {final.error}
-                  </span>
-                )}
-              </p>
-            )}
-            {final.status === 'failed' && (
-              <p className="text-red-700">
-                失敗 + 復旧失敗。手動対応が必要です。
-                {final.error && (
-                  <span className="block text-xs mt-1 text-gray-600">
-                    {final.error}
-                  </span>
-                )}
-              </p>
-            )}
-            <Button
-              type="button"
-              onClick={onClose}
-              className="mt-3"
-              size="sm"
-              variant="secondary"
-            >
-              閉じる
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function iconFor(s: UpdateEvent['status']): string {
-  if (s === 'done') return '✓'
-  if (s === 'running') return '⏳'
-  if (s === 'failed') return '✗'
-  return '○'
-}
-
-function labelFor(step: UpdateEvent['step']): string {
-  const map: Record<UpdateEvent['step'], string> = {
-    preflight: 'Pre-flight',
-    migration: 'Migration',
-    worker: 'Worker デプロイ',
-    admin: 'Admin デプロイ',
-    liff: 'LIFF デプロイ',
-    verify: 'ヘルスチェック',
-    rollback: 'Rollback',
-    complete: '完了',
-  }
-  return map[step] ?? step
+  return <ProgressModalView rows={rows} final={final} mode={mode} titleId={titleId} onClose={onClose} />
 }
