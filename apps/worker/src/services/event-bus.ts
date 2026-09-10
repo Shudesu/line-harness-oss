@@ -22,6 +22,7 @@ import {
 import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
+import { keywordMatches } from './keyword-match.js';
 import {
   claimTagEffects,
   createTagAutomationDispatch,
@@ -191,7 +192,7 @@ async function processAutomations(
       const actions = JSON.parse(automation.actions) as Array<{ type: string; params: Record<string, string> }>;
 
       // 条件チェック（簡易版: 条件が空なら常にマッチ）
-      if (!matchConditions(conditions, payload)) continue;
+      if (!matchConditions(conditions, payload, eventType)) continue;
 
       const results: Array<{ action: string; success: boolean; error?: string }> = [];
 
@@ -225,6 +226,7 @@ async function processAutomations(
 function matchConditions(
   conditions: Record<string, unknown>,
   payload: EventPayload,
+  eventType: string,
 ): boolean {
   // 条件が空 → 常にマッチ
   if (Object.keys(conditions).length === 0) return true;
@@ -245,16 +247,20 @@ function matchConditions(
   // keyword チェック（message_received / postback_received イベント用）
   if (conditions.keyword !== undefined && payload.eventData) {
     const text = payload.eventData.text as string | undefined;
-    if (!text || !text.includes(conditions.keyword as string)) return false;
+    if (!text) return false;
+    // Only human message text shares auto-reply/inbox normalization. Postback
+    // data is opaque, and event payloads/logs must retain the original input.
+    if (eventType === 'message_received' && typeof conditions.keyword === 'string') {
+      if (!keywordMatches({ keyword: conditions.keyword, match_type: 'contains' }, text, { normalizeText: true })) return false;
+    } else if (!text.includes(conditions.keyword as string)) return false;
   }
 
   // keyword_exact（完全一致）
   if (conditions.keyword_exact) {
     const rawText = payload.eventData?.text as string | undefined;
-    const text = (rawText || '').trim();
-    if (text !== conditions.keyword_exact) {
-      return false;
-    }
+    if (eventType === 'message_received' && typeof conditions.keyword_exact === 'string') {
+      if (!keywordMatches({ keyword: conditions.keyword_exact, match_type: 'exact' }, rawText || '', { normalizeText: true })) return false;
+    } else if ((rawText || '').trim() !== conditions.keyword_exact) return false;
   }
 
   return true;
