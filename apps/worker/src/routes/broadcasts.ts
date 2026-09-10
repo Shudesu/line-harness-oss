@@ -1154,7 +1154,10 @@ broadcasts.post('/api/broadcasts/:id/test-send', async (c) => {
     let tracked = { messageType: broadcast.message_type as string, content: messageContent };
     if (broadcast.track_links !== 0) {
       const { autoTrackContent } = await import('../services/auto-track.js');
-      tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, c.env.WORKER_URL, {
+      // Self-hosted installs may omit WORKER_URL. Use the request URL, never
+      // the caller-controlled Origin header, for the Worker's tracking base.
+      const trackWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+      tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, trackWorkerUrl, {
         lineAccountId: accountId,
       });
     }
