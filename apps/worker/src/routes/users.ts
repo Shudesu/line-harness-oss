@@ -12,6 +12,7 @@ import {
 } from '@line-crm/db';
 import type { User as DbUser } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { requireRole } from '../middleware/role-guard.js';
 
 const users = new Hono<Env>();
 
@@ -28,7 +29,7 @@ function serializeUser(row: DbUser) {
 }
 
 // GET /api/users - list all
-users.get('/api/users', async (c) => {
+users.get('/api/users', requireRole('owner', 'admin'), async (c) => {
   try {
     const items = await getUsers(c.env.DB);
     return c.json({ success: true, data: items.map(serializeUser) });
@@ -39,9 +40,9 @@ users.get('/api/users', async (c) => {
 });
 
 // GET /api/users/:id - get single
-users.get('/api/users/:id', async (c) => {
+users.get('/api/users/:id', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const user = await getUserById(c.env.DB, id);
     if (!user) {
       return c.json({ success: false, error: 'User not found' }, 404);
@@ -54,7 +55,7 @@ users.get('/api/users/:id', async (c) => {
 });
 
 // POST /api/users - create
-users.post('/api/users', async (c) => {
+users.post('/api/users', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json<{
       email?: string | null;
@@ -72,9 +73,9 @@ users.post('/api/users', async (c) => {
 });
 
 // PUT /api/users/:id - update
-users.put('/api/users/:id', async (c) => {
+users.put('/api/users/:id', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const body = await c.req.json<{
       email?: string | null;
       phone?: string | null;
@@ -100,9 +101,9 @@ users.put('/api/users/:id', async (c) => {
 });
 
 // DELETE /api/users/:id - delete
-users.delete('/api/users/:id', async (c) => {
+users.delete('/api/users/:id', requireRole('owner', 'admin'), async (c) => {
   try {
-    await deleteUser(c.env.DB, c.req.param('id'));
+    await deleteUser(c.env.DB, c.req.param('id')!);
     return c.json({ success: true, data: null });
   } catch (err) {
     console.error('DELETE /api/users/:id error:', err);
@@ -111,9 +112,9 @@ users.delete('/api/users/:id', async (c) => {
 });
 
 // POST /api/users/:id/link - link friend to user UUID
-users.post('/api/users/:id/link', async (c) => {
+users.post('/api/users/:id/link', requireRole('owner', 'admin'), async (c) => {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const body = await c.req.json<{ friendId: string }>();
 
     if (!body.friendId) {
@@ -129,9 +130,9 @@ users.post('/api/users/:id/link', async (c) => {
 });
 
 // GET /api/users/:id/accounts - get all linked friends/accounts
-users.get('/api/users/:id/accounts', async (c) => {
+users.get('/api/users/:id/accounts', requireRole('owner', 'admin'), async (c) => {
   try {
-    const userId = c.req.param('id');
+    const userId = c.req.param('id')!;
     const friends = await getUserFriends(c.env.DB, userId);
     return c.json({
       success: true,
@@ -149,7 +150,7 @@ users.get('/api/users/:id/accounts', async (c) => {
 });
 
 // POST /api/users/match - find user by email or phone
-users.post('/api/users/match', async (c) => {
+users.post('/api/users/match', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json<{ email?: string; phone?: string }>();
     let user = null;
