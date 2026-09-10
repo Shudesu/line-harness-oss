@@ -1,0 +1,91 @@
+name: Core Safety CI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/worker/**'
+      - 'packages/create-line-harness/**'
+      - 'packages/db/**'
+      - 'packages/update-engine/**'
+      - 'packages/shared/**'
+      - 'packages/line-sdk/**'
+      - 'scripts/check-migrations.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/core-safety-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/worker/**'
+      - 'packages/create-line-harness/**'
+      - 'packages/db/**'
+      - 'packages/update-engine/**'
+      - 'packages/shared/**'
+      - 'packages/line-sdk/**'
+      - 'scripts/check-migrations.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/core-safety-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-safety-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @line-crm/shared --filter @line-crm/line-sdk --filter @line-harness/update-engine build
+      - run: pnpm --filter worker typecheck
+      - run: pnpm --filter worker test
+      - run: pnpm --filter worker build
+
+  setup-and-upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Upgrade tests read old database schemas from tags. Some historical
+      # tags exist only in the public repository, including for private CI.
+      - name: Ensure historical schema fixtures are available
+        run: |
+          set -euo pipefail
+          for tag in v0.14.1 v0.15.0 v0.16.0 v0.17.0 v0.18.0 v0.18.1; do
+            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              git fetch --depth=1 --no-tags https://github.com/Shudesu/line-harness-oss.git "refs/tags/$tag:refs/tags/$tag"
+            fi
+          done
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @line-harness/update-engine build
+      - run: pnpm --filter @line-crm/db test
+      - run: pnpm --filter @line-crm/db typecheck
+      - run: pnpm --filter @line-harness/update-engine test
+      - run: pnpm --filter @line-harness/update-engine typecheck
+      - run: pnpm --filter create-line-harness test
+      - run: pnpm --filter create-line-harness build
+      - run: pnpm --filter create-line-harness exec tsc --noEmit
+      - run: pnpm exec tsx scripts/check-migrations.ts
+      - run: node packages/db/scripts/generate-bootstrap.mjs --check

@@ -1,6 +1,9 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { readFileSync, writeFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
+import {
+  readFileSync, writeFileSync, existsSync, rmSync, unlinkSync,
+  chmodSync, openSync, closeSync, fchmodSync, ftruncateSync, constants,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -79,9 +82,12 @@ function getStatePath(repoDir: string): string {
   return join(repoDir, ".line-harness-setup.json");
 }
 
-function loadState(repoDir: string): SetupState {
+export function loadState(repoDir: string): SetupState {
   const path = getStatePath(repoDir);
   if (existsSync(path)) {
+    // Older CLI versions left credentials readable by other local users.
+    // Fail before setup if these permissions cannot be repaired.
+    chmodSync(path, 0o600);
     try {
       return JSON.parse(readFileSync(path, "utf-8"));
     } catch {
@@ -91,8 +97,18 @@ function loadState(repoDir: string): SetupState {
   return { completedSteps: [] };
 }
 
-function saveState(repoDir: string, state: SetupState): void {
-  writeFileSync(getStatePath(repoDir), JSON.stringify(state, null, 2) + "\n");
+export function saveState(repoDir: string, state: SetupState): void {
+  const content = JSON.stringify(state, null, 2) + "\n";
+  const fd = openSync(getStatePath(repoDir), constants.O_WRONLY | constants.O_CREAT, 0o600);
+  try {
+    // The open mode only applies to newly created files. Secure an existing
+    // file before truncating it or writing any new credentials.
+    fchmodSync(fd, 0o600);
+    ftruncateSync(fd, 0);
+    writeFileSync(fd, content);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function removeStateFile(repoDir: string): void {
