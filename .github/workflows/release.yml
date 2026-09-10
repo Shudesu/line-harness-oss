@@ -223,6 +223,7 @@ jobs:
           cat > release-entry.json <<JSON
           {
             "version": "${{ steps.version.outputs.version }}",
+            "legacy_mileage_projection_version": 1,
             "released_at": "${{ steps.hashes.outputs.released_at }}",
             "worker_hash": "${{ steps.hashes.outputs.worker_hash }}",
             "worker_bundle_hash": "${{ steps.bundlehash.outputs.worker_bundle_hash }}",

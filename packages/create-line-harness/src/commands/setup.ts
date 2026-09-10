@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { checkDeps } from "../steps/check-deps.js";
 import { ensureAuth, getAccountId } from "../steps/auth.js";
 import { promptLineCredentials } from "../steps/prompt.js";
-import { createDatabase } from "../steps/database.js";
+import { assertSetupMileageHandoffCompatible, createDatabase, readSourceLegacyMileageProjectionVersion } from "../steps/database.js";
 import { deployWorker, syncInstalledWorkerConfig } from "../steps/deploy-worker.js";
 import { ensureWorkersDevSubdomain } from "../steps/ensure-subdomain.js";
 import { deployAdmin } from "../steps/deploy-admin.js";
@@ -564,8 +564,14 @@ async function runSetupInner(
   }
 
   // Step 7: Create D1 database + run migrations
+  const legacyMileageProjectionVersion = release
+    ? release.release.legacy_mileage_projection_version
+    : readSourceLegacyMileageProjectionVersion(repoDir);
   if (!isDone(state, "database")) {
-    const { databaseId, databaseName } = await createDatabase(repoDir, state.projectName!);
+    const { databaseId, databaseName } = await createDatabase(repoDir, state.projectName!, {
+      accountId: state.accountId,
+      legacyMileageProjectionVersion,
+    });
     state.d1DatabaseId = databaseId;
     state.d1DatabaseName = databaseName;
     // Now that the real D1 ID is known, finish patching wrangler.toml so
@@ -582,6 +588,16 @@ async function runSetupInner(
     }
     p.log.success(`D1 データベース: 作成済み（${state.d1DatabaseId}）`);
   }
+
+  // Completion flags can come from a compatible source install while this run
+  // selects an older bundle. Read the remaining handoff even when DB is done,
+  // before either initial Worker deployment or later Worker config syncing.
+  await assertSetupMileageHandoffCompatible({
+    databaseId: state.d1DatabaseId!,
+    databaseName: state.d1DatabaseName!,
+    accountId: state.accountId,
+    legacyMileageProjectionVersion,
+  });
 
   // Step 8: Create R2 bucket for image uploads
   const r2BucketName = `${state.projectName}-images`;

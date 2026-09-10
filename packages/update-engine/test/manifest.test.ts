@@ -74,15 +74,29 @@ describe('fetchManifest', () => {
     );
   });
 
+  it('accepts schema 2 while keeping schema 1 releases readable', async () => {
+    const manifest: Manifest = { ...sampleManifest(), schema_version: 2 };
+    manifest.releases[2].legacy_mileage_projection_version = 1;
+    vi.mocked(globalThis.fetch).mockResolvedValue({ ok: true, json: async () => manifest } as Response);
+    expect(await fetchManifest('https://example.com/manifest.json')).toEqual(manifest);
+  });
+
+  it('does not allow handoff releases to masquerade as old-engine-compatible schema 1', async () => {
+    const manifest = sampleManifest();
+    manifest.releases[2].legacy_mileage_projection_version = 1;
+    vi.mocked(globalThis.fetch).mockResolvedValue({ ok: true, json: async () => manifest } as Response);
+    await expect(fetchManifest('https://example.com/manifest.json')).rejects.toThrow('requires manifest schema_version 2');
+  });
+
   it('throws on unsupported schema_version', async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ schema_version: 2, latest: '1.0.0', releases: [] }),
+      json: async () => ({ schema_version: 3, latest: '1.0.0', releases: [] }),
     } as Response);
 
     await expect(fetchManifest('https://example.com/manifest.json')).rejects.toThrow(
-      /unsupported manifest schema_version 2/,
+      /unsupported manifest schema_version 3/,
     );
   });
 });

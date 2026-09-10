@@ -694,6 +694,7 @@ export async function runUpdate(
     creds,
     d1DatabaseId: cfg.d1DatabaseId,
     names: upgrade.migrations,
+    legacyMileageProjectionVersion: upgrade.legacy_mileage_projection_version,
     bundle,
     s,
   });
@@ -854,12 +855,14 @@ async function applyMigrations(opts: {
   s: Spinner;
   /** adoption 専用: 破壊的な旧世代 migration を probe + 記録のみで通す (エンジン側 doc 参照)。 */
   adoptGrandfathered?: boolean;
+  legacyMileageProjectionVersion?: 1;
 }): Promise<void> {
   const { creds, d1DatabaseId, names, bundle, s } = opts;
   try {
     await applyD1Migrations({
       creds,
       adoptGrandfathered: opts.adoptGrandfathered,
+      legacyMileageProjectionVersion: opts.legacyMileageProjectionVersion,
       databaseId: d1DatabaseId,
       names,
       migrations: bundle.migrations,
@@ -1240,6 +1243,7 @@ async function runAdoption(opts: {
     bundle,
     s,
     adoptGrandfathered: true,
+    legacyMileageProjectionVersion: target.legacy_mileage_projection_version,
   });
 
   await deployWorkerFromBundle(creds, cfg, bundle, s);

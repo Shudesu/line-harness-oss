@@ -84,6 +84,20 @@ describe('updateManifest', () => {
     ).toThrow(/release 0\.8\.0 already exists in manifest/);
   });
 
+  it('gates handoff releases from old engines without discarding existing release history', () => {
+    const oldRelease = makeEntry('0.24.0');
+    updateManifest({ manifestPath, release: oldRelease });
+    const compatible = makeEntry('0.24.1', { legacy_mileage_projection_version: 1 });
+    updateManifest({ manifestPath, release: compatible });
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest;
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.releases).toEqual([compatible, oldRelease]);
+    // The released schema-1 reader checks this before any migration work.
+    expect(manifest.schema_version === 1).toBe(false);
+    updateManifest({ manifestPath, release: makeEntry('0.24.2') });
+    expect(JSON.parse(readFileSync(manifestPath, 'utf8')).schema_version).toBe(2);
+  });
+
   it('writes pretty-printed, parseable JSON output', () => {
     const release = makeEntry('0.8.0');
     updateManifest({ manifestPath, release });
@@ -121,11 +135,11 @@ describe('updateManifest', () => {
   it('throws on unsupported schema_version', () => {
     writeFileSync(
       manifestPath,
-      JSON.stringify({ schema_version: 2, latest: '0.7.0', releases: [] }, null, 2),
+      JSON.stringify({ schema_version: 3, latest: '0.7.0', releases: [] }, null, 2),
     );
 
     expect(() => updateManifest({ manifestPath, release: makeEntry('0.8.0') })).toThrow(
-      /unsupported manifest schema_version: 2/,
+      /unsupported manifest schema_version: 3/,
     );
   });
 });

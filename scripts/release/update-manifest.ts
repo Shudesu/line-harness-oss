@@ -37,12 +37,13 @@ export interface ReleaseEntry {
   required_secrets: string[];
   new_required_secrets: string[];
   migrations: string[];
+  legacy_mileage_projection_version?: 1;
   changelog_url: string;
   min_from_version: string;
 }
 
 export interface Manifest {
-  schema_version: 1;
+  schema_version: 1 | 2;
   latest: string;
   releases: ReleaseEntry[];
 }
@@ -54,13 +55,24 @@ export function updateManifest(opts: { manifestPath: string; release: ReleaseEnt
     ? (JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest)
     : { schema_version: 1, latest: release.version, releases: [] };
 
-  if (manifest.schema_version !== 1) {
+  if (manifest.schema_version !== 1 && manifest.schema_version !== 2) {
     throw new Error(`unsupported manifest schema_version: ${manifest.schema_version}`);
   }
 
   if (manifest.releases.some((r) => r.version === release.version)) {
     throw new Error(`release ${release.version} already exists in manifest`);
   }
+
+  if (release.legacy_mileage_projection_version !== undefined &&
+      release.legacy_mileage_projection_version !== 1) {
+    throw new Error('unsupported legacy_mileage_projection_version');
+  }
+  // Old schema-1 engines otherwise ignore the new capability and execute
+  // 062/063's unsafe SQL. Schema 2 deliberately makes them stop before D1;
+  // the compatible CLI must be published before this manifest is released.
+  if (release.legacy_mileage_projection_version === 1 || manifest.releases.some(
+    entry => entry.legacy_mileage_projection_version === 1,
+  )) manifest.schema_version = 2;
 
   manifest.releases = [release, ...manifest.releases];
   manifest.latest = release.version;

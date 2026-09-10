@@ -104,6 +104,18 @@ describe('executeD1Query', () => {
     expect(body.params).toEqual(['one', 2, true]);
   });
 
+  it.each([
+    { success: false, result: [] },
+    { success: true, result: [{ success: false, error: 'sensitive SQL data' }] },
+    { success: true, result: null },
+  ])('rejects an unsuccessful SQL envelope even with HTTP 200', async (body) => {
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true, status: 200, json: async () => body,
+    } as Response);
+    await expect(executeD1Query({ creds, databaseId: 'db', sql: 'SELECT 1' }))
+      .rejects.toThrow('D1 query returned an unsuccessful SQL result');
+  });
+
   it('defaults params to [] when not provided', async () => {
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValue({
