@@ -461,7 +461,7 @@ export default function ChatsPage() {
   // Previously fetched 800 friends in parallel with chats, which blocked the initial render.
   const loadAllFriends = useCallback(async () => {
     try {
-      const friendRes = await api.friends.list({ accountId: selectedAccountId || undefined, limit: '800' })
+      const friendRes = await api.friends.list({ accountId: selectedAccountId || undefined, limit: '800', includeTags: false })
       if (friendRes.success) {
         setAllFriends((friendRes.data as unknown as { items: FriendItem[] }).items)
       }
