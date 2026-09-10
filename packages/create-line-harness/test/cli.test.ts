@@ -66,6 +66,7 @@ describe("CLI help and invalid arguments", () => {
     ["update", "-h"],
     ["--help", "update", "--repair-admin", "--repo-dir", "./missing"],
     ["--repo-dir", "./missing", "--from-source", "setup", "-h"],
+    ["setup", "--release", "0.24.1", "--help"],
   ])("prints help without loading commands or touching directories: %j", async (...args) => {
     expect(await runCli(args)).toBe(0);
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining("Usage:"));
@@ -93,6 +94,16 @@ describe("CLI help and invalid arguments", () => {
     ["setup", "--repair-admin"],
     ["update", "--from-source"],
     ["update", "--repair-admin", "--repair-admin"],
+    ["--release"],
+    ["--release", ""],
+    ["--release", "--help"],
+    ["--release", "latest"],
+    ["--release", "v0.24.1"],
+    ["--release", "0.24.1-rc.1"],
+    ["--release", "00.24.1"],
+    ["--release", "0.24.1", "--release", "0.24.2"],
+    ["--release", "0.24.1", "--from-source"],
+    ["update", "--release", "0.24.1"],
   ])("rejects malformed arguments before side effects: %j", async (...args) => {
     expect(await runCli(args)).toBe(1);
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Usage:"));
@@ -132,6 +143,16 @@ describe("supported commands and options", () => {
     expect(mocks.ensureRepo).not.toHaveBeenCalled();
     expect(mocks.existsSync).not.toHaveBeenCalled();
     expect(mocks.mkdirSync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["setup", "--release", "0.24.1", "--repo-dir", "./existing install"],
+    ["--release", "0.24.1", "--repo-dir", "./existing install"],
+  ])("passes an explicit setup release separately from command/version/help handling: %j", async (...args) => {
+    expect(await runCli(args)).toBe(0);
+    expect(mocks.ensureRepo).toHaveBeenCalledWith(resolve("./existing install"));
+    expect(mocks.runSetup).toHaveBeenCalledWith("/test/repo", { fromSource: false, releaseVersion: "0.24.1" });
+    expect(mocks.runUpdate).not.toHaveBeenCalled();
   });
 
   it("uses an existing cwd config for update", async () => {
