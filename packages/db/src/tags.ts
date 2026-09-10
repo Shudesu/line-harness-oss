@@ -237,6 +237,26 @@ export async function getFriendTags(
   return result.results;
 }
 
+/** Read tags only for an already-selected page. D1 allows 100 binds per query. */
+export async function getFriendTagsByIds(
+  db: D1Database,
+  friendIds: readonly string[],
+): Promise<Map<string, Tag[]>> {
+  const ids = [...new Set(friendIds)];
+  const byFriend = new Map<string, Tag[]>(ids.map((id) => [id, []]));
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const chunk = ids.slice(offset, offset + 100);
+    const result = await db.prepare(
+      `SELECT ft.friend_id, t.* FROM friend_tags ft
+       INNER JOIN tags t ON t.id = ft.tag_id
+       WHERE ft.friend_id IN (${chunk.map(() => '?').join(',')})
+       ORDER BY t.name ASC`,
+    ).bind(...chunk).all<Tag & { friend_id: string }>();
+    for (const { friend_id, ...tag } of result.results) byFriend.get(friend_id)?.push(tag);
+  }
+  return byFriend;
+}
+
 import type { Friend } from './friends';
 
 export async function getFriendsByTag(

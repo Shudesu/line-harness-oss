@@ -1255,7 +1255,7 @@ export const api = {
         minWaitMinutes?: number;
         page?: number;
         pageSize?: number;
-      }) => {
+      }, request?: Pick<RequestInit, 'signal'>) => {
         const p = new URLSearchParams();
         if (opts?.q) p.set('q', opts.q);
         if (opts?.account) p.set('account', opts.account);
@@ -1279,14 +1279,14 @@ export const api = {
             lastIncomingType: string;
             lastIncomingContent: string;
           }>;
-        }>>(`/api/inbox/unanswered${qs ? `?${qs}` : ''}`);
+        }>>(`/api/inbox/unanswered${qs ? `?${qs}` : ''}`, request);
       },
-      count: () =>
+      count: (request?: Pick<RequestInit, 'signal'>) =>
         fetchApi<ApiResponse<{
           total: number;
           byAccount: Array<{ accountId: string; accountName: string; count: number }>;
           oldestWaitMinutes: number | null;
-        }>>('/api/inbox/unanswered/count'),
+        }>>('/api/inbox/unanswered/count', request),
     },
   },
   richMenuGroups: {
