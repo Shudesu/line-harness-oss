@@ -192,3 +192,45 @@ credential.
   `Referrer-Policy: no-referrer` so the token does not leak onward.
 - The resulting session is indistinguishable from an API-key login, including
   CSRF handling and the 7-day cookie lifetime. `POST /api/auth/logout` ends it.
+
+
+## Troubleshooting: admin login fails with CORS
+
+An incomplete setup can leave `ADMIN_ORIGIN` unset, so a browser reports a
+missing `Access-Control-Allow-Origin` header even though the Worker is running.
+A value without an absolute URL scheme, such as `example-admin.pages.dev`, can
+produce the same symptom because no configured origin can be parsed.
+
+For a rejected HTTP(S) origin on an `/api/auth/*` route with an empty parsed
+allowlist, the Worker emits one structured warning:
+
+```json
+{"component":"admin-auth","code":"admin_origin_empty","message":"ADMIN_ORIGIN is empty. Set it to the admin URL; enable ADMIN_ALLOW_CROSS_SITE for the Pages/Workers topology. See docs/ADMIN-AUTH.md."}
+```
+
+`admin_origin_invalid` means the setting has a value but no entry parses as an
+origin; check that the admin URL includes `https://`. The log deliberately omits
+request origins, paths, and configuration values. Its fixed messages remain
+bounded and cannot include request-controlled line breaks or a secret pasted
+into the wrong setting.
+
+The diagnostic is limited to **one warning per loaded Worker module/isolate**,
+even if successive requests use different environment objects. It is advisory:
+an anonymous first auth probe may consume the warning before the operator opens
+logs, and a later request will not emit it again. Missing log output does not
+prove configuration is correct. The warning never changes the allowlist,
+cookie configuration, or the decision to reject a request.
+
+To investigate an existing installation, inspect Worker logs and whether the
+setting exists:
+
+```sh
+npx wrangler tail <worker-name>
+npx wrangler secret list --name <worker-name>
+```
+
+A listed secret name does not verify its value. Confirm the full admin origin
+and follow the topology instructions above. For the usual Pages/Workers setup,
+set `ADMIN_ORIGIN` to the actual admin URL and `ADMIN_ALLOW_CROSS_SITE` to `true`.
+Use secret settings so they survive redeploys; no diagnostic requires an
+immediate production redeploy just to produce a fresh log entry.
