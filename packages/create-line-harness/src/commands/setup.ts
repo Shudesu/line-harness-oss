@@ -21,6 +21,7 @@ import { setSecrets } from "../steps/secrets.js";
 import { assertAdminAuthConfigured, configureAdminAuth } from "../steps/admin-auth.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
 import { generateApiKey } from "../lib/crypto.js";
+import { assertSetupWranglerConfigSafe } from "../lib/wrangler-config-preservation.js";
 import { buildLineIdentitySql, quoteSqlString } from "../lib/line-account-sql.js";
 import { validateSetupReleaseVersion } from "../lib/setup-release.js";
 import {
@@ -374,6 +375,8 @@ export async function runSetup(
       `前回の途中から再開します（完了済み: ${state.completedSteps.join(", ")}）`,
     );
   }
+
+  await assertSetupWranglerConfigSafe(repoDir, state, options.fromSource);
 
   // Resume hygiene: a previous (possibly aborted) run may have left
   // wrangler.toml patched and cached the now-stale baseline in state.json.
