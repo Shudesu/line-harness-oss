@@ -14,7 +14,7 @@ vi.mock("@clack/prompts", () => ({
 }));
 vi.mock("../src/steps/check-deps.js", () => ({ checkDeps: vi.fn() }));
 vi.mock("../src/steps/auth.js", () => ({ ensureAuth: vi.fn(), getAccountId: vi.fn() }));
-vi.mock("../src/steps/clone-repo.js", () => ({ pinRepoToTag: vi.fn() }));
+vi.mock("../src/steps/clone-repo.js", () => ({ pinRepoToTag: vi.fn(), installRepoDeps: vi.fn() }));
 vi.mock("../src/steps/release-bundle.js", () => ({ fetchLatestRelease: vi.fn() }));
 vi.mock("../src/steps/ensure-subdomain.js", () => ({ ensureWorkersDevSubdomain: vi.fn() }));
 vi.mock("../src/steps/deploy-worker.js", () => ({
