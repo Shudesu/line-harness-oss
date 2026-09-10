@@ -131,7 +131,10 @@ export function browserPollingEnvironment(doc: Document, win: Window): PollingEn
       const activity = () => callback('activity')
       const visibility = () => callback('visibility')
       const resume = () => callback('resume')
-      const events = ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart'] as const
+      // Scroll events also come from layout shifts, anchor adjustment and
+      // scrollTo(). Only input events may extend the idle deadline; otherwise
+      // a refresh that adjusts scrolling could keep its own polling alive.
+      const events = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const
       for (const event of events) win.addEventListener(event, activity, { passive: true, capture: true })
       win.addEventListener('focus', activity)
       win.addEventListener(POLLING_RESUME_EVENT, resume)

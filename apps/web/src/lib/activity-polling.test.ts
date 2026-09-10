@@ -168,7 +168,7 @@ it('the browser event adapter observes visibility, activity, explicit resume and
   const env = browserPollingEnvironment(doc as unknown as Document, win as unknown as Window)
   const callback = vi.fn()
   const stop = env.subscribe(callback)
-  for (const event of ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart', 'focus']) win.dispatchEvent(new Event(event))
+  for (const event of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'focus']) win.dispatchEvent(new Event(event))
   doc.visibilityState = 'hidden'; doc.dispatchEvent(new Event('visibilitychange'))
   win.dispatchEvent(new Event(POLLING_RESUME_EVENT))
   expect(env.visible()).toBe(false)
@@ -194,4 +194,49 @@ it('one explicit resume wakes both mounted inbox and sidebar controllers exactly
   expect(loadInbox).toHaveBeenCalledTimes(inboxBefore + 1)
   expect(loadSidebar).toHaveBeenCalledTimes(sidebarBefore + 1)
   inbox.dispose(); sidebar.dispose()
+})
+
+it('programmatic scroll events after each refresh do not keep an unattended page polling', async () => {
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+  const win = new EventTarget()
+  const environment = browserPollingEnvironment(doc as unknown as Document, win as unknown as Window)
+  const load = vi.fn(async () => 'fresh')
+  const states: PollingState[] = []
+  const poller = createActivityPoller({
+    environment, intervalMs: 30_000, load,
+    // Represents layout/scroll restoration effects, not a browser reproduction.
+    onData: () => win.dispatchEvent(new Event('scroll')),
+    onError: () => {}, onState: (state) => states.push(state),
+  })
+  await vi.advanceTimersByTimeAsync(POLLING_IDLE_MS)
+  expect(states.at(-1)).toEqual({ reason: 'idle', fetching: false })
+  expect(load).toHaveBeenCalledTimes(10)
+  for (let i = 0; i < 10; i++) {
+    win.dispatchEvent(new Event('scroll'))
+    await vi.advanceTimersByTimeAsync(30_000)
+  }
+  expect(load).toHaveBeenCalledTimes(10)
+  poller.dispose()
+})
+
+it('wheel input extends the idle deadline and resumes a paused page without a fetch for every wheel event', async () => {
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+  const win = new EventTarget()
+  const environment = browserPollingEnvironment(doc as unknown as Document, win as unknown as Window)
+  const load = vi.fn(async () => 'fresh')
+  const states: PollingState[] = []
+  const poller = createActivityPoller({ environment, intervalMs: 30_000, load, onData: () => {}, onError: () => {}, onState: (state) => states.push(state) })
+  for (let i = 0; i < 6; i++) {
+    await vi.advanceTimersByTimeAsync(60_000)
+    for (let n = 0; n < 20; n++) win.dispatchEvent(new Event('wheel'))
+  }
+  expect(states.at(-1)?.reason).toBe('active')
+  expect(load).toHaveBeenCalledTimes(13)
+  await vi.advanceTimersByTimeAsync(POLLING_IDLE_MS)
+  expect(states.at(-1)?.reason).toBe('idle')
+  const previous = load.mock.calls.length
+  win.dispatchEvent(new Event('wheel')); await flush()
+  expect(states.at(-1)?.reason).toBe('active')
+  expect(load).toHaveBeenCalledTimes(previous + 1)
+  poller.dispose()
 })
