@@ -130,7 +130,20 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   aggregation_unit  TEXT,
   batch_offset    INTEGER NOT NULL DEFAULT 0,
   segment_conditions TEXT,
-  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  -- NOTE: この DEFAULT だけ他テーブルの JST ISO-8601 形式ではなく UTC の datetime('now')。
+  -- 029_account_management_v2.sql がテーブルを再構築した際に datetime('now') で
+  -- 宣言しており、029 は schema.sql より後に適用されるため、replay 後の実効値は
+  -- UTC 側になる。
+  -- ここは「意図」ではなく「実際に出来上がる DDL」を書いている（schema.sql と
+  -- bootstrap.sql / migrated schema の乖離を防ぐため）。
+  -- 現時点で実害はない: broadcasts への INSERT は src/broadcasts.ts の 1 箇所のみで、
+  -- created_at を明示列挙して jstNow() をバインドしているため DEFAULT は発火しない。
+  -- created_at を省略する INSERT を新設する場合は、必ず jstNow() を明示バインドすること。
+  -- 揃えるには SQLite の仕様上テーブル再構築が必要で、未使用の DEFAULT のために
+  -- 既存テーブルを作り直すのは割に合わないと判断した。
+  -- 同様に UTC DEFAULT のままの列は test/timestamp-defaults.test.ts の
+  -- KNOWN_UTC_DEFAULTS に列挙してある（新規追加はテストが失敗する）。
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
   account_ids        TEXT CHECK (account_ids IS NULL OR json_valid(account_ids)),
   dedup_priority     TEXT CHECK (dedup_priority IS NULL OR json_valid(dedup_priority)),
   failed_account_ids TEXT CHECK (failed_account_ids IS NULL OR json_valid(failed_account_ids)),
