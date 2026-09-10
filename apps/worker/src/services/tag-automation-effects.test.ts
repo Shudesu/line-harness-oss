@@ -141,7 +141,7 @@ describe('tag automation side effects with real SQLite and mocked LINE transport
         { type: 'set_metadata', params: { data: '{"wrongAction":true}' } },
       ]);
       await attachTagAndFireSideEffects(s.db, 'friend-a', 'tag-a');
-      const row = s.sqlite.prepare("SELECT metadata FROM friends WHERE id='friend-a'").get()!;
+      const row = s.sqlite.prepare("SELECT metadata FROM friends WHERE id='friend-a'").get() as Record<string, unknown>;
       expect(JSON.parse(String(row.metadata))).toEqual({ globalAction: true, accountAction: true });
     } finally { s.sqlite.close(); }
   });
@@ -171,7 +171,7 @@ describe('tag automation side effects with real SQLite and mocked LINE transport
         defaultAccessToken: 'synthetic-token-b', accountChannelId: 'channel-b',
       });
       expect(s.requests).toEqual([]);
-      const row = s.sqlite.prepare("SELECT status,actions_result FROM automation_logs WHERE automation_id='menu-a'").get()!;
+      const row = s.sqlite.prepare("SELECT status,actions_result FROM automation_logs WHERE automation_id='menu-a'").get() as Record<string, unknown>;
       expect(row.status).toBe('failed');
       expect(JSON.parse(String(row.actions_result))).toEqual([
         { action: 'switch_rich_menu', success: false, error: 'LINE account credentials are unavailable for this action' },
@@ -243,7 +243,7 @@ describe('tag automation side effects with real SQLite and mocked LINE transport
       expect(s.sqlite.prepare('SELECT COUNT(*) n FROM friend_scenarios').get()).toEqual({ n: 1 });
       expect(s.sqlite.prepare("SELECT COUNT(*) n FROM engagement_events WHERE event_type='tag_added'").get()).toEqual({ n: 1 });
       expect(s.sqlite.prepare('SELECT COUNT(*) n FROM automation_logs').get()).toEqual({ n: 1 });
-      const audit = s.sqlite.prepare("SELECT status,actions_result FROM automation_logs WHERE automation_id='cycle'").get()!;
+      const audit = s.sqlite.prepare("SELECT status,actions_result FROM automation_logs WHERE automation_id='cycle'").get() as Record<string, unknown>;
       expect(audit.status).toBe('partial');
       expect(JSON.parse(String(audit.actions_result))).toEqual([
         { action: 'remove_tag', success: true },
@@ -266,7 +266,7 @@ describe('tag automation side effects with real SQLite and mocked LINE transport
       await attachTagAndFireSideEffects(s.db, 'friend-a', 'chain-0');
       expect(s.sqlite.prepare('SELECT COUNT(*) n FROM friend_tags').get()).toEqual({ n: MAX_TAG_CHANGES_PER_DISPATCH });
       expect(s.sqlite.prepare("SELECT COUNT(*) n FROM automation_logs WHERE status='failed'").get()).toEqual({ n: 1 });
-      const row = s.sqlite.prepare("SELECT actions_result FROM automation_logs WHERE status='failed'").get()!;
+      const row = s.sqlite.prepare("SELECT actions_result FROM automation_logs WHERE status='failed'").get() as Record<string, unknown>;
       expect(String(row.actions_result)).toContain('Tag automation chain limit reached');
     } finally { s.sqlite.close(); }
   });
