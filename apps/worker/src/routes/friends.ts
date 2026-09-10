@@ -6,6 +6,7 @@ import {
   addTagToFriend,
   removeTagFromFriend,
   getFriendTags,
+  getFriendTagsByIds,
   getFormSubmissionsByFriend,
   getScenarios,
   enrollFriendInScenario,
@@ -90,8 +91,7 @@ friends.get('/api/friends', async (c) => {
     const tagId = c.req.query('tagId');
     const lineAccountId = c.req.query('lineAccountId');
     const search = c.req.query('search');
-    // ?includeTags=false skips per-row tag enrichment (N+1 of getFriendTags
-    // → ~50 extra D1 reads on a wide list query). The list view needs tags
+    // ?includeTags=false skips tag enrichment. The list view needs tags
     // for filter chips, but autocomplete-style consumers (test-recipient
     // picker, broadcast recipient picker) only render id/displayName/picture
     // and pay the cost for nothing. Default true to keep the historical
@@ -237,17 +237,13 @@ friends.get('/api/friends', async (c) => {
     const listResult = await listStmt.bind(...listBinds).all<DbFriend>();
     const items = listResult.results;
 
-    // Fetch tags for each friend in parallel so the list response includes tags.
-    // Skipped when ?includeTags=false (autocomplete consumers don't render
-    // tags and would otherwise pay N D1 reads per keystroke).
-    let itemsWithTags = includeTags
-      ? await Promise.all(
-          items.map(async (friend) => {
-            const tags = await getFriendTags(db, friend.id);
-            return { ...serializeFriendListRow(friend, includeChatStatus), tags: tags.map(serializeTag) };
-          }),
-        )
-      : items.map((friend) => ({ ...serializeFriendListRow(friend, includeChatStatus), tags: [] }));
+    // Enrich only IDs selected by the existing filters and pagination. Chunked
+    // bulk lookup preserves friend order and tag-name order without N+1 queries.
+    const tagsByFriend = includeTags ? await getFriendTagsByIds(db, items.map((friend) => friend.id)) : new Map<string, DbTag[]>();
+    let itemsWithTags = items.map((friend) => ({
+      ...serializeFriendListRow(friend, includeChatStatus),
+      tags: (tagsByFriend.get(friend.id) ?? []).map(serializeTag),
+    }));
 
     // Optional: hydrate chat status (latest in/out message, active scenario,
     // derived "handled" flag). Three batched queries instead of N×3 to keep
