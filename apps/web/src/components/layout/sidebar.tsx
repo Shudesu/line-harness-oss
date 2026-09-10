@@ -10,6 +10,8 @@ import { DropdownMenu } from '@cloudflare/kumo/components/dropdown'
 import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
+import { useActivityPolling } from '@/hooks/use-activity-polling'
+import { PollingStatus } from '@/components/shared/polling-status'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
 import { getApiBase } from '@/lib/api-base'
 import { withBasePath } from '@/lib/base-path'
@@ -192,31 +194,16 @@ export default function Sidebar() {
   // チャット画面での status 変更・手動返信直後は UNANSWERED_REFRESH_EVENT で
   // 即時再取得する (ポーリング待ちだと操作してもバッジが減らないと感じるため)。
   const [unansweredCount, setUnansweredCount] = useState<number>(0)
-  useEffect(() => {
-    let cancelled = false
-    // 連続操作で fetch が並走した際、遅い古いレスポンスが新しい値を上書きしない
-    // ように発行順 seq でガードする。
-    let seq = 0
-    const fetchCount = async () => {
-      const mySeq = ++seq
-      try {
-        const { api } = await import('@/lib/api')
-        const res = await api.inbox.unanswered.count()
-        if (!cancelled && mySeq === seq && res.success) setUnansweredCount(res.data.total)
-      } catch {
-        // サイレント失敗
-      }
-    }
-    fetchCount()
-    const id = setInterval(fetchCount, 5 * 60_000)
-    const onRefresh = () => { void fetchCount() }
-    window.addEventListener(UNANSWERED_REFRESH_EVENT, onRefresh)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-      window.removeEventListener(UNANSWERED_REFRESH_EVENT, onRefresh)
-    }
-  }, [])
+  const polling = useActivityPolling({
+    intervalMs: 5 * 60_000,
+    refreshEvent: UNANSWERED_REFRESH_EVENT,
+    load: async (signal) => {
+      const { api } = await import('@/lib/api')
+      return api.inbox.unanswered.count({ signal })
+    },
+    onData: (res) => { if (res.success) setUnansweredCount(res.data.total) },
+    onError: () => {}, // Keep the last count on transient failure.
+  })
 
   useEffect(() => { setIsOpen(false) }, [pathname])
   useEffect(() => {
@@ -289,6 +276,8 @@ export default function Sidebar() {
           </div>
         ))}
       </nav>
+
+      <div className="px-3 pb-3"><PollingStatus reason={polling.reason} onResume={polling.resume} /></div>
 
       {/* フッター */}
       <div className="border-t border-gray-200">
