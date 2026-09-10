@@ -1,6 +1,7 @@
 import { resolve, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
+import { validateSetupReleaseVersion } from "./lib/setup-release.js";
 
 const HELP = `Usage: create-line-harness [setup|update] [options]
 
@@ -12,12 +13,14 @@ Options:
   -h, --help             このヘルプを表示して終了
   --repo-dir <path>      リポジトリ・設定ファイルのディレクトリ
   --from-source          ソースからビルドしてデプロイ（setup のみ）
+  --release <X.Y.Z>       公開済みの対象リリースを指定・再開先を変更（setup のみ）
   --repair-admin         管理画面のみを復旧（update のみ）`;
 
 interface CliArgs {
   command: "setup" | "update";
   repoDir: string | null;
   fromSource: boolean;
+  releaseVersion?: string;
   repairAdmin: boolean;
   help: boolean;
 }
@@ -26,6 +29,7 @@ function parseArgs(args: string[]): CliArgs {
   let command: CliArgs["command"] | undefined;
   let repoDir: string | null = null;
   let fromSource = false;
+  let releaseVersion: string | undefined;
   let repairAdmin = false;
   let help = false;
   const seen = new Set<string>();
@@ -36,7 +40,7 @@ function parseArgs(args: string[]): CliArgs {
       help = true;
       continue;
     }
-    if (arg === "--repo-dir" || arg === "--from-source" || arg === "--repair-admin") {
+    if (arg === "--repo-dir" || arg === "--from-source" || arg === "--repair-admin" || arg === "--release") {
       if (seen.has(arg)) throw new Error(`Duplicate option: ${arg}`);
       seen.add(arg);
       if (arg === "--repo-dir") {
@@ -45,6 +49,8 @@ function parseArgs(args: string[]): CliArgs {
           throw new Error("--repo-dir requires a path.");
         }
         repoDir = value;
+      } else if (arg === "--release") {
+        releaseVersion = validateSetupReleaseVersion(args[++i] ?? "");
       } else if (arg === "--from-source") {
         fromSource = true;
       } else {
@@ -68,7 +74,13 @@ function parseArgs(args: string[]): CliArgs {
   if (fromSource && command !== "setup") {
     throw new Error("--from-source は setup コマンドでのみ使用できます。");
   }
-  return { command, repoDir, fromSource, repairAdmin, help };
+  if (releaseVersion !== undefined && command !== "setup") {
+    throw new Error("--release は setup コマンドでのみ使用できます。");
+  }
+  if (releaseVersion !== undefined && fromSource) {
+    throw new Error("--release と --from-source は併用できません。");
+  }
+  return { command, repoDir, fromSource, releaseVersion, repairAdmin, help };
 }
 
 /** update uses the explicit directory, an existing cwd config, or the install home. */
@@ -105,7 +117,10 @@ export async function runCli(args = process.argv.slice(2)): Promise<number> {
   } else {
     const { ensureRepo } = await import("./steps/clone-repo.js");
     const { runSetup } = await import("./commands/setup.js");
-    await runSetup(await ensureRepo(repoDir), { fromSource: parsed.fromSource });
+    await runSetup(await ensureRepo(repoDir), {
+      fromSource: parsed.fromSource,
+      ...(parsed.releaseVersion !== undefined ? { releaseVersion: parsed.releaseVersion } : {}),
+    });
   }
   return 0;
 }
