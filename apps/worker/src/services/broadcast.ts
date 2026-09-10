@@ -332,7 +332,7 @@ export async function processBroadcastSend(
         throw new Error('target_tag_id is required for tag-targeted broadcasts');
       }
 
-      const friends = await getFriendsByTag(db, broadcast.target_tag_id);
+      const friends = await getFriendsByTag(db, broadcast.target_tag_id, broadcast.line_account_id);
       const followingFriends = friends.filter((f) => f.is_following);
       totalCount = followingFriends.length;
 
@@ -672,10 +672,12 @@ async function processQueuedBroadcastBatches(
     const condition = JSON.parse(segmentConditionsStr);
     const { sql, bindings } = buildSegmentQuery(condition);
     // アカウントフィルタを追加（line_account_idで絞り込み）
-    let accountSql = sql;
+    let accountSql = broadcast.target_type === 'tag'
+      ? sql.replace('WHERE', 'WHERE f.is_following = 1 AND')
+      : sql;
     const accountBindings = [...bindings];
     if (accountId) {
-      accountSql = sql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
+      accountSql = accountSql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
       accountBindings.unshift(accountId);
     }
     const result = await db.prepare(accountSql).bind(...accountBindings).all<{
@@ -686,7 +688,7 @@ async function processQueuedBroadcastBatches(
     friends = result.results ?? [];
   } else if (broadcast.target_tag_id) {
     const { getFriendsByTag } = await import('@line-crm/db');
-    const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id);
+    const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id, broadcast.line_account_id);
     friends = tagFriends.filter(f => f.is_following).map(f => ({
       id: f.id,
       line_user_id: f.line_user_id,

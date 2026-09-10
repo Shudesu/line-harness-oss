@@ -176,20 +176,8 @@ export async function estimateSendAudience(
 ): Promise<number | null> {
   if (broadcast.target_type === 'tag') {
     if (!broadcast.target_tag_id) return null;
-    // Deliberately NO account filter here, even for an account-bound
-    // broadcast: the actual tag send path (getFriendsByTag in broadcast.ts)
-    // messages every following friend with the tag regardless of account.
-    // The estimate must mirror what will really be sent — an account-filtered
-    // count would undercount and let a send slip past the monthly limit.
-    const row = await db
-      .prepare(
-        `SELECT COUNT(*) as count FROM friends
-          WHERE is_following = 1
-            AND EXISTS (SELECT 1 FROM friend_tags ft WHERE ft.friend_id = friends.id AND ft.tag_id = ?)`,
-      )
-      .bind(broadcast.target_tag_id)
-      .first<{ count: number }>();
-    return row?.count ?? 0;
+    // Same account + following + tag conditions as inline and queued delivery.
+    return personalizedAudienceCount(db, broadcast);
   }
   if (broadcast.target_type !== 'all') return null;
   const accountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
@@ -209,32 +197,13 @@ export async function estimateSendAudience(
   return row?.count ?? 0;
 }
 
-/**
- * Audience COUNT of a queued (tag-marker) tag send: the exact population the
- * queue executor delivers to. The marker carries only a tag_exists rule, so
- * there is deliberately NO is_following filter — unfollowed tagged rows are
- * part of the send (and log) population — and the account filter is the same
- * strict equality the executor injects. Returns null without a tag id.
- */
+/** Exact tag audience, shared by inline estimates and legacy queued markers. */
 export async function queuedTagAudienceCount(
   db: D1Database,
   broadcast: { target_type: string; target_tag_id?: string | null },
 ): Promise<number | null> {
   if (!broadcast.target_tag_id) return null;
-  const accountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
-  const where: string[] = [
-    'EXISTS (SELECT 1 FROM friend_tags ft WHERE ft.friend_id = f.id AND ft.tag_id = ?)',
-  ];
-  const binds: unknown[] = [broadcast.target_tag_id];
-  if (accountId) {
-    where.unshift('f.line_account_id = ?');
-    binds.unshift(accountId);
-  }
-  const row = await db
-    .prepare(`SELECT COUNT(*) as count FROM friends f WHERE ${where.join(' AND ')}`)
-    .bind(...binds)
-    .first<{ count: number }>();
-  return row?.count ?? 0;
+  return personalizedAudienceCount(db, broadcast);
 }
 
 /**
