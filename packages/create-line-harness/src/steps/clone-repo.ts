@@ -70,12 +70,28 @@ export async function pinRepoToTag(
 
   // The tag may pin different dependency versions than the previously
   // installed main HEAD — reinstall to match its lockfile.
+  await installRepoDeps(repoDir);
+}
+
+/**
+ * Install workspace dependencies into an existing checkout.
+ *
+ * `ensureRepo()` installs only on the fresh-clone path, so a checkout that
+ * already exists locally — cwd, `--repo-dir`, or a previous
+ * `~/.line-harness` clone — arrives at the build steps with no
+ * `node_modules`. `pinRepoToTag()` covers that for release installs;
+ * `--from-source` skips pinning entirely and must install here instead,
+ * or the first build fails with `tsc: command not found`.
+ */
+export async function installRepoDeps(repoDir: string): Promise<void> {
+  const s = p.spinner();
   s.start("依存関係インストール中...");
   try {
     await repoPnpm(repoDir, ["install", "--frozen-lockfile"], {
       cwd: repoDir,
     });
   } catch {
+    // A drifted lockfile must not block setup — retry unfrozen.
     await repoPnpm(repoDir, ["install"], { cwd: repoDir });
   }
   s.stop("依存関係インストール完了");
@@ -167,17 +183,7 @@ export async function ensureRepo(repoDir: string | null): Promise<string> {
   }
   s.stop("ダウンロード完了");
 
-  // Install dependencies
-  s.start("依存関係インストール中...");
-  try {
-    await repoPnpm(homeDir, ["install", "--frozen-lockfile"], {
-      cwd: homeDir,
-    });
-  } catch {
-    // Try without frozen lockfile
-    await repoPnpm(homeDir, ["install"], { cwd: homeDir });
-  }
-  s.stop("依存関係インストール完了");
+  await installRepoDeps(homeDir);
 
   return homeDir;
 }

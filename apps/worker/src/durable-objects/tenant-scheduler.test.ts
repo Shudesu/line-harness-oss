@@ -227,21 +227,58 @@ describe('TenantScheduler クラス — DO ランタイムへの配線', () => {
     expect(storage.alarm()).not.toBeNull();
   });
 
+  // alarm() は now を引数に取らず runSchedulerTick の既定値 (new Date()) を使うため、
+  // 実時刻のまま走らせると UTC 0/6/12/18 時ちょうどに CI が回ったときだけ
+  // isSixHourBoundary() が真になり scheduled() が 2 回呼ばれて落ちる。
+  // Date だけを固定して分岐を決め打ちする (タイマーは実物のまま = await を壊さない)。
+  function withFixedNow<T>(iso: string, run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(iso));
+    return run().finally(() => {
+      vi.useRealTimers();
+    });
+  }
+
   test('alarm() は次アラームを先にセットしてから既存の scheduled() を呼ぶ', async () => {
-    const storage = fakeStorage(1_700_000_000_000); // コンストラクタの自己修復をスキップさせる
-    const ctx = fakeCtx(storage);
-    const env = { DB: {} } as never;
-    const scheduler = new TenantScheduler(ctx as never, env);
-    await ctx.ready;
+    // 6時間境界ではない時刻に固定する (境界の挙動は次のテストで確認する)。
+    await withFixedNow('2026-08-23T10:30:00Z', async () => {
+      const storage = fakeStorage(1_700_000_000_000); // コンストラクタの自己修復をスキップさせる
+      const ctx = fakeCtx(storage);
+      const env = { DB: {} } as never;
+      const scheduler = new TenantScheduler(ctx as never, env);
+      await ctx.ready;
 
-    const beforeAlarm = storage.alarm();
-    await scheduler.alarm();
+      const beforeAlarm = storage.alarm();
+      await scheduler.alarm();
 
-    expect(storage.alarm()).not.toBe(beforeAlarm); // 再アームされている
-    expect(scheduledMock).toHaveBeenCalledTimes(1);
-    const [eventArg, envArg] = scheduledMock.mock.calls[0] as unknown as [{ cron: string }, unknown];
-    expect(eventArg.cron).toBe('* * * * *');
-    expect(envArg).toBe(env);
+      expect(storage.alarm()).not.toBe(beforeAlarm); // 再アームされている
+      expect(scheduledMock).toHaveBeenCalledTimes(1);
+      const [eventArg, envArg] = scheduledMock.mock.calls[0] as unknown as [
+        { cron: string },
+        unknown,
+      ];
+      expect(eventArg.cron).toBe('* * * * *');
+      expect(envArg).toBe(env);
+    });
+  });
+
+  test('alarm() は6時間境界では分足と6h足の2イベントで scheduled() を呼ぶ', async () => {
+    // Cloudflare Cron Triggers が両パターンにマッチする分の挙動 (トリガーごとに1回) の再現。
+    await withFixedNow('2026-08-23T12:00:00Z', async () => {
+      const storage = fakeStorage(1_700_000_000_000);
+      const ctx = fakeCtx(storage);
+      const env = { DB: {} } as never;
+      const scheduler = new TenantScheduler(ctx as never, env);
+      await ctx.ready;
+
+      await scheduler.alarm();
+
+      expect(scheduledMock).toHaveBeenCalledTimes(2);
+      const crons = scheduledMock.mock.calls.map(
+        (call) => (call as unknown as [{ cron: string }])[0].cron,
+      );
+      expect(crons).toEqual(['* * * * *', '0 */6 * * *']);
+    });
   });
 
   test('ensureArmed() は公開 RPC メソッドとして自己修復ロジックに委譲する', async () => {
