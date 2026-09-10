@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { containsDestructiveSchemaChanges, splitSqlStatements, stripSqlComments } from './sql-statements.js';
 export { containsDestructiveSchemaChanges, splitSqlStatements } from './sql-statements.js';
-import { applyLegacyMileageMigration, assertLegacyMileageSource, isLegacyMileageMigration } from './legacy-mileage.js';
+import { applyLegacyMileageMigration, assertLegacyMileageSource, isLegacyMileageMigration, LEGACY_MILEAGE_CLAIMS_TABLE } from './legacy-mileage.js';
 import type { CfApiCreds } from './types.js';
 import { executeD1Query } from './cf-api/d1.js';
 import { isBenignSchemaErrorText } from './materialize.js';
@@ -167,6 +167,9 @@ export async function applyD1Migrations(
           `migration ${name}: recorded checksum differs from bundle (never executed by this engine — continuing)`,
         );
       }
+      if (isLegacyMileageMigration(name) && opts.legacyMileageProjectionVersion !== 1) {
+        await assertNoUnfinishedMileageClaims(execute, base);
+      }
       const result: MigrationApplyResult = {
         name,
         alreadyApplied: true,
@@ -270,6 +273,27 @@ export async function applyD1Migrations(
     await opts.onMigrationDone?.(result);
   }
   return results;
+}
+
+async function assertNoUnfinishedMileageClaims(
+  execute: D1Executor,
+  base: { creds: CfApiCreds; databaseId: string },
+): Promise<void> {
+  const schema = await execute({ ...base, sql:
+    `SELECT COUNT(*) AS claims_table FROM sqlite_master WHERE type='table' AND name='${LEGACY_MILEAGE_CLAIMS_TABLE}'`,
+  });
+  const present = firstResultValue(schema, 'claims_table');
+  if (present === 0) return;
+  if (present !== 1) throw new Error('Cannot verify historical mileage handoff state');
+  const pending = await execute({ ...base, sql:
+    `SELECT COUNT(*) AS unfinished FROM ${LEGACY_MILEAGE_CLAIMS_TABLE} c
+     LEFT JOIN mileage_event_queue q ON q.engagement_event_id=c.engagement_event_id
+     WHERE q.engagement_event_id IS NULL OR q.status <> 'processed'`,
+  });
+  const count = firstResultValue(pending, 'unfinished');
+  if (count !== 0) {
+    throw new Error('Historical mileage handoff is unfinished. A Worker with legacy_mileage_projection_version=1 is required even when migration checksums match.');
+  }
 }
 
 /**

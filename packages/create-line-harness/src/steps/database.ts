@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { applyD1Migrations, type ApplyD1MigrationsOptions } from "@line-harness/update-engine";
 import { wrangler, WranglerError } from "../lib/wrangler.js";
 
 interface DatabaseResult {
@@ -11,6 +12,141 @@ interface DatabaseResult {
 interface BootstrapMeta {
   includedMigrations: string[];
   migrationCount: number;
+}
+
+interface DatabaseOptions {
+  accountId?: string;
+  /** Capability of the Worker that setup is actually about to deploy. */
+  legacyMileageProjectionVersion?: 1;
+}
+
+/**
+ * Source builds declare their capability in the first non-comment statement.
+ * Do not import/evaluate the checkout, or mistake a comment/string elsewhere
+ * in an old Worker for evidence that it can consume held historical activity.
+ */
+export function readSourceLegacyMileageProjectionVersion(repoDir: string): 1 | undefined {
+  const file = join(repoDir, "packages/db/src/mileage.ts");
+  if (!existsSync(file)) return undefined;
+  const source = readFileSync(file, "utf8").replace(/^(?:\s|\/\/[^\r\n]*(?:\r?\n|$)|\/\*[\s\S]*?\*\/)+/, "");
+  return /^export\s+const\s+LEGACY_MILEAGE_PROJECTION_VERSION\s*=\s*1\s*;/.test(source)
+    ? 1 : undefined;
+}
+
+/** Wrangler has no bind flag. Encode values, then replace only SQL tokens. */
+function bindMigrationParameters(sql: string, params: unknown[]): string {
+  let index = 0;
+  const bound = sql.replace(
+    /'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]|--[^\r\n]*|\/\*[\s\S]*?\*\/|\?\d*/g,
+    (token) => {
+      if (!token.startsWith("?")) return token;
+      if (token !== "?" || index >= params.length) {
+        throw new Error("Unsupported or missing D1 migration parameter");
+      }
+      const value = params[index++];
+      if (value === null) return "NULL";
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+      if (typeof value === "string") {
+        // Hex also preserves embedded NULs without passing them in argv.
+        return `CAST(X'${Buffer.from(value, "utf8").toString("hex")}' AS TEXT)`;
+      }
+      throw new Error("Unsupported D1 migration parameter type");
+    },
+  );
+  if (index !== params.length) throw new Error("Unexpected D1 migration parameters");
+  return bound;
+}
+
+/**
+ * Reuse setup's authenticated, account-pinned Wrangler session. --command
+ * sends the adapter's whole atomic unit to D1 /query in one request; do not
+ * split it into individually committed commands or send it via --file.
+ * wrangler() uses an execa argument array, never shell interpolation.
+ */
+export function createSetupD1Executor(databaseName: string): NonNullable<ApplyD1MigrationsOptions["execute"]> {
+  return async ({ sql, params = [] }) => {
+    const output = await runD1WithRetry(
+      ["d1", "execute", databaseName, "--remote", "--json", "--command", bindMigrationParameters(sql, params)],
+      "マイレージ migration 適用",
+    );
+    let result: unknown;
+    try { result = JSON.parse(output); } catch {
+      throw new Error("D1 migration query did not return valid JSON results");
+    }
+    if (!Array.isArray(result) || result.length === 0 || result.some(
+      (item) => item?.success !== true || !Array.isArray(item.results),
+    )) {
+      throw new Error("D1 migration query returned an unsuccessful SQL result");
+    }
+    return { success: true, result };
+  };
+}
+
+/**
+ * A resumed setup may skip migrations after changing its source/release target.
+ * Check the actual DB handoff before any Worker deployment or config sync;
+ * migration checksums alone do not prove that the new target can finish it.
+ */
+export async function assertSetupMileageHandoffCompatible(
+  options: DatabaseOptions & DatabaseResult,
+): Promise<void> {
+  if (options.legacyMileageProjectionVersion === 1) return;
+  if (!options.databaseName || !options.databaseId) {
+    throw new Error("Cannot verify historical mileage handoff: saved D1 database information is missing.");
+  }
+  const execute = createSetupD1Executor(options.databaseName);
+  const base = {
+    creds: { accountId: options.accountId ?? "", apiToken: "" },
+    databaseId: options.databaseId,
+  };
+  const tables = await execute({ ...base, sql: `SELECT
+    (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_line_harness_legacy_mileage_claims') AS claims_table,
+    (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mileage_event_queue') AS queue_table` });
+  const schema = tables.result[0].results[0];
+  if (![0, 1].includes(schema?.claims_table) || ![0, 1].includes(schema?.queue_table)) {
+    throw new Error("Cannot verify historical mileage handoff state; Worker deployment was stopped.");
+  }
+  if (schema.claims_table === 0) return;
+  const pending = await execute({ ...base, sql: schema.queue_table === 1
+    ? `SELECT EXISTS(SELECT 1 FROM _line_harness_legacy_mileage_claims claim
+        LEFT JOIN mileage_event_queue queue ON queue.engagement_event_id = claim.engagement_event_id
+        WHERE queue.status IS NOT 'processed') AS unresolved`
+    : "SELECT EXISTS(SELECT 1 FROM _line_harness_legacy_mileage_claims) AS unresolved" });
+  const unresolved = pending.result[0].results[0]?.unresolved;
+  if (unresolved !== 0 && unresolved !== 1) {
+    throw new Error("Cannot verify whether historical mileage handoff is complete; Worker deployment was stopped.");
+  }
+  if (unresolved === 1) {
+    throw new Error(
+      "Historical mileage is still awaiting a compatible Worker (legacy_mileage_projection_version=1). " +
+      "Resume setup with a compatible release or source checkout; Worker deployment was stopped and held claims were preserved.",
+    );
+  }
+}
+
+async function applySetupMigration(
+  databaseName: string,
+  databaseId: string,
+  migrationsDir: string,
+  file: string,
+  options: DatabaseOptions,
+): Promise<void> {
+  const filePath = join(migrationsDir, file);
+  if (/^(?:062|063)_/.test(file)) {
+    // Never pass the immutable historical financial INSERTs to applySqlFile,
+    // including its file-level first attempt or statement-level retry path.
+    await applyD1Migrations({
+      // The supplied executor owns authentication; no API token is required.
+      creds: { accountId: options.accountId ?? "", apiToken: "" },
+      databaseId,
+      names: [file],
+      migrations: new Map([[file, readFileSync(filePath)]]),
+      legacyMileageProjectionVersion: options.legacyMileageProjectionVersion,
+      execute: createSetupD1Executor(databaseName),
+    });
+    return;
+  }
+  await applySqlFile(databaseName, filePath, `migration 適用: ${file}`);
 }
 
 const TRANSIENT_D1_ERROR = /code[:\s]*10043|cloudflarestatus|temporarily unavailable|internal error|timed out|timeout|fetch failed|network|connection reset/i;
@@ -210,6 +346,7 @@ function loadBootstrapMeta(repoDir: string): BootstrapMeta | null {
 export async function createDatabase(
   repoDir: string,
   databaseName: string,
+  options: DatabaseOptions = {},
 ): Promise<DatabaseResult> {
   const s = p.spinner();
 
@@ -296,10 +433,12 @@ export async function createDatabase(
 
     for (const file of pendingMigrations) {
       try {
-        await applySqlFile(
+        await applySetupMigration(
           databaseName,
-          join(migrationsDir, file),
-          `bootstrap 後 migration 適用: ${file}`,
+          databaseId,
+          migrationsDir,
+          file,
+          options,
         );
       } catch (err) {
         s.stop(`migration 失敗: ${file}`);
@@ -323,10 +462,12 @@ export async function createDatabase(
 
     for (const file of migrationFiles) {
       try {
-        await applySqlFile(
+        await applySetupMigration(
           databaseName,
-          join(migrationsDir, file),
-          `migration 適用: ${file}`,
+          databaseId,
+          migrationsDir,
+          file,
+          options,
         );
       } catch (err) {
         s.stop(`migration 失敗: ${file}`);

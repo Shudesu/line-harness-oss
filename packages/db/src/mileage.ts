@@ -1,3 +1,6 @@
+// Keep this first declaration readable by the source installer without running code.
+export const LEGACY_MILEAGE_PROJECTION_VERSION = 1;
+
 import { jstNow } from './utils.js';
 
 export const DEFAULT_MILEAGE_PROGRAM_ID = 'default';

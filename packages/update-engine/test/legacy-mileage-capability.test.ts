@@ -22,11 +22,23 @@ describe('legacy mileage target capability', () => {
 
   it('keeps matching-checksum updates to older targets as no-ops', async () => {
     const execute = vi.fn(async ({sql}: {sql: string}) => ({
-      success: true, result: [{ success: true, results: sql.startsWith('SELECT checksum') ? [{checksum}] : [] }],
+      success: true, result: [{ success: true, results: sql.startsWith('SELECT checksum') ? [{checksum}]
+        : sql.includes('claims_table') ? [{claims_table: 0}] : [] }],
     }));
     const result = await applyD1Migrations({ ...options, execute });
     expect(result).toEqual([{name, alreadyApplied: true, executedStatements: 0, skippedStatements: 0}]);
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not strand existing held claims behind a matching checksum when selecting an old Worker', async () => {
+    const execute = vi.fn(async ({sql}: {sql: string}) => ({
+      success: true, result: [{ success: true, results:
+        sql.startsWith('SELECT checksum') ? [{checksum}] : sql.includes('claims_table') ? [{claims_table: 1}]
+          : sql.includes('AS unfinished') ? [{unfinished: 1}] : [],
+      }],
+    }));
+    await expect(applyD1Migrations({ ...options, execute })).rejects.toThrow('handoff is unfinished');
+    expect(execute.mock.calls.every(([input]) => !input.sql.startsWith('INSERT'))).toBe(true);
   });
 
   it('rejects changed or renamed historical SQL before contacting D1', async () => {

@@ -32,12 +32,25 @@ and includes linked historic actor grants in daily limits.
   verified release build. This document does not authorize publication.
 - Do not publish the engine/CLI with a schema-1 handoff release. A new engine
   also rejects unrecorded 062/063 against a target without the capability.
-  Matching-checksum migrations remain no-ops when selecting an older target.
+  Matching-checksum migrations remain no-ops when selecting an older target
+  only if no unfinished historical claims remain. Otherwise a compatible target
+  is required so held work cannot be silently stranded.
 - A failed Worker deployment leaves historical claims safely held. Retry the
   compatible deployment; do not remove the hold or migration checksum to force
   old code to process it. After successful deployment, normal scheduled mileage
   processing projects the held rows. SQL completion does not mean projection
   has already finished.
+
+## Setup and resume
+
+The setup command routes 062/063 through the same checked engine, including
+existing-database resume. Its D1 executor uses the authenticated, account-pinned
+Wrangler session. Bundle installs use the selected release capability; source
+installs read an exact leading version declaration in the runtime source without
+executing that source. Even when a saved setup has completed the database step,
+it checks unfinished claims before any Worker deployment or configuration sync
+if the selected target lacks the capability. Fresh bootstrap retains its existing
+fast path.
 
 ## Conditions requiring review
 
