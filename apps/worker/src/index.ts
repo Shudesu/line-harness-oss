@@ -57,6 +57,7 @@ import { adPlatforms } from './routes/ad-platforms.js';
 import { staff } from './routes/staff.js';
 import { capabilities } from './routes/capabilities.js';
 import { images } from './routes/images.js';
+import { incomingMedia } from './routes/incoming-media.js';
 import { accountSettings } from './routes/account-settings.js';
 import { setup } from './routes/setup.js';
 import { autoReplies } from './routes/auto-replies.js';
@@ -154,6 +155,12 @@ export type Env = {
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    incomingMediaService?: {
+      credentialId: string;
+      lineAccountId: string;
+      scope: 'incoming_media_read';
+    };
+    incomingMediaAccountId?: string;
   };
 };
 
@@ -238,6 +245,7 @@ app.route('/', adPlatforms);
 app.route('/', staff);
 app.route('/', capabilities);
 app.route('/', images);
+app.route('/', incomingMedia);
 app.route('/', setup);
 app.route('/', autoReplies);
 app.route('/', adminAuth);

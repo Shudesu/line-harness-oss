@@ -31,6 +31,7 @@ function actualRoutes(): string[] {
     join(SRC, 'index.ts'),
   ];
   const re = /\.(get|post|put|delete|patch)\(\s*'([^']+)'/g;
+  const annotation = /@api-route\s+(HEAD|GET|POST|PUT|DELETE|PATCH)\s+(\/\S+)/g;
   const out = new Set<string>();
   for (const file of files) {
     const src = readFileSync(file, 'utf8');
@@ -40,6 +41,11 @@ function actualRoutes(): string[] {
       // 公開 API 面だけを対象にする（内部ヘルパの .get() 等は拾わない）。
       if (!(raw.startsWith('/api') || raw.startsWith('/r/') || raw.startsWith('/t/') || raw === '/webhook')) continue;
       const path = raw.replace(/:([A-Za-z0-9_]+)/g, '{$1}').replace(/\/\*$/, '/{path}');
+      out.add(`${method} ${path}`);
+    }
+    for (const m of src.matchAll(annotation)) {
+      const method = m[1];
+      const path = m[2].replace(/:([A-Za-z0-9_]+)/g, '{$1}').replace(/\/\*$/, '/{path}');
       out.add(`${method} ${path}`);
     }
   }
@@ -53,7 +59,7 @@ function documentedRoutes(): string[] {
   const blocks = /^    '([^']+)': \{([\s\S]*?)^    \},$/gm;
   for (const b of src.matchAll(blocks)) {
     const path = b[1];
-    for (const mm of b[2].matchAll(/^      (get|post|put|delete|patch): \{/gm)) {
+    for (const mm of b[2].matchAll(/^      (head|get|post|put|delete|patch): \{/gm)) {
       out.add(`${mm[1].toUpperCase()} ${path}`);
     }
   }
