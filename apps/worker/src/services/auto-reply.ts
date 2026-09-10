@@ -10,19 +10,8 @@ import {
   resolveMetadata,
 } from './step-delivery.js';
 
-/**
- * exact/contains のキーワードマッチ述語。webhook のテキスト/postback 経路と
- * unanswered-inbox の「構造化メッセ除外」判定が同じルール解釈を共有する。
- * 未知の match_type はマッチなし扱い (誤マッチで inbox から隠すより安全側)。
- */
-export function keywordMatches(
-  rule: { keyword: string; match_type: string },
-  text: string,
-): boolean {
-  if (rule.match_type === 'exact') return text === rule.keyword;
-  if (rule.match_type === 'contains') return text.includes(rule.keyword);
-  return false;
-}
+import { keywordMatches } from './keyword-match.js';
+export { keywordMatches } from './keyword-match.js';
 
 /**
  * auto_reply 行の content/type を resolve する。template_id が set なら templates
@@ -96,6 +85,8 @@ export async function matchAndReply(
     liffUrl?: string;
     logContext?: string;
     replyMessage?: AutoReplySender;
+    /** Human message text is normalized; machine-defined postback data is opaque. */
+    inputKind?: 'text' | 'postback';
   } = {},
 ): Promise<MatchAndReplyResult> {
   const { lineAccountId = null, workerUrl, liffUrl, logContext, replyMessage } = opts;
@@ -112,7 +103,9 @@ export async function matchAndReply(
     .bind(lineAccountId)
     .all<AutoReply>();
 
-  const rule = autoReplies.results.find((r) => keywordMatches(r, incomingText));
+  const rule = autoReplies.results.find((r) => keywordMatches(r, incomingText, {
+    normalizeText: opts.inputKind !== 'postback',
+  }));
   if (!rule) return { matched: false, replyTokenConsumed: false };
   if (rule.response_type === 'silent') return { matched: true, replyTokenConsumed: false };
 
