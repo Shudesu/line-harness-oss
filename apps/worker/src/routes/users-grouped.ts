@@ -26,7 +26,9 @@ usersGrouped.get('/api/users-grouped', requireRole('owner', 'admin'), async (c) 
     const result = await computeUsersGrouped(c.env.DB, opts);
     return c.json({ success: true, data: result });
   } catch (err) {
-    console.error('GET /api/users-grouped error:', err);
+    console.error('GET /api/users-grouped failed', {
+      errorType: err instanceof Error ? 'Error' : typeof err,
+    });
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

@@ -16,6 +16,12 @@ import { requireRole } from '../middleware/role-guard.js';
 
 const users = new Hono<Env>();
 
+function logUsersRouteError(route: string, error: unknown): void {
+  console.error(`${route} failed`, {
+    errorType: error instanceof Error ? 'Error' : typeof error,
+  });
+}
+
 function serializeUser(row: DbUser) {
   return {
     id: row.id,
@@ -34,7 +40,7 @@ users.get('/api/users', requireRole('owner', 'admin'), async (c) => {
     const items = await getUsers(c.env.DB);
     return c.json({ success: true, data: items.map(serializeUser) });
   } catch (err) {
-    console.error('GET /api/users error:', err);
+    logUsersRouteError('GET /api/users', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -49,7 +55,7 @@ users.get('/api/users/:id', requireRole('owner', 'admin'), async (c) => {
     }
     return c.json({ success: true, data: serializeUser(user) });
   } catch (err) {
-    console.error('GET /api/users/:id error:', err);
+    logUsersRouteError('GET /api/users/:id', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -67,7 +73,7 @@ users.post('/api/users', requireRole('owner', 'admin'), async (c) => {
     const user = await createUser(c.env.DB, body);
     return c.json({ success: true, data: serializeUser(user) }, 201);
   } catch (err) {
-    console.error('POST /api/users error:', err);
+    logUsersRouteError('POST /api/users', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -95,7 +101,7 @@ users.put('/api/users/:id', requireRole('owner', 'admin'), async (c) => {
     }
     return c.json({ success: true, data: serializeUser(updated) });
   } catch (err) {
-    console.error('PUT /api/users/:id error:', err);
+    logUsersRouteError('PUT /api/users/:id', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -106,7 +112,7 @@ users.delete('/api/users/:id', requireRole('owner', 'admin'), async (c) => {
     await deleteUser(c.env.DB, c.req.param('id')!);
     return c.json({ success: true, data: null });
   } catch (err) {
-    console.error('DELETE /api/users/:id error:', err);
+    logUsersRouteError('DELETE /api/users/:id', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -124,7 +130,7 @@ users.post('/api/users/:id/link', requireRole('owner', 'admin'), async (c) => {
     await linkFriendToUser(c.env.DB, body.friendId, userId);
     return c.json({ success: true, data: null });
   } catch (err) {
-    console.error('POST /api/users/:id/link error:', err);
+    logUsersRouteError('POST /api/users/:id/link', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -144,7 +150,7 @@ users.get('/api/users/:id/accounts', requireRole('owner', 'admin'), async (c) =>
       })),
     });
   } catch (err) {
-    console.error('GET /api/users/:id/accounts error:', err);
+    logUsersRouteError('GET /api/users/:id/accounts', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -167,7 +173,7 @@ users.post('/api/users/match', requireRole('owner', 'admin'), async (c) => {
     }
     return c.json({ success: true, data: serializeUser(user) });
   } catch (err) {
-    console.error('POST /api/users/match error:', err);
+    logUsersRouteError('POST /api/users/match', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

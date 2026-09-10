@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -140,6 +140,10 @@ const deniedCredentials: Array<[string, Record<string, string>, number]> = [
   ['no credentials', {}, 401],
 ];
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe.each(routes)('$method $path permissions', (route) => {
   test.each(allowedCredentials)('allows %s', async (_name, headers) => {
     const response = await request(route, headers);
@@ -160,4 +164,36 @@ describe.each(routes)('$method $path permissions', (route) => {
     });
     expectNoUserDataAccess();
   });
+
+  test('keeps database exception details out of responses and console output', async () => {
+    const secret = 'synthetic-db-secret:user-private@example.test';
+    const error = new Error(`Database query failed: ${secret}`);
+    // Error names, like messages and stacks, may contain untrusted data.
+    error.name = secret;
+    route.operation.mockRejectedValueOnce(error);
+    const consoleSpies = (['error', 'warn', 'log', 'info', 'debug'] as const)
+      .map((method) => vi.spyOn(console, method).mockImplementation(() => {}));
+
+    const response = await request(route, { Authorization: 'Bearer admin-key' });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ success: false, error: 'Internal server error' });
+    const routeTemplate = route.path.split('?')[0]!.replace('/user-1', '/:id');
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith(`${route.method} ${routeTemplate} failed`, {
+      errorType: 'Error',
+    });
+    expect(JSON.stringify(consoleSpies.flatMap((spy) => spy.mock.calls))).not.toContain(secret);
+  });
 });
+
+test.each(routes.filter((route) => route.method !== 'GET'))(
+  '$method $path rejects cookie authentication without CSRF before accessing user data',
+  async (route) => {
+    const response = await request(route, { Cookie: 'lh_admin_session=admin-key' });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ success: false, error: 'CSRF token mismatch' });
+    expectNoUserDataAccess();
+  },
+);
