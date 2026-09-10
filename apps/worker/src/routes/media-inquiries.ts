@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { jstNow } from '@line-crm/db';
 import type { Env } from '../index.js';
 
 const mediaInquiries = new Hono<Env>();
@@ -91,6 +92,12 @@ mediaInquiries.post('/api/public/media-inquiries', async (c) => {
     utmCampaign: text(body.utmCampaign, 200),
   };
 
+  // 他テーブルと同じく JST ISO-8601（+09:00 付き）で保存する。SQLite 側の
+  // now 系関数はオフセットなしの UTC 文字列を返すため、読み手がローカル時刻
+  // として解釈してしまう。created_at と初期 updated_at は同一イベントなので
+  // 同じ値を使う。
+  const now = jstNow();
+
   await c.env.DB.prepare(
     `INSERT INTO media_inquiries (
       id, inquiry_type, company_name, contact_name, department, position,
@@ -99,7 +106,7 @@ mediaInquiries.post('/api/public/media-inquiries', async (c) => {
       preferred_contact, source_article, source_url, referrer,
       utm_source, utm_medium, utm_campaign, country, cf_ray,
       mail_status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
   ).bind(
     id, inquiryType, companyName, contactName, values.department, values.position,
     values.decisionRole, email, values.phone, values.companySize, values.currentTools,
@@ -107,6 +114,7 @@ mediaInquiries.post('/api/public/media-inquiries', async (c) => {
     values.preferredContact, values.sourceArticle, values.sourceUrl, values.referrer,
     values.utmSource, values.utmMedium, values.utmCampaign,
     c.req.header('cf-ipcountry') || '', c.req.header('cf-ray') || '',
+    now, now,
   ).run();
 
   let mailStatus = 'pending';
@@ -167,8 +175,8 @@ mediaInquiries.post('/api/public/media-inquiries', async (c) => {
   }
 
   await c.env.DB.prepare(
-    `UPDATE media_inquiries SET mail_status = ?, mail_error = ?, updated_at = datetime('now') WHERE id = ?`,
-  ).bind(mailStatus, mailError || null, id).run();
+    `UPDATE media_inquiries SET mail_status = ?, mail_error = ?, updated_at = ? WHERE id = ?`,
+  ).bind(mailStatus, mailError || null, jstNow(), id).run();
 
   return c.json({
     success: true,

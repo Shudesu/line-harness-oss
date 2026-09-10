@@ -32,7 +32,10 @@ const validBody = {
 };
 
 beforeEach(() => vi.restoreAllMocks());
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe('POST /api/public/media-inquiries', () => {
   it('rejects origins outside the media allowlist without persisting', async () => {
@@ -98,5 +101,74 @@ describe('POST /api/public/media-inquiries', () => {
     expect(calls[1].values[0]).toBe('activation_required');
     const body = await res.json() as { data: { notification: string } };
     expect(body.data.notification).toBe('activation_required');
+  });
+
+  // タイムスタンプはプロジェクト共通の JST ISO-8601（+09:00 付き）で保存する。
+  // SQLite 側の now 系関数はオフセットなしの UTC 文字列を返すため、それを
+  // 使うと読み手がローカル時刻として解釈し、JST 00:00〜09:00 の問い合わせが
+  // 前日の日付として扱われる。
+  it('persists offset-bearing JST timestamps instead of offset-less UTC', async () => {
+    const calls: RunCall[] = [];
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ success: true }), { status: 200 })));
+
+    await mediaInquiries.request(
+      '/api/public/media-inquiries',
+      {
+        method: 'POST',
+        headers: { origin: 'https://the-harness.com', 'content-type': 'application/json' },
+        body: JSON.stringify(validBody),
+      },
+      createEnv(calls),
+    );
+
+    const JST_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+09:00$/;
+
+    // INSERT: created_at / updated_at は末尾 2 バインド。
+    const [createdAt, initialUpdatedAt] = calls[0].values.slice(-2) as [string, string];
+    expect(createdAt).toMatch(JST_ISO);
+    expect(initialUpdatedAt).toMatch(JST_ISO);
+    // 同一イベントなので初期値は完全一致させる（無駄な数 ms 差を作らない）。
+    expect(initialUpdatedAt).toBe(createdAt);
+
+    // UPDATE: updated_at は id の 1 つ手前。
+    const notifiedUpdatedAt = calls[1].values.at(-2) as string;
+    expect(notifiedUpdatedAt).toMatch(JST_ISO);
+
+    // タイムスタンプを SQL 側で生成しない（オフセットなし UTC への逆戻り防止）。
+    expect(calls[0].sql).not.toContain('datetime(');
+    expect(calls[1].sql).not.toContain('datetime(');
+  });
+
+  it.each([
+    ['2026-08-19T15:30:00.123Z', '2026-08-20T00:30:00.123+09:00', false],
+    ['2026-08-31T15:10:00.999Z', '2026-09-01T00:10:00.999+09:00', false],
+    ['2026-12-31T15:05:00.456Z', '2027-01-01T00:05:00.456+09:00', true],
+  ] as const)('preserves the instant across JST date boundaries (%s)', async (utc, expectedJst, notificationFails) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(utc));
+    const calls: RunCall[] = [];
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      vi.setSystemTime(new Date(new Date(utc).getTime() + 2500));
+      if (notificationFails) throw new Error('notification unavailable');
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    }));
+
+    const response = await mediaInquiries.request('/api/public/media-inquiries', {
+      method: 'POST',
+      headers: { origin: 'https://the-harness.com', 'content-type': 'application/json' },
+      body: JSON.stringify(validBody),
+    }, createEnv(calls));
+
+    expect(response.status).toBe(201);
+    expect(calls).toHaveLength(2);
+    const [createdAt, updatedAt] = calls[0].values.slice(-2) as [string, string];
+    expect(createdAt).toBe(expectedJst);
+    expect(updatedAt).toBe(createdAt);
+    expect(new Date(createdAt).toISOString()).toBe(utc);
+    const afterNotification = calls[1].values.at(-2) as string;
+    expect(afterNotification).toMatch(/\+09:00$/);
+    expect(new Date(afterNotification).getTime() - new Date(createdAt).getTime()).toBe(2500);
+    expect(calls[1].values[0]).toBe(notificationFails ? 'failed' : 'accepted');
   });
 });

@@ -246,7 +246,39 @@ export function resolveCorsOrigin(
     return normalizedOrigin;
   }
 
-  return allowedOrigins.some((allowedOrigin) => isAllowedAdminOrigin(normalizedOrigin, allowedOrigin))
-    ? normalizedOrigin
-    : '';
+  if (allowedOrigins.some((allowedOrigin) => isAllowedAdminOrigin(normalizedOrigin, allowedOrigin))) {
+    return normalizedOrigin;
+  }
+  if (allowedOrigins.length === 0 && /^https?:\/\//.test(normalizedOrigin)) {
+    warnMissingAdminOrigin(env, requestUrl);
+  }
+  return '';
+}
+
+// Advisory diagnostic only: one fixed-size message per loaded Worker module.
+// The latch retains no request data or environment object, and never affects
+// authorization. A first anonymous auth probe can consume this one message.
+let warnedMissingAdminOrigin = false;
+
+function warnMissingAdminOrigin(env: AdminAuthEnv, requestUrl: string): void {
+  if (warnedMissingAdminOrigin) return;
+  let pathname: string;
+  try {
+    pathname = new URL(requestUrl).pathname;
+  } catch {
+    return;
+  }
+  if (!pathname.startsWith('/api/auth/')) return;
+
+  const configured = Boolean(env.ADMIN_ORIGIN?.trim());
+  warnedMissingAdminOrigin = true;
+  // Do not interpolate Origin, pathname, or the configured value: all can
+  // contain misleading text, and a mistaken secret value must not be logged.
+  console.warn(JSON.stringify({
+    component: 'admin-auth',
+    code: configured ? 'admin_origin_invalid' : 'admin_origin_empty',
+    message: configured
+      ? 'ADMIN_ORIGIN is set but contains no parseable origins. Use an absolute admin URL including https://. See docs/ADMIN-AUTH.md.'
+      : 'ADMIN_ORIGIN is empty. Set it to the admin URL; enable ADMIN_ALLOW_CROSS_SITE for the Pages/Workers topology. See docs/ADMIN-AUTH.md.',
+  }));
 }
