@@ -16,10 +16,15 @@ export async function fetchManifest(url: string): Promise<Manifest> {
   }
 
   const body = (await res.json()) as Manifest;
-  if (body.schema_version !== 1) {
+  if (body.schema_version !== 1 && body.schema_version !== 2) {
     throw new Error(
       `unsupported manifest schema_version ${body.schema_version}`,
     );
+  }
+  if (body.schema_version === 1 && body.releases.some(
+    release => release.legacy_mileage_projection_version !== undefined,
+  )) {
+    throw new Error('historical mileage handoff requires manifest schema_version 2');
   }
   return body;
 }

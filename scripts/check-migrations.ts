@@ -17,6 +17,7 @@
  *   - CREATE TABLE
  *   - ALTER TABLE ... ADD COLUMN  (NULL or with DEFAULT)
  *   - CREATE [UNIQUE] INDEX
+ *   - CREATE TRIGGER (complete BEGIN ... END body)
  *   - INSERT (seed data)
  *
  * Library API:
@@ -41,6 +42,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { argv, exit, stderr, stdout } from 'node:process';
+import {
+  GRANDFATHERED_CUTOFF_PREFIX,
+  isGrandfatheredMigration,
+} from '../packages/update-engine/src/migrations.js';
+import {
+  splitSqlStatements,
+  stripSqlComments,
+} from '../packages/update-engine/src/sql-statements.js';
 
 export type CheckResult = { ok: true } | { ok: false; violation: string };
 
@@ -53,10 +62,6 @@ interface Rule {
 
 // Order matters: more specific rules first so messages are useful.
 const RULES: Rule[] = [
-  {
-    label: 'CREATE TRIGGER is unsupported by the safe statement splitter',
-    pattern: /\bCREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\b/i,
-  },
   {
     label: 'DROP TABLE is forbidden (additive-only migrations)',
     pattern: /\bDROP\s+TABLE\b/i,
@@ -99,31 +104,22 @@ const RULES: Rule[] = [
   },
 ];
 
-/**
- * Strip `--` line comments. Block comments (`/* ... *\/`) are rare in
- * D1 migrations and ignored for now; if they appear we still get correct
- * results because the rules match real DDL anyway. Keeping the stripper
- * simple avoids accidentally hiding real code inside `/* ... *\/`.
- */
-function stripLineComments(sql: string): string {
-  return sql
-    .split('\n')
-    .map((line) => {
-      const idx = line.indexOf('--');
-      return idx === -1 ? line : line.slice(0, idx);
-    })
-    .join('\n');
-}
-
 export function checkMigration(sql: string): CheckResult {
-  const stripped = stripLineComments(sql);
-  for (const rule of RULES) {
-    const m = stripped.match(rule.pattern);
-    if (m) {
-      return { ok: false, violation: `${rule.label} (matched: "${m[0].trim()}")` };
+  try {
+    const stripped = stripSqlComments(sql);
+    for (const rule of RULES) {
+      const m = stripped.match(rule.pattern);
+      if (m) {
+        return { ok: false, violation: `${rule.label} (matched: "${m[0].trim()}")` };
+      }
     }
+    // Use the update engine's structural validation as well as policy rules:
+    // CI must reject a malformed trigger before the updater can touch D1.
+    splitSqlStatements(sql);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, violation: error instanceof Error ? error.message : String(error) };
   }
-  return { ok: true };
 }
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
@@ -136,27 +132,31 @@ const DEFAULT_MIGRATIONS_DIR = 'packages/db/migrations';
  * already been applied to production D1 and cannot be rewritten — they are
  * grandfathered. Bump this only when starting a new policy era.
  *
- * String comparison works here because migration prefixes are numeric and
- * zero-padded (`001`..`041`..), so lexicographic order matches numeric order.
+ * 単一ソースは packages/update-engine/src/migrations.ts の
+ * GRANDFATHERED_CUTOFF_PREFIX (update-engine は「grandfathered かつ破壊的」な
+ * migration を adoption 時に実行せず記録のみで通すため、境界がずれると
+ * CI の合格範囲とエンジンの実行範囲が乖離する)。このスクリプトはリポ専用
+ * (OSS 同期から除外) なので、published パッケージ側を import できる。
  */
-export const POLICY_CUTOFF_PREFIX = '041';
+export const POLICY_CUTOFF_PREFIX = GRANDFATHERED_CUTOFF_PREFIX;
 
 /**
  * Filter the list of migration filenames (basenames, not full paths) to those
  * that fall under the active policy. With `all = true`, returns the input
  * unchanged (escape hatch for ad-hoc full scans).
  *
- * Files whose name starts with a prefix >= POLICY_CUTOFF_PREFIX pass. Files
- * with non-numeric or shorter prefixes pass through too (the comparison is
- * lexicographic and any newer naming scheme is assumed in-policy until we
- * decide otherwise).
+ * 判定はエンジンの isGrandfatheredMigration と同一 (単一ソース):
+ * 3桁数字プレフィックスがカットオフ未満のものだけ免除。非数値・桁違いの
+ * 命名はポリシー対象として必ずスキャンする — エンジン側も同じ判定で
+ * splitSqlStatements の破壊ガードに回すため、「CI は素通りするのに更新は
+ * 全環境で throw する」という非対称を作らない。
  */
 export function filterMigrationsByPolicy(
   names: string[],
   options: { all?: boolean } = {},
 ): string[] {
   if (options.all) return names;
-  return names.filter((name) => name >= POLICY_CUTOFF_PREFIX);
+  return names.filter((name) => !isGrandfatheredMigration(name));
 }
 
 function listDefaultMigrations(options: { all?: boolean } = {}): string[] {

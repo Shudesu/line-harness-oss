@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { containsDestructiveSchemaChanges, splitSqlStatements, stripSqlComments } from './sql-statements.js';
+export { containsDestructiveSchemaChanges, splitSqlStatements } from './sql-statements.js';
+import { applyLegacyMileageMigration, assertLegacyMileageSource, isLegacyMileageMigration } from './legacy-mileage.js';
 import type { CfApiCreds } from './types.js';
 import { executeD1Query } from './cf-api/d1.js';
 import { isBenignSchemaErrorText } from './materialize.js';
@@ -31,19 +34,6 @@ export const GRANDFATHERED_CUTOFF_PREFIX = '041';
 export function isGrandfatheredMigration(name: string): boolean {
   const prefix = name.slice(0, 3);
   return /^\d{3}$/.test(prefix) && prefix < GRANDFATHERED_CUTOFF_PREFIX;
-}
-
-/**
- * 破壊的スキーマ変更 (DROP TABLE/COLUMN, RENAME TO/COLUMN) を含むか。
- * splitSqlStatements の拒否条件と同一定義 — adopt-stamp の対象判定と
- * スプリッタのガードがずれないよう、双方がこの関数を使う。
- */
-export function containsDestructiveSchemaChanges(sql: string): boolean {
-  const uncommented = stripSqlComments(sql);
-  return (
-    /\bDROP\s+(?:TABLE|COLUMN)\b/i.test(uncommented) ||
-    /\bRENAME\s+(?:TO|COLUMN)\b/i.test(uncommented)
-  );
 }
 
 export interface MigrationApplyResult {
@@ -79,95 +69,10 @@ export interface ApplyD1MigrationsOptions {
    * 停止する (通常の差分更新に現れるのは異常なので loud に落とす)。
    */
   adoptGrandfathered?: boolean;
+  /** Target Worker explicitly supports projecting adapter-held historical activity. */
+  legacyMileageProjectionVersion?: 1;
   /** Test seam. Production callers use the Cloudflare D1 HTTP API. */
   execute?: D1Executor;
-}
-
-/**
- * Split a SQLite migration into individual statements.
- *
- * D1 executes a multi-statement SQL string atomically. That is unsafe for
- * legacy L Harness installs: one duplicate ALTER TABLE rolls back later
- * statements in the same file. This scanner splits only on semicolons that
- * are outside strings, quoted identifiers, and comments.
- *
- * Current L Harness migrations intentionally do not use CREATE TRIGGER
- * bodies (whose internal BEGIN/END semicolons need a full SQLite parser).
- * Fail loudly if one appears so a future release cannot silently split it
- * incorrectly.
- */
-export function splitSqlStatements(sql: string): string[] {
-  const uncommented = stripSqlComments(sql);
-  if (/\bCREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\b/i.test(uncommented)) {
-    throw new Error('CREATE TRIGGER migrations are not supported by the safe D1 splitter');
-  }
-  if (containsDestructiveSchemaChanges(sql)) {
-    throw new Error('destructive schema changes are not supported by safe D1 updates');
-  }
-
-  const statements: string[] = [];
-  let start = 0;
-  let quote: "'" | '"' | '`' | ']' | null = null;
-  let lineComment = false;
-  let blockComment = false;
-
-  for (let i = 0; i < sql.length; i += 1) {
-    const ch = sql[i];
-    const next = sql[i + 1];
-
-    if (lineComment) {
-      if (ch === '\n' || ch === '\r') lineComment = false;
-      continue;
-    }
-    if (blockComment) {
-      if (ch === '*' && next === '/') {
-        blockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (quote) {
-      const closing = quote;
-      if (ch === closing) {
-        // SQLite escapes quote characters by doubling them.
-        if (next === closing && closing !== ']') {
-          i += 1;
-        } else {
-          quote = null;
-        }
-      }
-      continue;
-    }
-
-    if (ch === '-' && next === '-') {
-      lineComment = true;
-      i += 1;
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      blockComment = true;
-      i += 1;
-      continue;
-    }
-    if (ch === "'" || ch === '"' || ch === '`') {
-      quote = ch;
-      continue;
-    }
-    if (ch === '[') {
-      quote = ']';
-      continue;
-    }
-    if (ch === ';') {
-      pushSqlStatement(statements, sql.slice(start, i));
-      start = i + 1;
-    }
-  }
-
-  if (quote || blockComment) {
-    throw new Error('migration contains an unterminated SQL quote or block comment');
-  }
-  pushSqlStatement(statements, sql.slice(start));
-  return statements;
 }
 
 /**
@@ -207,6 +112,9 @@ export async function applyD1Migrations(
       throw new Error(`migration ${name} missing in bundle`);
     }
     const sql = (opts.migrations.get(name) as Buffer).toString('utf8');
+    if (isLegacyMileageMigration(name)) {
+      assertLegacyMileageSource(name, opts.migrations.get(name) as Buffer);
+    }
     if (
       adoptGrandfathered &&
       isGrandfatheredMigration(name) &&
@@ -300,7 +208,20 @@ export async function applyD1Migrations(
       continue;
     }
 
-    const statements = parsedStatements.get(name) as string[];
+    const legacyMileage = isLegacyMileageMigration(name);
+    if (legacyMileage && opts.legacyMileageProjectionVersion !== 1) {
+      throw new Error(
+        `Migration ${name} requires a target release with legacy_mileage_projection_version=1. ` +
+        'Select a compatible Worker release; historical mileage was not replayed.',
+      );
+    }
+    // The released SQL/checksum stays immutable. Prepare only additive structure;
+    // the adapter atomically hands history to the compatible runtime and stamps
+    // the migration, without replaying its direct monetary INSERTs.
+    const statements = legacyMileage
+      ? (parsedStatements.get(name) as string[]).filter(statement =>
+          /^(?:ALTER\s+TABLE|CREATE\s+(?:UNIQUE\s+)?INDEX)\b/i.test(stripSqlComments(statement).trim()))
+      : parsedStatements.get(name) as string[];
     let executedStatements = 0;
     let skippedStatements = 0;
     for (let index = 0; index < statements.length; index += 1) {
@@ -318,6 +239,18 @@ export async function applyD1Migrations(
           { cause: error },
         );
       }
+    }
+
+    if (legacyMileage) {
+      const applied = await applyLegacyMileageMigration({ ...base, execute, name, source, checksum });
+      const result: MigrationApplyResult = {
+        name, alreadyApplied: false,
+        executedStatements: executedStatements + applied.executedStatements,
+        skippedStatements: skippedStatements + applied.skippedStatements,
+      };
+      results.push(result);
+      await opts.onMigrationDone?.(result);
+      continue;
     }
 
     await execute({
@@ -381,15 +314,6 @@ async function assertAdoptableSchemaPresent(
         '手動での更新が必要です: https://github.com/Shudesu/line-harness-oss/blob/main/docs/wiki/26-Manual-Update.md',
     );
   }
-}
-
-function pushSqlStatement(statements: string[], candidate: string): void {
-  const trimmed = candidate.trim();
-  if (trimmed && stripSqlComments(trimmed).trim()) statements.push(trimmed);
-}
-
-function stripSqlComments(sql: string): string {
-  return sql.replace(/--[^\r\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 function firstResultValue(

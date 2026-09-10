@@ -34,12 +34,10 @@ describe('splitSqlStatements', () => {
     expect(splitSqlStatements('-- only a comment;\n; /* another */')).toEqual([]);
   });
 
-  it('rejects trigger bodies instead of splitting them incorrectly', () => {
-    expect(() =>
-      splitSqlStatements(
-        'CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET x = 1; END;',
-      ),
-    ).toThrow(/CREATE TRIGGER/);
+  it('preserves complete trigger bodies as one statement', () => {
+    expect(splitSqlStatements(
+      'CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET x = 1; END;',
+    )).toEqual(['CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET x = 1; END']);
   });
 });
 

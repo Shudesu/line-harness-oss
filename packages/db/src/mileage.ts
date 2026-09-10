@@ -212,10 +212,98 @@ export interface PostMileageEntryInput {
   occurredAt?: string;
 }
 
+const HISTORICAL_MILEAGE_RULES = new Map<string, { eventType: string; sources: string[]; prefix: string; subject?: string }>(Object.entries({
+  'builtin-message-received': { eventType: 'message_received', sources: ['line'], prefix: 'message' },
+  'builtin-link-clicked': { eventType: 'link_clicked', sources: ['tracked_link'], prefix: 'link', subject: 'trackedLinkId' },
+  'builtin-form-submitted': { eventType: 'form_submitted', sources: ['form'], prefix: 'form', subject: 'formId' },
+  'builtin-booking-created': { eventType: 'booking_created', sources: ['booking', 'event_booking'], prefix: 'booking' },
+  'builtin-webinar-watch-5m': { eventType: 'webinar_watch_5m', sources: ['webinar'], prefix: 'webinar:5m', subject: 'webinarId' },
+  'builtin-webinar-watch-15m': { eventType: 'webinar_watch_15m', sources: ['webinar'], prefix: 'webinar:15m', subject: 'webinarId' },
+  'builtin-webinar-completed': { eventType: 'webinar_completed', sources: ['webinar'], prefix: 'webinar:complete', subject: 'webinarId' },
+  'builtin-webinar-cta-clicked': { eventType: 'webinar_cta_clicked', sources: ['webinar'], prefix: 'webinar:cta', subject: 'webinarId' },
+  'builtin-instagram-line-returned': { eventType: 'instagram_line_returned', sources: ['instagram'], prefix: 'instagram:return', subject: 'igsid' },
+}));
+
+/** Match only actor grants emitted by the runtime that also existed in 062/063. */
+function legacyMileageCounterpart(
+  input: PostMileageEntryInput,
+  programId: string,
+  occurredAt: string,
+): { sql: string; values: (string | null)[] } | null {
+  const rule = input.mileageRuleId ? HISTORICAL_MILEAGE_RULES.get(input.mileageRuleId) : undefined;
+  if (programId !== DEFAULT_MILEAGE_PROGRAM_ID || !rule || input.entryType !== 'grant'
+      || input.amount <= 0 || input.reversesEntryId || !input.engagementEventId
+      || !rule.sources.includes(input.source) || input.metadata?.beneficiaryType !== 'actor'
+      || input.metadata.ruleId !== input.mileageRuleId || input.metadata.eventType !== rule.eventType) {
+    return null;
+  }
+
+  // Use the actual runtime key, not the original seeded conditions: operators can
+  // change uniqueness or route a rule to a referrer. Other/manual keys are untouched.
+  const identity = input.beneficiaryUserId
+    ? `user:${input.beneficiaryUserId}` : `friend:${input.beneficiaryFriendId}`;
+  const subject = typeof input.metadata.subjectKey === 'string' && input.metadata.subjectKey
+    ? input.metadata.subjectKey : null;
+  const prefix = `rule:${input.mileageRuleId}`;
+  const subjectPrefix = `${prefix}:identity:${identity}`;
+  const uniqueSubject = subject !== null && input.idempotencyKey === `${subjectPrefix}:subject:${subject}`;
+  const uniqueDay = subject !== null
+    && input.idempotencyKey === `${subjectPrefix}:day:${occurredAt.slice(0, 10)}:subject:${subject}`;
+  if (!uniqueSubject && !uniqueDay && input.idempotencyKey !== `${prefix}:event:${input.engagementEventId}`) {
+    return null;
+  }
+
+  // The immutable legacy ledger sometimes carries the subject only on its event.
+  const metadataValue = (key: string) => `COALESCE(
+    json_extract(CASE WHEN json_valid(legacy.metadata) THEN legacy.metadata END, '$.${key}'),
+    json_extract(CASE WHEN json_valid(event.metadata) THEN event.metadata END, '$.${key}'))`;
+  let historicalSubject = rule.subject ? metadataValue(rule.subject) : 'NULL';
+  if (rule.eventType === 'webinar_cta_clicked') {
+    historicalSubject = `(${historicalSubject} || ':' || COALESCE(${metadataValue('ctaId')}, 'primary'))`;
+  } else if (rule.eventType === 'instagram_line_returned') {
+    historicalSubject = `COALESCE(${historicalSubject}, CASE WHEN event.identity_provider = 'instagram' THEN event.identity_subject END)`;
+  }
+  historicalSubject = `COALESCE(${metadataValue('subjectKey')}, ${historicalSubject})`;
+  const historicalPrefix = input.source === 'event_booking' ? 'event-booking' : rule.prefix;
+  const values: (string | null)[] = [
+    input.beneficiaryFriendId ?? null, input.beneficiaryFriendId ?? null, input.beneficiaryUserId ?? null,
+    programId, input.mileageRuleId!, input.source, `history-mile:${historicalPrefix}:%`,
+    input.sourceEventId ?? null,
+  ];
+  let actionMatch = 'legacy.source_event_id = ?';
+  if (uniqueSubject || uniqueDay) {
+    actionMatch += ` OR (${historicalSubject} = ?${uniqueDay ? ' AND substr(legacy.occurred_at, 1, 10) = ?' : ''})`;
+    values.push(subject);
+    if (uniqueDay) values.push(occurredAt.slice(0, 10));
+  }
+  return {
+    sql: `FROM mileage_ledger legacy
+      LEFT JOIN engagement_events event ON event.id = legacy.engagement_event_id AND event.program_id = legacy.program_id
+      LEFT JOIN friends legacy_friend ON legacy_friend.id = legacy.beneficiary_friend_id
+      CROSS JOIN (SELECT ? AS friend_id, COALESCE((SELECT user_id FROM friends WHERE id = ?), ?) AS user_id) beneficiary
+      WHERE legacy.program_id = ? AND legacy.mileage_rule_id = ? AND legacy.source = ?
+        AND legacy.entry_type = 'grant' AND legacy.idempotency_key LIKE ?
+        AND (legacy.beneficiary_friend_id = beneficiary.friend_id
+             OR (beneficiary.user_id IS NOT NULL
+                 AND (legacy.beneficiary_user_id = beneficiary.user_id OR legacy_friend.user_id = beneficiary.user_id)))
+        AND (${actionMatch})`,
+    values,
+  };
+}
+
+interface MileageDailyCap {
+  sql: string;
+  values: (string | number | null)[];
+  limit: number;
+}
+
+class MileageDailyCapReached extends Error {}
+
 /** Add one immutable ledger entry exactly once. Existing entries are returned. */
 export async function postMileageEntry(
   db: D1Database,
   input: PostMileageEntryInput,
+  dailyCap?: MileageDailyCap,
 ): Promise<MileageLedgerEntry> {
   if (!Number.isInteger(input.amount) || input.amount === 0) {
     throw new Error('Mileage amount must be a non-zero integer');
@@ -228,6 +316,12 @@ export async function postMileageEntry(
   const now = jstNow();
   const programId = input.programId ?? DEFAULT_MILEAGE_PROGRAM_ID;
   await ensureBuiltInProgram(db, programId);
+  const occurredAt = input.occurredAt ?? now;
+  const legacy = legacyMileageCounterpart(input, programId, occurredAt);
+  const insertPredicates = [
+    ...(legacy ? [`NOT EXISTS (SELECT 1 ${legacy.sql})`] : []),
+    ...(dailyCap ? [`(${dailyCap.sql}) < ?`] : []),
+  ];
   await db
     .prepare(
       `INSERT OR IGNORE INTO mileage_ledger
@@ -235,7 +329,8 @@ export async function postMileageEntry(
           engagement_event_id, mileage_rule_id, entry_type, status, amount, reason, source,
           source_event_id, idempotency_key, reverses_entry_id, metadata,
           occurred_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       ${insertPredicates.length ? `WHERE ${insertPredicates.join(' AND ')}` : ''}`,
     )
     .bind(
       id,
@@ -253,18 +348,28 @@ export async function postMileageEntry(
       input.idempotencyKey,
       input.reversesEntryId ?? null,
       input.metadata ? JSON.stringify(input.metadata) : null,
-      input.occurredAt ?? now,
+      occurredAt,
       now,
+      ...(legacy?.values ?? []),
+      ...(dailyCap ? [...dailyCap.values, dailyCap.limit] : []),
     )
     .run();
 
-  const entry = await db
+  let entry = await db
     .prepare(
       `SELECT * FROM mileage_ledger
         WHERE program_id = ? AND idempotency_key = ?`,
     )
     .bind(programId, input.idempotencyKey)
     .first<MileageLedgerEntry>();
+  if (!entry && legacy) {
+    entry = await db.prepare(`SELECT legacy.* ${legacy.sql} ORDER BY legacy.created_at, legacy.id LIMIT 1`)
+      .bind(...legacy.values).first<MileageLedgerEntry>();
+  }
+  if (!entry && dailyCap) {
+    const count = await db.prepare(dailyCap.sql).bind(...dailyCap.values).first<{ action_count: number }>();
+    if (count && count.action_count >= dailyCap.limit) throw new MileageDailyCapReached('Mileage daily cap reached');
+  }
   if (!entry) throw new Error('Failed to post mileage entry');
   return entry;
 }
@@ -771,6 +876,8 @@ export interface MileageRuleRow {
   is_active: number;
   created_at: string;
   updated_at: string;
+  valid_from: string | null;
+  valid_until: string | null;
 }
 
 export interface MileageRuleConditions {
@@ -1005,6 +1112,7 @@ async function resolveMileageMultiplier(
 async function applyMileageRulesImmediately(
   db: D1Database,
   input: ApplyMileageRulesInput,
+  historicalClaim?: LegacyMileageClaim | null,
 ): Promise<{ event: EngagementEvent; granted: MileageLedgerEntry[] }> {
   const friend = await db
     .prepare(`SELECT id, user_id FROM friends WHERE id = ?`)
@@ -1013,6 +1121,7 @@ async function applyMileageRulesImmediately(
   if (!friend) throw new Error(`Mileage friend not found: ${input.friendId}`);
 
   const occurredAt = input.occurredAt ?? jstNow();
+  if (historicalClaim) await verifyLegacyMileageClaim(db, historicalClaim, input, occurredAt);
   const metadata = {
     ...(input.metadata ?? {}),
     ...(input.subjectKey ? { subjectKey: input.subjectKey } : {}),
@@ -1037,9 +1146,10 @@ async function applyMileageRulesImmediately(
           AND is_active = 1
           AND (valid_from IS NULL OR valid_from <= ?)
           AND (valid_until IS NULL OR valid_until >= ?)
+          AND (? IS NULL OR id = ?)
         ORDER BY created_at ASC, id ASC`,
     )
-    .bind(input.eventType, input.source, occurredAt, occurredAt)
+    .bind(input.eventType, input.source, occurredAt, occurredAt, historicalClaim?.mileage_rule_id ?? null, historicalClaim?.mileage_rule_id ?? null)
     .all<MileageRuleRow>();
 
   const identityKey = friend.user_id ? `user:${friend.user_id}` : `friend:${friend.id}`;
@@ -1132,10 +1242,19 @@ async function applyMileageRulesImmediately(
       ? await resolveMileageMultiplier(db, beneficiaryFriendId, occurredAt)
       : actorMultiplier;
 
+    if (historicalClaim && !conditions.ignoreMultiplier && multiplier.bps !== 10000) {
+      throw new Error('Historical mileage multiplier changed since migration; review the held claim before retrying');
+    }
+
+    let atomicDailyCap: MileageDailyCap | undefined;
     if (conditions.dailyCapActions && conditions.dailyCapActions > 0) {
-      const capRow = await db
-        .prepare(
-          `SELECT COUNT(*) AS action_count
+      const historicalRule = HISTORICAL_MILEAGE_RULES.get(rule.id);
+      const includeLinkedHistory = rule.program_id === DEFAULT_MILEAGE_PROGRAM_ID
+        && conditions.beneficiary !== 'referrer'
+        && historicalRule?.eventType === input.eventType
+        && historicalRule.sources.includes(input.source);
+      const cap: MileageDailyCap = {
+        sql: `SELECT COUNT(*) AS action_count
              FROM mileage_ledger ml
             WHERE ml.program_id = ?
               AND ml.mileage_rule_id = ?
@@ -1143,9 +1262,12 @@ async function applyMileageRulesImmediately(
               AND ml.status != 'void'
               AND substr(ml.occurred_at, 1, 10) = substr(?, 1, 10)
               AND ((? IS NOT NULL AND ml.beneficiary_user_id = ?)
-                   OR (? IS NULL AND ml.beneficiary_friend_id = ?))`,
-        )
-        .bind(
+                   OR (? IS NULL AND ml.beneficiary_friend_id = ?)
+                   OR (? = 1 AND ml.idempotency_key LIKE 'history-mile:%' AND EXISTS (
+                     SELECT 1 FROM friends historical_friend
+                      WHERE historical_friend.id = ml.beneficiary_friend_id AND historical_friend.user_id = ?
+                   )))`,
+        values: [
           rule.program_id,
           rule.id,
           occurredAt,
@@ -1153,8 +1275,16 @@ async function applyMileageRulesImmediately(
           beneficiaryUserId,
           beneficiaryUserId,
           beneficiaryFriendId,
-        )
-        .first<{ action_count: number }>();
+          includeLinkedHistory ? 1 : 0,
+          beneficiaryUserId,
+        ],
+        // Preserve the numeric comparison used by the precheck; binding a
+        // legacy JSON string as TEXT would use SQLite's storage-class order.
+        limit: Number(conditions.dailyCapActions),
+      };
+      const capRow = await db.prepare(cap.sql).bind(...cap.values).first<{ action_count: number }>();
+      if (rule.program_id === DEFAULT_MILEAGE_PROGRAM_ID && rule.id.startsWith('builtin-')
+          && conditions.beneficiary !== 'referrer') atomicDailyCap = cap;
       if ((capRow?.action_count ?? 0) >= conditions.dailyCapActions) continue;
     }
 
@@ -1167,40 +1297,44 @@ async function applyMileageRulesImmediately(
           : conditions.uniquePerSubjectPerDay && input.subjectKey
             ? `rule:${rule.id}:identity:${beneficiaryIdentityKey}:day:${occurredAt.slice(0, 10)}:subject:${input.subjectKey}`
             : `rule:${rule.id}:event:${event.id}`;
-    const entry = await postMileageEntry(db, {
-      programId: rule.program_id,
-      beneficiaryUserId,
-      beneficiaryFriendId,
-      engagementEventId: event.id,
-      mileageRuleId: rule.id,
-      entryType: 'grant',
-      status: rule.initial_status,
-      amount: conditions.ignoreMultiplier
-        ? rule.amount
-        : Math.max(1, Math.round((rule.amount * multiplier.bps) / 10000)),
-      reason: rule.name,
-      source: input.source,
-      sourceEventId: input.sourceEventId,
-      idempotencyKey,
-      metadata: {
-        ...metadata,
-        ruleId: rule.id,
-        eventType: input.eventType,
-        baseAmount: rule.amount,
-        multiplierBps: multiplier.bps,
-        multiplierTagId: multiplier.tagId,
-        multiplierTagName: multiplier.tagName,
-        beneficiaryType: conditions.beneficiary ?? 'actor',
-        ...(referrer ? {
-          affiliateId: referrer.affiliateId,
-          refCode: referrer.refCode,
-          referredFriendId: friend.id,
-          referredUserId: friend.user_id,
-        } : {}),
-      },
-      occurredAt,
-    });
-    granted.push(entry);
+    try {
+      const entry = await postMileageEntry(db, {
+        programId: rule.program_id,
+        beneficiaryUserId,
+        beneficiaryFriendId,
+        engagementEventId: event.id,
+        mileageRuleId: rule.id,
+        entryType: 'grant',
+        status: rule.initial_status,
+        amount: conditions.ignoreMultiplier
+          ? rule.amount
+          : Math.max(1, Math.round((rule.amount * multiplier.bps) / 10000)),
+        reason: rule.name,
+        source: input.source,
+        sourceEventId: input.sourceEventId,
+        idempotencyKey,
+        metadata: {
+          ...metadata,
+          ruleId: rule.id,
+          eventType: input.eventType,
+          baseAmount: rule.amount,
+          multiplierBps: multiplier.bps,
+          multiplierTagId: multiplier.tagId,
+          multiplierTagName: multiplier.tagName,
+          beneficiaryType: conditions.beneficiary ?? 'actor',
+          ...(referrer ? {
+            affiliateId: referrer.affiliateId,
+            refCode: referrer.refCode,
+            referredFriendId: friend.id,
+            referredUserId: friend.user_id,
+          } : {}),
+        },
+        occurredAt,
+      }, atomicDailyCap);
+      granted.push(entry);
+    } catch (error) {
+      if (!(error instanceof MileageDailyCapReached)) throw error;
+    }
   }
   return { event, granted };
 }
@@ -1224,6 +1358,49 @@ export interface MileageQueueResult {
   granted: number;
 }
 
+// Adapter-owned claims stay invisible to older workers, even after a failed
+// projection. Only this processor recognizes the held rows as eligible work.
+const LEGACY_MILEAGE_HOLD = '9999-12-31T23:59:59';
+interface LegacyMileageClaim {
+  migration_name: string;
+  mileage_rule_id: string;
+  rule_snapshot: string;
+}
+
+async function verifyLegacyMileageClaim(
+  db: D1Database,
+  claim: LegacyMileageClaim,
+  input: ApplyMileageRulesInput,
+  occurredAt: string,
+): Promise<void> {
+  const migrationRules: Record<string, string[]> = {
+    '062_mileage_admin_and_activity_rules.sql': [
+      'builtin-message-received', 'builtin-link-clicked', 'builtin-form-submitted', 'builtin-booking-created',
+    ],
+    '063_webinar_instagram_mileage.sql': [
+      'builtin-webinar-watch-5m', 'builtin-webinar-watch-15m', 'builtin-webinar-completed',
+      'builtin-webinar-cta-clicked', 'builtin-instagram-line-returned',
+    ],
+  };
+  if (!migrationRules[claim.migration_name]?.includes(claim.mileage_rule_id)) {
+    throw new Error('Historical mileage claim has an unsupported migration or rule');
+  }
+  const rule = await getMileageRuleById(db, claim.mileage_rule_id);
+  let snapshot: Record<string, unknown> | null = null;
+  try { snapshot = JSON.parse(claim.rule_snapshot) as Record<string, unknown>; } catch { /* Reject below. */ }
+  const keys = ['amount', 'initial_status', 'conditions', 'source', 'event_type', 'is_active', 'valid_from', 'valid_until'] as const;
+  if (!rule || rule.program_id !== DEFAULT_MILEAGE_PROGRAM_ID || !snapshot || typeof snapshot !== 'object'
+      || keys.some((key) => !Object.prototype.hasOwnProperty.call(snapshot, key) || snapshot[key] !== rule[key])) {
+    throw new Error('Historical mileage policy changed since migration; review the held claim before retrying');
+  }
+  if (rule.is_active !== 1 || rule.event_type !== input.eventType
+      || (rule.source !== null && rule.source !== input.source)
+      || (rule.valid_from !== null && rule.valid_from > occurredAt)
+      || (rule.valid_until !== null && rule.valid_until < occurredAt)) {
+    throw new Error('Historical mileage claim does not match an eligible rule');
+  }
+}
+
 /** Drain a bounded batch. Safe for retries and overlapping cron invocations. */
 export async function processPendingMileageEvents(
   db: D1Database,
@@ -1231,6 +1408,9 @@ export async function processPendingMileageEvents(
 ): Promise<MileageQueueResult> {
   const limit = Math.min(250, Math.max(1, options.limit ?? 100));
   const now = options.now ?? jstNow();
+  const hasLegacyClaims = !!await db.prepare(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+  ).bind('_line_harness_legacy_mileage_claims').first<{ name: string }>();
   await db
     .prepare(
       `UPDATE mileage_event_queue
@@ -1247,7 +1427,10 @@ export async function processPendingMileageEvents(
          FROM mileage_event_queue q
         WHERE q.status IN ('pending','failed')
           AND q.attempts < 5
-          AND datetime(q.available_at) <= datetime(?)
+          AND (datetime(q.available_at) <= datetime(?)
+               ${hasLegacyClaims ? `OR (q.available_at = '${LEGACY_MILEAGE_HOLD}' AND EXISTS (
+                 SELECT 1 FROM _line_harness_legacy_mileage_claims claim WHERE claim.engagement_event_id = q.engagement_event_id
+               ))` : ''})
         ORDER BY q.created_at ASC, q.engagement_event_id ASC
         LIMIT ?`,
     )
@@ -1280,6 +1463,11 @@ export async function processPendingMileageEvents(
       if (event.metadata) {
         try { metadata = JSON.parse(event.metadata) as Record<string, unknown>; } catch { metadata = {}; }
       }
+      const historicalClaim = hasLegacyClaims
+        ? await db.prepare(`SELECT migration_name, mileage_rule_id, rule_snapshot
+              FROM _line_harness_legacy_mileage_claims WHERE engagement_event_id = ?`)
+          .bind(event.id).first<LegacyMileageClaim>()
+        : null;
       const projection = await applyMileageRulesImmediately(db, {
         eventType: event.event_type,
         source: event.source,
@@ -1288,7 +1476,7 @@ export async function processPendingMileageEvents(
         subjectKey: typeof metadata.subjectKey === 'string' ? metadata.subjectKey : null,
         metadata,
         occurredAt: event.occurred_at,
-      });
+      }, historicalClaim);
       result.granted += projection.granted.length;
       result.processed += 1;
       await db
@@ -1307,7 +1495,8 @@ export async function processPendingMileageEvents(
         .prepare(
           `UPDATE mileage_event_queue
               SET status = 'failed', processing_started_at = NULL,
-                  available_at = datetime(?, '+' || MIN(attempts * 5, 60) || ' minutes'),
+                  available_at = CASE WHEN available_at = '${LEGACY_MILEAGE_HOLD}' THEN available_at
+                    ELSE datetime(?, '+' || MIN(attempts * 5, 60) || ' minutes') END,
                   updated_at = ?, last_error = ?
             WHERE engagement_event_id = ?`,
         )

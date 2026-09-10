@@ -6,12 +6,48 @@ import {
 } from './check-migrations';
 
 describe('checkMigration', () => {
-  it('rejects CREATE TRIGGER because its body cannot be split safely', () => {
+  it('allows complete CREATE TRIGGER bodies', () => {
     const result = checkMigration(
       'CREATE TRIGGER audit AFTER INSERT ON friends BEGIN INSERT INTO logs VALUES (NEW.id); END;',
     );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it.each([
+    'CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1;',
+    'CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1 END;',
+    'CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN 1 THEN 2; END;',
+    'CREATE TRIGGER t AFTER INSERT ON a BEGIN END;',
+    'CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END CREATE TABLE b (id);',
+  ])('rejects structurally malformed triggers: %s', (sql) => {
+    const result = checkMigration(sql);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.violation).toContain('CREATE TRIGGER');
+  });
+
+  it('still applies additive rules to SQL following a trigger', () => {
+    const trigger = 'CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END;';
+    const result = checkMigration(`${trigger} ALTER TABLE a ADD COLUMN required TEXT NOT NULL;`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.violation).toContain('NOT NULL');
+  });
+
+  it('does not let a comment marker inside a string hide destructive SQL', () => {
+    const result = checkMigration("SELECT '--'; DROP TABLE foo;");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.violation).toContain('DROP TABLE');
+  });
+
+  it('ignores block comments without merging adjacent keywords', () => {
+    expect(checkMigration('/* DROP TABLE foo; */ CREATE TABLE foo (id INTEGER);')).toEqual({ ok: true });
+    const result = checkMigration('DROP/**/TABLE foo;');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.violation).toContain('DROP TABLE');
+  });
+
+  it('reports unterminated quotes and comments through the library result', () => {
+    expect(checkMigration("SELECT 'unfinished;").ok).toBe(false);
+    expect(checkMigration('CREATE TABLE foo (id); /* unfinished').ok).toBe(false);
   });
   it('allows CREATE TABLE', () => {
     const sql = `CREATE TABLE foo (id INTEGER PRIMARY KEY, name TEXT);`;

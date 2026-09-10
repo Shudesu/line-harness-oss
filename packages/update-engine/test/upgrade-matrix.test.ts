@@ -29,7 +29,16 @@ type SqliteExecutor = NonNullable<Parameters<typeof applyD1Migrations>[0]['execu
 
 function sqliteExecutor(db: Database.Database): SqliteExecutor {
   return (async (opts: { sql: string; params?: any[] }) => {
-    const statement = db.prepare(opts.sql);
+    let statement: ReturnType<Database.Database['prepare']>;
+    try {
+      statement = db.prepare(opts.sql);
+    } catch (error) {
+      if (!String(error).includes('more than one statement') || opts.params?.length) throw error;
+      // Model the HTTP API's intentionally atomic multi-statement adapter unit.
+      // Ordinary migration statements still use prepare() below.
+      db.transaction(() => db.exec(opts.sql))();
+      return { success: true, result: [{ success: true, results: [] }] };
+    }
     const params = opts.params ?? [];
     if (statement.reader) {
       return {
@@ -91,6 +100,7 @@ async function applyAll(db: Database.Database): Promise<void> {
     databaseId: 'local',
     names: allMigrationNames,
     migrations: allMigrations,
+    legacyMileageProjectionVersion: 1,
     execute: sqliteExecutor(db),
   });
 }
@@ -171,6 +181,7 @@ describe('safe upgrade matrix', () => {
           databaseId: 'local',
           names: allMigrationNames.slice(0, lastIndex + 1),
           migrations: allMigrations,
+          legacyMileageProjectionVersion: 1,
           execute: sqliteExecutor(db),
         });
         // Historical releases did not have the new checksum ledger. Remove

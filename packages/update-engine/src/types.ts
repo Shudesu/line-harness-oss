@@ -25,12 +25,14 @@ export interface ReleaseEntry {
   required_secrets: string[];
   new_required_secrets: string[];
   migrations: string[];
+  /** Worker can safely claim historical mileage held by the update adapter. */
+  legacy_mileage_projection_version?: 1;
   changelog_url: string;
   min_from_version: string;
 }
 
 export interface Manifest {
-  schema_version: 1;
+  schema_version: 1 | 2;
   latest: string;
   releases: ReleaseEntry[];
 }
