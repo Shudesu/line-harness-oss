@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
+import type { Message } from '@line-crm/line-sdk';
+import { messageToLogPayload } from '../services/step-delivery.js';
 import {
   getOperators,
   getOperatorById,
@@ -11,7 +13,7 @@ import {
   createChat,
   getFriendById,
   getLineAccountById,
-  resolveDefaultAccessToken,
+  resolveDefaultLineAccount,
   updateChat,
   jstNow,
 } from '@line-crm/db';
@@ -102,9 +104,10 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
 }
 
 /**
- * `envAccessToken` は「最後の砦」であって既定値ではない —
- * `resolveDefaultAccessToken` の doc comment を参照。friend にアカウントが
- * 紐付いていなくても、テナントに有効なアカウントが1本しか無ければそれを使う。
+ * Resolve the sending token and tracking-link owner from the same account.
+ * Unassigned legacy friends can use the sole active account or the existing
+ * environment fallback. An assigned but unavailable account never falls back
+ * to another bot.
  */
 async function resolveFriendAndAccessToken(
   db: D1Database,
@@ -113,19 +116,18 @@ async function resolveFriendAndAccessToken(
 ) {
   const friend = await getFriendById(db, friendId);
   if (!friend) {
-    return { friend: null, accessToken: await resolveDefaultAccessToken(db, envAccessToken) };
+    return { friend: null, accessToken: envAccessToken, lineAccountId: null };
   }
 
-  if (!friend.line_account_id) {
-    return { friend, accessToken: await resolveDefaultAccessToken(db, envAccessToken) };
+  const account = friend.line_account_id
+    ? await getLineAccountById(db, friend.line_account_id)
+    : await resolveDefaultLineAccount(db);
+  if (friend.line_account_id && (!account?.is_active || !account.channel_access_token?.trim())) {
+    throw new Error('LINE account credentials are unavailable');
   }
-
-  const account = await getLineAccountById(db, friend.line_account_id);
-  if (!account) {
-    return { friend, accessToken: await resolveDefaultAccessToken(db, envAccessToken) };
-  }
-
-  return { friend, accessToken: account.channel_access_token };
+  const accessToken = account?.channel_access_token || envAccessToken;
+  if (!accessToken?.trim()) throw new Error('LINE account credentials are unavailable');
+  return { friend, accessToken, lineAccountId: account?.id ?? null };
 }
 
 // ========== オペレーターCRUD ==========
@@ -557,10 +559,14 @@ chats.post('/api/chats/:id/send', async (c) => {
     const chat = await resolveOrCreateChat(c.env.DB, chatId);
     if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
 
-    const body = await c.req.json<{ messageType?: string; content: string }>();
-    if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
+    const body = await c.req.json<{ messageType?: string; content: string; trackLinks?: boolean }>();
+    if (typeof body.content !== 'string' || !body.content) return c.json({ success: false, error: 'content is required' }, 400);
+    const messageType = body.messageType ?? 'text';
+    if (!['text', 'flex', 'image'].includes(messageType)) {
+      return c.json({ success: false, error: 'Unsupported message type' }, 400);
+    }
 
-    const { friend, accessToken } = await resolveFriendAndAccessToken(
+    const { friend, accessToken, lineAccountId } = await resolveFriendAndAccessToken(
       c.env.DB,
       chat.friend_id,
       c.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -570,30 +576,40 @@ chats.post('/api/chats/:id/send', async (c) => {
     // LINE APIでメッセージ送信
     const { LineClient } = await import('@line-crm/line-sdk');
     const lineClient = new LineClient(accessToken);
-    const messageType = body.messageType ?? 'text';
 
-    if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
-    } else if (messageType === 'flex') {
-      const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
-    } else if (messageType === 'image') {
-      const parsed = JSON.parse(body.content) as {
+    const sendWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+    const { autoTrackContent, appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+    let tracked = { messageType, content: body.content };
+    if (body.trackLinks !== false) {
+      tracked = await autoTrackContent(c.env.DB, messageType, body.content, sendWorkerUrl, { lineAccountId });
+    }
+    // Opt-out disables raw URL wrapping, but existing tracked links still get
+    // this 1:1 recipient. Image URLs are media and must remain untouched.
+    if (tracked.messageType !== 'image') {
+      tracked.content = await appendFriendToTrackedLinks(c.env.DB, tracked.content, sendWorkerUrl, friend.id);
+    }
+
+    let message: Message;
+    if (tracked.messageType === 'text') {
+      message = { type: 'text', text: tracked.content };
+    } else if (tracked.messageType === 'flex') {
+      const contents = JSON.parse(tracked.content);
+      message = { type: 'flex', altText: extractFlexAltText(contents), contents };
+    } else {
+      const parsed = JSON.parse(tracked.content) as {
         originalContentUrl: string;
         previewImageUrl: string;
       };
-      await lineClient.pushImageMessage(
-        friend.line_user_id,
-        parsed.originalContentUrl,
-        parsed.previewImageUrl,
-      );
+      message = { type: 'image', originalContentUrl: parsed.originalContentUrl, previewImageUrl: parsed.previewImageUrl };
     }
+    await lineClient.pushMessage(friend.line_user_id, [message]);
 
-    // メッセージログに記録
+    // Store exactly the payload delivered to LINE, including tracking changes.
+    const log = messageToLogPayload(message);
     const logId = crypto.randomUUID();
     await c.env.DB
-      .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, created_at) VALUES (?, ?, 'outgoing', ?, ?, 'manual', ?)`)
-      .bind(logId, friend.id, messageType, body.content, jstNow())
+      .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, line_account_id, created_at) VALUES (?, ?, 'outgoing', ?, ?, 'manual', ?, ?)`)
+      .bind(logId, friend.id, log.messageType, log.content, lineAccountId, jstNow())
       .run();
 
     // チャットの最終メッセージ日時を更新（chat.id を直接使う — friend_id で呼ばれても resolveOrCreateChat 済み）
