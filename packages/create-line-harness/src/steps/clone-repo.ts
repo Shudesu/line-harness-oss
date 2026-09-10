@@ -1,14 +1,9 @@
 import * as p from "@clack/prompts";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execa } from "execa";
-import {
-  isGeneratedInstalledWranglerToml,
-  renderInstalledWranglerToml,
-  resolveInstalledWranglerConfig,
-  type SavedInstallConfig,
-} from "../lib/installed-wrangler.js";
+import { inspectWranglerForGit, withWranglerRestored } from "../lib/wrangler-config-preservation.js";
 import { repoPnpm } from "../lib/pnpm.js";
 
 const REPO_URL =
@@ -26,28 +21,17 @@ const REPO_URL =
  * migrations newer than the release, leaving the database "ahead" of what
  * the manifest expects on the next update.
  *
- * The clone is CLI-managed (`~/.line-harness`): apps/worker/wrangler.toml
- * is force-restored before checkout because setup itself patches/generates
- * it and a dirty copy would block `git checkout`.
+ * A caller may supply any checkout via --repo-dir. Only exact CLI-generated
+ * configuration can be temporarily restored for Git; unknown edits stop setup.
  */
 export async function pinRepoToTag(
   repoDir: string,
   version: string,
 ): Promise<void> {
   const tag = `v${version}`;
+  const snapshot = await inspectWranglerForGit(repoDir);
   const s = p.spinner();
   s.start(`リリース ${tag} のソースに固定中...`);
-
-  // Drop CLI-authored wrangler.toml changes so the checkout can't conflict.
-  // The file is regenerated later in setup (applyPatchedConfig /
-  // syncInstalledWorkerConfig), so nothing user-authored is lost.
-  try {
-    await execa("git", ["checkout", "--", "apps/worker/wrangler.toml"], {
-      cwd: repoDir,
-    });
-  } catch {
-    // File may be untracked / repo pristine — fine.
-  }
 
   try {
     await execa(
@@ -55,7 +39,9 @@ export async function pinRepoToTag(
       ["fetch", "--depth", "1", "origin", "tag", tag, "--no-tags"],
       { cwd: repoDir },
     );
-    await execa("git", ["checkout", "--quiet", tag], { cwd: repoDir });
+    await withWranglerRestored(repoDir, snapshot, () =>
+      execa("git", ["checkout", "--quiet", tag], { cwd: repoDir }),
+    );
   } catch (error: any) {
     s.stop(`リリースタグ ${tag} への切り替えに失敗`);
     throw new Error(
@@ -97,6 +83,36 @@ export async function installRepoDeps(repoDir: string): Promise<void> {
   s.stop("依存関係インストール完了");
 }
 
+/** Refresh the canonical install checkout without replacing unknown configuration. */
+export async function refreshInstalledRepo(repoDir: string): Promise<string> {
+  let snapshot: Awaited<ReturnType<typeof inspectWranglerForGit>>;
+  try {
+    snapshot = await inspectWranglerForGit(repoDir);
+  } catch {
+    // Reusing a source checkout is read-only. Unknown configuration does not
+    // authorize a pull/reset; leave it intact and let setup choose its mode.
+    p.log.warn("Worker設定に変更があるため、リポジトリを更新せず現在のチェックアウトを使います。");
+    return repoDir;
+  }
+  const s = p.spinner();
+  s.start("最新バージョンを取得中...");
+  try {
+    await withWranglerRestored(repoDir, snapshot, async () => {
+      try {
+        await execa("git", ["pull", "--ff-only"], { cwd: repoDir });
+      } catch {
+        // A failed pull can use the existing checkout. Restoration errors must
+        // still propagate, so this catch only surrounds the Git operation.
+      }
+    });
+  } catch (error) {
+    s.stop("設定ファイルの復元に失敗しました");
+    throw error;
+  }
+  s.stop("リポジトリ更新完了");
+  return repoDir;
+}
+
 /**
  * Clone the L Harness repo and install dependencies.
  * Returns the path to the cloned repo.
@@ -118,55 +134,7 @@ export async function ensureRepo(repoDir: string | null): Promise<string> {
     ".line-harness",
   );
   if (existsSync(join(homeDir, "pnpm-workspace.yaml"))) {
-    const wranglerTomlPath = join(homeDir, "apps/worker/wrangler.toml");
-    const configPath = join(homeDir, ".line-harness-config.json");
-    let installedToml: string | null = null;
-
-    if (existsSync(configPath)) {
-      try {
-        const config = JSON.parse(
-          readFileSync(configPath, "utf-8"),
-        ) as SavedInstallConfig;
-        const resolved = resolveInstalledWranglerConfig(config);
-        if (resolved) {
-          installedToml = renderInstalledWranglerToml(resolved);
-        }
-      } catch {
-        // Ignore unreadable config and continue with a normal pull.
-      }
-    }
-
-    if (existsSync(wranglerTomlPath)) {
-      try {
-        const currentToml = readFileSync(wranglerTomlPath, "utf-8");
-        if (isGeneratedInstalledWranglerToml(currentToml)) {
-          await execa("git", ["checkout", "--", "apps/worker/wrangler.toml"], {
-            cwd: homeDir,
-          });
-        }
-      } catch {
-        // Best effort — if the file stays dirty, the pull below may fail.
-      }
-    }
-
-    // Pull latest
-    const s = p.spinner();
-    s.start("最新バージョンを取得中...");
-    try {
-      await execa("git", ["pull", "--ff-only"], { cwd: homeDir });
-    } catch {
-      // Non-critical, continue with existing
-    }
-    s.stop("リポジトリ更新完了");
-
-    if (installedToml) {
-      try {
-        writeFileSync(wranglerTomlPath, installedToml);
-      } catch {
-        // Non-critical — the next setup run will regenerate it again.
-      }
-    }
-    return homeDir;
+    return refreshInstalledRepo(homeDir);
   }
 
   // Clone fresh

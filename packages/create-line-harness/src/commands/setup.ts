@@ -7,6 +7,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { compareSemver } from "@line-harness/update-engine/pure";
 import { checkDeps } from "../steps/check-deps.js";
 import { ensureAuth, getAccountId } from "../steps/auth.js";
 import { promptLineCredentials } from "../steps/prompt.js";
@@ -17,10 +18,12 @@ import { deployAdmin } from "../steps/deploy-admin.js";
 import { fetchLatestRelease, type FetchedRelease } from "../steps/release-bundle.js";
 import { installRepoDeps, pinRepoToTag } from "../steps/clone-repo.js";
 import { setSecrets } from "../steps/secrets.js";
-import { configureAdminAuth } from "../steps/admin-auth.js";
+import { assertAdminAuthConfigured, configureAdminAuth } from "../steps/admin-auth.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
 import { generateApiKey } from "../lib/crypto.js";
+import { assertSetupWranglerConfigSafe } from "../lib/wrangler-config-preservation.js";
 import { buildLineIdentitySql, quoteSqlString } from "../lib/line-account-sql.js";
+import { validateSetupReleaseVersion } from "../lib/setup-release.js";
 import {
   getAccountIds,
   setAccountId,
@@ -51,11 +54,13 @@ interface SetupState {
   workerUrl?: string;
   adminUrl?: string;
   /**
-   * Release version selected on the FIRST run of this setup. Resumed runs
-   * re-pin to it (never float to a newer `latest`) so every step —
+   * Release version selected for this setup. Resumed runs re-pin to it
+   * unless --release explicitly selects a newer verified release, so every step —
    * schema/migrations, Worker bundle, admin files — comes from one release.
    */
   releaseVersion?: string;
+  /** Source-mode DB/deploy work invalidates a retained official release baseline. */
+  sourceSetup?: boolean;
   /**
    * Pristine apps/worker/wrangler.toml content captured before we started
    * substituting account/database IDs. Restored on exit so the cloned repo
@@ -78,6 +83,12 @@ const ACCOUNT_DEPENDENT_STEPS = [
   "workerConfig",
   "adminAuth",
 ];
+
+// Recheck schema and deploy matching artifacts when the release changes.
+// Resource identities, secrets and LINE account registration remain reusable.
+const RELEASE_DEPENDENT_STEPS = new Set([
+  "database", "worker", "admin", "adminAuth", "workerConfig",
+]);
 
 function getStatePath(repoDir: string): string {
   return join(repoDir, ".line-harness-setup.json");
@@ -318,6 +329,8 @@ async function verifyAccount(
 }
 
 export interface SetupOptions {
+  /** Explicit published stable target; overrides a saved setup pin. */
+  releaseVersion?: string;
   /**
    * Deploy the Worker/Admin from a local source build instead of the
    * official release bundle. Development escape hatch: the install reports
@@ -330,15 +343,40 @@ export async function runSetup(
   repoDir: string,
   options: SetupOptions = {},
 ): Promise<void> {
+  if (options.releaseVersion !== undefined) {
+    validateSetupReleaseVersion(options.releaseVersion);
+    if (options.fromSource) throw new Error("--release と --from-source は併用できません。");
+  }
   p.intro(pc.bgCyan(pc.black(" L Harness セットアップ ")));
 
   const state = loadState(repoDir);
+  if (options.releaseVersion !== undefined && (state.sourceSetup || (!state.releaseVersion &&
+      (state.completedSteps.length > 0 || state.d1DatabaseId || state.workerUrl)))) {
+    throw new Error(
+      "--release cannot switch an existing setup without a verified release baseline. " +
+      "Continue the original source checkout with --from-source, or follow the manual update guide. " +
+      "The database and saved credentials were preserved: https://github.com/Shudesu/line-harness-oss/blob/main/docs/wiki/26-Manual-Update.md",
+    );
+  }
+  if (state.sourceSetup === true && !options.fromSource) {
+    throw new Error(
+      "This setup previously used source mode. Resume the same source checkout with --from-source; " +
+      "an older saved release pin is not a verified baseline for that source work. " +
+      "The database, saved credentials, and completion flags were preserved.",
+    );
+  }
+  if (options.releaseVersion !== undefined && state.releaseVersion &&
+      compareSemver(options.releaseVersion, state.releaseVersion) < 0) {
+    throw new Error("--release cannot downgrade a resumed setup. Select the saved release or a newer compatible release; the database and saved credentials were preserved.");
+  }
 
   if (state.completedSteps.length > 0) {
     p.log.info(
       `前回の途中から再開します（完了済み: ${state.completedSteps.join(", ")}）`,
     );
   }
+
+  await assertSetupWranglerConfigSafe(repoDir, state, options.fromSource);
 
   // Resume hygiene: a previous (possibly aborted) run may have left
   // wrangler.toml patched and cached the now-stale baseline in state.json.
@@ -414,16 +452,20 @@ async function runSetupInner(
   // to its tag so schema/migrations/client assets match the Worker we
   // deploy. Runs before auth (network-only) and re-runs on resume — the
   // bundle is small and re-verifying beats trusting a stale download.
-  // Resumes re-pin to the release the first run selected (persisted in
-  // state) so completed steps and remaining steps never mix releases.
+  // Resumes keep their pin unless --release explicitly chooses a new target.
+  // Verify the bundle and pin its source before changing saved completion flags.
   let release: FetchedRelease | null = null;
   if (!options.fromSource) {
-    release = await fetchLatestRelease(MANIFEST_URL, state.releaseVersion);
+    release = await fetchLatestRelease(MANIFEST_URL, options.releaseVersion ?? state.releaseVersion);
+    await pinRepoToTag(repoDir, release.release.version);
+    if (options.releaseVersion !== undefined && state.releaseVersion !== release.release.version) {
+      state.completedSteps = state.completedSteps.filter(step => !RELEASE_DEPENDENT_STEPS.has(step));
+      p.log.info(`対象を v${release.release.version} に変更しました。既存DB・認証情報を引き継ぎ、スキーマとデプロイを再確認します。`);
+    }
     if (state.releaseVersion !== release.release.version) {
       state.releaseVersion = release.release.version;
       saveState(repoDir, state);
     }
-    await pinRepoToTag(repoDir, release.release.version);
   } else {
     p.log.warn(
       [
@@ -571,6 +613,12 @@ async function runSetupInner(
   const legacyMileageProjectionVersion = release
     ? release.release.legacy_mileage_projection_version
     : readSourceLegacyMileageProjectionVersion(repoDir);
+  if (options.fromSource && !state.sourceSetup) {
+    // Retaining an older bundle pin must not make later source work appear
+    // to have that verified baseline. Record this before any DB/deploy step.
+    state.sourceSetup = true;
+    saveState(repoDir, state);
+  }
   if (!isDone(state, "database")) {
     const { databaseId, databaseName } = await createDatabase(repoDir, state.projectName!, {
       accountId: state.accountId,
@@ -819,6 +867,16 @@ ON CONFLICT(channel_id) DO UPDATE SET
 
   // Step 13b: Configure cookie-based admin auth for the cross-site
   // Pages↔Workers topology (SameSite=None cookie + CORS allowlist).
+  if (isDone(state, "adminAuth")) {
+    try {
+      await assertAdminAuthConfigured(state.workerName);
+    } catch {
+      // Older installers marked this done after a warning. Revoke that stale
+      // flag before retrying, so another failure preserves a resumable step.
+      state.completedSteps = state.completedSteps.filter(step => step !== "adminAuth");
+      saveState(repoDir, state);
+    }
+  }
   if (!isDone(state, "adminAuth")) {
     await configureAdminAuth({
       workerName: state.workerName,

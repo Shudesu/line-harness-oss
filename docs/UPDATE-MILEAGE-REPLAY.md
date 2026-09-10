@@ -52,6 +52,38 @@ it checks unfinished claims before any Worker deployment or configuration sync
 if the selected target lacks the capability. Fresh bootstrap retains its existing
 fast path.
 
+If setup stopped because its saved release (for example v0.24.0) cannot finish
+the mileage handoff, retrying normally keeps that same release pin. After a
+compatible stable release has been published, select it explicitly:
+
+```sh
+npx create-line-harness@latest setup --release "X.Y.Z" --repo-dir "/path/to/existing/install"
+```
+
+Replace `X.Y.Z` with an actual published compatible version from
+[GitHub Releases](https://github.com/Shudesu/line-harness-oss/releases), and use
+the existing installation directory (normally `~/.line-harness`). The version
+must use stable `X.Y.Z` notation without a `v` prefix. Do not delete the database,
+migration ledger, or `.line-harness-setup.json` to change the target.
+
+`--release` verifies the selected manifest entry and bundle, then pins the
+matching source tag. A changed target rechecks database migrations and reruns
+Worker/Admin deployment, admin authentication configuration, and final Worker
+configuration. It keeps resource IDs, credentials, secrets, R2, and existing
+LINE account registration. A failed verification or checkout preserves the old
+pin and completion flags; after a successful target switch, ordinary retries
+use the newly saved pin. Specifying the same version does not reset completed
+steps. Existing mileage capability/held-claim checks still apply.
+
+This option is for setup, cannot be combined with `--from-source`, and does not
+permit downgrading a saved release. An existing setup without a saved official
+release baseline cannot safely switch through this option: continue the
+original source setup or use the manual update guide after checking its
+baseline. Already completed installations should use `update`.
+When setup has recorded source-mode work, even an ordinary retry must include
+`--from-source` and use the same source checkout; an older saved official pin
+cannot silently replace that source baseline.
+
 ## Conditions requiring review
 
 Automatic replay stops atomically when it cannot establish ownership or reward
