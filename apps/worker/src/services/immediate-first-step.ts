@@ -7,6 +7,7 @@ import {
   completeFriendScenario,
   claimFriendScenarioForDelivery,
   enrollFriendInScenario,
+  scenarioAllowedForFriendAccount,
   getLineAccountByChannelId,
   getLineAccountById,
   resolveDefaultLineAccount,
@@ -133,6 +134,17 @@ export async function pushImmediateFirstStep(
     // this an entry route pointing at a deactivated campaign would still
     // instant-push its first step.
     if (!scenarioRow.is_active) return false;
+    // Cross-account guard: never instant-push a scenario owned by another
+    // account out of THIS friend's bot. enrollFriendInScenario applies the same
+    // rule, but 'every-click' pushes even when the enrollment already exists
+    // (or was just blocked), so the check has to be here too.
+    if (!(await scenarioAllowedForFriendAccount(db, friendId, scenarioRow.line_account_id))) {
+      console.error(
+        `[immediate-first-step] cross-account push blocked: scenario=${scenarioId} ` +
+          `(account=${scenarioRow.line_account_id}) does not belong to friend=${friendId}'s account`,
+      );
+      return false;
+    }
     const steps = scenarioRow.steps;
     if (!steps[0]) return false;
 

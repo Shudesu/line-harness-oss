@@ -361,6 +361,43 @@ export async function getScenarioSteps(
 // Friend Scenario Enrollments
 // ============================================================
 
+/**
+ * Cross-account guard: may this scenario be enrolled for this friend?
+ *
+ * Delivery resolves the push client from the FRIEND's current account (both
+ * step-delivery and immediate-first-step do), so a scenario owned by account A
+ * that gets enrolled for a friend sitting on account B is delivered out of
+ * account B's bot — one brand's step message sent from another brand's
+ * official account.
+ *
+ * This is reachable whenever a friend's ref_code outlives the account it was
+ * issued for. LINE user ids are shared across channels of the same provider,
+ * so following a SECOND account reuses the existing friend row and only
+ * rewrites line_account_id; the ref_code issued by the first account survives
+ * and still resolves its original entry_route. The friend_add and tag_added
+ * trigger loops already compare accounts before enrolling — the referral-route
+ * and tracked-link paths reach enrollment without that check, which is what
+ * this guard closes.
+ *
+ * Only a hard mismatch (both sides non-NULL and different) is rejected. A NULL
+ * on either side means "unassigned / single-account install" and stays allowed,
+ * matching the trigger loops' own `scenarioAccountMatch` rule.
+ */
+export async function scenarioAllowedForFriendAccount(
+  db: D1Database,
+  friendId: string,
+  scenarioAccountId: string | null,
+): Promise<boolean> {
+  if (!scenarioAccountId) return true;
+  const friendRow = await db
+    .prepare(`SELECT line_account_id FROM friends WHERE id = ?`)
+    .bind(friendId)
+    .first<{ line_account_id: string | null }>();
+  const friendAccountId = friendRow?.line_account_id ?? null;
+  if (!friendAccountId) return true;
+  return friendAccountId === scenarioAccountId;
+}
+
 export async function enrollFriendInScenario(
   db: D1Database,
   friendId: string,
@@ -371,10 +408,19 @@ export async function enrollFriendInScenario(
 
   // delivery_mode を取得（migration 037 適用前の DB では 'relative' が DEFAULT で既に入っている）
   const scenarioRow = await db
-    .prepare(`SELECT delivery_mode FROM scenarios WHERE id = ?`)
+    .prepare(`SELECT delivery_mode, line_account_id FROM scenarios WHERE id = ?`)
     .bind(scenarioId)
-    .first<{ delivery_mode: DeliveryMode }>();
+    .first<{ delivery_mode: DeliveryMode; line_account_id: string | null }>();
   if (!scenarioRow) return null;
+
+  // 別アカウントのシナリオには登録しない（登録経路を問わない最後の砦）。
+  if (!(await scenarioAllowedForFriendAccount(db, friendId, scenarioRow.line_account_id))) {
+    console.error(
+      `[scenario] cross-account enrollment blocked: scenario=${scenarioId} ` +
+        `(account=${scenarioRow.line_account_id}) does not belong to friend=${friendId}'s account`,
+    );
+    return null;
+  }
 
   const firstStep = await db
     .prepare(
