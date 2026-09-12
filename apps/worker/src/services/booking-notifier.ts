@@ -50,3 +50,64 @@ export async function sendBookingNotification(params: SendNotificationParams): P
 }
 
 export type BookingNotificationSender = (params: SendNotificationParams) => Promise<void>;
+
+// ---------------------------------------------------------------------------
+// スタッフ通知
+//
+// 顧客向け通知 (上) と分けている理由は宛先と文面が別物のため。顧客には
+// 「お店からの返信をお待ちください」、スタッフには承認を促す内容を送る。
+//
+// 宛先はスタッフ本人が公式アカウントを友だち追加した friends 行
+// (staff.notify_friend_id)、および account_settings の
+// 'booking_notify_friend_ids' に列挙された friends.id (店長など全件受け取る人)。
+//
+// ⚠️ push はアカウントの配信通数を消費する。
+// ---------------------------------------------------------------------------
+
+export const BOOKING_NOTIFY_RECIPIENTS_KEY = 'booking_notify_friend_ids';
+
+export interface StaffNotificationContext extends NotificationContext {
+  customerName: string;
+  adminUrl?: string;
+}
+
+export function renderStaffNotificationText(ctx: StaffNotificationContext): string {
+  const lines = [
+    '新しい予約リクエストが入りました。',
+    '',
+    `お客様: ${ctx.customerName}`,
+    `メニュー: ${ctx.menuName}`,
+    `担当: ${ctx.staffName}`,
+    `日時: ${ctx.startsAtJst}`,
+    '',
+    // 24 時間で expired になるため、放置されないよう期限を明示する
+    '24 時間以内に承認されないと自動でキャンセル扱いになります。',
+  ];
+  if (ctx.adminUrl) lines.push('', `管理画面: ${ctx.adminUrl}`);
+  return lines.join('\n');
+}
+
+/**
+ * 通知先の friends.id を集める。指名スタッフの通知先と、アカウント共通の
+ * 通知先を結合し重複を除く。順序は「指名スタッフ → 共通」で安定させる。
+ */
+export function resolveStaffRecipients(
+  staffNotifyFriendId: string | null | undefined,
+  accountRecipientsJson: string | null | undefined,
+): string[] {
+  const out: string[] = [];
+  if (staffNotifyFriendId) out.push(staffNotifyFriendId);
+  if (accountRecipientsJson) {
+    try {
+      const parsed: unknown = JSON.parse(accountRecipientsJson);
+      if (Array.isArray(parsed)) {
+        for (const v of parsed) {
+          if (typeof v === 'string' && v && !out.includes(v)) out.push(v);
+        }
+      }
+    } catch {
+      // 設定が壊れていても予約自体は成功させる。通知だけ諦める。
+    }
+  }
+  return out;
+}

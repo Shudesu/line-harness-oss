@@ -177,6 +177,36 @@ const spec = {
     },
   },
   paths: {
+    // ── Booking (スタッフ通知先) ─────────────────────────────────────────────
+    '/api/booking/admin/notify-recipients': {
+      get: {
+        tags: ['Booking'],
+        summary: '予約リクエストの通知先を取得（アカウント共通）',
+        responses: { '200': { description: '{ friend_ids: string[] }' } },
+      },
+      put: {
+        tags: ['Booking'],
+        summary: '予約リクエストの通知先を設定（アカウント共通）',
+        description:
+          '店長など全予約を受け取る人の friends.id。スタッフ個別の通知先は staff.notify_friend_id。'
+          + ' push は配信通数を消費する点に注意。',
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { friend_ids: { type: 'array', items: { type: 'string' } } },
+                required: ['friend_ids'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: '{ ok: true, count }' },
+          '422': { description: 'invalid_friend_ids' },
+        },
+      },
+    },
     // ── Friends ─────────────────────────────────────────────────────────────
     '/api/friends': {
       get: {

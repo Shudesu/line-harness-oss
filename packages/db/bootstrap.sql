@@ -884,6 +884,9 @@ CREATE TABLE IF NOT EXISTS staff (
   sort_order               INTEGER NOT NULL DEFAULT 0,
   is_designation_optional  INTEGER NOT NULL DEFAULT 0,
   is_active                INTEGER NOT NULL DEFAULT 1,
+  -- 予約リクエストの通知先。スタッフ本人が公式アカウントを友だち追加した
+  -- friends.id。NULL = 通知しない。
+  notify_friend_id         TEXT,
   deleted_at               TEXT,
   created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
