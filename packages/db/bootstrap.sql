@@ -937,6 +937,31 @@ CREATE TABLE IF NOT EXISTS staff_shifts (
   FOREIGN KEY (staff_id) REFERENCES staff(id)
 );
 
+CREATE TABLE IF NOT EXISTS staff_time_off (
+  id          TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  work_date   TEXT NOT NULL,    -- YYYY-MM-DD (JST)
+  start_time  TEXT NOT NULL,    -- HH:MM (JST)
+  end_time    TEXT NOT NULL,    -- HH:MM (JST)
+  reason      TEXT,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+
+CREATE TABLE IF NOT EXISTS staff_time_off_rules (
+  id          TEXT PRIMARY KEY,
+  staff_id    TEXT NOT NULL,
+  weekday     INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+  start_time  TEXT NOT NULL,
+  end_time    TEXT NOT NULL,
+  reason      TEXT,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+
 CREATE TABLE IF NOT EXISTS stripe_events (
   id               TEXT PRIMARY KEY,
   stripe_event_id  TEXT NOT NULL UNIQUE,
@@ -1371,6 +1396,12 @@ CREATE INDEX IF NOT EXISTS idx_staff_availability_rules_staff
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
 
 CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
+
+CREATE INDEX IF NOT EXISTS idx_staff_time_off_rules_staff
+  ON staff_time_off_rules (staff_id, weekday, is_active);
+
+CREATE INDEX IF NOT EXISTS idx_staff_time_off_staff_date
+  ON staff_time_off (staff_id, work_date);
 
 CREATE INDEX IF NOT EXISTS idx_stripe_events_friend ON stripe_events (friend_id);
 

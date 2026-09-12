@@ -137,6 +137,8 @@ interface StubData {
   shifts?: Array<{ staff_id: string; work_date: string; start_time: string; end_time: string }>;
   rules?: Array<{ staff_id: string; weekday: number; start_time: string; end_time: string }>;
   bookings?: Array<{ staff_id: string; starts_at: string; block_ends_at: string }>;
+  timeOff?: Array<{ staff_id: string; work_date: string; start_time: string; end_time: string }>;
+  timeOffRules?: Array<{ staff_id: string; weekday: number; start_time: string; end_time: string }>;
   calendarConnection?: {
     id: string;
     calendar_id: string;
@@ -158,6 +160,12 @@ function stubDB(data: StubData): D1Database {
         async all() {
           if (sql.includes('FROM staff') && sql.includes('staff_menus')) {
             return { results: data.staff ?? [] };
+          }
+          if (sql.includes('FROM staff_time_off_rules')) {
+            return { results: data.timeOffRules ?? [] };
+          }
+          if (sql.includes('FROM staff_time_off')) {
+            return { results: data.timeOff ?? [] };
           }
           if (sql.includes('FROM staff_shifts')) {
             return { results: data.shifts ?? [] };
@@ -385,5 +393,107 @@ describe('getAvailability', () => {
       minLeadTimeMinutes: 60,
     });
     expect(result.by_staff).toEqual([]);
+  });
+});
+
+describe('getAvailability — 予約不可時間', () => {
+  const MENU = {
+    duration_minutes: 60,
+    buffer_after_minutes: 0,
+    override_duration: null,
+    override_price: null,
+  };
+  const STAFF = [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }];
+  // 2026-05-09 は土曜 (weekday = 6)
+  const SHIFT = [
+    { staff_id: 'S1', work_date: '2026-05-09', start_time: '09:00', end_time: '13:00' },
+  ];
+  const params = {
+    lineAccountId: 'A1',
+    menuId: 'M1',
+    from: '2026-05-09',
+    to: '2026-05-09',
+    now: new Date('2026-05-08T00:00:00Z'),
+    minLeadTimeMinutes: 60,
+  };
+
+  test('定例の休憩が枠を分割する (2 部制)', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: STAFF,
+      shifts: SHIFT,
+      bookings: [],
+      timeOffRules: [
+        { staff_id: 'S1', weekday: 6, start_time: '11:00', end_time: '12:00' },
+      ],
+    });
+    const result = await getAvailability(db, params);
+    // 勤務 09:00-13:00 から休憩 11:00-12:00 を抜くと [09:00-11:00, 12:00-13:00]。
+    // 60 分メニューが収まる開始時刻は 09:00 / 09:30 / 10:00 と 12:00。
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual([
+      '09:00', '09:30', '10:00', '12:00',
+    ]);
+  });
+
+  test('曜日が違う定例は影響しない', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: STAFF,
+      shifts: SHIFT,
+      bookings: [],
+      timeOffRules: [
+        { staff_id: 'S1', weekday: 1, start_time: '11:00', end_time: '12:00' },
+      ],
+    });
+    const result = await getAvailability(db, params);
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual([
+      '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00',
+    ]);
+  });
+
+  test('当日の臨時 (外出) が除外される', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: STAFF,
+      shifts: SHIFT,
+      bookings: [],
+      timeOff: [
+        { staff_id: 'S1', work_date: '2026-05-09', start_time: '09:30', end_time: '10:30' },
+      ],
+    });
+    const result = await getAvailability(db, params);
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['10:30', '11:00', '11:30', '12:00']);
+  });
+
+  test('定例と臨時は排他ではなく重なる', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: STAFF,
+      shifts: SHIFT,
+      bookings: [],
+      timeOffRules: [
+        { staff_id: 'S1', weekday: 6, start_time: '11:00', end_time: '12:00' },
+      ],
+      timeOff: [
+        { staff_id: 'S1', work_date: '2026-05-09', start_time: '09:30', end_time: '10:00' },
+      ],
+    });
+    const result = await getAvailability(db, params);
+    // 休憩 11:00-12:00 と外出 09:30-10:00 の両方が効く
+    expect(result.by_staff[0].slots.map((s) => s.start)).toEqual(['10:00', '12:00']);
+  });
+
+  test('他スタッフの予約不可時間は影響しない', async () => {
+    const db = stubDB({
+      menu: MENU,
+      staff: STAFF,
+      shifts: SHIFT,
+      bookings: [],
+      timeOffRules: [
+        { staff_id: 'S2', weekday: 6, start_time: '11:00', end_time: '12:00' },
+      ],
+    });
+    const result = await getAvailability(db, params);
+    expect(result.by_staff[0].slots).toHaveLength(7);
   });
 });

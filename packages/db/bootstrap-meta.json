@@ -77,7 +77,8 @@
     "070_admin_sso_jti.sql",
     "071_quota_alerts.sql",
     "072_broadcast_last_error.sql",
-    "072_health_logs_composite_index.sql"
+    "072_health_logs_composite_index.sql",
+    "NNN_staff_time_off.sql"
   ],
-  "migrationCount": 78
+  "migrationCount": 79
 }
