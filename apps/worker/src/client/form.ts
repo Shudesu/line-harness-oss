@@ -101,6 +101,13 @@ interface FormState {
   refTrackedLinkId: string | null;
 }
 
+export function shouldUseXEngagementGate(formDef: Pick<FormDef, 'fields' | 'webhookGateId'>): boolean {
+  return Boolean(
+    formDef.webhookGateId &&
+    formDef.fields.some((field) => field.name === 'x_username'),
+  );
+}
+
 const state: FormState = {
   formDef: null,
   xHarnessBaseUrl: null,
@@ -449,7 +456,7 @@ function render(): void {
   // Split fields: survey fields (page 1) vs x_username field (page 2)
   const surveyFields = formDef.fields.filter((f) => f.name !== 'x_username');
   const xUsernameField = formDef.fields.find((f) => f.name === 'x_username');
-  const hasTwoPages = !!xUsernameField && formDef.hasSubmitWebhook;
+  const hasTwoPages = shouldUseXEngagementGate(formDef);
 
   const surveyFieldsHtml = surveyFields.map(renderField).join('');
   const xFieldHtml = xUsernameField ? renderField(xUsernameField) : '';
@@ -460,7 +467,7 @@ function render(): void {
       <div class="form-page">
         <div class="form-header">
           <h1>${escapeHtml(formDef.name).replace(/\\n|\n/g, '<br>')}</h1>
-          ${formDef.description && !formDef.hasSubmitWebhook ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
+          ${formDef.description && !hasTwoPages ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
           ${profileHtml}
         </div>
         <!-- Page 1: Survey -->
@@ -562,7 +569,7 @@ function render(): void {
       <div class="form-page">
         <div class="form-header">
           <h1>${escapeHtml(formDef.name).replace(/\\n|\n/g, '<br>')}</h1>
-          ${formDef.description && !formDef.hasSubmitWebhook ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
+          ${formDef.description && !hasTwoPages ? `<p class="form-description">${escapeHtml(formDef.description).replace(/\\n|\n/g, '<br>')}</p>` : ''}
           ${profileHtml}
         </div>
         <form id="liff-form" class="form-body" novalidate>
@@ -1017,7 +1024,7 @@ async function submitForm(): Promise<void> {
     console.log('Form data collected:', JSON.stringify(data));
 
     // Webhook gate — pre-verified by /repliers endpoint
-    if (state.formDef.hasSubmitWebhook) {
+    if (shouldUseXEngagementGate(state.formDef)) {
       // Check that user was selected from pre-verified repliers list
       const xField = ((data.x_username as string) ?? '').trim().replace(/^@/, '');
       if (!xField || xField !== state.verifiedXUsername) {

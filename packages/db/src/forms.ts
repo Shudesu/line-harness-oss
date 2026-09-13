@@ -12,6 +12,7 @@ export interface Form {
   on_submit_scenario_id: string | null;
   on_submit_message_type: 'text' | 'flex' | null;
   on_submit_message_content: string | null; // supports template variables: {{name}}, {{auth_url:CHANNEL_ID}}, etc.
+  send_submit_message: number;
   on_submit_webhook_url: string | null;
   on_submit_webhook_headers: string | null;
   on_submit_webhook_fail_message: string | null;
@@ -123,6 +124,7 @@ export interface CreateFormInput {
   onSubmitScenarioId?: string | null;
   onSubmitMessageType?: 'text' | 'flex' | null;
   onSubmitMessageContent?: string | null;
+  sendSubmitMessage?: boolean;
   onSubmitWebhookUrl?: string | null;
   onSubmitWebhookHeaders?: string | null;
   onSubmitWebhookFailMessage?: string | null;
@@ -140,12 +142,12 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
     .prepare(
       `INSERT INTO forms
          (id, name, description, fields, on_submit_tag_id, on_submit_scenario_id,
-          on_submit_message_type, on_submit_message_content,
+          on_submit_message_type, on_submit_message_content, send_submit_message,
           on_submit_webhook_url, on_submit_webhook_headers, on_submit_webhook_fail_message,
           save_to_metadata, is_active, submit_count,
           og_title, og_description, og_image_url,
           created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -156,6 +158,7 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
       input.onSubmitScenarioId ?? null,
       input.onSubmitMessageType ?? null,
       input.onSubmitMessageContent ?? null,
+      input.sendSubmitMessage !== false ? 1 : 0,
       input.onSubmitWebhookUrl ?? null,
       input.onSubmitWebhookHeaders ?? null,
       input.onSubmitWebhookFailMessage ?? null,
@@ -179,6 +182,7 @@ export interface UpdateFormInput {
   onSubmitScenarioId?: string | null;
   onSubmitMessageType?: 'text' | 'flex' | null;
   onSubmitMessageContent?: string | null;
+  sendSubmitMessage?: boolean;
   onSubmitWebhookUrl?: string | null;
   onSubmitWebhookHeaders?: string | null;
   onSubmitWebhookFailMessage?: string | null;
@@ -209,6 +213,7 @@ export async function updateForm(
            on_submit_scenario_id = ?,
            on_submit_message_type = ?,
            on_submit_message_content = ?,
+           send_submit_message = ?,
            on_submit_webhook_url = ?,
            on_submit_webhook_headers = ?,
            on_submit_webhook_fail_message = ?,
@@ -234,6 +239,9 @@ export async function updateForm(
       'onSubmitMessageContent' in input
         ? (input.onSubmitMessageContent ?? null)
         : existing.on_submit_message_content,
+      'sendSubmitMessage' in input
+        ? (input.sendSubmitMessage !== false ? 1 : 0)
+        : existing.send_submit_message,
       'onSubmitWebhookUrl' in input
         ? (input.onSubmitWebhookUrl ?? null)
         : existing.on_submit_webhook_url,
