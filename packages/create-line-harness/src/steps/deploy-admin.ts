@@ -12,6 +12,14 @@ import { repoPnpm } from "../lib/pnpm.js";
 const TTY_REQUIRED =
   /non[- ]?interactive|cloudflare_api_token|consent denied|authentication error|expired/i;
 
+/** `pages project create` on an existing project — the one failure we can ignore. */
+function isProjectAlreadyExists(error: unknown): boolean {
+  return (
+    error instanceof WranglerError &&
+    `${error.message}\n${error.stderr}`.includes("already exists")
+  );
+}
+
 interface DeployAdminOptions {
   repoDir: string;
   workerUrl: string;
@@ -111,8 +119,15 @@ export async function deployAdmin(
           { tty: true },
         );
         projectSpinner.start("Pages プロジェクト準備中...");
-      } else {
+      } else if (isProjectAlreadyExists(error)) {
         // Already exists, that's fine
+      } else {
+        // Anything else means the project was NOT created. Reporting
+        // "準備完了" here hides the real cause: the deploy below then asks
+        // "The project you specified does not exist. Would you like to create it?"
+        // and setup stops at an interactive prompt with no explanation.
+        projectSpinner.stop("Pages プロジェクト準備失敗");
+        throw error;
       }
     }
     projectSpinner.stop("Pages プロジェクト準備完了");
