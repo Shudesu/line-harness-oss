@@ -290,7 +290,11 @@ async function applySqlFile(
     }
     try {
       await runD1WithRetry(
-        ["d1", "execute", databaseName, "--remote", "--command", statement],
+        // 先頭コメントを落とした head を渡す。原文のままだと `-- ...` で始まる文が
+        // wrangler (yargs) にオプションとして解釈され、Unknown arguments で落ちる。
+        // stripLeadingComments は先頭の行コメントを落として trim するだけなので、
+        // 実行される SQL は変わらない。
+        ["d1", "execute", databaseName, "--remote", "--command", head],
         contextLabel,
       );
       if (isAddColumn) addedColumn = true;
