@@ -23,7 +23,7 @@ export const DEFAULT_LANDING_TEXTS: Record<LandingTextKey, string> = {
   qrHeading: "スマートフォンで QR コードを読み取ってください",
   qrHint: "LINE アプリのカメラまたは\nスマートフォンのカメラで読み取れます",
   qrFooter: "友だち追加で全機能を無料体験できます",
-  mobileHeading: "友達追加して始める",
+  mobileHeading: "LINE で開く",
 };
 
 /**

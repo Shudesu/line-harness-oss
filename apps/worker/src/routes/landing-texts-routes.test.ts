@@ -125,9 +125,9 @@ describe('/o — the explicit-liffId wrapper renders the same pages as /r', () =
     expect(html).not.toContain('class="help"');
   });
 
-  it('uses the shared default heading on mobile (was "LINE で開く" before the merge)', async () => {
+  it('uses the neutral shared default heading on mobile', async () => {
     const html = await (await open(`/o?liffId=${LIFF_ID}`, MOBILE_UA)).text();
-    expect(html).toContain('<p class="msg">友達追加して始める</p>');
+    expect(html).toContain('<p class="msg">LINE で開く</p>');
     expect(html).toContain('class="btn"');
   });
 
@@ -195,7 +195,7 @@ describe.each([
     dbMocks.getLandingTextsJson.mockResolvedValueOnce(raw);
     const res = await open(path, ua);
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain(ua === DESKTOP_UA ? DEFAULT_LANDING_TEXTS.qrHeading : DEFAULT_LANDING_TEXTS.mobileHeading);
+    expect(await res.text()).toContain(ua === DESKTOP_UA ? DEFAULT_LANDING_TEXTS.qrHeading : `<p class="msg">${DEFAULT_LANDING_TEXTS.mobileHeading}</p>`);
     expect(dbMocks.getLandingTextsJson).toHaveBeenCalledTimes(1);
   });
 });
@@ -226,7 +226,7 @@ describe.each(['/r/campaign', '/o?liffId=1234567890-AbCdEfGh'])('%s mobile setti
       dbMocks.getLandingTextsJson.mockResolvedValueOnce(JSON.stringify(value === undefined ? {} : { mobileHeading: value }));
       const html = await (await open(path, ua)).text();
       if (value === '') expect(html).not.toContain('<p class="msg"');
-      else expect(html).toContain(value === undefined ? DEFAULT_LANDING_TEXTS.mobileHeading : '&lt;script&gt;登録&lt;/script&gt;');
+      else expect(html).toContain(value === undefined ? `<p class="msg">${DEFAULT_LANDING_TEXTS.mobileHeading}</p>` : '&lt;script&gt;登録&lt;/script&gt;');
       expect(html).toContain('class="btn"');
       expect(html).not.toContain('<script>');
     }
@@ -237,7 +237,7 @@ it.each(['iPhone', 'Android Mobile', DESKTOP_UA])('/o stays available on read fa
   dbMocks.getLandingTextsJson.mockRejectedValueOnce(new Error('database unavailable'));
   const res = await open('/o?liffId=1234567890-AbCdEfGh', ua);
   expect(res.status).toBe(200);
-  expect(await res.text()).toContain(ua === DESKTOP_UA ? DEFAULT_LANDING_TEXTS.qrFooter : DEFAULT_LANDING_TEXTS.mobileHeading);
+  expect(await res.text()).toContain(ua === DESKTOP_UA ? DEFAULT_LANDING_TEXTS.qrFooter : `<p class="msg">${DEFAULT_LANDING_TEXTS.mobileHeading}</p>`);
 });
 
 it('GET returns only overrides plus the defaults and limit', async () => {
