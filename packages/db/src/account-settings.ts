@@ -145,3 +145,14 @@ export async function setTrackedLinkBaseUrl(
 ): Promise<void> {
   return setUrlSetting(db, accountId, TRACKED_LINK_BASE_URL_KEY, value);
 }
+
+// Deployment-wide: env-only LIFF links do not have an account to scope to.
+export const LANDING_TEXTS_KEY = 'landing_texts';
+
+export async function getLandingTextsJson(db: D1Database): Promise<string | null> {
+  return getAccountSetting(db, '__global__', LANDING_TEXTS_KEY);
+}
+
+export async function setLandingTextsJson(db: D1Database, json: string): Promise<void> {
+  await setAccountSetting(db, '__global__', LANDING_TEXTS_KEY, json);
+}

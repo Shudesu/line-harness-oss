@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Freeze the landing pages before extracting their presentation helpers.
+// Defaults retain the extracted pages. PR2 escapes URL attributes and
+// intentionally gives /o the common default QR footer.
 
 const dbMocks = {
+  getLandingTextsJson: vi.fn().mockResolvedValue(null),
   // eager module-load deps
   getLineAccounts: vi.fn().mockResolvedValue([]),
   getStaffByApiKey: vi.fn(),

@@ -22,6 +22,17 @@ const spec = {
       },
     },
     schemas: {
+      LandingTexts: {
+        type: 'object',
+        description: '各値は空文字で非表示、省略で既定文言。上限はHTML maxlengthと同じUTF-16コード単位で200（補助平面の文字は2単位）。',
+        additionalProperties: false,
+        properties: {
+          qrHeading: { type: 'string', maxLength: 200, description: 'QRコードの上の見出し（PC）' },
+          qrHint: { type: 'string', maxLength: 200, description: 'QRコードの下の読み取り案内（PC）。改行可' },
+          qrFooter: { type: 'string', maxLength: 200, description: 'ページ最下部の補足（PC）。未設定は既定文言' },
+          mobileHeading: { type: 'string', maxLength: 200, description: '起動ボタンの上の見出し（スマートフォン）' },
+        },
+      },
       ApiResponse: {
         type: 'object',
         properties: {
@@ -177,6 +188,38 @@ const spec = {
     },
   },
   paths: {
+    '/api/account-settings/landing-texts': {
+      get: {
+        tags: ['Links'],
+        summary: '案内ページの文言を取得',
+        description: 'パソコンやスマートフォンで /r/{refCode}・/o・/auth/line を開いたときの案内ページの文言。stored は保存済みの上書きだけを返し、含まれないキーは defaults を使う。空文字はその行を表示しない指定。',
+        responses: {
+          '200': { description: 'Landing copy', content: { 'application/json': { schema: {
+            type: 'object', properties: { success: { type: 'boolean' }, data: {
+              type: 'object', required: ['stored', 'defaults', 'maxLength'], properties: {
+                stored: { $ref: '#/components/schemas/LandingTexts' },
+                defaults: { $ref: '#/components/schemas/LandingTexts' },
+                maxLength: { type: 'integer' },
+              },
+            } },
+          } } } },
+          '401': { description: 'Authentication required' },
+        },
+      },
+      put: {
+        tags: ['Links'],
+        summary: '案内ページの文言を保存',
+        description: 'キーを省略すると既定の文言を表示する。空文字はその行を表示しない。未知のキーと上限超過は400。',
+        requestBody: { required: true, content: { 'application/json': { schema: {
+          type: 'object', required: ['value'], properties: { value: { $ref: '#/components/schemas/LandingTexts' } },
+        } } } },
+        responses: {
+          '200': { description: 'Saved' },
+          '400': { description: 'Malformed body, unknown key, non-string value or value too long' },
+          '401': { description: 'Authentication required' },
+        },
+      },
+    },
     // ── Friends ─────────────────────────────────────────────────────────────
     '/api/friends': {
       get: {

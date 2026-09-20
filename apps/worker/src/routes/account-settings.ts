@@ -4,7 +4,10 @@ import {
   setLinkBaseUrl,
   getTrackedLinkBaseUrl,
   setTrackedLinkBaseUrl,
+  getLandingTextsJson,
+  setLandingTextsJson,
 } from '@line-crm/db';
+import { DEFAULT_LANDING_TEXTS, LANDING_TEXT_MAX_LENGTH, parseLandingTexts, validateLandingTexts } from '@line-crm/shared';
 import type { Env } from '../index.js';
 
 const accountSettings = new Hono<Env>();
@@ -113,6 +116,48 @@ accountSettings.put('/api/account-settings/tracked-link-base-url', async (c) => 
     const message = err instanceof Error ? err.message : 'Validation error';
     return c.json({ success: false, error: message }, 400);
   }
+});
+
+// Defaults ship with the response so the form can offer "restore the default"
+// without duplicating the strings on the client.
+accountSettings.get('/api/account-settings/landing-texts', async (c) => {
+  const stored = parseLandingTexts(await getLandingTextsJson(c.env.DB));
+  return c.json({
+    success: true,
+    data: { stored, defaults: DEFAULT_LANDING_TEXTS, maxLength: LANDING_TEXT_MAX_LENGTH },
+  });
+});
+
+/**
+ * PUT /api/account-settings/landing-texts
+ * Body: { value: { qrHeading?, qrHint?, qrFooter?, mobileHeading? } }
+ * - An omitted key uses the default copy (that is how the UI stores "default").
+ * - An empty string drops that line from the page.
+ * - Unknown keys are rejected so a typo surfaces instead of being dropped.
+ * - A malformed body is a 400; resetting every slot needs an explicit
+ *   {"value":{}} so it cannot happen by accident.
+ */
+accountSettings.put('/api/account-settings/landing-texts', async (c) => {
+  // Reject a malformed request instead of folding it into {}. Without this an
+  // empty body, broken JSON, or a missing `value` would clear every stored
+  // override with a 200, making "the request was garbage" and "reset all
+  // slots to the default" the same operation.
+  let body: unknown;
+  try {
+    body = await c.req.json<unknown>();
+  } catch {
+    return c.json({ success: false, error: 'request body must be JSON' }, 400);
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return c.json({ success: false, error: 'request body must be an object' }, 400);
+  }
+  if (!('value' in body)) {
+    return c.json({ success: false, error: 'value is required' }, 400);
+  }
+  const validated = validateLandingTexts((body as { value: unknown }).value);
+  if (!validated.ok) return c.json({ success: false, error: validated.error }, 400);
+  await setLandingTextsJson(c.env.DB, JSON.stringify(validated.value));
+  return c.json({ success: true });
 });
 
 export { accountSettings };

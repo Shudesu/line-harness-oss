@@ -1,3 +1,4 @@
+import { loadLandingTexts } from '../lib/landing-texts.js';
 import { renderLineQrLanding } from '../lib/line-landing.js';
 import { Hono, type Context } from 'hono';
 import { createLiffQueryReader } from '../lib/liff-query.js';
@@ -525,7 +526,7 @@ liffRoutes.get('/auth/line', async (c) => {
   }
 
   // PC: show QR code page
-  return c.html(renderLineQrLanding(qrUrl));
+  return c.html(renderLineQrLanding(qrUrl, await loadLandingTexts(c.env.DB)));
 });
 
 /**

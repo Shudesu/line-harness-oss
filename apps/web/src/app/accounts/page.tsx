@@ -25,6 +25,7 @@ import {
 } from '@/components/accounts/account-form-fields'
 import AccountSetupUrls from '@/components/accounts/account-setup-urls'
 import LinkBaseUrlSetting from '@/components/accounts/link-base-url-setting'
+import LandingTextsSetting from '@/components/accounts/landing-texts-setting'
 import FollowerImportButton from '@/components/accounts/follower-import-button'
 
 const ReorderMode = dynamic(() => import('@/components/accounts/reorder-mode'), { ssr: false })
@@ -378,6 +379,7 @@ export default function AccountsPage() {
       <section className="mt-8" aria-labelledby="global-settings-title">
         <h2 id="global-settings-title" className="mb-3 text-sm font-semibold text-kumo-strong">グローバル設定</h2>
         <LinkBaseUrlSetting />
+        <LandingTextsSetting />
       </section>
 
       <Dialog.Root

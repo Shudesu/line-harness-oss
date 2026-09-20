@@ -1,3 +1,5 @@
+import { DEFAULT_LANDING_TEXTS } from '@line-crm/shared';
+import { loadLandingTexts } from './lib/landing-texts.js';
 import { renderLineMobileLanding, renderLineQrLanding, renderLineHelp } from './lib/line-landing.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -434,13 +436,15 @@ app.get('/r/:ref', async (c) => {
   // account than the one originally chosen for this user.
   const helpUrl = `/r/${encodeURIComponent(ref)}/help?t=${encodeURIComponent(liffTarget)}`;
 
+  const texts = await loadLandingTexts(c.env.DB);
+
   const ua = (c.req.header('user-agent') || '').toLowerCase();
   const isMobile = /iphone|ipad|android|mobile/.test(ua);
   if (isMobile) {
-    return c.html(renderLineMobileLanding(ua, liffTarget, helpUrl));
+    return c.html(renderLineMobileLanding(ua, liffTarget, helpUrl, texts));
   }
 
-  return c.html(renderLineQrLanding(liffTarget));
+  return c.html(renderLineQrLanding(liffTarget, texts));
 });
 
 // /r/:ref/help — opt-in recovery page when "LINEで開く" didn't launch the app.
@@ -504,13 +508,16 @@ app.get('/o', async (c) => {
   if (slug) liffParams.set('slug', slug);
   const liffTarget = `https://liff.line.me/${liffId}?${liffParams.toString()}`;
 
+  // This explicit-LIFF route was DB-independent; settings must not make it unavailable.
+  const texts = await loadLandingTexts(c.env.DB).catch(() => DEFAULT_LANDING_TEXTS);
+
   const ua = (c.req.header('user-agent') || '').toLowerCase();
   const isMobile = /iphone|ipad|android|mobile/.test(ua);
   if (isMobile) {
-    return c.html(renderLineMobileLanding(ua, liffTarget));
+    return c.html(renderLineMobileLanding(ua, liffTarget, undefined, texts));
   }
 
-  return c.html(renderLineQrLanding(liffTarget, false));
+  return c.html(renderLineQrLanding(liffTarget, texts));
 });
 
 // Convenience redirect for /book path

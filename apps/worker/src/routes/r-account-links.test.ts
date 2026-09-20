@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //     links keep OAuth (uid linking exists solely in /auth/callback)
 
 const dbMocks = {
+  getLandingTextsJson: vi.fn().mockResolvedValue(null),
   // eager module-load deps
   getLineAccounts: vi.fn().mockResolvedValue([]),
   getStaffByApiKey: vi.fn(),

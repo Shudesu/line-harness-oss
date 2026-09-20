@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // every referenced export must exist as a stub. The /r/:ref handler is the only
 // thing exercised here; unrelated helpers stay as bare vi.fn().
 const dbMocks = {
+  getLandingTextsJson: vi.fn().mockResolvedValue(null),
   // eager module-load deps (mirror not-found.test.ts)
   getLineAccounts: vi.fn().mockResolvedValue([]),
   getStaffByApiKey: vi.fn(),
