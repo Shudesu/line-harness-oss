@@ -15,7 +15,7 @@ describe('LINE landing presentation', () => {
 
   it.each(['iPhone', 'iPad', 'iPod'])('offers the iOS long-press hint on %s', (ua) => {
     const html = renderLineMobileLanding(ua, TARGET, '/r/campaign/help');
-    expect(html).toContain('友達追加して始める');
+    expect(html).toContain('<p class="msg">LINE で開く</p>');
     expect(html).toContain(`href="${TARGET}"`);
     expect(html).toContain('<strong>長押し</strong>');
     expect(html).toContain('href="/r/campaign/help"');

@@ -56,7 +56,7 @@ ${helpUrl ? ".help{font-size:12px;color:#999;margin-top:18px;line-height:1.5}\n.
 <div class="line-icon">
 <svg viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#06C755"/><path d="M24 12C17.37 12 12 16.58 12 22.2c0 3.54 2.35 6.65 5.86 8.47-.2.74-.76 2.75-.87 3.17-.14.55.2.54.42.39.18-.12 2.84-1.88 4-2.65.84.13 1.7.22 2.59.22 6.63 0 12-4.58 12-10.2S30.63 12 24 12z" fill="#fff"/></svg>
 </div>
-<p class="msg">友達追加して始める</p>
+<p class="msg">LINE で開く</p>
 <a href="${buttonHref}" class="btn">LINEで開く</a>
 ${longPressHint}
 ${helpUrl ? `<p class="help">うまく開けない方は <a href="${helpUrl}">こちら</a></p>\n` : ""}</div>

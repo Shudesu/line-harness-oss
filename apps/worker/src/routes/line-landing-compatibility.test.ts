@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Freeze the landing pages before extracting their presentation helpers.
+// Preserve the captured landing HTML except for the shared mobile heading.
 
 const dbMocks = {
   // eager module-load deps
@@ -75,7 +75,7 @@ function get(path: string, ua = MOBILE_UA) {
   );
 }
 
-// Capture the pre-extraction HTML. Only insignificant indentation and the
+// The initial baseline was captured before extracting these helpers. Only indentation and the
 // equivalent viewport number are normalized for the /auth/line template.
 const normalized = (html: string) => html.split('\n').map((line) => line.trim()).join('\n')
   .replace('width=device-width, initial-scale=1.0', 'width=device-width,initial-scale=1');
