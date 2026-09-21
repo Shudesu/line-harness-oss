@@ -18,6 +18,14 @@ pnpm dev:worker
 
 設定保存後、Cursor を再起動するか MCP サーバー一覧を更新してください。
 
+## 4. デプロイ後の検証
+
+```bash
+node scripts/verify-self-host.mjs
+```
+
+本番 Worker URL を設定したあと、上記で `/api/health`・`/api/capabilities`・API キーを確認できます。詳細は `docs/self-host/PHASE-A-DEPLOY.md`。
+
 ## 注意
 
 - `.cursor/mcp.json` は **コミットされません**（`.gitignore`）。

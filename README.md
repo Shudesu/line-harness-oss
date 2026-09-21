@@ -125,6 +125,8 @@ CLI が以下を全部やる:
 - **重複検出** — `picture_url` 中間トークンで複数アカウント間の同一ユーザーを自動タグ付け
 
 ### マーケティング
+- **オートウェビナー** — 疑似ライブ（LIFF・巻き戻し不可）、HLS 配信、視聴位置トラッキング（Cursor MCP / ffmpeg で動画投入）
+- **マイル（ポイント）** — ウェビナー 90% 視聴・CTA 等で付与、管理画面でルール編集（サイドバー「マイル」）
 - **リッチメニュー** — ユーザー別 / タグ別の自動切替
 - **フォーム (LIFF)** — LINE 内完結フォーム、回答 → メタデータ自動保存
 - **カレンダー予約** — Google Calendar 連携の予約システム (LIFF)
@@ -150,7 +152,15 @@ CLI が以下を全部やる:
 - **複数 LINE 公式アカウント** を 1 つのダッシュボードで管理
 - **アカウント別シナリオ・タグ・配信** スコープ
 - **BAN 検知** → 自動で次のアカウントへ友だち移行（pool 機能）
-- **トラフィックプール** — 複数アカウントへ自動振り分け
+- **トラフィックプール** — 複数アカウントへ自動振り分け（`entry_routes` とセットで `/r/{ref}` を登録）
+
+### 動画機能の再現（OSS）
+
+YouTube で紹介されたウェビナー・マイル・プールは **本リポジトリに実装済み** です。自前デプロイ手順と E2E チェックリスト:
+
+- [Phase A デプロイ](docs/self-host/PHASE-A-DEPLOY.md) · `node scripts/verify-self-host.mjs`
+- [動画機能プレイブック](docs/wiki/30-Video-Feature-Playbook.md)
+- Google ワンクリッククラウドは [L Harness Cloud](https://lharness.cloud/)（別製品）— 比較は [CLOUD-VS-OSS.md](docs/self-host/CLOUD-VS-OSS.md)
 
 ### AI 統合
 - **MCP Server 同梱** (`@line-harness/mcp-server`) — Cursor / Claude Code などから自然言語で全操作

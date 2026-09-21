@@ -105,6 +105,9 @@ L Harness は、LINE公式アカウント向けのオープンソース CRM / �
 22. **[Claude Code Integration](23-Claude-Code-Integration.md)** — AI連携、プロンプト例
 23. **[MCP Server](24-MCP-Server.md)** — MCP Server セットアップ、ツール一覧、URL自動追跡
 24. **[Cursor Integration](29-Cursor-Integration.md)** — Cursor 向け MCP・管理画面のエージェント切替
+25. **[Video Feature Playbook](30-Video-Feature-Playbook.md)** — 動画紹介機能（ウェビナー・マイル・プール）の OSS 手順
+26. **[Self-Host Phase A](https://github.com/Shudesu/line-harness-oss/blob/main/docs/self-host/PHASE-A-DEPLOY.md)** — 自前デプロイと `verify-self-host`
+27. **[Cloud vs OSS](../self-host/CLOUD-VS-OSS.md)** — L Harness Cloud と自前の判断メモ
 25. **[Staff Management](25-Staff-Management.md)** — スタッフ、権限、APIキー管理
 26. **[Manual Update](26-Manual-Update.md)** — CLIインストール環境の安全な手動更新
 27. **[Affiliate ASP](27-Affiliate-ASP.md)** — セルフサーブ型アフィリエイト計測、last-touch帰属、重複フラグ、API
