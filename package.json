@@ -30,6 +30,7 @@
     "test:scripts": "vitest run --config vitest.config.ts",
     "verify:self-host": "node scripts/verify-self-host.mjs",
     "bootstrap:self-host": "powershell -ExecutionPolicy Bypass -File scripts/bootstrap-self-host.ps1",
+    "continue:phase-a": "powershell -ExecutionPolicy Bypass -File scripts/continue-phase-a.ps1",
     "build:bundle": "tsx scripts/release/build-bundle.ts",
     "build:wfp-bundle": "tsx scripts/release/build-wfp-bundle.ts"
   },
