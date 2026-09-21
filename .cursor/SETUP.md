@@ -4,7 +4,7 @@
 
 | 変数 | この下書きの値 | 取得方法 |
 |------|----------------|----------|
-| `LINE_HARNESS_API_URL` | `http://127.0.0.1:8787` | ローカル: `pnpm dev:worker`。本番は `https://<your-worker>.workers.dev` |
+| `LINE_HARNESS_API_URL` | `http://localhost:5173` | ローカル: `pnpm dev:worker`（Vite）。本番は `https://<your-worker>.workers.dev` |
 | `LINE_HARNESS_API_KEY` | プレースホルダ | 管理画面の API キー、または `create-line-harness` セットアップ時に発行されたキー |
 | `LINE_HARNESS_ACCOUNT_ID` | 任意 | LINE アカウントが1つのときだけ設定（MCP 経由の配信が管理画面に表示されやすくなる） |
 

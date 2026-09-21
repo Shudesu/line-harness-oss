@@ -57,11 +57,15 @@ node scripts/verify-self-host.mjs
 ## ローカル開発のみ
 
 ```bash
-pnpm dev:worker   # http://127.0.0.1:8787
+pnpm --filter @line-crm/line-sdk build
+pnpm --filter @line-harness/update-engine build
+pnpm dev:worker   # Vite: http://localhost:5173（wrangler dev 単体の 8787 とは異なる）
 pnpm dev:web      # http://localhost:3001
 ```
 
-`.cursor/mcp.json` の URL を `http://127.0.0.1:8787` にし、ローカル D1 にマイグレーション済みであることを確認してください。
+Windows 一括: `powershell -ExecutionPolicy Bypass -File scripts/bootstrap-self-host.ps1`
+
+`.cursor/mcp.json` の `LINE_HARNESS_API_URL` をローカルなら `http://localhost:5173`、本番なら Worker URL に合わせます。ローカル D1 にマイグレーション済みであることを確認してください。
 
 ## 次のステップ
 
