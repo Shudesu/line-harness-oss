@@ -1,6 +1,12 @@
 import * as p from "@clack/prompts";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import {
+  AI_AGENTS,
+  DEFAULT_SETUP_MCP_AGENTS,
+  type AiAgentId,
+} from "@line-crm/shared";
+import { generateCursorAgentRules } from "./cursor-rules.js";
 
 interface McpConfigOptions {
   workerUrl: string;
@@ -12,6 +18,8 @@ interface McpConfigOptions {
    * the worker is exactly the call most likely to fail on a fresh install.
    */
   accountId?: string;
+  /** MCP 設定を書き込む対象エージェント。既定は Cursor + Claude Code。 */
+  agents?: AiAgentId[];
 }
 
 interface LineAccount {
@@ -22,18 +30,6 @@ interface LineAccount {
 /**
  * Resolve the single LINE account id for a fresh install so the MCP server can
  * be configured with a default account.
- *
- * Why this matters: the MCP server passes its `LINE_HARNESS_ACCOUNT_ID` to the
- * SDK as `defaultAccountId`. The SDK only auto-fills `lineAccountId` on
- * broadcast create/list/send when that default is present. Without it, every
- * broadcast created via the MCP server is written with `line_account_id = NULL`
- * and is therefore invisible in the account-scoped admin UI list (which filters
- * on `line_account_id`). Single-account installs are the common case, so we set
- * the default automatically. Multi-account setups are left unset on purpose —
- * the operator should pick a default per server entry themselves.
- *
- * Best-effort: any failure (network, multi-account, unexpected shape) just
- * skips the field and never breaks the install.
  */
 async function resolveDefaultAccountId(
   options: McpConfigOptions,
@@ -56,34 +52,25 @@ async function resolveDefaultAccountId(
   }
 }
 
-export async function generateMcpConfig(options: McpConfigOptions): Promise<void> {
-  const mcpJsonPath = join(process.cwd(), ".mcp.json");
-
-  const env: Record<string, string> = {
-    LINE_HARNESS_API_URL: options.workerUrl,
-    LINE_HARNESS_API_KEY: options.apiKey,
-  };
-
-  // Set a default account for single-account installs so MCP-created
-  // broadcasts are tagged with line_account_id and show up in the admin UI.
-  // Prefer the caller-provided id; fall back to asking the worker API.
-  const defaultAccountId =
-    options.accountId ?? (await resolveDefaultAccountId(options));
-  if (defaultAccountId) {
-    env.LINE_HARNESS_ACCOUNT_ID = defaultAccountId;
-  }
-
-  const newServerConfig = {
+function buildServerEntry(env: Record<string, string>) {
+  return {
     command: "npx",
     args: ["-y", "@line-harness/mcp-server@latest"],
     env,
   };
+}
 
+function mergeMcpFile(
+  filePath: string,
+  serverName: string,
+  newServerConfig: ReturnType<typeof buildServerEntry>,
+  apiKey: string,
+): string {
   let mcpConfig: Record<string, any> = {};
 
-  if (existsSync(mcpJsonPath)) {
+  if (existsSync(filePath)) {
     try {
-      mcpConfig = JSON.parse(readFileSync(mcpJsonPath, "utf-8"));
+      mcpConfig = JSON.parse(readFileSync(filePath, "utf-8"));
     } catch {
       // Invalid JSON, start fresh
     }
@@ -93,18 +80,60 @@ export async function generateMcpConfig(options: McpConfigOptions): Promise<void
     mcpConfig.mcpServers = {};
   }
 
-  // Don't overwrite existing line-harness config — use a unique name
-  let serverName = "line-harness";
+  let resolvedName = serverName;
   if (mcpConfig.mcpServers["line-harness"]) {
-    // Extract a short suffix from the API key
-    const suffix = options.apiKey.slice(0, 8);
-    serverName = `line-harness-${suffix}`;
+    const suffix = apiKey.slice(0, 8);
+    resolvedName = `line-harness-${suffix}`;
     p.log.info(
-      `既存の line-harness 設定があるため、${serverName} として追加します`,
+      `既存の line-harness 設定があるため、${resolvedName} として追加します（${filePath}）`,
     );
   }
-  mcpConfig.mcpServers[serverName] = newServerConfig;
+  mcpConfig.mcpServers[resolvedName] = newServerConfig;
 
-  writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, 2) + "\n");
-  p.log.success(`.mcp.json に MCP 設定を追加しました（${serverName}）`);
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(filePath, JSON.stringify(mcpConfig, null, 2) + "\n");
+  return resolvedName;
+}
+
+export async function generateMcpConfig(options: McpConfigOptions): Promise<void> {
+  const agents = options.agents?.length
+    ? options.agents
+    : DEFAULT_SETUP_MCP_AGENTS;
+
+  const env: Record<string, string> = {
+    LINE_HARNESS_API_URL: options.workerUrl,
+    LINE_HARNESS_API_KEY: options.apiKey,
+  };
+
+  const defaultAccountId =
+    options.accountId ?? (await resolveDefaultAccountId(options));
+  if (defaultAccountId) {
+    env.LINE_HARNESS_ACCOUNT_ID = defaultAccountId;
+  }
+
+  const newServerConfig = buildServerEntry(env);
+  const writtenPaths = new Set<string>();
+
+  for (const agentId of agents) {
+    const relativePath = AI_AGENTS[agentId].mcpConfigRelativePath;
+    if (writtenPaths.has(relativePath)) continue;
+    writtenPaths.add(relativePath);
+
+    const filePath = join(process.cwd(), relativePath);
+    const serverName = mergeMcpFile(
+      filePath,
+      "line-harness",
+      newServerConfig,
+      options.apiKey,
+    );
+    p.log.success(`MCP 設定を追加しました: ${relativePath}（${serverName}）`);
+  }
+
+  if (agents.includes("cursor")) {
+    generateCursorAgentRules({ workerUrl: options.workerUrl });
+    p.log.success("Cursor 用ルールを .cursor/rules/l-harness.mdc に追加しました");
+  }
 }

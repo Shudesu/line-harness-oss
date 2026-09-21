@@ -31,6 +31,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@line-crm/shared": "workspace:*",
     "@clack/prompts": "^0.9.1",
     "@line-harness/update-engine": "workspace:^0.0.13",
     "execa": "^9.5.2",

@@ -1,0 +1,13 @@
+---
+description: L Harness（LINE CRM）を MCP で操作する
+alwaysApply: true
+---
+
+# L Harness × Cursor
+
+- LINE 公式アカウントの変更は **REST API または MCP ツール** 経由で行う（管理画面は確認用）。
+- MCP サーバー: `@line-harness/mcp-server`（設定は `.cursor/mcp.json`）。
+- ローカル開発時の API ベース URL: `http://127.0.0.1:8787`（`pnpm dev:worker`）
+- 本番 Worker に接続する場合は `.cursor/mcp.json` の `LINE_HARNESS_API_URL` を差し替える。
+- ドキュメント: `docs/wiki/24-MCP-Server.md`、`docs/wiki/29-Cursor-Integration.md`
+- API キーはコミット・ルールへの直書き禁止。`.cursor/mcp.json` は gitignore 済み。

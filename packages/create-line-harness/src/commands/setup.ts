@@ -20,6 +20,11 @@ import { installRepoDeps, pinRepoToTag } from "../steps/clone-repo.js";
 import { setSecrets } from "../steps/secrets.js";
 import { assertAdminAuthConfigured, configureAdminAuth } from "../steps/admin-auth.js";
 import { generateMcpConfig } from "../steps/mcp-config.js";
+import {
+  AI_AGENT_IDS,
+  AI_AGENTS,
+  type AiAgentId,
+} from "@line-crm/shared";
 import { generateApiKey } from "../lib/crypto.js";
 import { assertSetupWranglerConfigSafe } from "../lib/wrangler-config-preservation.js";
 import { buildLineIdentitySql, quoteSqlString } from "../lib/line-account-sql.js";
@@ -917,9 +922,23 @@ ON CONFLICT(channel_id) DO UPDATE SET
 
   // Step 14: Generate MCP config
   const addMcp = await p.confirm({
-    message: "MCP 設定を .mcp.json に追加しますか？（Claude Code / Cursor 用）",
+    message:
+      "MCP 設定を追加しますか？（Cursor / Claude Code などの AI エージェント用）",
   });
   if (addMcp && !p.isCancel(addMcp)) {
+    const agentChoices = await p.multiselect({
+      message: "どの AI エージェント用に設定ファイルを書き込みますか？",
+      options: AI_AGENT_IDS.map((id) => ({
+        value: id,
+        label: AI_AGENTS[id].label,
+        hint: AI_AGENTS[id].mcpConfigRelativePath,
+      })),
+      initialValues: ["cursor", "claude-code"] as AiAgentId[],
+      required: true,
+    });
+    if (p.isCancel(agentChoices)) {
+      p.log.warn("MCP 設定の追加をスキップしました");
+    } else {
     // Resolve the line_accounts.id via wrangler (same authenticated path as
     // Step 12) so generateMcpConfig doesn't have to HTTP the fresh worker —
     // new workers.dev subdomains can take minutes to DNS-resolve. The upsert
@@ -952,7 +971,9 @@ ON CONFLICT(channel_id) DO UPDATE SET
       workerUrl: state.workerUrl!,
       apiKey: state.apiKey!,
       accountId: state.lineAccountId,
+      agents: agentChoices as AiAgentId[],
     });
+    }
   }
 
   // Step 15: Show completion screen

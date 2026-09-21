@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@cloudflare/kumo/components/button'
 import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { useAiAgent } from '@/contexts/ai-agent-context'
 
 export interface PromptTemplate {
   title: string
@@ -16,6 +17,7 @@ interface PromptModalProps {
 }
 
 export default function PromptModal({ isOpen, onClose, prompts }: PromptModalProps) {
+  const { agent } = useAiAgent()
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
 
@@ -48,7 +50,7 @@ export default function PromptModal({ isOpen, onClose, prompts }: PromptModalPro
       <Dialog className="w-full max-w-lg max-h-[80vh] flex flex-col p-0">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-          <Dialog.Title className="text-base font-bold text-kumo-strong">CC プロンプトテンプレート</Dialog.Title>
+          <Dialog.Title className="text-base font-bold text-kumo-strong">{agent.promptModalTitle}</Dialog.Title>
           <Button
             type="button"
             onClick={onClose}
@@ -119,7 +121,7 @@ export default function PromptModal({ isOpen, onClose, prompts }: PromptModalPro
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-gray-200">
-          <p className="text-xs text-gray-400">Claude Code にプロンプトを貼り付けて使用してください</p>
+          <p className="text-xs text-gray-400">{agent.promptFooter}</p>
         </div>
       </Dialog>
     </Dialog.Root>

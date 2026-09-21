@@ -15,6 +15,7 @@ import { PollingStatus } from '@/components/shared/polling-status'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
 import { getApiBase } from '@/lib/api-base'
 import { withBasePath } from '@/lib/base-path'
+import AiAgentSwitcher from '@/components/layout/ai-agent-switcher'
 
 const appVersion = process.env.APP_VERSION || '0.0.0'
 const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
@@ -230,6 +231,8 @@ export default function Sidebar() {
 
       {/* アカウント切替 */}
       <AccountSwitcher />
+
+      <AiAgentSwitcher />
 
       {/* ナビゲーション */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
