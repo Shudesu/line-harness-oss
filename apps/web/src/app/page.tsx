@@ -15,6 +15,7 @@ import { Banner } from '@cloudflare/kumo/components/banner'
 import { Button } from '@cloudflare/kumo/components/button'
 import { Input } from '@cloudflare/kumo/components/input'
 import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import VideoFeatureSetupChecklist from '@/components/dashboard/video-feature-setup-checklist'
 
 const ccPrompts = [
   {
@@ -330,6 +331,8 @@ export default function DashboardPage() {
 
       {error && <Banner className="mb-6" variant="error" title="データを読み込めませんでした" description={error} />}
 
+      <VideoFeatureSetupChecklist />
+
       <DeliveryHealthSection />
 
       <FriendAddLinkCard />
@@ -340,7 +343,7 @@ export default function DashboardPage() {
 
       {/* Demo banner */}
       <a
-        href="https://your-worker.your-subdomain.workers.dev/auth/line?ref=dashboard"
+        href={`${(getApiBase() ?? '').replace(/\/$/, '')}/auth/line?ref=dashboard`}
         target="_blank"
         rel="noopener noreferrer"
         className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"
