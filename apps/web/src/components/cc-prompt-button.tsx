@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import PromptModal, { type PromptTemplate } from '@/components/prompt-modal'
 import { Button } from '@cloudflare/kumo/components/button'
+import { useAiAgent } from '@/contexts/ai-agent-context'
 
 interface CcPromptButtonProps {
   prompts: PromptTemplate[]
@@ -15,6 +16,7 @@ interface CcPromptButtonProps {
 }
 
 export default function CcPromptButton({ prompts, positionClassName = 'bottom-6 right-6' }: CcPromptButtonProps) {
+  const { agent } = useAiAgent()
   const [isOpen, setIsOpen] = useState(false)
 
   return (
@@ -24,10 +26,10 @@ export default function CcPromptButton({ prompts, positionClassName = 'bottom-6 
         onClick={() => setIsOpen(true)}
         className={`fixed ${positionClassName} z-50 rounded-full shadow-lg`}
         variant="primary"
-        aria-label="CCに依頼"
+        aria-label={agent.requestAriaLabel}
       >
         <span className="text-base leading-none">📋</span>
-        <span className="hidden sm:inline">CCに依頼</span>
+        <span className="hidden sm:inline">{agent.requestButtonLabel}</span>
       </Button>
 
       <PromptModal

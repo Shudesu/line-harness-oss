@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateMcpConfig } from '../src/steps/mcp-config.js';
@@ -79,12 +79,30 @@ describe('generateMcpConfig', () => {
 
   it('does not overwrite an existing line-harness entry', async () => {
     mockAccounts([{ id: 'acc-1' }]);
-    await generateMcpConfig({ workerUrl: WORKER, apiKey: API_KEY });
-    await generateMcpConfig({ workerUrl: WORKER, apiKey: 'second-key-87654321' });
+    await generateMcpConfig({ workerUrl: WORKER, apiKey: API_KEY, agents: ['claude-code'] });
+    await generateMcpConfig({
+      workerUrl: WORKER,
+      apiKey: 'second-key-87654321',
+      agents: ['claude-code'],
+    });
     const servers = readConfig().mcpServers;
     expect(servers['line-harness'].env.LINE_HARNESS_API_KEY).toBe(API_KEY);
     expect(servers['line-harness-second-k'].env.LINE_HARNESS_API_KEY).toBe(
       'second-key-87654321',
     );
+  });
+
+  it('writes Cursor MCP config and rules when cursor is selected', async () => {
+    mockAccounts([{ id: 'acc-1' }]);
+    await generateMcpConfig({
+      workerUrl: WORKER,
+      apiKey: API_KEY,
+      agents: ['cursor'],
+    });
+    const cursorConfig = JSON.parse(
+      readFileSync(join(dir, '.cursor', 'mcp.json'), 'utf-8'),
+    );
+    expect(cursorConfig.mcpServers['line-harness'].env.LINE_HARNESS_API_URL).toBe(WORKER);
+    expect(existsSync(join(dir, '.cursor', 'rules', 'l-harness.mdc'))).toBe(true);
   });
 });

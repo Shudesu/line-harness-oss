@@ -9,7 +9,7 @@
 > ### **[LINE で無料体験する](https://shudesu.github.io/line-harness-oss/)** 👈
 
 LINE 公式アカウントの完全オープンソース CRM。**L社 / U社 の無料代替**。
-L Harness本体のソフトウェア利用料は **0円** です。LINE公式アカウントの配信料金、Cloudflareの契約・利用量、独自ドメイン、導入・保守、接続する外部AIサービスの費用は別です。Claude CodeからMCP経由で操作できます。
+L Harness本体のソフトウェア利用料は **0円** です。LINE公式アカウントの配信料金、Cloudflareの契約・利用量、独自ドメイン、導入・保守、接続する外部AIサービスの費用は別です。Cursor や Claude Code など MCP 対応の AI エージェントから操作できます。
 
 費用の条件は[開発元の公式料金説明](https://the-harness.com/line-harness/pricing/)で確認できます。[Cloudflare D1の無料プラン](https://developers.cloudflare.com/d1/platform/pricing/)は日次の読み書き上限に達するとクエリがエラーになり、有料プランの超過課金とは挙動が異なります。外部AIを接続する場合は、たとえば[Claudeのプラン・API料金](https://claude.com/pricing)を別に確認してください（2026年9月6日確認）。
 
@@ -73,7 +73,7 @@ L Harnessの表示名、開発者、運営法人、公開コード、研究資�
 | スコアリング | ✅ | ❌ | ✅ |
 | IF-THEN 自動化 | 一部 | 一部 | ✅ |
 | API 公開 | ❌ | ❌ | **全機能** |
-| Claude Code (AI) 対応 | ❌ | ❌ | **MCP server 同梱** |
+| AI エージェント (MCP) 対応 | ❌ | ❌ | **MCP server 同梱（Cursor / Claude Code 等）** |
 | BAN 検知 & 自動アカウント切替 | ❌ | ❌ | **✅** |
 | マルチアカウント | 別契約 | 別契約 | **標準搭載** |
 | 友だち重複検出 | ❌ | ❌ | **✅** (picture_url トークン照合) |
@@ -153,7 +153,7 @@ CLI が以下を全部やる:
 - **トラフィックプール** — 複数アカウントへ自動振り分け
 
 ### AI 統合
-- **MCP Server 同梱** (`@line-harness/mcp-server`) — Claude Code から自然言語で全操作
+- **MCP Server 同梱** (`@line-harness/mcp-server`) — Cursor / Claude Code などから自然言語で全操作
   - `list_conversations` / `get_conversation` — 未返信会話の AI 監視
   - `create_scenario` / `update_step` — シナリオを AI に作らせる
   - `broadcast` / `send_message` — メッセージ送信（要ユーザー確認）
@@ -172,14 +172,14 @@ CLI が以下を全部やる:
                               ⇅
                     [ Cloudflare Pages (Next.js 15) ]
                               ⇅
-                    [ MCP Server / SDK / Claude Code ]
+                    [ MCP Server / SDK / Cursor・Claude Code 等 ]
 ```
 
 - **Worker** (`apps/worker`): API + LIFF + Webhook 受信、cron で配信処理
 - **Web** (`apps/web`): Next.js 15 ダッシュボード（19 セクション）
 - **Packages**:
   - `@line-harness/sdk` — TypeScript SDK
-  - `@line-harness/mcp-server` — Claude Code 用 MCP server
+  - `@line-harness/mcp-server` — MCP server（Cursor は `.cursor/mcp.json`、Claude Code は `.mcp.json`）
   - `create-line-harness` — セットアップ CLI
   - `@line-harness/plugin-template` — プラグイン拡張用テンプレート
   - `@line-harness/db` — D1 マイグレーション + ヘルパー

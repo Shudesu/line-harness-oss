@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "line-harness": {
+      "command": "npx",
+      "args": ["-y", "@line-harness/mcp-server@latest"],
+      "env": {
+        "LINE_HARNESS_API_URL": "https://your-worker.example.workers.dev",
+        "LINE_HARNESS_API_KEY": "replace-with-your-api-key",
+        "LINE_HARNESS_ACCOUNT_ID": "optional-when-single-line-account"
+      }
+    }
+  }
+}

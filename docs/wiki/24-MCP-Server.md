@@ -1,6 +1,8 @@
 # 24. MCP Server
 
-L Harness MCP Server は [Model Context Protocol](https://modelcontextprotocol.io/) に準拠したサーバー。Claude Code や他の MCP クライアントから LINE 公式アカウントを自然言語で操作できる。
+L Harness MCP Server は [Model Context Protocol](https://modelcontextprotocol.io/) に準拠したサーバー。Cursor、Claude Code、その他の MCP クライアントから LINE 公式アカウントを自然言語で操作できる。
+
+Cursor 向けの手順は [29-Cursor-Integration.md](29-Cursor-Integration.md) を参照。
 
 ---
 
@@ -9,7 +11,7 @@ L Harness MCP Server は [Model Context Protocol](https://modelcontextprotocol.i
 ### npx (推奨)
 
 ```json
-// .mcp.json
+// Claude Code: .mcp.json / Cursor: .cursor/mcp.json（内容は同じ形式）
 {
   "mcpServers": {
     "line-harness": {

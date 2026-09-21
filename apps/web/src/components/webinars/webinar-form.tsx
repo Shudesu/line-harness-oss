@@ -8,6 +8,7 @@ import { Button } from '@cloudflare/kumo/components/button'
 import { Checkbox } from '@cloudflare/kumo/components/checkbox'
 import { Input } from '@cloudflare/kumo/components/input'
 import { Select } from '@cloudflare/kumo/components/select'
+import { useAiAgent } from '@/contexts/ai-agent-context'
 
 const DAYS = ['日', '月', '火', '水', '木', '金', '土']
 
@@ -36,6 +37,7 @@ export interface WebinarFormProps {
 }
 
 export default function WebinarForm({ initial }: WebinarFormProps) {
+  const { agent } = useAiAgent()
   const router = useRouter()
   const [title, setTitle] = useState(initial?.title ?? '')
   const [slug, setSlug] = useState(initial?.slug ?? '')
@@ -132,7 +134,7 @@ export default function WebinarForm({ initial }: WebinarFormProps) {
           />
         {!videoPrefix.trim() && (
           <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-700">
-            <p className="font-bold text-amber-900">動画のアップロードは Claude Code / Codex から行います</p>
+            <p className="font-bold text-amber-900">動画のアップロードは {agent.label}（MCP 接続済み）から行います</p>
             <p className="mt-2">
               この画面からは動画をアップロードできません。動画の変換には ffmpeg が必要です。お使いの AI エージェントに次のように依頼してください。
             </p>

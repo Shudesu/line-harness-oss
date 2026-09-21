@@ -104,6 +104,7 @@ L Harness は、LINE公式アカウント向けのオープンソース CRM / �
 21. **[Operations](22-Operations.md)** — 運用、監視、トラブルシューティング
 22. **[Claude Code Integration](23-Claude-Code-Integration.md)** — AI連携、プロンプト例
 23. **[MCP Server](24-MCP-Server.md)** — MCP Server セットアップ、ツール一覧、URL自動追跡
+24. **[Cursor Integration](29-Cursor-Integration.md)** — Cursor 向け MCP・管理画面のエージェント切替
 25. **[Staff Management](25-Staff-Management.md)** — スタッフ、権限、APIキー管理
 26. **[Manual Update](26-Manual-Update.md)** — CLIインストール環境の安全な手動更新
 27. **[Affiliate ASP](27-Affiliate-ASP.md)** — セルフサーブ型アフィリエイト計測、last-touch帰属、重複フラグ、API

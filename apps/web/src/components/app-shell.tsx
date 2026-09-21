@@ -5,6 +5,7 @@ import { UpdateBanner } from './update/update-banner'
 import { QuotaBanner } from './quota-banner'
 import AuthGuard from './auth-guard'
 import { AccountProvider } from '@/contexts/account-context'
+import { AiAgentProvider } from '@/contexts/ai-agent-context'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -27,6 +28,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
       <AccountProvider>
+        <AiAgentProvider>
         <div className={`flex flex-col ${isFullBleed ? 'h-dvh' : 'min-h-screen'}`}>
           {/* Phase 6: banner above sidebar+header so it pins to the top of the
               admin shell. Renders nothing while loading; one of latest/fork/
@@ -50,6 +52,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </main>
           </div>
         </div>
+        </AiAgentProvider>
       </AccountProvider>
     </AuthGuard>
   )

@@ -10,6 +10,7 @@ dist-mcp/
 *.log
 .DS_Store
 .mcp.json
+.cursor/mcp.json
 *.toml.bak
 .env.production
 .env.staging
