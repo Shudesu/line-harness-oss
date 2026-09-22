@@ -18,7 +18,8 @@ pnpm --filter @line-harness/update-engine build
 pnpm --filter create-line-harness build
 
 Write-Host "`nStarting create-line-harness setup (interactive — LINE credentials required)..." -ForegroundColor Yellow
-pnpm deploy:setup
+Write-Host "Using --from-source (current checkout; avoids git checkout of release tag)." -ForegroundColor DarkGray
+pnpm deploy:setup:source
 
 Write-Host "`n--- Next: edit .cursor/mcp.json ---" -ForegroundColor Cyan
 Write-Host "  LINE_HARNESS_API_URL = Worker URL from setup output"

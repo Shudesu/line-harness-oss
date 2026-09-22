@@ -17,7 +17,7 @@ npx wrangler login
 pnpm continue:phase-a
 ```
 
-（`pnpm bootstrap:self-host` でも可。`continue:phase-a` はログイン済み前提で `deploy:setup` まで進めます。）
+（`pnpm bootstrap:self-host` でも可。`continue:phase-a` はログイン済み前提で **ソースから** `deploy:setup` まで進めます。未変更のクローンのみリリースバンドルなら `pnpm deploy:setup` を使います。）
 
 ## 3. `.cursor/mcp.json` を更新
 

@@ -25,6 +25,7 @@
     "db:migrate": "wrangler d1 execute your-database --file=packages/db/schema.sql",
     "db:migrate:local": "wrangler d1 execute your-database --file=packages/db/schema.sql --local",
     "deploy:setup": "node packages/create-line-harness/dist/index.js",
+    "deploy:setup:source": "node packages/create-line-harness/dist/index.js --from-source",
     "deploy:update": "node packages/create-line-harness/dist/index.js update",
     "sandbox:create-line-harness": "bash scripts/run-create-line-harness-sandbox.sh",
     "test:scripts": "vitest run --config vitest.config.ts",

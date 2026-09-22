@@ -14,6 +14,15 @@
 pnpm dev:worker
 ```
 
+ローカル初回は `apps/worker/.dev.vars` に `API_KEY` を置く（リポジトリ同梱の `dev-local-lh-key` または自分で生成した文字列）。**Worker を再起動**してから管理画面でログインする。
+
+| 画面 | URL |
+|------|-----|
+| 管理画面（ログイン） | http://localhost:3001/login |
+| API | http://localhost:5173 |
+
+`apps/web/.env.local` に `NEXT_PUBLIC_API_URL=http://localhost:5173` が必要（未設定なら作成して `pnpm dev:web` を再起動）。
+
 ## 3. Cursor で MCP を再読み込み
 
 設定保存後、Cursor を再起動するか MCP サーバー一覧を更新してください。

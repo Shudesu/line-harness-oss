@@ -1,3 +1,3 @@
-export * from "./types";
-export * from "./sticker";
-export * from "./ai-agents";
+export * from "./types.js";
+export * from "./sticker.js";
+export * from "./ai-agents.js";
