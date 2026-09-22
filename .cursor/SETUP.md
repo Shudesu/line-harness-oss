@@ -19,9 +19,11 @@ pnpm dev:worker
 | 画面 | URL |
 |------|-----|
 | 管理画面（ログイン） | http://localhost:3001/login |
-| API | http://localhost:5173 |
+| API（Worker 直） | http://127.0.0.1:5173 |
 
-`apps/web/.env.local` に `NEXT_PUBLIC_API_URL=http://localhost:5173` が必要（未設定なら作成して `pnpm dev:web` を再起動）。
+`apps/web/.env.local` は `apps/web/.env.local.example` をコピー（`next dev` が `/api` を Worker にプロキシするため **same-origin**）。作成・変更後は `pnpm dev:web` を再起動。
+
+MCP は引き続き Worker 直 URL（例: `http://127.0.0.1:5173`）を使う。
 
 ## 3. Cursor で MCP を再読み込み
 

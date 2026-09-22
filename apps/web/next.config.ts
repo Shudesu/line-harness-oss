@@ -30,11 +30,26 @@ if (basePath && !basePath.startsWith('/')) {
   throw new Error(`next.config.ts: NEXT_BASE_PATH must start with '/', got ${JSON.stringify(basePath)}`)
 }
 
+const isDev = process.env.NODE_ENV === 'development'
+const localWorkerOrigin = (process.env.LOCAL_WORKER_URL ?? 'http://127.0.0.1:5173').replace(
+  /\/+$/,
+  '',
+)
+
 const nextConfig: NextConfig = {
   output: 'export',
   transpilePackages: ['@line-crm/shared'],
   basePath: basePath || undefined,
   assetPrefix: basePath || undefined,
+  // `next dev` only: proxy /api to the local Worker so the admin UI can use
+  // same-origin mode and avoid cross-origin cookie/CORS issues on Windows.
+  ...(isDev
+    ? {
+        async rewrites() {
+          return [{ source: '/api/:path*', destination: `${localWorkerOrigin}/api/:path*` }]
+        },
+      }
+    : {}),
   env: {
     APP_VERSION: pkg.version,
     APP_COMMIT_SHA: buildSha.slice(0, 12),
