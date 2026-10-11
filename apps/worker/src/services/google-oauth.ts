@@ -1,3 +1,4 @@
+import { calendarBrokerConfigured, type CalendarBrokerCredentials } from './google-calendar-broker.js';
 import type { GoogleServiceAccountCredentials } from './google-service-account.js';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -11,7 +12,7 @@ export const GOOGLE_CALENDAR_OAUTH_SCOPE = [
   'https://www.googleapis.com/auth/calendar.events.freebusy',
 ].join(' ');
 
-export interface GoogleOAuthClientCredentials {
+export interface GoogleOAuthClientCredentials extends CalendarBrokerCredentials {
   oauthClientId?: string;
   oauthClientSecret?: string;
 }
@@ -24,6 +25,8 @@ export interface GoogleOAuthStatePayload {
   staffId: string;
   expiresAt: number;
   adminOrigin?: string;
+  broker?: boolean;
+  browserNonce?: string;
 }
 
 interface GoogleTokenResponse {
@@ -65,8 +68,12 @@ function timingSafeEqual(left: Uint8Array, right: Uint8Array): boolean {
   return mismatch === 0;
 }
 
-export function googleOAuthConfigured(credentials: GoogleOAuthClientCredentials): boolean {
+export function directGoogleOAuthConfigured(credentials: GoogleOAuthClientCredentials): boolean {
   return Boolean(credentials.oauthClientId?.trim() && credentials.oauthClientSecret?.trim());
+}
+
+export function googleOAuthConfigured(credentials: GoogleOAuthClientCredentials): boolean {
+  return directGoogleOAuthConfigured(credentials) || calendarBrokerConfigured(credentials);
 }
 
 export async function signGoogleOAuthState(
@@ -97,7 +104,9 @@ export async function verifyGoogleOAuthState(
     typeof payload.staffId !== 'string' ||
     typeof payload.expiresAt !== 'number' ||
     (payload.adminOrigin !== undefined && typeof payload.adminOrigin !== 'string') ||
-    payload.expiresAt < now.getTime()
+    (payload.broker !== undefined && typeof payload.broker !== 'boolean') ||
+    (payload.broker === true && (typeof payload.browserNonce !== 'string' || !payload.browserNonce)) ||
+    payload.expiresAt <= now.getTime()
   ) {
     throw new Error('invalid_google_oauth_state');
   }

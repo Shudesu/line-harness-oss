@@ -1874,7 +1874,7 @@ export const bookingApi = {
     fetchApi<{
       connection: BookingGoogleCalendarConnection | null;
       service_account: { configured: boolean; email: string | null };
-      oauth: { configured: boolean };
+      oauth: { configured: boolean; managed?: boolean };
     }>(withAccount(`/api/booking/admin/staff/${staffId}/google-calendar`, accountId)),
   startGoogleCalendarOAuth: (accountId: string, staffId: string) =>
     fetchApi<{ authorization_url: string }>(

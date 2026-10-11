@@ -137,6 +137,9 @@ export type Env = {
     // the Worker keeps a refresh token and never needs a service-account key.
     GOOGLE_OAUTH_CLIENT_ID?: string;
     GOOGLE_OAUTH_CLIENT_SECRET?: string;
+    GOOGLE_CALENDAR_BROKER_URL?: string;
+    GOOGLE_CALENDAR_TENANT_ID?: string;
+    GOOGLE_CALENDAR_BROKER_SECRET?: string;
     /** Days to keep messages_log rows. Unset/invalid = keep forever. */
     LOG_RETENTION_DAYS?: string;
     /** Max friends (is_following=1). Unset/invalid = unlimited. */

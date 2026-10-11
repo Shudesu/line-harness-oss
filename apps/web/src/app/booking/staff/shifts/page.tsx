@@ -51,6 +51,7 @@ export default function StaffShiftsPage() {
   const [serviceAccountEmail, setServiceAccountEmail] = useState<string | null>(null)
   const [serviceAccountConfigured, setServiceAccountConfigured] = useState(false)
   const [oauthConfigured, setOauthConfigured] = useState(false)
+  const [managedCalendar, setManagedCalendar] = useState(false)
   const [hasSavedWorkingHours, setHasSavedWorkingHours] = useState(true)
   const [loading, setLoading] = useState(true)
   const [savingRules, setSavingRules] = useState(false)
@@ -94,6 +95,7 @@ export default function StaffShiftsPage() {
       setServiceAccountEmail(calendar.service_account.email)
       setServiceAccountConfigured(calendar.service_account.configured)
       setOauthConfigured(calendar.oauth.configured)
+      setManagedCalendar(Boolean(calendar.oauth?.managed))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -241,7 +243,9 @@ export default function StaffShiftsPage() {
                 </div>
               ) : !serviceAccountConfigured && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  管理者によるGoogle OAuthまたはサービスアカウント設定が必要です。
+                  {managedCalendar
+                    ? '現在Googleカレンダーへの接続を利用できません。時間をおいて再度お試しください。解消しない場合は運営にお問い合わせください。お客様による秘密鍵の取得や送付は不要です。'
+                    : '管理者によるGoogle OAuthまたはサービスアカウント設定が必要です。'}
                 </div>
               )}
               {!oauthConfigured && serviceAccountEmail && (
@@ -250,7 +254,7 @@ export default function StaffShiftsPage() {
                   <code className="mt-2 inline-block break-all rounded bg-white px-2 py-1 text-xs">{serviceAccountEmail}</code>
                 </div>
               )}
-              {!oauthConfigured && <div>
+              {!oauthConfigured && (!managedCalendar || serviceAccountConfigured) && <div>
                 <Input
                   label="GoogleカレンダーID"
                   value={calendarId}
@@ -285,10 +289,10 @@ export default function StaffShiftsPage() {
         </div>
       )}
       <Dialog.Root role="alertdialog" open={pendingAction !== null} onOpenChange={(open) => { if (!open) setPendingAction(null) }}>
-        <Dialog>
-          <Dialog.Title>{pendingAction === 'disconnect' ? 'Googleカレンダー連携を解除しますか？' : '応急枠を削除しますか？'}</Dialog.Title>
-          <Dialog.Description className="mt-2">{pendingAction === 'disconnect' ? '予定との重複防止と予約登録が停止します。' : 'この日付だけに設定された予約枠を削除します。'}</Dialog.Description>
-          <div className="mt-6 flex justify-end gap-2">
+        <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold">{pendingAction === 'disconnect' ? 'Googleカレンダー連携を解除しますか？' : '応急枠を削除しますか？'}</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-relaxed text-kumo-subtle">{pendingAction === 'disconnect' ? '予定との重複防止と予約登録が停止します。' : 'この日付だけに設定された予約枠を削除します。'}</Dialog.Description>
+          <div className="mt-6 flex flex-wrap justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => setPendingAction(null)}>キャンセル</Button>
             <Button type="button" variant="destructive" onClick={() => pendingAction === 'disconnect' ? void disconnectCalendar() : pendingAction ? void deleteShift(pendingAction) : undefined}>実行する</Button>
           </div>
