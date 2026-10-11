@@ -1,4 +1,6 @@
 import type {
+  LandingTexts,
+  LandingTextKey,
   Friend,
   Tag,
   Scenario,
@@ -157,10 +159,13 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 export class ApiError extends Error {
   readonly status: number
 
-  constructor(status: number) {
+  readonly detail?: string
+
+  constructor(status: number, detail?: string) {
     super(`API error: ${status}`)
     this.name = 'ApiError'
     this.status = status
+    this.detail = detail
   }
 }
 
@@ -181,7 +186,20 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
       ...options?.headers,
     },
   })
-  if (!res.ok) throw new ApiError(res.status)
+  if (!res.ok) {
+    // Carry the server's reason so a caller can tell the operator what was
+    // wrong instead of collapsing every failure into one message.
+    let detail: string | undefined
+    try {
+      const body: unknown = await res.json()
+      if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+        detail = (body as { error: string }).error
+      }
+    } catch {
+      /* a non-JSON error body just leaves detail unset */
+    }
+    throw new ApiError(res.status, detail)
+  }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
@@ -608,6 +626,20 @@ export const api = {
       fetchApi<{ success: boolean; data: string | null }>('/api/account-settings/tracked-link-base-url'),
     updateTrackedLinkBaseUrl: (value: string) =>
       fetchApi<{ success: boolean; error?: string }>('/api/account-settings/tracked-link-base-url', {
+        method: 'PUT',
+        body: JSON.stringify({ value }),
+      }),
+    getLandingTexts: () =>
+      fetchApi<{
+        success: boolean
+        data: {
+          stored: LandingTexts
+          defaults: Record<LandingTextKey, string>
+          maxLength: number
+        }
+      }>('/api/account-settings/landing-texts'),
+    updateLandingTexts: (value: LandingTexts) =>
+      fetchApi<{ success: boolean; error?: string }>('/api/account-settings/landing-texts', {
         method: 'PUT',
         body: JSON.stringify({ value }),
       }),

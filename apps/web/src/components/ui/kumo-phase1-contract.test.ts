@@ -47,6 +47,7 @@ const migratedFiles = [
   '../accounts/account-setup-urls.tsx',
   '../accounts/follower-import-button.tsx',
   '../accounts/link-base-url-setting.tsx',
+  '../accounts/landing-texts-setting.tsx',
   '../accounts/reorder-mode.tsx',
   '../accounts/test-recipients-setting.tsx',
   '../friends/friend-list-row.tsx',

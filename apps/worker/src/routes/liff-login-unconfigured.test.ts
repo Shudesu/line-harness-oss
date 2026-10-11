@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // a 503 Japanese setup-guidance page instead of the 500.
 
 const dbMocks = {
+  getLandingTextsJson: vi.fn().mockResolvedValue(null),
   // eager module-load deps
   getLineAccounts: vi.fn().mockResolvedValue([]),
   getStaffByApiKey: vi.fn(),

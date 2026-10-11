@@ -1,3 +1,5 @@
+import { loadLandingTexts } from '../lib/landing-texts.js';
+import { renderLineQrLanding } from '../lib/line-landing.js';
 import { Hono, type Context } from 'hono';
 import { createLiffQueryReader } from '../lib/liff-query.js';
 import {
@@ -524,39 +526,7 @@ liffRoutes.get('/auth/line', async (c) => {
   }
 
   // PC: show QR code page
-  return c.html(`<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LINE で開く</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Hiragino Sans','Helvetica Neue',system-ui,sans-serif;background:#f5f7f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
-    .card{background:#fff;border-radius:20px;box-shadow:0 2px 20px rgba(0,0,0,0.06);text-align:center;max-width:480px;width:90%;padding:48px;border:1px solid rgba(0,0,0,0.04)}
-    .line-icon{width:48px;height:48px;margin:0 auto 20px}
-    .line-icon svg{width:48px;height:48px}
-    .msg{font-size:15px;color:#444;font-weight:500;margin-bottom:32px;line-height:1.6}
-    .qr{background:#f9f9f9;border-radius:16px;padding:24px;display:inline-block;margin-bottom:24px;border:1px solid rgba(0,0,0,0.04)}
-    .qr img{display:block;width:240px;height:240px}
-    .hint{font-size:13px;color:#999;line-height:1.6}
-    .footer{font-size:11px;color:#bbb;margin-top:24px;line-height:1.5}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="line-icon">
-      <svg viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="12" fill="#06C755"/><path d="M24 12C17.37 12 12 16.58 12 22.2c0 3.54 2.35 6.65 5.86 8.47-.2.74-.76 2.75-.87 3.17-.14.55.2.54.42.39.18-.12 2.84-1.88 4-2.65.84.13 1.7.22 2.59.22 6.63 0 12-4.58 12-10.2S30.63 12 24 12z" fill="#fff"/></svg>
-    </div>
-    <p class="msg">スマートフォンで QR コードを読み取ってください</p>
-    <div class="qr">
-      <img src="/api/qr?size=240x240&data=${encodeURIComponent(qrUrl)}" alt="QR Code">
-    </div>
-    <p class="hint">LINE アプリのカメラまたは<br>スマートフォンのカメラで読み取れます</p>
-    <p class="footer">友だち追加で全機能を無料体験できます</p>
-  </div>
-</body>
-</html>`);
+  return c.html(renderLineQrLanding(qrUrl, await loadLandingTexts(c.env.DB)));
 });
 
 /**
