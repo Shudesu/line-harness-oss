@@ -13,6 +13,7 @@ import {
   jstNow,
   getEntryRouteByRefCode,
   getMessageTemplateById,
+  getScenarioById,
 } from '@line-crm/db';
 import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
@@ -271,9 +272,29 @@ async function handleEvent(
         }
       }
     }
-    const referralRoute: EntryRoute | null = friendRefCode
+    let referralRoute: EntryRoute | null = friendRefCode
       ? await getEntryRouteByRefCode(db, friendRefCode)
       : null;
+
+    // A ref_code can outlive the account it was issued for: LINE user ids are
+    // shared across channels of the same provider, so following a DIFFERENT
+    // account reuses the existing friend row (only line_account_id is
+    // rewritten) and the stale ref still resolves its original entry_route.
+    // Treat such a route as "not ours" and drop it whole — its scenario would
+    // deliver another account's messages out of this bot, its intro template is
+    // written for the other brand, and its run_account_friend_add_scenarios
+    // override would suppress THIS account's own welcome.
+    if (referralRoute?.scenario_id && lineAccountId) {
+      const routeScenario = await getScenarioById(db, referralRoute.scenario_id);
+      if (routeScenario?.line_account_id && routeScenario.line_account_id !== lineAccountId) {
+        console.error(
+          `[follow] referral route ignored: ref=${friendRefCode} belongs to account ` +
+            `${routeScenario.line_account_id}, not ${lineAccountId} (stale ref_code on friend ${friend.id})`,
+        );
+        referralRoute = null;
+      }
+    }
+
     const runAccountScenarios =
       !referralRoute || referralRoute.run_account_friend_add_scenarios !== 0;
 
