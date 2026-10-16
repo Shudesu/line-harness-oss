@@ -239,6 +239,93 @@ const spec = {
         responses: { '200': { description: 'Tag deleted' } },
       },
     },
+    // ── Groups ───────────────────────────────────────────────────────────────
+    '/api/groups': {
+      get: {
+        tags: ['Groups'],
+        summary: 'LINEグループ一覧取得 (タグで絞り込み可)',
+        parameters: [
+          { name: 'tagId', in: 'query', required: false, schema: { type: 'string' }, description: 'このタグが付いたグループのみ返す' },
+          { name: 'accountId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['joined', 'left'] } },
+        ],
+        responses: { '200': { description: 'Groups with their tags' } },
+      },
+      post: {
+        tags: ['Groups'],
+        summary: 'グループ手動登録 (通常は webhook が自動登録する)',
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string', nullable: true }, accountId: { type: 'string', nullable: true } }, required: ['id'] } } } },
+        responses: { '201': { description: 'Group registered' }, '400': { description: 'id is required' } },
+      },
+    },
+    '/api/groups/{id}': {
+      get: {
+        tags: ['Groups'],
+        summary: 'グループ詳細取得 (タグ含む)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Group with tags' }, '404': { description: 'Not found' } },
+      },
+    },
+    '/api/groups/{id}/tags': {
+      post: {
+        tags: ['Groups'],
+        summary: 'グループにタグを付与 (既存の tags を再利用)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { tagId: { type: 'string' } }, required: ['tagId'] } } } },
+        responses: { '200': { description: 'Tag attached' }, '400': { description: 'tagId is required' }, '404': { description: 'Group or tag not found' } },
+      },
+    },
+    '/api/groups/{id}/tags/{tagId}': {
+      delete: {
+        tags: ['Groups'],
+        summary: 'グループからタグを外す',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'tagId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Tag detached' } },
+      },
+    },
+    // ── Tasks ────────────────────────────────────────────────────────────────
+    '/api/tasks': {
+      get: {
+        tags: ['Tasks'],
+        summary: 'タスク一覧取得 (期限の近い順・期限なしは末尾)',
+        parameters: [
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['todo', 'doing', 'done'] } },
+          { name: 'groupId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'openOnly', in: 'query', required: false, schema: { type: 'string', enum: ['1'] }, description: '完了を除く。status 指定時は無視される' },
+        ],
+        responses: { '200': { description: 'Tasks with status counts' }, '400': { description: 'Unknown status' } },
+      },
+      post: {
+        tags: ['Tasks'],
+        summary: 'タスク作成',
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { title: { type: 'string' }, groupId: { type: 'string', nullable: true }, status: { type: 'string', enum: ['todo', 'doing', 'done'] }, dueDate: { type: 'string', nullable: true, description: 'YYYY-MM-DD' }, assignee: { type: 'string', nullable: true } }, required: ['title'] } } } },
+        responses: { '201': { description: 'Task created' }, '400': { description: 'Invalid title, status or dueDate' }, '404': { description: 'Group not found' } },
+      },
+    },
+    '/api/tasks/{id}': {
+      get: {
+        tags: ['Tasks'],
+        summary: 'タスク詳細取得',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Task' }, '404': { description: 'Not found' } },
+      },
+      patch: {
+        tags: ['Tasks'],
+        summary: 'タスク更新 (渡した項目だけ変更。dueDate を空文字か null で期限を解除)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: ['todo', 'doing', 'done'] }, dueDate: { type: 'string', nullable: true, description: 'YYYY-MM-DD / 空で解除' }, assignee: { type: 'string', nullable: true }, groupId: { type: 'string', nullable: true } } } } } },
+        responses: { '200': { description: 'Updated' }, '400': { description: 'Invalid status, title or dueDate' }, '404': { description: 'Not found' } },
+      },
+      delete: {
+        tags: ['Tasks'],
+        summary: 'タスク削除',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Task deleted' } },
+      },
+    },
     // ── Scenarios ────────────────────────────────────────────────────────────
     '/api/scenarios': {
       get: { tags: ['Scenarios'], summary: 'シナリオ一覧取得', responses: { '200': { description: 'All scenarios' } } },
@@ -985,6 +1072,8 @@ const spec = {
   tags: [
     { name: 'Friends', description: '友だち管理' },
     { name: 'Tags', description: 'タグ管理' },
+    { name: 'Groups', description: 'LINEグループのタグ分け' },
+    { name: 'Tasks', description: 'グループ単位のタスク管理' },
     { name: 'Scenarios', description: 'ステップ配信シナリオ' },
     { name: 'Broadcasts', description: '一斉配信' },
     { name: 'Users', description: 'UUID Cross-Account ユーザー管理' },

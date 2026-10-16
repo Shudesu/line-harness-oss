@@ -13,6 +13,8 @@ import {
   jstNow,
   getEntryRouteByRefCode,
   getMessageTemplateById,
+  upsertLineGroup,
+  markGroupLeft,
 } from '@line-crm/db';
 import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
@@ -206,6 +208,40 @@ async function handleEvent(
   r2?: R2Bucket,
   proxyDispatch?: HarnessProxyDispatch,
 ): Promise<void> {
+  // ── LINE グループ登録簿 ───────────────────────────────────────────────
+  // グループ発のイベントは友だち単位の処理対象外 (以降の分岐は source.type が
+  // 'user' のときだけ進む) だが、グループへのタグ付けとタスク管理のために
+  // グループ自体は記録しておく。あくまで補助情報なので、ここが失敗しても
+  // 後続の友だち処理は止めない。
+  if (event.source.type === 'group') {
+    const groupId = event.source.groupId;
+    try {
+      if (event.type === 'leave') {
+        await markGroupLeft(db, groupId);
+      } else {
+        // 名前は bot が招待された瞬間にだけ問い合わせる。メッセージ毎に叩くと
+        // LINE API のレート上限を無駄に食う。取得に失敗しても登録は続ける
+        // (summary はプランによって使えないことがある)。
+        let name: string | null = null;
+        if (event.type === 'join') {
+          try {
+            name = (await lineClient.getGroupSummary(groupId)).groupName;
+          } catch (err) {
+            console.warn(`[group] summary unavailable groupId=${groupId}:`, err);
+          }
+        }
+        await upsertLineGroup(db, {
+          id: groupId,
+          accountId: lineAccountId,
+          name,
+          sawMessageAt: event.type === 'message' ? jstNow() : null,
+        });
+      }
+    } catch (err) {
+      console.error(`[group] registry update failed groupId=${groupId}:`, err);
+    }
+  }
+
   if (event.type === 'follow') {
     const userId =
       event.source.type === 'user' ? event.source.userId : undefined;
