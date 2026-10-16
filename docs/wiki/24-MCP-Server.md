@@ -39,7 +39,7 @@ node dist/index.js
 
 ---
 
-## ツール一覧 (25個)
+## ツール一覧 (33個)
 
 ### 読み取り系
 
@@ -52,6 +52,8 @@ node dist/index.js
 | `get_conversion_logs` | コンバージョンログ |
 | `account_summary` | アカウント概要 |
 | `list_crm_objects` | CRMオブジェクト汎用一覧 |
+| `list_conversations` | 未返信の会話一覧（待ち時間の長い順） |
+| `get_conversation` | 特定の友だちとのメッセージ履歴（送信元つき） |
 
 ### 書き込み系
 
@@ -79,6 +81,13 @@ node dist/index.js
 | `manage_tracked_links` | トラッキングリンク管理（list, delete） |
 | `manage_staff` | スタッフ管理 |
 | `manage_ad_platforms` | 広告プラットフォーム管理 |
+| `manage_group_tags` | LINEグループのタグ分け（一覧をタグで絞り込み / 付与 / 解除 / 手動登録） |
+| `manage_tasks` | グループ単位のタスク管理（一覧・作成・更新・完了・削除。一覧は期限の近い順） |
+| `manage_auto_replies` | 自動応答管理（CRUD） |
+| `manage_message_templates` | メッセージテンプレート管理（CRUD） |
+| `manage_entry_routes` | 流入リンク管理（タグ自動付与・起動シナリオ・振り分け先プールの紐付け） |
+| `manage_traffic_pools` | Traffic Pool 管理（複数アカウントへの均等分散） |
+| `manage_webinar_video` | ウェビナー動画のアップロードと公開（HLS） |
 
 ### Resources (MCP Resources)
 
@@ -128,6 +137,32 @@ v0.4.0 より、`send_message` と `broadcast` で送信するメッセージ中
 > さっきの配信のクリック数を見せて
 
 → get_link_clicks ツールで誰がクリックしたか確認
+```
+
+グループのタグ分けとタスク管理も同じように会話から操作できる。
+
+```
+> 「KOBOREL PJ」のグループに「進行中」タグを付けて
+
+→ manage_group_tags (action: list_groups) でグループIDを引き、
+   action: add でタグを付与。タグは友だちと共通の tags を使う
+
+> 「進行中」タグのグループを一覧して
+
+→ manage_group_tags (action: list_groups, tagId: ...) でタグ絞り込み
+
+> そのグループに「契約書のドラフトを送る」を今週金曜期限で追加して
+
+→ manage_tasks (action: create) で groupId / dueDate / assignee つきで作成
+
+> 期限の近いタスクを見せて
+
+→ manage_tasks (action: list, openOnly: true) で期限の近い順に取得
+   （期限なしは末尾。overdue 件数も一緒に返る）
+
+> 契約書のタスクを完了にして
+
+→ manage_tasks (action: complete) で status を done に更新
 ```
 
 ---
