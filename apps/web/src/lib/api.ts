@@ -325,6 +325,44 @@ export type QuotaUsage = {
   noticeUrl: string | null
 }
 
+/** A LINE group the bot belongs to, with the tags attached to it. */
+export type LineGroupItem = {
+  id: string
+  accountId: string | null
+  name: string | null
+  status: 'joined' | 'left'
+  messageCount: number
+  lastMessageAt: string | null
+  joinedAt: string | null
+  leftAt: string | null
+  createdAt: string
+  updatedAt: string
+  tags: { id: string; name: string; color: string }[]
+}
+
+export type TaskStatus = 'todo' | 'doing' | 'done'
+
+export type TaskItem = {
+  id: string
+  groupId: string | null
+  groupName: string | null
+  title: string
+  status: TaskStatus
+  /** 'YYYY-MM-DD', or null when the task has no deadline. */
+  dueDate: string | null
+  assignee: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type TaskCounts = {
+  todo: number
+  doing: number
+  done: number
+  /** Past-due tasks that are not yet done. */
+  overdue: number
+}
+
 export const api = {
   usage: () => fetchApi<ApiResponse<QuotaUsage>>('/api/usage'),
   friends: {
@@ -388,6 +426,65 @@ export const api = {
       }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/tags/${id}`, { method: 'DELETE' }),
+  },
+  groups: {
+    /** tagId を渡すとそのタグが付いたグループだけ返る。 */
+    list: (params?: { tagId?: string; accountId?: string; status?: 'joined' | 'left' }) => {
+      const query: Record<string, string> = {}
+      if (params?.tagId) query.tagId = params.tagId
+      if (params?.accountId) query.accountId = params.accountId
+      if (params?.status) query.status = params.status
+      const suffix = Object.keys(query).length ? '?' + new URLSearchParams(query) : ''
+      return fetchApi<ApiResponse<LineGroupItem[]>>('/api/groups' + suffix)
+    },
+    get: (id: string) => fetchApi<ApiResponse<LineGroupItem>>(`/api/groups/${id}`),
+    addTag: (groupId: string, tagId: string) =>
+      fetchApi<ApiResponse<{ added: boolean; group: LineGroupItem | null }>>(
+        `/api/groups/${groupId}/tags`,
+        { method: 'POST', body: JSON.stringify({ tagId }) },
+      ),
+    removeTag: (groupId: string, tagId: string) =>
+      fetchApi<ApiResponse<null>>(`/api/groups/${groupId}/tags/${tagId}`, {
+        method: 'DELETE',
+      }),
+  },
+  tasks: {
+    /** 期限の近い順。期限なしは末尾。 */
+    list: (params?: { status?: TaskStatus; groupId?: string; openOnly?: boolean }) => {
+      const query: Record<string, string> = {}
+      if (params?.status) query.status = params.status
+      if (params?.groupId) query.groupId = params.groupId
+      if (params?.openOnly) query.openOnly = '1'
+      const suffix = Object.keys(query).length ? '?' + new URLSearchParams(query) : ''
+      return fetchApi<ApiResponse<TaskItem[]> & { counts: TaskCounts }>('/api/tasks' + suffix)
+    },
+    create: (data: {
+      title: string
+      groupId?: string | null
+      status?: TaskStatus
+      dueDate?: string | null
+      assignee?: string | null
+    }) =>
+      fetchApi<ApiResponse<TaskItem>>('/api/tasks', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (
+      id: string,
+      data: {
+        title?: string
+        status?: TaskStatus
+        dueDate?: string | null
+        assignee?: string | null
+        groupId?: string | null
+      },
+    ) =>
+      fetchApi<ApiResponse<TaskItem>>(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/tasks/${id}`, { method: 'DELETE' }),
   },
   scenarios: {
     list: (params?: { accountId?: string }) => {

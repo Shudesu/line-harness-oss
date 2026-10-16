@@ -30,6 +30,8 @@ import { registerManageMessageTemplates } from "./manage-message-templates.js";
 import { registerListConversations } from "./list-conversations.js";
 import { registerGetConversation } from "./get-conversation.js";
 import { registerManageWebinarVideo } from "./manage-webinar-video.js";
+import { registerManageGroupTags } from "./manage-group-tags.js";
+import { registerManageTasks } from "./manage-tasks.js";
 
 export function registerAllTools(server: McpServer): void {
   registerSendMessage(server);
@@ -63,4 +65,6 @@ export function registerAllTools(server: McpServer): void {
   registerListConversations(server);
   registerGetConversation(server);
   registerManageWebinarVideo(server);
+  registerManageGroupTags(server);
+  registerManageTasks(server);
 }

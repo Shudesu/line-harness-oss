@@ -1152,3 +1152,47 @@ CREATE TABLE IF NOT EXISTS rich_menu_areas (
 CREATE INDEX IF NOT EXISTS idx_rich_menu_pages_group    ON rich_menu_pages(group_id, order_index);
 CREATE INDEX IF NOT EXISTS idx_rich_menu_areas_page     ON rich_menu_areas(page_id);
 CREATE INDEX IF NOT EXISTS idx_rich_menu_groups_account ON rich_menu_groups(account_id, status);
+
+-- ============================================================
+-- LINE group registry + group tags + tasks (migration 073)
+-- タグは既存 tags を再利用する (グループ専用のタグ表は作らない)。
+-- 追加のみ — 既存テーブルの行には触らない。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS line_groups (
+  id              TEXT PRIMARY KEY,
+  account_id      TEXT REFERENCES line_accounts (id) ON DELETE SET NULL,
+  name            TEXT,
+  status          TEXT NOT NULL DEFAULT 'joined' CHECK (status IN ('joined', 'left')),
+  message_count   INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
+  last_message_at TEXT,
+  joined_at       TEXT,
+  left_at         TEXT,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_line_groups_account      ON line_groups (account_id, status);
+CREATE INDEX IF NOT EXISTS idx_line_groups_last_message ON line_groups (last_message_at DESC);
+
+CREATE TABLE IF NOT EXISTS group_tags (
+  group_id    TEXT NOT NULL REFERENCES line_groups (id) ON DELETE CASCADE,
+  tag_id      TEXT NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
+  assigned_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  PRIMARY KEY (group_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_tags_tag_id ON group_tags (tag_id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id         TEXT PRIMARY KEY,
+  group_id   TEXT REFERENCES line_groups (id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done')),
+  due_date   TEXT,
+  assignee   TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks (status, due_date);
+CREATE INDEX IF NOT EXISTS idx_tasks_group      ON tasks (group_id, status);
