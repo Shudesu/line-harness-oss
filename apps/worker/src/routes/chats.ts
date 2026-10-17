@@ -445,7 +445,7 @@ chats.get('/api/chats/:id', async (c) => {
         `SELECT id, friend_id, direction, message_type, content, created_at
          FROM messages_log
          WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')
-         ORDER BY created_at DESC LIMIT 1000`,
+         ORDER BY created_at DESC, rowid DESC LIMIT 1000`,
       )
       .bind(resolvedFriendId)
       .all();
