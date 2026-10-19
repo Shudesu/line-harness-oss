@@ -737,7 +737,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
         scenarioId={id}
         onClose={() => setPreviewOpen(false)}
       />
-      <Dialog.Root role="alertdialog" open={deleteStepTarget !== null} onOpenChange={(open) => { if (!open) setDeleteStepTarget(null) }}><Dialog><Dialog.Title>このステップを削除しますか？</Dialog.Title><Dialog.Description className="mt-2">配信内容と到達時アクションを削除します。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteStepTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={() => { if (deleteStepTarget) void handleDeleteStep(deleteStepTarget) }}>削除</Button></div></Dialog></Dialog.Root>
+      <Dialog.Root role="alertdialog" open={deleteStepTarget !== null} onOpenChange={(open) => { if (!open) setDeleteStepTarget(null) }}><Dialog className="p-6"><Dialog.Title className="text-lg font-semibold text-kumo-strong">このステップを削除しますか？</Dialog.Title><Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">配信内容と到達時アクションを削除します。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteStepTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={() => { if (deleteStepTarget) void handleDeleteStep(deleteStepTarget) }}>削除</Button></div></Dialog></Dialog.Root>
     </div>
   )
 }
