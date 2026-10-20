@@ -128,9 +128,20 @@ wrangler secret put LINE_LOGIN_CHANNEL_ID
 wrangler secret put LINE_LOGIN_CHANNEL_SECRET
 wrangler secret put LIFF_URL
 
-# オプション
+# Stripe 連携を利用する場合は必須
 wrangler secret put STRIPE_WEBHOOK_SECRET
+
+# Meet Harness 連携を利用する場合は必須
+wrangler secret put MEET_CALLBACK_SECRET
 ```
+
+どちらも未設定・空白のみの場合は HTTP 503 で受信を拒否し、DB更新やLINE送信を行いません。開発環境でも署名検証は省略しません。Stripe CLI を使う場合は、CLI が表示する署名キーを設定してください。
+
+Meet Harness の送信側と受信側には、専用のランダムな共有シークレット `MEET_CALLBACK_SECRET` を設定します。送信側は、秒単位の Unix 時刻 `timestamp` と実際に送るJSON文字列 `rawBody` を `timestamp + "." + rawBody` で連結し、HMAC-SHA256 の小文字16進署名を計算してください。HTTPヘッダーは `X-Meet-Signature: t=<timestamp>,v1=<署名>` とします。送信後の本文整形は署名不一致になります。再送時は時刻と署名を作り直してください。
+
+両エンドポイントは署名不正・ヘッダー欠落・現在時刻から前後5分を超える時刻を HTTP 401 で拒否します。5分以内の同一リクエスト再送を完全に防ぐ仕組みではありません。Stripe は既存のイベントIDで重複処理を抑止します。Meet は既存どおり再送時に再通知されるため、送信側で同一セッションの重複送信を避けてください。
+
+反映前に送信側の署名対応と両シークレットを準備してください。未設定で反映すると、その連携は受信停止になります。Meet の結果通知は Harness の `/line-api/v2/bot/message/push` を内部実行し、プロキシで送信履歴を記録します。
 
 ---
 
@@ -269,7 +280,8 @@ wrangler d1 create line-crm
 
 | 変数名 | 説明 | 設定方法 |
 |--------|------|----------|
-| `STRIPE_WEBHOOK_SECRET` | Stripe Webhook 署名検証キー | `wrangler secret put` |
+| `STRIPE_WEBHOOK_SECRET` | Stripe 利用時必須の署名検証キー。未設定は503 | `wrangler secret put` |
+| `MEET_CALLBACK_SECRET` | Meet Harness 利用時必須の署名検証キー。未設定は503 | `wrangler secret put` |
 
 ---
 
