@@ -85,11 +85,11 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
   // 同時実行で二重挿入されないように WHERE NOT EXISTS で原子挿入。挿入結果に関わらず最古行を返して収束。
   await db
     .prepare(
-      `INSERT INTO chats (id, friend_id, status, last_message_at, created_at, updated_at)
-       SELECT ?, ?, 'resolved', ?, ?, ?
+      `INSERT INTO chats (id, friend_id, line_account_id, status, last_message_at, created_at, updated_at)
+       SELECT ?, ?, ?, 'resolved', ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM chats WHERE friend_id = ?)`,
     )
-    .bind(newId, friend.id, lastMessageAt, now, now, friend.id)
+    .bind(newId, friend.id, friend.line_account_id ?? null, lastMessageAt, now, now, friend.id)
     .run();
   return (await db
     .prepare(`SELECT * FROM chats WHERE friend_id = ? ORDER BY created_at ASC LIMIT 1`)
