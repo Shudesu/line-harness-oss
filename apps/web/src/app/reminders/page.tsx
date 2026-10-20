@@ -511,9 +511,9 @@ export default function RemindersPage() {
         </div>
       )}
       <Dialog.Root role="alertdialog" open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null) }}>
-        <Dialog>
-          <Dialog.Title>{pendingDelete?.kind === 'step' ? 'このステップを削除しますか？' : 'このリマインダーを削除しますか？'}</Dialog.Title>
-          <Dialog.Description className="mt-2">削除した内容は元に戻せません。</Dialog.Description>
+        <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">{pendingDelete?.kind === 'step' ? 'このステップを削除しますか？' : 'このリマインダーを削除しますか？'}</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">削除した内容は元に戻せません。</Dialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => setPendingDelete(null)}>キャンセル</Button>
             <Button type="button" variant="destructive" onClick={() => { if (!pendingDelete) return; const target = pendingDelete; setPendingDelete(null); if (target.kind === 'step') void handleDeleteStep(target.id); else void handleDelete(target.id) }}>削除</Button>
