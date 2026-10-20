@@ -129,11 +129,33 @@ export interface PostbackEvent extends BaseEvent {
   };
 }
 
+/** The bot was invited into a group or multi-person room. */
+export interface JoinEvent extends BaseEvent {
+  type: 'join';
+  replyToken: string;
+  source: GroupSource | RoomSource;
+}
+
+/** The bot was removed from a group or room. LINE issues no replyToken here. */
+export interface LeaveEvent extends BaseEvent {
+  type: 'leave';
+  source: GroupSource | RoomSource;
+}
+
 export type WebhookEvent =
   | MessageEvent
   | FollowEvent
   | UnfollowEvent
-  | PostbackEvent;
+  | PostbackEvent
+  | JoinEvent
+  | LeaveEvent;
+
+/** Group metadata from GET /v2/bot/group/{groupId}/summary. */
+export interface GroupSummary {
+  groupId: string;
+  groupName: string;
+  pictureUrl?: string;
+}
 
 export interface WebhookRequestBody {
   destination: string;
