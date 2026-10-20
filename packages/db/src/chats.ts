@@ -102,8 +102,9 @@ export async function createChat(
 ): Promise<ChatRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO chats (id, friend_id, operator_id, last_message_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.friendId, input.operatorId ?? null, now, now, now).run();
+  await db.prepare(`INSERT INTO chats (id, friend_id, operator_id, line_account_id, last_message_at, created_at, updated_at)
+    VALUES (?, ?, ?, (SELECT line_account_id FROM friends WHERE id = ?), ?, ?, ?)`)
+    .bind(id, input.friendId, input.operatorId ?? null, input.friendId, now, now, now).run();
   return (await getChatById(db, id))!;
 }
 
