@@ -1,0 +1,25 @@
+{
+  "name": "line-harness-plugin-paypay-recurring",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "build": "wrangler deploy --dry-run",
+    "db:local": "wrangler d1 execute DB --local --file=schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261021.1",
+    "esbuild": "0.25.12",
+    "miniflare": "5.20260730.0-alpha",
+    "typescript": "5.9.3",
+    "wrangler": "4.118.0",
+    "@types/node": "22.18.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
