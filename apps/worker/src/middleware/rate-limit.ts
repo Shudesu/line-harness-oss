@@ -124,8 +124,17 @@ const IP_CEILING_WINDOW = 60_000; // 1 min
 export async function rateLimitMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
   const path = new URL(c.req.url).pathname;
 
-  // Skip rate limiting for docs / static assets
-  if (path === '/docs' || path === '/openapi.json' || path.startsWith('/r/')) {
+  const isPublicImageRead =
+    (c.req.method === 'GET' || c.req.method === 'HEAD') &&
+    path.startsWith('/images/');
+
+  // Skip rate limiting for docs / public static assets
+  if (
+    path === '/docs' ||
+    path === '/openapi.json' ||
+    path.startsWith('/r/') ||
+    isPublicImageRead
+  ) {
     return next();
   }
 
