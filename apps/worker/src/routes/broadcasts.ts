@@ -1007,7 +1007,8 @@ broadcasts.post('/api/broadcasts/:id/fetch-insight', async (c) => {
       if (accountId) {
         const { getLineAccountById } = await import('@line-crm/db');
         const account = await getLineAccountById(c.env.DB, accountId);
-        if (account) accessToken = account.channel_access_token;
+        if (!account) throw new Error('Insight LINE account not found');
+        accessToken = account.channel_access_token;
       }
       const lineClient = new LineClient(accessToken);
       const response = await lineClient.getMessageEventInsight(lineRequestId) as Record<string, unknown>;
@@ -1083,7 +1084,8 @@ broadcasts.post('/api/broadcasts/:id/fetch-insight', async (c) => {
       if (accountId) {
         const { getLineAccountById } = await import('@line-crm/db');
         const account = await getLineAccountById(c.env.DB, accountId);
-        if (account) accessToken = account.channel_access_token;
+        if (!account) throw new Error('Insight LINE account not found');
+        accessToken = account.channel_access_token;
       }
       const lineClient = new LineClient(accessToken);
       const response = await lineClient.getUnitInsight(aggregationUnit, sentDate, sentDate) as Record<string, unknown>;
