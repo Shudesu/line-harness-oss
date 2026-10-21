@@ -43,7 +43,7 @@ describe('renderEventNotificationText', () => {
 
   test('前日リマインダ', () => {
     const text = renderEventNotificationText('reminder_day_before', baseCtx);
-    expect(text).toContain('明日イベントが開催');
+    expect(text).toContain('イベント開催のお知らせ');
   });
 
   test('開始 N 時間前リマインダ', () => {
@@ -51,8 +51,8 @@ describe('renderEventNotificationText', () => {
       ...baseCtx,
       hoursBefore: 2,
     });
-    expect(text).toContain('まもなくイベント開始');
-    expect(text).toContain('あと 2 時間');
+    expect(text).toContain('イベント開始前のお知らせ');
+    expect(text).toContain('日時: 2026-06-01 10:00');
   });
 
   test('venue が無くてもクラッシュしない', () => {
@@ -73,6 +73,20 @@ describe('renderEventNotificationText', () => {
     expect(text).toContain('会場: 渋谷');
     expect(text).not.toContain('https://');
   });
+  test.each([
+    ['reminder_day_before', '明日'], ['reminder_hours_before', 'あと 2 時間'],
+  ] as const)('遅れて当日17時に処理した %s 通知は18時開始の日時で案内する', (kind, misleading) => {
+    const text = renderEventNotificationText(kind, {
+      ...baseCtx, startsAtJst: '2026-08-10 18:00', hoursBefore: 2,
+      reminderExtra: '持ち物: 参加票',
+    });
+    expect(text).toContain('日時: 2026-08-10 18:00');
+    expect(text).toContain('会場: 渋谷ベース');
+    expect(text).toContain('https://maps.example/x');
+    expect(text.endsWith('持ち物: 参加票')).toBe(true);
+    expect(text).not.toContain(misleading);
+  });
+
 });
 
 describe('renderEventNotificationText — custom extra append', () => {
@@ -117,7 +131,7 @@ describe('renderEventNotificationText — custom extra append', () => {
       ...baseCtx,
       reminderExtra: extraRem,
     });
-    expect(text).toContain('明日イベントが開催');
+    expect(text).toContain('イベント開催のお知らせ');
     expect(text.endsWith(extraRem)).toBe(true);
   });
 
@@ -127,7 +141,7 @@ describe('renderEventNotificationText — custom extra append', () => {
       hoursBefore: 2,
       reminderExtra: extraRem,
     });
-    expect(text).toContain('まもなくイベント開始');
+    expect(text).toContain('イベント開始前のお知らせ');
     expect(text.endsWith(extraRem)).toBe(true);
   });
 
