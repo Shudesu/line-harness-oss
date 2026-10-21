@@ -10,6 +10,7 @@ import { extractFlexAltText } from '../utils/flex-alt-text.js';
 
 import {
   getDueReminderDeliveries,
+  getDueReminderStep,
   completeReminderIfDone,
   getFriendById,
   jstNow,
@@ -32,24 +33,26 @@ export async function processReminderDeliveries(
         await sleep(addJitter(50, 200));
       }
 
-      const friend = await getFriendById(db, fr.friend_id);
-      if (!friend || !friend.is_following) {
-        continue;
-      }
-
-      // Resolve correct lineClient for this friend's account
-      let deliveryClient = lineClient;
-      const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
-      if (friendAccountId) {
-        const { getLineAccountById } = await import('@line-crm/db');
-        const account = await getLineAccountById(db, friendAccountId);
-        if (account) {
-          const { LineClient: LC } = await import('@line-crm/line-sdk');
-          deliveryClient = new LC(account.channel_access_token);
+      for (const candidate of fr.steps) {
+        const step = await getDueReminderStep(db, fr.id, candidate.id, now);
+        if (!step) continue;
+        const friend = await getFriendById(db, step.friend_id);
+        if (!friend || !friend.is_following) {
+          continue;
         }
-      }
 
-      for (const step of fr.steps) {
+        // Resolve correct lineClient for this friend's account
+        let deliveryClient = lineClient;
+        const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
+        if (friendAccountId) {
+          const { getLineAccountById } = await import('@line-crm/db');
+          const account = await getLineAccountById(db, friendAccountId);
+          if (account) {
+            const { LineClient: LC } = await import('@line-crm/line-sdk');
+            deliveryClient = new LC(account.channel_access_token);
+          }
+        }
+
         const messages = buildMessages(step.message_type, step.message_content, buildMessage);
         await deliveryClient.pushMessage(friend.line_user_id, messages);
 

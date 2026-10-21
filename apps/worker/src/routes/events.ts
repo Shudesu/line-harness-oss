@@ -29,6 +29,7 @@ import {
   computeRemindersForBooking,
   insertRemindersForBooking,
   cancelPendingRemindersFor,
+  reconcileRemindersForBooking,
 } from '../services/event-booking-reminders.js';
 import {
   sendEventBookingNotification,
@@ -363,8 +364,8 @@ events.put('/api/events/admin/events/:id', async (c) => {
   return c.json(row);
 });
 
-// Cancel all pending reminders for an event's confirmed bookings, then
-// regenerate them from the latest event settings + slot starts_at.
+// Reconcile confirmed bookings against the latest settings and slot time,
+// retaining unchanged notification IDs and their retry state.
 async function rebuildRemindersForEvent(db: D1Database, event_id: string): Promise<void> {
   const ev = await db
     .prepare(
@@ -384,13 +385,11 @@ async function rebuildRemindersForEvent(db: D1Database, event_id: string): Promi
     .bind(event_id)
     .all<{ booking_id: string; starts_at: string }>();
   for (const r of rows.results ?? []) {
-    await cancelPendingRemindersFor(db, r.booking_id);
-    const reminders = computeRemindersForBooking({
+    await reconcileRemindersForBooking(db, r.booking_id, {
       starts_at_utc: r.starts_at,
       reminder_day_before_enabled: ev.reminder_day_before_enabled === 1,
       reminder_hours_before: ev.reminder_hours_before,
     });
-    await insertRemindersForBooking(db, r.booking_id, reminders);
   }
 }
 
@@ -416,13 +415,11 @@ async function rebuildRemindersForSlot(db: D1Database, slot_id: string): Promise
     .bind(slot_id)
     .all<{ booking_id: string }>();
   for (const r of rows.results ?? []) {
-    await cancelPendingRemindersFor(db, r.booking_id);
-    const reminders = computeRemindersForBooking({
+    await reconcileRemindersForBooking(db, r.booking_id, {
       starts_at_utc: slot.starts_at,
       reminder_day_before_enabled: ev.reminder_day_before_enabled === 1,
       reminder_hours_before: ev.reminder_hours_before,
     });
-    await insertRemindersForBooking(db, r.booking_id, reminders);
   }
 }
 
