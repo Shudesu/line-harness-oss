@@ -319,6 +319,7 @@ vi.mock('./stealth.js', () => ({
 import { getLineAccountById } from '@line-crm/db';
 import { processMultiAccountDedupBroadcast, projectedDedupAudience } from './dedup-broadcast.js';
 import type { LineClient, Message } from '@line-crm/line-sdk';
+import { LineApiError } from '@line-crm/line-sdk';
 
 class MockLineClient {
   calls: Array<{ method: string; args: unknown[] }> = [];
@@ -329,7 +330,7 @@ class MockLineClient {
     if (this.throwOn?.method === 'multicast') {
       const count = this.calls.filter((c) => c.method === 'multicast').length;
       if (!this.throwOn.afterNCalls || count >= this.throwOn.afterNCalls) {
-        throw new Error('mock multicast failure');
+        throw new LineApiError(400, 'Bad Request', 'mock definite multicast rejection');
       }
     }
     return { data: {}, requestId: 'mock-req' };
@@ -395,7 +396,7 @@ function makeSendDb(opts: {
             },
             async run() {
               if (isFailedUpdate) updates.failed_account_ids = params[0];
-              return { success: true } as D1Response;
+              return { success: true, meta: { changes: 1 } } as D1Response;
             },
           };
         },
@@ -403,7 +404,7 @@ function makeSendDb(opts: {
     },
     async batch(stmts: D1PreparedStatement[]) {
       batches.push(stmts as unknown as unknown[]);
-      return Array(stmts.length).fill({ success: true });
+      return Array(stmts.length).fill({ success: true, meta: { changes: 1 } });
     },
   } as unknown as D1Database;
   return { db, updates, batches, progressUpdates };
@@ -526,7 +527,7 @@ describe('processMultiAccountDedupBroadcast', () => {
     expect(result.complete).toBe(true);
   });
 
-  it('one account multicast throws: other succeeds, failedAccountIds = [thrower]', async () => {
+  it('one account multicast is definitively rejected: other succeeds, failedAccountIds = [thrower]', async () => {
     const { db, updates } = makeSendDb({
       selectedCounts: [
         { line_account_id: 'acc1', cnt: 1 },
@@ -893,8 +894,11 @@ describe('processMultiAccountDedupBroadcast', () => {
         return (base.db as unknown as { prepare(sql: string): unknown }).prepare(sql);
       },
       async batch(stmts: unknown[]) {
-        state.logged += Math.max(0, stmts.length - 1); // minus the progress UPDATE
-        return (base.db as unknown as { batch(s: unknown[]): Promise<unknown[]> }).batch(stmts);
+        const recorded = await (base.db as unknown as { batch(s: unknown[]): Promise<unknown[]> }).batch(stmts);
+        // Progress is the accepted recipient count; one SQL statement can now
+        // insert up to forty receipts. SQL statement count is not a user count.
+        state.logged = Number(base.progressUpdates.at(-1)?.successCount ?? 0);
+        return recorded;
       },
     } as unknown as D1Database;
     vi.mocked(getLineAccountById).mockImplementation(async (_db: D1Database, id: string) =>

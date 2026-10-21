@@ -488,37 +488,8 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       scheduled_at: body.scheduledAt,
       ...(body.trackLinks !== undefined ? { track_links: body.trackLinks ? 1 : 0 } : {}),
       ...(statusUpdate !== undefined ? { status: statusUpdate } : {}),
-    });
-
-    // 失敗 partial dedup broadcast を draft に戻して編集 → 再送するケースで、
-    // 残っていた resume 用 state を全部クリアして fresh campaign として送り直せる
-    // ようにする。
-    // - dedup_progress: 残すと過去 partial を skip して mixed delivery 事故
-    // - success_count: 残すと recover 経路の `success_count > 0 + dedup_progress=NULL`
-    //   排除条件にひっかかって永久に stuck になる (再 lock 後 crash で復旧不可)
-    // - failed_account_ids: 過去 attempt の失敗 mark を継承するのは misleading
-    // - batch_lock_at: stale lock 跡を残さない
-    // - sent_at: 念のため NULL に戻す。getQueuedBroadcasts / recoverStalledBroadcasts は
-    //   `sent_at IS NULL` を要求するので、過去 sent 値が残ると永久 stuck の元
-    // - aggregation_unit / line_request_id: 過去送信の insight 集計参照を残さない
-    await c.env.DB.prepare(
-      `UPDATE broadcasts SET
-         dedup_progress = NULL,
-         batch_lock_at = NULL,
-         success_count = 0,
-         failed_account_ids = NULL,
-         sent_at = NULL,
-         aggregation_unit = NULL,
-         line_request_id = NULL
-       WHERE id = ?`,
-    ).bind(id).run();
-
-    // 過去 send の insight 行を削除する。createBroadcastInsight は idempotent で
-    // 既存行があれば skip する設計のため、削除しないと再送時に新しい pending
-    // insight が作られず getPendingInsights / GET /insight が古い metrics を返し続ける。
-    await c.env.DB.prepare(
-      `DELETE FROM broadcast_insights WHERE broadcast_id = ?`,
-    ).bind(id).run();
+    }, { resetEditableState: true });
+    if (!updated) return c.json({ success: false, error: 'Broadcast is no longer editable' }, 409);
 
     return c.json({ success: true, data: updated ? serializeBroadcast(updated) : null });
   } catch (err) {
