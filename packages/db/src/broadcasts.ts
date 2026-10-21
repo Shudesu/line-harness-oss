@@ -21,6 +21,9 @@ export interface Broadcast {
   failed_account_ids: string | null;
   dedup_progress: string | null;
   batch_lock_at: string | null;
+  /** Exact in-flight standard multicast plan; never exposed by the admin API. */
+  pending_batch_id?: string | null;
+  pending_batch?: string | null;
   track_links: number;
   line_account_id?: string | null;
   alt_text?: string | null;
@@ -148,6 +151,7 @@ export async function updateBroadcast(
   db: D1Database,
   id: string,
   updates: UpdateBroadcastInput,
+  options: { resetEditableState?: boolean } = {},
 ): Promise<Broadcast | null> {
   const fields: string[] = [];
   const values: unknown[] = [];
@@ -183,6 +187,23 @@ export async function updateBroadcast(
   if (updates.track_links !== undefined) {
     fields.push('track_links = ?');
     values.push(updates.track_links ? 1 : 0);
+  }
+
+  if (options.resetEditableState) {
+    // A stale draft edit must not erase a request claimed while its body was
+    // being validated. Metadata, resume reset and old insight removal share
+    // the same transaction and editable-status predicate.
+    fields.push('dedup_progress = NULL', 'pending_batch_id = NULL', 'pending_batch = NULL',
+      'batch_lock_at = NULL', 'success_count = 0', 'failed_account_ids = NULL',
+      'sent_at = NULL', 'aggregation_unit = NULL', 'line_request_id = NULL');
+    values.push(id);
+    const results = await db.batch([
+      db.prepare(`DELETE FROM broadcast_insights WHERE broadcast_id = ?
+        AND EXISTS (SELECT 1 FROM broadcasts WHERE id = ? AND status IN ('draft', 'scheduled'))`).bind(id, id),
+      db.prepare(`UPDATE broadcasts SET ${fields.join(', ')} WHERE id = ? AND status IN ('draft', 'scheduled')`).bind(...values),
+    ]);
+    if (results[1].meta.changes !== 1) return null;
+    return getBroadcastById(db, id);
   }
 
   if (fields.length > 0) {
@@ -422,6 +443,43 @@ export async function recoverStalledBroadcasts(db: D1Database): Promise<void> {
     )
     .run();
 
+  // A persisted standard-multicast plan preserves the exact in-flight request.
+  // The consumer checks its age/eligibility and fences receipt writes by plan ID.
+  await db.prepare(
+    `UPDATE broadcasts SET batch_offset =
+        CASE WHEN json_valid(pending_batch) THEN
+          CASE WHEN json_type(pending_batch, '$.offset') = 'integer' AND json_extract(pending_batch, '$.offset') >= 0
+            THEN json_extract(pending_batch, '$.offset') ELSE success_count END
+          ELSE success_count END,
+        batch_lock_at = NULL
+      WHERE status = 'sending' AND batch_offset = -1 AND sent_at IS NULL
+        AND target_type != 'multi-account-dedup'
+        AND pending_batch_id IS NOT NULL AND pending_batch IS NOT NULL
+        AND batch_lock_at IS NOT NULL
+        AND julianday('now', '+9 hours') - julianday(batch_lock_at) > ${STALL_LOCK_REVOKE_DAYS_RESUMABLE}`,
+  ).run();
+
+  // The receipt transaction may commit while its response is lost. In that
+  // case the plan is already consumed but the caller still owns a -1 lock.
+  // Resume only with complete, unique outgoing receipts; a count-only fallback
+  // or incomplete historical log must never be interpreted as delivery proof.
+  await db.prepare(
+    `UPDATE broadcasts SET batch_offset = success_count, batch_lock_at = NULL
+      WHERE status = 'sending' AND batch_offset = -1 AND sent_at IS NULL
+        AND target_type != 'multi-account-dedup' AND segment_conditions IS NOT NULL
+        AND instr(replace(message_content, ' ', ''), '{{name}}') = 0
+        AND success_count > 0 AND pending_batch_id IS NULL AND pending_batch IS NULL
+        AND batch_lock_at IS NOT NULL
+        AND julianday('now', '+9 hours') - julianday(batch_lock_at) > ${STALL_LOCK_REVOKE_DAYS_RESUMABLE}
+        AND EXISTS (
+          SELECT 1 FROM messages_log WHERE broadcast_id = broadcasts.id
+            AND direction = 'outgoing' AND COALESCE(delivery_type, '') != 'test'
+          GROUP BY broadcast_id
+          HAVING COUNT(*) = broadcasts.success_count
+            AND COUNT(DISTINCT friend_id) = broadcasts.success_count
+        )`,
+  ).run();
+
   // 3) Personalized standard broadcasts are also safely resumable. They use
   // one stable LINE retry key per broadcast+friend+rendered content and check
   // messages_log before each push. Restarting from offset 0 is intentional:
@@ -480,6 +538,7 @@ export async function updateBroadcastStatus(
     // dedup_progress=NULL のまま再投入して全件再送 → 重複配信事故の元になる。
     // status='sent' と同一 UPDATE で原子的に clear する。
     fields.push('dedup_progress = NULL');
+    fields.push('pending_batch_id = NULL', 'pending_batch = NULL');
     // batch_lock_at もクリア (sent 後は recover の対象外なので影響はないが綺麗に).
     fields.push('batch_lock_at = NULL');
     // 送信が成功した以上、過去の失敗理由 (クォータ不足等) は解消済み。
