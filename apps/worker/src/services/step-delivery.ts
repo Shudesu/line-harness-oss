@@ -7,6 +7,7 @@ import {
   advanceFriendScenario,
   completeFriendScenario,
   claimFriendScenarioForDelivery,
+  isScenarioDeliveryCurrent,
   recoverStuckDeliveries,
   pauseFriendScenarioDelivery,
   getFriendById,
@@ -402,6 +403,15 @@ async function processSingleDelivery(
     }
     const { LineClient: LC } = await import('@line-crm/line-sdk');
     deliveryClient = new LC(account.channel_access_token);
+  }
+  if (!(await isScenarioDeliveryCurrent(db, fs.scenario_id, fs))) {
+    // Campaign pause must retain this step for resume. Deleted/paused or
+    // already-advanced enrollments must not be reactivated by this worker.
+    await db.prepare(`UPDATE friend_scenarios SET status = 'active', updated_at = ?
+      WHERE id = ? AND status = 'delivering' AND current_step_order = ?`)
+      .bind(jstNow(), fs.id, fs.current_step_order)
+      .run();
+    return false;
   }
   await deliveryClient.pushMessage(friend.line_user_id, messages);
 
