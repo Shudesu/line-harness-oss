@@ -1426,7 +1426,7 @@ export async function processPendingMileageEvents(
 
   const due = await db
     .prepare(
-      `SELECT q.engagement_event_id
+      `SELECT q.engagement_event_id, q.attempts
          FROM mileage_event_queue q
         WHERE q.status IN ('pending','failed')
           AND q.attempts < 5
@@ -1438,18 +1438,20 @@ export async function processPendingMileageEvents(
         LIMIT ?`,
     )
     .bind(now, limit)
-    .all<{ engagement_event_id: string }>();
+    .all<{ engagement_event_id: string; attempts: number }>();
 
   const result: MileageQueueResult = { claimed: 0, processed: 0, failed: 0, granted: 0 };
   for (const item of due.results) {
+    // Attempts is the claim version. A previously selected row must not claim
+    // again after another invocation has advanced its retry/backoff state.
     const claim = await db
       .prepare(
         `UPDATE mileage_event_queue
             SET status = 'processing', attempts = attempts + 1,
                 processing_started_at = ?, updated_at = ?, last_error = NULL
-          WHERE engagement_event_id = ? AND status IN ('pending','failed')`,
+          WHERE engagement_event_id = ? AND status IN ('pending','failed') AND attempts = ?`,
       )
-      .bind(now, now, item.engagement_event_id)
+      .bind(now, now, item.engagement_event_id, item.attempts)
       .run();
     if ((claim.meta?.changes ?? 0) === 0) continue;
     result.claimed += 1;
@@ -1487,9 +1489,9 @@ export async function processPendingMileageEvents(
           `UPDATE mileage_event_queue
               SET status = 'processed', processed_at = ?, processing_started_at = NULL,
                   updated_at = ?, last_error = NULL
-            WHERE engagement_event_id = ?`,
+            WHERE engagement_event_id = ? AND status = 'processing' AND attempts = ?`,
         )
-        .bind(now, now, event.id)
+        .bind(now, now, event.id, item.attempts + 1)
         .run();
     } catch (error) {
       result.failed += 1;
@@ -1501,9 +1503,9 @@ export async function processPendingMileageEvents(
                   available_at = CASE WHEN available_at = '${LEGACY_MILEAGE_HOLD}' THEN available_at
                     ELSE datetime(?, '+' || MIN(attempts * 5, 60) || ' minutes') END,
                   updated_at = ?, last_error = ?
-            WHERE engagement_event_id = ?`,
+            WHERE engagement_event_id = ? AND status = 'processing' AND attempts = ?`,
         )
-        .bind(now, now, message, item.engagement_event_id)
+        .bind(now, now, message, item.engagement_event_id, item.attempts + 1)
         .run();
     }
   }
