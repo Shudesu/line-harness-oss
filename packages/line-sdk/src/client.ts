@@ -14,6 +14,16 @@ const LINE_API_BASE = 'https://api.line.me';
 export class LineClient {
   constructor(private readonly channelAccessToken: string) {}
 
+  // Single place that builds the auth header. An unset/blank token is rejected
+  // here, before any fetch, so LINE is never called with an empty credential.
+  private authorization(): string {
+    const token = this.channelAccessToken as string | null | undefined;
+    if (typeof token !== 'string' || token.trim() === '') {
+      throw new Error('LINE access token is not configured');
+    }
+    return `Bearer ${token}`;
+  }
+
   // ─── Core request helper ──────────────────────────────────────────────────
 
   async request(
@@ -27,7 +37,7 @@ export class LineClient {
       method,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.channelAccessToken}`,
+        Authorization: this.authorization(),
       },
     };
 
@@ -173,7 +183,7 @@ export class LineClient {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.channelAccessToken}`,
+        Authorization: this.authorization(),
       },
     });
     if (res.status === 404) return null;
@@ -220,7 +230,7 @@ export class LineClient {
       method: 'POST',
       headers: {
         'Content-Type': contentType,
-        Authorization: `Bearer ${this.channelAccessToken}`,
+        Authorization: this.authorization(),
       },
       body: imageData,
     });
