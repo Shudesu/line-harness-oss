@@ -594,7 +594,8 @@ async function processQueuedBroadcastBatches(
   }
 
   // 排他ロック: batch_offset を -1 に設定して他のCronが拾わないようにする
-  // WHERE batch_offset = ? で楽観ロック（既に他が処理中なら更新0行→スキップ）
+  // offset だけでは dedup の yield (-1→0) 後に古い snapshot が再取得できる。
+  // 状態・保存済み進捗・本文も照合し、既送一覧や auto-track 結果を巻き戻さない。
   // batch_lock_at は recoverStalledBroadcasts が「ロック取得後 N 分経過」を判定する
   // ためのタイムスタンプ。created_at だと draft 作成時刻基準で本物の lock age と
   // ずれて Worker 並走 race を引き起こすため別カラムで管理する。
@@ -603,8 +604,10 @@ async function processQueuedBroadcastBatches(
   // と比較すると即座に「stale」扱いされて lock 取得直後に解除される。created_at
   // 列の DEFAULT と同じ式を使って naive JST に揃える。
   const lockResult = await db.prepare(
-    `UPDATE broadcasts SET batch_offset = -1, batch_lock_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours') WHERE id = ? AND batch_offset = ?`,
-  ).bind(broadcast.id, batchOffset).run();
+    `UPDATE broadcasts SET batch_offset = -1, batch_lock_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')
+     WHERE id = ? AND batch_offset = ? AND status = 'sending' AND sent_at IS NULL
+       AND dedup_progress IS ? AND message_type = ? AND message_content = ?`,
+  ).bind(broadcast.id, batchOffset, broadcast.dedup_progress ?? null, broadcast.message_type, broadcast.message_content).run();
   if (!lockResult.meta.changes || lockResult.meta.changes === 0) {
     // 他のCron実行が既に処理中 → スキップ
     return;
