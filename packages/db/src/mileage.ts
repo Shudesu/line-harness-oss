@@ -294,6 +294,71 @@ function legacyMileageCounterpart(
   };
 }
 
+/** Reuse an immutable referral grant even after either person links a UUID. */
+function existingReferralMileageCounterpart(
+  input: PostMileageEntryInput,
+  programId: string,
+): { sql: string; values: (string | null)[] } | null {
+  if (programId !== DEFAULT_MILEAGE_PROGRAM_ID || input.entryType !== 'grant'
+      || input.amount <= 0 || input.reversesEntryId
+      || !input.beneficiaryFriendId || !input.mileageRuleId
+      || input.metadata?.beneficiaryType !== 'referrer'
+      || input.metadata.ruleId !== input.mileageRuleId) {
+    return null;
+  }
+
+  const rulePrefix = `rule:${input.mileageRuleId}:`;
+  const identity = input.beneficiaryUserId
+    ? `user:${input.beneficiaryUserId}` : `friend:${input.beneficiaryFriendId}`;
+  const scope = ['referrer', 'identity'].find((kind) => input.idempotencyKey.startsWith(
+    `${rulePrefix}${kind}:${identity}:`,
+  ));
+  if (!scope) return null;
+  const suffix = input.idempotencyKey.slice(`${rulePrefix}${scope}:${identity}:`.length);
+  const metadataValue = (key: string) =>
+    `json_extract(CASE WHEN json_valid(legacy.metadata) THEN legacy.metadata END, '$.${key}')`;
+  const referredFriendId = typeof input.metadata.referredFriendId === 'string'
+    ? input.metadata.referredFriendId : null;
+  const referredUserId = typeof input.metadata.referredUserId === 'string'
+    ? input.metadata.referredUserId : null;
+  const referredIdentity = referredUserId ? `user:${referredUserId}` : `friend:${referredFriendId}`;
+  const referredPrefix = `referred:${referredIdentity}`;
+  let suffixSql = '?';
+  let referredSql = '';
+  let suffixValues: (string | null)[] = [suffix];
+  if (scope === 'referrer' && referredFriendId
+      && (suffix === referredPrefix || suffix.startsWith(`${referredPrefix}:subject:`))) {
+    // Reconstruct the old key from the identities recorded at grant time,
+    // then compare the actual people using today's explicit UUID links.
+    suffixSql = `('referred:' || CASE WHEN ${metadataValue('referredUserId')} IS NOT NULL
+      THEN 'user:' || ${metadataValue('referredUserId')}
+      ELSE 'friend:' || ${metadataValue('referredFriendId')} END || ?)`;
+    referredSql = `AND ((? IS NOT NULL AND ${metadataValue('referredUserId')} = ?)
+      OR EXISTS (SELECT 1 FROM friends referred
+        WHERE referred.id = ${metadataValue('referredFriendId')}
+          AND (referred.id = ? OR (? IS NOT NULL AND referred.user_id = ?))))`;
+    suffixValues = [suffix.slice(referredPrefix.length), referredUserId, referredUserId,
+      referredFriendId, referredUserId, referredUserId];
+  }
+  return {
+    sql: `FROM mileage_ledger legacy
+      WHERE legacy.program_id = ? AND legacy.mileage_rule_id = ?
+        AND legacy.beneficiary_friend_id IN (
+          SELECT ? UNION SELECT linked.id FROM friends linked WHERE linked.user_id = ?
+        )
+        AND legacy.entry_type = 'grant'
+        AND ${metadataValue('beneficiaryType')} = 'referrer'
+        AND ${metadataValue('ruleId')} = legacy.mileage_rule_id
+        AND legacy.idempotency_key = ? || CASE WHEN legacy.beneficiary_user_id IS NOT NULL
+          THEN 'user:' || legacy.beneficiary_user_id
+          ELSE 'friend:' || legacy.beneficiary_friend_id END || ':' || ${suffixSql}
+        ${referredSql}`,
+    values: [programId, input.mileageRuleId, input.beneficiaryFriendId,
+      input.beneficiaryUserId ?? null,
+      `${rulePrefix}${scope}:`, ...suffixValues],
+  };
+}
+
 interface MileageDailyCap {
   sql: string;
   values: (string | number | null)[];
@@ -320,7 +385,8 @@ export async function postMileageEntry(
   const programId = input.programId ?? DEFAULT_MILEAGE_PROGRAM_ID;
   await ensureBuiltInProgram(db, programId);
   const occurredAt = input.occurredAt ?? now;
-  const legacy = legacyMileageCounterpart(input, programId, occurredAt);
+  const legacy = legacyMileageCounterpart(input, programId, occurredAt)
+    ?? existingReferralMileageCounterpart(input, programId);
   const insertPredicates = [
     ...(legacy ? [`NOT EXISTS (SELECT 1 ${legacy.sql})`] : []),
     ...(dailyCap ? [`(${dailyCap.sql}) < ?`] : []),
@@ -1237,7 +1303,9 @@ async function applyMileageRulesImmediately(
       : null;
     if (conditions.beneficiary === 'referrer' && !referrer) continue;
     const beneficiaryFriendId = referrer?.friendId ?? friend.id;
-    const beneficiaryUserId = referrer?.userId ?? friend.user_id;
+    // An unlinked referrer owns a friend-scoped wallet. Their null user ID
+    // must not fall back to the referred actor's linked identity.
+    const beneficiaryUserId = referrer ? referrer.userId : friend.user_id;
     const beneficiaryIdentityKey = beneficiaryUserId
       ? `user:${beneficiaryUserId}`
       : `friend:${beneficiaryFriendId}`;
