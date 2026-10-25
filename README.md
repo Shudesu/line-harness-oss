@@ -17,7 +17,17 @@ L Harness本体のソフトウェア利用料は **0円** です。LINE公式ア
 
 [![クリックで YouTube を再生 — L Harness 導入の全手順](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
 
-**現バージョン**: v0.21.0 ・ MIT License ・ TypeScript / Cloudflare Workers + D1
+**最新の公開版**: [GitHub Releases](https://github.com/Shudesu/line-harness-oss/releases/latest) ・ MIT License ・ TypeScript / Cloudflare Workers + D1
+
+## 開発・PR・Issueの対応状況
+
+現在確認している課題、検証結果、公開版への反映状況は[プロジェクトの対応状況](docs/project-status.md)にまとめています。報告・修正案・再現テストの提供ありがとうございます。
+
+- [公開済みの変更と導入版](https://github.com/Shudesu/line-harness-oss/releases)
+- [PR・Issueの現在地と次の確認事項](docs/project-status.md)
+- [報告・提案・開発への参加方法](CONTRIBUTING.md)
+
+保守にはAIも活用しています。投稿者の検証、保守側の追加検証、公開リリース、Cloudへの反映を区別して記録します。採用・保留の理由は各スレッドで共有し、機密情報を含む報告は[セキュリティ方針](SECURITY.md)に沿って扱います。
 
 ---
 
