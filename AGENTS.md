@@ -1,8 +1,8 @@
-# Project Instructions
+# Contributor Agent Instructions
 
-- ゴールから外れる提案をしないでください。
-- ゴールに進む提案を必ずしてください。
-- 回答には必ず「次のタスクはこれ」「今の進捗を全体像から整理するとこれ」を含めてください。
-- 私が大学生だと思って、言語化してください。
-- L Harness Proxy から担当者として1対1返信する場合は、`X-Line-Harness-Source: manual` を必ず付けてください。予約通知などの自動送信には付けないでください。
-- Google Meetの個別相談を確定・変更した場合は、カレンダー更新だけで終えず、`POST /api/meet-consultations` にGoogle Calendar event ID・LINE friend ID・日時・Meet URLを登録してください。前日・1時間前のLINEリマインドを必須セットにします。キャンセル時は `DELETE /api/meet-consultations/:externalEventId` も実行してください。
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing this repository. Follow its contribution, verification, and security-reporting guidance.
+- Keep changes focused on the requested issue, preserve unrelated work, and report the checks run and any remaining limitations.
+- Use synthetic data for local verification. Keep credentials, customer information, and operator-specific instructions out of committed files.
+- When changing proxy message logging, preserve the distinction between individual staff replies and automated messages. Review `apps/worker/src/routes/line-proxy.ts` for the `X-Line-Harness-Source: manual` contract and its push-only validation.
+- When changing consultation scheduling, review `apps/worker/src/routes/meet-consultations.ts` and `apps/worker/src/services/meet-consultation-reminders.ts` together so registration, updates, cancellation, and reminder behavior stay consistent.
+- A code change does not itself authorize production deployment, real message delivery, or changes to a user's calendar.
