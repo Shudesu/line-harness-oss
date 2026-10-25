@@ -1,7 +1,10 @@
+import { PERSONALIZED_EMPTY, PERSONALIZED_SAVE_ERROR, isUnjournaledPersonalizedUncertainty, holdLegacyPersonalizedQueue, readPersonalizedIntent, pendingMatches, writePersonalizedIntent, holdPersonalizedIntent } from './broadcast-personalized-intent.js';
+import { personalizedFriendState, recordPersonalizedReceipt, releasePersonalizedClaim, finishPersonalizedClaim } from './broadcast-personalized-batch.js';
 import { buildMessages } from './message-group.js';
 import { BroadcastDeliveryError, BROADCAST_RECORDING_ERROR, broadcastDeliveryFailure, isDefiniteLineRejection } from './broadcast-delivery-error.js';
 import { BroadcastSenderError, resolveBroadcastSender } from './broadcast-sender.js';
-import { extractFlexAltText } from '../utils/flex-alt-text.js';
+import { buildMessage } from './message-builder.js';
+export { buildMessage } from './message-builder.js';
 import {
   getBroadcastById,
   getBroadcasts,
@@ -25,6 +28,11 @@ import {
   renderBroadcastMessageContent,
 } from './render-message.js';
 import { createBroadcastRetryKey } from './broadcast-retry-key.js';
+import {
+  parsePendingMulticastBatch, savePendingMulticastBatch, completePendingMulticastBatch, finishPendingMulticastBroadcast,
+  releasePendingMulticastClaim, PENDING_BATCH_REVIEW, PENDING_BATCH_SAVE_ERROR,
+  LEGACY_UNCERTAIN_REVIEW, type PendingMulticastBatch,
+} from './broadcast-pending-batch.js';
 import {
   isQuotaExceeded,
   quotaEnabled,
@@ -59,6 +67,7 @@ async function assertLinePlanQuota(
   lineClient: LineClient,
   broadcast: Broadcast,
   audience: number | (() => Promise<number>),
+  claimAt?: string,
 ): Promise<void> {
   const shortfall = await getLinePlanQuotaShortfall(lineClient, audience);
   if (!shortfall) return;
@@ -78,7 +87,13 @@ async function assertLinePlanQuota(
     `LINEプラン月間クォータ不足のため送信を中止: ` +
     `残り${shortfall.remaining}通 < 配信対象${shortfall.audience}人 ` +
     `(上限${shortfall.limit}通・消費${shortfall.consumption}通)`;
-  await setBroadcastLastError(db, broadcast.id, reason);
+  if (claimAt === undefined) await setBroadcastLastError(db, broadcast.id, reason);
+  else {
+    const updated = await db.prepare(`UPDATE broadcasts SET last_error = ? WHERE id = ?
+      AND status = 'sending' AND batch_offset = -1 AND batch_lock_at = ?`)
+      .bind(reason, broadcast.id, claimAt).run();
+    if (updated.meta.changes !== 1) throw new LinePlanQuotaError(shortfall);
+  }
   // 単一アカウント運用 (line_account_id NULL) は通知キーとして 'default' を使う
   // (env トークンの既定アカウントに相当)。pre-send 通知は dedup されないので、
   // ban-monitor 側の実 ID キーと分かれていても通知が消えることはない。
@@ -103,15 +118,16 @@ async function revertQueuedBroadcastOnQuotaShortfall(
   lineClient: LineClient,
   broadcast: Broadcast,
   audience: number | (() => Promise<number>),
+  claimAt?: string,
 ): Promise<boolean> {
   try {
-    await assertLinePlanQuota(db, lineClient, broadcast, audience);
+    await assertLinePlanQuota(db, lineClient, broadcast, audience, claimAt);
     return false;
   } catch (err) {
     if (!(err instanceof LinePlanQuotaError)) throw err;
     await db.prepare(
-      `UPDATE broadcasts SET status = 'draft', batch_offset = 0, batch_lock_at = NULL WHERE id = ?`,
-    ).bind(broadcast.id).run();
+      `UPDATE broadcasts SET status = 'draft', batch_offset = 0, batch_lock_at = NULL WHERE id = ?${claimAt === undefined ? '' : " AND status = 'sending' AND batch_offset = -1 AND batch_lock_at = ?"}`,
+    ).bind(broadcast.id, ...(claimAt === undefined ? [] : [claimAt])).run();
     return true;
   }
 }
@@ -202,7 +218,7 @@ export async function processBroadcastSend(
   if (hasRecipientVariables(broadcast.message_content)
     && broadcast.target_type !== 'multi-account-dedup') {
     const raw = broadcast as unknown as Record<string, unknown>;
-    const accountId = raw.line_account_id as string | null;
+    const accountId = (raw.line_account_id as string | null | undefined) ?? null;
     const where: string[] = ['f.is_following = 1'];
     const binds: unknown[] = [];
     if (accountId) {
@@ -265,7 +281,7 @@ export async function processBroadcastSend(
 
   // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
   // track_links=0 の broadcast は明示的に短縮 OFF (URL をそのまま送る)。
-  const broadcastAccountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
+  const broadcastAccountId = broadcast.line_account_id;
   let finalType: string = broadcast.message_type;
   let finalContent = broadcast.message_content;
   if (workerUrl && broadcast.track_links !== 0) {
@@ -283,11 +299,11 @@ export async function processBroadcastSend(
   if (broadcastAccountId) {
     const { getLineAccountById: getLA } = await import('@line-crm/db');
     const acct = await getLA(db, broadcastAccountId);
-    const liffId = (acct as unknown as { liff_id?: string | null } | null)?.liff_id ?? null;
+    const liffId = acct?.liff_id ?? null;
     finalContent = renderBroadcastMessageContent(finalType, finalContent, { liffId });
   }
   assertNoUnresolvedBroadcastVariables(finalContent);
-  const altText = (broadcast as unknown as Record<string, unknown>).alt_text as string | undefined;
+  const altText = broadcast.alt_text;
   const message = buildMessages(finalType, finalContent, buildMessage, altText || undefined);
   let totalCount = 0;
   let successCount = 0;
@@ -323,7 +339,7 @@ export async function processBroadcastSend(
             .first<{ count: number }>();
       // 送信前クォータガード: 残量が全員配信1回分に満たなければ中止する。
       // throw → 下の catch が draft へ戻す (last_error に理由記録済み)。
-      await assertLinePlanQuota(db, lineClient, broadcast, allTargetGuardAudience(db, broadcastAccountId));
+      await assertLinePlanQuota(db, lineClient, broadcast, allTargetGuardAudience(db, broadcastAccountId ?? null));
       // Use LINE broadcast API (sends to all followers)
       const retryKey = await createBroadcastRetryKey(
         broadcast.id,
@@ -389,7 +405,7 @@ export async function processBroadcastSend(
           // Log only successfully sent messages (batch insert for performance)
           // line_account_id は broadcast 設定時のアカウントを記録 (送信時点の固定値)。
           // friends.line_account_id は webhook で書き換わる mutable なので使わない。
-          const broadcastAccount = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
+          const broadcastAccount = broadcast.line_account_id;
           const logStmts = batch.map(friend =>
             db.prepare(
               `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
@@ -549,13 +565,53 @@ export async function processQueuedBroadcasts(
   // stopped per batch inside the executor.
   const queued = await getQueuedBroadcasts(db);
   for (const broadcast of queued) {
+    // A saved multicast request retains its protocol if the current body was edited.
+    const queuedState = broadcast as unknown as { pending_batch_id?: string | null; pending_batch?: string | null };
+    if (broadcast.target_type !== 'multi-account-dedup' && hasRecipientVariables(broadcast.message_content)
+      && queuedState.pending_batch_id == null && queuedState.pending_batch == null
+      && isUnjournaledPersonalizedUncertainty(broadcast.dedup_progress ?? null, broadcast.last_error)) {
+      const offset = (broadcast as unknown as { batch_offset?: number }).batch_offset ?? 0;
+      try { await holdLegacyPersonalizedQueue(db, broadcast, offset); }
+      catch { console.error('Legacy personalized uncertainty remains held; review metadata could not be saved.'); }
+      continue;
+    }
+    const failureClaim: { fenced: boolean; at?: string } = {
+      fenced: broadcast.target_type !== 'multi-account-dedup',
+    };
     try {
       const client = await resolveBroadcastSender(db, broadcast, lineClient);
-      await processQueuedBroadcastBatches(db, client, broadcast, workerUrl, quotaEnv);
+      await processQueuedBroadcastBatches(db, client, broadcast, workerUrl, quotaEnv, failureClaim);
     } catch (err) {
       console.error(`Failed to process queued broadcast ${broadcast.id}:`, err);
       if (!(err instanceof BroadcastSenderError)) {
-        try { await setBroadcastLastError(db, broadcast.id, '配信処理を継続できませんでした。配信状況を確認してください。'); } catch { /* best effort */ }
+        try {
+          const reason = '配信処理を継続できませんでした。配信状況を確認してください。';
+          if (broadcast.target_type === 'multi-account-dedup') {
+            const { DEDUP_INTENT_REVIEW } = await import('./dedup-delivery-intent.js');
+            const dedupReason = err instanceof Error && err.message === DEDUP_INTENT_REVIEW ? DEDUP_INTENT_REVIEW : reason;
+            // The executor reports errors against its exact saved intent. An
+            // outer error may be a lost response after completion or a newer
+            // request, so only the observed pre-execution state is writable.
+            await db.prepare(`UPDATE broadcasts SET last_error = ? WHERE id = ?
+              AND status = 'sending' AND sent_at IS NULL AND dedup_progress IS ? AND last_error IS ?`)
+              .bind(dedupReason, broadcast.id, broadcast.dedup_progress ?? null, broadcast.last_error ?? null).run();
+          } else if (!failureClaim.fenced) await setBroadcastLastError(db, broadcast.id, reason);
+          else {
+            const guard = failureClaim.at
+              ? { sql: 'AND batch_lock_at = ?', values: [failureClaim.at] }
+              : { sql: `AND batch_offset >= 0 AND batch_lock_at IS ? AND success_count = ?
+                  AND last_error IS ? AND message_type = ? AND message_content = ?
+                  AND pending_batch_id IS ? AND pending_batch IS ? AND dedup_progress IS ?`,
+                values: [broadcast.batch_lock_at, broadcast.success_count, broadcast.last_error ?? null,
+                  broadcast.message_type, broadcast.message_content, broadcast.pending_batch_id ?? null, broadcast.pending_batch ?? null, broadcast.dedup_progress ?? null] };
+            // A setup error must not erase the only hold evidence for an
+            // unknown historical request, even before a claim is acquired.
+            await db.prepare(`UPDATE broadcasts SET last_error = ? WHERE id = ?
+              AND status = 'sending' AND sent_at IS NULL ${guard.sql}
+              AND (last_error IS NULL OR last_error = '')`)
+              .bind(reason, broadcast.id, ...guard.values).run();
+          }
+        } catch { /* best effort; never unlock or overwrite a newer execution */ }
       }
     }
   }
@@ -567,15 +623,29 @@ async function processQueuedBroadcastBatches(
   broadcast: import('@line-crm/db').Broadcast,
   workerUrl?: string,
   quotaEnv?: QuotaEnv,
+  failureClaim?: { fenced: boolean; at?: string },
 ): Promise<void> {
   const raw = broadcast as unknown as Record<string, unknown>;
   const segmentConditionsStr = raw.segment_conditions as string | null;
   const batchOffset = (raw.batch_offset as number) || 0;
+  const pendingId = broadcast.pending_batch_id ?? null;
+  const pendingSerialized = broadcast.pending_batch ?? null;
+  const hasPendingBatch = pendingId !== null || pendingSerialized !== null;
   // dedup は分割送信で毎 tick batch_offset=0 から再入する。継続 tick かどうかは
   // dedup_progress の有無で判定する (auto-track の一回性判定とクォータの
   // fresh 判定の両方で使う)。
   const isDedupContinuation =
     broadcast.target_type === 'multi-account-dedup' && !!broadcast.dedup_progress;
+
+  const personalizedCandidate = broadcast.target_type !== 'multi-account-dedup'
+    && (hasRecipientVariables(broadcast.message_content) || broadcast.dedup_progress != null);
+  const savedReceipts = personalizedCandidate ? (await db.prepare(`SELECT friend_id FROM messages_log
+    WHERE broadcast_id = ? AND direction = 'outgoing' AND COALESCE(delivery_type, '') != 'test'`)
+    .bind(broadcast.id).all<{ friend_id: string }>()).results : [];
+  const isPersonalizedContinuation = personalizedCandidate
+    && (broadcast.dedup_progress != null || broadcast.success_count > 0 || savedReceipts.length > 0);
+  let intentRaw = broadcast.dedup_progress ?? null;
+  let intent = readPersonalizedIntent(intentRaw);
 
   // While over quota, only a FRESH row (nothing sent yet, batch_offset 0 and
   // not a dedup continuation) is skipped — before the claim, so its one-time
@@ -588,25 +658,60 @@ async function processQueuedBroadcastBatches(
     quotaEnv
     && batchOffset === 0
     && !isDedupContinuation
+    && !hasPendingBatch
+    && !isPersonalizedContinuation
     && (await isQuotaExceeded(db, quotaEnv))
   ) {
     return;
   }
 
   // 排他ロック: batch_offset を -1 に設定して他のCronが拾わないようにする
-  // WHERE batch_offset = ? で楽観ロック（既に他が処理中なら更新0行→スキップ）
+  // offset だけでは dedup の yield (-1→0) 後に古い snapshot が再取得できる。
+  // 状態・成功件数・保存済み進捗・本文を照合し、古い実行からの巻き戻しを防ぐ。
   // batch_lock_at は recoverStalledBroadcasts が「ロック取得後 N 分経過」を判定する
   // ためのタイムスタンプ。created_at だと draft 作成時刻基準で本物の lock age と
   // ずれて Worker 並走 race を引き起こすため別カラムで管理する。
-  // 重要: 値は SQL の strftime で生成する。jstNow() の '+09:00' suffix は SQLite で
+  // Standard queued claims retain naive JST for recovery and exact write fencing.
+  // jstNow() の '+09:00' suffix は SQLite で
   // UTC 正規化されて見かけ 9 時間古くなり、recover 側 (julianday('now','+9 hours'))
   // と比較すると即座に「stale」扱いされて lock 取得直後に解除される。created_at
   // 列の DEFAULT と同じ式を使って naive JST に揃える。
+  // A recovered standard execution gets a new naive-JST claim timestamp.
+  // Keep its exact value through every write; the recovery threshold is >3 minutes.
+  const queuedClaimAt = jstNow().slice(0, -6);
+  const standardClaim = broadcast.target_type !== 'multi-account-dedup';
+  const personalizedClaim = broadcast.target_type !== 'multi-account-dedup' && (hasRecipientVariables(broadcast.message_content) || broadcast.dedup_progress != null);
   const lockResult = await db.prepare(
-    `UPDATE broadcasts SET batch_offset = -1, batch_lock_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours') WHERE id = ? AND batch_offset = ?`,
-  ).bind(broadcast.id, batchOffset).run();
+    `UPDATE broadcasts SET batch_offset = -1, batch_lock_at = ${standardClaim ? '?' : "strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')"}
+     WHERE id = ? AND batch_offset = ? AND success_count = ? AND status = 'sending' AND sent_at IS NULL
+       AND pending_batch_id IS ? AND pending_batch IS ?
+       AND dedup_progress IS ? AND message_type = ? AND message_content = ?`,
+  ).bind(...(standardClaim ? [queuedClaimAt] : []), broadcast.id, batchOffset, broadcast.success_count, pendingId, pendingSerialized,
+    broadcast.dedup_progress ?? null, broadcast.message_type, broadcast.message_content).run();
   if (!lockResult.meta.changes || lockResult.meta.changes === 0) {
     // 他のCron実行が既に処理中 → スキップ
+    return;
+  }
+
+  if (standardClaim && failureClaim) failureClaim.at = queuedClaimAt;
+
+  if (hasPendingBatch && (broadcast.target_type === 'multi-account-dedup' || hasRecipientVariables(broadcast.message_content))) {
+    await releasePendingMulticastClaim(db, broadcast.id, batchOffset, broadcast.success_count, pendingId, pendingSerialized, PENDING_BATCH_REVIEW);
+    return;
+  }
+  if (!hasPendingBatch && broadcast.target_type !== 'multi-account-dedup'
+    && !personalizedCandidate
+    && (broadcast.last_error?.includes('LINEの受付結果を確認できませんでした。')
+      || broadcast.last_error?.includes(LEGACY_UNCERTAIN_REVIEW))) {
+    // Before auto-track or initial totals: historical unknown requests have no
+    // original intent to replay. Do not edit their payload, receipts or counts.
+    await releasePendingMulticastClaim(db, broadcast.id, batchOffset, broadcast.success_count, null, null, LEGACY_UNCERTAIN_REVIEW);
+    return;
+  }
+
+  if (personalizedClaim && (!intent || !hasRecipientVariables(broadcast.message_content)
+    || (!segmentConditionsStr && !broadcast.target_tag_id))) {
+    await holdPersonalizedIntent(db, broadcast.id, queuedClaimAt, batchOffset, intentRaw);
     return;
   }
 
@@ -619,7 +724,7 @@ async function processQueuedBroadcastBatches(
   // 継続 tick はそれを使う)。
   let finalType: string = broadcast.message_type;
   let finalContent = broadcast.message_content;
-  if (workerUrl && batchOffset === 0 && !isDedupContinuation && broadcast.track_links !== 0) {
+  if (workerUrl && batchOffset === 0 && !isDedupContinuation && !hasPendingBatch && !isPersonalizedContinuation && broadcast.track_links !== 0) {
     const { autoTrackContent } = await import('./auto-track.js');
     // dedup broadcast は複数アカウントから送るためリンクの所有アカウントを一意に
     // 決められない → line_account_id は null のまま (env.LIFF_URL フォールバック)。
@@ -630,8 +735,9 @@ async function processQueuedBroadcastBatches(
     finalContent = tracked.content;
     // 変換後のコンテンツを保存（次バッチ以降で使えるように）
     if (finalType !== broadcast.message_type || finalContent !== broadcast.message_content) {
-      await db.prepare('UPDATE broadcasts SET message_type = ?, message_content = ? WHERE id = ?')
-        .bind(finalType, finalContent, broadcast.id).run();
+      const updated = await db.prepare(`UPDATE broadcasts SET message_type = ?, message_content = ? WHERE id = ?${personalizedClaim ? " AND status = 'sending' AND batch_offset = -1 AND batch_lock_at = ?" : ''}`)
+        .bind(finalType, finalContent, broadcast.id, ...(personalizedClaim ? [queuedClaimAt] : [])).run();
+      if (personalizedClaim && updated.meta.changes !== 1) return;
     }
   }
 
@@ -640,11 +746,17 @@ async function processQueuedBroadcastBatches(
   if (queuedAccountId && broadcast.target_type !== 'multi-account-dedup') {
     const { getLineAccountById: getLA } = await import('@line-crm/db');
     const acct = await getLA(db, queuedAccountId);
-    const liffId = (acct as unknown as { liff_id?: string | null } | null)?.liff_id ?? null;
+    const liffId = acct?.liff_id ?? null;
     finalContent = renderBroadcastMessageContent(finalType, finalContent, { liffId });
   }
   const altText = raw.alt_text as string | undefined;
-  const message = buildMessages(finalType, finalContent, buildMessage, altText || undefined);
+  let message: Message[];
+  try { message = buildMessages(finalType, finalContent, buildMessage, altText || undefined); }
+  catch (error) {
+    if (!hasPendingBatch) throw error;
+    await releasePendingMulticastClaim(db, broadcast.id, batchOffset, broadcast.success_count, pendingId, pendingSerialized, PENDING_BATCH_REVIEW);
+    return;
+  }
 
   // multi-account-dedup: delegate to processMultiAccountDedupBroadcast.
   // dedup ループは内部で per-account に {{liff_id}} 置換 + buildMessage する。
@@ -657,6 +769,12 @@ async function processQueuedBroadcastBatches(
     // quotaEnv を渡す: dedup 内部のバッチ境界でも使用量上限を再チェックさせる
     // (下の while ループの再チェックは dedup 委譲経路では通らないため)。
     const result = await processMultiAccountDedupBroadcast(db, broadcastForDedup, undefined, { quotaEnv });
+    if ('journaledProgress' in result) {
+      const { releaseDedupDeliveryClaim, finishJournaledDedupBroadcast } = await import('./dedup-delivery-intent.js');
+      if (result.complete) await finishJournaledDedupBroadcast(db, broadcast.id, result);
+      else await releaseDedupDeliveryClaim(db, broadcast.id, result.journaledProgress ?? null);
+      return;
+    }
     if (!result.complete) {
       // 時間バジェットに達して途中で yield した。status='sending' のまま batch_offset を
       // -1(ロック) → 0 に戻し、次の cron tick が getQueuedBroadcasts で拾って続きを送る。
@@ -680,7 +798,7 @@ async function processQueuedBroadcastBatches(
   }
 
   // 対象ユーザーリストを取得（アカウントで絞り込む）
-  const accountId = raw.line_account_id as string | null;
+  const accountId = (raw.line_account_id as string | null | undefined) ?? null;
   let friends: Array<{ id: string; line_user_id: string; display_name: string | null }>;
   if (segmentConditionsStr) {
     const { buildSegmentQuery } = await import('./segment-query.js');
@@ -748,13 +866,14 @@ async function processQueuedBroadcastBatches(
   }
 
   // 初回: total_count を設定
-  if (batchOffset === 0) {
-    await db.prepare('UPDATE broadcasts SET total_count = ? WHERE id = ?')
-      .bind(friends.length, broadcast.id).run();
+  if (batchOffset === 0 && !hasPendingBatch && !isPersonalizedContinuation) {
+    const updated = await db.prepare(`UPDATE broadcasts SET total_count = ? WHERE id = ?${personalizedClaim ? " AND status = 'sending' AND batch_offset = -1 AND batch_lock_at = ?" : ''}`)
+      .bind(friends.length, broadcast.id, ...(personalizedClaim ? [queuedClaimAt] : [])).run();
+    if (personalizedClaim && updated.meta.changes !== 1) return;
 
     // 送信前クォータガード (fresh 開始時のみ — まだ1通も送っていないので draft へ
     // 戻して安全に中止できる。resume 中の row は既存のバッチ単位失敗処理に任せる)。
-    if (await revertQueuedBroadcastOnQuotaShortfall(db, lineClient, broadcast, friends.length)) {
+    if (await revertQueuedBroadcastOnQuotaShortfall(db, lineClient, broadcast, friends.length, personalizedClaim ? queuedClaimAt : undefined)) {
       return;
     }
   }
@@ -766,6 +885,20 @@ async function processQueuedBroadcastBatches(
   const personalized = hasRecipientVariables(finalContent);
   const unsupportedVariables = getUnsupportedBroadcastVariables(finalContent);
   if (unsupportedVariables.length > 0) {
+    if (hasPendingBatch) {
+      await releasePendingMulticastClaim(db, broadcast.id, batchOffset, broadcast.success_count, pendingId, pendingSerialized, PENDING_BATCH_REVIEW);
+      return;
+    }
+    if (personalizedClaim && intent?.pending) {
+      await holdPersonalizedIntent(db, broadcast.id, queuedClaimAt, batchOffset, intentRaw);
+      return;
+    }
+    if (personalizedClaim) {
+      await releasePersonalizedClaim(db, { id: broadcast.id, claimAt: queuedClaimAt,
+        offset: batchOffset, total: broadcast.total_count,
+        lastError: '配信処理を継続できませんでした。配信状況を確認してください。' });
+      return;
+    }
     await updateBroadcastBatchProgress(db, broadcast.id, batchOffset, 0);
     throw new Error(
       `Unsupported broadcast variables: ${unsupportedVariables.map((v) => `{{${v}}}`).join(', ')}`,
@@ -775,10 +908,90 @@ async function processQueuedBroadcastBatches(
     try {
       assertNoUnresolvedBroadcastVariables(finalContent);
     } catch (err) {
+      if (hasPendingBatch) {
+        await releasePendingMulticastClaim(db, broadcast.id, batchOffset, broadcast.success_count, pendingId, pendingSerialized, PENDING_BATCH_REVIEW);
+        return;
+      }
       await updateBroadcastBatchProgress(db, broadcast.id, batchOffset, 0);
       throw err;
     }
   }
+  // Personalized sends resume by friend identity, not an index into a mutable
+  // audience. Keep pending friends in their original order; moving the logged
+  // prefix ahead of them lets the existing cursor/batch budget remain intact.
+  let personalizedTotalCount = broadcast.total_count;
+  if (personalized) {
+    const sentIds = new Set(savedReceipts.map(row => row.friend_id));
+    const delivered: typeof friends = [];
+    const pending: typeof friends = [];
+    for (const friend of friends) (sentIds.has(friend.id) ? delivered : pending).push(friend);
+    if (intent?.pending) {
+      const pendingFriendId = intent.pending.friendId;
+      const index = pending.findIndex(friend => friend.id === pendingFriendId);
+      if (index < 0) {
+        await holdPersonalizedIntent(db, broadcast.id, queuedClaimAt, batchOffset, intentRaw);
+        return;
+      }
+      pending.unshift(...pending.splice(index, 1));
+    }
+    friends = [...delivered, ...pending];
+    currentOffset = delivered.length;
+    // Preserve the original target size after removals; newly eligible friends
+    // may expand it. Historical recipients remain counted after leaving a tag.
+    personalizedTotalCount = Math.max(broadcast.total_count, sentIds.size + pending.length);
+  }
+  // A resumed multicast can only be re-positioned when every accepted send
+  // has a durable, unique friend receipt. Missing logs deliberately keep the
+  // old cursor: advancing after a log failure must never become a resend.
+  let multicastResume: { start: number; sent: number; total: number; sentIds: Set<string> } | undefined;
+  if (!personalized && (batchOffset > 0 || hasPendingBatch) && broadcast.success_count === batchOffset) {
+    const logged = await db.prepare(
+      `SELECT friend_id FROM messages_log
+        WHERE broadcast_id = ? AND direction = 'outgoing'
+          AND COALESCE(delivery_type, '') != 'test'`,
+    ).bind(broadcast.id).all<{ friend_id: string }>();
+    const sentIds = new Set(logged.results.map(row => row.friend_id));
+    if (logged.results.length === broadcast.success_count && sentIds.size === logged.results.length) {
+      const delivered: typeof friends = [];
+      const pending: typeof friends = [];
+      for (const friend of friends) (sentIds.has(friend.id) ? delivered : pending).push(friend);
+      friends = [...delivered, ...pending];
+      currentOffset = delivered.length;
+      multicastResume = { start: currentOffset, sent: broadcast.success_count, sentIds,
+        total: Math.max(broadcast.total_count, sentIds.size + pending.length) };
+    }
+  }
+  // Keep persisted progress and variation indices in accepted-recipient units,
+  // even when a removed recipient has shortened the current audience prefix.
+  const progressOffset = () => multicastResume
+    ? multicastResume.sent + currentOffset - multicastResume.start : currentOffset;
+  let acceptedCount = broadcast.success_count;
+  let savedPlan: PendingMulticastBatch | null = null;
+  if (!personalized && hasPendingBatch) {
+    savedPlan = pendingId && pendingSerialized ? parsePendingMulticastBatch(pendingSerialized, pendingId, Date.now()) : null;
+    const eligible = new Map(friends.map(friend => [friend.id, friend.line_user_id]));
+    const valid = savedPlan && savedPlan.broadcastId === broadcast.id && savedPlan.accountId === accountId
+      && savedPlan.offset === batchOffset && savedPlan.acceptedBefore === broadcast.success_count
+      && savedPlan.messageType === finalType && savedPlan.unit === unit
+      && savedPlan.sourceKey === await createBroadcastRetryKey(broadcast.id, 'queued-multicast-source', finalType, finalContent)
+      && savedPlan.recipients.every(friend => eligible.get(friend.id) === friend.line_user_id)
+      && savedPlan.retryKey === await createBroadcastRetryKey(broadcast.id, 'queued-multicast',
+        ...savedPlan.recipients.map(friend => friend.id), JSON.stringify(savedPlan.messages));
+    // Re-positioning an old plan is safe only with complete earlier receipts.
+    const expected = friends.slice(currentOffset, currentOffset + (savedPlan?.recipients.length ?? 0));
+    const sameSlice = savedPlan && expected.length === savedPlan.recipients.length
+      && expected.every((friend, index) => friend.id === savedPlan!.recipients[index].id);
+    if (!valid || (!multicastResume && !sameSlice)) {
+      await releasePendingMulticastClaim(db, broadcast.id, batchOffset, broadcast.success_count, pendingId, pendingSerialized, PENDING_BATCH_REVIEW);
+      return;
+    }
+  }
+  const senderChannel = personalized && accountId
+    ? (await db.prepare('SELECT channel_id FROM line_accounts WHERE id = ?').bind(accountId)
+      .first<{ channel_id: string }>())?.channel_id ?? null : null;
+  const intentSource = JSON.stringify([broadcast.id, accountId, senderChannel, broadcast.target_type,
+    broadcast.target_tag_id, segmentConditionsStr, finalType, finalContent, altText ?? null]);
+  let recheckQuotaAfterPending = !!intent?.pending;
   const deliveryBatchSize = personalized ? PERSONALIZED_PUSH_BATCH_SIZE : MULTICAST_BATCH_SIZE;
   const totalBatches = Math.ceil(friends.length / deliveryBatchSize);
 
@@ -789,27 +1002,41 @@ async function processQueuedBroadcastBatches(
     // one batch. Progress is persisted with the offset unlocked and the next
     // tick resumes from here once back under the limit.
     if (quotaEnv && (await isQuotaExceeded(db, quotaEnv))) {
-      await updateBroadcastBatchProgress(db, broadcast.id, currentOffset, 0);
+      if (personalized) await releasePersonalizedClaim(db, { id: broadcast.id, claimAt: queuedClaimAt,
+        offset: currentOffset, total: personalizedTotalCount });
+      else await releasePendingMulticastClaim(db, broadcast.id, progressOffset(), acceptedCount,
+        savedPlan?.id ?? null, savedPlan ? pendingSerialized : null, undefined);
       return;
     }
-    const batch = friends.slice(currentOffset, currentOffset + deliveryBatchSize);
-    const lineUserIds = batch.map(f => f.line_user_id);
-    const batchIndex = Math.floor(currentOffset / deliveryBatchSize);
+    const replayed = savedPlan;
+    const batch = replayed
+      ? replayed.recipients.map(friend => ({ ...friend, display_name: null }))
+      : friends.slice(currentOffset, currentOffset + deliveryBatchSize);
+    const batchIndex = Math.floor(progressOffset() / deliveryBatchSize);
 
     if (personalized) {
       for (const friend of batch) {
-        const alreadyLogged = await db.prepare(
-          `SELECT 1 FROM messages_log
-            WHERE broadcast_id = ? AND friend_id = ? AND direction = 'outgoing'
-              AND COALESCE(delivery_type, '') != 'test'
-            LIMIT 1`,
-        ).bind(broadcast.id, friend.id).first();
-        if (alreadyLogged) {
+        if (!intent?.pending && recheckQuotaAfterPending) {
+          recheckQuotaAfterPending = false;
+          if (quotaEnv && (await isQuotaExceeded(db, quotaEnv))) {
+            await releasePersonalizedClaim(db, { id: broadcast.id, claimAt: queuedClaimAt,
+              offset: currentOffset, total: personalizedTotalCount });
+            return;
+          }
+        }
+        const friendState = await personalizedFriendState(db, broadcast.id, queuedClaimAt, friend.id);
+        if (!friendState?.owned) return;
+        if (friendState.logged) {
+          if (intent?.pending) {
+            await holdPersonalizedIntent(db, broadcast.id, queuedClaimAt, batchOffset, intentRaw);
+            return;
+          }
           currentOffset++;
           continue;
         }
 
         let recipientAccepted = false;
+        let requestStarted = false;
         try {
           const renderedContent = renderBroadcastMessageContent(finalType, finalContent, {
             displayName: friend.display_name,
@@ -823,54 +1050,59 @@ async function processQueuedBroadcastBatches(
             finalType,
             renderedContent,
           );
-          await lineClient.pushMessage(friend.line_user_id, personalizedMessage, retryKey, [unit]);
+          const expected = { source: intentSource, friendId: friend.id, to: friend.line_user_id,
+            messages: personalizedMessage, retryKey, unit, content: renderedContent };
+          if (intent?.pending && !pendingMatches(intent.pending, expected)) {
+            await holdPersonalizedIntent(db, broadcast.id, queuedClaimAt, batchOffset, intentRaw);
+            return;
+          }
+          if (!intent?.pending) {
+            intent = { version: 1, kind: 'personalized-queue', pending: {
+              ...expected, id: crypto.randomUUID(), firstAttemptAt: Date.now(),
+            } };
+            const nextRaw = JSON.stringify(intent);
+            if (!await writePersonalizedIntent(db, broadcast.id, queuedClaimAt, intentRaw, nextRaw)) return;
+            intentRaw = nextRaw;
+          }
+          const request = intent.pending!;
+          requestStarted = true;
+          await lineClient.pushMessage(request.to, request.messages, request.retryKey, [request.unit]);
           recipientAccepted = true;
 
-          await db.prepare(
-            `INSERT INTO messages_log
-              (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
-             VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, 'broadcast', ?, ?)`,
-          ).bind(
-            crypto.randomUUID(),
-            friend.id,
-            finalType,
-            renderedContent,
-            broadcast.id,
-            accountId,
-            now,
-          ).run();
+          if (!await recordPersonalizedReceipt(db, {
+            id: broadcast.id, claimAt: queuedClaimAt, friendId: friend.id,
+            messageType: finalType, content: renderedContent, accountId, createdAt: now, pendingRaw: intentRaw!,
+          })) return;
+          intentRaw = PERSONALIZED_EMPTY;
+          intent = readPersonalizedIntent(intentRaw);
           currentOffset++;
         } catch (err) {
+          if (requestStarted && !recipientAccepted && isDefiniteLineRejection(err) && (err as { status: number }).status !== 409) {
+            const cleared = savedReceipts.length === 0 && currentOffset === 0 ? null : PERSONALIZED_EMPTY;
+            if (!await writePersonalizedIntent(db, broadcast.id, queuedClaimAt, intentRaw, cleared)) return;
+            intentRaw = cleared;
+            intent = readPersonalizedIntent(intentRaw);
+          }
           if (recipientAccepted) recordingError = BROADCAST_RECORDING_ERROR;
-          const reason = recipientAccepted ? BROADCAST_RECORDING_ERROR : broadcastDeliveryFailure(err);
+          const reason = recipientAccepted ? BROADCAST_RECORDING_ERROR
+            : requestStarted ? broadcastDeliveryFailure(err) : PERSONALIZED_SAVE_ERROR;
           console.error(`Personalized broadcast recipient ${friend.id} failed:`, reason);
-          await setBroadcastLastError(db, broadcast.id, [recordingError, recipientAccepted ? null : reason].filter(Boolean).join('\n'));
-          await db.prepare(
-            `UPDATE broadcasts
-                SET batch_offset = ?, batch_lock_at = NULL,
-                    success_count = (
-                      SELECT COUNT(*) FROM messages_log
-                       WHERE broadcast_id = ? AND direction = 'outgoing'
-                         AND COALESCE(delivery_type, '') != 'test'
-                    )
-              WHERE id = ?`,
-          ).bind(currentOffset, broadcast.id, broadcast.id).run();
+          await releasePersonalizedClaim(db, {
+            id: broadcast.id, claimAt: queuedClaimAt, offset: currentOffset, total: personalizedTotalCount,
+            lastError: [recordingError, recipientAccepted ? null : reason].filter(Boolean).join('\n'),
+          });
           return;
         }
       }
 
-      await db.prepare(
-        `UPDATE broadcasts
-            SET batch_offset = ?, batch_lock_at = NULL,
-                success_count = (
-                  SELECT COUNT(*) FROM messages_log
-                   WHERE broadcast_id = ? AND direction = 'outgoing'
-                     AND COALESCE(delivery_type, '') != 'test'
-                )
-          WHERE id = ?`,
-      ).bind(currentOffset, broadcast.id, broadcast.id).run();
-      if (currentOffset < friends.length) return;
-      break;
+      if (currentOffset < friends.length) {
+        await releasePersonalizedClaim(db, { id: broadcast.id, claimAt: queuedClaimAt,
+          offset: currentOffset, total: personalizedTotalCount });
+      } else {
+        await finishPersonalizedClaim(db, { id: broadcast.id, claimAt: queuedClaimAt,
+          offset: currentOffset, total: personalizedTotalCount, unit, sentAt: jstNow(), lastError: recordingError });
+      }
+      return;
     }
 
     // ステルス遅延（最初のバッチ以外）
@@ -885,82 +1117,73 @@ async function processQueuedBroadcastBatches(
       batchMessage = message.map(item => item.type === 'text' ? { ...item, text: addMessageVariation(item.text, batchIndex) } : item);
     }
 
-    try {
+    let plan = replayed;
+    if (!plan) {
       const retryKey = await createBroadcastRetryKey(
-        broadcast.id,
-        'queued-multicast',
-        ...batch.map((f) => f.id),
-        JSON.stringify(batchMessage),
+        broadcast.id, 'queued-multicast', ...batch.map(friend => friend.id), JSON.stringify(batchMessage),
       );
-      await lineClient.multicast(lineUserIds, batchMessage, [unit], retryKey);
+      plan = { version: 1, id: crypto.randomUUID(), broadcastId: broadcast.id, accountId,
+        firstAttemptAt: Date.now(), offset: progressOffset(), acceptedBefore: acceptedCount,
+        totalCount: multicastResume?.total ?? Math.max(broadcast.total_count, friends.length),
+        recipients: batch.map(friend => ({ id: friend.id, line_user_id: friend.line_user_id })),
+        messageType: finalType, sourceKey: await createBroadcastRetryKey(broadcast.id, 'queued-multicast-source', finalType, finalContent),
+        messages: batchMessage, unit, retryKey };
+      try {
+        if (!await savePendingMulticastBatch(db, plan)) return;
+      } catch {
+        await releasePendingMulticastClaim(db, broadcast.id, plan.offset, plan.acceptedBefore, null, null, PENDING_BATCH_SAVE_ERROR);
+        return;
+      }
+    }
+    const serialized = replayed ? pendingSerialized! : JSON.stringify(plan);
+    // Check again just ahead of the external call, after any stagger delay.
+    if (!parsePendingMulticastBatch(serialized, plan.id, Date.now())) {
+      await releasePendingMulticastClaim(db, broadcast.id, plan.offset, plan.acceptedBefore, plan.id, serialized, PENDING_BATCH_REVIEW);
+      return;
+    }
+
+    try {
+      await lineClient.multicast(plan.recipients.map(friend => friend.line_user_id), plan.messages, [plan.unit], plan.retryKey);
     } catch (err) {
-      console.error(`Queued broadcast batch ${batchIndex} send failed:`, broadcastDeliveryFailure(err));
-      await setBroadcastLastError(db, broadcast.id, [recordingError, broadcastDeliveryFailure(err)].filter(Boolean).join("\n"));
-      // 送信失敗: ロック解除 + offsetを保存して次のCronで再開
-      await updateBroadcastBatchProgress(db, broadcast.id, currentOffset, 0);
-      return; // batch_offset が currentOffset に戻り、次の cron で再開可能
+      const definite = isDefiniteLineRejection(err) && (err as { status: number }).status !== 409;
+      await releasePendingMulticastClaim(db, broadcast.id, plan.offset, plan.acceptedBefore, plan.id, serialized,
+        [recordingError, broadcastDeliveryFailure(err)].filter(Boolean).join("\n"), definite);
+      return;
     }
-
-    // 送信成功後のログ・進捗更新（失敗しても再送しない）
-    // line_account_id は queue path lock 時の broadcast.line_account_id を使う
-    // (friends.line_account_id ではなく送信元アカウントを固定で記録)。
-    const queuedBroadcastAccount = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
+    let completed: { owned: boolean; recordingFailed: boolean };
     try {
-      const stmts = batch.map(friend =>
-        db.prepare(
-          `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
-           VALUES (?, ?, 'outgoing', ?, ?, ?, NULL, 'broadcast', ?, ?)`,
-        ).bind(crypto.randomUUID(), friend.id, finalType, finalContent, broadcast.id, queuedBroadcastAccount, now),
-      );
-      await db.batch(stmts);
-    } catch (logErr) {
-      console.error(`Queued broadcast batch ${batchIndex} log failed (messages already sent):`, logErr);
-      recordingError = BROADCAST_RECORDING_ERROR;
-      try { await setBroadcastLastError(db, broadcast.id, recordingError); } catch { /* Persist with final status below. */ }
-    }
-
-    currentOffset += batch.length;
-    // Update success_count but keep batch_offset=-1 (locked) during processing
-    await db.prepare(
-      `UPDATE broadcasts SET success_count = success_count + ? WHERE id = ?`,
-    ).bind(batch.length, broadcast.id).run();
-  }
-
-  // 全バッチ完了 — ロック解除 + 完了マーク
-  await updateBroadcastLineRequestId(db, broadcast.id, null, unit);
-  await createBroadcastInsight(db, broadcast.id);
-  await updateBroadcastStatus(db, broadcast.id, 'sent', { lastError: recordingError });
-}
-
-export function buildMessage(messageType: string, messageContent: string, altText?: string): Message {
-  if (messageType === 'text') {
-    return { type: 'text', text: messageContent };
-  }
-
-  if (messageType === 'image') {
-    try {
-      const parsed = JSON.parse(messageContent) as {
-        originalContentUrl: string;
-        previewImageUrl: string;
-      };
-      return {
-        type: 'image',
-        originalContentUrl: parsed.originalContentUrl,
-        previewImageUrl: parsed.previewImageUrl,
-      };
+      completed = await completePendingMulticastBatch(db, plan, finalContent, multicastResume?.total ?? plan.totalCount, now, BROADCAST_RECORDING_ERROR);
     } catch {
-      return { type: 'text', text: messageContent };
+      // Acceptance is known, but durable progress is unavailable. Keep the plan
+      // for a byte-identical retry instead of advancing without a receipt.
+      await releasePendingMulticastClaim(db, broadcast.id, plan.offset, plan.acceptedBefore, plan.id, serialized, BROADCAST_RECORDING_ERROR);
+      return;
     }
+    if (!completed.owned) return;
+    acceptedCount = plan.acceptedBefore + plan.recipients.length;
+    if (completed.recordingFailed) recordingError = BROADCAST_RECORDING_ERROR;
+    if (replayed && multicastResume) {
+      // New eligible members may precede an old plan. Consume the old plan once,
+      // then visit the identity-based remainder rather than skipping an index.
+      for (const friend of plan.recipients) multicastResume.sentIds.add(friend.id);
+      const delivered: typeof friends = [];
+      const pending: typeof friends = [];
+      for (const friend of friends) (multicastResume.sentIds.has(friend.id) ? delivered : pending).push(friend);
+      friends = [...delivered, ...pending];
+      currentOffset = delivered.length;
+      multicastResume.start = currentOffset;
+      multicastResume.sent = plan.offset + plan.recipients.length;
+    } else currentOffset += plan.recipients.length;
+    savedPlan = null;
   }
 
-  if (messageType === 'flex') {
-    try {
-      const contents = JSON.parse(messageContent);
-      return { type: 'flex', altText: altText || extractFlexAltText(contents), contents };
-    } catch {
-      return { type: 'text', text: messageContent };
-    }
+  if (personalized) {
+    await finishPersonalizedClaim(db, { id: broadcast.id, claimAt: queuedClaimAt,
+      offset: currentOffset, total: personalizedTotalCount, unit, sentAt: jstNow(), lastError: recordingError });
+  } else {
+    await finishPendingMulticastBroadcast(db, {
+      broadcastId: broadcast.id, acceptedCount, unit, sentAt: jstNow(),
+      lastError: recordingError, totalCount: multicastResume?.total,
+    });
   }
-
-  return { type: 'text', text: messageContent };
 }
