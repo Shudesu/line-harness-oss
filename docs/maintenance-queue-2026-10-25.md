@@ -27,10 +27,10 @@
 ## 導入・更新の不具合
 
 - [Issue #359](https://github.com/Shudesu/line-harness-oss/issues/359) Bug: pages project create の失敗が握りつぶされ「準備完了」と表示される（次のデプロイで対話待ちになる） — 一次分類・詳細確認前
-- [Issue #358](https://github.com/Shudesu/line-harness-oss/issues/358) Bug: applySqlFile の文単位フォールバックで、先頭コメント付きの SQL が wrangler の引数として解釈される — 一次分類・詳細確認前
+- [Issue #358](https://github.com/Shudesu/line-harness-oss/issues/358) Bug: applySqlFile の文単位フォールバックで、先頭コメント付きの SQL が wrangler の引数として解釈される — 修正候補を検証済み・公開/配布は未反映（[検証結果](https://github.com/Shudesu/line-harness-oss/issues/358#issuecomment-6397816202)）
 - [Issue #353](https://github.com/Shudesu/line-harness-oss/issues/353) Bug: Admin UI setup deploy lands on Cloudflare Pages Preview, not Production (detached HEAD branch name) — 一次分類・詳細確認前
 - [Issue #352](https://github.com/Shudesu/line-harness-oss/issues/352) Bug: failed R2 bucket creation is reported as success and marked done in setup state — 一次分類・詳細確認前
-- [Issue #351](https://github.com/Shudesu/line-harness-oss/issues/351) Bug: multi-line SQL in database.ts breaks `wrangler d1 execute --command` on Windows — 一次分類・詳細確認前
+- [Issue #351](https://github.com/Shudesu/line-harness-oss/issues/351) Bug: multi-line SQL in database.ts breaks `wrangler d1 execute --command` on Windows — 修正候補を検証済み・公開/配布は未反映（[検証結果](https://github.com/Shudesu/line-harness-oss/issues/351#issuecomment-6397815972)）
 - [Issue #325](https://github.com/Shudesu/line-harness-oss/issues/325) create-line-harness: セットアップの案内文が実画面と合っていない箇所（R2 有効化 / Messaging API 有効化 / 友だち追加オプション） — 一次分類・詳細確認前
 - [Issue #324](https://github.com/Shudesu/line-harness-oss/issues/324) create-line-harness: R2 有効化と cron 空き本数を事前チェックしないため、リソース作成後に失敗する — 一次分類・詳細確認前
 - [Issue #281](https://github.com/Shudesu/line-harness-oss/issues/281) update: adoption path (unstamped/v0.0.0-dev) validates full migration history and always fails on historical destructive migrations (#027, #029), even when checksums are correctly recorded — 一次分類・詳細確認前
@@ -39,17 +39,17 @@
 
 ## 通常の不具合・保守
 
-- [PR #389](https://github.com/Shudesu/line-harness-oss/pull/389) fix(web): ダイアログの余白と、スマホでの左右の余白を直す — 一次分類・詳細確認前
+- [PR #389](https://github.com/Shudesu/line-harness-oss/pull/389) fix(web): ダイアログの余白と、スマホでの左右の余白を直す — 修正候補を検証済み・公開/配布は未反映（[検証結果](https://github.com/Shudesu/line-harness-oss/pull/389#issuecomment-6397811181)）
 - [PR #386](https://github.com/Shudesu/line-harness-oss/pull/386) fix: 同時刻に記録されたメッセージがチャット履歴で逆順に表示される — 一次分類・詳細確認前
-- [PR #370](https://github.com/Shudesu/line-harness-oss/pull/370) fix: 公開画像のGET・HEADをAPI共通レート制限から除外 — 一次分類・詳細確認前
+- [PR #370](https://github.com/Shudesu/line-harness-oss/pull/370) fix: 公開画像のGET・HEADをAPI共通レート制限から除外 — 修正候補を検証済み・公開/配布は未反映（[検証結果](https://github.com/Shudesu/line-harness-oss/pull/370#issuecomment-6397811529)）
 - [PR #356](https://github.com/Shudesu/line-harness-oss/pull/356) fix(webinar): 相談枠の案内文を「15分」固定から予約メニューの所要時間に合わせる — 一次分類・詳細確認前
 - [PR #317](https://github.com/Shudesu/line-harness-oss/pull/317) fix(forms): allow webhook notifications without LINE replies — 一次分類・詳細確認前
 - [PR #261](https://github.com/Shudesu/line-harness-oss/pull/261) fix(liff): upsert friend in /api/liff/link to survive the follow-webhook race — 一次分類・詳細確認前
 - [PR #253](https://github.com/Shudesu/line-harness-oss/pull/253) fix(mcp): stop flagging the expected friend-count gap as broken sync — 一次分類・詳細確認前
 - [PR #236](https://github.com/Shudesu/line-harness-oss/pull/236) fix(db): messages_log の delivery_type CHECK に 'test' を追加(レガシーDBのテスト配信ログ失敗の修正) — 一次分類・詳細確認前
 - [PR #224](https://github.com/Shudesu/line-harness-oss/pull/224) fix(worker): scenario step の到達タグ付与で tag_change イベントを発火する — 一次分類・詳細確認前
-- [Issue #388](https://github.com/Shudesu/line-harness-oss/issues/388) Bug: 管理画面のダイアログの余白が無い・スマホで画面の左右に接する — 一次分類・詳細確認前
-- [Issue #369](https://github.com/Shudesu/line-harness-oss/issues/369) 公開画像のGET・HEADにもAPI共通レート制限が適用される — 一次分類・詳細確認前
+- [Issue #388](https://github.com/Shudesu/line-harness-oss/issues/388) Bug: 管理画面のダイアログの余白が無い・スマホで画面の左右に接する — 修正候補を検証済み・公開/配布は未反映（[検証結果](https://github.com/Shudesu/line-harness-oss/issues/388#issuecomment-6397811352)）
+- [Issue #369](https://github.com/Shudesu/line-harness-oss/issues/369) 公開画像のGET・HEADにもAPI共通レート制限が適用される — 修正候補を検証済み・公開/配布は未反映（[検証結果](https://github.com/Shudesu/line-harness-oss/issues/369#issuecomment-6397815774)）
 - [Issue #233](https://github.com/Shudesu/line-harness-oss/issues/233) テスト配信のログ書き込みがレガシーDBで CHECK constraint failed になる(migration 026 の前提誤り) — 一次分類・詳細確認前
 - [Issue #185](https://github.com/Shudesu/line-harness-oss/issues/185) [Bug] manage_tracked_links (action=list) always returns empty array — 一次分類・詳細確認前
 - [Issue #119](https://github.com/Shudesu/line-harness-oss/issues/119) Outgoing Webhook が message.received で発火しない — 一次分類・詳細確認前
