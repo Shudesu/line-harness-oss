@@ -18,13 +18,13 @@
 
 これらは配信安全性の一部の改善です。[Issue #64](https://github.com/Shudesu/line-harness-oss/issues/64)全体の完了を意味しません。実ユーザーへの試験送信や、受付不明の配信の再送は行っていません。
 
-## 次に確認するもの
+## 追加検証の結果（2026-10-25）
 
-- [PR #389 / Issue #388](https://github.com/Shudesu/line-harness-oss/pull/389): ダイアログの余白・スマートフォン幅。報告と修正案を一つの作業として確認します。
-- [PR #370 / Issue #369](https://github.com/Shudesu/line-harness-oss/pull/370): 公開画像のレート制限。画像取得と、認証を要する管理APIの制限を分けて検証します。
-- [Issue #351](https://github.com/Shudesu/line-harness-oss/issues/351)・[Issue #358](https://github.com/Shudesu/line-harness-oss/issues/358): セットアップ時のSQL引数の受け渡し。Windowsでの挙動と、移行を途中状態にしないことを確認します。
+- [PR #389 / Issue #388の結果](https://github.com/Shudesu/line-harness-oss/pull/389#issuecomment-6397811181): ダイアログの余白・幅を検証。公開版で87テスト・型検査、Cloud向け適応版で86テスト・型検査・ビルドが成功しました。Kumoのclass結合と、操作・API呼出し・文言を変えていないことを確認しています。ブラウザ目視・iOS Safariは未検証です。
+- [PR #370 / Issue #369の結果](https://github.com/Shudesu/line-harness-oss/pull/370#issuecomment-6397811529): 公開画像GET/HEADと管理APIの認証・制限を分け、合成R2を使った計9ケースを確認。Cloud向けWorker全1,836テスト・型検査も成功しました。実R2・LINE上の表示は未確認で、画像不表示の全原因を429と判断していません。
+- [Issue #351の結果](https://github.com/Shudesu/line-harness-oss/issues/351#issuecomment-6397815972)・[Issue #358の結果](https://github.com/Shudesu/line-harness-oss/issues/358#issuecomment-6397816202): Windowsランナーで元の複数行SQLの失敗を、Windows/Linuxで先頭コメントの失敗を再現しました。固定の読取SQLを1行で組み立て、再開時に先頭コメントを除く候補は両OSで成功。CLI全214テスト・型検査・ビルドも成功しました。remote D1・Windows11端末での全セットアップは未検証です。
 
-ここでの掲載順は確認の優先度で、実装や公開日の確約ではありません。既存の利用者への約束を変更するものでもありません。
+修正候補は保存済みですが、公開取り込み・配布・本番反映はまだです。次は公開側への適応差分と反映条件を確認し、採用先・配布版を元のスレッドへ追記します。検証成功を、公開日や全件採用の確約にはしません。
 
 ## 状態の読み方
 
