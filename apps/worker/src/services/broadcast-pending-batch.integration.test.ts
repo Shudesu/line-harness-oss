@@ -42,6 +42,21 @@ function setup(count=1001,loseAt=2,rejectCode?:number) {
  return {db,sqlite,row,plan,friend,run,accepted,recipients,multicast,app};
 }
 describe('durable standard multicast request plans',()=>{
+ it.each([
+  'LINEの受付結果を確認できませんでした。重複配信を避けるため、再送前に配信状況を確認してください。',
+  LEGACY_UNCERTAIN_REVIEW,
+ ])('preserves an unresolved legacy send when its account is disabled and repaired: %s',async reason=>{
+  const s=setup(1,999);
+  s.sqlite.prepare('UPDATE broadcasts SET last_error=?').run(reason);
+  s.sqlite.exec("UPDATE line_accounts SET is_active=0 WHERE id='a'");
+  await s.run();
+  const whileDisabled=s.row();
+  s.sqlite.exec("UPDATE line_accounts SET is_active=1 WHERE id='a'");
+  await s.run();await s.run();
+  expect(s.multicast).not.toHaveBeenCalled();
+  expect(whileDisabled).toMatchObject({status:'sending',success_count:0,pending_batch:null,last_error:reason});
+  expect(s.row()).toMatchObject({status:'sending',success_count:0,pending_batch:null,last_error:LEGACY_UNCERTAIN_REVIEW});
+ });
  it('replays the original accepted unknown batch before a new eligible prefix, without duplicate acceptance',async()=>{
   const s=setup();await s.run();const original=s.row().pending_batch;s.friend('new','1900-01-01');await s.run();
   expect(s.multicast.mock.calls[1]).toEqual(s.multicast.mock.calls[2]);expect(s.recipients()).toHaveLength(1002);expect(new Set(s.recipients()).size).toBe(1002);

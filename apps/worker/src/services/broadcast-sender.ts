@@ -33,10 +33,13 @@ export async function resolveBroadcastSender(
     const failure = error instanceof BroadcastSenderError
       ? error
       : new BroadcastSenderError('送信元情報を確認できないため、配信を停止しました。時間をおいて確認してください。');
+    // Existing delivery errors can be the only evidence of an unknown legacy
+    // request. Keep that evidence so repairing a sender cannot enable a resend.
     // Recording failure must never turn an unavailable sender into a fallback.
     try {
       await db.prepare(
-        "UPDATE broadcasts SET last_error = ? WHERE id = ? AND status IN ('draft','scheduled','sending')",
+        `UPDATE broadcasts SET last_error = ? WHERE id = ? AND status IN ('draft','scheduled','sending')
+          AND (last_error IS NULL OR last_error = '')`,
       ).bind(failure.message, broadcast.id).run();
     } catch { /* fail closed */ }
     throw failure;
