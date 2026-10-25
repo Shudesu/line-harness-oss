@@ -177,6 +177,99 @@ const spec = {
     },
   },
   paths: {
+    // ── Booking (予約不可時間) ───────────────────────────────────────────────
+    '/api/booking/admin/staff/{id}/time-off': {
+      get: {
+        tags: ['Booking'],
+        summary: 'スタッフの予約不可時間を取得（臨時 + 定例）',
+        description:
+          '臨時（日付指定）と定例（曜日指定）を同時に返す。両者は排他ではなく重なる。',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'from', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'to', in: 'query', schema: { type: 'string', format: 'date' } },
+        ],
+        responses: {
+          '200': { description: '{ time_off: [...], rules: [...] }' },
+          '404': { description: 'staff_not_found_in_account' },
+        },
+      },
+      post: {
+        tags: ['Booking'],
+        summary: '臨時の予約不可時間を追加（外出・会議など）',
+        description: '1 日に複数登録できる。既存の定例（休憩）に上書きせず追加される。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  work_date: { type: 'string', format: 'date', description: 'YYYY-MM-DD (JST)' },
+                  start_time: { type: 'string', description: 'HH:MM (JST)' },
+                  end_time: { type: 'string', description: 'HH:MM (JST)' },
+                  reason: { type: 'string' },
+                },
+                required: ['work_date', 'start_time', 'end_time'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: '{ ok: true, id }' },
+          '400': { description: 'missing_fields' },
+          '422': { description: 'invalid_range' },
+        },
+      },
+    },
+    '/api/booking/admin/staff/{id}/time-off/{timeOffId}': {
+      delete: {
+        tags: ['Booking'],
+        summary: '臨時の予約不可時間を削除',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'timeOffId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: '{ ok: true }' } },
+      },
+    },
+    '/api/booking/admin/staff/{id}/time-off-rules': {
+      put: {
+        tags: ['Booking'],
+        summary: '定例の予約不可時間を全置換（毎週の休憩など）',
+        description: 'availability-rules と同じく送られた配列で全置換する。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  rules: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        weekday: { type: 'integer', minimum: 0, maximum: 6, description: '0=日曜' },
+                        start_time: { type: 'string', description: 'HH:MM (JST)' },
+                        end_time: { type: 'string', description: 'HH:MM (JST)' },
+                        reason: { type: 'string' },
+                      },
+                      required: ['weekday', 'start_time', 'end_time'],
+                    },
+                  },
+                },
+                required: ['rules'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: '{ ok: true, count }' },
+          '422': { description: 'invalid_weekday / invalid_range' },
+        },
+      },
+    },
     // ── Friends ─────────────────────────────────────────────────────────────
     '/api/friends': {
       get: {
