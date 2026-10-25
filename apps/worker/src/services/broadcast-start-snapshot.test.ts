@@ -46,7 +46,19 @@ function setup(lane: Lane, edit?: string) {
   // The claim still runs against SQLite, rather than returning a mocked lock result.
   const prepare = db.prepare.bind(db);
   let edited = false;
+  let senderReads = 0;
+  let fault: { phase: 'sender' | 'claim' | 'after-claim'; competing: boolean } | undefined;
   vi.spyOn(db, 'prepare').mockImplementation(sql => {
+    if (sql === 'SELECT * FROM line_accounts WHERE id = ?') senderReads++;
+    if (fault && (
+      (fault.phase === 'sender' && senderReads === 1 && sql === 'SELECT * FROM line_accounts WHERE id = ?')
+      || (fault.phase === 'after-claim' && senderReads === 2 && sql === 'SELECT * FROM line_accounts WHERE id = ?')
+      || (fault.phase === 'claim' && /UPDATE broadcasts\s+SET status = 'sending'/.test(sql))
+    )) {
+      if (fault.competing) sqlite.exec("UPDATE broadcasts SET status='sending' WHERE id='campaign'");
+      fault = undefined;
+      throw new Error('Synthetic preflight or claim database failure');
+    }
     if (edit && !edited && /UPDATE broadcasts\s+SET status = 'sending'/.test(sql)) {
       edited = true;
       sqlite.exec(`UPDATE broadcasts SET ${edit} WHERE id='campaign'`);
@@ -62,7 +74,8 @@ function setup(lane: Lane, edit?: string) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       ...(lane === 'segment' ? { body: JSON.stringify({ conditions: { operator: 'AND', rules: [{ type: 'is_following', value: true }] } }) } : {}),
     }, { DB: db, LINE_CHANNEL_ACCESS_TOKEN: 'synthetic-default' });
-  return { row, run, send, multicast, edited: () => edited };
+  const fail = (phase: 'sender' | 'claim' | 'after-claim', competing = false) => { fault = { phase, competing }; };
+  return { row, run, send, multicast, fail, edited: () => edited };
 }
 
 describe('broadcast start uses the validated editable snapshot', () => {
@@ -111,5 +124,23 @@ describe('broadcast start uses the validated editable snapshot', () => {
     expect(s.row()).toMatchObject({ status: 'sending', batch_offset: 0 });
     if (lane === 'personalized' || lane === 'dedup') expect(s.row().total_count).toBe(1);
     if (lane !== 'dedup') expect(s.row().segment_conditions).toEqual(expect.any(String));
+  });
+  it.each(['sender', 'claim'] as const)('does not release another sender after a pre-claim %s failure', async phase => {
+    const s = setup('scheduled');
+    s.fail(phase, true);
+    await s.run();
+    expect(s.row().status).toBe('sending');
+    await s.run();
+    expect(s.send).not.toHaveBeenCalled();
+  });
+  it.each(['sender', 'claim', 'after-claim'] as const)('can retry a safe %s setup failure without a competing sender', async phase => {
+    const s = setup('scheduled');
+    s.fail(phase);
+    await s.run();
+    expect(s.row().status).toBe('scheduled');
+    expect(s.send).not.toHaveBeenCalled();
+    await s.run();
+    expect(s.row().status).toBe('sent');
+    expect(s.send).toHaveBeenCalledTimes(1);
   });
 });

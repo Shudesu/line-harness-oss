@@ -510,16 +510,19 @@ export async function processScheduledBroadcasts(
         if (wouldExceedMonthlyQuota(usage, estimate)) continue;
       }
     }
+    let claimed = false;
     try {
       await resolveBroadcastSender(db, broadcast, lineClient);
       // Optimistic lock: claim this broadcast (scheduled → sending)
-      if (!await claimBroadcastStart(db, broadcast)) continue;
+      claimed = await claimBroadcastStart(db, broadcast);
+      if (!claimed) continue;
 
       await processBroadcastSend(db, lineClient, broadcast.id, workerUrl);
     } catch (err) {
       console.error(`Failed to send scheduled broadcast ${broadcast.id}:`, err);
-      if (err instanceof BroadcastDeliveryError) continue;
-      // Reset to scheduled so it can be retried next cron
+      if (!claimed || err instanceof BroadcastDeliveryError) continue;
+      // Only a confirmed claim grants permission to restore a safe setup failure.
+      // A preflight/claim error must not release another executor's sending row.
       try {
         await db.prepare(`UPDATE broadcasts SET status = 'scheduled' WHERE id = ? AND status = 'sending'`)
           .bind(broadcast.id).run();
