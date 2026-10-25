@@ -45,16 +45,20 @@ describe('durable standard multicast request plans',()=>{
  it.each([
   'LINEの受付結果を確認できませんでした。重複配信を避けるため、再送前に配信状況を確認してください。',
   LEGACY_UNCERTAIN_REVIEW,
- ])('preserves an unresolved legacy send when its account is disabled and repaired: %s',async reason=>{
+ ].flatMap(reason=>['sender','claim'].map(failure=>({reason,failure}))))('preserves legacy uncertainty through a $failure failure and repair: $reason',async({reason,failure})=>{
   const s=setup(1,999);
   s.sqlite.prepare('UPDATE broadcasts SET last_error=?').run(reason);
-  s.sqlite.exec("UPDATE line_accounts SET is_active=0 WHERE id='a'");
+  if(failure==='sender')s.sqlite.exec("UPDATE line_accounts SET is_active=0 WHERE id='a'");
+  else {
+   const prepare=s.db.prepare.bind(s.db);let fail=true;
+   s.db.prepare=sql=>{if(fail && sql.startsWith('UPDATE broadcasts SET batch_offset = -1')){fail=false;throw new Error('Synthetic claim unavailable');}return prepare(sql);};
+  }
   await s.run();
-  const whileDisabled=s.row();
-  s.sqlite.exec("UPDATE line_accounts SET is_active=1 WHERE id='a'");
+  const whileUnavailable=s.row();
+  if(failure==='sender')s.sqlite.exec("UPDATE line_accounts SET is_active=1 WHERE id='a'");
   await s.run();await s.run();
   expect(s.multicast).not.toHaveBeenCalled();
-  expect(whileDisabled).toMatchObject({status:'sending',success_count:0,pending_batch:null,last_error:reason});
+  expect(whileUnavailable).toMatchObject({status:'sending',success_count:0,pending_batch:null,last_error:reason});
   expect(s.row()).toMatchObject({status:'sending',success_count:0,pending_batch:null,last_error:LEGACY_UNCERTAIN_REVIEW});
  });
  it('replays the original accepted unknown batch before a new eligible prefix, without duplicate acceptance',async()=>{

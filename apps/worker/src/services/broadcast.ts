@@ -604,8 +604,11 @@ export async function processQueuedBroadcasts(
                   AND pending_batch_id IS ? AND pending_batch IS ? AND dedup_progress IS ?`,
                 values: [broadcast.batch_lock_at, broadcast.success_count, broadcast.last_error ?? null,
                   broadcast.message_type, broadcast.message_content, broadcast.pending_batch_id ?? null, broadcast.pending_batch ?? null, broadcast.dedup_progress ?? null] };
+            // A setup error must not erase the only hold evidence for an
+            // unknown historical request, even before a claim is acquired.
             await db.prepare(`UPDATE broadcasts SET last_error = ? WHERE id = ?
-              AND status = 'sending' AND sent_at IS NULL ${guard.sql}`)
+              AND status = 'sending' AND sent_at IS NULL ${guard.sql}
+              AND (last_error IS NULL OR last_error = '')`)
               .bind(reason, broadcast.id, ...guard.values).run();
           }
         } catch { /* best effort; never unlock or overwrite a newer execution */ }
