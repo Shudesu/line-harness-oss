@@ -624,3 +624,73 @@ export interface GetConversationParams {
   limit?: number
   before?: string
 }
+
+// ─── Groups & Tasks ──────────────────────────────────────────────────────────
+
+export type GroupStatus = 'joined' | 'left'
+
+export interface LineGroup {
+  id: string
+  accountId: string | null
+  name: string | null
+  status: GroupStatus
+  messageCount: number
+  lastMessageAt: string | null
+  joinedAt: string | null
+  leftAt: string | null
+  createdAt: string
+  updatedAt: string
+  tags: Pick<Tag, 'id' | 'name' | 'color'>[]
+}
+
+export interface ListGroupsParams {
+  tagId?: string
+  accountId?: string
+  status?: GroupStatus
+}
+
+export type TaskStatus = 'todo' | 'doing' | 'done'
+
+export interface Task {
+  id: string
+  groupId: string | null
+  groupName?: string | null
+  title: string
+  status: TaskStatus
+  /** 'YYYY-MM-DD', or null when the task has no deadline. */
+  dueDate: string | null
+  assignee: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TaskCounts {
+  todo: number
+  doing: number
+  done: number
+  /** Past-due tasks that are not yet done. */
+  overdue: number
+}
+
+export interface CreateTaskInput {
+  title: string
+  groupId?: string | null
+  status?: TaskStatus
+  dueDate?: string | null
+  assignee?: string | null
+}
+
+export interface UpdateTaskInput {
+  title?: string
+  status?: TaskStatus
+  dueDate?: string | null
+  assignee?: string | null
+  groupId?: string | null
+}
+
+export interface ListTasksParams {
+  status?: TaskStatus
+  groupId?: string
+  /** Exclude completed tasks. Ignored when `status` is given. */
+  openOnly?: boolean
+}

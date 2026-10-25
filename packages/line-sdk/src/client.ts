@@ -1,6 +1,7 @@
 import type {
   BroadcastRequest,
   FlexContainer,
+  GroupSummary,
   Message,
   MulticastRequest,
   PushMessageRequest,
@@ -109,6 +110,21 @@ export class LineClient {
       `/v2/bot/profile/${encodeURIComponent(userId)}`,
     );
     return data as UserProfile;
+  }
+
+  // ─── Groups ──────────────────────────────────────────────────────────────
+
+  /**
+   * Group name and icon. Only available while the bot is a member, and the
+   * endpoint is unavailable on some plans — callers should treat a rejection
+   * as "name unknown" rather than an error worth failing over.
+   */
+  async getGroupSummary(groupId: string): Promise<GroupSummary> {
+    const { data } = await this.request(
+      'GET',
+      `/v2/bot/group/${encodeURIComponent(groupId)}/summary`,
+    );
+    return data as GroupSummary;
   }
 
   // ─── Messaging ───────────────────────────────────────────────────────────

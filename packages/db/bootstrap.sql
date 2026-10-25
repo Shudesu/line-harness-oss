@@ -505,6 +505,13 @@ CREATE TABLE IF NOT EXISTS google_calendar_connections (
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS group_tags (
+  group_id    TEXT NOT NULL REFERENCES line_groups (id) ON DELETE CASCADE,
+  tag_id      TEXT NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
+  assigned_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  PRIMARY KEY (group_id, tag_id)
+);
+
 CREATE TABLE IF NOT EXISTS incoming_webhooks (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
@@ -531,6 +538,19 @@ CREATE TABLE IF NOT EXISTS line_accounts (
   created_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 , login_channel_id TEXT, login_channel_secret TEXT, liff_id TEXT, token_expires_at TEXT);
+
+CREATE TABLE IF NOT EXISTS line_groups (
+  id              TEXT PRIMARY KEY,
+  account_id      TEXT REFERENCES line_accounts (id) ON DELETE SET NULL,
+  name            TEXT,
+  status          TEXT NOT NULL DEFAULT 'joined' CHECK (status IN ('joined', 'left')),
+  message_count   INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
+  last_message_at TEXT,
+  joined_at       TEXT,
+  left_at         TEXT,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
 
 CREATE TABLE IF NOT EXISTS link_clicks (
   id TEXT PRIMARY KEY,
@@ -959,6 +979,17 @@ CREATE TABLE IF NOT EXISTS tags (
   created_at                  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS tasks (
+  id         TEXT PRIMARY KEY,
+  group_id   TEXT REFERENCES line_groups (id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done')),
+  due_date   TEXT,
+  assignee   TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
 CREATE TABLE IF NOT EXISTS templates (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
@@ -1274,6 +1305,8 @@ CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_google_calendar_connections_staff
   ON google_calendar_connections (line_account_id, staff_id, is_active);
 
+CREATE INDEX IF NOT EXISTS idx_group_tags_tag_id ON group_tags (tag_id);
+
 CREATE INDEX IF NOT EXISTS idx_health_logs_account_created_at
   ON account_health_logs (line_account_id, created_at DESC);
 
@@ -1281,6 +1314,10 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON booking_idempotency_keys (
 
 CREATE INDEX IF NOT EXISTS idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_line_groups_account      ON line_groups (account_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_line_groups_last_message ON line_groups (last_message_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_link_clicks_friend ON link_clicks (friend_id);
 
@@ -1375,6 +1412,10 @@ CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
 CREATE INDEX IF NOT EXISTS idx_stripe_events_friend ON stripe_events (friend_id);
 
 CREATE INDEX IF NOT EXISTS idx_stripe_events_type ON stripe_events (event_type);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_group      ON tasks (group_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks (status, due_date);
 
 CREATE INDEX IF NOT EXISTS idx_templates_category ON templates (category);
 
