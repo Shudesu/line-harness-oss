@@ -24,6 +24,7 @@ L Harness本体のソフトウェア利用料は **0円** です。LINE公式ア
 現在確認している課題、検証結果、公開版への反映状況は[プロジェクトの対応状況](docs/project-status.md)にまとめています。報告・修正案・再現テストの提供ありがとうございます。
 
 - [公開済みの変更と導入版](https://github.com/Shudesu/line-harness-oss/releases)
+- [2026-10-25の活動報告](docs/updates/2026-10-25-maintenance.md)
 - [PR・Issueの現在地と次の確認事項](docs/project-status.md)
 - [報告・提案・開発への参加方法](CONTRIBUTING.md)
 
