@@ -75,9 +75,11 @@
     "068_media_inquiries.sql",
     "069_rich_menu_selected.sql",
     "070_admin_sso_jti.sql",
+    "071_incoming_media.sql",
     "071_quota_alerts.sql",
     "072_broadcast_last_error.sql",
-    "072_health_logs_composite_index.sql"
+    "072_health_logs_composite_index.sql",
+    "072_incoming_media_service_credentials.sql"
   ],
-  "migrationCount": 78
+  "migrationCount": 80
 }
