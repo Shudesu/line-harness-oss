@@ -18,6 +18,7 @@
  */
 
 import { initBooking } from './booking.js';
+import { initXGate } from './x-gate.js';
 import { initForm } from './form.js';
 import { safeRedirectTarget } from '../lib/safe-redirect.js';
 
@@ -687,7 +688,9 @@ async function main() {
     }
 
     const page = getPage();
-    if (page === 'book') {
+    if (page === 'xgate') {
+      await initXGate(new URLSearchParams(window.location.search).get('gate'));
+    } else if (page === 'book') {
       await initBooking();
     } else if (page === 'salon-book') {
       await initSalonBooking();

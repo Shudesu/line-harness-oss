@@ -1,3 +1,4 @@
+import { initXGate } from './x-gate.js';
 /**
  * LIFF Form Page — Dynamic form renderer for LINE surveys / questionnaires
  *
@@ -46,6 +47,7 @@ interface FormDef {
   onSubmitMessageContent?: string | null;
   onSubmitWebhookFailMessage?: string | null;
   consultationWebinarSlug?: string | null;
+  xGateMigrationRequired?: boolean;
 }
 
 interface ConsultationSlot {
@@ -148,30 +150,7 @@ function renderField(field: FormField): string {
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
   const requiredMark = field.required ? '<span class="required-mark">*</span>' : '';
 
-  // If this is an x_username field, render a fuzzy-search autocomplete input
-  if (field.name === 'x_username') {
-    return `
-      <div class="form-field">
-        <label class="form-label" for="field-${escapeHtml(field.name)}">
-          ${escapeHtml(field.label)}${requiredMark}
-        </label>
-        <div class="x-autocomplete-wrap">
-          <input
-            type="text"
-            name="${escapeHtml(field.name)}"
-            id="field-${escapeHtml(field.name)}"
-            class="form-input x-autocomplete-input"
-            placeholder="${field.placeholder ? escapeHtml(field.placeholder) : 'X ID or 名前で検索（3文字以上）'}"
-            autocomplete="off"
-            ${required} />
-          <ul class="x-suggest-list" id="x-suggest-list" hidden></ul>
-          <p class="x-suggest-hint" id="x-suggest-hint" hidden>3文字以上入力してください</p>
-        </div>
-        <div class="x-conditions" id="x-conditions" hidden></div>
-        <p class="x-conditions-result" id="x-conditions-result" hidden></p>
-      </div>
-    `;
-  }
+  if (field.name === 'x_username') return '';
 
   let inputHtml = '';
 
@@ -1018,34 +997,7 @@ async function submitForm(): Promise<void> {
 
     // Webhook gate — pre-verified by /repliers endpoint
     if (state.formDef.hasSubmitWebhook) {
-      // Check that user was selected from pre-verified repliers list
-      const xField = ((data.x_username as string) ?? '').trim().replace(/^@/, '');
-      if (!xField || xField !== state.verifiedXUsername) {
-        state.submitting = false;
-        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '送信する'; }
-        const existing = getApp().querySelector('.form-error-msg');
-        if (existing) existing.remove();
-        const errEl = document.createElement('p');
-        errEl.className = 'form-error-msg';
-        errEl.style.cssText = 'color:#e53e3e;font-size:14px;margin:8px 0;text-align:center;';
-        errEl.textContent = !xField
-          ? 'X IDを入力してください'
-          : 'X IDを入力後、入力欄の外をタップして確認してください';
-        submitBtn?.parentElement?.insertBefore(errEl, submitBtn);
-        return;
-      }
-
-      // Show success animation (conditions already verified by repliers endpoint)
-      const allPassConditions: Record<string, boolean | null> = {
-        reply: true,
-        like: true,
-        repost: true,
-        follow: true,
-      };
-      if (submitBtn) submitBtn.textContent = '判定中...';
-      await showSubmitConditions(allPassConditions, true);
-      await new Promise(r => setTimeout(r, 500));
-
+      if (submitBtn) submitBtn.textContent = '確認中...';
       // Webhook passed — submit data to server, then show success
       // If message is Flex JSON, show generic success (Flex is sent via LINE push)
       const rawMsg = state.formDef.onSubmitMessageContent || '条件をクリアしました！';
@@ -1112,302 +1064,12 @@ async function submitForm(): Promise<void> {
   }
 }
 
-function attachXAutocomplete(): void {
-  const input = document.querySelector<HTMLInputElement>('.x-autocomplete-input');
-  if (!input) return;
-
-  const suggestList = document.getElementById('x-suggest-list') as HTMLUListElement | null;
-  const hint = document.getElementById('x-suggest-hint');
-  const conditionsEl = document.getElementById('x-conditions');
-  const conditionsResult = document.getElementById('x-conditions-result');
-  if (!suggestList) return;
-
-  let verifyTimer: ReturnType<typeof setTimeout> | null = null;
-  let focusedIndex = -1;
-  let replierPool: XFollowerSuggestion[] = [];
-
-  // Prefetch repliers on form load
-  const gateIdForPool = getGateId();
-  if (state.xHarnessBaseUrl && gateIdForPool) {
-    fetch(`${state.xHarnessBaseUrl}/api/engagement-gates/${encodeURIComponent(gateIdForPool)}/repliers`)
-      .then(r => r.json())
-      .then((json: { success: boolean; data?: XFollowerSuggestion[] }) => {
-        replierPool = json.data ?? [];
-        _replierPoolReady = true;
-        // If page 2 is already visible, remove loading overlay
-        const overlay = document.getElementById('x-loading-overlay');
-        if (overlay) {
-          overlay.remove();
-          input.disabled = false;
-          input.focus();
-        }
-      })
-      .catch(() => {
-        _replierPoolReady = true;
-        const overlay = document.getElementById('x-loading-overlay');
-        if (overlay) {
-          overlay.remove();
-          input.disabled = false;
-        }
-      });
-  } else {
-    _replierPoolReady = true;
-  }
-
-  function hideConditions(): void {
-    if (conditionsEl) conditionsEl.hidden = true;
-    if (conditionsResult) conditionsResult.hidden = true;
-  }
-
-  function hideSuggestions(): void {
-    suggestList!.hidden = true;
-    suggestList!.innerHTML = '';
-    focusedIndex = -1;
-    if (hint) hint.hidden = true;
-  }
-
-  function selectSuggestion(username: string): void {
-    input!.value = username;
-    state.verifiedXUsername = username;
-    hideSuggestions();
-    input!.focus();
-    void triggerVerify(username);
-  }
-
-  function updateFocus(items: NodeListOf<Element>): void {
-    items.forEach((el, i) => {
-      el.classList.toggle('focused', i === focusedIndex);
-    });
-    const focused = items[focusedIndex] as HTMLElement | undefined;
-    focused?.scrollIntoView({ block: 'nearest' });
-  }
-
-  interface VerifyCondition {
-    type: string;
-    label: string;
-    required: boolean;
-    passed: boolean;
-  }
-
-  interface VerifyResult {
-    eligible: boolean;
-    userNotFound?: boolean;
-    conditions?: VerifyCondition[];
-  }
-
-  function renderConditions(result: VerifyResult): void {
-    if (!conditionsEl || !conditionsResult) return;
-
-    if (result.userNotFound) {
-      conditionsEl.hidden = true;
-      conditionsResult.innerHTML = '❌ Xアカウントが見つかりません<br><span style="font-size:11px;font-weight:normal">IDを確認してもう一度お試しください</span>';
-      conditionsResult.className = 'x-conditions-summary fail';
-      conditionsResult.hidden = false;
-      return;
-    }
-
-    const conditionDefs = [
-      { key: 'reply', label: 'リプライ' },
-      { key: 'like', label: 'いいね' },
-      { key: 'repost', label: 'リポスト' },
-      { key: 'follow', label: 'フォロー' },
-    ];
-
-    const conditions = result.conditions ?? [];
-
-    // Build a lookup by type
-    const condMap: Record<string, VerifyCondition> = {};
-    for (const c of conditions) {
-      condMap[c.type] = c;
-    }
-
-    let rowsHtml = '';
-    for (const def of conditionDefs) {
-      const cond = condMap[def.key];
-      if (!cond) continue; // not part of this gate, skip
-      if (!cond.required) {
-        rowsHtml += `
-          <div class="x-condition-row">
-            <div class="x-condition-check na">—</div>
-            <span>${escapeHtml(def.label)}</span>
-          </div>`;
-      } else if (cond.passed) {
-        rowsHtml += `
-          <div class="x-condition-row">
-            <div class="x-condition-check pass">✓</div>
-            <span>${escapeHtml(def.label)}</span>
-          </div>`;
-      } else {
-        rowsHtml += `
-          <div class="x-condition-row">
-            <div class="x-condition-check fail">✗</div>
-            <span>${escapeHtml(def.label)}</span>
-          </div>`;
-      }
-    }
-
-    if (rowsHtml) {
-      conditionsEl.innerHTML = `<div class="x-conditions-card">${rowsHtml}</div>`;
-      conditionsEl.hidden = false;
-    } else {
-      conditionsEl.hidden = true;
-    }
-
-    if (result.eligible) {
-      conditionsResult.textContent = '🎉 条件クリア！特典を受け取れます';
-      conditionsResult.className = 'x-conditions-summary pass';
-    } else {
-      conditionsResult.textContent = '条件を満たしていません';
-      conditionsResult.className = 'x-conditions-summary fail';
-    }
-    conditionsResult.hidden = false;
-  }
-
-  async function triggerVerify(username: string): Promise<void> {
-    const clean = username.trim().replace(/^@/, '');
-    if (!state.xHarnessBaseUrl || !clean) return;
-    const gateId = getGateId();
-    if (!gateId) return;
-
-    try {
-      const url = `${state.xHarnessBaseUrl}/api/engagement-gates/${encodeURIComponent(gateId)}/verify?username=${encodeURIComponent(clean)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('verify failed');
-      const json = await res.json() as { success: boolean; data?: VerifyResult };
-      const verifyData = json.data;
-      if (verifyData) {
-        renderConditions(verifyData);
-        // Mark as verified so submit is allowed even without selecting from suggestions
-        // Allow submit for any verified user (server-side webhook does final eligibility check)
-        if (!verifyData.userNotFound) {
-          state.verifiedXUsername = clean;
-          if (input) input.value = clean; // normalize input (strip @)
-        }
-      }
-    } catch {
-      // Hide stale gate condition rows before showing the error message
-      hideConditions();
-      // Show helpful message on verify error (e.g. X API down)
-      if (conditionsResult) {
-        conditionsResult.innerHTML = '⚠️ 確認中にエラーが発生しました<br><span style="font-size:11px;font-weight:normal">しばらく待ってからもう一度お試しください</span>';
-        conditionsResult.className = 'x-conditions-summary fail';
-        conditionsResult.hidden = false;
-      }
-    }
-  }
-
-  function showSuggestions(suggestions: XFollowerSuggestion[]): void {
-    suggestList!.innerHTML = '';
-    focusedIndex = -1;
-
-    if (suggestions.length === 0) {
-      suggestList!.hidden = true;
-      if (hint) {
-        hint.innerHTML = replierPool.length === 0
-          ? '<span style="color:#e53e3e">⏳ まだリアクションがありません</span><br><span style="font-size:11px;color:#888">ポストにリポスト＆フォローしてから再度お試しください</span>'
-          : '<span style="color:#888">候補に表示されなくても、そのままIDを入力して送信できます</span>';
-        hint.hidden = false;
-      }
-      return;
-    }
-
-    if (hint) hint.hidden = true;
-    for (const s of suggestions) {
-      const li = document.createElement('li');
-      li.className = 'x-suggest-item';
-      li.dataset.username = s.username;
-      const avatarHtml = s.profileImageUrl
-        ? `<img class="x-suggest-avatar" src="${escapeHtml(s.profileImageUrl)}" alt="" />`
-        : `<div class="x-suggest-avatar-placeholder">@</div>`;
-      li.innerHTML = `
-        ${avatarHtml}
-        <div class="x-suggest-names">
-          <span class="x-suggest-display">${escapeHtml(s.displayName)}</span>
-          <span class="x-suggest-username">@${escapeHtml(s.username)}</span>
-        </div>
-      `;
-      li.addEventListener('mousedown', (e) => {
-        e.preventDefault(); // prevent input blur before click
-        selectSuggestion(s.username);
-      });
-      suggestList!.appendChild(li);
-    }
-    suggestList!.hidden = false;
-  }
-
-  input.addEventListener('input', () => {
-    const q = input.value.trim().replace(/^@/, ''); // strip leading @
-    if (verifyTimer !== null) clearTimeout(verifyTimer);
-    // Clear verified flag when user types manually
-    if (q !== state.verifiedXUsername) state.verifiedXUsername = '';
-
-    if (!q) {
-      hideSuggestions();
-      hideConditions();
-      return;
-    }
-
-    if (q.length < 3) {
-      hideSuggestions();
-      hideConditions();
-      if (hint) { hint.textContent = '3文字以上入力してください'; hint.hidden = false; }
-      return;
-    }
-
-    if (hint) hint.hidden = true;
-    const qLower = q.toLowerCase();
-    const matches = replierPool.filter(r =>
-      r.username.toLowerCase().includes(qLower) ||
-      r.displayName.toLowerCase().includes(qLower)
-    ).slice(0, 5);
-    showSuggestions(matches);
-  });
-
-  input.addEventListener('keydown', (e) => {
-    const items = suggestList!.querySelectorAll('.x-suggest-item');
-    if (!items.length) return;
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      focusedIndex = Math.min(focusedIndex + 1, items.length - 1);
-      updateFocus(items);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      focusedIndex = Math.max(focusedIndex - 1, 0);
-      updateFocus(items);
-    } else if (e.key === 'Enter' && focusedIndex >= 0) {
-      e.preventDefault();
-      const focused = items[focusedIndex] as HTMLElement;
-      const username = focused.dataset.username;
-      if (username) selectSuggestion(username);
-    } else if (e.key === 'Escape') {
-      hideSuggestions();
-    }
-  });
-
-  input.addEventListener('blur', () => {
-    // Small delay so mousedown on suggestion can fire first
-    setTimeout(() => {
-      hideSuggestions();
-      // Trigger verify on blur if input has a value
-      const username = input.value.trim().replace(/^@/, '');
-      if (username && getGateId()) {
-        if (verifyTimer !== null) clearTimeout(verifyTimer);
-        verifyTimer = setTimeout(() => {
-          void triggerVerify(username);
-        }, 300);
-      }
-    }, 150);
-  });
-}
-
 function attachFormEvents(): void {
   const form = document.getElementById('liff-form');
   form?.addEventListener('submit', (e) => {
     e.preventDefault();
     void submitForm();
   });
-  attachXAutocomplete();
 }
 
 // ========== Init ==========
@@ -1479,6 +1141,10 @@ export async function initForm(formId: string | null): Promise<void> {
       return;
     }
 
+    if(json.data.xGateMigrationRequired){
+      if(json.data.webhookGateId){await initXGate(json.data.webhookGateId);return;}
+      renderFormError('この企画は参加方法が更新されています。作成者から案内された参加リンクを開いてください。');return;
+    }
     state.formDef = json.data;
 
     // Use only the trusted origin derived from the stored webhook. The raw

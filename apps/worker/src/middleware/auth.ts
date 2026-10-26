@@ -166,6 +166,8 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   if (isPublicFormAction) return next();
 
   if (
+    path === '/api/integrations/x-harness/events' ||
+    path === '/api/integrations/x-harness/engagement' ||
     path === '/webhook' ||
     path === '/docs' ||
     path === '/openapi.json' ||
