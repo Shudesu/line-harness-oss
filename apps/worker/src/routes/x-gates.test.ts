@@ -25,6 +25,9 @@ function fixture() {
       "utf8",
     ),
   );
+  sql.exec(
+    "CREATE TABLE account_settings(id TEXT PRIMARY KEY,line_account_id TEXT,key TEXT,value TEXT,updated_at TEXT,UNIQUE(line_account_id,key));CREATE TABLE broadcasts(id TEXT PRIMARY KEY,title TEXT,message_type TEXT,message_content TEXT,target_type TEXT,target_tag_id TEXT,status TEXT,line_account_id TEXT,created_at TEXT)",
+  );
   const stmt = (query: string, binds: unknown[] = []) => ({
     bind: (...v: unknown[]) => stmt(query, v),
     first: async () => sql.prepare(query).get(...binds) ?? null,
@@ -514,5 +517,168 @@ it("does not downgrade a delivered result when an older claim request finishes l
   await joinXGate(f.env, "g", "f", "a");
   expect(
     f.sql.prepare("SELECT state,result FROM x_gate_entries").get(),
-  ).toMatchObject({ state: "won", result: '{"status":"won"}' });
+  ).toMatchObject({
+    state: "won",
+    result: '{"status":"won"}',
+  });
+});
+
+describe("campaign operator notifications and explicit consent", () => {
+  it("skips a digest without local administrators, delivers once to configured administrators only", async () => {
+    const f = fixture();
+    await f.setup();
+    const fetcher = vi.fn(async (_request: RequestInfo | URL) =>
+      Response.json({}),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const body = {
+      schema: "xh.gate.v1",
+      gateId: "g",
+      kind: "ended",
+      periodKey: "ended",
+      lines: ["結果", "問題", "次の一手"],
+      lineFriendId: "untrusted-recipient",
+    };
+    const first = await f.signed(
+      "/api/integrations/x-harness/events",
+      "x.campaign.digest",
+      body,
+    );
+    expect(await first.json()).toMatchObject({ success: true, skipped: true });
+    expect(fetcher).not.toHaveBeenCalled();
+    f.sql
+      .prepare(
+        "INSERT INTO account_settings(id,line_account_id,key,value) VALUES ('config','a','x_campaign_digest_friend_ids',?)",
+      )
+      .run(JSON.stringify(["f"]));
+    const id = crypto.randomUUID();
+    expect(
+      (
+        await f.signed(
+          "/api/integrations/x-harness/events",
+          "x.campaign.digest",
+          body,
+          id,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await f.signed(
+          "/api/integrations/x-harness/events",
+          "x.campaign.digest",
+          body,
+          id,
+        )
+      ).status,
+    ).toBe(200);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const req = fetcher.mock.calls[0][0] as unknown as Request;
+    expect(((await req.clone().json()) as { to: string }).to).toBe("Ufixture");
+    expect(new URL(req.url).pathname).toBe("/line-api/v2/bot/message/push");
+  });
+  it("creates an audience-scoped draft for early notice, never a scheduled broadcast or push", async () => {
+    const f = fixture();
+    await f.setup();
+    f.sql.exec(
+      "INSERT INTO tags VALUES ('gate_followup_optin:g','gate_followup_optin:g','#2563eb','2020');INSERT INTO friend_tags VALUES ('f','gate_followup_optin:g','2020')",
+    );
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const id = crypto.randomUUID();
+    const body = {
+      schema: "xh.gate.v1",
+      gateId: "g",
+      sourceGateIds: ["g"],
+      title: "Next campaign",
+      entryUrl: "https://x.example/c/spring",
+    };
+    expect(
+      (
+        await f.signed(
+          "/api/integrations/x-harness/events",
+          "x.campaign.early_notice",
+          body,
+          id,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await f.signed(
+          "/api/integrations/x-harness/events",
+          "x.campaign.early_notice",
+          body,
+          id,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      f.sql
+        .prepare("SELECT status,target_type,line_account_id FROM broadcasts")
+        .get(),
+    ).toMatchObject({
+      status: "draft",
+      target_type: "tag",
+      line_account_id: "a",
+    });
+    expect(f.sql.prepare("SELECT COUNT(*) n FROM broadcasts").get()).toEqual({
+      n: 1,
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("uses opt-in reply only and preserves a coupon for the result page when no reply token exists", async () => {
+    const f = fixture();
+    await f.setup();
+    f.sql.exec(
+      "INSERT INTO x_gate_entries(gate_id,friend_id,line_account_id,line_user_id,following,state,result,created_at,last_seen_at) VALUES ('g','f','a','Ufixture',1,'lost','{}',1,1)",
+    );
+    const fetcher = vi.fn(async (_request: RequestInfo | URL) =>
+      Response.json({
+        success: true,
+        data: {
+          offer: "coupon",
+          coupon: { label: "Gift", value: "SYNTHETIC", type: "coupon_code" },
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    await handleXGateWebhook(f.env, {
+      type: "postback",
+      friendId: "f",
+      lineAccountId: "a",
+      lineUserId: "Ufixture",
+      sourceId: "followup-click",
+      data: "action=xgate_followup&gate=g",
+      proxyDispatch: proxyMock.dispatch,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0][0])).toContain(
+      "/api/integrations/line-harness/events",
+    );
+    expect(
+      JSON.parse(
+        (f.sql.prepare("SELECT result FROM x_gate_entries").get() as any)
+          .result,
+      ),
+    ).toMatchObject({
+      followupAccepted: true,
+      followupCoupon: { value: "SYNTHETIC" },
+    });
+    expect(
+      f.sql
+        .prepare("SELECT COUNT(*) n FROM tags WHERE id='gate_followup_optin:g'")
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+});
+
+it('returns only locally configured operator recipients from the matching LINE account',async()=>{
+ const f=fixture();f.sql.prepare("INSERT INTO account_settings(id,line_account_id,key,value) VALUES ('config','a','x_campaign_digest_friend_ids',?)").run(JSON.stringify(['f','outside']));
+ const response=await f.app.request('/api/x-campaign-notifications/a',undefined,f.env);expect(response.status).toBe(200);expect(await response.json()).toEqual({success:true,data:[{id:'f',displayName:'Fixture'}]});
+});
+
+it('rejects partner redirects with the Workers-compatible manual mode',async()=>{
+ const f=fixture();await f.setup();const fetcher=vi.fn(async(_url:RequestInfo|URL,_init?:RequestInit)=>new Response(null,{status:302,headers:{Location:'https://untrusted.example'}}));vi.stubGlobal('fetch',fetcher);
+ await expect(joinXGate(f.env,'g','f','a')).rejects.toThrow('x_gate_http_302');expect(fetcher).toHaveBeenCalledTimes(1);expect(fetcher.mock.calls[0][1]?.redirect).toBe('manual');
 });

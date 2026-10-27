@@ -1,3 +1,4 @@
+import { acceptXGateFollowup } from "./x-gate-followup.js";
 import type { HarnessProxyDispatch } from "./line-proxy-send.js";
 import { bodyDigest } from "./harness-gate-protocol.js";
 import type { Env } from "../index.js";
@@ -30,7 +31,7 @@ export async function handleXGateWebhook(
     action = params.get("action");
   if (
     input.type === "postback" &&
-    !["xgate_join", "xgate_check"].includes(action ?? "")
+    !["xgate_join", "xgate_check", "xgate_followup"].includes(action ?? "")
   )
     return false;
   if (input.type === "message" && input.data?.trim() !== "参加") {
@@ -135,6 +136,35 @@ export async function handleXGateWebhook(
     .bind(sourceId, input.friendId, gateId, Date.now())
     .run();
   try {
+    if (action === "xgate_followup") {
+      const result = await acceptXGateFollowup(
+        env,
+        gateId,
+        input.friendId,
+        input.lineAccountId,
+      );
+      if (input.replyToken) {
+        const account = await getLineAccountById(db, input.lineAccountId);
+        if (!account?.is_active) throw new Error("account_unavailable");
+        await sendGateLineMessage(
+          account.channel_access_token,
+          input.lineUserId,
+          { type: "text", text: result.message },
+          { ...proxy, replyToken: input.replyToken },
+        );
+        await logGateReply(db, input.friendId, input.lineAccountId, sourceId, {
+          type: "text",
+          text: result.message,
+        });
+      }
+      await db
+        .prepare(
+          "UPDATE x_gate_reply_receipts SET status='done' WHERE source_id=?",
+        )
+        .bind(sourceId)
+        .run();
+      return true;
+    }
     if (campaign.tier === "strict") {
       const proof = await db
         .prepare(

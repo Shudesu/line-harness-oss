@@ -36,6 +36,17 @@ export async function sendGateLineMessage(
     );
 }
 export interface GateClaimView {
+  campaign?: {
+    remaining: number | null;
+    unlimited: boolean;
+    participants: number | null;
+    endsAt: string;
+  };
+  display?: { message: string; rankLabel?: string; remainingLabel?: string };
+  followup?: { offer: string; label: string };
+  followupAccepted?: boolean;
+  followupCoupon?: { label: string; value: string; type: string } | null;
+  asks?: string[];
   status: string;
   awardMode?: 'first_come' | 'lottery';
   replyCreatedAt?: number | null;
@@ -58,6 +69,8 @@ export interface GateClaimView {
   reward?: { label: string; type: string; value: string } | null;
 }
 export function gateStatusText(data: GateClaimView): string {
+  if (['won', 'lost', 'rewarded'].includes(data.status) && data.display?.message)
+    return data.display.message;
   if (data.status === 'won' || data.status === 'rewarded')
     return `特典が確定しました${data.rank ? '（受付 #' + data.rank + '）' : ''}。${data.reward?.label ?? ''}`;
   if (data.status === 'lost')
@@ -124,7 +137,14 @@ export function gateFlex(gateId: string, data: GateClaimView): unknown {
       wrap: true,
       margin: 'md',
     });
-  if(data.xUsername&&/^[A-Za-z0-9_]{1,15}$/.test(data.xUsername))body.push({type:'text',text:`確認したXアカウント: @${data.xUsername}`,size:'sm',wrap:true,margin:'md'});
+  if (data.xUsername && /^[A-Za-z0-9_]{1,15}$/.test(data.xUsername))
+    body.push({
+      type: 'text',
+      text: `確認したXアカウント: @${data.xUsername}`,
+      size: 'sm',
+      wrap: true,
+      margin: 'md',
+    });
   if (data.reward)
     body.push(
       { type: 'text', text: data.reward.label, weight: 'bold', wrap: true, margin: 'md' },
@@ -138,8 +158,44 @@ export function gateFlex(gateId: string, data: GateClaimView): unknown {
       wrap: true,
       margin: 'md',
     });
+  if (data.campaign)
+    body.push({
+      type: 'text',
+      text: campaignStatusText(data.campaign),
+      wrap: true,
+      size: 'xs',
+      margin: 'md',
+    });
+  if (data.asks?.length)
+    body.push({ type: 'text', text: campaignAskText(data), wrap: true, size: 'sm', margin: 'md' });
   const actions: any[] = [];
-  if(data.reward&&['url','file'].includes(data.reward.type)&&/^https:\/\//.test(data.reward.value))actions.push({type:'button',style:'primary',action:{type:'uri',label:'特典を開く',uri:data.reward.value}});
+  if (data.status === 'lost' && data.followup)
+    body.push({
+      type: 'text',
+      text: followupConsentText(data.followup.offer),
+      wrap: true,
+      size: 'sm',
+      margin: 'md',
+    });
+  if (data.status === 'lost' && data.followup)
+    actions.push({
+      type: 'button',
+      action: {
+        type: 'postback',
+        label: data.followup.label.slice(0, 20),
+        data: `action=xgate_followup&gate=${encodeURIComponent(gateId)}`,
+      },
+    });
+  if (
+    data.reward &&
+    ['url', 'file'].includes(data.reward.type) &&
+    /^https:\/\//.test(data.reward.value)
+  )
+    actions.push({
+      type: 'button',
+      style: 'primary',
+      action: { type: 'uri', label: '特典を開く', uri: data.reward.value },
+    });
   if (
     data.missing?.includes('follow') &&
     data.brandUsername &&
@@ -182,4 +238,19 @@ export function gateFlex(gateId: string, data: GateClaimView): unknown {
       footer: { type: 'box', layout: 'vertical', contents: actions },
     },
   };
+}
+
+export function campaignStatusText(c: NonNullable<GateClaimView['campaign']>) {
+  return `${c.unlimited ? '在庫上限なし' : `残り ${c.remaining} 名`}${c.participants === null ? '' : `・参加 ${c.participants} 人${c.participants >= 100 ? '以上' : ''}`}・〆切 ${new Date(c.endsAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST`;
+}
+export function campaignAskText(data: GateClaimView) {
+  return `よろしければ ${data.asks?.includes('follow') ? '@' + (data.brandUsername ?? '') + ' のフォロー' : ''}${data.asks?.length === 2 ? '・' : ''}${data.asks?.includes('like') ? '告知投稿へのいいね' : ''}もお願いします（応募条件ではありません）。`;
+}
+
+export function followupConsentText(offer: string) {
+  return offer === 'coupon'
+    ? 'ボタンを押すと参加賞クーポンを受け取れます。'
+    : offer === 'both'
+      ? 'ボタンを押すとクーポンを受け取り、次回のキャンペーン案内をLINEで受け取ることに同意します。'
+      : 'ボタンを押すと、次回のキャンペーン案内をLINEで受け取ることに同意します。';
 }

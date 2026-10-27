@@ -1,4 +1,10 @@
-import { gateStatusText, type GateClaimView } from '../services/x-gate-line-message.js';
+import {
+  gateStatusText,
+  campaignStatusText,
+  campaignAskText,
+  followupConsentText,
+  type GateClaimView,
+} from '../services/x-gate-line-message.js';
 declare const liff: {
   getIDToken(): string | null;
   getAccessToken(): string | null;
@@ -24,7 +30,7 @@ export async function initXGate(gateId: string | null): Promise<void> {
   };
   let busy = false,
     challengeToken = '';
-  async function load(action: 'join' | 'check') {
+  async function load(action: 'join' | 'check' | 'followup') {
     if (busy || !gateId) return;
     busy = true;
     card.replaceChildren();
@@ -42,7 +48,12 @@ export async function initXGate(gateId: string | null): Promise<void> {
       const result = (await response.json()) as {
         success: boolean;
         error?: string;
-        data: GateClaimView & { addFriendUrl?: string | null; siteKey?: string };
+        data: GateClaimView & {
+          addFriendUrl?: string | null;
+          siteKey?: string;
+          message?: string;
+          coupon?: { label: string; value: string };
+        };
       };
       if (!response.ok || !result.success)
         throw new Error(result.error || '現在確認できません。時間をおいてお試しください。');
@@ -90,8 +101,20 @@ export async function initXGate(gateId: string | null): Promise<void> {
         return;
       }
       challengeToken = '';
-      text('p', gateStatusText(data));
-      if(data.xUsername)text('p',`確認したXアカウント: @${data.xUsername}`,'muted');
+      if (action === 'followup') text('p', data.message ?? '受け付けました。');
+      else text('p', gateStatusText(data));
+      if (data.campaign) text('p', campaignStatusText(data.campaign), 'muted');
+      if (data.asks?.length) text('p', campaignAskText(data), 'muted');
+      if (data.followupCoupon) {
+        text('h2', data.followupCoupon.label);
+        text('p', data.followupCoupon.value);
+      }
+      if (data.status === 'lost' && data.followup && !data.followupAccepted) {
+        text('p', followupConsentText(data.followup.offer), 'muted');
+        const opt = text('button', data.followup.label, 'primary') as HTMLButtonElement;
+        opt.onclick = () => void load('followup');
+      }
+      if (data.xUsername) text('p', `確認したXアカウント: @${data.xUsername}`, 'muted');
       if (
         data.displayCode &&
         !data.replyCreatedAt &&

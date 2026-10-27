@@ -1,3 +1,5 @@
+import { handleCampaignEvent } from "../services/x-campaign-events.js";
+import { acceptXGateFollowup } from "../services/x-gate-followup.js";
 import { verifyGateChallenge } from "../services/x-gate-challenge.js";
 import { dispatchLineProxyLocally } from "../services/local-line-proxy.js";
 import { Hono, type Context } from "hono";
@@ -252,8 +254,83 @@ xGates.post("/api/integrations/x-harness/campaigns/:id/cancel", async (c) => {
   ]);
   return c.json({ success: true });
 });
+xGates.get("/api/integrations/x-harness/capabilities", async (c) => {
+  const signed = await partner(c);
+  if (!signed || signed.signature.event !== "x.campaign.capabilities")
+    return c.json({ success: false, error: "Unauthorized" }, 401);
+  return c.json({
+    success: true,
+    data: {
+      schema: "xh.gate.v1",
+      events: ["x.campaign.digest", "x.campaign.early_notice"],
+      followup: true,
+      display: true,
+    },
+  });
+});
+xGates.get('/api/x-campaign-notifications/:accountId',async c=>{
+  if(!['owner','admin'].includes(c.get('staff')?.role??''))return c.json({success:false,error:'Admin required'},403);
+  const accountId=c.req.param('accountId');
+  if(!await getLineAccountById(c.env.DB,accountId))return c.json({success:false,error:'Account not found'},404);
+  const saved=await c.env.DB.prepare("SELECT value FROM account_settings WHERE line_account_id=? AND key='x_campaign_digest_friend_ids'").bind(accountId).first<{value:string}>();
+  const ids:unknown=JSON.parse(saved?.value??'[]');
+  if(!Array.isArray(ids)||!ids.length)return c.json({success:true,data:[]});
+  const rows=(await c.env.DB.prepare(`SELECT id,display_name AS displayName FROM friends WHERE line_account_id=? AND id IN (${ids.map(()=>'?').join(',')}) ORDER BY display_name,id`).bind(accountId,...ids).all()).results;
+  return c.json({success:true,data:rows});
+});
+xGates.put("/api/x-campaign-notifications/:accountId", async (c) => {
+  if (!["owner", "admin"].includes(c.get("staff")?.role ?? ""))
+    return c.json({ success: false, error: "Admin required" }, 403);
+  if (!(await getLineAccountById(c.env.DB, c.req.param("accountId"))))
+    return c.json({ success: false, error: "Account not found" }, 404);
+  const body = await c.req.json<{ friendIds?: string[] }>(),
+    ids = body?.friendIds;
+  if (
+    !Array.isArray(ids) ||
+    ids.length > 5 ||
+    ids.some((x) => typeof x !== "string") ||
+    new Set(ids).size !== ids.length
+  )
+    return c.json(
+      { success: false, error: "Select up to five administrators" },
+      400,
+    );
+  for (const id of ids)
+    if (
+      !(await c.env.DB.prepare(
+        "SELECT id FROM friends WHERE id=? AND line_account_id=?",
+      )
+        .bind(id, c.req.param("accountId"))
+        .first())
+    )
+      return c.json({ success: false, error: "Friend account mismatch" }, 400);
+  await c.env.DB.prepare(
+    "INSERT INTO account_settings(id,line_account_id,key,value) VALUES (?,?,'x_campaign_digest_friend_ids',?) ON CONFLICT(line_account_id,key) DO UPDATE SET value=excluded.value,updated_at=?",
+  )
+    .bind(
+      crypto.randomUUID(),
+      c.req.param("accountId"),
+      JSON.stringify(ids),
+      jstNow(),
+    )
+    .run();
+  return c.json({ success: true });
+});
 xGates.post("/api/integrations/x-harness/events", async (c) => {
   const signed = await partner(c);
+  if (
+    signed &&
+    ["x.campaign.digest", "x.campaign.early_notice"].includes(
+      signed.signature.event,
+    )
+  )
+    return handleCampaignEvent(
+      c,
+      signed.signature.event,
+      signed.signature.deliveryId,
+      signed.raw,
+      signed.body,
+    );
   if (
     !signed ||
     ![
@@ -311,6 +388,7 @@ xGates.post("/api/integrations/x-harness/events", async (c) => {
           line_user_id: string;
           following: number;
           reward_reply_at: number | null;
+          result?: string;
         }>();
       if (
         !entry ||
@@ -338,7 +416,17 @@ xGates.post("/api/integrations/x-harness/events", async (c) => {
             kind,
             kind,
             kind,
-            JSON.stringify({ ...b, status: kind }),
+            JSON.stringify({
+              ...b,
+              status: kind,
+              ...(JSON.parse(entry.result ?? "{}").followupAccepted
+                ? {
+                    followupAccepted: true,
+                    followupCoupon:
+                      JSON.parse(entry.result ?? "{}").followupCoupon ?? null,
+                  }
+                : {}),
+            }),
             b.gateId,
             b.lineFriendId,
           ),
@@ -397,6 +485,21 @@ xGates.post("/api/integrations/x-harness/events", async (c) => {
           db
             .prepare("UPDATE friends SET metadata=? WHERE id=?")
             .bind(JSON.stringify(metadata), friend.id),
+        );
+      }
+      if (kind === "lost") {
+        const lostTag = `gate_lost:${b.gateId}`;
+        batch.push(
+          db
+            .prepare(
+              "INSERT OR IGNORE INTO tags(id,name,color,created_at) VALUES (?,?,'#2563eb',?)",
+            )
+            .bind(lostTag, lostTag, jstNow()),
+          db
+            .prepare(
+              "INSERT OR IGNORE INTO friend_tags(friend_id,tag_id,assigned_at) VALUES (?,?,?)",
+            )
+            .bind(b.lineFriendId, lostTag, jstNow()),
         );
       }
       await db.batch(batch);
@@ -692,6 +795,16 @@ async function handleLiffGate(c: Context<Env>): Promise<Response> {
     }
   }
   try {
+    if (c.req.path.endsWith("/followup"))
+      return c.json({
+        success: true,
+        data: await acceptXGateFollowup(
+          c.env,
+          campaign.gate_id,
+          caller.friend.id,
+          campaign.line_account_id,
+        ),
+      });
     const result = await joinXGate(
       c.env,
       campaign.gate_id,
@@ -713,6 +826,7 @@ async function handleLiffGate(c: Context<Env>): Promise<Response> {
 }
 xGates.post("/api/liff/x-gates/:gateId/join", handleLiffGate);
 xGates.post("/api/liff/x-gates/:gateId/check", handleLiffGate);
+xGates.post("/api/liff/x-gates/:gateId/followup", handleLiffGate);
 xGates.on(
   ["GET", "POST"],
   "/api/integrations/x-harness/engagement",
