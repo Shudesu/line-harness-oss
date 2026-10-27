@@ -141,8 +141,7 @@ export async function getDueReminderDeliveries(db: D1Database, now: string): Pro
     // 未配信で配信時刻が到来しているステップをフィルタ
     const dueSteps = steps.filter((step) => {
       if (deliveredIds.has(step.id)) return false;
-      const targetTime = new Date(fr.target_date).getTime() + step.offset_minutes * 60_000;
-      return targetTime <= new Date(now).getTime();
+      return isReminderStepDue(fr.target_date, step.offset_minutes, now);
     });
 
     if (dueSteps.length > 0) {
@@ -150,6 +149,35 @@ export async function getDueReminderDeliveries(db: D1Database, now: string): Pro
     }
   }
   return results;
+}
+
+function isReminderStepDue(targetDate: string, offsetMinutes: number, now: string): boolean {
+  const targetTime = new Date(targetDate).getTime() + offsetMinutes * 60_000;
+  return targetTime <= new Date(now).getTime();
+}
+
+/** Refresh a queued step immediately before dispatch; initial batch rows may be stale. */
+export async function getDueReminderStep(
+  db: D1Database,
+  friendReminderId: string,
+  stepId: string,
+  now: string,
+): Promise<(ReminderStepRow & { friend_id: string }) | null> {
+  const step = await db.prepare(`
+    SELECT s.*, fr.friend_id, fr.target_date
+      FROM friend_reminders fr
+      INNER JOIN reminders r ON r.id = fr.reminder_id
+      INNER JOIN reminder_steps s ON s.reminder_id = fr.reminder_id
+     WHERE fr.id = ? AND s.id = ?
+       AND fr.status = 'active' AND r.is_active = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM friend_reminder_deliveries d
+          WHERE d.friend_reminder_id = fr.id AND d.reminder_step_id = s.id
+       )`)
+    .bind(friendReminderId, stepId)
+    .first<ReminderStepRow & { friend_id: string; target_date: string }>();
+  if (!step || !isReminderStepDue(step.target_date, step.offset_minutes, now)) return null;
+  return step;
 }
 
 /** 配信済みを記録 */
@@ -167,7 +195,7 @@ export async function completeReminderIfDone(db: D1Database, friendReminderId: s
     .bind(friendReminderId).first<{ count: number }>();
 
   if (totalSteps && deliveredSteps && deliveredSteps.count >= totalSteps.count) {
-    await db.prepare(`UPDATE friend_reminders SET status = 'completed', updated_at = ? WHERE id = ?`)
+    await db.prepare(`UPDATE friend_reminders SET status = 'completed', updated_at = ? WHERE id = ? AND status = 'active'`)
       .bind(jstNow(), friendReminderId).run();
   }
 }

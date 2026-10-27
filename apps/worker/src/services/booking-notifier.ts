@@ -29,14 +29,17 @@ export function renderNotificationText(
       return `申し訳ありません、ご希望の枠でお取りできませんでした。\n別の日時で再度お試しください。`;
     case 'expired':
       return `予約リクエストが 24 時間返信が無かったため、期限切れになりました。${detail}`;
+    // Cron can be late; the absolute date stays correct on a delayed retry.
     case 'day_before':
-      return `明日のご予約のお知らせです。${detail}`;
+      return `ご予約のお知らせです。${detail}`;
     case 'hours_before':
-      return `本日のご予約まであと ${ctx.hoursBefore} 時間です。${detail}`;
+      return `ご予約の開始前のお知らせです。${detail}`;
   }
 }
 
 export interface SendNotificationParams {
+  /** Persisted delivery UUID, reused only for retries of that notification. */
+  retryKey?: string;
   channelAccessToken: string;
   toLineUserId: string;
   kind: NotificationKind;
@@ -46,7 +49,7 @@ export interface SendNotificationParams {
 export async function sendBookingNotification(params: SendNotificationParams): Promise<void> {
   const text = renderNotificationText(params.kind, params.ctx);
   const client = new LineClient(params.channelAccessToken);
-  await client.pushMessage(params.toLineUserId, [{ type: 'text', text }]);
+  await client.pushMessage(params.toLineUserId, [{ type: 'text', text }], params.retryKey);
 }
 
 export type BookingNotificationSender = (params: SendNotificationParams) => Promise<void>;

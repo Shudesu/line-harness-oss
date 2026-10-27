@@ -34,7 +34,9 @@ function stubDB(due: DueRow[]) {
           return { success: true, meta: { changes: 1 } };
         },
         async first() {
-          return null;
+          return sql.includes('FROM booking_reminders')
+            ? due.find(row => row.id === bound[2]) ?? null
+            : null;
         },
       };
       return stmt;
