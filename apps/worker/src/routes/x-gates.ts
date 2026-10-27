@@ -268,6 +268,16 @@ xGates.get("/api/integrations/x-harness/capabilities", async (c) => {
     },
   });
 });
+xGates.get('/api/x-campaign-notifications/:accountId',async c=>{
+  if(!['owner','admin'].includes(c.get('staff')?.role??''))return c.json({success:false,error:'Admin required'},403);
+  const accountId=c.req.param('accountId');
+  if(!await getLineAccountById(c.env.DB,accountId))return c.json({success:false,error:'Account not found'},404);
+  const saved=await c.env.DB.prepare("SELECT value FROM account_settings WHERE line_account_id=? AND key='x_campaign_digest_friend_ids'").bind(accountId).first<{value:string}>();
+  const ids:unknown=JSON.parse(saved?.value??'[]');
+  if(!Array.isArray(ids)||!ids.length)return c.json({success:true,data:[]});
+  const rows=(await c.env.DB.prepare(`SELECT id,display_name AS displayName FROM friends WHERE line_account_id=? AND id IN (${ids.map(()=>'?').join(',')}) ORDER BY display_name,id`).bind(accountId,...ids).all()).results;
+  return c.json({success:true,data:rows});
+});
 xGates.put("/api/x-campaign-notifications/:accountId", async (c) => {
   if (!["owner", "admin"].includes(c.get("staff")?.role ?? ""))
     return c.json({ success: false, error: "Admin required" }, 403);

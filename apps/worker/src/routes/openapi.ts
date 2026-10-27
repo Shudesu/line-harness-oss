@@ -188,6 +188,10 @@ const spec = {
       },
     },
     '/api/x-campaign-notifications/{accountId}': {
+      get: {
+        tags:['X gate integration'],summary:'Read the locally configured operator digest recipients. Owner/admin only.',
+        parameters:[{name:'accountId',in:'path',required:true,schema:{type:'string'}}],responses:{'200':{description:'Configured friend IDs and display names within this account'},'403':{description:'Admin required'},'404':{description:'Account not found'}},
+      },
       put: {
         tags: ['X gate integration'], summary: 'Configure operator digest recipients on the LINE side. Owner/admin only; maximum five friend IDs belonging to this LINE account. An empty array disables recipients.',
         parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string' } }],

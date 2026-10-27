@@ -672,3 +672,8 @@ describe("campaign operator notifications and explicit consent", () => {
     ).toEqual({ n: 0 });
   });
 });
+
+it('returns only locally configured operator recipients from the matching LINE account',async()=>{
+ const f=fixture();f.sql.prepare("INSERT INTO account_settings(id,line_account_id,key,value) VALUES ('config','a','x_campaign_digest_friend_ids',?)").run(JSON.stringify(['f','outside']));
+ const response=await f.app.request('/api/x-campaign-notifications/a',undefined,f.env);expect(response.status).toBe(200);expect(await response.json()).toEqual({success:true,data:[{id:'f',displayName:'Fixture'}]});
+});
