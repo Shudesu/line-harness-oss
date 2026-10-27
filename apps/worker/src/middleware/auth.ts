@@ -146,8 +146,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   // unauthenticated LIFF caller receives the redacted public representation.
   // Crucially, this exception is method-aware: PUT/DELETE on the same path
   // must continue through the normal admin authentication below.
-  const isPublicFormDefinition =
-    method === 'GET' && /^\/api\/forms\/[^/]+$/.test(path);
+  const isPublicFormDefinition = method === 'GET' && /^\/api\/forms\/[^/]+$/.test(path);
   if (isPublicFormDefinition) {
     const token = bearerToken(c) ?? cookieToken(c);
     const staff = await authenticateApiToken(c, token);
@@ -167,6 +166,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
 
   if (
     path === '/api/integrations/x-harness/events' ||
+    path === '/api/integrations/x-harness/capabilities' ||
     path === '/api/integrations/x-harness/engagement' ||
     path === '/webhook' ||
     path === '/docs' ||

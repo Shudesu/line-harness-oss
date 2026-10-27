@@ -98,6 +98,17 @@ export async function joinXGate(
     { gateId, lineFriendId: friendId },
   );
   if (!result.success) throw new Error("x_gate_failed");
+  const previous = await env.DB.prepare(
+    "SELECT result FROM x_gate_entries WHERE gate_id=? AND friend_id=?",
+  )
+    .bind(gateId, friendId)
+    .first<{ result: string }>();
+  const saved = JSON.parse(previous?.result ?? "{}");
+  if (saved.followupAccepted) {
+    result.data.followupAccepted = true;
+    result.data.followupCoupon = saved.followupCoupon ?? null;
+  }
+
   await env.DB.prepare(
     "UPDATE x_gate_entries SET participant_id=COALESCE(participant_id,?),state=CASE WHEN state IN ('won','lost','rewarded') AND ? NOT IN ('won','lost','rewarded') THEN state ELSE ? END,result=CASE WHEN state IN ('won','lost','rewarded') AND ? NOT IN ('won','lost','rewarded') THEN result ELSE ? END WHERE gate_id=? AND friend_id=?",
   )
