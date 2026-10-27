@@ -81,6 +81,31 @@ function getRef(): string | null {
   return params.get('ref');
 }
 
+// Ad click IDs / UTM carried on the LIFF URL (from /go/{ref} or a tracked link).
+// /auth/callback persists these for the OAuth path; /api/liff/link needs the
+// client to forward them, otherwise ref_tracking has no fbclid and
+// sendAdConversions (Meta CAPI) silently sends nothing for LIFF-path friends.
+// After a LINE Login round-trip the original query survives in liff.state,
+// so fall back to that when the top-level query is empty.
+function getClickIds(): Record<string, string | undefined> {
+  const top = new URLSearchParams(window.location.search);
+  let inner: URLSearchParams | null = null;
+  const st = top.get('liff.state');
+  if (st) {
+    try { inner = new URLSearchParams(st.replace(/^[^?]*\?/, '')); } catch { inner = null; }
+  }
+  const pick = (k: string) => top.get(k) || inner?.get(k) || undefined;
+  return {
+    fbclid: pick('fbclid'),
+    gclid: pick('gclid'),
+    twclid: pick('twclid'),
+    ttclid: pick('ttclid'),
+    utmSource: pick('utm_source'),
+    utmMedium: pick('utm_medium'),
+    utmCampaign: pick('utm_campaign'),
+  };
+}
+
 function getSavedUuid(): string | null {
   try {
     return localStorage.getItem(UUID_STORAGE_KEY);
@@ -149,6 +174,7 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
             body: JSON.stringify({
               idToken,
               displayName: fp.displayName,
+              ...getClickIds(),
               existingUuid: getSavedUuid(),
               ref: getRef() || undefined,
               ig: params.get('ig') || undefined,
@@ -260,6 +286,7 @@ async function linkAndAddFlow() {
       body: JSON.stringify({
         idToken: rawIdToken,
         displayName: profile.displayName,
+        ...getClickIds(),
         existingUuid: existingUuid,
         ref: ref,
         ig: linkParams.get('ig') || '',
@@ -382,6 +409,7 @@ async function initSalonBooking(): Promise<void> {
     body: JSON.stringify({
       idToken,
       displayName: profile.displayName,
+      ...getClickIds(),
       existingUuid,
       ref: ref || undefined,
       ig: ig || undefined,
@@ -456,6 +484,7 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
     body: JSON.stringify({
       idToken,
       displayName: profile.displayName,
+      ...getClickIds(),
       existingUuid,
       ref: ref || undefined,
       ig: eventParams.get('ig') || undefined,
@@ -523,6 +552,7 @@ async function initWebinar(): Promise<void> {
     body: JSON.stringify({
       idToken,
       displayName: profile.displayName,
+      ...getClickIds(),
       existingUuid,
       ref: ref || undefined,
     }),
@@ -587,6 +617,7 @@ async function initAffiliate(): Promise<void> {
       body: JSON.stringify({
         idToken: liff.getIDToken(),
         displayName: profile.displayName,
+        ...getClickIds(),
         existingUuid,
         ref: ref || undefined,
         ig: affParams.get('ig') || undefined,
