@@ -156,9 +156,9 @@ function PoolCard({
       </div>
       <PoolAccountList poolId={pool.id} accounts={accounts} onChange={onChange} />
       <Dialog.Root role="alertdialog" open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <Dialog>
-          <Dialog.Title>プールを削除しますか？</Dialog.Title>
-          <Dialog.Description className="mt-2">「{pool.name}」を削除します。この操作は取り消せません。</Dialog.Description>
+        <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">プールを削除しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">「{pool.name}」を削除します。この操作は取り消せません。</Dialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => setDeleteOpen(false)}>キャンセル</Button>
             <Button type="button" variant="destructive" onClick={onDelete}>削除</Button>
@@ -249,9 +249,9 @@ function PoolAccountList({
         </div>
       )}
       <Dialog.Root role="alertdialog" open={removeTarget !== null} onOpenChange={(open) => { if (!open) setRemoveTarget(null) }}>
-        <Dialog>
-          <Dialog.Title>アカウントを外しますか？</Dialog.Title>
-          <Dialog.Description className="mt-2">このアカウントをプールの配信先から外します。</Dialog.Description>
+        <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">アカウントを外しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">このアカウントをプールの配信先から外します。</Dialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => setRemoveTarget(null)}>キャンセル</Button>
             <Button type="button" variant="destructive" onClick={onRemove}>外す</Button>
@@ -289,9 +289,9 @@ function CreatePoolModal({
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting) onClose() }}>
-      <Dialog className="w-full max-w-md">
-        <Dialog.Title>新規プール</Dialog.Title>
-        <Dialog.Description className="mt-1">分散先と最初の所属アカウントを設定します。</Dialog.Description>
+      <Dialog className="p-6">
+        <Dialog.Title className="text-lg font-semibold text-kumo-strong">新規プール</Dialog.Title>
+        <Dialog.Description className="mt-1 text-sm text-kumo-subtle">分散先と最初の所属アカウントを設定します。</Dialog.Description>
         <div className="mt-4 space-y-3">
         {error && (
           <Banner size="sm" variant="error" title="作成できませんでした" description={error} />
