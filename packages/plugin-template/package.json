@@ -2,7 +2,7 @@
   "name": "@line-harness/plugin-myservice",
   "version": "0.1.0",
   "private": true,
-  "description": "L Harness plugin template — copy this directory to start a new integration",
+  "description": "L Harness plugin template \u2014 copy this directory to start a new integration",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@line-harness/sdk": "workspace:*"
+    "@line-harness/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240620.0",

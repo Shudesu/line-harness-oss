@@ -1,3 +1,4 @@
+import { xGates } from './routes/x-gates.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
@@ -112,6 +113,11 @@ export type Env = {
     // feature is entirely absent unless an operator opts in. ≥32 chars, shared
     // with the token issuer. See routes/admin-sso.ts and docs/ADMIN-AUTH.md.
     ADMIN_SSO_SECRET?: string;
+    X_GATE_TURNSTILE_SITE_KEY?: string;
+    X_GATE_TURNSTILE_SECRET_KEY?: string;
+    X_GATE_TURNSTILE_HOSTNAMES?: string;
+    X_HARNESS_GATE_SECRET?: string;
+    X_HARNESS_CONNECTION_ID?: string;
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
@@ -234,6 +240,7 @@ app.route('/', notifications);
 app.route('/', conversations);
 app.route('/', stripe);
 app.route('/', health);
+app.route('/', xGates);
 app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
@@ -296,8 +303,11 @@ app.get('/api/qr', async (c) => {
 // Desktop: QR code encodes LIFF URL.
 // Stuck users opt into /r/:ref/help for Safari escape instructions.
 app.get('/r/:ref', async (c) => {
+  const xGateCampaign=c.env.X_HARNESS_GATE_SECRET&&c.env.X_HARNESS_CONNECTION_ID
+    ? await c.env.DB.prepare('SELECT gate_id,line_account_id FROM x_gate_campaigns WHERE tracked_link_id=? AND is_active=1').bind(c.req.param('ref')).first<{gate_id:string;line_account_id:string}>()
+    : null;
   const ref = c.req.param('ref');
-  const formId = c.req.query('form') || '';
+  const formId = xGateCampaign ? '' : c.req.query('form') || '';
 
   // Resolve LIFF URL — priority:
   //   0. URL query ?account= (explicit single-account pin — admin-issued
@@ -315,7 +325,8 @@ app.get('/r/:ref', async (c) => {
   // account without liff_id falls through to the normal resolution chain.
   const accountParam = c.req.query('account') || '';
   let accountResolved = false;
-  if (accountParam) {
+  if(xGateCampaign){const account=await getLineAccountById(c.env.DB,xGateCampaign.line_account_id);if(!account?.liff_id)return c.html(loginUnconfiguredPage(),503);liffUrl=`https://liff.line.me/${account.liff_id}`;accountResolved=true;}
+  if (accountParam && !xGateCampaign) {
     const account = await getLineAccountByChannelId(c.env.DB, accountParam);
     if (account?.liff_id) {
       liffUrl = `https://liff.line.me/${account.liff_id}`;
@@ -396,8 +407,8 @@ app.get('/r/:ref', async (c) => {
   if (ref) liffParams.set('ref', ref);
   if (formId) liffParams.set('form', formId);
   // Parity with /auth/line's qrParams — keeps the account hint on the LIFF URL.
-  if (accountParam) liffParams.set('account', accountParam);
-  const gate = c.req.query('gate');
+  if (accountParam && !xGateCampaign) liffParams.set('account', accountParam);
+  const gate = xGateCampaign?.gate_id ?? c.req.query('gate');
   if (gate) liffParams.set('gate', gate);
   const xh = c.req.query('xh');
   if (xh) liffParams.set('xh', xh);
@@ -413,8 +424,8 @@ app.get('/r/:ref', async (c) => {
   // friend-add gate (initSalonBooking, initEventBooking); page=book/form
   // would bypass that gate and bypass ref-based attribution, so they are
   // intentionally excluded until those initializers are unified.
-  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar']);
-  const page = c.req.query('page');
+  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar','xgate']);
+  const page = xGateCampaign ? 'xgate' : c.req.query('page');
   if (page && PAGE_PASSTHROUGH_ALLOWED.has(page)) liffParams.set('page', page);
   const id = c.req.query('id');
   if (id) liffParams.set('id', id);

@@ -1,3 +1,4 @@
+import { handleXGateWebhook } from '../services/x-gate-webhook.js';
 import { Hono } from 'hono';
 import { verifySignature, LineClient } from '@line-crm/line-sdk';
 import type { WebhookRequestBody, WebhookEvent, TextEventMessage } from '@line-crm/line-sdk';
@@ -177,6 +178,7 @@ webhook.post('/webhook', async (c) => {
           c.env.LIFF_URL,
           c.env.IMAGES,
           proxyDispatch,
+          c.env,
         );
       } catch (err) {
         console.error('Error handling webhook event:', err);
@@ -205,6 +207,7 @@ async function handleEvent(
   liffUrl?: string,
   r2?: R2Bucket,
   proxyDispatch?: HarnessProxyDispatch,
+  gateEnv?: Env['Bindings'],
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -251,6 +254,8 @@ async function handleEvent(
       metadata: { lineAccountId },
       occurredAt: firstFollowedAt,
     });
+
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'follow',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:(event as any).webhookEventId ?? 'follow:'+userId+':'+event.timestamp}))return;
 
     // Resolve referral link (entry_route) for this friend.
     // /auth/callback (OAuth path) writes friends.ref_code in parallel with
@@ -367,6 +372,7 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
+    if(gateEnv?.X_HARNESS_GATE_SECRET&&lineAccountId)await db.prepare('UPDATE x_gate_entries SET following=0 WHERE line_user_id=? AND line_account_id=?').bind(userId,lineAccountId).run();
     await updateFriendFollowStatus(db, userId, false);
     return;
   }
@@ -397,6 +403,8 @@ async function handleEvent(
     } catch (err) {
       console.error('Failed to log incoming postback', err);
     }
+
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'postback',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:(event as any).webhookEventId ?? 'postback:'+event.replyToken,data:postbackData}))return;
 
     // postback data を auto_replies にマッチさせて返信 (テキスト経路と共通)。
     // silent + automation で「返信なしでタグだけ付ける」構成もここで成立する。
@@ -529,10 +537,10 @@ async function handleEvent(
     // 受信メッセージをログに記録
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?)`,
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
+         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?, ?)`,
       )
-      .bind(logId, friend.id, incomingText, now)
+      .bind(logId, friend.id, incomingText, lineAccountId, now)
       .run();
 
     await awardActivityMileage(db, {
@@ -543,6 +551,8 @@ async function handleEvent(
       metadata: { messageType: 'text' },
       occurredAt: now,
     });
+
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'message',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:textMessage.id,data:incomingText}))return;
 
     // Cross-account trigger: send message from another account via UUID
     if (incomingText === '体験を完了する' && lineAccountId) {

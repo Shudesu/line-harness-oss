@@ -60,9 +60,21 @@ jobs:
       - name: Resolve version from tag
         id: version
         run: |
-          # Strip the leading "v" — manifest entries use plain semver.
+          set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           version="${tag#v}"
+          test "$version" != '0.0.0'
+          # checkout can flatten an annotated local ref. Restore from origin
+          # without ever changing a published remote tag.
+          git fetch --no-tags origin "+refs/tags/$tag:refs/tags/$tag" "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse HEAD)"
+          test "$(git cat-file -t "$tag")" = tag
+          git merge-base --is-ancestor HEAD origin/main
+          for file in package.json apps/web/package.json apps/worker/package.json; do
+            test "$(node -p "require('./$file').version")" = "$version"
+          done
+          test -s "docs/release-notes/$tag.md"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
@@ -282,6 +294,7 @@ jobs:
           draft: true
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
+          body_path: docs/release-notes/${{ steps.version.outputs.tag }}.md
           generate_release_notes: true
           files: |
             dist/bundle.tar.gz

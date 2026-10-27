@@ -3,6 +3,9 @@ import type { Env } from '../index.js';
 
 const openapi = new Hono<Env>();
 
+const gateHeaders = ['X-Harness-Connection-Id','X-Harness-Event','X-Harness-Delivery-Id','X-Harness-Timestamp','X-Harness-Signature'].map(name=>({name,in:'header',required:true,schema:{type:'string'}}));
+const gateIdentityBody = {required:true,content:{'application/json':{schema:{type:'object',required:['idToken','accessToken'],properties:{idToken:{type:'string'},accessToken:{type:'string'},turnstileToken:{type:'string',description:'Required for initial strict participation'}}}}}};
+
 const spec = {
   openapi: '3.1.0',
   info: {
@@ -177,6 +180,48 @@ const spec = {
     },
   },
   paths: {
+    '/api/integrations/x-harness/campaigns': {
+      post: {
+        tags: ['X gate integration'], summary: 'Create LINE campaign assets atomically. Admin authentication plus xh.gate.v1 HMAC required.',
+        security: [{ bearerAuth: [] }], parameters: gateHeaders,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/integrations/x-harness/campaigns/{id}/cancel': {
+      post: {
+        tags: ['X gate integration'], summary: 'Deactivate a campaign without deleting delivery history. Admin authentication plus HMAC required.',
+        security: [{ bearerAuth: [] }], parameters: [...gateHeaders,{name:'id',in:'path',required:true,schema:{type:'string'}}],
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/integrations/x-harness/events': {
+      post: {
+        tags: ['X gate integration'], summary: 'Apply signed X gate events idempotently. Delivery ID, timestamp, connection ID and HMAC are mandatory.',
+        security: [], parameters: gateHeaders,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/integrations/x-harness/engagement': {
+      get: {
+        tags: ['X gate integration'], summary: 'Return observed incoming-message engagement for a signed gate request.',
+        security: [], parameters: [...gateHeaders,{name:'gateId',in:'query',required:true,schema:{type:'string'}}],
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/liff/x-gates/{gateId}/join': {
+      post: {
+        tags: ['X gate integration'], summary: 'Join with verified LINE ID/access tokens for the campaign channel; no X ID input.',
+        security: [], parameters: [{name:'gateId',in:'path',required:true,schema:{type:'string'}}], requestBody: gateIdentityBody,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/liff/x-gates/{gateId}/check': {
+      post: {
+        tags: ['X gate integration'], summary: 'Check participation using verified LINE tokens. Returns actual state and retryAfterSec.',
+        security: [], parameters: [{name:'gateId',in:'path',required:true,schema:{type:'string'}}], requestBody: gateIdentityBody,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
     // ── Friends ─────────────────────────────────────────────────────────────
     '/api/friends': {
       get: {

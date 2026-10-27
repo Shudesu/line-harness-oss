@@ -1,7 +1,7 @@
 {
   "name": "@line-harness/mcp-server",
   "version": "0.24.3",
-  "description": "MCP server for L Harness — operate a LINE official account from AI agents over MCP",
+  "description": "MCP server for L Harness \u2014 operate a LINE official account from AI agents over MCP",
   "type": "module",
   "bin": {
     "line-harness-mcp": "./dist/index.js"
@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:protocol": "node scripts/smoke.mjs"
   },
   "keywords": [
     "line",
@@ -40,8 +41,8 @@
   },
   "dependencies": {
     "@line-harness/sdk": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "zod": "^3.24.4"
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

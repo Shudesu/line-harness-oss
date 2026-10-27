@@ -1,3 +1,5 @@
+> v0.25.0: LINE先行のXキャンペーン参加を追加しています。対応するX側更新・migration・連携設定が必要です。[導入ガイド](docs/operations/line-first-x-gates.md) / [リリースノート](docs/release-notes/v0.25.0.md)。
+
 🌐 **日本語** | [English](README.en.md) | [简体中文](README.zh-CN.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
 # L Harness
