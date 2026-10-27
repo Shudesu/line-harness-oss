@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   applyMileageRulesForEvent,
+  postMileageEntry,
   processPendingMileageEvents,
   enqueueFollowingMileageMilestones,
   getMileageAdminOverview,
@@ -464,6 +465,281 @@ describe('configurable mileage rules', () => {
       referralMiles: 205,
       qualityReferralCount: 1,
     });
+  });
+
+  function seedReferrer(referrerUserId: string | null): void {
+    if (referrerUserId) {
+      sqlite.prepare(`INSERT INTO users (id, display_name) VALUES (?, '紹介者')`).run(referrerUserId);
+    }
+    sqlite.prepare(
+      `INSERT INTO friends
+         (id, line_user_id, display_name, user_id, line_account_id, created_at, updated_at)
+       VALUES ('friend-referrer', 'U-REFERRER', '紹介者', ?, 'account-1',
+               '2026-07-01T10:00:00.000+09:00', '2026-07-01T10:00:00.000+09:00')`,
+    ).run(referrerUserId);
+    sqlite.prepare(
+      `UPDATE friends SET created_at = '2026-08-01T10:00:00.000+09:00' WHERE id = 'friend-1'`,
+    ).run();
+    sqlite.prepare(
+      `INSERT INTO affiliates (id, name, code, friend_id)
+       VALUES ('affiliate-referrer', '紹介者', 'REFERRER', 'friend-referrer')`,
+    ).run();
+    sqlite.prepare(
+      `INSERT INTO affiliate_links (id, affiliate_id, ref_code, is_active, created_at)
+       VALUES ('affiliate-link-referrer', 'affiliate-referrer', 'GOODREF', 1, '2026-08-01')`,
+    ).run();
+    sqlite.prepare(
+      `INSERT INTO ref_tracking (id, ref_code, friend_id, created_at)
+       VALUES ('ref-touch', 'GOODREF', 'friend-1', '2026-08-01T10:00:01.000+09:00')`,
+    ).run();
+  }
+
+  it.each([null, 'user-referrer'])('keeps referral miles out of the actor wallet when referrer user_id is %s', async (referrerUserId) => {
+    seedReferrer(referrerUserId);
+
+    for (const sourceEventId of ['booking-1', 'booking-2']) {
+      await applyMileageRulesForEvent(db, {
+        eventType: 'booking_created', source: 'booking', sourceEventId,
+        friendId: 'friend-1', occurredAt: '2026-08-05T10:00:00.000+09:00',
+      });
+    }
+    await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+
+    // Two actor actions earn 20 each; the separate 50-mile referral bonus
+    // belongs only to the introducer, including before UUID linking.
+    expect((await getMileageSummaryForFriend(db, 'friend-1')).available).toBe(40);
+    expect((await getMileageSummaryForFriend(db, 'friend-2')).available).toBe(40);
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer')).available).toBe(50);
+    const identity = referrerUserId ? `user:${referrerUserId}` : 'friend:friend-referrer';
+    expect(sqlite.prepare(
+      `SELECT beneficiary_friend_id, beneficiary_user_id, amount, idempotency_key
+         FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).all()).toEqual([{
+      beneficiary_friend_id: 'friend-referrer', beneficiary_user_id: referrerUserId, amount: 50,
+      idempotency_key: `rule:builtin-referral-booking-created:referrer:${identity}:referred:user:user-1`,
+    }]);
+
+    const overview = await getMileageAdminOverview(db);
+    expect(overview.members.find((member) => member.identityKey === 'user:user-1')?.available).toBe(40);
+    expect(overview.members.find((member) => member.identityKey === identity)?.available).toBe(50);
+  });
+
+  it.each([false, true])('does not repay a legacy unlinked-referrer grant after linking=%s', async (linkReferrer) => {
+    seedReferrer(null);
+    const legacy = await postMileageEntry(db, {
+      beneficiaryFriendId: 'friend-referrer', beneficiaryUserId: 'user-1',
+      mileageRuleId: 'builtin-referral-booking-created', entryType: 'grant', amount: 50,
+      reason: 'Legacy referral bonus', source: 'booking', sourceEventId: 'legacy-booking',
+      idempotencyKey: 'rule:builtin-referral-booking-created:referrer:user:user-1:referred:user:user-1',
+      metadata: { ruleId: 'builtin-referral-booking-created', eventType: 'booking_created',
+        beneficiaryType: 'referrer', referredFriendId: 'friend-1', referredUserId: 'user-1' },
+      occurredAt: '2026-08-04T10:00:00.000+09:00',
+    });
+    if (linkReferrer) {
+      sqlite.prepare(`INSERT INTO users (id, display_name) VALUES ('user-referrer', '紹介者')`).run();
+      sqlite.prepare(`UPDATE friends SET user_id = 'user-referrer' WHERE id = 'friend-referrer'`).run();
+    }
+    await applyMileageRulesForEvent(db, {
+      eventType: 'booking_created', source: 'booking', sourceEventId: 'new-booking',
+      friendId: 'friend-1', occurredAt: '2026-08-05T10:00:00.000+09:00',
+    });
+    await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+
+    // Preserve immutable historical entries for a separate audited correction;
+    // changing the recipient identity must not grant the same bonus again.
+    expect(sqlite.prepare(
+      `SELECT * FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).all()).toEqual([legacy]);
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer')).available).toBe(50);
+  });
+
+  it('keeps a friend-scoped referral bonus unique after the introducer links a UUID', async () => {
+    seedReferrer(null);
+    const book = async (sourceEventId: string) => {
+      await applyMileageRulesForEvent(db, {
+        eventType: 'booking_created', source: 'booking', sourceEventId,
+        friendId: 'friend-1', occurredAt: '2026-08-05T10:00:00.000+09:00',
+      });
+      await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+    };
+    await book('before-link');
+    const firstGrant = sqlite.prepare(
+      `SELECT * FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).get();
+    sqlite.prepare(`INSERT INTO users (id, display_name) VALUES ('user-referrer', '紹介者')`).run();
+    sqlite.prepare(`UPDATE friends SET user_id = 'user-referrer' WHERE id = 'friend-referrer'`).run();
+    await book('after-link');
+
+    expect(sqlite.prepare(
+      `SELECT * FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).all()).toEqual([firstGrant]);
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer')).available).toBe(50);
+    expect((await getMileageSummaryForFriend(db, 'friend-1')).available).toBe(40);
+  });
+
+  it.each([
+    [null, 'friend-1'], [null, 'friend-2'],
+    ['user-referrer', 'friend-1'], ['user-referrer', 'friend-2'],
+  ] as const)('keeps one referral bonus after actor linking: referrer=%s next friend=%s', async (referrerUserId, nextFriendId) => {
+    seedReferrer(referrerUserId);
+    sqlite.prepare(`UPDATE friends SET user_id = NULL WHERE id = 'friend-1'`).run();
+    const book = async (sourceEventId: string, friendId: string) => {
+      await applyMileageRulesForEvent(db, {
+        eventType: 'booking_created', source: 'booking', sourceEventId, friendId,
+        occurredAt: '2026-08-05T10:00:00.000+09:00',
+      });
+      await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+    };
+    await book('before-actor-link', 'friend-1');
+    const firstGrant = sqlite.prepare(
+      `SELECT * FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).get();
+    sqlite.prepare(`UPDATE friends SET user_id = 'user-1' WHERE id = 'friend-1'`).run();
+    await book('after-actor-link', nextFriendId);
+
+    expect(sqlite.prepare(
+      `SELECT * FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).all()).toEqual([firstGrant]);
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer')).available).toBe(50);
+  });
+
+  it('keeps the referral bonus unique when both people link UUIDs', async () => {
+    seedReferrer(null);
+    sqlite.prepare(`UPDATE friends SET user_id = NULL WHERE id = 'friend-1'`).run();
+    for (const phase of ['before', 'after']) {
+      if (phase === 'after') {
+        sqlite.prepare(`INSERT INTO users (id, display_name) VALUES ('user-referrer', '紹介者')`).run();
+        sqlite.prepare(`UPDATE friends SET user_id = 'user-referrer' WHERE id = 'friend-referrer'`).run();
+        sqlite.prepare(`UPDATE friends SET user_id = 'user-1' WHERE id = 'friend-1'`).run();
+      }
+      await applyMileageRulesForEvent(db, {
+        eventType: 'booking_created', source: 'booking', sourceEventId: `both-link-${phase}`,
+        friendId: 'friend-1', occurredAt: '2026-08-05T10:00:00.000+09:00',
+      });
+      await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+    }
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer')).available).toBe(50);
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).get()).toEqual({ count: 1 });
+  });
+
+  it('keeps per-person subject bonuses unique through linking while allowing another subject', async () => {
+    seedReferrer('user-referrer');
+    sqlite.prepare(`UPDATE friends SET user_id = NULL WHERE id = 'friend-1'`).run();
+    await updateMileageRule(db, 'builtin-referral-booking-created', {
+      conditions: { beneficiary: 'referrer', uniquePerReferredFriendPerSubject: true },
+    });
+    for (const [sourceEventId, subjectKey] of [
+      ['before-link-subject', 'subject:one'],
+      ['after-link-same-subject', 'subject:one'],
+      ['after-link-new-subject', 'subject:two'],
+    ] as const) {
+      if (sourceEventId !== 'before-link-subject') {
+        sqlite.prepare(`UPDATE friends SET user_id = 'user-1' WHERE id = 'friend-1'`).run();
+      }
+      await applyMileageRulesForEvent(db, {
+        eventType: 'booking_created', source: 'booking', sourceEventId,
+        friendId: 'friend-1', subjectKey, occurredAt: '2026-08-05T10:00:00.000+09:00',
+      });
+      await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+    }
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer')).available).toBe(100);
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).get()).toEqual({ count: 2 });
+  });
+
+  it('reuses the original grant when the introducer switches to a linked LINE account', async () => {
+    seedReferrer(null);
+    for (const phase of ['before', 'after']) {
+      if (phase === 'after') {
+        sqlite.prepare(`INSERT INTO users (id, display_name) VALUES ('user-referrer', '紹介者')`).run();
+        sqlite.prepare(`UPDATE friends SET user_id = 'user-referrer' WHERE id = 'friend-referrer'`).run();
+        sqlite.prepare(`INSERT INTO friends (id, line_user_id, user_id, line_account_id)
+                        VALUES ('friend-referrer-2', 'U-REFERRER-2', 'user-referrer', 'account-2')`).run();
+        sqlite.prepare(`UPDATE affiliates SET friend_id = 'friend-referrer-2' WHERE id = 'affiliate-referrer'`).run();
+      }
+      await applyMileageRulesForEvent(db, {
+        eventType: 'booking_created', source: 'booking', sourceEventId: `referrer-account-${phase}`,
+        friendId: 'friend-1', occurredAt: '2026-08-05T10:00:00.000+09:00',
+      });
+      await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+    }
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer-2')).available).toBe(50);
+    expect(sqlite.prepare(
+      `SELECT beneficiary_friend_id FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).all()).toEqual([{ beneficiary_friend_id: 'friend-referrer' }]);
+  });
+
+  it('still rewards a different unlinked referred person', async () => {
+    seedReferrer('user-referrer');
+    sqlite.prepare(`UPDATE friends SET user_id = NULL WHERE id = 'friend-1'`).run();
+    sqlite.prepare(`INSERT INTO friends (id, line_user_id, line_account_id, created_at)
+                    VALUES ('friend-other', 'U-OTHER', 'account-1', '2026-08-01T10:00:00.000+09:00')`).run();
+    sqlite.prepare(`INSERT INTO ref_tracking (id, ref_code, friend_id, created_at)
+                    VALUES ('ref-other', 'GOODREF', 'friend-other', '2026-08-01T10:00:01.000+09:00')`).run();
+    for (const friendId of ['friend-1', 'friend-other']) {
+      await applyMileageRulesForEvent(db, {
+        eventType: 'booking_created', source: 'booking', sourceEventId: `different-person-${friendId}`,
+        friendId, occurredAt: '2026-08-05T10:00:00.000+09:00',
+      });
+    }
+    await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+    expect((await getMileageSummaryForFriend(db, 'friend-referrer')).available).toBe(100);
+    expect(sqlite.prepare(
+      `SELECT COUNT(*) AS count FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).get()).toEqual({ count: 2 });
+  });
+
+  it('can match a recorded actor UUID when its original LINE friend row no longer exists', async () => {
+    seedReferrer(null);
+    const legacy = await postMileageEntry(db, {
+      beneficiaryFriendId: 'friend-referrer', beneficiaryUserId: null,
+      mileageRuleId: 'builtin-referral-booking-created', entryType: 'grant', amount: 50,
+      reason: 'Original referral bonus', source: 'booking', sourceEventId: 'old-friend-booking',
+      idempotencyKey: 'rule:builtin-referral-booking-created:referrer:friend:friend-referrer:referred:user:user-1',
+      metadata: { ruleId: 'builtin-referral-booking-created', beneficiaryType: 'referrer',
+        referredFriendId: 'deleted-friend', referredUserId: 'user-1' },
+      occurredAt: '2026-08-04T10:00:00.000+09:00',
+    });
+    sqlite.prepare(`INSERT INTO users (id, display_name) VALUES ('user-referrer', '紹介者')`).run();
+    sqlite.prepare(`UPDATE friends SET user_id = 'user-referrer' WHERE id = 'friend-referrer'`).run();
+    await applyMileageRulesForEvent(db, {
+      eventType: 'booking_created', source: 'booking', sourceEventId: 'new-friend-booking',
+      friendId: 'friend-1', occurredAt: '2026-08-05T10:00:00.000+09:00',
+    });
+    await processPendingMileageEvents(db, { now: '2026-08-10T10:00:00.000+09:00' });
+    expect(sqlite.prepare(
+      `SELECT * FROM mileage_ledger WHERE mileage_rule_id = 'builtin-referral-booking-created'`,
+    ).all()).toEqual([legacy]);
+  });
+
+  it.each(['referrer', 'actor'])('only reuses a subject-unique bonus with valid referrer metadata: %s', async (legacyMetadata) => {
+    seedReferrer(null);
+    const shared = {
+      beneficiaryFriendId: 'friend-referrer', mileageRuleId: 'builtin-referral-booking-created',
+      entryType: 'grant' as const, amount: 50, reason: 'Subject bonus', source: 'booking',
+      occurredAt: '2026-08-04T10:00:00.000+09:00',
+    };
+    const legacy = await postMileageEntry(db, {
+      ...shared, beneficiaryUserId: 'user-1', sourceEventId: 'old-subject-event',
+      idempotencyKey: 'rule:builtin-referral-booking-created:identity:user:user-1:subject:shared-subject',
+      metadata: { ruleId: shared.mileageRuleId, beneficiaryType: legacyMetadata, referredUserId: 'user-1' },
+    });
+    const current = await postMileageEntry(db, {
+      ...shared, beneficiaryUserId: null, sourceEventId: 'new-subject-event',
+      idempotencyKey: 'rule:builtin-referral-booking-created:identity:friend:friend-referrer:subject:shared-subject',
+      metadata: { ruleId: shared.mileageRuleId, beneficiaryType: 'referrer', referredUserId: 'a-different-actor' },
+    });
+    if (legacyMetadata === 'referrer') {
+      expect(current).toEqual(legacy);
+      expect(sqlite.prepare(`SELECT COUNT(*) AS count FROM mileage_ledger`).get()).toEqual({ count: 1 });
+    } else {
+      expect(current.id).not.toBe(legacy.id);
+      expect(current.beneficiary_user_id).toBeNull();
+      expect(sqlite.prepare(`SELECT COUNT(*) AS count FROM mileage_ledger`).get()).toEqual({ count: 2 });
+    }
   });
 
   it('does not award quality miles for a self-referral', async () => {
