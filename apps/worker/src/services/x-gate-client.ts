@@ -36,7 +36,7 @@ export async function callXGate(
     method: "POST",
     headers,
     body,
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(30000),
   });
   if (!response.ok) throw new Error(`x_gate_http_${response.status}`);

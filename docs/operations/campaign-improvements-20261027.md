@@ -87,3 +87,9 @@ LINE: 073と既存account_settings/broadcastsを使用。追加migrationなし�
 - Cloudflare宛先設定: https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/
 
 2026-10-27に参照。単価は既存UNIT_PRICESを変更していない。
+
+## 公開依頼後の更新
+
+2026-10-27、本人から公開・アップデートとUI改善の指示を受領。X-36b本文を受領し、v0.7.1（PR #52）で先行公開。この修正をv0.9.0へ統合。機能分はX v0.9.0 / LINE v0.26.0として一括公開する。上の「未公開」「原文未確認」は初回実装時点の履歴であり、現在の保留事項ではない。更新モーダル、作成手順、名前による企画・通知先選択を追加。Cloudへの反映記録は制御プレーン側に保存する。
+
+Cloud実機試験でfetchのredirect:error非対応と、Worker間のHTTP接続に必要なglobal_fetch_strictly_publicを確認。manualで転送を追わず非2xxを拒否し、X/LINEと共通ディスパッチャーに互換設定を反映した。隔離環境で企画作成→署名claim→特典→status/OGP/秘密のマスクを確認。実SNS送信は行っていない。

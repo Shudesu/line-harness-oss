@@ -677,3 +677,8 @@ it('returns only locally configured operator recipients from the matching LINE a
  const f=fixture();f.sql.prepare("INSERT INTO account_settings(id,line_account_id,key,value) VALUES ('config','a','x_campaign_digest_friend_ids',?)").run(JSON.stringify(['f','outside']));
  const response=await f.app.request('/api/x-campaign-notifications/a',undefined,f.env);expect(response.status).toBe(200);expect(await response.json()).toEqual({success:true,data:[{id:'f',displayName:'Fixture'}]});
 });
+
+it('rejects partner redirects with the Workers-compatible manual mode',async()=>{
+ const f=fixture();await f.setup();const fetcher=vi.fn(async(_url:RequestInfo|URL,_init?:RequestInit)=>new Response(null,{status:302,headers:{Location:'https://untrusted.example'}}));vi.stubGlobal('fetch',fetcher);
+ await expect(joinXGate(f.env,'g','f','a')).rejects.toThrow('x_gate_http_302');expect(fetcher).toHaveBeenCalledTimes(1);expect(fetcher.mock.calls[0][1]?.redirect).toBe('manual');
+});

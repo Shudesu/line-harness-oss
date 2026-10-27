@@ -2128,3 +2128,6 @@ function baseEvent(over: Partial<EventRow>): EventRow {
     ...over,
   };
 }
+
+// Mileage behavior has its own tests; avoid unrelated lazy imports leaking across booking tests.
+vi.mock('../services/activity-mileage.js',()=>({awardActivityMileage:vi.fn().mockResolvedValue(undefined)}));

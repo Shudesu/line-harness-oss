@@ -371,3 +371,6 @@ describe('LIFF identity enforcement', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('api.line.me'))).toBe(false);
   });
 });
+
+// Mileage behavior has its own tests; avoid unrelated lazy imports leaking across booking tests.
+vi.mock('../services/activity-mileage.js',()=>({awardActivityMileage:vi.fn().mockResolvedValue(undefined)}));
