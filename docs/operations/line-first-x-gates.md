@@ -4,7 +4,7 @@
 
 ## 導入
 
-1. DBのバックアップ、実スキーマとmigration履歴を確認し、`*_x_line_first_gates.sql`を適用します。PR内は規約に従い`NNN`で、マージ時に採番します。bootstrapも再生成が必要です。
+1. DBのバックアップ、実スキーマとmigration履歴を確認し、`073_x_line_first_gates.sql`を適用します。新規導入用のbootstrapにも反映済みです。
 2. キャンペーンのMessaging APIアカウントに対応するLogin channel・LIFFを設定します。
 3. X側共有LINE接続と同じ32文字以上のランダムキーを`X_HARNESS_GATE_SECRET`へ設定します。`X_HARNESS_CONNECTION_ID`、信頼するpeerのHTTPS origin `X_HARNESS_URL`も指定します。ブラウザから接続先・friend IDを指定させません。
 4. 厳格ティアは`X_GATE_TURNSTILE_SITE_KEY`、`X_GATE_TURNSTILE_SECRET_KEY`が必須です。別のLIFF hostnameを使う場合は`X_GATE_TURNSTILE_HOSTNAMES`へカンマ区切りで許可します。action・campaign・hostnameをサーバーで検証します。

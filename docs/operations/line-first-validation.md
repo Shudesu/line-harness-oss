@@ -29,13 +29,13 @@ pnpm -r --if-present typecheck
 pnpm --filter worker exec vitest run --maxWorkers=2 --minWorkers=1
 pnpm --workspace-concurrency=2 --filter web --filter liff --filter @line-harness/update-engine --filter @line-harness/sdk --filter create-line-harness --filter @line-crm/db test
 pnpm test:scripts
-pnpm exec tsx scripts/check-migrations.ts packages/db/migrations/NNN_x_line_first_gates.sql
+pnpm exec tsx scripts/check-migrations.ts packages/db/migrations/073_x_line_first_gates.sql
 pnpm -r build
 pnpm --filter @line-harness/mcp-server test:protocol
 pnpm audit --prod
 ```
 
-migrationの`NNN`はマージ時に採番します。最終番号へ変更後にbootstrapを再生成し、上記のファイル名も合わせます。外部ディスクへ依存のvirtual storeを置く場合は、通常と同じ`.pnpm`というディレクトリ名を使い、Nodeの型解決が変わらないようにしてください。
+migrationはマージ準備時に`073_x_line_first_gates.sql`へ採番し、bootstrapを再生成しています。外部ディスクへ依存のvirtual storeを置く場合は、通常と同じ`.pnpm`というディレクトリ名を使い、Nodeの型解決が変わらないようにしてください。
 
 ## 公開前に残る確認
 

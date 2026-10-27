@@ -1,4 +1,4 @@
--- Additive MVP; assign final migration number at merge.
+-- LINE-first gate integration. Maintainer-assigned release migration.
 CREATE TABLE x_gate_campaigns (
  gate_id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,line_account_id TEXT NOT NULL,
  slug TEXT NOT NULL,title TEXT NOT NULL,tier TEXT NOT NULL,tracked_link_id TEXT NOT NULL UNIQUE,

@@ -21,7 +21,7 @@ function fixture() {
   );
   sql.exec(
     readFileSync(
-      "../../packages/db/migrations/NNN_x_line_first_gates.sql",
+      "../../packages/db/migrations/073_x_line_first_gates.sql",
       "utf8",
     ),
   );
