@@ -462,7 +462,7 @@ export async function getFriendScenariosDueForDelivery(
 
 /**
  * Optimistic lock: claim a friend_scenario for delivery.
- * Only succeeds if status='active' and current_step_order matches.
+ * Only succeeds if status='active', current_step_order matches and the parent is active.
  * Returns true if claimed, false if another worker already processed it.
  */
 export async function claimFriendScenarioForDelivery(
@@ -475,11 +475,31 @@ export async function claimFriendScenarioForDelivery(
     .prepare(
       `UPDATE friend_scenarios
        SET status = 'delivering', updated_at = ?
-       WHERE id = ? AND status = 'active' AND current_step_order = ?`,
+       WHERE id = ? AND status = 'active' AND current_step_order = ?
+         AND EXISTS (SELECT 1 FROM scenarios s
+                      WHERE s.id = friend_scenarios.scenario_id AND s.is_active = 1)`,
     )
     .bind(now, id, expectedStepOrder)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+/** Refresh campaign and claim state immediately before an external send. */
+export async function isScenarioDeliveryCurrent(
+  db: D1Database,
+  scenarioId: string,
+  claim?: Pick<FriendScenario, 'id' | 'current_step_order'>,
+): Promise<boolean> {
+  const row = await db.prepare(`SELECT s.id FROM scenarios s
+    WHERE s.id = ? AND s.is_active = 1
+      AND (? IS NULL OR EXISTS (
+        SELECT 1 FROM friend_scenarios fs
+         WHERE fs.id = ? AND fs.scenario_id = s.id
+           AND fs.status = 'delivering' AND fs.current_step_order = ?
+      ))`)
+    .bind(scenarioId, claim?.id ?? null, claim?.id ?? null, claim?.current_step_order ?? null)
+    .first<{ id: string }>();
+  return row !== null;
 }
 
 /**
