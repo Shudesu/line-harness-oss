@@ -958,7 +958,7 @@ export const api = {
       fetchApi<ApiResponse<StaffMember>>(`/api/staff/${id}`),
     me: () =>
       fetchApi<ApiResponse<{ id: string; name: string; role: string; email: string | null }>>('/api/staff/me'),
-    create: (data: { name: string; email?: string; role: 'admin' | 'staff' }) =>
+    create: (data: { name: string; email?: string; role: 'admin' | 'staff'; accountIds?: string[] }) =>
       fetchApi<ApiResponse<StaffMember>>('/api/staff', {
         method: 'POST',
         body: JSON.stringify(data),

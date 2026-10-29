@@ -19,10 +19,12 @@ import {
   addTagToFriend,
   getEntryRouteByRefCode,
   getMessageTemplateById,
+  getLineAccountById,
 } from '@line-crm/db';
 import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { handlePickedUniversity, handleSurveyPostback, handleSurveyText, startSurveyOnFollow, surveyConfigFromEnv } from '../services/intern-survey.js';
 import type { Env } from '../index.js';
 
 const webhook = new Hono<Env>();
@@ -159,12 +161,13 @@ webhook.post('/webhook', async (c) => {
   }
 
   const lineClient = new LineClient(channelAccessToken);
+  const surveyConfig = surveyConfigFromEnv(c.env);
 
   // 非同期処理 — LINE は ~1s 以内のレスポンスを要求
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES, surveyConfig);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -176,6 +179,26 @@ webhook.post('/webhook', async (c) => {
   return c.json({ status: 'ok' }, 200);
 });
 
+// インターンの「大学を選ぶ」画面が、トークに文を送れなかったときの受け口。ミニアプリのサーバーが、
+// LINE ログインで本人を確かめたうえで合言葉付きで送ってくる
+webhook.post('/intern/picked-university', async (c) => {
+  const config = surveyConfigFromEnv(c.env);
+  const key = c.req.header('x-bridge-key') || '';
+  if (!config.bridgeKey || key.length < 24 || key !== config.bridgeKey || !config.accountId) return c.json({ error: 'not found' }, 404);
+  const body = await c.req.json<{ line_user_id?: string; name?: string; unlisted?: boolean }>().catch(() => null);
+  const lineUserId = String(body?.line_user_id || '');
+  const name = String(body?.name || '').trim().slice(0, 40);
+  if (!/^U[0-9a-f]{32}$/.test(lineUserId) || !name) return c.json({ error: 'invalid' }, 400);
+  const account = await getLineAccountById(c.env.DB, config.accountId);
+  if (!account) return c.json({ error: 'not found' }, 404);
+  const result = await handlePickedUniversity(c.env.DB, new LineClient(account.channel_access_token), config, {
+    lineUserId,
+    name,
+    unlisted: !!body?.unlisted,
+  });
+  return c.json({ result });
+});
+
 async function handleEvent(
   db: D1Database,
   lineClient: LineClient,
@@ -185,6 +208,7 @@ async function handleEvent(
   workerUrl?: string,
   liffUrl?: string,
   r2?: R2Bucket,
+  surveyConfig: ReturnType<typeof surveyConfigFromEnv> = {},
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -247,6 +271,7 @@ async function handleEvent(
     // friend_add シナリオに登録（このアカウントのシナリオのみ）
     // Skip entirely when a referral link explicitly overrides (run_account_friend_add_scenarios=0).
     const scenarios = runAccountScenarios ? await getScenarios(db) : [];
+    let replyTokenUsed = false;
     for (const scenario of scenarios) {
       // Only trigger scenarios belonging to this account (or unassigned for backward compat)
       const scenarioAccountMatch = !scenario.line_account_id || !lineAccountId || scenario.line_account_id === lineAccountId;
@@ -286,6 +311,7 @@ async function handleEvent(
                 const expandedContent = expandVariables(resolved.messageContent, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], undefined, resolved.messageType);
                 const message = buildMessage(resolved.messageType, expandedContent);
                 await lineClient.replyMessage(event.replyToken, [message]);
+                replyTokenUsed = true;
                 console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
 
                 // Log what was actually delivered (post buildMessage normalization)
@@ -360,6 +386,18 @@ async function handleEvent(
       }
     }
 
+    // インターンの登録アンケート（対象のアカウントのときだけ）
+    try {
+      await startSurveyOnFollow(db, lineClient, surveyConfig, {
+        friendId: friend.id,
+        lineUserId: userId,
+        replyToken: replyTokenUsed ? null : event.replyToken,
+        lineAccountId,
+      });
+    } catch (err) {
+      console.error('[intern-survey] failed to start survey', err);
+    }
+
     // イベントバス発火: friend_add（replyToken は Step 0 で使用済みの可能性あり）
     await fireEvent(db, 'friend_add', { friendId: friend.id, eventData: { displayName: friend.display_name } }, lineAccessToken, lineAccountId);
     return;
@@ -414,6 +452,14 @@ async function handleEvent(
         .run();
     } catch (err) {
       console.error('Failed to log incoming postback', err);
+    }
+
+    // インターンの登録アンケートのボタン
+    try {
+      if (await handleSurveyPostback(db, lineClient, surveyConfig, { friendId: friend.id, lineUserId: userId, data: postbackData, replyToken: event.replyToken, lineAccountId })) return;
+    } catch (err) {
+      console.error('[intern-survey] postback failed', err);
+      return;
     }
 
     for (const rule of autoReplies.results) {
@@ -545,6 +591,13 @@ async function handleEvent(
       )
       .bind(logId, friend.id, incomingText, now)
       .run();
+
+    // インターンの登録アンケートの途中（大学名の入力など）
+    try {
+      if (await handleSurveyText(db, lineClient, surveyConfig, { friendId: friend.id, lineUserId: userId, text: incomingText, replyToken: event.replyToken, lineAccountId })) return;
+    } catch (err) {
+      console.error('[intern-survey] text failed', err);
+    }
 
     // Cross-account trigger: send message from another account via UUID
     if (incomingText === '体験を完了する' && lineAccountId) {

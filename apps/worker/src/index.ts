@@ -27,7 +27,9 @@ import { sendBookingNotification } from './services/booking-notifier.js';
 import { DEFAULT_ACCOUNT_SETTINGS } from './services/booking-types.js';
 import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
+import { accountScopeMiddleware } from './middleware/account-scope.js';
 import { webhook } from './routes/webhook.js';
+import { remindUnansweredSurveys, surveyConfigFromEnv } from './services/intern-survey.js';
 import { friends } from './routes/friends.js';
 import { tags } from './routes/tags.js';
 import { scenarios } from './routes/scenarios.js';
@@ -102,6 +104,13 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
+    INTERN_SURVEY_ACCOUNT_ID?: string;  // インターンの登録アンケートを動かすアカウント（未設定なら動かない）
+    INTERN_PRIVACY_POLICY_URL?: string; // アンケートの入口に出すプライバシーポリシーのリンク
+    INTERN_UNIVERSITY_PICKER_URL?: string; // 1問目の「大学を選ぶ」画面（ミニアプリ）
+    INTERN_UNLOCKED_RICHMENU_ID?: string;  // 答え終えた人に付け替える解放後のメニュー
+    INTERN_MINIAPP_SURVEY_URL?: string;    // 答えを渡すミニアプリの受け口
+    INTERN_BRIDGE_KEY?: string;            // ミニアプリとのあいだの合言葉（秘密の値）
+    INTERN_SURVEY_REMINDER?: string;       // 'on' のときだけ、未回答の人へ翌日20時に再案内する
     // Admin auth topology (see middleware/admin-auth-config.ts):
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
@@ -128,6 +137,7 @@ export type Env = {
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    accountScope?: string[] | null; // 担当アカウント（null/未設定 = 全アカウント）
   };
 };
 
@@ -150,6 +160,7 @@ app.use('*', rateLimitMiddleware);
 
 // Auth middleware — skips /webhook and /docs automatically
 app.use('*', authMiddleware);
+app.use('*', accountScopeMiddleware);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
@@ -921,6 +932,20 @@ async function scheduled(
     await processInsightFetch(env.DB, lineClients, defaultLineClient);
   } catch (e) {
     console.error('Insight fetch error:', e);
+  }
+
+  // インターンの未回答の人への再案内（翌日以降の20時に1回だけ。INTERN_SURVEY_REMINDER=on のときだけ）
+  if (event.cron === '*/5 * * * *' && env.INTERN_SURVEY_REMINDER === 'on') {
+    try {
+      const config = surveyConfigFromEnv(env);
+      const client = config.accountId ? lineClients.get(config.accountId) : undefined;
+      if (client) {
+        const sent = await remindUnansweredSurveys(env.DB, client, config);
+        if (sent) console.log(`[intern-survey] reminded=${sent}`);
+      }
+    } catch (e) {
+      console.error('intern-survey reminder error:', e);
+    }
   }
 
   // Booking expirer — runs only on the 6h cron tick.

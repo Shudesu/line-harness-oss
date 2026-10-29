@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import Header from '@/components/layout/header'
 import { fetchApi } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
 import type { ApiResponse } from '@line-crm/shared'
 import type { StaffMember } from '@line-crm/shared'
 
@@ -23,12 +24,44 @@ function RoleBadge({ role }: { role: string }) {
   )
 }
 
+function AccountChecklist({
+  accounts,
+  value,
+  onChange,
+}: {
+  accounts: { id: string; name: string; displayName?: string }[]
+  value: string[]
+  onChange: (ids: string[]) => void
+}) {
+  if (accounts.length === 0) {
+    return <p className="text-xs text-gray-500">LINEアカウントがありません</p>
+  }
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-2">
+      {accounts.map((account) => (
+        <label key={account.id} className="inline-flex items-center gap-1.5 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={value.includes(account.id)}
+            onChange={(e) =>
+              onChange(e.target.checked ? [...value, account.id] : value.filter((id) => id !== account.id))
+            }
+            className="rounded border-gray-300"
+          />
+          {account.displayName || account.name}
+        </label>
+      ))}
+    </div>
+  )
+}
+
 function maskKey(key: string): string {
   if (!key || key.length <= 8) return '••••••••'
   return key.slice(0, 4) + '••••••••' + key.slice(-4)
 }
 
 export default function StaffPage() {
+  const { accounts } = useAccount()
   const [members, setMembers] = useState<StaffMember[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -42,6 +75,11 @@ export default function StaffPage() {
   const [formName, setFormName] = useState('')
   const [formEmail, setFormEmail] = useState('')
   const [formRole, setFormRole] = useState<'admin' | 'staff'>('staff')
+  const [formAccountIds, setFormAccountIds] = useState<string[]>([])
+
+  // Account assignment editor (one row at a time)
+  const [editingAccountsFor, setEditingAccountsFor] = useState<string | null>(null)
+  const [editAccountIds, setEditAccountIds] = useState<string[]>([])
   const [formLoading, setFormLoading] = useState(false)
   const [formError, setFormError] = useState('')
 
@@ -71,9 +109,10 @@ export default function StaffPage() {
     setFormLoading(true)
     setFormError('')
     try {
-      const body: { name: string; role: 'admin' | 'staff'; email?: string } = {
+      const body: { name: string; role: 'admin' | 'staff'; email?: string; accountIds: string[] } = {
         name: formName,
         role: formRole,
+        accountIds: formAccountIds,
       }
       if (formEmail) body.email = formEmail
 
@@ -88,6 +127,7 @@ export default function StaffPage() {
         setFormName('')
         setFormEmail('')
         setFormRole('staff')
+        setFormAccountIds([])
         setShowForm(false)
         await loadMembers()
       } else {
@@ -110,6 +150,33 @@ export default function StaffPage() {
     } catch {
       setError('更新に失敗しました')
     }
+  }
+
+  const startEditAccounts = (member: StaffMember) => {
+    setEditingAccountsFor(member.id)
+    setEditAccountIds(member.accountIds ?? [])
+  }
+
+  const handleSaveAccounts = async (member: StaffMember) => {
+    try {
+      const res = await fetchApi<ApiResponse<StaffMember>>(`/api/staff/${member.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ accountIds: editAccountIds }),
+      })
+      if (res.success) {
+        setEditingAccountsFor(null)
+        await loadMembers()
+      } else {
+        setError(res.error ?? '担当アカウントの保存に失敗しました')
+      }
+    } catch {
+      setError('担当アカウントの保存に失敗しました')
+    }
+  }
+
+  const accountName = (id: string) => {
+    const account = accounts.find((a) => a.id === id)
+    return account ? account.displayName || account.name : '（削除されたアカウント）'
   }
 
   const handleRegenerateKey = async (member: StaffMember) => {
@@ -225,6 +292,13 @@ export default function StaffPage() {
                 </select>
               </div>
             </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">担当アカウント</label>
+              <AccountChecklist accounts={accounts} value={formAccountIds} onChange={setFormAccountIds} />
+              <p className="mt-1 text-xs text-gray-500">
+                チェックしたアカウントの友だち・配信・設定だけを見られます。何も選ばないと、どのアカウントも見られません。
+              </p>
+            </div>
             {formError && (
               <p className="text-sm text-red-600">{formError}</p>
             )}
@@ -283,6 +357,7 @@ export default function StaffPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">名前</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">メール</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ロール</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">担当アカウント</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">APIキー</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状態</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
@@ -295,6 +370,44 @@ export default function StaffPage() {
                   <td className="px-4 py-3 text-gray-500 hidden sm:table-cell">{member.email ?? '—'}</td>
                   <td className="px-4 py-3">
                     <RoleBadge role={member.role} />
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-700">
+                    {member.role === 'owner' ? (
+                      <span className="text-gray-500">すべて</span>
+                    ) : editingAccountsFor === member.id ? (
+                      <div className="space-y-2">
+                        <AccountChecklist accounts={accounts} value={editAccountIds} onChange={setEditAccountIds} />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSaveAccounts(member)}
+                            className="px-2.5 py-1 text-xs font-medium text-white rounded hover:opacity-90"
+                            style={{ backgroundColor: '#06C755' }}
+                          >
+                            保存
+                          </button>
+                          <button
+                            onClick={() => setEditingAccountsFor(null)}
+                            className="px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                          >
+                            キャンセル
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className={member.accountIds?.length ? '' : 'text-red-600'}>
+                          {member.accountIds?.length
+                            ? member.accountIds.map(accountName).join('、')
+                            : 'なし（何も見られません）'}
+                        </span>
+                        <button
+                          onClick={() => startEditAccounts(member)}
+                          className="shrink-0 px-2 py-0.5 text-xs text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                        >
+                          変更
+                        </button>
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-400 font-mono text-xs hidden md:table-cell">
                     {maskKey(member.apiKey ?? '')}

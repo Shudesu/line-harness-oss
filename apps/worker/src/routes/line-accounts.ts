@@ -12,6 +12,7 @@ import {
 import type { LineAccount as DbLineAccount } from '@line-crm/db';
 import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
+import { getAccountScope } from '../middleware/account-scope.js';
 
 const lineAccounts = new Hono<Env>();
 
@@ -67,7 +68,8 @@ async function fetchBotProfile(accessToken: string): Promise<{ displayName?: str
 lineAccounts.get('/api/line-accounts', async (c) => {
   try {
     const db = c.env.DB;
-    const items = await getLineAccounts(db);
+    const scope = getAccountScope(c);
+    const items = (await getLineAccounts(db)).filter((item) => !scope || scope.includes(item.id));
 
     // Get stats for all accounts in parallel
     const results = await Promise.all(

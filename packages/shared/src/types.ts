@@ -853,6 +853,8 @@ export interface StaffMember {
   role: 'owner' | 'admin' | 'staff';
   apiKey: string;
   isActive: boolean;
+  /** 担当アカウント。owner は全アカウントなので空。admin / staff はここにあるアカウントだけ操作できる */
+  accountIds?: string[];
   createdAt: string;
   updatedAt: string;
 }

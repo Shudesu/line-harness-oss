@@ -152,6 +152,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   }
   if (
     path === '/webhook' ||
+    path === '/intern/picked-university' || // 合言葉は受け口で確かめる
     path === '/docs' ||
     path === '/openapi.json' ||
     path === '/api/affiliates/click' ||
@@ -176,7 +177,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.match(/^\/api\/forms\/[^/]+\/submit$/) ||
     path.match(/^\/api\/forms\/[^/]+\/opened$/) ||
     path.match(/^\/api\/forms\/[^/]+\/partial$/) ||
-    path.match(/^\/api\/forms\/[^/]+$/) || // GET form definition (public for LIFF)
+    (c.req.method === 'GET' && path.match(/^\/api\/forms\/[^/]+$/)) || // GET form definition (public for LIFF). PUT/DELETE は認証が要る
     path === '/api/meet-callback' || // Meet Harness completion callback
     path === '/api/qr' || // Public QR proxy — used by desktop landing pages
     path === '/api/health' // Liveness probe (update CLI / self-update verify)

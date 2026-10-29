@@ -14,6 +14,7 @@ import {
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
 import type { TrackedLink } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { getAccountScope } from '../middleware/account-scope.js';
 import { isLinkPreviewBot } from '../lib/og-bot.js';
 import { buildOgHtml } from '../lib/og-html.js';
 import { resolveOgForTrackedLink } from '../lib/og-resolver.js';
@@ -132,7 +133,10 @@ async function resolveLinkAccount(
 // GET /api/tracked-links — list all
 trackedLinks.get('/api/tracked-links', async (c) => {
   try {
-    const items = await getTrackedLinks(c.env.DB);
+    const scope = getAccountScope(c);
+    const items = (await getTrackedLinks(c.env.DB)).filter(
+      (item) => !scope || (item.line_account_id != null && scope.includes(item.line_account_id)),
+    );
     const base = await resolveApiLinkBase(c);
     return c.json({ success: true, data: items.map((item) => serializeTrackedLink(item, base)) });
   } catch (err) {

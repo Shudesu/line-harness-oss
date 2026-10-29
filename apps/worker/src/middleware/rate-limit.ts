@@ -128,6 +128,13 @@ export async function rateLimitMiddleware(c: Context<Env>, next: Next): Promise<
     return next();
   }
 
+  // LINE からの知らせは、どの友だちの分も LINE の同じ送り元から届く。IP ごとの上限をかけると、
+  // 人が集まった瞬間に全員分まとめて弾かれ、何も返らなくなる。受け口で LINE の署名を確かめているので上限から外す。
+  // インターンの「大学を選ぶ」画面の受け口も、ミニアプリのサーバーから合言葉付きでしか来ないので同じく外す
+  if (path === '/webhook' || path === '/intern/picked-university') {
+    return next();
+  }
+
   let key: string;
   let max: number;
   let windowMs: number;
