@@ -9,6 +9,7 @@ import {
   isSurveyAccount,
   gradeCode,
   handlePickedUniversity,
+  greetingFromTemplates,
 } from './intern-survey.js';
 
 type QuickItem = { action: { label: string; data: string; inputOption?: string } };
@@ -108,7 +109,9 @@ describe('buildStartMessage', () => {
     const m = buildStartMessage({});
     const json = JSON.stringify(m);
     expect(json).toContain('"inputOption":"openKeyboard"');
-    expect(json).not.toContain('プライバシーポリシーを見る');
+    expect(json).not.toContain('"uri"');
+    // 1問目を画面で選ぶときはキーボードを開かない
+    expect(JSON.stringify(buildStartMessage({ pickerUrl: 'https://example.com/u' }))).not.toContain('openKeyboard');
     expect(JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p' }))).toContain('https://example.com/p');
   });
 });
@@ -140,7 +143,7 @@ describe('アンケートの流れ', () => {
     const done = step('isv:y:2028');
     expect(state).toMatchObject({ survey_step: 'done', graduation_year: '2028' });
     expect(state.survey_completed_at).toBeTruthy();
-    expect(String(done.messages[0].text)).toContain('ありがとうございました');
+    expect(done.messages[0]).toMatchObject({ type: 'image', originalContentUrl: expect.stringContaining('intern-done-menu') });
   });
 
   it('一覧にない大学は打ったまま記録し、印を付ける', () => {
@@ -192,10 +195,10 @@ describe('isSurveyAccount', () => {
 describe('大学を選ぶ画面・答え終えたあと', () => {
   const cfg = { pickerUrl: 'https://liff.line.me/x/university.html' };
 
-  it('同意すると「大学を選ぶ」ボタンのカードが届き、同意の印を付ける', () => {
+  it('同意すると「大学を選択する」ボタンのカードが届き、同意の印を付ける', () => {
     const r = reducePostback({ survey_step: 'consent' }, 'isv:consent', cfg)!;
     expect(r.patch).toEqual({ survey_step: 'university' });
-    expect(JSON.stringify(r.messages[0])).toContain('大学を選ぶ');
+    expect(JSON.stringify(r.messages[0])).toContain('大学を選択する');
     expect(r.effects).toEqual(['consented']);
   });
 
@@ -285,5 +288,25 @@ describe('大学を選ぶ画面からの受け渡し（通常の送信）', () =
     expect(await handlePickedUniversity(db, client as never, cfg, { lineUserId: U, name: '明治大学', unlisted: false })).toBe('ok');
     expect(sent).toHaveLength(1);
     expect(JSON.parse(store.metadata)).toMatchObject({ survey_step: 'grade', university_name: '明治大学' });
+  });
+});
+
+describe('あいさつ（アンケートの入口の前に付ける）', () => {
+  const rows = [
+    { name: 'ズ_あいさつ_2', message_type: 'text', message_content: '2' },
+    { name: 'ズ_あいさつ_10', message_type: 'text', message_content: '10' },
+    { name: 'ズ_あいさつ_1', message_type: 'text', message_content: '1' },
+    { name: 'ズ_あいさつ_3', message_type: 'text', message_content: '3' },
+    { name: 'ズ_あいさつ_4', message_type: 'text', message_content: '4' },
+    { name: 'ズ_あいさつ_5', message_type: 'text', message_content: '' },
+    { name: 'ズ_あいさつ1_1', message_type: 'text', message_content: '前の作りの名前' },
+    { name: 'ズ_あいさつ_ボタン名', message_type: 'text', message_content: '前の作りの名前' },
+    { name: 'ほかの定型文', message_type: 'text', message_content: '関係ない' },
+  ];
+  const texts = (ms: unknown[]) => ms.map((m) => (m as { text?: string }).text);
+
+  it('「ズ_あいさつ_数字」だけを名前の順に並べ、1回に送れる数（4つ）までにする。空の定型文は飛ばす', () => {
+    expect(texts(greetingFromTemplates(rows))).toEqual(['1', '2', '3', '4']);
+    expect(greetingFromTemplates([])).toEqual([]);
   });
 });

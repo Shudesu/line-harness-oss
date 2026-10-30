@@ -1,10 +1,12 @@
 // インターン（すごい大学生ズ）の登録アンケート（3問）。
 //
-// 1問目 大学名：［大学を選ぶ］でミニアプリの小さな画面を開き、文字を打つと出る候補から選ぶ。
+// 1問目 大学名：［大学を選択する］でミニアプリの小さな画面を開き、文字を打つと出る候補から選ぶ。
 //   選ぶと画面が「大学名：〇〇大学」をトークに送って閉じる。画面が使えない人はトークに大学名を打てば、候補をボタンで返す
 // 2問目 学年・3問目 卒業予定年：カードの中の選択肢を押して選ぶ
 // トーク下に並ぶボタン（クイックリプライ）は見た目がよくないので使わない。選択肢はすべてカードの中に置く
 // 答え終えたら：印を付ける・解放後のメニューに切り替える・答えをミニアプリのプロフィールに渡す
+// はじめて友だち追加した人には、アンケートの入口（同意のカード）の前にあいさつの文を付けて、1回の返事でまとめて送る。
+//   文はハーネスの定型文「ズ_あいさつ_1」「ズ_あいさつ_2」…から読む。1つも無ければ、今までどおりアンケートの入口だけを送る
 //
 // どこまで答えたかと答えは、友だちの metadata に入れる（survey_step / university_name ほか）。
 // INTERN_SURVEY_ACCOUNT_ID のアカウントでだけ動く。ほかのアカウントの動きは変えない。
@@ -14,6 +16,7 @@ import type { LineClient } from '@line-crm/line-sdk';
 import { jstNow } from '@line-crm/db';
 import { UNIVERSITIES_TSV } from './intern-universities.js';
 import { buildQaAnswer, buildQaCarousel } from './intern-qa.js';
+import { buildMessage } from './step-delivery.js';
 
 export const SURVEY_PREFIX = 'isv:';
 
@@ -292,11 +295,7 @@ function creamCard(altText: string, head: Msg[], body: Msg[]): Msg {
 
 /** 登録の直後・やり直しのときに送る、プライバシーポリシーの確認と回答の入口 */
 export function buildStartMessage(config: SurveyConfig): Msg {
-  const body: Msg[] = [];
-  if (config.privacyPolicyUrl) {
-    body.push(linkBox('プライバシーポリシーを見る', { type: 'uri', label: 'プライバシーポリシーを見る', uri: config.privacyPolicyUrl }, false));
-  }
-  body.push(
+  const body: Msg[] = [
     linkBox(
       '同意して回答する',
       {
@@ -304,18 +303,32 @@ export function buildStartMessage(config: SurveyConfig): Msg {
         label: '同意して回答する',
         data: `${SURVEY_PREFIX}consent`,
         displayText: '同意して回答する',
-        inputOption: 'openKeyboard',
+        // 1問目を画面で選ぶときはキーボードを開かない（カードが隠れるため）。トークに打つ形のときだけ開く
+        ...(config.pickerUrl ? {} : { inputOption: 'openKeyboard' }),
       },
       true,
     ),
-  );
+  ];
+  // ボタンの下に、下線付きの文字のリンクで置く
+  if (config.privacyPolicyUrl) {
+    body.push({
+      type: 'text',
+      text: 'プライバシーポリシー',
+      size: 'sm',
+      color: '#1A73E8',
+      margin: 'md',
+      decoration: 'underline',
+      align: 'center',
+      action: { type: 'uri', label: 'プライバシーポリシー', uri: config.privacyPolicyUrl },
+    });
+  }
   return creamCard(
-    'かんたんなアンケート（3問）にお答えください。',
+    'アンケートのお願い（3問）',
     [
-      { type: 'text', text: 'アンケートのお願い', weight: 'bold', size: 'md', color: INK, wrap: true },
+      { type: 'text', text: 'アンケートのお願い（3問）', weight: 'bold', size: 'md', color: INK, wrap: true },
       {
         type: 'text',
-        text: 'はじめに、かんたんなアンケート（3問）にお答えください。回答の前に、プライバシーポリシーをご確認ください。',
+        text: 'プライバシーポリシーに同意のうえ、\n3問のアンケートにご回答ください。\n\n回答後、下のメニューが開きます。',
         size: 'xs',
         color: SUB,
         wrap: true,
@@ -325,20 +338,49 @@ export function buildStartMessage(config: SurveyConfig): Msg {
   );
 }
 
+// ── あいさつ（アンケートの入口の前に付ける） ─────────────────────────
+
+// 定型文の名前。「ズ_あいさつ_1」「ズ_あいさつ_2」…を名前の順に送る
+export const GREETING_PREFIX = 'ズ_あいさつ_';
+const GREETING_NAME = /^ズ_あいさつ_\d+$/;
+// 1回の返事で送れるのは5つまで。最後のアンケートの入口の分を残す
+const GREETING_MAX = 4;
+
+export interface TemplateRow {
+  name: string;
+  message_type: string;
+  message_content: string;
+}
+
+/** 定型文の一覧から、あいさつの吹き出しを並べる */
+export function greetingFromTemplates(rows: TemplateRow[]): Msg[] {
+  return rows
+    .filter((r) => GREETING_NAME.test(r.name) && r.message_content.trim())
+    .sort((a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true }))
+    .slice(0, GREETING_MAX)
+    .map((r) => buildMessage(r.message_type, r.message_content) as unknown as Msg);
+}
+
+async function loadGreeting(db: D1Database): Promise<Msg[]> {
+  const rows = await db
+    .prepare("SELECT name, message_type, message_content FROM message_templates WHERE name LIKE 'ズ_あいさつ_%'")
+    .all<TemplateRow>();
+  return greetingFromTemplates(rows.results ?? []);
+}
+
 export function buildUniversityQuestion(config: SurveyConfig = {}): Msg {
   if (!config.pickerUrl) {
     return text('1問目：大学名を入力して送ってください。\n例：早稲田、明治大学');
   }
   return creamCard(
-    '1問目：在籍している大学を選んでください。',
+    '1問目：大学名を教えてください。',
     [
       { type: 'text', text: 'アンケート 1/3', size: 'xs', color: SUB },
-      { type: 'text', text: '在籍している大学を選んでください。', weight: 'bold', size: 'md', color: INK, wrap: true },
-      { type: 'text', text: '大学名の一部を入力すると、候補が出ます。', size: 'xs', color: SUB, wrap: true },
+      { type: 'text', text: '大学名を教えてください。', weight: 'bold', size: 'md', color: INK, wrap: true },
     ],
     [
-      linkBox('大学を選ぶ', { type: 'uri', label: '大学を選ぶ', uri: config.pickerUrl }, true),
-      { type: 'text', text: '画面が開かない場合は、このトークに大学名を送ってください。', size: 'xxs', color: SUB, wrap: true },
+      // 画面が開かない人向けの案内は出さないが、トークに大学名を打てば今までどおり受け付ける
+      linkBox('大学を選択する', { type: 'uri', label: '大学を選択する', uri: config.pickerUrl }, true),
     ],
   );
 }
@@ -392,8 +434,12 @@ export function buildGraduationYearQuestion(): Msg {
   });
 }
 
+// 答え終えたときの画像（画面下のメニューと同じ2段×3列に、ボタンごとの説明を並べた絵）。R2 に置いてある。差し替えるときは名前の版を上げる
+const DONE_IMAGE_URL = 'https://line-harness.line-haraness.workers.dev/images/intern-done-menu-v2.png';
+
+/** 答え終えたときに送る画像。押してもどこにも飛ばない（ボタンは画面下のメニューを使ってもらう） */
 export function buildDoneMessage(): Msg {
-  return text('ご回答ありがとうございました。メニューが使えるようになりました。画面下のメニューからご覧ください。');
+  return { type: 'image', originalContentUrl: DONE_IMAGE_URL, previewImageUrl: DONE_IMAGE_URL };
 }
 
 /** メニューの「Q&A」。よくある質問のカルーセル */
@@ -411,6 +457,8 @@ export interface SurveyState {
   grade?: string;
   graduation_year?: string;
   survey_completed_at?: string;
+  /** あいさつを送った日時（二度送らない） */
+  greeted_at?: string;
 }
 
 export interface SurveyResult {
@@ -736,7 +784,13 @@ export async function startSurveyOnFollow(
     await runEffects(db, lineClient, config, friend.id, friend.lineUserId, meta as SurveyState, ['unlock']);
     return;
   }
-  const result: SurveyResult = { patch: { survey_step: 'consent' }, messages: [buildStartMessage(config)] };
+  const state = meta as SurveyState;
+  // はじめての人（アンケートにまだ手を付けておらず、あいさつも未送信）には、入口の前にあいさつを付ける
+  const greeting = !state.survey_step && !state.greeted_at ? await loadGreeting(db) : [];
+  const result: SurveyResult = {
+    patch: greeting.length ? { survey_step: 'consent', greeted_at: jstNow() } : { survey_step: 'consent' },
+    messages: [...greeting, buildStartMessage(config)],
+  };
   await apply(db, lineClient, config, opts.replyToken, friend, meta, result, opts.lineAccountId);
 }
 
