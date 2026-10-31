@@ -7,6 +7,7 @@ import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
+import { accountTone, pageScope } from '@/lib/account-look'
 
 const appVersion = process.env.APP_VERSION || '0.0.0'
 const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
@@ -15,7 +16,7 @@ const appBuildDate = appBuildTime ? appBuildTime.replace('T', ' ').replace(/\.\d
 
 // ─── メニュー定義（ユーザー目線のカテゴリ） ───
 
-const menuSections = [
+const menuItems = [
   {
     label: null, // セクションラベルなし（メイン）
     items: [
@@ -78,7 +79,48 @@ const menuSections = [
   },
 ]
 
+// 旧来の分類から、各項目（名前・アイコン）を引けるようにする
+const itemByHref = new Map(
+  menuItems.flatMap((s) => s.items).map((item) => [item.href, item] as const),
+)
+
+// 呼び名を日常の言葉に寄せる
+const RELABEL: Record<string, string> = {
+  '/notifications': '未対応のトーク',
+  '/inflow-links': '流入リンク',
+  '/conversions': '成果の計測',
+}
+
+// やりたいこと別に並べ直す。よく使うものを上に、ほとんど使わないものは
+// 「その他の機能」にたたんでおく。
+const MENU_GROUPS: { label: string | null; hrefs: string[]; collapsible?: boolean }[] = [
+  { label: null, hrefs: ['/', '/notifications', '/chats', '/friends'] },
+  { label: 'LINEで送る', hrefs: ['/broadcasts', '/scenarios', '/friend-add-settings', '/reminders', '/templates'] },
+  { label: 'LINEの画面・自動返信', hrefs: ['/rich-menus', '/auto-replies', '/automations'] },
+  { label: '結果を見る', hrefs: ['/form-submissions', '/inflow-links', '/conversions'] },
+  { label: '設定', hrefs: ['/accounts', '/staff'] },
+  {
+    label: 'その他の機能',
+    collapsible: true,
+    hrefs: [
+      '/booking/bookings', '/booking/menus', '/booking/staff', '/events',
+      '/affiliates', '/scoring', '/duplicates', '/webhooks', '/pools', '/users',
+      '/health', '/updates', '/emergency',
+    ],
+  },
+]
+
+const menuSections = MENU_GROUPS.map((g) => ({
+  label: g.label,
+  collapsible: g.collapsible ?? false,
+  items: g.hrefs
+    .map((href) => itemByHref.get(href))
+    .filter((item): item is NonNullable<typeof item> => !!item)
+    .map((item) => ({ ...item, label: RELABEL[item.href] ?? item.label })),
+}))
+
 function AccountAvatar({ account, size = 32 }: { account: AccountWithStats; size?: number }) {
+  const { accounts } = useAccount()
   const displayName = account.displayName || account.name
   if (account.pictureUrl) {
     return (
@@ -93,7 +135,7 @@ function AccountAvatar({ account, size = 32 }: { account: AccountWithStats; size
   return (
     <div
       className="rounded-full flex items-center justify-center text-white font-bold shrink-0"
-      style={{ width: size, height: size, backgroundColor: '#06C755', fontSize: size * 0.4 }}
+      style={{ width: size, height: size, backgroundColor: accountTone(account.id, accounts).solid, fontSize: size * 0.4 }}
     >
       {displayName.charAt(0)}
     </div>
@@ -116,23 +158,30 @@ function AccountSwitcher() {
   if (loading || accounts.length === 0) return null
 
   const displayName = selectedAccount?.displayName || selectedAccount?.name || ''
+  const tone = accountTone(selectedAccount?.id, accounts)
 
   return (
     <div ref={ref} className="px-3 py-3 border-b border-gray-200">
+      <p className="px-1 pb-1.5 text-[11px] font-semibold text-gray-400">操作中のアカウント</p>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg border-2 transition-colors"
+        style={{ borderColor: tone.solid, backgroundColor: tone.soft }}
+        title={accounts.length > 1 ? '押すとアカウントを切り替えられます' : undefined}
       >
-        {selectedAccount && <AccountAvatar account={selectedAccount} size={28} />}
+        {selectedAccount && <AccountAvatar account={selectedAccount} size={32} />}
         <div className="flex-1 text-left min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">
+          <p className="text-sm font-bold truncate" style={{ color: tone.text }}>
             <span className="flex items-center gap-1.5">
               {countryFlag(selectedAccount?.country) && (
                 <span className="text-base leading-none">{countryFlag(selectedAccount?.country)}</span>
               )}
-              <span>{displayName}</span>
+              <span className="truncate">{displayName}</span>
             </span>
           </p>
+          {typeof selectedAccount?.stats?.friendCount === 'number' && (
+            <p className="text-[11px] text-gray-500">友だち {selectedAccount.stats.friendCount.toLocaleString('ja-JP')} 人</p>
+          )}
         </div>
         <svg
           className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -156,13 +205,15 @@ function AccountSwitcher() {
                   setSelectedAccountId(account.id)
                   setOpen(false)
                 }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${
-                  isSelected ? 'bg-green-50' : 'hover:bg-gray-50'
-                }`}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+                style={{
+                  borderLeft: `4px solid ${accountTone(account.id, accounts).solid}`,
+                  backgroundColor: isSelected ? accountTone(account.id, accounts).soft : undefined,
+                }}
               >
                 <AccountAvatar account={account} size={24} />
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm truncate ${isSelected ? 'font-semibold text-green-700' : 'text-gray-700'}`}>
+                  <p className={`text-sm truncate ${isSelected ? 'font-semibold' : 'text-gray-700'}`} style={isSelected ? { color: accountTone(account.id, accounts).text } : undefined}>
                     <span className="flex items-center gap-1.5">
                       {countryFlag(account.country) && (
                         <span className="text-base leading-none">{countryFlag(account.country)}</span>
@@ -170,12 +221,15 @@ function AccountSwitcher() {
                       <span>{name}</span>
                     </span>
                   </p>
-                  {account.basicId && (
-                    <p className="text-xs text-gray-400 truncate">{account.basicId}</p>
-                  )}
+                  <p className="text-xs text-gray-400 truncate">
+                    {[
+                      typeof account.stats?.friendCount === 'number' ? `友だち ${account.stats.friendCount.toLocaleString('ja-JP')} 人` : null,
+                      account.basicId,
+                    ].filter(Boolean).join(' · ')}
+                  </p>
                 </div>
                 {isSelected && (
-                  <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 shrink-0" style={{ color: accountTone(account.id, accounts).solid }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 )}
@@ -199,6 +253,8 @@ function NavIcon({ d }: { d: string }) {
 export default function Sidebar() {
   const pathname = usePathname()
   const [isOpen, setIsOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const { selectedAccount, accounts } = useAccount()
   const [staffName, setStaffName] = useState<string | null>(null)
   const [staffRole, setStaffRole] = useState<string | null>(null)
 
@@ -266,49 +322,78 @@ export default function Sidebar() {
 
       {/* ナビゲーション */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {menuSections.map((section, si) => (
-          <div key={si}>
-            {section.label && (
-              <div className="pt-5 pb-2 px-3">
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{section.label}</p>
-              </div>
-            )}
-            {section.items.filter((item) => {
-              if (item.href === '/staff' && staffRole !== 'owner') return false
-              if (item.href === '/accounts' && staffRole === 'staff') return false
-              return true
-            }).map((item) => {
-              const active = isActive(item.href)
-              const isDanger = 'danger' in item && item.danger
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    active
-                      ? 'text-white'
-                      : isDanger
-                        ? 'text-red-500 hover:bg-red-50'
-                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                  }`}
-                  style={active ? { backgroundColor: isDanger ? '#EF4444' : '#06C755' } : {}}
-                >
-                  <NavIcon d={item.icon} />
-                  <span className="flex-1">{item.label}</span>
-                  {item.href === '/notifications' && unansweredCount > 0 && (
-                    <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-                        active ? 'bg-white text-rose-600' : 'bg-rose-500 text-white'
-                      }`}
-                    >
-                      {unansweredCount > 99 ? '99+' : unansweredCount}
-                    </span>
-                  )}
-                </Link>
-              )
-            })}
-          </div>
-        ))}
+        {menuSections.map((section, si) => {
+          const items = section.items.filter((item) => {
+            if (item.href === '/staff' && staffRole !== 'owner') return false
+            if (item.href === '/accounts' && staffRole === 'staff') return false
+            return true
+          })
+          if (items.length === 0) return null
+          // たたんである区切りでも、いま開いている画面が中にあれば開いておく
+          const hasActive = items.some((item) => isActive(item.href))
+          const expanded = !section.collapsible || moreOpen || hasActive
+          return (
+            <div key={si}>
+              {section.label && (
+                section.collapsible ? (
+                  <button
+                    type="button"
+                    onClick={() => setMoreOpen(!moreOpen)}
+                    className="mt-5 mb-1 w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] font-semibold text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  >
+                    <span>{section.label}（{items.length}）</span>
+                    <svg className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                ) : (
+                  <div className="pt-5 pb-2 px-3">
+                    <p className="text-[11px] font-semibold text-gray-400 tracking-wider">{section.label}</p>
+                  </div>
+                )
+              )}
+              {expanded && items.map((item) => {
+                const active = isActive(item.href)
+                const isDanger = 'danger' in item && item.danger
+                const shared = pageScope(item.href) === 'shared'
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                      active
+                        ? 'text-white'
+                        : isDanger
+                          ? 'text-red-500 hover:bg-red-50'
+                          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    }`}
+                    style={active ? { backgroundColor: isDanger ? '#EF4444' : '#06C755' } : {}}
+                  >
+                    <NavIcon d={item.icon} />
+                    <span className="flex-1">{item.label}</span>
+                    {shared && (
+                      <span
+                        title="全アカウント共通の画面です"
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${active ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-400'}`}
+                      >
+                        共通
+                      </span>
+                    )}
+                    {item.href === '/notifications' && unansweredCount > 0 && (
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                          active ? 'bg-white text-rose-600' : 'bg-rose-500 text-white'
+                        }`}
+                      >
+                        {unansweredCount > 99 ? '99+' : unansweredCount}
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+            </div>
+          )
+        })}
       </nav>
 
       {/* フッター */}
@@ -383,6 +468,14 @@ export default function Sidebar() {
           <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs" style={{ backgroundColor: '#06C755' }}>H</div>
           <p className="text-sm font-bold text-gray-900">L Harness</p>
         </div>
+        {selectedAccount && (
+          <span
+            className="ml-auto max-w-[45%] truncate rounded-full px-2.5 py-1 text-xs font-bold"
+            style={{ backgroundColor: accountTone(selectedAccount.id, accounts).soft, color: accountTone(selectedAccount.id, accounts).text }}
+          >
+            {selectedAccount.displayName || selectedAccount.name}
+          </span>
+        )}
       </div>
 
       {/* モバイル: オーバーレイ */}

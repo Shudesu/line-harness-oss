@@ -29,9 +29,6 @@ interface DashboardStats {
   friendCount: number | null
   activeScenarioCount: number | null
   broadcastCount: number | null
-  templateCount: number | null
-  automationCount: number | null
-  scoringRuleCount: number | null
 }
 
 interface StatCardProps {
@@ -77,9 +74,6 @@ export default function DashboardPage() {
     friendCount: null,
     activeScenarioCount: null,
     broadcastCount: null,
-    templateCount: null,
-    automationCount: null,
-    scoringRuleCount: null,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -89,13 +83,10 @@ export default function DashboardPage() {
       setLoading(true)
       setError('')
       try {
-        const [friendCountRes, scenariosRes, broadcastsRes, templatesRes, automationsRes, scoringRes] = await Promise.allSettled([
+        const [friendCountRes, scenariosRes, broadcastsRes] = await Promise.allSettled([
           api.friends.count({ accountId: selectedAccountId ?? undefined }),
-          api.scenarios.list(),
-          api.broadcasts.list(),
-          api.templates.list(),
-          api.automations.list(),
-          api.scoring.rules(),
+          api.scenarios.list({ accountId: selectedAccountId ?? undefined }),
+          api.broadcasts.list({ accountId: selectedAccountId ?? undefined }),
         ])
 
         setStats({
@@ -110,18 +101,6 @@ export default function DashboardPage() {
           broadcastCount:
             broadcastsRes.status === 'fulfilled' && broadcastsRes.value.success
               ? broadcastsRes.value.data.length
-              : null,
-          templateCount:
-            templatesRes.status === 'fulfilled' && templatesRes.value.success
-              ? templatesRes.value.data.length
-              : null,
-          automationCount:
-            automationsRes.status === 'fulfilled' && automationsRes.value.success
-              ? automationsRes.value.data.filter((a) => a.isActive).length
-              : null,
-          scoringRuleCount:
-            scoringRes.status === 'fulfilled' && scoringRes.value.success
-              ? scoringRes.value.data.length
               : null,
         })
       } catch {
@@ -151,24 +130,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Demo banner */}
-      <a
-        href="https://your-worker.your-subdomain.workers.dev/auth/line?ref=dashboard"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-bold text-gray-900">LINE で体験する</p>
-            <p className="text-xs text-gray-500 mt-0.5">友だち追加でステップ配信・フォーム・自動返信を体験</p>
-          </div>
-          <span className="text-xs px-3 py-1.5 rounded-full text-white font-medium" style={{ backgroundColor: '#06C755' }}>
-            友だち追加
-          </span>
-        </div>
-      </a>
-
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
         <StatCard
@@ -184,7 +145,7 @@ export default function DashboardPage() {
           }
         />
         <StatCard
-          title="アクティブシナリオ数"
+          title="動いているシナリオ"
           value={stats.activeScenarioCount}
           loading={loading}
           href="/scenarios"
@@ -197,7 +158,7 @@ export default function DashboardPage() {
           }
         />
         <StatCard
-          title="配信数 (合計)"
+          title="一斉配信（これまで）"
           value={stats.broadcastCount}
           loading={loading}
           href="/broadcasts"
@@ -211,52 +172,9 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Round 3 summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
-        <StatCard
-          title="テンプレート数"
-          value={stats.templateCount}
-          loading={loading}
-          href="/templates"
-          accentColor="#F59E0B"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6z" />
-            </svg>
-          }
-        />
-        <StatCard
-          title="アクティブルール数"
-          value={stats.automationCount}
-          loading={loading}
-          href="/automations"
-          accentColor="#EF4444"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          }
-        />
-        <StatCard
-          title="スコアリングルール数"
-          value={stats.scoringRuleCount}
-          loading={loading}
-          href="/scoring"
-          accentColor="#10B981"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-            </svg>
-          }
-        />
-      </div>
-
       {/* Quick links */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-sm font-semibold text-gray-800 mb-4">クイックアクション</h2>
+        <h2 className="text-sm font-semibold text-gray-800 mb-4">よく使う画面</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Link
             href="/friends"
@@ -317,24 +235,23 @@ export default function DashboardPage() {
               </svg>
             </div>
             <div>
-              <p className="text-sm font-medium text-gray-900 group-hover:text-green-700 transition-colors">チャット</p>
-              <p className="text-xs text-gray-400">オペレーターチャット管理</p>
+              <p className="text-sm font-medium text-gray-900 group-hover:text-green-700 transition-colors">個別チャット</p>
+              <p className="text-xs text-gray-400">友だちと1対1でやりとり</p>
             </div>
           </Link>
 
           <Link
-            href="/health"
-            className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-red-300 hover:bg-red-50 transition-colors group"
+            href="/rich-menus"
+            className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50 transition-colors group"
           >
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 bg-red-500">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 bg-orange-500">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h6v6H4V4zm0 10h6v6H4v-6zm10-10h6v6h-6V4zm0 10h6v6h-6v-6z" />
               </svg>
             </div>
             <div>
-              <p className="text-sm font-medium text-gray-900 group-hover:text-red-700 transition-colors">BAN検知</p>
-              <p className="text-xs text-gray-400">アカウント健康度ダッシュボード</p>
+              <p className="text-sm font-medium text-gray-900 group-hover:text-orange-700 transition-colors">リッチメニュー</p>
+              <p className="text-xs text-gray-400">トーク画面の下に出るメニュー</p>
             </div>
           </Link>
         </div>

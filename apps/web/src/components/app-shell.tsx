@@ -1,6 +1,7 @@
 'use client'
 import { usePathname } from 'next/navigation'
 import Sidebar from './layout/sidebar'
+import AccountBanner from './layout/account-banner'
 import { UpdateBanner } from './update/update-banner'
 import AuthGuard from './auth-guard'
 import { AccountProvider } from '@/contexts/account-context'
@@ -24,6 +25,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Sidebar />
             <main className="flex-1 overflow-auto pt-[72px] lg:pt-0">
               <div className="px-4 pb-6 sm:px-6 lg:pt-8 lg:px-8 lg:pb-8">
+                <AccountBanner />
                 {children}
               </div>
             </main>
