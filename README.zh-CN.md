@@ -7,9 +7,13 @@
 完全开源的 LINE 官方账号 CRM。**专有 LINE CRM SaaS（月费 1-2 万日元）的免费替代方案**。
 基于 Cloudflare 免费套餐运行。**服务器费用 0 元**。可通过 Claude Code 完整操作。
 
-### ▶️ [在 YouTube 观看视频教程（约 20 分钟）](https://youtu.be/DiRuGaeq1sM)
+### 复制这一行，开始安装
 
-[![点击在 YouTube 播放 — L Harness 配置教程](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+在已安装 Node.js 22+ 和 Git 的电脑上，将下面的命令粘贴到终端运行，再按提示登录 Cloudflare 并配置 LINE。
+
+```bash
+npx --yes create-line-harness@latest
+```
 
 **当前版本**: v0.13.2 ・ MIT 许可证 ・ TypeScript / Cloudflare Workers + D1
 
@@ -40,24 +44,24 @@
 ### 一条命令完成全部配置
 
 ```bash
-npx create-line-harness
+npx --yes create-line-harness@latest
 ```
 
-CLI 自动完成以下全部步骤：
+CLI 会引导你完成以下步骤：
 - Cloudflare 账号认证 (`wrangler login`)
 - D1 数据库创建 + schema 与 migration 应用
 - Worker / 管理后台部署
 - LINE 官方账号 credentials 注册
-- LIFF 应用自动创建
+- 按提示手动配置 LINE Login 渠道和 LIFF 应用
 - 管理后台首次登录用 Owner 用户创建
 
-约 5 分钟完成。完成后即可在 `https://<your-name>-admin.pages.dev` 后台开始运营。
+按照完成页面的提示设置 Webhook URL、LINE Login 回调 URL 和 LIFF 端点，然后打开显示的管理后台 URL。所需时间取决于账号准备和 LINE 配置。
 
 ### 前置要求
 
-- Cloudflare 账号（免费套餐即可）
+- Cloudflare 账号并启用 R2（启用 R2 需要登记支付信息）
 - LINE 官方账号 + Messaging API channel
-- Node.js 22+ / pnpm
+- Node.js 22+（含 npm / npx）和 Git
 
 ---
 
@@ -143,7 +147,7 @@ CLI 自动完成以下全部步骤：
 
 ## 资源
 
-- [配置教程视频](https://youtu.be/DiRuGaeq1sM)
+- [复制命令开始安装](#快速开始)
 - [在 LINE 上免费体验](https://shudesu.github.io/line-harness-oss/)
 - [npm: @line-harness/sdk](https://www.npmjs.com/package/@line-harness/sdk)
 - [npm: @line-harness/mcp-server](https://www.npmjs.com/package/@line-harness/mcp-server)

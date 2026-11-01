@@ -7,9 +7,13 @@
 CRM completamente open source para Cuentas Oficiales de LINE. **Alternativa gratuita a los SaaS de CRM para LINE propietarios** (con precios desde ¥10,000–20,000/mes).
 Funciona sobre el plan gratuito de Cloudflare. **Costo de servidor: $0/mes**. Operable al 100% desde Claude Code.
 
-### ▶️ [Ver el tutorial en YouTube (~20 min)](https://youtu.be/DiRuGaeq1sM)
+### Copia un comando para iniciar la instalación
 
-[![Haz clic para reproducir en YouTube — Guía de configuración de L Harness](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+En un equipo con Node.js 22+ y Git, pega este comando en la terminal. Sigue las indicaciones para iniciar sesión en Cloudflare y configurar LINE.
+
+```bash
+npx --yes create-line-harness@latest
+```
 
 **Versión actual**: v0.13.2 ・ Licencia MIT ・ TypeScript / Cloudflare Workers + D1
 
@@ -40,24 +44,24 @@ Funciona sobre el plan gratuito de Cloudflare. **Costo de servidor: $0/mes**. Op
 ### Configuración con un solo comando
 
 ```bash
-npx create-line-harness
+npx --yes create-line-harness@latest
 ```
 
-El CLI se encarga de todo:
+El CLI te guía durante la configuración:
 - Autenticación con Cloudflare (`wrangler login`)
 - Creación de la base de datos D1 + aplicación de schema y migraciones
 - Despliegue del Worker y del panel de administración
 - Registro de credenciales de la Cuenta Oficial de LINE
-- Creación automática de la app LIFF
+- Configuración manual guiada del canal LINE Login y de la app LIFF
 - Creación del usuario Owner inicial para el panel
 
-Tarda unos 5 minutos. Al finalizar, el panel en `https://<your-name>-admin.pages.dev` está listo para operar.
+Sigue las instrucciones finales para configurar la URL del Webhook, la URL de callback de LINE Login y el endpoint de LIFF. Después, abre la URL del panel indicada. El tiempo depende de la preparación de las cuentas y de la configuración de LINE.
 
 ### Requisitos
 
-- Cuenta de Cloudflare (con el plan gratuito basta)
+- Cuenta de Cloudflare con R2 activado (R2 requiere registrar información de pago)
 - Cuenta Oficial de LINE + canal Messaging API
-- Node.js 22+ / pnpm
+- Node.js 22+ (con npm / npx) y Git
 
 ---
 
@@ -143,7 +147,7 @@ Tarda unos 5 minutos. Al finalizar, el panel en `https://<your-name>-admin.pages
 
 ## Recursos
 
-- [Tutorial de configuración (video)](https://youtu.be/DiRuGaeq1sM)
+- [Guía de instalación con un comando](#inicio-rápido)
 - [Demo en vivo en LINE](https://shudesu.github.io/line-harness-oss/)
 - [npm: @line-harness/sdk](https://www.npmjs.com/package/@line-harness/sdk)
 - [npm: @line-harness/mcp-server](https://www.npmjs.com/package/@line-harness/mcp-server)

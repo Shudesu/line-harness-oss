@@ -7,9 +7,13 @@
 A fully open-source CRM for LINE Official Accounts. **Free alternative to proprietary LINE CRM SaaS** (priced at ¥10,000–20,000+/month).
 Runs on Cloudflare's free tier. **$0/month server cost.** Fully operable from Claude Code.
 
-### ▶️ [Watch the walkthrough on YouTube (~20 min)](https://youtu.be/DiRuGaeq1sM)
+### Start with one copy-and-paste command
 
-[![Click to play on YouTube — L Harness setup guide](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+On a PC with Node.js 22+ and Git, paste this into your terminal. Follow the prompts for Cloudflare login and LINE configuration.
+
+```bash
+npx --yes create-line-harness@latest
+```
 
 **Current version**: v0.13.2 ・ MIT License ・ TypeScript / Cloudflare Workers + D1
 
@@ -40,24 +44,24 @@ Runs on Cloudflare's free tier. **$0/month server cost.** Fully operable from Cl
 ### One-command setup
 
 ```bash
-npx create-line-harness
+npx --yes create-line-harness@latest
 ```
 
-The CLI handles everything:
+The CLI guides you through setup:
 - Cloudflare account auth (`wrangler login`)
 - D1 database creation + schema/migrations
 - Worker / dashboard deployment
 - LINE Official Account credentials registration
-- LIFF app auto-creation
+- Guided manual setup of the LINE Login channel and LIFF app
 - Initial Owner user for the dashboard
 
-Takes about 5 minutes. Once done, the dashboard at `https://<your-name>-admin.pages.dev` is live and ready.
+Follow the final instructions to configure the Webhook URL, LINE Login callback URL, and LIFF endpoint, then open the displayed dashboard URL. Setup time depends on account preparation and LINE configuration.
 
 ### Requirements
 
-- Cloudflare account (free tier is fine)
+- Cloudflare account with R2 enabled (payment information is required for R2)
 - LINE Official Account + Messaging API channel
-- Node.js 22+ / pnpm
+- Node.js 22+ (including npm / npx) and Git
 
 ---
 
@@ -143,7 +147,7 @@ Takes about 5 minutes. Once done, the dashboard at `https://<your-name>-admin.pa
 
 ## Resources
 
-- [Setup walkthrough (video)](https://youtu.be/DiRuGaeq1sM)
+- [Copy-and-paste setup guide](#quick-start)
 - [Live demo on LINE](https://shudesu.github.io/line-harness-oss/)
 - [npm: @line-harness/sdk](https://www.npmjs.com/package/@line-harness/sdk)
 - [npm: @line-harness/mcp-server](https://www.npmjs.com/package/@line-harness/mcp-server)
