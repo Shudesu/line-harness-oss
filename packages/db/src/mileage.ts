@@ -403,6 +403,9 @@ const FRIEND_WALLET_SCOPE_SQL = `(
  * Resolve a wallet through friends.user_id when available. This makes balances
  * follow the same person across multiple LINE accounts without rewriting old
  * ledger rows; an unlinked friend still has a safe friend-scoped wallet.
+ * Collect matching entry IDs through the existing beneficiary indexes first.
+ * UNION deduplicates entries matching both user and friend scopes. Keeping the
+ * OR predicate on the ledger join makes SQLite scan the entire program ledger.
  */
 export async function getMileageSummaryForFriend(
   db: D1Database,
@@ -414,6 +417,17 @@ export async function getMileageSummaryForFriend(
     .prepare(
       `WITH identity AS (
          SELECT user_id FROM friends WHERE id = ?
+       ), wallet_ids AS (
+         SELECT id FROM mileage_ledger
+          WHERE program_id = ? AND beneficiary_friend_id = ?
+         UNION
+         SELECT id FROM mileage_ledger
+          WHERE program_id = ? AND beneficiary_user_id = (SELECT user_id FROM identity)
+         UNION
+         SELECT id FROM mileage_ledger
+          WHERE program_id = ? AND beneficiary_friend_id IN (
+            SELECT id FROM friends WHERE user_id = (SELECT user_id FROM identity)
+          )
        )
        SELECT mp.name AS program_name,
               COALESCE(SUM(CASE WHEN ml.status = 'available' THEN ml.amount ELSE 0 END), 0) AS available,
@@ -423,14 +437,11 @@ export async function getMileageSummaryForFriend(
               COALESCE(-SUM(CASE WHEN ml.entry_type = 'spend' AND ml.amount < 0
                                  THEN ml.amount ELSE 0 END), 0) AS spent
          FROM mileage_programs mp
-         LEFT JOIN identity ON 1 = 1
-         LEFT JOIN mileage_ledger ml
-           ON ml.program_id = mp.id
-          AND ${FRIEND_WALLET_SCOPE_SQL}
+         LEFT JOIN mileage_ledger ml ON ml.id IN (SELECT id FROM wallet_ids)
         WHERE mp.id = ?
         GROUP BY mp.id, mp.name`,
     )
-    .bind(friendId, friendId, programId)
+    .bind(friendId, programId, friendId, programId, programId, programId)
     .first<{
       program_name: string;
       available: number;

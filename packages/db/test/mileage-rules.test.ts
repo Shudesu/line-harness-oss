@@ -82,6 +82,66 @@ describe('configurable mileage rules', () => {
     vi.useRealTimers();
   });
 
+
+  it('uses beneficiary indexes before aggregating a wallet', async () => {
+    let walletSql = '';
+    let walletParams: unknown[] = [];
+    const observed = {
+      prepare(sql: string) {
+        const statement = db.prepare(sql);
+        return { bind(...params: unknown[]) {
+          if (sql.includes('SELECT mp.name AS program_name')) {
+            walletSql = sql;
+            walletParams = params;
+          }
+          return statement.bind(...params);
+        } };
+      },
+    } as unknown as D1Database;
+    await getMileageSummaryForFriend(observed, 'friend-1');
+    const plan = (sqlite.prepare('EXPLAIN QUERY PLAN ' + walletSql).all(...walletParams) as { detail: string }[])
+      .map(row => row.detail).join('\n');
+    expect(plan).toMatch(/idx_mileage_ledger_friend.*program_id=\? AND beneficiary_friend_id=\?/);
+    expect(plan).toMatch(/idx_mileage_ledger_user.*program_id=\? AND beneficiary_user_id=\?/);
+    expect(plan).toMatch(/SEARCH ml .*\(id=\?\)/);
+    expect(plan).not.toMatch(/SEARCH ml .*\(program_id=\?\)/);
+  });
+
+  it('preserves cross-account wallet scope and all ledger states without double counting', async () => {
+    sqlite.prepare(`INSERT INTO friends (id,line_user_id,display_name) VALUES ('unlinked','U3','Unlinked')`).run();
+    const insert = sqlite.prepare(`INSERT INTO mileage_ledger
+      (id,program_id,beneficiary_user_id,beneficiary_friend_id,entry_type,status,amount,
+       reason,source,idempotency_key,occurred_at,created_at)
+      VALUES (?, 'default', ?, ?, ?, ?, ?, 'fixture','test', ?, '2026-08-01', '2026-08-01')`);
+    const rows = [
+      ['grant','user-1','friend-1','grant','available',100],
+      ['legacy',null,'friend-2','grant','available',40],
+      ['user-only','user-1',null,'grant','available',20],
+      ['pending','user-1','friend-1','grant','pending',30],
+      ['void','user-1','friend-1','grant','void',50],
+      ['spend','user-1','friend-1','spend','available',-10],
+      ['reversal','user-1','friend-1','reversal','available',-5],
+      ['expiration','user-1','friend-1','expiration','available',-8],
+      ['adjustment','user-1','friend-1','adjustment','available',3],
+      ['other',null,'unlinked','grant','available',7],
+    ];
+    for (const row of rows) insert.run(...row, row[0]);
+    for (const friend of ['friend-1','friend-2']) {
+      expect(await getMileageSummaryForFriend(db, friend)).toMatchObject({
+        available:140, pending:30, lifetimeEarned:240, spent:10,
+      });
+    }
+    expect(await getMileageSummaryForFriend(db,'unlinked')).toMatchObject({available:7,pending:0});
+    expect(await getMileageSummaryForFriend(db,'missing')).toMatchObject({available:0,pending:0});
+    sqlite.prepare(`UPDATE mileage_ledger SET status='available' WHERE id='pending'`).run();
+    expect((await getMileageSummaryForFriend(db,'friend-1')).available).toBe(170);
+    sqlite.prepare(`UPDATE mileage_ledger SET status='void' WHERE id='grant'`).run();
+    expect((await getMileageSummaryForFriend(db,'friend-1')).available).toBe(70);
+    sqlite.prepare(`UPDATE friends SET user_id=NULL WHERE id='friend-2'`).run();
+    expect((await getMileageSummaryForFriend(db,'friend-1')).available).toBe(30);
+    expect((await getMileageSummaryForFriend(db,'friend-2')).available).toBe(40);
+  });
+
   it('enforces the message daily cap across two LINE accounts for one user', async () => {
     for (let index = 0; index < 6; index += 1) {
       await applyMileageRulesForEvent(db, {
