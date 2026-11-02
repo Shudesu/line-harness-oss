@@ -10,6 +10,7 @@ import {
   gradeCode,
   handlePickedUniversity,
   greetingFromTemplates,
+  startSurveyOnFollow,
 } from './intern-survey.js';
 
 type QuickItem = { action: { label: string; data: string; inputOption?: string } };
@@ -113,6 +114,16 @@ describe('buildStartMessage', () => {
     // 1問目を画面で選ぶときはキーボードを開かない
     expect(JSON.stringify(buildStartMessage({ pickerUrl: 'https://example.com/u' }))).not.toContain('openKeyboard');
     expect(JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p' }))).toContain('https://example.com/p');
+  });
+
+  it('利用規約のリンクがあれば、ポリシーと並べて出し、本文にも書く', () => {
+    const json = JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p', termsUrl: 'https://example.com/t' }));
+    expect(json).toContain('https://example.com/t');
+    expect(json).toContain('https://example.com/p');
+    expect(json).toContain('利用規約とプライバシーポリシーに同意のうえ');
+    expect(json.indexOf('https://example.com/t')).toBeLessThan(json.indexOf('https://example.com/p'));
+    // 規約のリンクが無いときは本文に規約を書かない
+    expect(JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p' }))).not.toContain('利用規約');
   });
 });
 
@@ -308,5 +319,67 @@ describe('あいさつ（アンケートの入口の前に付ける）', () => {
   it('「ズ_あいさつ_数字」だけを名前の順に並べ、1回に送れる数（4つ）までにする。空の定型文は飛ばす', () => {
     expect(texts(greetingFromTemplates(rows))).toEqual(['1', '2', '3', '4']);
     expect(greetingFromTemplates([])).toEqual([]);
+  });
+});
+
+describe('友だち追加のときのメニュー', () => {
+  const U = 'U' + '1'.repeat(32);
+  const fakeDb = (meta: Record<string, unknown>) => {
+    const store = { metadata: JSON.stringify(meta) };
+    const db = {
+      prepare(sql: string) {
+        let args: unknown[] = [];
+        const stmt = {
+          bind(...a: unknown[]) { args = a; return stmt; },
+          async first() {
+            if (sql.startsWith('SELECT metadata')) return { metadata: store.metadata };
+            return null;
+          },
+          async all() { return { results: [] }; },
+          async run() {
+            if (sql.startsWith('UPDATE friends SET metadata')) store.metadata = String(args[0]);
+            return {};
+          },
+        };
+        return stmt;
+      },
+    };
+    return db as unknown as D1Database;
+  };
+  const fakeClient = () => {
+    const calls: string[] = [];
+    return {
+      calls,
+      client: {
+        replyMessage: async () => { calls.push('reply'); },
+        pushMessage: async () => { calls.push('push'); },
+        linkRichMenuToUser: async (_u: string, id: string) => { calls.push('link:' + id); },
+      },
+    };
+  };
+  const cfg = { accountId: 'intern', lockedRichMenuId: 'locked', unlockedRichMenuId: 'unlocked' };
+
+  it('まだ答えていない人には、返事のあとに鍵付きを個人に付け直す', async () => {
+    const { calls, client } = fakeClient();
+    await startSurveyOnFollow(fakeDb({}), client as never, cfg, { friendId: 'f1', lineUserId: U, replyToken: 'r', lineAccountId: 'intern' });
+    expect(calls[0]).toBe('reply');
+    expect(calls).toContain('link:locked');
+    expect(calls).not.toContain('link:unlocked');
+  });
+
+  it('答え終えた人には鍵付きを付けず、解放後に戻す', async () => {
+    const { calls, client } = fakeClient();
+    await startSurveyOnFollow(fakeDb({ survey_step: 'done' }), client as never, cfg, { friendId: 'f1', lineUserId: U, replyToken: 'r', lineAccountId: 'intern' });
+    expect(calls).toContain('link:unlocked');
+    expect(calls).not.toContain('link:locked');
+  });
+
+  it('メニューを付けられなくても止まらない', async () => {
+    const { calls, client } = fakeClient();
+    client.linkRichMenuToUser = async () => { throw new Error('ng'); };
+    await expect(
+      startSurveyOnFollow(fakeDb({}), client as never, cfg, { friendId: 'f1', lineUserId: U, replyToken: 'r', lineAccountId: 'intern' }),
+    ).resolves.toBeUndefined();
+    expect(calls[0]).toBe('reply');
   });
 });

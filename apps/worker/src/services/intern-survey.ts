@@ -25,10 +25,14 @@ export type SurveyStep = 'consent' | 'university' | 'grade' | 'graduation_year' 
 export interface SurveyConfig {
   accountId?: string;
   privacyPolicyUrl?: string;
+  /** アンケートの入口に出す利用規約のリンク */
+  termsUrl?: string;
   /** 大学を選ぶ小さな画面（ミニアプリ）。無ければトークに打ってもらう形だけになる */
   pickerUrl?: string;
   /** 答え終えた人に付け替える、解放後のリッチメニューの LINE 上の ID */
   unlockedRichMenuId?: string;
+  /** まだ答え終えていない人に付ける、鍵付きのリッチメニューの LINE 上の ID */
+  lockedRichMenuId?: string;
   /** 答えを渡すミニアプリの受け口と合言葉 */
   miniappSurveyUrl?: string;
   bridgeKey?: string;
@@ -37,16 +41,20 @@ export interface SurveyConfig {
 export function surveyConfigFromEnv(env: {
   INTERN_SURVEY_ACCOUNT_ID?: string;
   INTERN_PRIVACY_POLICY_URL?: string;
+  INTERN_TERMS_URL?: string;
   INTERN_UNIVERSITY_PICKER_URL?: string;
   INTERN_UNLOCKED_RICHMENU_ID?: string;
+  INTERN_LOCKED_RICHMENU_ID?: string;
   INTERN_MINIAPP_SURVEY_URL?: string;
   INTERN_BRIDGE_KEY?: string;
 }): SurveyConfig {
   return {
     accountId: env.INTERN_SURVEY_ACCOUNT_ID,
     privacyPolicyUrl: env.INTERN_PRIVACY_POLICY_URL,
+    termsUrl: env.INTERN_TERMS_URL,
     pickerUrl: env.INTERN_UNIVERSITY_PICKER_URL,
     unlockedRichMenuId: env.INTERN_UNLOCKED_RICHMENU_ID,
+    lockedRichMenuId: env.INTERN_LOCKED_RICHMENU_ID,
     miniappSurveyUrl: env.INTERN_MINIAPP_SURVEY_URL,
     bridgeKey: env.INTERN_BRIDGE_KEY,
   };
@@ -293,7 +301,20 @@ function creamCard(altText: string, head: Msg[], body: Msg[]): Msg {
   };
 }
 
-/** 登録の直後・やり直しのときに送る、プライバシーポリシーの確認と回答の入口 */
+/** 青字・下線の文字のリンク */
+function textLink(label: string, uri: string): Msg {
+  return {
+    type: 'text',
+    text: label,
+    size: 'sm',
+    color: '#1A73E8',
+    decoration: 'underline',
+    flex: 0,
+    action: { type: 'uri', label, uri },
+  };
+}
+
+/** 登録の直後・やり直しのときに送る、利用規約・プライバシーポリシーの確認と回答の入口 */
 export function buildStartMessage(config: SurveyConfig): Msg {
   const body: Msg[] = [
     linkBox(
@@ -309,18 +330,12 @@ export function buildStartMessage(config: SurveyConfig): Msg {
       true,
     ),
   ];
-  // ボタンの下に、下線付きの文字のリンクで置く
-  if (config.privacyPolicyUrl) {
-    body.push({
-      type: 'text',
-      text: 'プライバシーポリシー',
-      size: 'sm',
-      color: '#1A73E8',
-      margin: 'md',
-      decoration: 'underline',
-      align: 'center',
-      action: { type: 'uri', label: 'プライバシーポリシー', uri: config.privacyPolicyUrl },
-    });
+  // ボタンの下に、下線付きの文字のリンクで横に並べて置く
+  const links: Msg[] = [];
+  if (config.termsUrl) links.push(textLink('利用規約', config.termsUrl));
+  if (config.privacyPolicyUrl) links.push(textLink('プライバシーポリシー', config.privacyPolicyUrl));
+  if (links.length) {
+    body.push({ type: 'box', layout: 'horizontal', justifyContent: 'center', spacing: 'xl', margin: 'md', contents: links });
   }
   return creamCard(
     'アンケートのお願い（3問）',
@@ -328,7 +343,7 @@ export function buildStartMessage(config: SurveyConfig): Msg {
       { type: 'text', text: 'アンケートのお願い（3問）', weight: 'bold', size: 'md', color: INK, wrap: true },
       {
         type: 'text',
-        text: 'プライバシーポリシーに同意のうえ、\n3問のアンケートにご回答ください。\n\n回答後、下のメニューが開きます。',
+        text: `${config.termsUrl ? '利用規約と' : ''}プライバシーポリシーに同意のうえ、\n3問のアンケートにご回答ください。\n\n回答後、下のメニューが開きます。`,
         size: 'xs',
         color: SUB,
         wrap: true,
@@ -791,7 +806,16 @@ export async function startSurveyOnFollow(
     patch: greeting.length ? { survey_step: 'consent', greeted_at: jstNow() } : { survey_step: 'consent' },
     messages: [...greeting, buildStartMessage(config)],
   };
-  await apply(db, lineClient, config, opts.replyToken, friend, meta, result, opts.lineAccountId);
+  try {
+    await apply(db, lineClient, config, opts.replyToken, friend, meta, result, opts.lineAccountId);
+  } finally {
+    // ブロックすると LINE 側で個人に付けたメニューが外れ、既定の鍵付きも出ないことがあるため、個人に付け直す（返事の鍵を先に使う）
+    if (config.lockedRichMenuId) {
+      await lineClient.linkRichMenuToUser(friend.lineUserId, config.lockedRichMenuId).catch((err: unknown) => {
+        console.error('[intern-survey] failed to link locked menu', err);
+      });
+    }
+  }
 }
 
 // ── 未回答の人への再案内（UTAGE の「01 アンケート未回答の方へ」の代わり） ─────────

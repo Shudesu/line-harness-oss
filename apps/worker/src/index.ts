@@ -106,8 +106,10 @@ export type Env = {
     WORKER_URL: string;
     INTERN_SURVEY_ACCOUNT_ID?: string;  // インターンの登録アンケートを動かすアカウント（未設定なら動かない）
     INTERN_PRIVACY_POLICY_URL?: string; // アンケートの入口に出すプライバシーポリシーのリンク
+    INTERN_TERMS_URL?: string;          // アンケートの入口に出す利用規約のリンク
     INTERN_UNIVERSITY_PICKER_URL?: string; // 1問目の「大学を選ぶ」画面（ミニアプリ）
     INTERN_UNLOCKED_RICHMENU_ID?: string;  // 答え終えた人に付け替える解放後のメニュー
+    INTERN_LOCKED_RICHMENU_ID?: string;    // まだ答え終えていない人に付ける鍵付きのメニュー
     INTERN_MINIAPP_SURVEY_URL?: string;    // 答えを渡すミニアプリの受け口
     INTERN_BRIDGE_KEY?: string;            // ミニアプリとのあいだの合言葉（秘密の値）
     INTERN_SURVEY_REMINDER?: string;       // 'on' のときだけ、未回答の人へ翌日20時に再案内する
