@@ -7,6 +7,10 @@ const NG = ['圧倒的成長', '裁量', '即戦力', '成長できる環境', '
 describe('Q&A の中身', () => {
   const all = QA_SECTIONS.flatMap((s) => s.items);
 
+  it('どのカードも3問ずつ', () => {
+    for (const s of QA_SECTIONS) expect(s.items.length, s.title).toBe(3);
+  });
+
   it('質問の名前が重ならない', () => {
     expect(new Set(all.map((i) => i.id)).size).toBe(all.length);
   });
@@ -43,7 +47,7 @@ describe('Q&A のボタン', () => {
     expect(m.type).toBe('flex');
     expect(m.quickReply).toBeUndefined();
     const json = JSON.stringify(m);
-    expect(json).toContain('利用料はかかりません');
+    expect(json).toContain('すべて無料で利用できます');
     expect(json).toContain('"data":"isv:qa"');
   });
 
