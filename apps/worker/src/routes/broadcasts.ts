@@ -1,3 +1,4 @@
+import { claimBroadcastStart } from '../services/broadcast-start-claim.js';
 import { validateMessageContent, parseMessageGroup, packMessageItems } from '@line-crm/shared';
 import { buildMessages } from '../services/message-group.js';
 import { BroadcastDeliveryError } from '../services/broadcast-delivery-error.js';
@@ -656,13 +657,11 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
             { type: 'tag_exists', value: existing.target_tag_id! },
           ] }
         : { operator: 'AND', rules: [{ type: 'is_following', value: true }] };
-      const lockResult = await c.env.DB.prepare(
-        `UPDATE broadcasts
-            SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
-          WHERE id = ? AND status IN ('draft','scheduled')`,
-      ).bind(total, JSON.stringify(conditions), id).run();
-      if (!lockResult.meta.changes) {
-        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      const claimed = await claimBroadcastStart(c.env.DB, existing, {
+        totalCount: total, segmentConditions: JSON.stringify(conditions),
+      });
+      if (!claimed) {
+        return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
       }
 
       try {
@@ -733,11 +732,9 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
         return c.json({ success: false, error: 'quota_exceeded', quota }, 403);
       }
 
-      const lockResult = await c.env.DB.prepare(
-        `UPDATE broadcasts SET status = 'sending', batch_offset = 0, total_count = ? WHERE id = ? AND status IN ('draft','scheduled')`
-      ).bind(projectedTotal, id).run();
-      if (!lockResult.meta.changes) {
-        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      const claimed = await claimBroadcastStart(c.env.DB, existing, { totalCount: projectedTotal });
+      if (!claimed) {
+        return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
       }
 
       // cron (5min) を待たず即時にバックグラウンド処理を起動する。waitUntil なら
@@ -774,11 +771,9 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       if (followingCount > 500) {
         // Atomic lock: status='draft'|'scheduled' のときだけ status='sending' に遷移
         const tagMarker = JSON.stringify({ operator: 'AND', rules: [{ type: 'is_following', value: true }, { type: 'tag_exists', value: existing.target_tag_id }] });
-        const lockResult = await c.env.DB.prepare(
-          `UPDATE broadcasts SET status = 'sending', batch_offset = 0, segment_conditions = ? WHERE id = ? AND status IN ('draft','scheduled')`
-        ).bind(tagMarker, id).run();
-        if (!lockResult.meta.changes) {
-          return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+        const claimed = await claimBroadcastStart(c.env.DB, existing, { segmentConditions: tagMarker });
+        if (!claimed) {
+          return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
         }
         const result = await getBroadcastById(c.env.DB, id);
         return c.json({ success: true, data: result ? serializeBroadcast(result) : null, queued: true, message: 'Broadcast queued for batch processing by Cron' }, 202);
@@ -789,27 +784,12 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     // accessToken 解決は lock 前に行う (setup 失敗時に status='sending' で stuck しないため、
     // 即時送信パスには recoverStalledBroadcasts がない)
 
-    // atomic lock — 'draft' と 'scheduled' を分けて単一 UPDATE で claim する。
-    // 各 UPDATE は単一 write statement なので read-then-write transaction の
-    // SQLITE_BUSY_SNAPSHOT を引き起こさず、claim 成功時の status も WHERE 句から
-    // 一意に確定する (rollback 時の status 復元に使用)。
-    let claimedStatus: 'draft' | 'scheduled' | null = null;
-    const draftClaim = await c.env.DB.prepare(
-      `UPDATE broadcasts SET status = 'sending' WHERE id = ? AND status = 'draft'`
-    ).bind(id).run();
-    if (draftClaim.meta.changes) {
-      claimedStatus = 'draft';
-    } else {
-      const schedClaim = await c.env.DB.prepare(
-        `UPDATE broadcasts SET status = 'sending' WHERE id = ? AND status = 'scheduled'`
-      ).bind(id).run();
-      if (schedClaim.meta.changes) {
-        claimedStatus = 'scheduled';
-      }
+    // The payload, audience and schedule must still match the preflight checks.
+    const claimed = await claimBroadcastStart(c.env.DB, existing);
+    if (!claimed) {
+      return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
     }
-    if (!claimedStatus) {
-      return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
-    }
+    const claimedStatus = existing.status;
 
     // processBroadcastSend は内部の try/catch で multicast 失敗を 'draft' に戻すが、
     // 冒頭 (updateBroadcastStatus / getBroadcastById / autoTrackContent / buildMessage) で
@@ -919,11 +899,11 @@ broadcasts.post('/api/broadcasts/:id/send-segment', async (c) => {
     }
 
     // Atomic lock: status='draft'|'scheduled' のときだけ status='sending' に遷移
-    const lockResult = await c.env.DB.prepare(
-      `UPDATE broadcasts SET status = 'sending', batch_offset = 0, segment_conditions = ? WHERE id = ? AND status IN ('draft','scheduled')`
-    ).bind(JSON.stringify(body.conditions), id).run();
-    if (!lockResult.meta.changes) {
-      return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+    const claimed = await claimBroadcastStart(c.env.DB, existing, {
+      segmentConditions: JSON.stringify(body.conditions),
+    });
+    if (!claimed) {
+      return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
     }
 
     const result = await getBroadcastById(c.env.DB, id);
