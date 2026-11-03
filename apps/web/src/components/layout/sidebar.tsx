@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
+import { ExtensionMenu } from '@/components/extensions/extension-menu'
+import { useAdminExtensions } from '@/components/extensions/use-admin-extensions'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { CheckIcon, CaretDownIcon, ListIcon, SignOutIcon, XIcon } from '@phosphor-icons/react'
@@ -180,6 +182,7 @@ function NavIcon({ d }: { d: string }) {
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const { extensions } = useAdminExtensions()
   const [isOpen, setIsOpen] = useState(false)
   const [staffName, setStaffName] = useState<string | null>(null)
   const [staffRole, setStaffRole] = useState<string | null>(null)
@@ -235,6 +238,9 @@ export default function Sidebar() {
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         {menuSections.map((section, si) => (
           <div key={si}>
+            {section.label === '設定' && <Suspense fallback={null}>
+              <ExtensionMenu extensions={extensions} onNavigate={() => setIsOpen(false)} />
+            </Suspense>}
             {section.label && (
               <div className="pt-5 pb-2 px-3">
                 <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{section.label}</p>

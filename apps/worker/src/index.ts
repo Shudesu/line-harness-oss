@@ -57,6 +57,7 @@ import { forms } from './routes/forms.js';
 import { adPlatforms } from './routes/ad-platforms.js';
 import { staff } from './routes/staff.js';
 import { capabilities } from './routes/capabilities.js';
+import { adminExtensions } from './routes/admin-extensions.js';
 import { images } from './routes/images.js';
 import { accountSettings } from './routes/account-settings.js';
 import { setup } from './routes/setup.js';
@@ -109,6 +110,7 @@ export type Env = {
     WORKER_URL: string;
     // Admin auth topology (see middleware/admin-auth-config.ts):
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
+    ADMIN_EXTENSIONS?: string;      // Optional, non-secret JSON display metadata
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
     ADMIN_ALLOW_CROSS_SITE?: string; // 'true' opts into SameSite=None cross-site cookies
     // External SSO into the admin session (GET /admin/sso). Optional: when the
@@ -254,6 +256,7 @@ app.route('/', forms);
 app.route('/', adPlatforms);
 app.route('/', staff);
 app.route('/', capabilities);
+app.route('/', adminExtensions);
 app.route('/', images);
 app.route('/', setup);
 app.route('/', autoReplies);
