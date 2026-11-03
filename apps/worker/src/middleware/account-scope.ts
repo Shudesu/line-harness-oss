@@ -217,6 +217,10 @@ export const RULES: Rule[] = [
   // KIDOUインターンの友だち追加リンク
   r(['GET', 'POST'], '/api/intern/join-links', internAccount),
   r(['PATCH'], `/api/intern/join-links/${ID}`, internAccount),
+  // KIDOUインターンの自動で送る文面
+  r(['GET', 'PUT'], '/api/intern/line-copy', internAccount),
+  r(['POST'], '/api/intern/line-copy/templates', internAccount),
+  r(['PUT', 'DELETE'], `/api/intern/line-copy/templates/${ID}`, internAccount),
   // Self / session — no account involved.
   r(['GET'], '/api/staff/me', global),
   r(['POST'], '/api/staff/me/password', global),

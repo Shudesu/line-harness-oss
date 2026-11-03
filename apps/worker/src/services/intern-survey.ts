@@ -16,6 +16,7 @@ import type { LineClient } from '@line-crm/line-sdk';
 import { jstNow } from '@line-crm/db';
 import { UNIVERSITIES_TSV } from './intern-universities.js';
 import { buildQaAnswer, buildQaCarousel } from './intern-qa.js';
+import { DEFAULT_COPY, fillInput, loadCopy, type InternCopy } from './intern-copy.js';
 import { buildMessage } from './step-delivery.js';
 
 export const SURVEY_PREFIX = 'isv:';
@@ -36,6 +37,18 @@ export interface SurveyConfig {
   /** 答えを渡すミニアプリの受け口と合言葉 */
   miniappSurveyUrl?: string;
   bridgeKey?: string;
+  /** 管理画面の「自動で送る文面」。無ければ初期の文面 */
+  copy?: InternCopy;
+}
+
+function cp(config: SurveyConfig): InternCopy {
+  return config.copy ?? DEFAULT_COPY;
+}
+
+/** 文面を置き場から読んで config に入れる（読めなければ初期の文面） */
+export async function withCopy(db: D1Database, config: SurveyConfig): Promise<SurveyConfig> {
+  if (config.copy) return config;
+  return { ...config, copy: await loadCopy(db, config.accountId) };
 }
 
 export function surveyConfigFromEnv(env: {
@@ -178,7 +191,8 @@ export function searchUniversities(input: string): University[] {
 // ── 送る中身 ──────────────────────────────────────────────────────────────
 
 export const GRADES = ['学部1年', '学部2年', '学部3年', '学部4年', '修士1年', '修士2年', '博士1年', '博士2年', '博士3年', 'その他'];
-export const GRADUATION_YEARS = ['2027', '2028', '2029', '2030', '2031', '2032', '2033', '2034', '2035', '2036'];
+// 卒業予定年の選択肢は管理画面で直せる（初期は intern-copy.ts の DEFAULT_COPY）
+export const GRADUATION_YEARS = DEFAULT_COPY.graduationYear.years;
 
 // 候補のカードに並べる大学の数。下に「もう一度入力する」「この中にない」を足す
 const MAX_CANDIDATES = 8;
@@ -199,6 +213,10 @@ const INK = '#3a3a3a';
 const SUB = '#8a7f6a';
 const BORDER = '#e3dccd';
 
+// LINE の決まり：カードの通知に出る文は400字、押したときにトークに出る文は300字まで。超えると返事ごと断られる
+const ALT_TEXT_MAX = 400;
+const DISPLAY_TEXT_MAX = 300;
+
 interface Choice {
   label: string;
   data: string;
@@ -215,7 +233,7 @@ function postbackAction(c: Choice): Msg {
     type: 'postback',
     label: label(c.label),
     data: c.data,
-    displayText: c.displayText,
+    displayText: c.displayText.slice(0, DISPLAY_TEXT_MAX),
     ...(c.openKeyboard ? { inputOption: 'openKeyboard' } : {}),
   };
 }
@@ -292,7 +310,7 @@ function linkBox(labelText: string, action: Msg, main: boolean): Msg {
 function creamCard(altText: string, head: Msg[], body: Msg[]): Msg {
   return {
     type: 'flex',
-    altText,
+    altText: altText.slice(0, ALT_TEXT_MAX),
     contents: {
       type: 'bubble',
       header: { type: 'box', layout: 'vertical', spacing: 'xs', backgroundColor: CREAM, paddingAll: '16px', contents: head },
@@ -316,14 +334,15 @@ function textLink(label: string, uri: string): Msg {
 
 /** 登録の直後・やり直しのときに送る、利用規約・プライバシーポリシーの確認と回答の入口 */
 export function buildStartMessage(config: SurveyConfig): Msg {
+  const c = cp(config).consent;
   const body: Msg[] = [
     linkBox(
-      '同意して回答する',
+      c.button,
       {
         type: 'postback',
-        label: '同意して回答する',
+        label: label(c.button),
         data: `${SURVEY_PREFIX}consent`,
-        displayText: '同意して回答する',
+        displayText: c.button,
         // 1問目を画面で選ぶときはキーボードを開かない（カードが隠れるため）。トークに打つ形のときだけ開く
         ...(config.pickerUrl ? {} : { inputOption: 'openKeyboard' }),
       },
@@ -338,12 +357,12 @@ export function buildStartMessage(config: SurveyConfig): Msg {
     body.push({ type: 'box', layout: 'horizontal', justifyContent: 'center', spacing: 'xl', margin: 'md', contents: links });
   }
   return creamCard(
-    'アンケートのお願い（3問）',
+    c.title,
     [
-      { type: 'text', text: 'アンケートのお願い（3問）', weight: 'bold', size: 'md', color: INK, wrap: true },
+      { type: 'text', text: c.title, weight: 'bold', size: 'md', color: INK, wrap: true },
       {
         type: 'text',
-        text: `${config.termsUrl ? '利用規約と' : ''}プライバシーポリシーに同意のうえ、\n3問のアンケートにご回答ください。\n\n回答後、下のメニューが開きます。`,
+        text: c.body,
         size: 'xs',
         color: SUB,
         wrap: true,
@@ -408,73 +427,78 @@ async function loadDoneIntro(db: D1Database): Promise<Msg[]> {
 }
 
 export function buildUniversityQuestion(config: SurveyConfig = {}): Msg {
+  const c = cp(config).university;
   if (!config.pickerUrl) {
-    return text('1問目：大学名を入力して送ってください。\n例：早稲田、明治大学');
+    return text(c.typeOnly);
   }
   return creamCard(
-    '1問目：大学名を教えてください。',
+    `1問目：${c.title}`,
     [
-      { type: 'text', text: 'アンケート 1/3', size: 'xs', color: SUB },
-      { type: 'text', text: '大学名を教えてください。', weight: 'bold', size: 'md', color: INK, wrap: true },
+      { type: 'text', text: c.kicker, size: 'xs', color: SUB },
+      { type: 'text', text: c.title, weight: 'bold', size: 'md', color: INK, wrap: true },
     ],
     [
       // 画面が開かない人向けの案内は出さないが、トークに大学名を打てば今までどおり受け付ける
-      linkBox('大学を選択する', { type: 'uri', label: '大学を選択する', uri: config.pickerUrl }, true),
+      linkBox(c.button, { type: 'uri', label: label(c.button), uri: config.pickerUrl }, true),
     ],
   );
 }
 
-export function buildCandidatesMessage(input: string): Msg {
+export function buildCandidatesMessage(input: string, config: SurveyConfig = {}): Msg {
+  const copy = cp(config);
+  const c = copy.candidates;
   const shown = input.trim().slice(0, RAW_MAX);
-  const retry = choice('もう一度入力する', `${SURVEY_PREFIX}retry`, 'もう一度入力する', true);
+  const retry = choice(c.retry, `${SURVEY_PREFIX}retry`, c.retry, true);
   const found = searchUniversities(input);
 
   if (found.length === 0) {
+    const title = fillInput(c.notFoundTitle, shown);
+    const register = fillInput(c.registerRaw, shown);
     return questionCard({
-      altText: `「${shown}」に当てはまる大学が見つかりませんでした。`,
-      kicker: 'アンケート 1/3',
-      title: `「${shown}」に当てはまる大学が見つかりませんでした。`,
-      note: '大学名をもう一度入力するか、入力したままの名前で登録してください。',
+      altText: title,
+      kicker: copy.university.kicker,
+      title,
+      note: c.notFoundNote,
       choices: [],
-      extra: [retry, choice(`「${shown}」で登録する`, `${SURVEY_PREFIX}raw:${shown}`, `「${shown}」で登録する`)],
+      extra: [retry, choice(register, `${SURVEY_PREFIX}raw:${shown}`, register)],
     });
   }
   const items = found.slice(0, MAX_CANDIDATES).map((u) => choice(u.name, `${SURVEY_PREFIX}u:${u.name}`, u.name));
-  const note = found.length > MAX_CANDIDATES
-    ? '候補が多いため、一部だけ出しています。見つからない場合は、もう少し詳しく入力してください。'
-    : undefined;
+  const note = found.length > MAX_CANDIDATES ? c.manyNote : undefined;
   return questionCard({
-    altText: '当てはまる大学を選んでください。',
-    kicker: 'アンケート 1/3',
-    title: '当てはまる大学を選んでください。',
+    altText: c.title,
+    kicker: copy.university.kicker,
+    title: c.title,
     note,
     choices: items,
-    extra: [retry, choice('この中にない', `${SURVEY_PREFIX}raw:${shown}`, 'この中にない')],
+    extra: [retry, choice(c.notListed, `${SURVEY_PREFIX}raw:${shown}`, c.notListed)],
   });
 }
 
-export function buildGradeQuestion(): Msg {
+export function buildGradeQuestion(config: SurveyConfig = {}): Msg {
+  const c = cp(config).grade;
   return questionCard({
-    altText: '2問目：現在の学年を選んでください。',
-    kicker: 'アンケート 2/3',
-    title: '現在の学年を選んでください。',
+    altText: `2問目：${c.title}`,
+    kicker: c.kicker,
+    title: c.title,
     choices: GRADES.map((g) => choice(g, `${SURVEY_PREFIX}g:${g}`, g)),
     cols: 2,
   });
 }
 
-export function buildGraduationYearQuestion(): Msg {
+export function buildGraduationYearQuestion(config: SurveyConfig = {}): Msg {
+  const c = cp(config).graduationYear;
   return questionCard({
-    altText: '3問目：卒業予定年を選んでください。',
-    kicker: 'アンケート 3/3',
-    title: '卒業予定年を選んでください。',
-    choices: GRADUATION_YEARS.map((y) => choice(`${y}年`, `${SURVEY_PREFIX}y:${y}`, `${y}年`)),
+    altText: `3問目：${c.title}`,
+    kicker: c.kicker,
+    title: c.title,
+    choices: c.years.map((y) => choice(`${y}年`, `${SURVEY_PREFIX}y:${y}`, `${y}年`)),
     cols: 2,
   });
 }
 
 // 答え終えたときの画像（画面下のメニューと同じ2段×3列に、ボタンごとの説明を並べた絵）。R2 に置いてある。差し替えるときは名前の版を上げる
-const DONE_IMAGE_URL = 'https://line-harness.line-haraness.workers.dev/images/intern-done-menu-v2.png';
+export const DONE_IMAGE_URL = 'https://line-harness.line-haraness.workers.dev/images/intern-done-menu-v2.png';
 
 /** 答え終えたときに送る画像。押してもどこにも飛ばない（ボタンは画面下のメニューを使ってもらう） */
 export function buildDoneMessage(): Msg {
@@ -482,8 +506,8 @@ export function buildDoneMessage(): Msg {
 }
 
 /** メニューの「Q&A」。よくある質問のカルーセル */
-export function buildQaMessage(): Msg {
-  return buildQaCarousel(SURVEY_PREFIX);
+export function buildQaMessage(config: SurveyConfig = {}): Msg {
+  return buildQaCarousel(SURVEY_PREFIX, cp(config).qa.sections);
 }
 
 // ── 答えの受け取り ────────────────────────────────────────────────────────
@@ -515,19 +539,21 @@ export function reducePostback(state: SurveyState, data: string, config: SurveyC
   const body = data.slice(SURVEY_PREFIX.length);
   const step = state.survey_step;
 
-  if (body === 'qa') return { patch: null, messages: [buildQaMessage()] };
+  const copy = cp(config);
+  const already = () => text(copy.done.already);
+  if (body === 'qa') return { patch: null, messages: [buildQaMessage(config)] };
   // Q&A の質問のボタン。アンケートの途中でも答え終えたあとでも、回答だけ返す
-  if (body.startsWith('qa:')) return { patch: null, messages: [buildQaAnswer(SURVEY_PREFIX, body.slice(3))] };
+  if (body.startsWith('qa:')) return { patch: null, messages: [buildQaAnswer(SURVEY_PREFIX, body.slice(3), copy.qa.sections, copy.qa)] };
   if (body === 'start') {
     // 回答済みなのに鍵付きのメニューを押せた人は、メニューの付け替えが漏れている。付け直す
-    if (step === 'done') return { patch: null, messages: [text('アンケートは回答済みです。')], effects: ['unlock'] };
+    if (step === 'done') return { patch: null, messages: [already()], effects: ['unlock'] };
     // 途中まで答えた人には、続きの問いを出す
     if (step === 'university' || step === 'grade' || step === 'graduation_year') {
       return { patch: null, messages: [currentQuestion(step, config)] };
     }
     return { patch: { survey_step: 'consent' }, messages: [buildStartMessage(config)] };
   }
-  if (step === 'done') return { patch: null, messages: [text('アンケートは回答済みです。')] };
+  if (step === 'done') return { patch: null, messages: [already()] };
 
   if (body === 'consent') {
     // 1問目より先に進んでいる人が古い同意ボタンを押したときは、今の問いを出し直す
@@ -536,7 +562,7 @@ export function reducePostback(state: SurveyState, data: string, config: SurveyC
   }
   if (body === 'retry') {
     if (step !== 'university') return { patch: null, messages: [currentQuestion(step, config)] };
-    return { patch: null, messages: [text('大学名を入力して送ってください。')] };
+    return { patch: null, messages: [text(copy.university.retryPrompt)] };
   }
   if (body.startsWith('u:') || body.startsWith('raw:')) {
     if (step !== 'university') return { patch: null, messages: [currentQuestion(step, config)] };
@@ -546,13 +572,13 @@ export function reducePostback(state: SurveyState, data: string, config: SurveyC
   if (body.startsWith('g:')) {
     if (step !== 'grade') return { patch: null, messages: [currentQuestion(step, config)] };
     const g = body.slice(2);
-    if (!GRADES.includes(g)) return { patch: null, messages: [buildGradeQuestion()] };
-    return { patch: { survey_step: 'graduation_year', grade: g }, messages: [buildGraduationYearQuestion()] };
+    if (!GRADES.includes(g)) return { patch: null, messages: [buildGradeQuestion(config)] };
+    return { patch: { survey_step: 'graduation_year', grade: g }, messages: [buildGraduationYearQuestion(config)] };
   }
   if (body.startsWith('y:')) {
     if (step !== 'graduation_year') return { patch: null, messages: [currentQuestion(step, config)] };
     const y = body.slice(2);
-    if (!GRADUATION_YEARS.includes(y)) return { patch: null, messages: [buildGraduationYearQuestion()] };
+    if (!copy.graduationYear.years.includes(y)) return { patch: null, messages: [buildGraduationYearQuestion(config)] };
     return {
       patch: { survey_step: 'done', graduation_year: y, survey_completed_at: jstNow() },
       messages: [buildDoneMessage()],
@@ -567,7 +593,7 @@ function chooseUniversity(name: string, config: SurveyConfig): SurveyResult | nu
   if (!u) return null;
   return {
     patch: { survey_step: 'grade', university_name: u.name, university_kind: u.kind, university_unlisted: false },
-    messages: [buildGradeQuestion()],
+    messages: [buildGradeQuestion(config)],
   };
 }
 
@@ -576,7 +602,7 @@ function chooseRaw(input: string, config: SurveyConfig): SurveyResult {
   if (!raw) return { patch: null, messages: [buildUniversityQuestion(config)] };
   return {
     patch: { survey_step: 'grade', university_name: raw, university_kind: '', university_unlisted: true },
-    messages: [buildGradeQuestion()],
+    messages: [buildGradeQuestion(config)],
   };
 }
 
@@ -592,9 +618,9 @@ export function reduceText(state: SurveyState, incoming: string, config: SurveyC
   }
   if (step === 'university') {
     if (pickedRaw !== null) return chooseRaw(pickedRaw, config);
-    if (picked !== null) return chooseUniversity(picked.trim(), config) ?? { patch: null, messages: [buildCandidatesMessage(picked)] };
+    if (picked !== null) return chooseUniversity(picked.trim(), config) ?? { patch: null, messages: [buildCandidatesMessage(picked, config)] };
     if (!t) return { patch: null, messages: [buildUniversityQuestion(config)] };
-    return { patch: null, messages: [buildCandidatesMessage(incoming)] };
+    return { patch: null, messages: [buildCandidatesMessage(incoming, config)] };
   }
   // 学年・卒業予定年はボタンで答える。ボタンが消えた人のために問いを出し直す
   if (step === 'grade' || step === 'graduation_year') return { patch: null, messages: [currentQuestion(step, config)] };
@@ -602,9 +628,9 @@ export function reduceText(state: SurveyState, incoming: string, config: SurveyC
 }
 
 function currentQuestion(step: SurveyStep | undefined, config: SurveyConfig = {}): Msg {
-  if (step === 'grade') return buildGradeQuestion();
-  if (step === 'graduation_year') return buildGraduationYearQuestion();
-  if (step === 'done') return text('アンケートは回答済みです。');
+  if (step === 'grade') return buildGradeQuestion(config);
+  if (step === 'graduation_year') return buildGraduationYearQuestion(config);
+  if (step === 'done') return text(cp(config).done.already);
   return buildUniversityQuestion(config);
 }
 
@@ -760,6 +786,7 @@ export async function handleSurveyPostback(
   opts: { friendId: string; lineUserId: string; data: string; replyToken: string; lineAccountId: string | null },
 ): Promise<boolean> {
   if (!isSurveyAccount(config, opts.lineAccountId) || !opts.data.startsWith(SURVEY_PREFIX)) return false;
+  config = await withCopy(db, config);
   const meta = await readState(db, opts.friendId);
   const result = reducePostback(meta as SurveyState, opts.data, config);
   if (!result) return false;
@@ -784,6 +811,9 @@ export async function handleSurveyText(
 ): Promise<boolean> {
   if (!isSurveyAccount(config, opts.lineAccountId)) return false;
   const meta = await readState(db, opts.friendId);
+  // アンケートの途中でなければ文面を読まずに返す（ふだんの自動応答に回す）
+  if (reduceText(meta as SurveyState, opts.text, config) === null) return false;
+  config = await withCopy(db, config);
   const result = reduceText(meta as SurveyState, opts.text, config);
   if (!result) return false;
   await apply(db, lineClient, config, opts.replyToken, { id: opts.friendId, lineUserId: opts.lineUserId }, meta, result, opts.lineAccountId);
@@ -800,7 +830,8 @@ export async function handlePickedUniversity(
   config: SurveyConfig,
   opts: { lineUserId: string; name: string; unlisted: boolean },
 ): Promise<'ok' | 'not_found' | 'not_waiting'> {
-  if (!config.accountId) return 'not_found';
+  const accountId = config.accountId;
+  if (!accountId) return 'not_found';
   const row = await db
     .prepare('SELECT id FROM friends WHERE line_user_id = ? AND line_account_id = ?')
     .bind(opts.lineUserId, config.accountId)
@@ -810,9 +841,10 @@ export async function handlePickedUniversity(
   const incoming = (opts.unlisted ? PICKED_UNLISTED_PREFIX : PICKED_PREFIX) + opts.name;
   const state = meta as SurveyState;
   if (state.survey_step !== 'university') return 'not_waiting';
+  config = await withCopy(db, config);
   const result = reduceText(state, incoming, config);
   if (!result) return 'not_waiting';
-  await apply(db, lineClient, config, null, { id: row.id, lineUserId: opts.lineUserId }, meta, result, config.accountId);
+  await apply(db, lineClient, config, null, { id: row.id, lineUserId: opts.lineUserId }, meta, result, accountId);
   return 'ok';
 }
 
@@ -824,6 +856,7 @@ export async function startSurveyOnFollow(
   opts: { friendId: string; lineUserId: string; replyToken: string | null; lineAccountId: string | null },
 ): Promise<void> {
   if (!isSurveyAccount(config, opts.lineAccountId)) return;
+  config = await withCopy(db, config);
   const meta = await readState(db, opts.friendId);
   const friend = { id: opts.friendId, lineUserId: opts.lineUserId };
   // 答え終えた人が一度ブロックして戻ってきたときは、メニューだけ開き直す
@@ -833,13 +866,28 @@ export async function startSurveyOnFollow(
   }
   const state = meta as SurveyState;
   // はじめての人（アンケートにまだ手を付けておらず、あいさつも未送信）には、入口の前にあいさつを付ける
-  const greeting = !state.survey_step && !state.greeted_at ? await loadGreeting(db) : [];
+  // あいさつが読めなくても、アンケートのお願いは送る
+  const greeting =
+    !state.survey_step && !state.greeted_at
+      ? await loadGreeting(db).catch((err: unknown) => {
+          console.error('[intern-survey] failed to load greeting', err);
+          return [] as Msg[];
+        })
+      : [];
   const result: SurveyResult = {
     patch: greeting.length ? { survey_step: 'consent', greeted_at: jstNow() } : { survey_step: 'consent' },
     messages: [...greeting, buildStartMessage(config)],
   };
   try {
-    await apply(db, lineClient, config, opts.replyToken, friend, meta, result, opts.lineAccountId);
+    try {
+      await apply(db, lineClient, config, opts.replyToken, friend, meta, result, opts.lineAccountId);
+    } catch (err) {
+      // あいさつ（管理画面で直せる）を LINE が受け付けないと、一緒に送るお願いのカードも届かない。お願いだけを送り直す
+      // 中身を断られたとき（400）だけ。ほかの失敗で送り直すと、届いていたときに二重になる
+      if (!greeting.length || !String(err).includes('LINE API error: 400')) throw err;
+      console.error('[intern-survey] greeting rejected, resending start only', err);
+      await apply(db, lineClient, config, null, friend, meta, { ...result, messages: [buildStartMessage(config)] }, opts.lineAccountId);
+    }
   } finally {
     // ブロックすると LINE 側で個人に付けたメニューが外れ、既定の鍵付きも出ないことがあるため、個人に付け直す（返事の鍵を先に使う）
     if (config.lockedRichMenuId) {
@@ -865,6 +913,7 @@ export async function remindUnansweredSurveys(
   if (!config.accountId) return 0;
   const jst = new Date(now.getTime() + 9 * 3600_000);
   if (jst.getUTCHours() !== 20 || jst.getUTCMinutes() >= 5) return 0;
+  config = await withCopy(db, config);
   // 今日の0時（日本時間）より前に友だちになった人だけ（＝翌日以降）
   const today = jst.toISOString().slice(0, 10);
   const rows = await db
@@ -895,7 +944,7 @@ export async function remindUnansweredSurveys(
       .bind(JSON.stringify({ ...meta, survey_reminded_at: jstNow(), ...(step ? {} : { survey_step: 'consent' }) }), jstNow(), row.id)
       .run();
     try {
-      await lineClient.pushMessage(row.line_user_id, [text('アンケートがまだ途中です。答えると、画面下のメニュー（求人・マイページなど）が使えるようになります。'), message] as never);
+      await lineClient.pushMessage(row.line_user_id, [text(cp(config).remind.text), message] as never);
       sent++;
     } catch (err) {
       console.error('[intern-survey] reminder failed', err);

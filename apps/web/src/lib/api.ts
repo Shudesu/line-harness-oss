@@ -135,6 +135,24 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
   return res.json() as Promise<T>
 }
 
+/** fetchApi と同じだが、断られたとき（400 など）も返ってきた中身（error の文）を返す */
+export async function sendApi<T extends { success: boolean; error?: string }>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method ?? 'GET').toUpperCase()
+  const csrfHeaders: Record<string, string> = {}
+  if (MUTATING_METHODS.has(method)) {
+    const token = getCsrfToken()
+    if (token) csrfHeaders['X-CSRF-Token'] = token
+  }
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders, ...options?.headers },
+  })
+  const body = (await res.json().catch(() => null)) as T | null
+  if (body && typeof body === 'object' && 'success' in body) return body
+  return { success: false, error: `API error: ${res.status}` } as T
+}
+
 export type FriendListParams = {
   offset?: string
   limit?: string | number

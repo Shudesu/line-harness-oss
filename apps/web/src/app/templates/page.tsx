@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FlexPreviewComponent from '@/components/flex-preview'
@@ -235,6 +236,17 @@ export default function TemplatesPage() {
           {error}
         </div>
       )}
+
+      {/* KIDOUインターンのあいさつ・アンケート・Q&A は別の置き場。迷わないよう入口を出す */}
+      <Link
+        href="/line-copy"
+        className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 hover:bg-green-100"
+      >
+        <span>
+          KIDOUインターンのあいさつ・アンケート・Q&A・回答後の文など、<span className="font-bold">LINE で自動で送っている文</span>はここではなく「自動で送る文面」で見て直せます。
+        </span>
+        <span className="shrink-0 font-bold">開く →</span>
+      </Link>
 
       {/* Type filter */}
       <div className="mb-4 flex flex-wrap gap-2">

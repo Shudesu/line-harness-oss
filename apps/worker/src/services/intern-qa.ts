@@ -4,7 +4,8 @@
 // カードの質問を押すと、その回答をカードで返す（カードの下に［ほかの質問を見る］を付ける）。
 // トーク下に並ぶボタン（クイックリプライ）は見た目がよくないので使わない。
 // 質問と回答の中身は 11/02 版（そーごの直しを反映・4枚×3問）。
-// カードの大きさをそろえるため、どのカードも3問ずつにし、質問の行は高さを固定する（2行まで）。中身を変えるときは QA_SECTIONS だけ直せばよい。
+// カードの大きさをそろえるため、どのカードも3問ずつにし、質問の行は高さを固定する（2行まで）。
+// ここの QA_SECTIONS は初期の中身。管理画面の「自動で送る文面」で直した中身があればそちらを使う（intern-copy.ts）。
 // 回答は LINE 配信の決まりに合わせる（です・ます・200字以内・絵文字なし・断定を避ける）。
 
 type Msg = Record<string, unknown>;
@@ -134,13 +135,13 @@ function questionRow(prefix: string, item: QaItem): Msg {
 }
 
 /** よくある質問のカルーセル。prefix はボタンの合図の頭（アンケートと同じ isv: を使う） */
-export function buildQaCarousel(prefix: string): Msg {
+export function buildQaCarousel(prefix: string, sections: QaSection[] = QA_SECTIONS): Msg {
   return {
     type: 'flex',
     altText: 'よくある質問です。気になる質問を押してください。',
     contents: {
       type: 'carousel',
-      contents: QA_SECTIONS.map((s, i) => ({
+      contents: sections.map((s, i) => ({
         type: 'bubble',
         size: 'kilo',
         header: {
@@ -149,7 +150,7 @@ export function buildQaCarousel(prefix: string): Msg {
           backgroundColor: CREAM,
           paddingAll: '16px',
           contents: [
-            { type: 'text', text: `よくある質問 ${i + 1}/${QA_SECTIONS.length}`, size: 'xxs', color: SUB },
+            { type: 'text', text: `よくある質問 ${i + 1}/${sections.length}`, size: 'xxs', color: SUB },
             { type: 'text', text: s.title, weight: 'bold', size: 'md', color: INK, wrap: true },
           ],
         },
@@ -166,8 +167,8 @@ export function buildQaCarousel(prefix: string): Msg {
   };
 }
 
-export function findQa(id: string): QaItem | undefined {
-  for (const s of QA_SECTIONS) {
+export function findQa(id: string, sections: QaSection[] = QA_SECTIONS): QaItem | undefined {
+  for (const s of sections) {
     const hit = s.items.find((i) => i.id === id);
     if (hit) return hit;
   }
@@ -175,12 +176,17 @@ export function findQa(id: string): QaItem | undefined {
 }
 
 /** 質問のボタンを押したときの回答。知らない質問（古いカード等）ならカルーセルを出し直す */
-export function buildQaAnswer(prefix: string, id: string): Msg {
-  const item = findQa(id);
-  if (!item) return buildQaCarousel(prefix);
+export function buildQaAnswer(
+  prefix: string,
+  id: string,
+  sections: QaSection[] = QA_SECTIONS,
+  labels: { answerKicker: string; more: string } = { answerKicker: 'よくある質問', more: 'ほかの質問を見る' },
+): Msg {
+  const item = findQa(id, sections);
+  if (!item) return buildQaCarousel(prefix, sections);
   return {
     type: 'flex',
-    altText: item.a,
+    altText: item.a.slice(0, 400), // LINE の決まりで400字まで
     contents: {
       type: 'bubble',
       header: {
@@ -190,7 +196,7 @@ export function buildQaAnswer(prefix: string, id: string): Msg {
         backgroundColor: CREAM,
         paddingAll: '16px',
         contents: [
-          { type: 'text', text: 'よくある質問', size: 'xxs', color: SUB },
+          { type: 'text', text: labels.answerKicker, size: 'xxs', color: SUB },
           { type: 'text', text: item.q, weight: 'bold', size: 'md', color: INK, wrap: true },
         ],
       },
@@ -216,8 +222,8 @@ export function buildQaAnswer(prefix: string, id: string): Msg {
             cornerRadius: '8px',
             borderWidth: '1px',
             borderColor: LINE,
-            action: { type: 'postback', label: 'ほかの質問を見る', data: `${prefix}${QA_PREFIX}`, displayText: 'ほかの質問を見る' },
-            contents: [{ type: 'text', text: 'ほかの質問を見る', size: 'sm', color: SUB, align: 'center' }],
+            action: { type: 'postback', label: labels.more.slice(0, 20), data: `${prefix}${QA_PREFIX}`, displayText: labels.more.slice(0, 300) },
+            contents: [{ type: 'text', text: labels.more, size: 'sm', color: SUB, align: 'center' }],
           },
         ],
       },

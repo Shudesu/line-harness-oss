@@ -118,14 +118,14 @@ describe('buildStartMessage', () => {
     expect(JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p' }))).toContain('https://example.com/p');
   });
 
-  it('利用規約のリンクがあれば、ポリシーと並べて出し、本文にも書く', () => {
+  it('利用規約のリンクがあれば、ポリシーと並べて出す（本文は管理画面の文面）', () => {
     const json = JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p', termsUrl: 'https://example.com/t' }));
     expect(json).toContain('https://example.com/t');
     expect(json).toContain('https://example.com/p');
     expect(json).toContain('利用規約とプライバシーポリシーに同意のうえ');
     expect(json.indexOf('https://example.com/t')).toBeLessThan(json.indexOf('https://example.com/p'));
-    // 規約のリンクが無いときは本文に規約を書かない
-    expect(JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p' }))).not.toContain('利用規約');
+    // 規約のリンクが無いときは、リンクの並びに規約を出さない
+    expect(JSON.stringify(buildStartMessage({ privacyPolicyUrl: 'https://example.com/p' }))).not.toContain('"label":"利用規約"');
   });
 });
 
@@ -371,7 +371,7 @@ describe('答え終えたときの文（画像の前に付ける）', () => {
 
 describe('友だち追加のときのメニュー', () => {
   const U = 'U' + '1'.repeat(32);
-  const fakeDb = (meta: Record<string, unknown>) => {
+  const fakeDb = (meta: Record<string, unknown>, greeting: Record<string, unknown>[] = []) => {
     const store = { metadata: JSON.stringify(meta) };
     const db = {
       prepare(sql: string) {
@@ -382,7 +382,7 @@ describe('友だち追加のときのメニュー', () => {
             if (sql.startsWith('SELECT metadata')) return { metadata: store.metadata };
             return null;
           },
-          async all() { return { results: [] }; },
+          async all() { return { results: sql.includes('ズ_あいさつ_') ? greeting : [] }; },
           async run() {
             if (sql.startsWith('UPDATE friends SET metadata')) store.metadata = String(args[0]);
             return {};
@@ -398,8 +398,8 @@ describe('友だち追加のときのメニュー', () => {
     return {
       calls,
       client: {
-        replyMessage: async () => { calls.push('reply'); },
-        pushMessage: async () => { calls.push('push'); },
+        replyMessage: async (_t: string, _m: unknown[]) => { calls.push('reply'); },
+        pushMessage: async (_u: string, _m: unknown[]) => { calls.push('push'); },
         linkRichMenuToUser: async (_u: string, id: string) => { calls.push('link:' + id); },
       },
     };
@@ -428,5 +428,28 @@ describe('友だち追加のときのメニュー', () => {
       startSurveyOnFollow(fakeDb({}), client as never, cfg, { friendId: 'f1', lineUserId: U, replyToken: 'r', lineAccountId: 'intern' }),
     ).resolves.toBeUndefined();
     expect(calls[0]).toBe('reply');
+  });
+
+  const hello = [{ name: 'ズ_あいさつ_1', message_type: 'text', message_content: 'こんにちは' }];
+
+  it('あいさつを LINE に断られたら、アンケートのお願いだけを送り直す', async () => {
+    const sent: unknown[][] = [];
+    const { calls, client } = fakeClient();
+    client.replyMessage = async () => { calls.push('reply'); throw new Error('LINE API error: 400 Bad Request — invalid'); };
+    client.pushMessage = async (_u: string, m: unknown[]) => { calls.push('push'); sent.push(m); };
+    await startSurveyOnFollow(fakeDb({}, hello), client as never, cfg, { friendId: 'f1', lineUserId: U, replyToken: 'r', lineAccountId: 'intern' });
+    expect(calls.slice(0, 2)).toEqual(['reply', 'push']);
+    expect(sent[0]).toHaveLength(1);
+    expect((sent[0][0] as { type: string }).type).toBe('flex');
+    expect(calls).toContain('link:locked');
+  });
+
+  it('中身以外の失敗（400 以外）では送り直さない（届いていたときに二重になるため）', async () => {
+    const { calls, client } = fakeClient();
+    client.replyMessage = async () => { calls.push('reply'); throw new Error('LINE API error: 500 Internal'); };
+    await expect(
+      startSurveyOnFollow(fakeDb({}, hello), client as never, cfg, { friendId: 'f1', lineUserId: U, replyToken: 'r', lineAccountId: 'intern' }),
+    ).rejects.toThrow('500');
+    expect(calls).not.toContain('push');
   });
 });
