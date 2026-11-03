@@ -25,6 +25,7 @@ const dbMocks = vi.hoisted(() => ({
   completeFriendScenario: vi.fn(),
   claimFriendScenarioForDelivery: vi.fn(),
   enrollFriendInScenario: vi.fn(),
+  scenarioAllowedForFriendAccount: vi.fn(),
   getLineAccountByChannelId: vi.fn(),
   getLineAccountById: vi.fn(),
   // 既定は env をそのまま返す（＝従来挙動）。テナントに有効なアカウントが1本
@@ -124,8 +125,10 @@ beforeEach(() => {
     id: 'scn-1',
     is_active: 1,
     delivery_mode: 'relative',
+    line_account_id: null,
     steps: [STEP1, STEP2],
   });
+  dbMocks.scenarioAllowedForFriendAccount.mockResolvedValue(true);
   dbMocks.getFriendById.mockResolvedValue({
     id: 'friend-1',
     line_user_id: 'U-1',
@@ -630,5 +633,35 @@ describe('step conditions — cron parity on the instant path', () => {
     expect(sent).toBe(false);
     expect(lineClientMock.pushMessage).not.toHaveBeenCalled();
     expect(dbMocks.claimFriendScenarioForDelivery).not.toHaveBeenCalled();
+  });
+});
+
+describe('cross-account guard', () => {
+  // The delivery client is resolved from the FRIEND's account, so pushing a
+  // scenario owned by another account sends that brand's message out of this
+  // bot. 'every-click' pushes even when the enrollment already exists, so the
+  // check cannot live in enrollFriendInScenario alone.
+  it('does not push a scenario belonging to another account', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    dbMocks.getScenarioById.mockResolvedValue({
+      id: 'scn-1',
+      is_active: 1,
+      delivery_mode: 'relative',
+      line_account_id: 'acct-a',
+      steps: [STEP1, STEP2],
+    });
+    dbMocks.scenarioAllowedForFriendAccount.mockResolvedValue(false);
+
+    const { db } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      mode: 'every-click',
+      targetLineUserId: 'U-1',
+    });
+
+    expect(sent).toBe(false);
+    expect(lineClientMock.pushMessage).not.toHaveBeenCalled();
+    expect(dbMocks.enrollFriendInScenario).not.toHaveBeenCalled();
+    expect(dbMocks.claimFriendScenarioForDelivery).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
