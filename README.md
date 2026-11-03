@@ -1,5 +1,8 @@
 # L Harness
 
+> **既存環境の認証強化アップグレード:** キーハッシュ化・セッション移行にはSQL適用とバックフィルが必要です。[移行手順](docs/SECURITY-UPGRADE.md)を先に確認してください。workers.devと公開Webhook/LIFFは維持します。
+
+
 LINE公式アカウントの配信・顧客管理・自動化を、オープンソースで。開発者は **野田修一（Shudesu）** です。
 
 > ### [野田修一の公式LINEに登録して、無料ガイドを受け取る →](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)

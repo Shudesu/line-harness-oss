@@ -1,5 +1,8 @@
 🌐 [日本語](README.md) | **English** | [简体中文](README.zh-CN.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
+> **Authentication hardening for existing installations:** SQL migration and key backfill are required. Read the [upgrade guide](docs/SECURITY-UPGRADE.en.md) first. workers.dev and public webhook/LIFF paths remain available.
+
+
 # L Harness
 
 > ### **[Try free on LINE](https://shudesu.github.io/line-harness-oss/)** 👈

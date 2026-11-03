@@ -507,7 +507,10 @@ export interface CalendarBooking {
 // ─── Staff ──────────────────────────────────────────────
 export type StaffRole = 'owner' | 'admin' | 'staff'
 
+export type StaffApiScope = 'messages:read' | 'messages:send'
+
 export interface StaffMember {
+  apiScopes?: StaffApiScope[] | null
   id: string
   name: string
   email: string | null
@@ -530,12 +533,14 @@ export interface StaffProfile {
 }
 
 export interface CreateStaffInput {
+  apiScopes?: StaffApiScope[] | null
   name: string
   email?: string
   role: 'admin' | 'staff'
 }
 
 export interface UpdateStaffInput {
+  apiScopes?: StaffApiScope[] | null
   name?: string
   email?: string | null
   role?: StaffRole

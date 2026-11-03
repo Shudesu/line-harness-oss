@@ -62,7 +62,7 @@ crons = ["* * * * *", "0 */6 * * *"]
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 5 self-update vars — consumed by /admin/update/*. Secrets
-# (CF_API_TOKEN, ADMIN_API_KEY) must be set via `wrangler secret put`
+# (CF_API_TOKEN) must be set via `wrangler secret put`
 # and are intentionally absent from this file.
 # 注: [env.production] には意図的に置かない。本番は GitHub Actions デプロイ
 # 運用のため self-update は使わず、vars/secrets 不在で route は実行時ガードで

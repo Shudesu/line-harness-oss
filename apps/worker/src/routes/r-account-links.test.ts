@@ -1,3 +1,5 @@
+// Auth storage is integration-tested in security-hardening.test.ts.
+vi.mock('../middleware/auth-security.js', () => ({ limitAuth: async () => null, audit: async () => {} }));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // /r/:ref?account= resolution + /auth/line mobile routing for ?account= links.
