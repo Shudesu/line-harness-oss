@@ -7,7 +7,7 @@ afterEach(() => { opened.splice(0).forEach(x => x.close()); vi.restoreAllMocks()
 function setup(legacy = false) {
   const sql = new Database(':memory:'); opened.push(sql);
   sql.exec(readFileSync(new URL('../migrations/011_staff_members.sql', import.meta.url), 'utf8'));
-  if (!legacy) sql.exec(readFileSync(new URL('../migrations/NNN_security_hardening.sql', import.meta.url), 'utf8'));
+  if (!legacy) sql.exec(readFileSync(new URL('../migrations/074_security_hardening.sql', import.meta.url), 'utf8'));
   const queries: string[] = [];
   let intercept: (query: string) => void = () => {};
   const db = { prepare(query: string) {

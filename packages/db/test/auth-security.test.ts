@@ -8,7 +8,7 @@ afterEach(()=>opened.splice(0).forEach(s=>s.close()));
 function setup() {
   const sql=new Database(':memory:');opened.push(sql);
   sql.exec(readFileSync(new URL('../migrations/011_staff_members.sql',import.meta.url),'utf8'));
-  sql.exec(readFileSync(new URL('../migrations/NNN_security_hardening.sql',import.meta.url),'utf8'));
+  sql.exec(readFileSync(new URL('../migrations/074_security_hardening.sql',import.meta.url),'utf8'));
   const queries:{sql:string;params:unknown[]}[]=[];
   const db={prepare(query:string){let params:unknown[]=[];return {
     bind(...values:unknown[]){params=values;return this;},

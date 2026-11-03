@@ -200,9 +200,13 @@ async function authenticateRequest(c: Context<Env>, next: Next): Promise<Respons
   const isPublicFormDefinition = method === 'GET' && /^\/api\/forms\/[^/]+$/.test(path);
   if (isPublicFormDefinition) {
     const bearer = bearerToken(c);
-    if (bearer) { const limited = await limitAuth(c, 'key', bearer); if (limited) return limited; }
+    const cookie = cookieToken(c);
     const accessOk = c.env.ACCESS_REQUIRED !== 'true' || await verifyAccessJwt(c.req.header('Cf-Access-Jwt-Assertion'), c.env);
     const staff = accessOk ? (bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookieToken(c))) : null;
+    if (!staff && (bearer || cookie)) {
+      const limited = await limitAuth(c, 'key', bearer || cookie!);
+      if (limited) return limited;
+    }
     if (staff && staff.apiScopes == null) c.set('staff', staff);
     return next();
   }
@@ -256,10 +260,13 @@ async function authenticateRequest(c: Context<Env>, next: Next): Promise<Respons
 
   const bearer = bearerToken(c);
   const cookie = cookieToken(c);
-  if (bearer) { const limited = await limitAuth(c, 'key', bearer); if (limited) return limited; }
   const accessDenied = await requireAccess(c); if (accessDenied) return accessDenied;
   const staff = bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookie);
   if (!staff) {
+    if (bearer || cookie) {
+      const limited = await limitAuth(c, 'key', bearer || cookie!);
+      if (limited) return limited;
+    }
     if (bearer) await audit(c, 'key_rejected', 'denied');
     return c.json({ success: false, error: legacyIncoming ? 'Image not found' : 'Unauthorized' }, legacyIncoming ? 404 : 401);
   }

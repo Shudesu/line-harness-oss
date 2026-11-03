@@ -90,7 +90,7 @@ Small, focused PRs are easiest to review. A good PR includes:
 - A clear statement of what was not tested.
 - No production secrets, private configuration, generated build output, or
   unrelated formatting churn.
-- Migration files with a placeholder number (for example `NNN_add_feature.sql`).
+- Migration files with a placeholder number (for example `<number>_add_feature.sql`).
   The upstream migration chain moves fast, so final numbers are assigned by
   maintainers at merge time. Do not pick the next free number yourself — it
   will almost always conflict by the time the PR lands.

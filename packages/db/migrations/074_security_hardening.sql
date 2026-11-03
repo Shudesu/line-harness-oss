@@ -22,14 +22,14 @@ CREATE INDEX IF NOT EXISTS idx_admin_sessions_staff ON admin_sessions(staff_id, 
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at, id_hash);
 ALTER TABLE admin_sessions ADD COLUMN auth_subject TEXT;
 
-CREATE TABLE auth_rate_limits (
+CREATE TABLE IF NOT EXISTS auth_rate_limits (
   bucket_hash TEXT PRIMARY KEY,
   window_start INTEGER NOT NULL,
   attempts INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
-CREATE INDEX idx_auth_rate_limits_expires ON auth_rate_limits(expires_at, bucket_hash);
-CREATE TABLE auth_audit_log (
+CREATE INDEX IF NOT EXISTS idx_auth_rate_limits_expires ON auth_rate_limits(expires_at, bucket_hash);
+CREATE TABLE IF NOT EXISTS auth_audit_log (
   id TEXT PRIMARY KEY,
   actor_id TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -37,4 +37,4 @@ CREATE TABLE auth_audit_log (
   ip TEXT NOT NULL,
   outcome TEXT NOT NULL
 );
-CREATE INDEX idx_auth_audit_log_time ON auth_audit_log(occurred_at, id);
+CREATE INDEX IF NOT EXISTS idx_auth_audit_log_time ON auth_audit_log(occurred_at, id);

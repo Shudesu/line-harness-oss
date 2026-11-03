@@ -106,15 +106,17 @@ describe('security integration with real SQLite/D1 statements',()=>{
     expect(store.sqlite.prepare('SELECT count(*) AS n FROM auth_audit_log').get()).toEqual({n:10});
     expect(JSON.stringify(store.sqlite.prepare('SELECT * FROM auth_rate_limits').all())).not.toContain('wrong');
   });
-  it('enforces shared key and IP limits before authentication, including rotating supplied keys',async()=>{
+  it('limits failed credentials across routers while valid keys bypass saturated IP buckets',async()=>{
     const now=Math.floor(Date.now()/1000);
     await consumeAuthRateLimit(store.db,'key:ip','unknown',1000,60,now);
     store.sqlite.exec('UPDATE auth_rate_limits SET attempts=1000');
-    for(const token of ['owner-key','rotated-attempt']) expect((await app().request('/api/friends',{headers:{Authorization:'Bearer '+token}},env)).status).toBe(429);
+    expect((await app().request('/api/friends',{headers:{Authorization:'Bearer owner-key'}},env)).status).toBe(200);
+    expect((await app().request('/api/friends',{headers:{Authorization:'Bearer rotated-attempt'}},env)).status).toBe(429);
   });
   it('fails closed if shared auth storage is unavailable',async()=>{
     store.sqlite.exec('DROP TABLE auth_rate_limits');expect((await login()).status).toBe(503);
-    expect((await app().request('/api/friends',{headers:{Authorization:'Bearer owner-key'}},env)).status).toBe(503);
+    expect((await app().request('/api/friends',{headers:{Authorization:'Bearer owner-key'}},env)).status).toBe(200);
+    expect((await app().request('/api/friends',{headers:{Authorization:'Bearer wrong'}},env)).status).toBe(503);
   });
   it('requires cookie owner sessions for updates and rejects the old public admin key',async()=>{
     for(const h of [{ 'x-admin-api-key':'synthetic-env-key' },{Authorization:'Bearer owner-key'}] as Record<string,string>[]) {
@@ -137,5 +139,43 @@ describe('security integration with real SQLite/D1 statements',()=>{
     expect(body.data.apiKey).toMatch(/^lh_/);
     const rows=JSON.stringify(store.sqlite.prepare('SELECT * FROM auth_audit_log').all());
     expect(rows).toContain('staff_change');expect(rows).not.toContain(body.data.apiKey);expect(rows).not.toContain('Synthetic Staff');
+  });
+});
+
+
+describe('failure-only key/session limiter', () => {
+  function proxySetup() {
+    store.sqlite.exec(`CREATE TABLE line_accounts (id TEXT, name TEXT, channel_id TEXT, channel_access_token TEXT,
+      channel_secret TEXT, is_active INTEGER, display_order INTEGER, created_at TEXT);
+      INSERT INTO line_accounts VALUES ('account-1','Synthetic','123','synthetic-channel-token','synthetic-channel-secret',1,0,'');`);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+  }
+  const cases = [
+    ['/api/friends', 'bearer'], ['/api/friends', 'session'],
+    ['/api/forms/test', 'bearer'], ['/line-api/v2/bot/info', 'bearer'],
+    ['/line-api/v2/bot/info', 'channel'],
+  ] as const;
+  it.each(cases)('%s (%s): 1,001 successes issue zero limiter SQL', async (path, kind) => {
+    proxySetup();
+    const prepare = vi.spyOn(store.db, 'prepare');
+    const a = app();
+    const h: Record<string,string> = kind === 'session' ? headers : {Authorization:'Bearer '+(kind === 'channel' ? 'synthetic-channel-token' : 'owner-key')};
+    for (let i=0; i<1001; i++) expect((await a.request(path, {headers:h}, env)).status).toBe(200);
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes('auth_rate_limits'))).toHaveLength(0);
+  });
+  it.each(cases.filter(([,kind]) => kind !== 'channel'))('%s (%s): repeated failures reach 429; successes still pass', async (path, kind) => {
+    proxySetup();
+    vi.spyOn(Date, 'now').mockReturnValue(1800000000000);
+    // Keep the seeded synthetic session alive at the fixed clock.
+    store.sqlite.exec('UPDATE admin_sessions SET expires_at=1800604800');
+    const a = app();
+    const h: Record<string,string> = kind === 'session' ? {Cookie:'lh_admin_session=invalid-test-session'} : {Authorization:'Bearer invalid-test-key'};
+    for(let i=0; i<1000; i++) expect((await a.request(path,{headers:h},env)).status).toBe(path.includes('/forms/') ? 200 : 401);
+    const rejected = await a.request(path,{headers:h},env);
+    expect(rejected.status).toBe(429);
+    expect(Number(rejected.headers.get('Retry-After'))).toBeGreaterThan(0);
+    const before = store.sqlite.prepare('SELECT * FROM auth_rate_limits ORDER BY bucket_hash').all();
+    expect((await a.request(path,{headers:kind === 'session' ? headers : {Authorization:'Bearer owner-key'}},env)).status).toBe(200);
+    expect(store.sqlite.prepare('SELECT * FROM auth_rate_limits ORDER BY bucket_hash').all()).toEqual(before);
   });
 });

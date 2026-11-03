@@ -154,7 +154,6 @@ function asMessages(value: unknown): Message[] {
  * or the env default token. Returns a Response on auth/validation failure.
  */
 async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCaller | Response> {
-  const limited = await limitAuth(c, 'key', token); if (limited) return limited;
   const denied = await requireAccess(c); if (denied) return denied;
   const accounts = await getLineAccounts(c.env.DB);
   const active = accounts.filter((a) => a.is_active);
@@ -180,7 +179,11 @@ async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCa
 
   // harness API キー経路 — worker 側でチャネルトークンを解決する。
   const staff = await authenticateApiToken(c, token);
-  if (!staff) { await audit(c, 'key_rejected', 'denied'); return c.json(AUTH_FAILED, 401); }
+  if (!staff) {
+    const limited = await limitAuth(c, 'key', token); if (limited) return limited;
+    await audit(c, 'key_rejected', 'denied');
+    return c.json(AUTH_FAILED, 401);
+  }
   // Raw LINE proxy exposes a wider API than the message-scope allowlist.
   if (staff.apiScopes != null) return c.json({message:'Scoped keys cannot use the LINE proxy'},403);
 

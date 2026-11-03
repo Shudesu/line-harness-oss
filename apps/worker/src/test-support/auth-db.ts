@@ -8,7 +8,7 @@ export const TEST_SESSION = 'lhs_' + 'A'.repeat(43);
 export function authDb() {
   const result = sqliteD1();
   result.sqlite.exec(readFileSync(new URL('../../../../packages/db/migrations/011_staff_members.sql', import.meta.url), 'utf8'));
-  result.sqlite.exec(readFileSync(new URL('../../../../packages/db/migrations/NNN_security_hardening.sql', import.meta.url), 'utf8'));
+  result.sqlite.exec(readFileSync(new URL('../../../../packages/db/migrations/074_security_hardening.sql', import.meta.url), 'utf8'));
   return result;
 }
 export function seedAuthStaff(sql: ReturnType<typeof authDb>['sqlite'], input = {id:'staff-1',name:'Staff One',role:'admin',key:'staff-key'}, token = TEST_SESSION) {

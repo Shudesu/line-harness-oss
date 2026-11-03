@@ -5,10 +5,10 @@ Workers＋D1で動作します。有料サービス追加、`workers_dev`の無�
 ## 既存セルフホスト環境の移行
 
 1. 既存の手順でD1をバックアップし、各クライアントの秘密情報ストアに**元のAPIキー**を保持します。移行後はDBや管理画面からキーを復元できません。既に紛失している場合は再発行し、利用先を個別に更新してください。ハッシュ値や`hashed:<id>`は認証用キーではありません。
-2. 通常の未適用マイグレーションを先に適用し、`packages/db/migrations/NNN_security_hardening.sql`を**新Workerのデプロイ前に一度だけ**適用します。`NNN`はCONTRIBUTING.mdで指定された仮番号です。リリース担当者は正式番号を割り当て、bootstrapメタデータを再生成してから配布します。このブランチでは明示的にファイルを指定できます。
+2. 通常の未適用マイグレーションを先に適用し、`packages/db/migrations/074_security_hardening.sql`を**新Workerのデプロイ前に一度だけ**適用します。このブランチでは明示的にファイルを指定できます。
 
    ```sh
-   pnpm exec wrangler d1 execute YOUR_DATABASE --remote --file=packages/db/migrations/NNN_security_hardening.sql
+   pnpm exec wrangler d1 execute YOUR_DATABASE --remote --file=packages/db/migrations/074_security_hardening.sql
    ```
 
    SQLは列・索引・テーブル追加のみです。**SQL適用だけでは平文キーの変換は完了しません。** Web Cryptoによる後続処理が必要です。既存DBへの更新に`schema.sql` / `bootstrap.sql`を代用しないでください。途中失敗時は実際に適用された列・テーブルを調べて復旧します。ALTER文の単純再実行はできません。
@@ -49,7 +49,7 @@ Workers＋D1で動作します。有料サービス追加、`workers_dev`の無�
 
 ## D1共有レート制限・監査ログ
 
-固定時間窓でログイン/SSOはIPごとに5分10回、キー認証はIP・資格情報ごとに毎分1,000回です。LINEプロキシも対象です。偽キーの切替前にIP単位で制限し、成功・失敗とも回数に含めます。共有NATや時間窓境界の連続バーストに注意してください。信頼するIPはCloudflareの`CF-Connecting-IP`のみで、不明時は`unknown`共通枠です。429にRetry-Afterを付け、ストレージ障害時は認証を拒否します。従来のインメモリ制限は補助です。
+固定時間窓でログイン/SSOはIPごとに5分10回、キー・セッション認証の失敗はIP・資格情報ごとに毎分1,000回です。LINEプロキシも対象です。成功時は制限用SQLを発行せず、IP上限に達しても正しい認証を止めません。失敗時だけ認証後に集計します。共有NATや時間窓境界の連続バーストに注意してください。信頼するIPはCloudflareの`CF-Connecting-IP`のみで、不明時は`unknown`共通枠です。429にRetry-Afterを付け、ストレージ障害時は認証を拒否します。従来のインメモリ制限は補助です。
 
 監査はactor ID・固定action/outcome・Unix時刻・IPのみです。キー、Cookie、署名、本文、URL、User-Agentは記録しません。ログイン/ログアウト/SSO、キー・Access拒否、スタッフ変更、移行、セッション失効、更新試行を記録します。変更操作は`attempted`であり、後段の権限確認や業務処理の成功を意味しません。レート制限済みの大量拒否は1件ずつ監査記録しません。完全なコンプライアンス監査ではなく最小限の履歴です。IPは個人情報としてDBアクセスを制限してください。
 
@@ -57,9 +57,9 @@ Workers＋D1で動作します。有料サービス追加、`workers_dev`の無�
 
 ## Cloudflare処理量の設計メモ・未確認事項
 
-入口はログイン、キー認証、Cookie要求、明示的な移行・保守です。ログインはrate UPSERT 1回×IPの1行、成功時はsession/audit各INSERT 1回。キー認証は最大2回×bucketの各1行＋索引付きスタッフ照会（通常1回、未一致なら旧キー照会1回、旧キー一致なら条件付きUPDATE 1回）。Cookieはsession PK照会1回＋staff PK照会最大1回、last_seen更新は5分ごと最大1回。監査は1件INSERT＋索引更新です。
+入口はログイン、キー認証、Cookie要求、明示的な移行・保守です。ログインはrate UPSERT 1回×IPの1行、成功時はsession/audit各INSERT 1回。認証成功時のrate書込は0回、失敗時は最大2回×bucketの各1行＋索引付きスタッフ照会（通常1回、未一致なら旧キー照会1回、旧キー一致なら条件付きUPDATE 1回）。Cookieはsession PK照会1回＋staff PK照会最大1回、last_seen更新は5分ごと最大1回。監査は1件INSERT＋索引更新です。
 
-移行はpending索引25件までの取得1回＋PK更新最大25回、保守は索引付きDELETE 3回×各100件まで。新たなポーリング・Cron・自動再試行はありません。日次のBearer要求B件・ログインL件ならrate SQLは最大`2B+L`回です。再試行も新しい要求として加算し、呼出し頻度・利用者数が増えればSQL回数と保存量は増えます。
+移行はpending索引25件までの取得1回＋PK更新最大25回、保守は索引付きDELETE 3回×各100件まで。新たなポーリング・Cron・自動再試行はありません。日次のキー・セッション認証失敗B件・ログインL件ならrate SQLは最大`2B+L`回です。再試行も新しい要求として加算し、呼出し頻度・利用者数が増えればSQL回数と保存量は増えます。
 
 100/10,000/100,000件の合成データで実helperのSQL回数・上限・索引使用、同時要求・失効・障害を検査します。`pnpm check:cost`に追加し、既存のSQLite VM検査・索引欠落の負例も実行します。**SQLite VM命令数とD1課金rowsは別物です。**
 

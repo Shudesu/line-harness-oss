@@ -5,10 +5,10 @@ This upgrade uses Workers and D1. It does not disable `workers_dev`, introduce a
 ## Upgrade an existing self-hosted installation
 
 1. Back up D1 using your existing backup procedure and securely retain the **original** owner/integration API keys in your client secret stores. The dashboard and DB will no longer let you recover a key. If a key is already lost, regenerate it after upgrading and explicitly update each affected client; never use `hashed:<id>` or the SHA-256 digest as a Bearer credential.
-2. Apply your ordinary pending migrations first, then apply `packages/db/migrations/NNN_security_hardening.sql` **once, before deploying the new Worker**. `NNN` is the contribution placeholder required by CONTRIBUTING.md; release maintainers must assign its final number and regenerate bootstrap metadata before shipping. For this branch, explicit application is possible:
+2. Apply your ordinary pending migrations first, then apply `packages/db/migrations/074_security_hardening.sql` **once, before deploying the new Worker**. For this branch, explicit application is possible:
 
    ```sh
-   pnpm exec wrangler d1 execute YOUR_DATABASE --remote --file=packages/db/migrations/NNN_security_hardening.sql
+   pnpm exec wrangler d1 execute YOUR_DATABASE --remote --file=packages/db/migrations/074_security_hardening.sql
    ```
 
    This adds hash/scopes columns, the indexed legacy-backfill queue, sessions, rate limits and audit tables. SQL alone does **not** hash credentials: the conversion uses Web Crypto in the next steps. Do not apply `schema.sql` or `bootstrap.sql` over an existing database as an upgrade substitute. On a partial SQL failure, inspect applied columns/tables and repair the migration before proceeding; the ALTER statements are not repeatable.
@@ -49,25 +49,27 @@ Configure any Access edge policy only for private paths. A whole-host policy wou
 
 ## Rate limits, audit and retention
 
-D1 fixed-window limits are shared across isolates: login/SSO **10 per 5 minutes per IP**; key authentication **1,000 per minute per IP and per credential** (including LINE proxy). The IP limit is checked first so changing fake keys cannot bypass it. Only Cloudflare's `CF-Connecting-IP` is trusted; missing IP shares an `unknown` bucket. Limits apply to successful and failed attempts and can affect users behind a shared NAT. Fixed windows can allow two adjacent-window bursts. Saturated counters stop incrementing; 429 includes Retry-After. Storage failure fails closed, without silently reverting to isolate-local limits. The existing in-memory general burst guard is supplementary, not the shared security boundary.
+D1 fixed-window limits are shared across isolates: login/SSO **10 per 5 minutes per IP**; failed key/session authentication **1,000 per minute per IP and per credential** (including LINE proxy). The IP limit is checked first so changing fake keys cannot bypass it. Only Cloudflare's `CF-Connecting-IP` is trusted; missing IP shares an `unknown` bucket. Login/SSO issuance limits apply to all attempts; key/session limits apply only to failures. Fixed windows can allow two adjacent-window bursts. Saturated counters stop incrementing; 429 includes Retry-After. Storage failure fails closed, without silently reverting to isolate-local limits. The existing in-memory general burst guard is supplementary, not the shared security boundary.
 
 `auth_audit_log` stores actor ID, a fixed action/outcome, Unix timestamp and IP. It excludes keys, cookies, signatures, URLs, request/response bodies and user agents. Login/logout/SSO, rejected key/Access authentication, staff changes, key migration, session revocation and update attempts are logged. Mutation records say `attempted`, not that the action completed; a later role check or business operation can fail. Rate-rejected floods do not create per-attempt audit rows. This is a minimal audit trail, not a complete compliance log. Restrict DB access; IPs are personal data.
 
 Owner `POST /api/auth/maintenance` deletes at most 100 expired rate buckets, 100 expired sessions, and 100 audit rows older than 90 days per call, using expiry indexes. **No new Cron or notification is installed.** Integrate this bounded endpoint into your existing authorized maintenance routine and monitor backlog/storage; expiry rejects credentials even before cleanup. Audit retention is therefore a cleanup threshold, not a guaranteed deletion deadline.
+
+Key/session limits count failures only (including invalid sessions); valid credentials bypass saturated IP buckets. Authentication runs before the failure limiter so shared-IP attackers cannot lock out valid users. Login/SSO issuance limits are unchanged.
 
 ## Processing/cost design and verification limits
 
 | Entry | SQL calls × row scope |
 | --- | --- |
 | Login/SSO attempt | 1 rate UPSERT × one hashed-IP row, then credential/SSO checks; login success adds 1 session INSERT + 1 audit INSERT |
-| Bearer/key authentication | Up to 2 rate UPSERTs × one hashed bucket each; normally 1 indexed staff-hash lookup (miss adds 1 legacy-key lookup); legacy hit adds 1 conditional UPDATE |
+| Bearer/key authentication | Successful key/session authentication: no rate-limit SQL. Failed authentication: up to 2 rate UPSERTs × one hashed bucket each; normally 1 indexed staff-hash lookup (miss adds 1 legacy-key lookup); legacy hit adds 1 conditional UPDATE |
 | Cookie request | 1 session PK lookup + up to 1 staff PK lookup; last-seen UPDATE at most once per five-minute interval per session |
 | Audit | 1 INSERT per recorded action, plus primary/time index maintenance |
 | Backfill | 1 pending-index scan limited to 25 + at most 25 PK conditional UPDATEs; no full-table COUNT |
 | Revoke all sessions | 1 staff/expiry-index UPDATE × all active sessions for the caller; linear in that caller’s active sessions, not all users |
 | Explicit maintenance | 3 indexed DELETE statements, at most 100 rows each; no retries or polling |
 
-For B bearer requests and L login attempts/day, limiter statements are at most `2B + L`, before supplementary local rejection; network retries count as new requests. Identity cardinality affects retained storage. Unrelated history growing 100×/1,000× must not widen point lookups or bounded maintenance; more requests scale calls linearly. New synthetic tests exercise actual helpers at 100/10,000/100,000 rows, check bounded work/index use, concurrency, expiry and failed-storage behavior. `pnpm check:cost` includes these and the existing SQLite VM cost regression/negative-index control. SQLite VM instructions are **not D1 billed rows**.
+For B failed key/session requests and L login attempts/day, limiter statements are at most `2B + L`, before supplementary local rejection; network retries count as new requests. Identity cardinality affects retained storage. Unrelated history growing 100×/1,000× must not widen point lookups or bounded maintenance; more requests scale calls linearly. New synthetic tests exercise actual helpers at 100/10,000/100,000 rows, check bounded work/index use, concurrency, expiry and failed-storage behavior. `pnpm check:cost` includes these and the existing SQLite VM cost regression/negative-index control. SQLite VM instructions are **not D1 billed rows**.
 
 Not verified here: deployed D1 billing rows, Workers CPU/latency, production multi-isolate behavior, live Access/JWKS rotation, real browser third-party-cookie delivery, CDN cache purge, and real LINE/Stripe delivery. No production load test, migration, publish or deployment was performed. Free-tier fit and monthly cost are unmeasured, not assumed zero. No spending cap, automatic customer shutdown or notification service is introduced.
 
