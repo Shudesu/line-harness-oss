@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### リリース時の注意
+
+- Instagram連携リンクに署名付きトークン `igt` を追加。LINE Harnessを先に更新し、IG Harness側の対応後に `IG_LINK_TOKEN_POLICY=prefer` → `require` を推奨します。既定は `off` のままです。
+- migration `075_ig_link_token_uses.sql` を適用してください（spec 08原文の076ではなく、このブランチでは074に続く075）。`prefer` では未署名リンクのIG復帰マイルを付与せず、`require` では未署名リンクを紐付けません。[形式・環境変数・移行手順](docs/IG_LINK_TOKEN.md)。
+
 ### Breaking changes
 
 - `ADMIN_API_KEY` / `NEXT_PUBLIC_ADMIN_API_KEY` と `x-admin-api-key` による更新認証を廃止。管理画面の更新にはオーナーのCookieセッションとCSRFを使用してください。通常のAPI連携はスタッフAPIキーまたはサーバー側 `API_KEY` を使用します。

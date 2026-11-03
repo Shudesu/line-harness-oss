@@ -122,6 +122,8 @@ export type Env = {
     X_HARNESS_GATE_SECRET?: string;
     X_HARNESS_CONNECTION_ID?: string;
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
+    IG_LINK_TOKEN_SECRET?: string; // Optional dedicated spec 08 HMAC secret
+    IG_LINK_TOKEN_POLICY?: 'off' | 'prefer' | 'require';
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
     // Phase 5 self-update — consumed by /admin/update/*. Defaults live in
@@ -415,6 +417,8 @@ app.get('/r/:ref', async (c) => {
   if (gate) liffParams.set('gate', gate);
   const xh = c.req.query('xh');
   if (xh) liffParams.set('xh', xh);
+  const igt = c.req.query('igt');
+  if (igt !== undefined) liffParams.set('igt', igt);
   const ig = c.req.query('ig');
   if (ig) liffParams.set('ig', ig);
   const iga = c.req.query('iga');

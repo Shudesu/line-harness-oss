@@ -2,6 +2,7 @@
 
 > **Authentication hardening for existing installations:** SQL migration and key backfill are required. Read the [upgrade guide](docs/SECURITY-UPGRADE.en.md) first. workers.dev and public webhook/LIFF paths remain available.
 
+Instagram signed-link bindings: `IG_LINK_TOKEN_POLICY` (default off), optional dedicated secret `IG_LINK_TOKEN_SECRET`, and shared-secret fallback `IG_HARNESS_LINK_SECRET`. See the [migration 075 and coordinated rollout guide](docs/IG_LINK_TOKEN.md).
 
 # L Harness
 

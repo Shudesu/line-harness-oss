@@ -70,6 +70,10 @@ crons = ["* * * * *", "0 */6 * * *"]
 # ═══════════════════════════════════════════════════════════════
 # LOG_RETENTION_DAYS: days to keep messages_log rows (archived to R2 first).
 # Unset = keep forever (default). Set per-deployment, not here.
+# Instagram spec 08 (optional): IG_LINK_TOKEN_POLICY selects off / prefer / require.
+# Store IG_LINK_TOKEN_SECRET and IG_HARNESS_LINK_SECRET as secrets, not vars.
+# IG_LINK_TOKEN_SECRET overrides the HKDF fallback from IG_HARNESS_LINK_SECRET.
+# See docs/IG_LINK_TOKEN.md for migration 075 and coordinated rollout.
 [vars]
 WORKER_NAME = "line-harness"
 ADMIN_PAGES_PROJECT = "line-harness-admin"

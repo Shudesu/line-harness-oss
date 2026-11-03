@@ -540,6 +540,13 @@ CREATE TABLE IF NOT EXISTS google_calendar_connections (
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS ig_link_token_uses (
+  nonce TEXT PRIMARY KEY,
+  friend_id TEXT NOT NULL,
+  used_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS incoming_webhooks (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
@@ -1356,6 +1363,8 @@ CREATE INDEX IF NOT EXISTS idx_health_logs_account_created_at
   ON account_health_logs (line_account_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON booking_idempotency_keys (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_ig_link_token_uses_expires ON ig_link_token_uses(expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);

@@ -214,3 +214,22 @@ describe('/auth/line — mobile ?account= routing', () => {
     expect(html).toContain(encodeURIComponent('liff.line.me/2011177336-RWMDBXOl'));
   });
 });
+
+
+it.each(['/r/synthetic-short', '/auth/line'])('%s forwards igt to LIFF and keeps conflicting ig for server verification', async path => {
+  const token = 'synthetic-payload.synthetic-signature';
+  const response = await get(path + '?' + new URLSearchParams({igt:token, ig:'unsigned', iga:'untrusted'}), DESKTOP_UA);
+  expect(response.status).toBe(200);
+  const html = await response.text();
+  expect(html).toContain('igt%3D' + token);
+  expect(html).toContain('ig%3Dunsigned');
+});
+
+it('/auth/line preserves igt in callback-only OAuth state', async () => {
+  dbMocks.getLineAccountByChannelId.mockResolvedValue(TESTIN);
+  const token='synthetic-payload.synthetic-signature';
+  const res=await get('/auth/line?'+new URLSearchParams({account:TESTIN.channel_id,uid:'synthetic-user',igt:token}));
+  expect(res.status).toBe(302);
+  const state=new URL(res.headers.get('location')!).searchParams.get('state')!;
+  expect(JSON.parse(Buffer.from(state,'base64').toString()).igt).toBe(token);
+});
