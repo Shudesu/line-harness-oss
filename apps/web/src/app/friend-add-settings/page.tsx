@@ -185,7 +185,7 @@ export default function FriendAddSettingsPage() {
     <div className="min-h-screen bg-gray-50">
       <Header
         title="友だち追加時設定"
-        description="各 LINE アカウントに友だち追加した瞬間に何が配信されるかを管理します。アクティブなシナリオが0件のアカウントは新規友だちに何も届きません。"
+        description="各 LINE アカウントに友だち追加した瞬間に始まるシナリオを管理します。"
       />
 
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-4">
@@ -280,21 +280,21 @@ function AccountSection({
   onCreate: () => void
 }) {
   const activeCount = row.scenarios.filter(s => s.isActive).length
-  const isHealthy = activeCount > 0
+  // 0件でも赤い警告は出さない（KIDOUインターンのあいさつはシナリオを使わずアンケートの仕組みで送るため）
   return (
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-      <div className={`px-4 py-3 flex items-center justify-between border-b ${isHealthy ? 'border-gray-200' : 'border-red-200 bg-red-50'}`}>
+      <div className="px-4 py-3 flex items-center justify-between border-b border-gray-200">
         <div className="flex items-center gap-3">
           <h2 className="font-semibold text-gray-900">{row.account.name}</h2>
           <span className="text-xs text-gray-400">{row.account.channelId}</span>
         </div>
-        {isHealthy ? (
+        {activeCount > 0 ? (
           <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-medium">
             アクティブ {activeCount} 件
           </span>
         ) : (
-          <span className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700 font-medium">
-            ⚠ アクティブ 0 件 — 新規友だちに何も届きません
+          <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-500 font-medium">
+            オンのシナリオなし
           </span>
         )}
       </div>
