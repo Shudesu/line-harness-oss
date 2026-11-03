@@ -10,6 +10,8 @@ import {
   gradeCode,
   handlePickedUniversity,
   greetingFromTemplates,
+  doneIntroFromTemplates,
+  handleSurveyPostback,
   startSurveyOnFollow,
 } from './intern-survey.js';
 
@@ -319,6 +321,51 @@ describe('あいさつ（アンケートの入口の前に付ける）', () => {
   it('「ズ_あいさつ_数字」だけを名前の順に並べ、1回に送れる数（4つ）までにする。空の定型文は飛ばす', () => {
     expect(texts(greetingFromTemplates(rows))).toEqual(['1', '2', '3', '4']);
     expect(greetingFromTemplates([])).toEqual([]);
+  });
+});
+
+describe('答え終えたときの文（画像の前に付ける）', () => {
+  const cfg = { accountId: 'intern' };
+  const rows = [
+    { name: 'ズ_回答後_2', message_type: 'text', message_content: '2' },
+    { name: 'ズ_回答後_1', message_type: 'text', message_content: '1' },
+    { name: 'ズ_回答後_3', message_type: 'text', message_content: '' },
+    { name: 'ズ_あいさつ_1', message_type: 'text', message_content: 'あいさつ' },
+  ];
+  const texts = (ms: unknown[]) => ms.map((m) => (m as { text?: string }).text);
+
+  it('「ズ_回答後_数字」だけを名前の順に並べ、空の定型文は飛ばす', () => {
+    expect(texts(doneIntroFromTemplates(rows))).toEqual(['1', '2']);
+    expect(doneIntroFromTemplates([])).toEqual([]);
+  });
+
+  it('3問目に答えたら、文のあとに画像を1回の返事で送る', async () => {
+    const store = { metadata: JSON.stringify({ survey_step: 'graduation_year', grade: '学部3年', university_name: '明治大学' }) };
+    const db = {
+      prepare(sql: string) {
+        let args: unknown[] = [];
+        const stmt = {
+          bind(...a: unknown[]) { args = a; return stmt; },
+          async first() { return sql.startsWith('SELECT metadata') ? { metadata: store.metadata } : null; },
+          async all() { return { results: sql.includes('ズ_回答後_') ? rows : [] }; },
+          async run() { if (sql.startsWith('UPDATE friends SET metadata')) store.metadata = String(args[0]); return {}; },
+        };
+        return stmt;
+      },
+    };
+    const replies: unknown[][] = [];
+    const client = {
+      replyMessage: async (_t: string, m: unknown[]) => { replies.push(m); },
+      pushMessage: async () => {},
+      linkRichMenuToUser: async () => {},
+    };
+    const ok = await handleSurveyPostback(db as never, client as never, cfg, {
+      friendId: 'f1', lineUserId: 'U' + '2'.repeat(32), data: 'isv:y:2028', replyToken: 'r', lineAccountId: cfg.accountId ?? null,
+    });
+    expect(ok).toBe(true);
+    expect(replies).toHaveLength(1);
+    expect(texts(replies[0].slice(0, 2))).toEqual(['1', '2']);
+    expect(replies[0][2]).toMatchObject({ type: 'image' });
   });
 });
 

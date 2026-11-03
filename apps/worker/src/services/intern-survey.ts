@@ -383,6 +383,30 @@ async function loadGreeting(db: D1Database): Promise<Msg[]> {
   return greetingFromTemplates(rows.results ?? []);
 }
 
+// ── 答え終えたときの文（画像の前に付ける） ─────────────────────────────
+
+// 定型文「ズ_回答後_1」「ズ_回答後_2」…を名前の順に、画像の前に送る。1つも無ければ画像だけ
+export const DONE_INTRO_PREFIX = 'ズ_回答後_';
+const DONE_INTRO_NAME = /^ズ_回答後_\d+$/;
+// 1回の返事で送れるのは5つまで。最後の画像の分を残す
+const DONE_INTRO_MAX = 4;
+
+/** 定型文の一覧から、答え終えたときの文を並べる */
+export function doneIntroFromTemplates(rows: TemplateRow[]): Msg[] {
+  return rows
+    .filter((r) => DONE_INTRO_NAME.test(r.name) && r.message_content.trim())
+    .sort((a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true }))
+    .slice(0, DONE_INTRO_MAX)
+    .map((r) => buildMessage(r.message_type, r.message_content) as unknown as Msg);
+}
+
+async function loadDoneIntro(db: D1Database): Promise<Msg[]> {
+  const rows = await db
+    .prepare("SELECT name, message_type, message_content FROM message_templates WHERE name LIKE 'ズ_回答後_%'")
+    .all<TemplateRow>();
+  return doneIntroFromTemplates(rows.results ?? []);
+}
+
 export function buildUniversityQuestion(config: SurveyConfig = {}): Msg {
   if (!config.pickerUrl) {
     return text('1問目：大学名を入力して送ってください。\n例：早稲田、明治大学');
@@ -739,6 +763,14 @@ export async function handleSurveyPostback(
   const meta = await readState(db, opts.friendId);
   const result = reducePostback(meta as SurveyState, opts.data, config);
   if (!result) return false;
+  // 答え終えたときは、画像の前に定型文の文を付ける（読めなくても画像は送る）
+  if (result.effects?.includes('completed')) {
+    const intro = await loadDoneIntro(db).catch((err) => {
+      console.error('[intern-survey] done intro load failed', err);
+      return [] as Msg[];
+    });
+    result.messages = [...intro, ...result.messages];
+  }
   await apply(db, lineClient, config, opts.replyToken, { id: opts.friendId, lineUserId: opts.lineUserId }, meta, result, opts.lineAccountId);
   return true;
 }
