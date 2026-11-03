@@ -12,7 +12,7 @@
 |--------|-----|------|
 | `id` | TEXT (UUID) | 主キー |
 | `title` | TEXT | 配信タイトル（管理用） |
-| `message_type` | TEXT | `text` / `image` / `flex` |
+| `message_type` | TEXT | `text` / `image` / `flex`（`image` は payload の形で imagemap も送れる。[imagemap 配信](#imagemap-配信リッチメッセージ)参照） |
 | `message_content` | TEXT | メッセージ内容 |
 | `target_type` | TEXT | `all` / `tag` |
 | `target_tag_id` | TEXT | tag 指定時のタグID |
@@ -270,12 +270,49 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts" \
   }'
 ```
 
+### imagemap 配信（リッチメッセージ）
+
+LINE 公式アカウントマネージャーの「リッチメッセージ」にあたる形式です。吹き出しもアカウントアイコンも出ない全幅表示になり、画像そのものをタップ領域にできます。
+
+`messageType` は `image` のままで、`messageContent` が `baseUrl` と `baseSize` を持っていれば imagemap として送信されます。専用の `messageType` を足していないのは、`broadcasts.message_type` の CHECK 制約を変えるにはテーブル再作成が必要で、additive-only のマイグレーション方針（`scripts/check-migrations.ts`）に反するためです。従来の画像配信 payload（`originalContentUrl` / `previewImageUrl`）とはキーが衝突しないため、後方互換です。
+
+```bash
+curl -X POST "https://your-worker.your-subdomain.workers.dev/api/broadcasts" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "キャンペーン告知",
+    "messageType": "image",
+    "messageContent": "{\"baseUrl\":\"https://example.com/img/campaign\",\"baseSize\":{\"width\":1040,\"height\":1040},\"actions\":[{\"type\":\"uri\",\"linkUri\":\"https://example.com/lp\",\"area\":{\"x\":0,\"y\":0,\"width\":1040,\"height\":1040}}]}",
+    "targetType": "all",
+    "altText": "キャンペーンのお知らせ"
+  }'
+```
+
+| フィールド | 説明 |
+|-----------|------|
+| `baseUrl` | 拡張子を含まない画像 URL のプレフィックス |
+| `baseSize` | `{ width, height }`。`width` は 1040 固定 |
+| `actions` | タップ領域。座標は `baseSize` の座標系。省略時は空配列（タップ不可） |
+
+`altText` は通知バナーとトーク一覧に出る文字で、LINE の必須項目です。broadcast の `altText` フィールド、payload 内の `altText`、既定値 `お知らせ` の順に採用されます。
+
+**画像の置き方**: LINE は `{baseUrl}/240` のように幅を足して取りに来るため、**240 / 300 / 460 / 700 / 1040 の 5 サイズを拡張子なしのファイル名**で配置し、`image/jpeg` か `image/png` の Content-Type で返す必要があります。拡張子が無いと静的ホスティングによっては `application/octet-stream` になり、LINE 側で表示されません。
+
+```
+https://example.com/img/campaign/240
+https://example.com/img/campaign/300
+https://example.com/img/campaign/460
+https://example.com/img/campaign/700
+https://example.com/img/campaign/1040
+```
+
 リクエストボディ:
 
 | フィールド | 型 | 必須 | 説明 |
 |-----------|-----|------|------|
 | `title` | string | 必須 | 管理用タイトル |
-| `messageType` | string | 必須 | `text` / `image` / `flex` |
+| `messageType` | string | 必須 | `text` / `image` / `flex`（`image` は payload の形で imagemap も送れる。[imagemap 配信](#imagemap-配信リッチメッセージ)参照） |
 | `messageContent` | string | 必須 | メッセージ内容 |
 | `targetType` | string | 必須 | `all` / `tag` |
 | `targetTagId` | string | 条件付き | targetType=tag の場合必須 |
