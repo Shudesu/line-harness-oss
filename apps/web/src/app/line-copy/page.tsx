@@ -295,7 +295,7 @@ function TemplateEditor({ template, onSaved, onDeleted }: { template: Template; 
         <>
           <textarea rows={mode === 'card' ? 14 : 6} value={value} onChange={(e) => setValue(e.target.value)} className={inputClass} />
           {mode === 'card' && (
-            <p className="mt-1 text-[11px] text-gray-400">1行目は太字の見出し。空の行で間をあける。「---」だけの行は区切り線。行の頭に全角の空白「　」を入れると少し右に下がります。</p>
+            <p className="mt-1 text-[11px] text-gray-400">1行目から最初の空の行までは太字の見出し。空の行で間をあける。「---」だけの行は区切り線。行の頭に全角の空白「　」を入れると少し右に下がります。</p>
           )}
         </>
       )}
