@@ -44,6 +44,6 @@ export type PageScope = 'account' | 'shared' | 'none'
 export function pageScope(pathname: string): PageScope {
   if (pathname === '/') return 'account'
   // 設定まわりはアカウントの切替と関係しない
-  if (['/accounts', '/staff', '/updates', '/friend-add-settings'].some((p) => pathname.startsWith(p))) return 'none'
+  if (['/accounts', '/staff', '/updates', '/friend-add-settings', '/password'].some((p) => pathname.startsWith(p))) return 'none'
   return ACCOUNT_SCOPED_PREFIXES.some((p) => pathname.startsWith(p)) ? 'account' : 'shared'
 }

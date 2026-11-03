@@ -408,6 +408,11 @@ export default function Sidebar() {
             }`}>
               {staffRole === 'owner' ? 'オーナー' : staffRole === 'admin' ? '管理者' : 'スタッフ'}
             </span>
+            {staffRole !== 'owner' && (
+              <Link href="/password" className="block mt-1 text-[11px] text-gray-500 hover:text-gray-800 underline">
+                パスワードを変更
+              </Link>
+            )}
           </div>
         )}
         <div className="px-6 py-4 space-y-3">

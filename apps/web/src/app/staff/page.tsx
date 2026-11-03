@@ -56,6 +56,7 @@ function AccountChecklist({
 }
 
 function maskKey(key: string): string {
+  if (key === 'self-set-password') return '本人が決めたパスワード'
   if (!key || key.length <= 8) return '••••••••'
   return key.slice(0, 4) + '••••••••' + key.slice(-4)
 }

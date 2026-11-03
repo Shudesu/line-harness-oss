@@ -31,14 +31,60 @@ function generateApiKey(): string {
   return `lh_${hex}`;
 }
 
+/**
+ * Staff can replace their generated key with a password of their own. The
+ * password is never stored: api_key holds `pw:` + SHA-256(password), so the
+ * existing UNIQUE api_key column keeps working for lookup and the owner's
+ * "regenerate key" resets it back to a random key.
+ */
+export const STAFF_PASSWORD_PREFIX = 'pw:';
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function staffPasswordKey(password: string): Promise<string> {
+  return `${STAFF_PASSWORD_PREFIX}${await sha256Hex(password)}`;
+}
+
 export async function getStaffByApiKey(
   db: D1Database,
   apiKey: string,
 ): Promise<StaffMember | null> {
-  return db
+  // A stored password hash is not itself a credential.
+  if (apiKey.startsWith(STAFF_PASSWORD_PREFIX)) return null;
+  const byKey = await db
     .prepare('SELECT * FROM staff_members WHERE api_key = ? AND is_active = 1')
     .bind(apiKey)
     .first<StaffMember>();
+  if (byKey) return byKey;
+  return db
+    .prepare('SELECT * FROM staff_members WHERE api_key = ? AND is_active = 1')
+    .bind(await staffPasswordKey(apiKey))
+    .first<StaffMember>();
+}
+
+/** Returns false when another staff member already uses the same password. */
+export async function setStaffPassword(
+  db: D1Database,
+  id: string,
+  password: string,
+): Promise<boolean> {
+  const key = await staffPasswordKey(password);
+  const taken = await db
+    .prepare('SELECT id FROM staff_members WHERE api_key = ? AND id != ?')
+    .bind(key, id)
+    .first<{ id: string }>();
+  if (taken) return false;
+  const result = await db
+    .prepare('UPDATE staff_members SET api_key = ?, updated_at = ? WHERE id = ?')
+    .bind(key, jstNow(), id)
+    .run();
+  if (result.meta.changes === 0) {
+    throw new Error(`Staff member not found: ${id}`);
+  }
+  return true;
 }
 
 export async function getStaffMembers(db: D1Database): Promise<StaffMember[]> {

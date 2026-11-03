@@ -212,6 +212,7 @@ const friendRow = (g: number) => row('friends', 'line_account_id', g);
 export const RULES: Rule[] = [
   // Self / session — no account involved.
   r(['GET'], '/api/staff/me', global),
+  r(['POST'], '/api/staff/me/password', global),
   r(['GET'], '/api/auth/session', global),
   r(['GET'], '/api/capabilities', global),
 

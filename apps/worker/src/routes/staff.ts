@@ -7,6 +7,7 @@ import {
   deleteStaffMember,
   regenerateStaffApiKey,
   countActiveStaffByRole,
+  setStaffPassword,
 } from '@line-crm/db';
 import type { StaffMember } from '@line-crm/db';
 import { requireRole } from '../middleware/role-guard.js';
@@ -15,11 +16,14 @@ import {
   setStaffAccountIds,
   clearStaffAccountIds,
 } from '../middleware/account-scope.js';
+import { adminSessionCookie, authenticateApiToken } from '../middleware/auth.js';
+import { resolveAdminAuthConfig } from '../middleware/admin-auth-config.js';
 import type { Env } from '../index.js';
 
 const staff = new Hono<Env>();
 
 function maskApiKey(key: string): string {
+  if (key.startsWith('pw:')) return 'self-set-password';
   return `lh_****${key.slice(-4)}`;
 }
 
@@ -95,6 +99,56 @@ staff.get('/api/staff/me', async (c) => {
     });
   } catch (err) {
     console.error('GET /api/staff/me error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// POST /api/staff/me/password — a staff member replaces their own login
+// credential with a password they choose. The old key stops working, and the
+// session cookie is reissued with the new password so they stay logged in.
+// The env owner's password is a Worker secret and cannot be changed here.
+staff.post('/api/staff/me/password', async (c) => {
+  try {
+    const currentStaff = c.get('staff');
+    if (currentStaff.id === 'env-owner') {
+      return c.json(
+        { success: false, error: 'オーナーのパスワードはここでは変更できません' },
+        400,
+      );
+    }
+
+    const body = await c.req
+      .json<{ currentPassword?: unknown; newPassword?: unknown }>()
+      .catch(() => ({}) as { currentPassword?: unknown; newPassword?: unknown });
+    const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword.trim() : '';
+    const newPassword = typeof body.newPassword === 'string' ? body.newPassword.trim() : '';
+
+    const me = await authenticateApiToken(c, currentPassword || null);
+    if (!me || me.id !== currentStaff.id) {
+      return c.json({ success: false, error: 'いまのパスワードが違います' }, 400);
+    }
+    if (newPassword.length < 10 || newPassword.length > 128) {
+      return c.json({ success: false, error: '新しいパスワードは10文字以上128文字以内にしてください' }, 400);
+    }
+    if (
+      newPassword.startsWith('pw:') ||
+      newPassword === c.env.API_KEY ||
+      (c.env.LEGACY_API_KEY && newPassword === c.env.LEGACY_API_KEY) ||
+      (await authenticateApiToken(c, newPassword))
+    ) {
+      return c.json({ success: false, error: 'このパスワードは使えません。別のものにしてください' }, 400);
+    }
+
+    const ok = await setStaffPassword(c.env.DB, currentStaff.id, newPassword);
+    if (!ok) {
+      return c.json({ success: false, error: 'このパスワードは使えません。別のものにしてください' }, 400);
+    }
+
+    const { sameSite } = resolveAdminAuthConfig(c.env, { requestOrigin: new URL(c.req.url).origin });
+    c.header('Set-Cookie', adminSessionCookie(newPassword, sameSite), { append: true });
+    return c.json({ success: true, data: null });
+  } catch (err) {
+    console.error('POST /api/staff/me/password error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
