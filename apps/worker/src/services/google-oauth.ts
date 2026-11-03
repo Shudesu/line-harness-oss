@@ -1,3 +1,4 @@
+import { timingSafeEqualBytes } from '@line-crm/shared';
 import { calendarBrokerConfigured, type CalendarBrokerCredentials } from './google-calendar-broker.js';
 import type { GoogleServiceAccountCredentials } from './google-service-account.js';
 
@@ -61,12 +62,7 @@ async function hmac(value: string, secret: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value)));
 }
 
-function timingSafeEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < left.length; i += 1) mismatch |= left[i] ^ right[i];
-  return mismatch === 0;
-}
+
 
 export function directGoogleOAuthConfigured(credentials: GoogleOAuthClientCredentials): boolean {
   return Boolean(credentials.oauthClientId?.trim() && credentials.oauthClientSecret?.trim());
@@ -93,7 +89,7 @@ export async function verifyGoogleOAuthState(
   const [encoded, signature, extra] = state.split('.');
   if (!encoded || !signature || extra || !secret) throw new Error('invalid_google_oauth_state');
   const expected = await hmac(encoded, secret);
-  if (!timingSafeEqual(expected, decodeBase64Url(signature))) {
+  if (!timingSafeEqualBytes(expected, decodeBase64Url(signature))) {
     throw new Error('invalid_google_oauth_state');
   }
   const payload = JSON.parse(

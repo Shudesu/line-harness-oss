@@ -11,6 +11,7 @@ import { useAccount } from '@/contexts/account-context'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
+import MessageImage from '@/components/shared/message-image'
 import ImageUploader, { type ImageUploaderValue } from '@/components/shared/image-uploader'
 import { Button } from '@cloudflare/kumo/components/button'
 import { Checkbox } from '@cloudflare/kumo/components/checkbox'
@@ -1055,7 +1056,7 @@ export default function ChatsPage() {
                       try {
                         const parsed = JSON.parse(msg.content)
                         bubbleContent = (
-                          <img src={parsed.originalContentUrl || parsed.previewImageUrl} alt="" className="max-w-[200px] rounded" />
+                          <MessageImage src={parsed.originalContentUrl || parsed.previewImageUrl} alt="" className="max-w-[200px] rounded" />
                         )
                       } catch {
                         bubbleContent = <span>🖼️ [画像]</span>

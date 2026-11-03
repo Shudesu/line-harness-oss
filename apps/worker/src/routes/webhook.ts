@@ -1,3 +1,4 @@
+import { timingSafeEqualString } from '@line-crm/shared';
 import { handleXGateWebhook } from '../services/x-gate-webhook.js';
 import { Hono } from 'hono';
 import { verifySignature, LineClient } from '@line-crm/line-sdk';
@@ -122,9 +123,8 @@ webhook.post('/webhook', async (c) => {
     valid = await verifySignature(envSecret, rawBody, signature);
     if (valid) {
       const accounts = await getLineAccounts(db);
-      const main = accounts.find(
-        (a) => a.is_active && a.channel_secret === envSecret,
-      );
+      const matches = await Promise.all(accounts.map(a => timingSafeEqualString(a.channel_secret, envSecret)));
+      const main = accounts.find((a, i) => a.is_active && matches[i]);
       if (main) {
         channelAccessToken = main.channel_access_token;
         matchedAccountId = main.id;
@@ -136,7 +136,7 @@ webhook.post('/webhook', async (c) => {
     const accounts = await getLineAccounts(db);
     for (const account of accounts) {
       if (!account.is_active) continue;
-      if (envSecret && account.channel_secret === envSecret) continue; // already tried via fast path
+      if (envSecret && await timingSafeEqualString(account.channel_secret, envSecret)) continue; // already tried via fast path
       const isValid = await verifySignature(account.channel_secret, rawBody, signature);
       if (isValid) {
         channelAccessToken = account.channel_access_token;

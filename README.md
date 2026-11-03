@@ -1,5 +1,9 @@
 # L Harness
 
+> **既存環境の認証強化アップグレード:** キーハッシュ化・セッション移行にはSQL適用とバックフィルが必要です。[移行手順](docs/SECURITY-UPGRADE.md)を先に確認してください。workers.devと公開Webhook/LIFFは維持します。
+
+Instagram署名リンクの環境変数: `IG_LINK_TOKEN_POLICY`（既定off）、`IG_LINK_TOKEN_SECRET`（任意の専用Secret）、`IG_HARNESS_LINK_SECRET`（共有Secretからの導出）。migration 075と両側の更新順序は[導入手順](docs/IG_LINK_TOKEN.md)を参照してください。
+
 LINE公式アカウントの配信・顧客管理・自動化を、オープンソースで。開発者は **野田修一（Shudesu）** です。
 
 > ### [野田修一の公式LINEに登録して、無料ガイドを受け取る →](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)

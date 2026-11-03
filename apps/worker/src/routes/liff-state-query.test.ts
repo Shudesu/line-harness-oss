@@ -70,7 +70,7 @@ describe('/auth/oauth LIFF query fallback (PR #159)', () => {
         gclid: 'synthetic-g', fbclid: 'synthetic-fb', twclid: 'synthetic-tw', ttclid: 'synthetic-tt',
         utm_source: '紹介', utm_medium: 'SNS', utm_campaign: '夏の勉強会',
         account: 'channel-b', uid: 'synthetic-user', ig: 'synthetic-ig',
-        iga: 'synthetic-iga', igan: '日本語アカウント',
+        igt: 'synthetic-payload.synthetic-signature', iga: 'synthetic-iga', igan: '日本語アカウント',
       };
       const direct = await s.authorize(new URLSearchParams(fields));
       const wrapped = await s.authorize(new URLSearchParams({

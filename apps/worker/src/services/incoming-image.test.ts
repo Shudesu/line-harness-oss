@@ -39,9 +39,9 @@ describe('fetchAndStoreIncomingImage', () => {
     );
     expect(r2.put).toHaveBeenCalled();
     const [key, , opts] = r2.put.mock.calls[0];
-    expect(key).toBe('incoming-acc-1-msg-xyz.jpg');
+    expect(key).toMatch(/^incoming-[0-9a-f]{64}\.jpg$/);
     expect(opts.httpMetadata?.contentType).toBe('image/jpeg');
-    expect(result?.originalContentUrl).toBe('https://worker.example.com/images/incoming-acc-1-msg-xyz.jpg');
+    expect(result?.originalContentUrl).toBe(`https://worker.example.com/api/incoming-images/${key}`);
     expect(result?.previewImageUrl).toBe(result?.originalContentUrl);
   });
 
@@ -103,6 +103,19 @@ describe('fetchAndStoreIncomingImage', () => {
     });
 
     const [key] = r2.put.mock.calls[0];
-    expect(key).toBe('incoming-a-m-png.png');
+    expect(key).toMatch(/^incoming-[0-9a-f]{64}\.png$/);
   });
+  test('同じイベントの再試行は同じキー、別アカウントは別キー', async () => {
+    const r2 = makeR2Stub();
+    const options = {
+      r2: r2 as unknown as R2Bucket,
+      fetch: vi.fn(async () => new Response(new ArrayBuffer(1), { headers: { 'Content-Type': 'image/png' } })),
+      workerUrl: 'https://worker.example.com', channelAccessToken: 'token', accountId: 'a', messageId: 'm',
+    };
+    const first = await fetchAndStoreIncomingImage(options);
+    expect(await fetchAndStoreIncomingImage(options)).toEqual(first);
+    expect(await fetchAndStoreIncomingImage({ ...options, accountId: 'b' })).not.toEqual(first);
+    expect(r2._store.size).toBe(2);
+  });
+
 });

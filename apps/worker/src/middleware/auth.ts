@@ -1,5 +1,10 @@
 import type { Context, Next } from 'hono';
-import { getStaffByApiKey } from '@line-crm/db';
+import { getStaffByApiKey, getStaffById, parseStaffApiScopes, createAdminSession, getAdminSession, hashApiKey, staffCredentialFingerprint, type StaffApiScope } from '@line-crm/db';
+import { timingSafeEqualString } from '@line-crm/shared';
+import { allowsApiScope } from './api-scope.js';
+import { resolveAdminAuthConfig } from './admin-auth-config.js';
+import { verifyAccessJwt } from '../lib/access-jwt.js';
+import { audit, limitAuth } from './auth-security.js';
 import type { Env } from '../index.js';
 import type { AdminSameSite } from './admin-auth-config.js';
 import { safeDecode } from '../utils/safe-decode.js';
@@ -30,7 +35,7 @@ function bearerToken(c: Context<Env>): string | null {
   return authHeader.slice('Bearer '.length);
 }
 
-function cookieToken(c: Context<Env>): string | null {
+export function cookieToken(c: Context<Env>): string | null {
   return parseCookieHeader(c.req.header('Cookie'))[ADMIN_AUTH_COOKIE] || null;
 }
 
@@ -51,7 +56,7 @@ function buildCookie(
   return parts.join('; ');
 }
 
-/** HttpOnly session cookie carrying the API token. */
+/** HttpOnly session cookie carrying only an opaque revocable session token. */
 export function adminSessionCookie(token: string, sameSite: AdminSameSite): string {
   return buildCookie(ADMIN_AUTH_COOKIE, token, sameSite, SESSION_MAX_AGE, true);
 }
@@ -73,6 +78,8 @@ export function expiredCookie(name: string, sameSite: AdminSameSite): string {
 }
 
 export type AuthenticatedStaff = {
+  apiScopes?: StaffApiScope[] | null;
+  sessionId?: string;
   id: string;
   name: string;
   role: 'owner' | 'admin' | 'staff';
@@ -87,15 +94,16 @@ export async function authenticateApiToken(
   c: Context<Env>,
   token: string | null,
 ): Promise<AuthenticatedStaff | null> {
-  if (!token) return null;
+  if (!token || token.length > 4096) return null;
 
   const staff = await getStaffByApiKey(c.env.DB, token);
   if (staff) {
-    return { id: staff.id, name: staff.name, role: staff.role };
+    if (!['owner', 'admin', 'staff'].includes(staff.role)) return null;
+    return { id: staff.id, name: staff.name, role: staff.role, ...(staff.api_scopes == null ? {} : { apiScopes: parseStaffApiScopes(staff.api_scopes) }) };
   }
 
   // Fallback: env API_KEY acts as owner (current rotation slot)
-  if (token === c.env.API_KEY) {
+  if (await timingSafeEqualString(token, c.env.API_KEY)) {
     return { id: 'env-owner', name: 'Owner', role: 'owner' };
   }
 
@@ -106,8 +114,8 @@ export async function authenticateApiToken(
   // zero legacy usage before deleting the secret.
   if (
     c.env.LEGACY_API_KEY &&
-    c.env.LEGACY_API_KEY !== c.env.API_KEY &&
-    token === c.env.LEGACY_API_KEY
+    !(await timingSafeEqualString(c.env.LEGACY_API_KEY, c.env.API_KEY)) &&
+    await timingSafeEqualString(token, c.env.LEGACY_API_KEY)
   ) {
     console.log('[auth] accept_via=LEGACY_API_KEY');
     return { id: 'env-owner', name: 'Owner', role: 'owner' };
@@ -116,7 +124,43 @@ export async function authenticateApiToken(
   return null;
 }
 
-export async function authMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
+export function publicStaffProfile(staff: AuthenticatedStaff) {
+  return { id: staff.id, name: staff.name, role: staff.role, apiScopes: staff.apiScopes };
+}
+
+export async function issueAdminSession(c: Context<Env>, staff: AuthenticatedStaff, credential: string, method: 'api_key' | 'sso' = 'api_key') {
+  if (staff.apiScopes != null) throw new Error('Scoped integration keys cannot create browser sessions');
+  const session = await createAdminSession(c.env.DB, { staffId: staff.id, role: staff.role,
+    credentialFp: await hashApiKey(credential), authMethod: method });
+  const config = resolveAdminAuthConfig(c.env, {requestOrigin: new URL(c.req.url).origin});
+  c.header('Set-Cookie', adminSessionCookie(session.token, config.sameSite), {append: true});
+}
+
+export async function authenticateCookieSession(c: Context<Env>, token: string | null): Promise<AuthenticatedStaff | null> {
+  if (!token) return null;
+  const session = await getAdminSession(c.env.DB, token);
+  if (!session) return null;
+  if (session.staff_id === 'env-owner') {
+    const matches = await Promise.all([c.env.API_KEY, c.env.LEGACY_API_KEY].map(async key =>
+      !!key && await timingSafeEqualString(session.credential_fp, await hashApiKey(key))));
+    if (session.role_at_issue !== 'owner' || !matches.some(Boolean)) return null;
+    return {id: 'env-owner', name: 'Owner', role: 'owner', sessionId: session.id_hash};
+  }
+  const current = await getStaffById(c.env.DB, session.staff_id);
+  if (!current || current.is_active !== 1 || current.role !== session.role_at_issue || parseStaffApiScopes(current.api_scopes) != null) return null;
+  if (!await timingSafeEqualString(session.credential_fp, await staffCredentialFingerprint(current))) return null;
+  return {id: current.id, name: current.name, role: current.role, sessionId: session.id_hash};
+}
+
+/** Optional second factor at the Worker; does not gate public LINE/LIFF routes. */
+export async function requireAccess(c: Context<Env>): Promise<Response | null> {
+  if (c.env.ACCESS_REQUIRED !== 'true') return null;
+  if (await verifyAccessJwt(c.req.header('Cf-Access-Jwt-Assertion'), c.env)) return null;
+  await audit(c, 'access_rejected', 'denied');
+  return c.json({success:false,error:'Cloudflare Access assertion required'},403);
+}
+
+async function authenticateRequest(c: Context<Env>, next: Next): Promise<Response | void> {
   // Skip auth for the LINE webhook endpoint — it uses signature verification instead
   // Skip auth for OpenAPI docs — public documentation
   const path = new URL(c.req.url).pathname;
@@ -125,7 +169,14 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   // /api/ で始まらないパスは認証 skip して static asset として返す。
   // (admin は別ホスト、Worker の non-API path はすべて LIFF/SPA 経由)
   const method = c.req.method.toUpperCase();
-  if (!path.startsWith('/api/')) {
+  const decodedPath = safeDecode(path);
+  const legacyIncoming = /^\/images\/incoming-[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)$/.test(decodedPath);
+  const scopePath = legacyIncoming ? decodedPath.replace('/images/', '/api/incoming-images/') : path;
+  if (path.startsWith('/api/incoming-images/') || legacyIncoming) {
+    c.header('Cache-Control', 'private, no-store');
+    c.header('X-Content-Type-Options', 'nosniff');
+  }
+  if (!path.startsWith('/api/') && !path.startsWith('/admin/update')) {
     // ただし内部用エンドポイント (/webhook, /auth, /setup) は元の skip 判定に任せる
     if (
       path !== '/webhook' &&
@@ -148,9 +199,15 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   // must continue through the normal admin authentication below.
   const isPublicFormDefinition = method === 'GET' && /^\/api\/forms\/[^/]+$/.test(path);
   if (isPublicFormDefinition) {
-    const token = bearerToken(c) ?? cookieToken(c);
-    const staff = await authenticateApiToken(c, token);
-    if (staff) c.set('staff', staff);
+    const bearer = bearerToken(c);
+    const cookie = cookieToken(c);
+    const accessOk = c.env.ACCESS_REQUIRED !== 'true' || await verifyAccessJwt(c.req.header('Cf-Access-Jwt-Assertion'), c.env);
+    const staff = accessOk ? (bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookieToken(c))) : null;
+    if (!staff && (bearer || cookie)) {
+      const limited = await limitAuth(c, 'key', bearer || cookie!);
+      if (limited) return limited;
+    }
+    if (staff && staff.apiScopes == null) c.set('staff', staff);
     return next();
   }
 
@@ -175,7 +232,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.startsWith('/t/') ||
     path.startsWith('/r/') ||
     path.startsWith('/pool/') ||
-    path.startsWith('/images/') ||
+    (path.startsWith('/images/') && !legacyIncoming) ||
     // 画像 src として <img> 経由でブラウザが取得するため (Authorization ヘッダ不可)。
     // R2 key 内に group_id / page_id (UUID) が含まれるので推測困難。draft 画像も
     // 最終的に LINE 上で公開されるため機密性は低い。
@@ -203,11 +260,15 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
 
   const bearer = bearerToken(c);
   const cookie = cookieToken(c);
-  const token = bearer ?? cookie;
-
-  const staff = await authenticateApiToken(c, token);
+  const accessDenied = await requireAccess(c); if (accessDenied) return accessDenied;
+  const staff = bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookie);
   if (!staff) {
-    return c.json({ success: false, error: 'Unauthorized' }, 401);
+    if (bearer || cookie) {
+      const limited = await limitAuth(c, 'key', bearer || cookie!);
+      if (limited) return limited;
+    }
+    if (bearer) await audit(c, 'key_rejected', 'denied');
+    return c.json({ success: false, error: legacyIncoming ? 'Image not found' : 'Unauthorized' }, legacyIncoming ? 404 : 401);
   }
 
   // CSRF protection applies ONLY to cookie-authenticated, state-changing
@@ -217,11 +278,25 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   if (!bearer && cookie && !SAFE_METHODS.has(c.req.method.toUpperCase())) {
     const header = c.req.header(CSRF_HEADER);
     const expected = csrfTokenFromCookie(c);
-    if (!header || !expected || header !== expected) {
+    if (!header || !expected || !(await timingSafeEqualString(header, expected))) {
       return c.json({ success: false, error: 'CSRF token mismatch' }, 403);
     }
   }
 
+  if (!allowsApiScope(staff.apiScopes, method, scopePath)) return c.json({success:false,error:'API key scope does not allow this operation'},403);
   c.set('staff', staff);
+  if (!SAFE_METHODS.has(method)) {
+    if (path.startsWith('/api/staff')) await audit(c, 'staff_change', 'attempted', staff.id);
+    if (path.startsWith('/admin/update')) await audit(c, 'admin_update', 'attempted', staff.id);
+  }
   return next();
+}
+
+export async function authMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
+  let dispatched = false;
+  try { return await authenticateRequest(c, async () => { dispatched = true; await next(); }); }
+  catch (error) {
+    if (dispatched) throw error;
+    return c.json({success:false,error:'Authentication storage unavailable; check migrations'},503);
+  }
 }

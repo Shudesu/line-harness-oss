@@ -1,5 +1,9 @@
 🌐 [日本語](README.md) | **English** | [简体中文](README.zh-CN.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
+> **Authentication hardening for existing installations:** SQL migration and key backfill are required. Read the [upgrade guide](docs/SECURITY-UPGRADE.en.md) first. workers.dev and public webhook/LIFF paths remain available.
+
+Instagram signed-link bindings: `IG_LINK_TOKEN_POLICY` (default off), optional dedicated secret `IG_LINK_TOKEN_SECRET`, and shared-secret fallback `IG_HARNESS_LINK_SECRET`. See the [migration 075 and coordinated rollout guide](docs/IG_LINK_TOKEN.md).
+
 # L Harness
 
 > ### **[Try free on LINE](https://shudesu.github.io/line-harness-oss/)** 👈

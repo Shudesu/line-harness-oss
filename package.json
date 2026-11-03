@@ -30,7 +30,7 @@
     "test:scripts": "vitest run --config vitest.config.ts",
     "build:bundle": "tsx scripts/release/build-bundle.ts",
     "build:wfp-bundle": "tsx scripts/release/build-wfp-bundle.ts",
-    "check:cost": "node packages/db/scripts/generate-bootstrap.mjs --check && pnpm --filter @line-crm/db exec vitest run --no-cache test/mileage-cost.test.ts test/mileage-rules.test.ts && node --test scripts/cost/*.test.mjs && python3 -m unittest discover -s scripts/cost -p \"test_*.py\" && node scripts/cost/cost-model.mjs scripts/cost/assumptions.example.json"
+    "check:cost": "node packages/db/scripts/generate-bootstrap.mjs --check && pnpm --filter @line-crm/db exec vitest run --no-cache test/mileage-cost.test.ts test/mileage-rules.test.ts test/auth-security.test.ts test/staff-credentials.test.ts test/admin-sessions.test.ts test/ig-link-token-uses.test.ts && node --test scripts/cost/*.test.mjs && python3 -m unittest discover -s scripts/cost -p \"test_*.py\" && node scripts/cost/cost-model.mjs scripts/cost/assumptions.example.json"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {

@@ -859,7 +859,10 @@ export interface AutomationLog {
 // -----------------------------------------------------------------------------
 // スタッフ (StaffMember)
 // -----------------------------------------------------------------------------
+export type StaffApiScope = 'messages:read' | 'messages:send';
+
 export interface StaffMember {
+  apiScopes?: StaffApiScope[] | null;
   id: string;
   name: string;
   email: string | null;

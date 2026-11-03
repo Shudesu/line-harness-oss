@@ -96,6 +96,9 @@ export type Env = {
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;
     API_KEY: string;
+    ACCESS_REQUIRED?: string;
+    ACCESS_TEAM_DOMAIN?: string;
+    ACCESS_AUD?: string;
     MEET_CALLBACK_SECRET?: string;
     STRIPE_WEBHOOK_SECRET?: string;
     LEGACY_API_KEY?: string;
@@ -119,14 +122,15 @@ export type Env = {
     X_HARNESS_GATE_SECRET?: string;
     X_HARNESS_CONNECTION_ID?: string;
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
+    IG_LINK_TOKEN_SECRET?: string; // Optional dedicated spec 08 HMAC secret
+    IG_LINK_TOKEN_POLICY?: 'off' | 'prefer' | 'require';
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
     // Phase 5 self-update — consumed by /admin/update/*. Defaults live in
-    // wrangler.toml [vars]; secrets (CF_API_TOKEN, ADMIN_API_KEY) come from
+    // wrangler.toml [vars]; secret (CF_API_TOKEN) come from
     // `wrangler secret put`. All are optional at the type level so the rest
     // of the worker still type-checks in test environments that don't set
     // them; the /admin/update/* route guards on their presence at runtime.
-    ADMIN_API_KEY?: string;
     CF_API_TOKEN?: string;
     CF_ACCOUNT_ID?: string;
     WORKER_NAME?: string;
@@ -164,7 +168,8 @@ export type Env = {
     TENANT_SCHEDULER: DurableObjectNamespace<TenantScheduler>;
   };
   Variables: {
-    staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    staff: import('./middleware/auth.js').AuthenticatedStaff;
+    authRateChecked: boolean;
   };
 };
 
@@ -198,7 +203,7 @@ app.use('*', cors({
   origin: (origin, c) => resolveCorsOrigin(c.env, origin, c.req.url),
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-admin-api-key', 'Idempotency-Key'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Idempotency-Key'],
   maxAge: 600,
 }));
 
@@ -271,10 +276,10 @@ app.route('/', lineProxy);
 // /admin/ but intentionally unauthenticated: the dashboard fetches /admin/version
 // before login to render the upgrade banner, and the returned hashes are
 // derivable from the deployed bundle. /admin/update/* (Task 18) layers
-// ADMIN_API_KEY middleware on subpaths.
+// owner-session middleware on subpaths.
 app.route('/admin', adminVersion);
-// Phase 5 Task 18 — self-update endpoints guarded by x-admin-api-key.
-// authMiddleware skips non-/api/ paths so this router owns its own auth gate.
+// Phase 5 Task 18 — self-update endpoints guarded by owner sessions.
+// Shared middleware validates the cookie and CSRF; the router requires owner.
 app.route('/admin/update', adminUpdate);
 // External SSO — establishes the admin session from a signed, single-use token.
 // Inert (404) unless ADMIN_SSO_SECRET is configured. authMiddleware skips
@@ -412,6 +417,8 @@ app.get('/r/:ref', async (c) => {
   if (gate) liffParams.set('gate', gate);
   const xh = c.req.query('xh');
   if (xh) liffParams.set('xh', xh);
+  const igt = c.req.query('igt');
+  if (igt !== undefined) liffParams.set('igt', igt);
   const ig = c.req.query('ig');
   if (ig) liffParams.set('ig', ig);
   const iga = c.req.query('iga');

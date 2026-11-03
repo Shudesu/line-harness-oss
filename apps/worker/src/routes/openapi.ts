@@ -180,6 +180,31 @@ const spec = {
     },
   },
   paths: {
+    '/api/auth/migrate-keys': {
+      post: {
+        summary: 'Owner: hash up to 25 existing staff keys',
+        responses: { '200': { description: 'migrated count; repeat until zero. Existing raw keys remain valid as Bearer credentials.' } },
+      },
+    },
+    '/api/auth/sessions/revoke': {
+      post: {
+        summary: 'Revoke all sessions for the authenticated staff member',
+        responses: { '200': { description: 'Sessions revoked' } },
+      },
+    },
+    '/api/auth/maintenance': {
+      post: {
+        summary: 'Owner: purge up to 100 expired rows per auth table (audit retention 90 days)',
+        responses: { '200': { description: 'Bounded maintenance complete' } },
+      },
+    },
+    '/api/incoming-images/{key}': {
+      get: {
+        summary: 'Read an incoming image with a session or messages:read key',
+        parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Private image; no-store' }, '401': { description: 'Authentication required' } },
+      },
+    },
     '/api/integrations/x-harness/capabilities': {
       get: {
         tags: ['X gate integration'], summary: 'Discover supported campaign events before sending. Requires signed x.campaign.capabilities headers.',

@@ -1,3 +1,7 @@
+import { authDb } from '../test-support/auth-db.js';
+let database: ReturnType<typeof authDb>;
+beforeEach(() => { database = authDb(); });
+afterEach(() => database.sqlite.close());
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
 import { authMiddleware, ADMIN_AUTH_COOKIE, CSRF_COOKIE } from '../middleware/auth.js';
@@ -12,7 +16,8 @@ import type { Env } from '../index.js';
 
 const consumeAdminSsoJti = vi.hoisted(() => vi.fn());
 
-vi.mock('@line-crm/db', () => ({
+vi.mock('@line-crm/db', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@line-crm/db')>(),
   getStaffByApiKey: vi.fn(async () => null),
   consumeAdminSsoJti,
 }));
@@ -37,7 +42,7 @@ function ledger() {
 
 function env(overrides: Partial<Env['Bindings']> = {}): Env['Bindings'] {
   return {
-    DB: {} as D1Database,
+    DB: database.db,
     IMAGES: {} as R2Bucket,
     ASSETS: {} as Fetcher,
     TENANT_SCHEDULER: {} as Env['Bindings']['TENANT_SCHEDULER'],
@@ -158,7 +163,7 @@ describe('successful SSO', () => {
     const session = setCookies.find((value) => value.startsWith(`${ADMIN_AUTH_COOKIE}=`));
     const csrf = setCookies.find((value) => value.startsWith(`${CSRF_COOKIE}=`));
 
-    expect(session).toContain(`${ADMIN_AUTH_COOKIE}=${encodeURIComponent(API_KEY)}`);
+    expect(session).toContain(`${ADMIN_AUTH_COOKIE}=lhs_`);
     expect(session).toContain('HttpOnly');
     expect(session).toContain('Secure');
     expect(csrf).toBeDefined();
@@ -180,7 +185,7 @@ describe('successful SSO', () => {
       env(),
     );
     expect(authed.status).toBe(200);
-    expect(await authed.json()).toEqual({
+    expect(await authed.json()).toMatchObject({
       success: true,
       staff: { id: 'env-owner', name: 'Owner', role: 'owner' },
     });

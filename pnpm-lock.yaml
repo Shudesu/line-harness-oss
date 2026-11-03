@@ -168,6 +168,9 @@ importers:
       hono:
         specifier: ^4.13.14
         version: 4.13.14
+      jose:
+        specifier: ^6.1.0
+        version: 6.2.2
       react:
         specifier: ^19.0.0
         version: 19.2.4
@@ -5814,6 +5817,14 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 1.2.0
 
+  '@vitest/mocker@2.1.9(vite@5.4.21(@types/node@22.19.15)(lightningcss@1.32.0))':
+    dependencies:
+      '@vitest/spy': 2.1.9
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 5.4.21(@types/node@22.19.15)(lightningcss@1.32.0)
+
   '@vitest/mocker@2.1.9(vite@5.4.21(@types/node@25.5.0)(lightningcss@1.32.0))':
     dependencies:
       '@vitest/spy': 2.1.9
@@ -7579,7 +7590,7 @@ snapshots:
   vitest@2.1.9(@types/node@22.19.15)(lightningcss@1.32.0):
     dependencies:
       '@vitest/expect': 2.1.9
-      '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@25.5.0)(lightningcss@1.32.0))
+      '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@22.19.15)(lightningcss@1.32.0))
       '@vitest/pretty-format': 2.1.9
       '@vitest/runner': 2.1.9
       '@vitest/snapshot': 2.1.9

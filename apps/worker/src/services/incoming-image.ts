@@ -54,11 +54,10 @@ export async function fetchAndStoreIncomingImage(
     console.error('incoming-image: unsupported content-type', { contentType, messageId: opts.messageId, accountId: opts.accountId });
     return null;
   }
-  // accountId / messageId は実質 UUID / LINE 数字 ID で安全だが、念のため
-  // R2 キーに不正な文字（スラッシュ等）が混入しないよう sanitize する。
-  const safeAccountId = opts.accountId.replace(/[^a-zA-Z0-9-]/g, '_');
-  const safeMessageId = opts.messageId.replace(/[^a-zA-Z0-9-]/g, '_');
-  const key = `incoming-${safeAccountId}-${safeMessageId}.${ext}`;
+  // Deterministic opaque object name; authorization is enforced on reads.
+  const identity = new TextEncoder().encode(JSON.stringify([opts.accountId, opts.messageId]));
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', identity));
+  const key = `incoming-${Array.from(digest, b => b.toString(16).padStart(2, '0')).join('')}.${ext}`;
 
   let data: ArrayBuffer;
   try {
@@ -76,6 +75,6 @@ export async function fetchAndStoreIncomingImage(
   }
 
   const base = opts.workerUrl.replace(/\/$/, '');
-  const url = `${base}/images/${key}`;
+  const url = `${base}/api/incoming-images/${key}`;
   return { originalContentUrl: url, previewImageUrl: url };
 }

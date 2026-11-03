@@ -2,6 +2,7 @@ import { flushXGateEvents } from './services/x-gate-client.js';
 import { LineClient } from '@line-crm/line-sdk';
 import {
   getLineAccounts,
+  purgeIgLinkTokenUses,
   enqueueFollowingMileageMilestones,
   processPendingMileageEvents,
 } from '@line-crm/db';
@@ -67,6 +68,11 @@ export async function scheduled(
   env: Env['Bindings'],
   ctx: ExecutionContext,
 ): Promise<void> {
+  // Reuse the existing hourly tick; bounded cleanup also runs after policy rollback.
+  if (isHourlyTick(event)) {
+    try { await purgeIgLinkTokenUses(env.DB, Math.floor(event.scheduledTime / 1000)); }
+    catch { console.warn('[ig-link] cleanup_failed'); }
+  }
   await flushXGateEvents(env);
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);

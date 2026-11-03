@@ -4,6 +4,7 @@ import path from 'path';
 export default defineConfig({
   resolve: {
     alias: {
+      '@line-crm/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
       // @line-crm/line-sdk has main=dist/index.js but dist may not exist in
       // the worktree; point Vitest directly at the TS sources so tests resolve
       // without a build step.

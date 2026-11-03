@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import MessageImage from '../shared/message-image'
 import { Badge } from '@cloudflare/kumo/components/badge'
 
 export interface InboxRowData {
@@ -58,10 +59,9 @@ function ImageThumb({ raw }: { raw: string }) {
   return (
     <span className="inline-flex items-center gap-2">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <MessageImage
         src={src}
         alt=""
-        loading="lazy"
         className="h-12 w-12 flex-shrink-0 rounded object-cover ring-1 ring-kumo-line"
       />
       <span className="text-sm text-kumo-subtle">🖼 画像</span>

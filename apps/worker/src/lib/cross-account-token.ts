@@ -1,3 +1,4 @@
+import { timingSafeEqualString } from '@line-crm/shared';
 const encoder = new TextEncoder();
 
 function base64Url(bytes: ArrayBuffer | Uint8Array): string {
@@ -41,11 +42,6 @@ export async function verifyCrossAccountToken(
   }
   const payload = `${version}.${expiresRaw}.${userId}.${targetAccountId}`;
   const expectedSignature = await hmac(secret, payload);
-  if (expectedSignature.length !== suppliedSignature.length) return null;
-  let difference = 0;
-  for (let index = 0; index < expectedSignature.length; index += 1) {
-    difference |= expectedSignature.charCodeAt(index) ^ suppliedSignature.charCodeAt(index);
-  }
-  if (difference !== 0) return null;
+  if (!await timingSafeEqualString(expectedSignature, suppliedSignature)) return null;
   return { userId, targetAccountId };
 }

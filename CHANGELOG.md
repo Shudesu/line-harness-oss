@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### リリース時の注意
+
+- Instagram連携リンクに署名付きトークン `igt` を追加。LINE Harnessを先に更新し、IG Harness側の対応後に `IG_LINK_TOKEN_POLICY=prefer` → `require` を推奨します。既定は `off` のままです。
+- migration `075_ig_link_token_uses.sql` を適用してください（spec 08原文の076ではなく、このブランチでは074に続く075）。`prefer` では未署名リンクのIG復帰マイルを付与せず、`require` では未署名リンクを紐付けません。[形式・環境変数・移行手順](docs/IG_LINK_TOKEN.md)。
+
+### Breaking changes
+
+- `ADMIN_API_KEY` / `NEXT_PUBLIC_ADMIN_API_KEY` と `x-admin-api-key` による更新認証を廃止。管理画面の更新にはオーナーのCookieセッションとCSRFを使用してください。通常のAPI連携はスタッフAPIキーまたはサーバー側 `API_KEY` を使用します。
+- セッションと保存済みスタッフキーをハッシュ形式へ移行するため、全ユーザーの再ログインが必要です。元のAPIキーは引き続き利用できますが、保存値から復元できません。
+- 受信画像（旧 `/images/incoming-*` を含む）の取得には認証が必要です。
+- 更新前に migration `074_security_hardening.sql` を適用し、Worker・管理画面を更新後、スタッフキーのバックフィルと再ログインを行ってください。[詳細手順](docs/SECURITY-UPGRADE.md)。
+
 ## [0.26.1] - 2026-11-01
 
 - LIFF SDKを2.31.2へ更新し、依存関係の下限とlockfileを修正。
