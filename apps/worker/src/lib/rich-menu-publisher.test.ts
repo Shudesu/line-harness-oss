@@ -146,6 +146,30 @@ describe('publishRichMenuGroup', () => {
     expect(result.pages).toEqual([{ pageId: 'p1', newRichMenuId: 'lm-1' }]);
   });
 
+  it('旧削除の前に beforeOldDeleted を呼び、false なら旧を消さない', async () => {
+    const page = {
+      id: 'p1', orderIndex: 0, name: 'p1',
+      imageR2Key: 'rich-menus/test/p1.png', imageContentType: 'image/png',
+      lineRichMenuId: 'old-1',
+      areas: [],
+    };
+    const group = { id: 'gid12345-aaaa', size: 'large' as const, chatBarText: 'menu', isDefaultForAll: false, pages: [page] };
+
+    const line = makeMockLineClient();
+    const seen: string[] = [];
+    await publishRichMenuGroup(group, line, makeMockR2(), async (pageId, newId, oldId) => {
+      seen.push(`${pageId}:${newId}:${oldId}`);
+      line.calls.push('hook');
+      return true;
+    });
+    expect(seen).toEqual(['p1:lm-1:old-1']);
+    expect(line.calls.indexOf('hook')).toBeLessThan(line.calls.indexOf('delete-old'));
+
+    const line2 = makeMockLineClient();
+    await publishRichMenuGroup(group, line2, makeMockR2(), async () => false);
+    expect(line2.calls).not.toContain('delete-old');
+  });
+
   it('2 page: 各ページについて順序実行', async () => {
     const line = makeMockLineClient();
     const r2 = makeMockR2();

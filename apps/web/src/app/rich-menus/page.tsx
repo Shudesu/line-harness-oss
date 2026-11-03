@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
-import { api } from '@/lib/api'
+import { api, sendApi } from '@/lib/api'
 import { ApplyToTagModal } from '@/components/rich-menus/apply-to-tag-modal'
 
 type RichMenuGroupListItem = {
@@ -203,6 +203,11 @@ export default function RichMenusListPage() {
         <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3 rounded mb-6">
           LINE 公式アカウントの状態取得に失敗しました: {externalError}
         </div>
+      )}
+
+      {/* KIDOUインターン: アンケートの前後で出し分けるメニューを選ぶ */}
+      {selectedAccount && !loading && !error && (
+        <InternRoleSection accountId={selectedAccount.id} groups={groups} />
       )}
 
       {/* Admin 管理メニュー見出し */}
@@ -496,5 +501,134 @@ function ExternalSection({
         </div>
       )}
     </section>
+  )
+}
+
+type InternRichMenus = {
+  accountId: string
+  lockedGroupId: string | null
+  unlockedGroupId: string | null
+  lockedRichMenuId: string | null
+  unlockedRichMenuId: string | null
+  fallbackLockedRichMenuId: string | null
+  fallbackUnlockedRichMenuId: string | null
+}
+
+// KIDOUインターンのアンケートは「答える前（鍵付き）」と「答えた後（解放後）」でメニューを出し分ける。
+// どのメニューを使うかを、管理画面のメニューから選ぶ（KIDOUインターンを選んでいるときだけ出す）。
+function InternRoleSection({ accountId, groups }: { accountId: string; groups: RichMenuGroupListItem[] }) {
+  const [data, setData] = useState<InternRichMenus | null>(null)
+  const [locked, setLocked] = useState('')
+  const [unlocked, setUnlocked] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+
+  // keepPicks: 保存に失敗したとき、選んだままにしてもう一度押せるようにする（保存済みの分だけ読み直す）
+  const load = useCallback(async (keepPicks = false) => {
+    const res = await sendApi<{ success: boolean; data?: InternRichMenus }>('/api/intern/richmenus').catch(() => null)
+    if (res?.success && res.data) {
+      setData(res.data)
+      if (!keepPicks) {
+        setLocked(res.data.lockedGroupId ?? '')
+        setUnlocked(res.data.unlockedGroupId ?? '')
+      }
+    } else if (!keepPicks) {
+      setData(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load, accountId])
+
+  if (!data || data.accountId !== accountId) return null
+
+  const published = groups.filter((g) => g.status === 'published')
+  const changed = locked !== (data.lockedGroupId ?? '') || unlocked !== (data.unlockedGroupId ?? '')
+
+  async function save() {
+    if (locked && locked === unlocked) {
+      setMessage({ kind: 'error', text: '答える前と答えた後に同じメニューは選べません。' })
+      return
+    }
+    if (!confirm('選んだメニューを、いまの友だち全員に付け直します。答え終えた人には「答えた後」、まだの人には「答える前」のメニューが付きます。\n\n続けますか？')) return
+    setSaving(true)
+    setMessage(null)
+    const res = await sendApi<{ success: boolean; error?: string; data?: { relinkedLocked: number; relinkedUnlocked: number } }>(
+      '/api/intern/richmenus',
+      { method: 'PUT', body: JSON.stringify({ lockedGroupId: locked || null, unlockedGroupId: unlocked || null }) },
+    ).catch(() => ({ success: false, error: '保存できませんでした。通信を確かめてください。' }) as { success: false; error: string; data?: undefined })
+    setSaving(false)
+    if (!res.success) {
+      setMessage({ kind: 'error', text: res.error ?? '保存できませんでした。' })
+      await load(true)
+      return
+    }
+    setMessage({ kind: 'ok', text: `保存しました（答える前 ${res.data?.relinkedLocked ?? 0}人・答えた後 ${res.data?.relinkedUnlocked ?? 0}人に付け直しました）。` })
+    await load()
+  }
+
+  const row = (
+    label: string,
+    note: string,
+    value: string,
+    onChange: (v: string) => void,
+    activeId: string | null,
+    fallbackId: string | null,
+  ) => (
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+      <div className="sm:w-56">
+        <p className="text-sm font-medium text-gray-800">{label}</p>
+        <p className="text-[11px] text-gray-500">{note}</p>
+      </div>
+      <div className="flex-1">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+        >
+          <option value="">（選ばない）</option>
+          {published.map((g) => (
+            <option key={g.id} value={g.id}>{g.name}</option>
+          ))}
+        </select>
+        {!activeId && (
+          <p className="text-[11px] text-amber-700 mt-1">
+            {fallbackId ? 'いまは管理画面の外で設定したメニューを使っています。' : 'メニューが決まっていません。'}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-5 mb-6">
+      <h2 className="text-sm font-semibold text-gray-800">KIDOUインターンのアンケートで使うメニュー</h2>
+      <p className="text-xs text-gray-500 mt-1 mb-4">
+        アンケートに答える前と答えた後で、学生に出すメニューを切り替えます。下の「管理画面で作成・編集するメニュー」で LINE に登録済みのものから選べます。選んだメニューを編集して LINE に出し直すと、友だちのメニューも自動で新しいほうに付け直します。
+      </p>
+      {published.length === 0 ? (
+        <p className="text-xs text-amber-700">LINE に登録済みのメニューがまだありません。上の一覧から「管理画面に取り込む」で取り込んでください。</p>
+      ) : (
+        <div className="space-y-3">
+          {row('答える前（鍵付き）', '友だち追加した直後・回答の途中の人。新しい友だちにも最初に出ます', locked, setLocked, data.lockedRichMenuId, data.fallbackLockedRichMenuId)}
+          {row('答えた後（解放後）', '3問に答え終えた人', unlocked, setUnlocked, data.unlockedRichMenuId, data.fallbackUnlockedRichMenuId)}
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={save}
+              disabled={!changed || saving}
+              className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-40"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              {saving ? '保存中…' : '保存して付け直す'}
+            </button>
+            {message && (
+              <p className={`text-xs ${message.kind === 'ok' ? 'text-green-700' : 'text-red-700'}`}>{message.text}</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

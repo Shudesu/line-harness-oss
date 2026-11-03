@@ -25,9 +25,11 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { validateRichMenuImage } from '../lib/image-validator.js';
+import { internMenuPageIdOf, internRoleOfGroup, relinkInternFriends } from '../services/intern-richmenus.js';
 import {
   publishRichMenuGroup,
   unpublishRichMenuGroup,
+  type BeforeOldRichMenuDeleted,
   linkRichMenuBulkChunked,
   type LineRichMenuClient,
   type R2Like,
@@ -428,6 +430,23 @@ richMenuGroups.post('/api/rich-menu-groups/import', async (c) => {
   await setPageRichMenuId(c.env.DB, newPage.id, richMenuId);
   await markRichMenuGroupPublished(c.env.DB, created.id);
 
+  // いま LINE の「全員のデフォルト」になっているメニューなら、その印も引き継ぐ
+  // （付けないと、公開し直したときにデフォルトが外れて新しい友だちにメニューが出なくなる）
+  try {
+    const defRes = await fetch('https://api.line.me/v2/bot/user/all/richmenu', { headers: { Authorization: auth } });
+    if (defRes.ok) {
+      const def = (await defRes.json()) as { richMenuId?: string };
+      if (def.richMenuId === richMenuId) {
+        await c.env.DB
+          .prepare('UPDATE rich_menu_groups SET is_default_for_all = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE account_id = ?')
+          .bind(created.id, accountId)
+          .run();
+      }
+    }
+  } catch {
+    // 印が付かなくても取り込みは成功のまま
+  }
+
   // 8. alias を upsert (今後の再 publish 時の安定 ID として)
   const aliasId = `lhx-${created.id.slice(0, 8)}-0`;
   try {
@@ -675,6 +694,10 @@ richMenuGroups.delete('/api/rich-menu-groups/:groupId', async (c) => {
   const force = c.req.query('force') === 'true';
   const existing = await getRichMenuGroupById(c.env.DB, groupId);
   if (!existing) return c.json({ success: false, error: 'not found' }, 404);
+  if (c.env.INTERN_SURVEY_ACCOUNT_ID && c.env.INTERN_SURVEY_ACCOUNT_ID === existing.account_id
+      && (await internRoleOfGroup(c.env.DB, existing.account_id, groupId)).length > 0) {
+    return c.json({ success: false, error: 'KIDOUインターンのアンケートで使っているメニューです。先にリッチメニューの画面で別のメニューに切り替えてください。' }, 409);
+  }
   if (existing.status === 'published' && !force) {
     return c.json(
       {
@@ -746,7 +769,7 @@ richMenuGroups.get('/api/rich-menu-images/:key{.+}', async (c) => {
 
 // ----- Publish -----
 
-function createLineClient(channelAccessToken: string): LineRichMenuClient {
+export function createLineClient(channelAccessToken: string): LineRichMenuClient {
   const auth = `Bearer ${channelAccessToken}`;
   return {
     async createRichMenu(payload) {
@@ -876,12 +899,37 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/publish', async (c) => {
         })),
       })),
     };
-    const result = await publishRichMenuGroup(groupInput, line, r2Adapter);
+    // KIDOUインターンの鍵付き・解放後に選ばれているメニューなら、公開し直すと LINE 上の ID が変わる。
+    // 前のメニューを消すとそこに付いていた友だちのメニューも外れるので、消す前に新しいほうへ付け替える。
+    // 付け替えに失敗したら前のメニューは消さずに残す（友だちは前のメニューのまま使える。公開し直せばまた付け替える）
+    const relinkWarnings: string[] = [];
+    let beforeOldDeleted: BeforeOldRichMenuDeleted | undefined;
+    if (c.env.INTERN_SURVEY_ACCOUNT_ID && c.env.INTERN_SURVEY_ACCOUNT_ID === group.account_id) {
+      const roles = await internRoleOfGroup(c.env.DB, group.account_id, groupId);
+      const targetPageId = roles.length > 0 ? await internMenuPageIdOf(c.env.DB, group.account_id, groupId) : null;
+      if (targetPageId) {
+        beforeOldDeleted = async (pageId, newRichMenuId) => {
+          if (pageId !== targetPageId) return true;
+          try {
+            // 鍵付きは全員のデフォルトでもあるので、前のメニューが消えても新しい友だちに出るよう先に切り替える
+            if (roles.includes('locked')) await line.setDefaultRichMenu(newRichMenuId);
+            for (const role of roles) await relinkInternFriends(c.env.DB, line, group.account_id, role, newRichMenuId);
+            return true;
+          } catch (e) {
+            relinkWarnings.push(
+              `友だちへの付け直しに失敗したため、前のメニューを残しました（もう一度公開すると付け直します）: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            return false;
+          }
+        };
+      }
+    }
+    const result = await publishRichMenuGroup(groupInput, line, r2Adapter, beforeOldDeleted);
     for (const r of result.pages) {
       await setPageRichMenuId(c.env.DB, r.pageId, r.newRichMenuId);
     }
     await markRichMenuGroupPublished(c.env.DB, groupId);
-    return c.json({ success: true, data: result });
+    return c.json({ success: true, data: { ...result, relinkWarnings } });
   } catch (e) {
     await releasePublishLock(c.env.DB, groupId);
     const message = e instanceof Error ? e.message : String(e);
@@ -898,6 +946,11 @@ richMenuGroups.post('/api/rich-menu-groups/:groupId/unpublish', async (c) => {
   const groupId = c.req.param('groupId');
   const group = await getRichMenuGroupWithPages(c.env.DB, groupId);
   if (!group) return c.json({ success: false, error: 'not found' }, 404);
+  // KIDOUインターンのアンケートで使っているメニューを LINE から下げると、学生のメニューが消える
+  if (c.env.INTERN_SURVEY_ACCOUNT_ID && c.env.INTERN_SURVEY_ACCOUNT_ID === group.account_id
+      && (await internRoleOfGroup(c.env.DB, group.account_id, groupId)).length > 0) {
+    return c.json({ success: false, error: 'KIDOUインターンのアンケートで使っているメニューです。先にリッチメニューの画面で別のメニューに切り替えてください。' }, 409);
+  }
 
   const account = await getLineAccountById(c.env.DB, group.account_id);
   if (!account) return c.json({ success: false, error: 'line account not found' }, 500);

@@ -17,6 +17,7 @@ import { jstNow } from '@line-crm/db';
 import { UNIVERSITIES_TSV } from './intern-universities.js';
 import { buildQaAnswer, buildQaCarousel } from './intern-qa.js';
 import { DEFAULT_COPY, fillInput, loadCopy, type InternCopy } from './intern-copy.js';
+import { resolveInternRichMenuIds } from './intern-richmenus.js';
 import { buildMessage } from './step-delivery.js';
 
 export const SURVEY_PREFIX = 'isv:';
@@ -48,7 +49,23 @@ function cp(config: SurveyConfig): InternCopy {
 /** 文面を置き場から読んで config に入れる（読めなければ初期の文面） */
 export async function withCopy(db: D1Database, config: SurveyConfig): Promise<SurveyConfig> {
   if (config.copy) return config;
-  return { ...config, copy: await loadCopy(db, config.accountId) };
+  return withRichMenus(db, { ...config, copy: await loadCopy(db, config.accountId) });
+}
+
+/** 管理画面のリッチメニューで選んだ鍵付き・解放後があれば、秘密の値より優先する（読めなければ秘密の値のまま） */
+async function withRichMenus(db: D1Database, config: SurveyConfig): Promise<SurveyConfig> {
+  if (!config.accountId) return config;
+  try {
+    const ids = await resolveInternRichMenuIds(db, config.accountId);
+    return {
+      ...config,
+      lockedRichMenuId: ids.locked ?? config.lockedRichMenuId,
+      unlockedRichMenuId: ids.unlocked ?? config.unlockedRichMenuId,
+    };
+  } catch (err) {
+    console.error('intern richmenus load failed', err);
+    return config;
+  }
 }
 
 export function surveyConfigFromEnv(env: {

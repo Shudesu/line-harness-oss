@@ -84,6 +84,7 @@ import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
 import { internJoin } from './routes/intern-join.js';
 import { internCopy } from './routes/intern-copy.js';
+import { internRichMenus } from './routes/intern-richmenus.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
 import { buildOgHtml } from './lib/og-html.js';
 import {
@@ -173,6 +174,7 @@ app.use('*', accountScopeMiddleware);
 app.route('/', webhook);
 app.route('/', internJoin);
 app.route('/', internCopy);
+app.route('/', internRichMenus);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);

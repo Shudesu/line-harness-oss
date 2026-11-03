@@ -109,12 +109,21 @@ friends.get('/api/friends', async (c) => {
     // hide rows on the current page and leave `total` misleading.
     const handledFilter: 'unhandled' | null =
       c.req.query('handled') === 'unhandled' ? 'unhandled' : null;
+    // ?following=following|blocked filters by is_following (blocked = the
+    // friend blocked the account). Anything else = no filter.
+    const followingParam = c.req.query('following');
+    const followingFilter: 1 | 0 | null =
+      followingParam === 'following' ? 1 : followingParam === 'blocked' ? 0 : null;
 
     const db = c.env.DB;
 
     // Build WHERE conditions
     const conditions: string[] = [];
     const binds: unknown[] = [];
+    if (followingFilter !== null) {
+      conditions.push('f.is_following = ?');
+      binds.push(followingFilter);
+    }
     if (tagId) {
       conditions.push('EXISTS (SELECT 1 FROM friend_tags ft WHERE ft.friend_id = f.id AND ft.tag_id = ?)');
       binds.push(tagId);
@@ -350,14 +359,23 @@ friends.get('/api/friends/count', async (c) => {
   try {
     const lineAccountId = c.req.query('lineAccountId');
     let count: number;
+    let blockedCount: number;
     if (lineAccountId) {
-      const row = await c.env.DB.prepare('SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?')
-        .bind(lineAccountId).first<{ count: number }>();
+      const row = await c.env.DB.prepare(
+        `SELECT COALESCE(SUM(CASE WHEN is_following = 1 THEN 1 ELSE 0 END), 0) AS count,
+                COALESCE(SUM(CASE WHEN is_following = 0 THEN 1 ELSE 0 END), 0) AS blocked
+         FROM friends WHERE line_account_id = ?`,
+      ).bind(lineAccountId).first<{ count: number; blocked: number }>();
       count = row?.count ?? 0;
+      blockedCount = row?.blocked ?? 0;
     } else {
       count = await getFriendCount(c.env.DB);
+      const row = await c.env.DB.prepare('SELECT COUNT(*) as count FROM friends WHERE is_following = 0')
+        .first<{ count: number }>();
+      blockedCount = row?.count ?? 0;
     }
-    return c.json({ success: true, data: { count } });
+    // `count` stays "following only" for existing callers; blockedCount = blocked the account.
+    return c.json({ success: true, data: { count, blockedCount } });
   } catch (err) {
     console.error('GET /api/friends/count error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);

@@ -32,6 +32,7 @@ const PAGE_SIZE = 20
 
 type SortMode = 'recent' | 'oldest'
 type ResponseFilter = 'all' | 'unhandled'
+type FollowFilter = 'all' | 'following' | 'blocked'
 
 export default function FriendsPage() {
   const { selectedAccountId } = useAccount()
@@ -45,6 +46,8 @@ export default function FriendsPage() {
   const [searchSubmitted, setSearchSubmitted] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>('recent')
   const [responseFilter, setResponseFilter] = useState<ResponseFilter>('all')
+  const [followFilter, setFollowFilter] = useState<FollowFilter>('all')
+  const [followCounts, setFollowCounts] = useState<{ following: number; blocked: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -70,6 +73,7 @@ export default function FriendsPage() {
         includeChatStatus: true,
         sort: sortMode,
         handled: responseFilter === 'unhandled' ? 'unhandled' : undefined,
+        following: followFilter === 'all' ? undefined : followFilter,
       })
       if (res.success) {
         setFriends(res.data.items)
@@ -83,11 +87,26 @@ export default function FriendsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, selectedTagId, selectedAccountId, searchSubmitted, sortMode, responseFilter])
+  }, [page, selectedTagId, selectedAccountId, searchSubmitted, sortMode, responseFilter, followFilter])
+
+  // 友だち・ブロック中の人数（選んでいるアカウントの全体。絞り込みとは別）
+  const loadFollowCounts = useCallback(async () => {
+    try {
+      const res = await api.friends.count({ accountId: selectedAccountId || undefined })
+      if (res.success) setFollowCounts({ following: res.data.count, blocked: res.data.blockedCount ?? 0 })
+      else setFollowCounts(null)
+    } catch {
+      setFollowCounts(null)
+    }
+  }, [selectedAccountId])
 
   useEffect(() => {
     loadTags()
   }, [loadTags])
+
+  useEffect(() => {
+    loadFollowCounts()
+  }, [loadFollowCounts])
 
   // Reset the URL-style account context to page 1 in a separate effect.
   // For user-driven filter changes (search/sort/handled/tag) we reset
@@ -127,6 +146,7 @@ export default function FriendsPage() {
   const handleSortChange = (v: SortMode) => updateAndResetPage(() => setSortMode(v))
   const handleResponseFilterChange = (v: ResponseFilter) => updateAndResetPage(() => setResponseFilter(v))
   const handleTagFilterChange = (v: string) => updateAndResetPage(() => setSelectedTagId(v))
+  const handleFollowFilterChange = (v: FollowFilter) => updateAndResetPage(() => setFollowFilter(v))
 
   return (
     <div>
@@ -134,6 +154,28 @@ export default function FriendsPage() {
         title="友だちリスト"
         description="友だちの検索や、詳細情報の確認ができます。"
       />
+
+      {/* 友だち・ブロック中の人数。押すとその人だけに絞る */}
+      {followCounts && (
+        <div className="flex flex-wrap gap-3 mb-4">
+          <button
+            type="button"
+            onClick={() => handleFollowFilterChange(followFilter === 'following' ? 'all' : 'following')}
+            className={`flex-1 min-w-[140px] text-left bg-white rounded-lg border px-4 py-3 transition-colors ${followFilter === 'following' ? 'border-green-500 ring-2 ring-green-100' : 'border-gray-200 hover:bg-gray-50'}`}
+          >
+            <p className="text-xs text-gray-500">友だち</p>
+            <p className="text-xl font-bold text-gray-900">{followCounts.following.toLocaleString('ja-JP')}<span className="text-sm font-medium text-gray-500 ml-1">人</span></p>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFollowFilterChange(followFilter === 'blocked' ? 'all' : 'blocked')}
+            className={`flex-1 min-w-[140px] text-left bg-white rounded-lg border px-4 py-3 transition-colors ${followFilter === 'blocked' ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-200 hover:bg-gray-50'}`}
+          >
+            <p className="text-xs text-gray-500">ブロック中</p>
+            <p className="text-xl font-bold text-red-600">{followCounts.blocked.toLocaleString('ja-JP')}<span className="text-sm font-medium text-gray-500 ml-1">人</span></p>
+          </button>
+        </div>
+      )}
 
       {/* Search + sort bar — L-step style */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
@@ -186,6 +228,18 @@ export default function FriendsPage() {
             >
               <option value="all">すべて</option>
               <option value="unhandled">未対応のみ</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600 font-medium whitespace-nowrap">友だちの状態:</label>
+            <select
+              className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              value={followFilter}
+              onChange={(e) => handleFollowFilterChange(e.target.value as FollowFilter)}
+            >
+              <option value="all">すべて</option>
+              <option value="following">友だちのみ</option>
+              <option value="blocked">ブロック中のみ</option>
             </select>
           </div>
           <span className="text-xs text-gray-500 ml-auto">

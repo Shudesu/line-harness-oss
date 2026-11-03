@@ -17,6 +17,8 @@ const dbMocks = {
   setPageRichMenuId: vi.fn(),
   markRichMenuGroupPublished: vi.fn(),
   getLineAccountById: vi.fn(),
+  getAccountSetting: vi.fn(),
+  setAccountSetting: vi.fn(),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -65,11 +67,13 @@ function makeMinimalDbStub(): D1Database {
   } as unknown as D1Database;
 }
 
-function setupApp(opts: { r2?: R2Bucket; db?: D1Database } = {}) {
+function setupApp(opts: { r2?: R2Bucket; db?: D1Database; internAccountId?: string } = {}) {
   const app = new Hono<TestEnv>();
   app.use('*', async (c, next) => {
     c.set('staff', { id: 'staff-1', role: 'owner' });
     c.env = { DB: opts.db ?? makeMinimalDbStub(), IMAGES: opts.r2 ?? makeR2Stub() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (opts.internAccountId) (c.env as any).INTERN_SURVEY_ACCOUNT_ID = opts.internAccountId;
     await next();
   });
   app.route('/', richMenuGroups);
@@ -370,6 +374,15 @@ describe('DELETE /api/rich-menu-groups/:groupId', () => {
     dbMocks.getRichMenuGroupById.mockResolvedValue({ id: 'g1', status: 'published' });
     const app = setupApp();
     const res = await app.request('/api/rich-menu-groups/g1', { method: 'DELETE' });
+    expect(res.status).toBe(409);
+    expect(dbMocks.deleteRichMenuGroup).not.toHaveBeenCalled();
+  });
+
+  test('KIDOUインターンのアンケートで使っているメニューは force=true でも消さない', async () => {
+    dbMocks.getRichMenuGroupById.mockResolvedValue({ id: 'g1', status: 'published', account_id: 'acc-intern' });
+    dbMocks.getAccountSetting.mockResolvedValue(JSON.stringify({ lockedGroupId: 'g1', unlockedGroupId: null }));
+    const app = setupApp({ internAccountId: 'acc-intern' });
+    const res = await app.request('/api/rich-menu-groups/g1?force=true', { method: 'DELETE' });
     expect(res.status).toBe(409);
     expect(dbMocks.deleteRichMenuGroup).not.toHaveBeenCalled();
   });

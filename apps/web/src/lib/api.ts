@@ -173,6 +173,8 @@ export type FriendListParams = {
   sort?: 'recent' | 'oldest'
   /** `unhandled` で「最新が未返信の incoming」だけに絞る (サーバ側 SQL filter). */
   handled?: 'unhandled'
+  /** `following` で友だちのまま、`blocked` でブロック中だけに絞る。未指定はすべて。 */
+  following?: 'following' | 'blocked'
 }
 
 export type FriendWithTags = Friend & { tags: Tag[] }
@@ -197,6 +199,7 @@ export const api = {
       if (params?.includeChatStatus) query.includeChatStatus = 'true'
       if (params?.sort) query.sort = params.sort
       if (params?.handled) query.handled = params.handled
+      if (params?.following) query.following = params.following
       return fetchApi<ApiResponse<PaginatedResponse<FriendListItem>>>(
         '/api/friends?' + new URLSearchParams(query)
       )
@@ -205,7 +208,7 @@ export const api = {
       fetchApi<ApiResponse<FriendWithTags>>(`/api/friends/${id}`),
     count: (params?: { accountId?: string }) => {
       const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
-      return fetchApi<ApiResponse<{ count: number }>>('/api/friends/count' + query)
+      return fetchApi<ApiResponse<{ count: number; blockedCount?: number }>>('/api/friends/count' + query)
     },
     addTag: (friendId: string, tagId: string) =>
       fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/tags`, {

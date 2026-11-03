@@ -96,6 +96,17 @@ export type PublishResult = {
   pages: { pageId: string; newRichMenuId: string }[];
 };
 
+/**
+ * 新しい richmenu ができて、旧 richmenu を消す直前に呼ぶ（旧が無いページでも呼ぶ）。
+ * 旧を消すと、そこに付いていた友だちのメニューも外れるため、先に付け替えるのに使う。
+ * false を返すと旧 richmenu を消さずに残す（付け替えに失敗したとき、友だちが旧のまま使えるように）。
+ */
+export type BeforeOldRichMenuDeleted = (
+  pageId: string,
+  newRichMenuId: string,
+  oldRichMenuId: string | null,
+) => Promise<boolean>;
+
 async function readR2Object(r2: R2Like, key: string): Promise<Uint8Array> {
   const obj = await r2.get(key);
   if (!obj) throw new Error(`R2 image missing: ${key}`);
@@ -107,6 +118,7 @@ export async function publishRichMenuGroup(
   group: GroupInput,
   line: LineRichMenuClient,
   r2: R2Like,
+  beforeOldDeleted?: BeforeOldRichMenuDeleted,
 ): Promise<PublishResult> {
   const resolvedPages = resolveSwitcherActions(group.pages, group.id);
   resolvedPages.sort((a, b) => a.orderIndex - b.orderIndex);
@@ -146,7 +158,10 @@ export async function publishRichMenuGroup(
     await line.createRichMenuAlias(aliasId, newRichMenuId);
 
     // 4. 旧 richmenu 削除 (alias 切替後にだけ。失敗しても致命的ではない)
-    if (page.lineRichMenuId) {
+    const deleteOld = beforeOldDeleted
+      ? await beforeOldDeleted(page.id, newRichMenuId, page.lineRichMenuId ?? null)
+      : true;
+    if (page.lineRichMenuId && deleteOld) {
       try {
         await line.deleteRichMenu(page.lineRichMenuId);
       } catch {
