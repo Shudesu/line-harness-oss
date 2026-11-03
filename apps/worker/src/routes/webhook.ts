@@ -24,6 +24,7 @@ import {
 import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { attachPendingJoinRef } from '../services/intern-join.js';
 import { handlePickedUniversity, handleSurveyPostback, handleSurveyText, startSurveyOnFollow, surveyConfigFromEnv } from '../services/intern-survey.js';
 import type { Env } from '../index.js';
 
@@ -241,6 +242,14 @@ async function handleEvent(
       await db.prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
         .bind(lineAccountId, jstNow(), friend.id).run();
       console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
+    }
+
+    // KIDOUインターンの経路リンク：LIFF で控えておいた経路を新しい友だちに付ける（下の経路の読み取りより先に）
+    try {
+      const joinedRef = await attachPendingJoinRef(db, surveyConfig.accountId, { friendId: friend.id, lineUserId: userId, lineAccountId });
+      if (joinedRef) (friend as { ref_code?: string | null }).ref_code = joinedRef;
+    } catch (err) {
+      console.error('[intern-join] failed to attach pending ref', err);
     }
 
     // Resolve referral link (entry_route) for this friend.

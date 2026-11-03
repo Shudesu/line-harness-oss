@@ -39,6 +39,7 @@ const menuItems = [
   {
     label: '分析',
     items: [
+      { href: '/join-links', label: '友だち追加リンク', icon: 'M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z' },
       { href: '/inflow-links', label: 'リファラルリンク', icon: 'M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1' },
       { href: '/affiliates', label: 'アフィリエイト', icon: 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 12.632a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z' },
       { href: '/conversions', label: 'CV計測', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
@@ -97,7 +98,7 @@ const MENU_GROUPS: { label: string | null; hrefs: string[]; collapsible?: boolea
   { label: null, hrefs: ['/', '/notifications', '/chats', '/friends'] },
   { label: 'LINEで送る', hrefs: ['/broadcasts', '/scenarios', '/friend-add-settings', '/reminders', '/templates'] },
   { label: 'LINEの画面・自動返信', hrefs: ['/rich-menus', '/auto-replies', '/automations'] },
-  { label: '結果を見る', hrefs: ['/form-submissions', '/inflow-links', '/conversions'] },
+  { label: '結果を見る', hrefs: ['/join-links', '/form-submissions', '/inflow-links', '/conversions'] },
   { label: '設定', hrefs: ['/accounts', '/staff'] },
   {
     label: 'その他の機能',

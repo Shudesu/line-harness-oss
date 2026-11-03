@@ -82,6 +82,7 @@ import { profileRefresh } from './routes/profile-refresh.js';
 import { richMenuGroups } from './routes/rich-menu-groups.js';
 import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
+import { internJoin } from './routes/intern-join.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
 import { buildOgHtml } from './lib/og-html.js';
 import {
@@ -113,6 +114,9 @@ export type Env = {
     INTERN_MINIAPP_SURVEY_URL?: string;    // 答えを渡すミニアプリの受け口
     INTERN_BRIDGE_KEY?: string;            // ミニアプリとのあいだの合言葉（秘密の値）
     INTERN_SURVEY_REMINDER?: string;       // 'on' のときだけ、未回答の人へ翌日20時に再案内する
+    INTERN_JOIN_LIFF_ID?: string;          // 経路リンクで開く LIFF（エンドポイントは /in/join）。未設定ならふつうの友だち追加へ
+    INTERN_JOIN_LOGIN_CHANNEL_ID?: string; // その LIFF がある LINE ログインのチャネル ID（本人の確かめに使う）
+    INTERN_BOT_BASIC_ID?: string;          // 友だち追加の ID（既定 @899hdfxg）
     // Admin auth topology (see middleware/admin-auth-config.ts):
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
@@ -166,6 +170,7 @@ app.use('*', accountScopeMiddleware);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
+app.route('/', internJoin);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);

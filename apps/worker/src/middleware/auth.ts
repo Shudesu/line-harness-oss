@@ -153,6 +153,7 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
   if (
     path === '/webhook' ||
     path === '/intern/picked-university' || // 合言葉は受け口で確かめる
+    path === '/api/intern/join' || // LINE の ID トークンで本人を確かめる（経路リンク）
     path === '/docs' ||
     path === '/openapi.json' ||
     path === '/api/affiliates/click' ||

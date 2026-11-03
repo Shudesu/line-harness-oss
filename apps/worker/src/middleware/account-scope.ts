@@ -209,7 +209,14 @@ const r = (methods: Method[], path: string, resolve: Resolver): Rule => ({
 
 const friendRow = (g: number) => row('friends', 'line_account_id', g);
 
+/** KIDOUインターンの友だち追加リンク。触るのは INTERN_SURVEY_ACCOUNT_ID のアカウントだけ */
+const internAccount: Resolver = async (c) =>
+  c.env.INTERN_SURVEY_ACCOUNT_ID ? { accounts: [c.env.INTERN_SURVEY_ACCOUNT_ID] } : { error: NEED_ACCOUNT };
+
 export const RULES: Rule[] = [
+  // KIDOUインターンの友だち追加リンク
+  r(['GET', 'POST'], '/api/intern/join-links', internAccount),
+  r(['PATCH'], `/api/intern/join-links/${ID}`, internAccount),
   // Self / session — no account involved.
   r(['GET'], '/api/staff/me', global),
   r(['POST'], '/api/staff/me/password', global),
