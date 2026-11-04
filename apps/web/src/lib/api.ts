@@ -175,7 +175,14 @@ export type FriendListParams = {
   handled?: 'unhandled'
   /** `following` で友だちのまま、`blocked` でブロック中だけに絞る。未指定はすべて。 */
   following?: 'following' | 'blocked'
+  /** KIDOUインターンのアンケートの進み具合。`done` 回答済み・`answering` 回答中・`not_started` 未回答 */
+  survey?: SurveyFilter
+  /** アンケートの答えで絞る（metadata の university_name / grade / graduation_year と完全一致） */
+  surveyAnswers?: Partial<Record<SurveyGroupKey, string>>
 }
+
+export type SurveyFilter = 'done' | 'answering' | 'not_started'
+export type SurveyGroupKey = 'university_name' | 'grade' | 'graduation_year'
 
 export type FriendWithTags = Friend & { tags: Tag[] }
 /** Friend list items, optionally hydrated with chat status (when ?includeChatStatus=true) */
@@ -200,6 +207,10 @@ export const api = {
       if (params?.sort) query.sort = params.sort
       if (params?.handled) query.handled = params.handled
       if (params?.following) query.following = params.following
+      if (params?.survey) query.survey = params.survey
+      for (const [k, v] of Object.entries(params?.surveyAnswers ?? {})) {
+        if (v) query[`metadata.${k}`] = v
+      }
       return fetchApi<ApiResponse<PaginatedResponse<FriendListItem>>>(
         '/api/friends?' + new URLSearchParams(query)
       )
@@ -209,6 +220,15 @@ export const api = {
     count: (params?: { accountId?: string }) => {
       const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
       return fetchApi<ApiResponse<{ count: number; blockedCount?: number }>>('/api/friends/count' + query)
+    },
+    surveyGroups: (params: { accountId?: string; by: SurveyGroupKey; survey?: SurveyFilter; following?: 'following' | 'blocked' }) => {
+      const query: Record<string, string> = { by: params.by }
+      if (params.accountId) query.lineAccountId = params.accountId
+      if (params.survey) query.survey = params.survey
+      if (params.following) query.following = params.following
+      return fetchApi<ApiResponse<Array<{ value: string; count: number }>>>(
+        '/api/friends/survey-groups?' + new URLSearchParams(query)
+      )
     },
     addTag: (friendId: string, tagId: string) =>
       fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/tags`, {

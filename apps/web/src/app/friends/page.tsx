@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
-import type { FriendListItem } from '@/lib/api'
+import type { FriendListItem, SurveyFilter, SurveyGroupKey } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FriendListTable from '@/components/friends/friend-list-table'
 import CcPromptButton from '@/components/cc-prompt-button'
@@ -33,6 +33,18 @@ const PAGE_SIZE = 20
 type SortMode = 'recent' | 'oldest'
 type ResponseFilter = 'all' | 'unhandled'
 type FollowFilter = 'all' | 'following' | 'blocked'
+type SurveyAnswers = Record<SurveyGroupKey, string>
+type SurveyGroups = Record<SurveyGroupKey, Array<{ value: string; count: number }>>
+
+const NO_ANSWERS: SurveyAnswers = { university_name: '', grade: '', graduation_year: '' }
+const NO_GROUPS: SurveyGroups = { university_name: [], grade: [], graduation_year: [] }
+const SURVEY_GROUP_LABEL: Record<SurveyGroupKey, string> = {
+  university_name: '大学',
+  grade: '学年',
+  graduation_year: '卒業予定',
+}
+const SURVEY_GROUP_KEYS: SurveyGroupKey[] = ['university_name', 'grade', 'graduation_year']
+const surveyValueLabel = (key: SurveyGroupKey, value: string) => (key === 'graduation_year' ? `${value}年` : value)
 
 export default function FriendsPage() {
   const { selectedAccountId } = useAccount()
@@ -47,6 +59,10 @@ export default function FriendsPage() {
   const [sortMode, setSortMode] = useState<SortMode>('recent')
   const [responseFilter, setResponseFilter] = useState<ResponseFilter>('all')
   const [followFilter, setFollowFilter] = useState<FollowFilter>('all')
+  const [surveyFilter, setSurveyFilter] = useState<SurveyFilter | ''>('')
+  const [surveyAnswers, setSurveyAnswers] = useState<SurveyAnswers>(NO_ANSWERS)
+  const [surveyGroups, setSurveyGroups] = useState<SurveyGroups>(NO_GROUPS)
+  const [groupBy, setGroupBy] = useState<SurveyGroupKey>('university_name')
   const [followCounts, setFollowCounts] = useState<{ following: number; blocked: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -74,6 +90,8 @@ export default function FriendsPage() {
         sort: sortMode,
         handled: responseFilter === 'unhandled' ? 'unhandled' : undefined,
         following: followFilter === 'all' ? undefined : followFilter,
+        survey: surveyFilter || undefined,
+        surveyAnswers,
       })
       if (res.success) {
         setFriends(res.data.items)
@@ -87,7 +105,25 @@ export default function FriendsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, selectedTagId, selectedAccountId, searchSubmitted, sortMode, responseFilter, followFilter])
+  }, [page, selectedTagId, selectedAccountId, searchSubmitted, sortMode, responseFilter, followFilter, surveyFilter, surveyAnswers])
+
+  // アンケートの答えごとの人数（絞り込みの選択肢と「グループで見る」）。友だちの状態の絞り込みだけ合わせる
+  const loadSurveyGroups = useCallback(async () => {
+    const following = followFilter === 'all' ? undefined : followFilter
+    try {
+      const results = await Promise.all(
+        SURVEY_GROUP_KEYS.map((by) => api.friends.surveyGroups({ accountId: selectedAccountId || undefined, by, following })),
+      )
+      const next: SurveyGroups = { ...NO_GROUPS }
+      SURVEY_GROUP_KEYS.forEach((key, i) => {
+        const res = results[i]
+        next[key] = res.success ? res.data : []
+      })
+      setSurveyGroups(next)
+    } catch {
+      setSurveyGroups(NO_GROUPS)
+    }
+  }, [selectedAccountId, followFilter])
 
   // 友だち・ブロック中の人数（選んでいるアカウントの全体。絞り込みとは別）
   const loadFollowCounts = useCallback(async () => {
@@ -108,6 +144,10 @@ export default function FriendsPage() {
     loadFollowCounts()
   }, [loadFollowCounts])
 
+  useEffect(() => {
+    loadSurveyGroups()
+  }, [loadSurveyGroups])
+
   // Reset the URL-style account context to page 1 in a separate effect.
   // For user-driven filter changes (search/sort/handled/tag) we reset
   // page synchronously inside the handlers below — that avoids the
@@ -115,6 +155,8 @@ export default function FriendsPage() {
   // new `page=1` request and overwrites the correct page-1 rows.
   useEffect(() => {
     setPage(1)
+    // アカウントが変わると答えの選択肢も変わるので、アンケートの絞り込みは外す
+    setSurveyAnswers(NO_ANSWERS)
   }, [selectedAccountId])
 
   useEffect(() => {
@@ -147,6 +189,18 @@ export default function FriendsPage() {
   const handleResponseFilterChange = (v: ResponseFilter) => updateAndResetPage(() => setResponseFilter(v))
   const handleTagFilterChange = (v: string) => updateAndResetPage(() => setSelectedTagId(v))
   const handleFollowFilterChange = (v: FollowFilter) => updateAndResetPage(() => setFollowFilter(v))
+  const handleSurveyFilterChange = (v: SurveyFilter | '') => updateAndResetPage(() => setSurveyFilter(v))
+  const handleSurveyAnswerChange = (key: SurveyGroupKey, value: string) =>
+    updateAndResetPage(() => setSurveyAnswers((prev) => ({ ...prev, [key]: value })))
+  // グループの札を押すとその答えで絞る。もう一度押すと外す
+  const handleGroupClick = (key: SurveyGroupKey, value: string) =>
+    handleSurveyAnswerChange(key, surveyAnswers[key] === value ? '' : value)
+  const clearSurveyFilters = () => updateAndResetPage(() => {
+    setSurveyFilter('')
+    setSurveyAnswers(NO_ANSWERS)
+  })
+  const surveyFiltered = surveyFilter !== '' || SURVEY_GROUP_KEYS.some((k) => surveyAnswers[k] !== '')
+  const hasSurveyGroups = SURVEY_GROUP_KEYS.some((k) => surveyGroups[k].length > 0)
 
   return (
     <div>
@@ -246,7 +300,92 @@ export default function FriendsPage() {
             {loading ? '読み込み中...' : `${total.toLocaleString('ja-JP')} 件`}
           </span>
         </div>
+
+        {/* アンケートの答えで絞り込む（KIDOUインターンの登録アンケート） */}
+        <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-100">
+          <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">アンケート</span>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600 font-medium whitespace-nowrap">回答状況:</label>
+            <select
+              className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              value={surveyFilter}
+              onChange={(e) => handleSurveyFilterChange(e.target.value as SurveyFilter | '')}
+            >
+              <option value="">すべて</option>
+              <option value="done">回答済み</option>
+              <option value="answering">回答中</option>
+              <option value="not_started">未回答</option>
+            </select>
+          </div>
+          {SURVEY_GROUP_KEYS.map((key) => (
+            <div key={key} className="flex items-center gap-2">
+              <label className="text-xs text-gray-600 font-medium whitespace-nowrap">{SURVEY_GROUP_LABEL[key]}:</label>
+              <select
+                className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white max-w-[200px] focus:outline-none focus:ring-2 focus:ring-green-500"
+                value={surveyAnswers[key]}
+                onChange={(e) => handleSurveyAnswerChange(key, e.target.value)}
+              >
+                <option value="">すべて</option>
+                {/* 選んでいる答えが人数の一覧に無くても（0人になった等）選んだままにする */}
+                {surveyAnswers[key] && !surveyGroups[key].some((g) => g.value === surveyAnswers[key]) && (
+                  <option value={surveyAnswers[key]}>{surveyValueLabel(key, surveyAnswers[key])}（0人）</option>
+                )}
+                {surveyGroups[key].map((g) => (
+                  <option key={g.value} value={g.value}>{surveyValueLabel(key, g.value)}（{g.count}人）</option>
+                ))}
+              </select>
+            </div>
+          ))}
+          {surveyFiltered && (
+            <button
+              type="button"
+              onClick={clearSurveyFilters}
+              className="text-xs text-blue-600 hover:text-blue-800 underline"
+            >
+              アンケートの絞り込みを外す
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* グループで見る — 答えごとの人数。札を押すとその人たちだけに絞る */}
+      {hasSurveyGroups && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="text-xs font-semibold text-gray-700 mr-1">グループで見る</span>
+            {SURVEY_GROUP_KEYS.map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setGroupBy(key)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${groupBy === key ? 'bg-green-600 border-green-600 text-white' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+              >
+                {SURVEY_GROUP_LABEL[key]}別
+              </button>
+            ))}
+          </div>
+          {surveyGroups[groupBy].length === 0 ? (
+            <p className="text-xs text-gray-400">まだ答えた人がいません。</p>
+          ) : (
+            <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto">
+              {surveyGroups[groupBy].map((g) => {
+                const active = surveyAnswers[groupBy] === g.value
+                return (
+                  <button
+                    key={g.value}
+                    type="button"
+                    onClick={() => handleGroupClick(groupBy, g.value)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-colors ${active ? 'border-green-500 bg-green-50 text-green-800 ring-2 ring-green-100' : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100'}`}
+                  >
+                    <span className="font-medium">{surveyValueLabel(groupBy, g.value)}</span>
+                    <span className="text-gray-500">{g.count}人</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -257,12 +396,13 @@ export default function FriendsPage() {
       {loading ? (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           {[...Array(5)].map((_, i) => (
-            <div key={i} className="px-4 py-4 border-b border-gray-100 grid grid-cols-[80px_220px_120px_1fr_280px] gap-3 animate-pulse">
+            <div key={i} className="px-4 py-4 border-b border-gray-100 grid grid-cols-[80px_200px_180px_120px_1fr_260px] gap-3 animate-pulse">
               <div className="h-5 bg-gray-100 rounded w-16" />
               <div className="flex items-center gap-2">
                 <div className="w-9 h-9 rounded-full bg-gray-200" />
                 <div className="h-3 bg-gray-200 rounded w-24" />
               </div>
+              <div className="h-3 bg-gray-100 rounded w-24" />
               <div className="h-3 bg-gray-100 rounded w-20" />
               <div className="space-y-2">
                 <div className="h-3 bg-gray-100 rounded w-3/4" />

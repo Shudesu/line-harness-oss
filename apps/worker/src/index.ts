@@ -30,6 +30,7 @@ import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { accountScopeMiddleware } from './middleware/account-scope.js';
 import { webhook } from './routes/webhook.js';
 import { remindUnansweredSurveys, surveyConfigFromEnv } from './services/intern-survey.js';
+import { maintainInternGrades } from './services/intern-grade.js';
 import { friends } from './routes/friends.js';
 import { tags } from './routes/tags.js';
 import { scenarios } from './routes/scenarios.js';
@@ -956,6 +957,16 @@ async function scheduled(
       }
     } catch (e) {
       console.error('intern-survey reminder error:', e);
+    }
+  }
+
+  // インターンの学年を毎年4月に進め、学年・卒業年の印を答えに合わせる（6時間ごと。何度動いても二重には進まない）
+  if (event.cron === '0 */6 * * *') {
+    try {
+      const r = await maintainInternGrades(env.DB, env.INTERN_SURVEY_ACCOUNT_ID);
+      if (r.advanced || r.retagged) console.log(`[intern-grade] advanced=${r.advanced} retagged=${r.retagged}`);
+    } catch (e) {
+      console.error('intern-grade error:', e);
     }
   }
 

@@ -25,6 +25,8 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
   const incoming = friend.latestIncomingMessage
   const scenario = friend.activeScenario
   const isFollowing = friend.isFollowing
+  // アンケートの答えと同じ中身の印は「アンケート」の欄で見られるので、ここには出さない
+  const tags = friend.tags.filter((t) => !isSurveyTag(t.name))
 
   return (
     <div
@@ -122,9 +124,9 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
 
       {/* ★つきタグ・友だち情報 */}
       <div className="space-y-1">
-        {friend.tags.length > 0 && (
+        {tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {friend.tags.map((tag) => (
+            {tags.map((tag) => (
               <TagBadge key={tag.id} tag={tag} />
             ))}
           </div>
@@ -154,7 +156,7 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
             </p>
           )
         })()}
-        {friend.tags.length === 0 && !friend.firstTrackedLinkName && !friend.refCode &&
+        {tags.length === 0 && !friend.firstTrackedLinkName && !friend.refCode &&
           !(friend as unknown as { metadata?: Record<string, unknown> }).metadata?.ig_account_username &&
           !(friend as unknown as { metadata?: Record<string, unknown> }).metadata?.ig_account_id && (
           <span className="text-[10px] text-gray-300">—</span>
@@ -172,6 +174,10 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
     </div>
   )
 }
+
+// アンケートで自動で付く印（進み具合・学年・卒業年）。一覧の「アンケート」の欄と中身が同じもの
+const SURVEY_TAG = /^ズ_(状態|学年|卒業年)_/
+const isSurveyTag = (name: string) => SURVEY_TAG.test(name)
 
 const SURVEY_STEP_LABEL: Record<string, string> = {
   consent: '未回答（同意の前）',

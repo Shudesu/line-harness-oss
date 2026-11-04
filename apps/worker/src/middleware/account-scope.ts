@@ -240,6 +240,7 @@ export const RULES: Rule[] = [
   r(['GET'], '/api/friends', query('lineAccountId')),
   r(['GET'], '/api/friends/count', query('lineAccountId')),
   r(['GET'], '/api/friends/ref-stats', query('lineAccountId')),
+  r(['GET'], '/api/friends/survey-groups', query('lineAccountId')),
   r(['GET'], `/api/friends/${ID}`, friendRow(1)),
   r(['POST'], `/api/friends/${ID}/tags`, friendRow(1)),
   r(['DELETE'], `/api/friends/${ID}/tags/${ID}`, friendRow(1)),

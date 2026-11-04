@@ -160,6 +160,9 @@ friends.get('/api/friends', async (c) => {
          ) = 'unread'`,
       );
     }
+    // ?survey=done|answering|not_started — KIDOUインターンの登録アンケートの進み具合（metadata.survey_step）
+    const surveyCond = surveyCondition(c.req.query('survey'));
+    if (surveyCond) conditions.push(surveyCond);
     // Metadata filters: ?metadata.key=value (e.g. ?metadata.monthly_cost=〜100万円)
     const url = new URL(c.req.url);
     for (const [key, value] of url.searchParams.entries()) {
@@ -378,6 +381,53 @@ friends.get('/api/friends/count', async (c) => {
     return c.json({ success: true, data: { count, blockedCount } });
   } catch (err) {
     console.error('GET /api/friends/count error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// アンケートの進み具合の絞り込み（一覧・グループ別の人数で共通）
+const SURVEY_STEP_SQL = "COALESCE(json_extract(f.metadata, '$.survey_step'), '')";
+function surveyCondition(v: string | undefined): string | null {
+  if (v === 'done') return `${SURVEY_STEP_SQL} = 'done'`;
+  if (v === 'answering') return `${SURVEY_STEP_SQL} IN ('university', 'grade', 'graduation_year')`;
+  if (v === 'not_started') return `${SURVEY_STEP_SQL} NOT IN ('done', 'university', 'grade', 'graduation_year')`;
+  return null;
+}
+
+// グループ別に数えられるアンケートの答え
+const SURVEY_GROUP_KEYS = ['university_name', 'grade', 'graduation_year'] as const;
+
+// GET /api/friends/survey-groups?lineAccountId=&by=university_name|grade|graduation_year[&survey=&following=]
+// アンケートの答えごとの人数（多い順）。一覧の絞り込みの選択肢と「グループで見る」に使う
+friends.get('/api/friends/survey-groups', async (c) => {
+  try {
+    const lineAccountId = c.req.query('lineAccountId');
+    const by = c.req.query('by') as (typeof SURVEY_GROUP_KEYS)[number] | undefined;
+    if (!by || !SURVEY_GROUP_KEYS.includes(by)) {
+      return c.json({ success: false, error: 'by must be university_name, grade or graduation_year' }, 400);
+    }
+    const conditions = [`TRIM(COALESCE(CAST(json_extract(f.metadata, '$.${by}') AS TEXT), '')) <> ''`];
+    const binds: unknown[] = [];
+    if (lineAccountId) {
+      conditions.push('f.line_account_id = ?');
+      binds.push(lineAccountId);
+    }
+    const surveyCond = surveyCondition(c.req.query('survey'));
+    if (surveyCond) conditions.push(surveyCond);
+    const followingParam = c.req.query('following');
+    if (followingParam === 'following' || followingParam === 'blocked') {
+      conditions.push('f.is_following = ?');
+      binds.push(followingParam === 'following' ? 1 : 0);
+    }
+    const stmt = c.env.DB.prepare(
+      `SELECT CAST(json_extract(f.metadata, '$.${by}') AS TEXT) AS value, COUNT(*) AS count
+       FROM friends f WHERE ${conditions.join(' AND ')}
+       GROUP BY value ORDER BY count DESC, value ASC LIMIT 500`,
+    );
+    const result = await (binds.length > 0 ? stmt.bind(...binds) : stmt).all<{ value: string; count: number }>();
+    return c.json({ success: true, data: result.results.map((r) => ({ value: r.value, count: r.count })) });
+  } catch (err) {
+    console.error('GET /api/friends/survey-groups error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

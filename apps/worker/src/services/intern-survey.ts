@@ -19,6 +19,7 @@ import { buildQaAnswer, buildQaCarousel } from './intern-qa.js';
 import { DEFAULT_COPY, fillInput, loadCopy, type InternCopy } from './intern-copy.js';
 import { resolveInternRichMenuIds } from './intern-richmenus.js';
 import { buildMessage } from './step-delivery.js';
+import { academicYearJst, ensureTag, syncAnswerTags } from './intern-grade.js';
 
 export const SURVEY_PREFIX = 'isv:';
 
@@ -98,7 +99,8 @@ export const PICKED_UNLISTED_PREFIX = '大学名（一覧にない）：';
 export const TAG_CONSENTED = 'ズ_状態_ポリシー同意済み';
 export const TAG_ANSWERED = 'ズ_状態_アンケート回答済み';
 export const TAG_UNLOCKED = 'ズ_状態_メニュー解放済み';
-export const tagGraduationYear = (y: string) => `ズ_卒業年_${y}`;
+// 学年・卒業年の印（ズ_学年_◯・ズ_卒業年_◯）は intern-grade.ts で答えに合わせて付け替える
+export { tagGrade, tagGraduationYear } from './intern-grade.js';
 
 export interface University {
   name: string;
@@ -536,6 +538,8 @@ export interface SurveyState {
   university_unlisted?: boolean;
   grade?: string;
   graduation_year?: string;
+  /** 学年がどの年度（4月始まり）のものか。毎年4月に、今の年度との差の分だけ学年を進める */
+  grade_academic_year?: number;
   survey_completed_at?: string;
   /** あいさつを送った日時（二度送らない） */
   greeted_at?: string;
@@ -590,7 +594,7 @@ export function reducePostback(state: SurveyState, data: string, config: SurveyC
     if (step !== 'grade') return { patch: null, messages: [currentQuestion(step, config)] };
     const g = body.slice(2);
     if (!GRADES.includes(g)) return { patch: null, messages: [buildGradeQuestion(config)] };
-    return { patch: { survey_step: 'graduation_year', grade: g }, messages: [buildGraduationYearQuestion(config)] };
+    return { patch: { survey_step: 'graduation_year', grade: g, grade_academic_year: academicYearJst() }, messages: [buildGraduationYearQuestion(config)] };
   }
   if (body.startsWith('y:')) {
     if (step !== 'graduation_year') return { patch: null, messages: [currentQuestion(step, config)] };
@@ -667,17 +671,6 @@ async function readState(db: D1Database, friendId: string): Promise<Record<strin
   }
 }
 
-async function ensureTag(db: D1Database, name: string): Promise<string> {
-  const found = await db.prepare('SELECT id FROM tags WHERE name = ?').bind(name).first<{ id: string }>();
-  if (found) return found.id;
-  await db
-    .prepare('INSERT OR IGNORE INTO tags (id, name, color, created_at) VALUES (?, ?, ?, ?)')
-    .bind(crypto.randomUUID(), name, '#3a7d5c', jstNow())
-    .run();
-  const row = await db.prepare('SELECT id FROM tags WHERE name = ?').bind(name).first<{ id: string }>();
-  return row!.id;
-}
-
 async function addTags(db: D1Database, friendId: string, names: string[]): Promise<void> {
   for (const name of names) {
     const tagId = await ensureTag(db, name);
@@ -743,9 +736,9 @@ async function runEffects(
         await addTags(db, friendId, [TAG_UNLOCKED]);
       }
       if (effect === 'completed') {
-        const names = [TAG_ANSWERED];
-        if (state.graduation_year) names.push(tagGraduationYear(state.graduation_year));
-        await addTags(db, friendId, names);
+        await addTags(db, friendId, [TAG_ANSWERED]);
+        // 学年・卒業年の印は今の答えの分だけにする（答え直した人の古い印は外す）
+        await syncAnswerTags(db, friendId, state as Record<string, unknown>);
         await unlockMenu(lineClient, config, lineUserId);
         await addTags(db, friendId, [TAG_UNLOCKED]);
         await sendAnswersToMiniapp(config, lineUserId, state);
