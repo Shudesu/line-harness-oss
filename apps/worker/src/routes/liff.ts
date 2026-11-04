@@ -1197,6 +1197,26 @@ liffRoutes.post('/api/liff/profile', async (c) => {
   }
 });
 
+// Click IDs / UTM / UA / IP for ref_tracking on the LIFF path, mirroring what
+// /auth/callback stores. Without fbclid here, Meta CAPI (sendAdConversions)
+// has nothing to attribute and skips LIFF-path friends silently.
+function clickIdFields(
+  c: { req: { header: (name: string) => string | undefined } },
+  body: { fbclid?: string; gclid?: string; twclid?: string; ttclid?: string; utmSource?: string; utmMedium?: string; utmCampaign?: string },
+) {
+  return {
+    fbclid: body.fbclid || null,
+    gclid: body.gclid || null,
+    twclid: body.twclid || null,
+    ttclid: body.ttclid || null,
+    utmSource: body.utmSource || null,
+    utmMedium: body.utmMedium || null,
+    utmCampaign: body.utmCampaign || null,
+    userAgent: c.req.header('User-Agent') || null,
+    ipAddress: c.req.header('CF-Connecting-IP') || null,
+  };
+}
+
 // POST /api/liff/link - link friend to user UUID (public, verified via LINE ID token)
 liffRoutes.post('/api/liff/link', async (c) => {
   try {
@@ -1210,6 +1230,14 @@ liffRoutes.post('/api/liff/link', async (c) => {
       igt?: string;
       iga?: string;
       igan?: string;
+      // Ad click IDs / UTM forwarded by the LIFF client (see getClickIds in client/main.ts)
+      fbclid?: string;
+      gclid?: string;
+      twclid?: string;
+      ttclid?: string;
+      utmSource?: string;
+      utmMedium?: string;
+      utmCampaign?: string;
     }>();
 
     if (!body.idToken) {
@@ -1307,6 +1335,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
             friendId: friend.id,
             entryRouteId: route?.id ?? null,
             sourceUrl: null,
+            ...clickIdFields(c, body),
           });
         } catch { /* silent */ }
       }
@@ -1376,6 +1405,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
           friendId: friend.id,
           entryRouteId: route?.id ?? null,
           sourceUrl: null,
+          ...clickIdFields(c, body),
         });
       } catch { /* silent */ }
 
