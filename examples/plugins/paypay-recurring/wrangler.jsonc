@@ -1,0 +1,18 @@
+{
+  "name": "line-harness-plugin-paypay-recurring",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ENVIRONMENT": "development", "PAYPAY_ENVIRONMENT": "sandbox",
+    "PUBLIC_URL": "https://REPLACE_WITH_PLUGIN_HOST",
+    "LINE_HARNESS_URL": "https://REPLACE_WITH_HARNESS_HOST",
+    "LINE_ACCOUNT_ID": "REPLACE_WITH_ACCOUNT_ID",
+    "LINE_LOGIN_CHANNEL_ID": "REPLACE_WITH_LOGIN_CHANNEL_ID", "LIFF_ID": "REPLACE_WITH_LIFF_ID",
+    "DELIVERY_URL": "https://REPLACE_WITH_DELIVERY_PLUGIN_HOST",
+    "SHOP_TITLE": "PayPay定期便のお申し込み", "SALES_TERMS_URL": "https://example.invalid/terms",
+    "CATALOG_JSON": "[{\"id\":\"tea\",\"name\":\"お茶の季節便\",\"amount\":12000,\"billingMonths\":12,\"deliveryCount\":4}]"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "paypay-recurring", "database_id": "REPLACE_WITH_PLUGIN_DATABASE_ID" }]
+  // Optional after verification: "triggers": { "crons": ["25 * * * *"] }
+}
