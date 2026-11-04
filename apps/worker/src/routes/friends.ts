@@ -562,7 +562,7 @@ friends.get('/api/friends/:id/messages', async (c) => {
         `SELECT id, direction, message_type as messageType, content, created_at as createdAt
          FROM messages_log WHERE friend_id = ?
            AND (delivery_type IS NULL OR delivery_type != 'test')
-         ORDER BY created_at DESC LIMIT 200`,
+         ORDER BY created_at DESC, rowid DESC LIMIT 200`,
       )
       .bind(friendId)
       .all<{ id: string; direction: string; messageType: string; content: string; createdAt: string }>();
