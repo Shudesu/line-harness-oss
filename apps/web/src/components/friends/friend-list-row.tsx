@@ -13,8 +13,8 @@ interface Props {
   onTagEditClick?: () => void
 }
 
-// Single row of the L-step style friend list. Renders 5 columns:
-// 対応マーク / 名前 / シナリオ / 受信メッセージ / ★つきタグ・友だち情報
+// Single row of the L-step style friend list. Renders 6 columns:
+// 対応マーク / 名前 / アンケート / シナリオ / 受信メッセージ / ★つきタグ・友だち情報
 // Clicking the row navigates to the per-friend chat view at
 // `/chats?friend=<id>` so the operator can read history / reply / mark as
 // resolved without leaving the list. The "タグ" button at the end of the
@@ -42,7 +42,7 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           navigateToChat()
         }
       }}
-      className="grid grid-cols-[80px_220px_120px_1fr_280px] gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50"
+      className="grid grid-cols-[80px_200px_180px_120px_1fr_260px] gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50"
     >
       {/* 対応マーク — chats.status 由来 (unread / in_progress / resolved). */}
       <div className="pt-1">
@@ -84,6 +84,9 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           )}
         </div>
       </div>
+
+      {/* アンケート — KIDOUインターンの登録アンケートの答え（metadata の survey_step / university_name / grade / graduation_year） */}
+      <SurveyAnswers metadata={friend.metadata} />
 
       {/* シナリオ */}
       <div className="pt-1">
@@ -166,6 +169,54 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           </button>
         )}
       </div>
+    </div>
+  )
+}
+
+const SURVEY_STEP_LABEL: Record<string, string> = {
+  consent: '未回答（同意の前）',
+  university: '回答中（大学名の前）',
+  grade: '回答中（学年の前）',
+  graduation_year: '回答中（卒業予定年の前）',
+}
+
+function text(v: unknown): string | null {
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  if (typeof v === 'number') return String(v)
+  return null
+}
+
+// アンケートの答えを日本語の見出しで出す。アンケートに入っていない友だち（ほかのアカウント等）は「—」
+function SurveyAnswers({ metadata }: { metadata?: Record<string, unknown> }) {
+  const step = text(metadata?.survey_step)
+  const university = text(metadata?.university_name)
+  const grade = text(metadata?.grade)
+  const year = text(metadata?.graduation_year)
+  if (!step && !university && !grade && !year) {
+    return <div className="pt-1"><span className="text-xs text-gray-300">—</span></div>
+  }
+  const done = step === 'done'
+  const completedAt = text(metadata?.survey_completed_at)
+  return (
+    <div className="pt-1 space-y-0.5 min-w-0">
+      {done ? (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">
+          回答済み{completedAt ? `（${formatJstDate(completedAt)}）` : ''}
+        </span>
+      ) : (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500">
+          {(step && SURVEY_STEP_LABEL[step]) ?? '未回答'}
+        </span>
+      )}
+      {[
+        ['大学', university],
+        ['学年', grade],
+        ['卒業予定', year ? `${year}年` : null],
+      ].map(([label, value]) => value && (
+        <p key={label} className="text-xs text-gray-700 truncate" title={value}>
+          <span className="text-[10px] text-gray-400">{label}：</span>{value}
+        </p>
+      ))}
     </div>
   )
 }
