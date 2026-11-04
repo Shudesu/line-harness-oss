@@ -7,6 +7,7 @@ import {
   advanceFriendScenario,
   completeFriendScenario,
   claimFriendScenarioForDelivery,
+  isScenarioDeliveryCurrent,
   enrollFriendInScenario,
   getLineAccountByChannelId,
   getLineAccountById,
@@ -124,6 +125,7 @@ export async function pushImmediateFirstStep(
   const mode = options?.mode ?? 'once';
   // Function-scope so the outer catch can settle a half-finished delivery.
   let claimedEnrollmentId: string | null = null;
+  let claimedStepOrder = 0;
   let sent = false;
   let settleAfterSend: (() => Promise<void>) | null = null;
   try {
@@ -252,6 +254,7 @@ export async function pushImmediateFirstStep(
       );
       if (!claimed) return false;
       claimedEnrollmentId = enrollmentRow.id;
+      claimedStepOrder = enrollmentRow.current_step_order;
       advanceTargetId = enrollmentRow.id;
 
       // Advance without pushing on a cooldown hit so the row is neither
@@ -285,6 +288,7 @@ export async function pushImmediateFirstStep(
         const claimed = await claimFriendScenarioForDelivery(db, row.id, row.current_step_order);
         if (!claimed) return false;
         claimedEnrollmentId = row.id;
+        claimedStepOrder = row.current_step_order;
         advanceTargetId = row.id;
       } else {
         // Pure re-click re-delivery. Re-probe the cooldown: the first probe
@@ -296,7 +300,7 @@ export async function pushImmediateFirstStep(
 
     const releaseClaim = async () => {
       if (!claimedEnrollmentId) return;
-      await releaseClaimById(db, claimedEnrollmentId);
+      await releaseClaimById(db, claimedEnrollmentId, claimedStepOrder);
       claimedEnrollmentId = null;
     };
 
@@ -352,6 +356,12 @@ export async function pushImmediateFirstStep(
       { lineAccountId: friend.line_account_id ?? sendAccount?.id ?? null, friendId },
     );
     const sentMessages = buildMessages(decorated.messageType, decorated.content, buildMessage);
+
+    if (!(await isScenarioDeliveryCurrent(db, scenarioId, claimedEnrollmentId
+      ? { id: claimedEnrollmentId, current_step_order: claimedStepOrder } : undefined))) {
+      await releaseClaim();
+      return false;
+    }
 
     try {
       if (options?.reply) {
@@ -419,7 +429,7 @@ export async function pushImmediateFirstStep(
       } else if (claimedEnrollmentId) {
         // Nothing was sent — hand the claim back now instead of leaving the
         // row in 'delivering' until the stuck-delivery sweep frees it.
-        await releaseClaimById(db, claimedEnrollmentId);
+        await releaseClaimById(db, claimedEnrollmentId, claimedStepOrder);
       }
     } catch (settleErr) {
       console.error('[immediate-first-step] post-failure settle failed:', settleErr);
@@ -428,12 +438,12 @@ export async function pushImmediateFirstStep(
   }
 }
 
-async function releaseClaimById(db: D1Database, enrollmentId: string): Promise<void> {
+async function releaseClaimById(db: D1Database, enrollmentId: string, expectedStepOrder: number): Promise<void> {
   await db
     .prepare(
       `UPDATE friend_scenarios SET status = 'active', updated_at = ?
-       WHERE id = ? AND status = 'delivering'`,
+       WHERE id = ? AND status = 'delivering' AND current_step_order = ?`,
     )
-    .bind(jstNow(), enrollmentId)
+    .bind(jstNow(), enrollmentId, expectedStepOrder)
     .run();
 }

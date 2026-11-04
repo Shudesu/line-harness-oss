@@ -24,6 +24,7 @@ const dbMocks = vi.hoisted(() => ({
   advanceFriendScenario: vi.fn(),
   completeFriendScenario: vi.fn(),
   claimFriendScenarioForDelivery: vi.fn(),
+  isScenarioDeliveryCurrent: vi.fn(),
   enrollFriendInScenario: vi.fn(),
   getLineAccountByChannelId: vi.fn(),
   getLineAccountById: vi.fn(),
@@ -139,6 +140,7 @@ beforeEach(() => {
     templateIdAtSend: null,
   });
   dbMocks.claimFriendScenarioForDelivery.mockResolvedValue(true);
+  dbMocks.isScenarioDeliveryCurrent.mockResolvedValue(true);
   dbMocks.enrollFriendInScenario.mockResolvedValue({ id: 'fs-1', current_step_order: 0 });
   lineClientMock.pushMessage.mockResolvedValue({});
   lineClientMock.replyMessage.mockResolvedValue({});
