@@ -1,0 +1,18 @@
+{
+  "name": "line-harness-plugin-stripe-subscriptions",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "vars": {
+    "PUBLIC_URL": "https://REPLACE_WITH_PLUGIN_HOST",
+    "LINE_HARNESS_URL": "https://REPLACE_WITH_HARNESS_HOST",
+    "LINE_ACCOUNT_ID": "REPLACE_WITH_ACCOUNT_ID",
+    "LINE_LOGIN_CHANNEL_ID": "REPLACE_WITH_LOGIN_CHANNEL_ID",
+    "LIFF_ID": "REPLACE_WITH_LIFF_ID",
+    "DELIVERY_URL": "https://REPLACE_WITH_DELIVERY_PLUGIN_HOST",
+    "SHOP_TITLE": "定期便のお申し込み",
+    "SALES_TERMS_URL": "https://example.invalid/terms",
+    "CATALOG_JSON": "[{\"id\":\"tea\",\"name\":\"お茶の季節便\",\"stripePriceId\":\"price_REPLACE\",\"amount\":12000,\"interval\":\"year\",\"deliveryCount\":4}]"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "stripe-subscriptions", "database_id": "REPLACE_WITH_PLUGIN_DATABASE_ID" }]
+  // Optional after verification: "triggers": { "crons": ["20 * * * *"] }
+}
