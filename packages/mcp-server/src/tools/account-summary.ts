@@ -19,6 +19,7 @@ interface AccountStat {
   dbCountStatus: "ready" | "error";
   lineCountStatus: "ready" | "unready" | "error";
   syncDifference: number | null;
+  followersNotInDb: number | null;
   syncRiskLevel: "ok" | "warning" | "unknown";
   riskLevel?: string;
   targetedReaches?: number | null;
@@ -147,11 +148,20 @@ export function registerAccountSummary(server: McpServer): void {
             friendsInDb !== null && friendsFromLine !== null
               ? friendsInDb - friendsFromLine
               : null;
-          if (syncDifference !== null && syncDifference !== 0) {
+          // friends rows are only created by webhook events: `follow` for new adds,
+          // or `ensureFriendFromWebhookUser()` on message/postback from a user we
+          // have not seen yet. Followers who added the account before the webhook
+          // went live and have never interacted since are therefore invisible to
+          // the DB by design, and there is no LINE API to backfill them. So a DB
+          // count *below* the LINE follower count is the expected steady state,
+          // not a fault — only the opposite direction indicates something wrong.
+          if (syncDifference !== null && syncDifference > 0) {
             warnings.push(
-              `DB friends (${friendsInDb}) differ from LINE followers (${friendsFromLine}) by ${syncDifference}. Check webhook sync and channel tokens.`,
+              `DB friends (${friendsInDb}) exceed LINE followers (${friendsFromLine}) by ${syncDifference}. Expected at most parity — suspect stale rows, duplicate registrations, or friends mapped to the wrong lineAccountId.`,
             );
           }
+          const followersNotInDb =
+            syncDifference !== null ? Math.max(0, -syncDifference) : null;
           accountStats.push({
             id: acc.id,
             name: acc.name,
@@ -167,11 +177,12 @@ export function registerAccountSummary(server: McpServer): void {
                 ? "ready"
                 : "unready",
             syncDifference,
+            followersNotInDb,
             syncRiskLevel: syncDifference === null
               ? "unknown"
-              : syncDifference === 0
-                ? "ok"
-                : "warning",
+              : syncDifference > 0
+                ? "warning"
+                : "ok",
             targetedReaches: lineData.success ? lineData.data?.targetedReaches ?? null : null,
             blocks: lineData.success ? lineData.data?.blocks ?? null : null,
             warnings,
@@ -215,7 +226,7 @@ export function registerAccountSummary(server: McpServer): void {
         const summary = {
           friends: {
             totalDbRecords: totalFriends,
-            note: "totalDbRecords is the DB count. perAccount[].friendsFromLine is the LINE official follower insight for the previous JST date. If these differ, webhook sync or channel token health may be broken.",
+            note: "totalDbRecords is the DB count. perAccount[].friendsFromLine is the LINE official follower insight for the previous JST date. The DB only holds friends the webhook has seen (a `follow` event, or a message/postback from a previously unknown user), so followersNotInDb > 0 is normal — those are followers from before the webhook went live who have not interacted since, and they cannot be backfilled. Only friendsInDb EXCEEDING friendsFromLine (syncRiskLevel=warning) points at a real fault. Broadcasts still reach every follower via the LINE broadcast API; only tag-filtered sends and 1:1 conversations are limited to friendsInDb.",
             warningCount: accountStats.reduce((sum, acc) => sum + acc.warnings.length, 0),
             perAccount: accountStats,
           },
