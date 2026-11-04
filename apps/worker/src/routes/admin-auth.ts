@@ -75,6 +75,7 @@ adminAuth.post('/api/auth/logout', async (c) => {
   c.header('Cache-Control', 'no-store');
   const token = cookieToken(c);
   const staff = await authenticateCookieSession(c, token);
+  if (staff instanceof Response) return staff;
   if (token) await revokeAdminSession(c.env.DB, token);
   if (staff) await audit(c, 'logout', 'success', staff.id);
   const { sameSite } = resolveAdminAuthConfig(c.env, { requestOrigin: new URL(c.req.url).origin });

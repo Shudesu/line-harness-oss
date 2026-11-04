@@ -10,16 +10,19 @@ export function authClientIp(c: Context<Env>): string {
 export async function audit(c: Context<Env>, action: AuditAction, outcome: AuditOutcome, actorId = 'anonymous') {
   await writeAuthAudit(c.env.DB, { actorId, action, outcome, ip: authClientIp(c) });
 }
-export async function limitAuth(c: Context<Env>, kind: 'login' | 'key', credential?: string): Promise<Response | null> {
+export async function limitAuth(c: Context<Env>, kind: 'login' | 'key' | 'legacy_upgrade', credential?: string): Promise<Response | null> {
   if (c.get('authRateChecked')) return null;
   c.set('authRateChecked', true);
-  const max = kind === 'login' ? 10 : 1000;
-  const window = kind === 'login' ? 300 : 60;
+  const max = kind === 'login' ? 10 : kind === 'legacy_upgrade' ? 300 : 1000;
+  const window = kind === 'key' ? 60 : 300;
   try {
-    const identities = [{ scope: `${kind}:ip`, value: authClientIp(c) }];
-    if (kind === 'key' && credential) identities.push({ scope: 'key:credential', value: credential });
+    const identities = [{ scope: `${kind}:ip`, value: authClientIp(c), max }];
+    if (kind !== 'login' && credential) identities.push({ scope: `${kind}:credential`, value: credential,
+      // Parallel page loads must not spend the interactive login budget.
+      // The shared DB hashes each identity and bounds issuance across IPs/isolates.
+      max: kind === 'legacy_upgrade' ? 30 : max });
     for (const identity of identities) {
-      const result = await consumeAuthRateLimit(c.env.DB, identity.scope, identity.value, max, window);
+      const result = await consumeAuthRateLimit(c.env.DB, identity.scope, identity.value, identity.max, window);
       if (!result.allowed) return c.json({success:false,error:'Too many authentication attempts'},
         {status:429,headers:{'Retry-After':String(result.retryAfter)}});
     }

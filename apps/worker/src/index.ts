@@ -96,6 +96,8 @@ export type Env = {
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;
     API_KEY: string;
+    ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT?: string; // UTC開始日時から14日間のみ旧Cookieを交換
+    STAFF_API_KEY_LAZY_HASH_ENABLED?: string; // 'true' のみ既存キーの平文を認証時に削除
     ACCESS_REQUIRED?: string;
     ACCESS_TEAM_DOMAIN?: string;
     ACCESS_AUD?: string;
