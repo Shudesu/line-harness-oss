@@ -296,6 +296,57 @@ describe('session endpoint', () => {
   });
 });
 
+describe('admin session lifetime', () => {
+  const login = (e: Env['Bindings']) => app().request('/api/auth/login', {
+    method: 'POST', body: JSON.stringify({ apiKey: 'staff-key' }), headers: { 'Content-Type': 'application/json' },
+  }, e);
+  const ageSession = (e: Env['Bindings'], secondsAgo: number) => {
+    const sqlite = databases[databases.length - 1].sqlite;
+    const now = Math.floor(Date.now() / 1000);
+    sqlite.prepare('UPDATE admin_sessions SET last_seen_at = ?, expires_at = ?').run(now - secondsAgo, now - secondsAgo + 604800);
+    return e;
+  };
+  const cookie = `lh_admin_session=${TEST_SESSION}; lh_csrf=token-abc`;
+
+  test('ADMIN_SESSION_TTL_SECONDS sets cookie Max-Age and D1 expiry', async () => {
+    const e = env({ ADMIN_ORIGIN: PAGES, ADMIN_ALLOW_CROSS_SITE: 'true', ADMIN_SESSION_TTL_SECONDS: '2592000' });
+    const res = await login(e);
+    expect(cookieFor(res, 'lh_admin_session') ?? '').toContain('Max-Age=2592000');
+    expect(cookieFor(res, 'lh_csrf') ?? '').toContain('Max-Age=2592000');
+    const row = databases[databases.length - 1].sqlite.prepare('SELECT expires_at - created_at AS ttl FROM admin_sessions ORDER BY created_at DESC, rowid DESC LIMIT 1').get();
+    expect(row).toEqual({ ttl: 2592000 });
+  });
+
+  test('out-of-range and invalid TTL values fall back to the store bounds', async () => {
+    expect(cookieFor(await login(env({ ADMIN_ORIGIN: PAGES, ADMIN_ALLOW_CROSS_SITE: 'true', ADMIN_SESSION_TTL_SECONDS: '34560000' })), 'lh_admin_session') ?? '').toContain('Max-Age=2592000');
+    expect(cookieFor(await login(env({ ADMIN_ORIGIN: PAGES, ADMIN_ALLOW_CROSS_SITE: 'true', ADMIN_SESSION_TTL_SECONDS: 'abc' })), 'lh_admin_session') ?? '').toContain('Max-Age=604800');
+  });
+
+  test('sliding re-issues both cookies when the session is used after 5 minutes', async () => {
+    const e = ageSession(env({ ADMIN_ORIGIN: PAGES, ADMIN_ALLOW_CROSS_SITE: 'true', ADMIN_SESSION_SLIDING: 'true' }), 600);
+    const res = await app().request('/api/protected', { headers: { Cookie: cookie } }, e);
+    expect(res.status).toBe(200);
+    expect(cookieFor(res, 'lh_admin_session') ?? '').toContain(`lh_admin_session=${TEST_SESSION}`);
+    expect(cookieFor(res, 'lh_admin_session') ?? '').toContain('Max-Age=604800');
+    expect(cookieFor(res, 'lh_csrf') ?? '').toContain('lh_csrf=token-abc');
+    const row = databases[databases.length - 1].sqlite.prepare('SELECT expires_at FROM admin_sessions').get() as { expires_at: number };
+    expect(row.expires_at).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) + 604800 - 5);
+  });
+
+  test('without ADMIN_SESSION_SLIDING the expiry and cookies are unchanged', async () => {
+    const e = ageSession(crossSiteEnv(), 600);
+    const res = await app().request('/api/protected', { headers: { Cookie: cookie } }, e);
+    expect(res.status).toBe(200);
+    expect(setCookies(res)).toEqual([]);
+  });
+
+  test('logout does not renew the session it revokes', async () => {
+    const e = ageSession(env({ ADMIN_ORIGIN: PAGES, ADMIN_ALLOW_CROSS_SITE: 'true', ADMIN_SESSION_SLIDING: 'true' }), 600);
+    const res = await app().request('/api/auth/logout', { method: 'POST', headers: { Cookie: cookie } }, e);
+    expect(setCookies(res).every(c => c.includes('Max-Age=0'))).toBe(true);
+  });
+});
+
 describe('CORS allowed / blocked origins', () => {
   test('allowlisted admin origin is echoed back', async () => {
     const res = await app().request('/api/protected', {

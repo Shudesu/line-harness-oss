@@ -34,7 +34,13 @@ export async function createAdminSession(db: D1Database, input: {
     VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(sessionId,input.staffId,input.credentialFp,input.role,input.authMethod,now,now,expiresAt,input.userAgent?.slice(0,200) ?? null,input.authSubject??null).run();
   return { token, expiresAt, createdAt: now, sessionId };
 }
-export async function getAdminSession(db: D1Database, token: string, now = Math.floor(Date.now()/1000)): Promise<AdminSession | null> {
+/**
+ * `slideTtlSeconds` (opt-in) renews `expires_at` to now + TTL in the same
+ * once-per-five-minutes write that records activity, so an active session never
+ * expires while an idle one still does. `renewed` is true only when that write
+ * actually extended the row, so callers can re-issue the cookie.
+ */
+export async function getAdminSession(db: D1Database, token: string, now = Math.floor(Date.now()/1000), opts: { slideTtlSeconds?: number } = {}): Promise<(AdminSession & { renewed?: boolean }) | null> {
   if (!TOKEN.test(token)) return null;
   const hash = await hashApiKey(token);
   const row = await db.prepare('SELECT * FROM admin_sessions WHERE id_hash = ? AND revoked_at IS NULL AND expires_at > ?')
@@ -42,8 +48,15 @@ export async function getAdminSession(db: D1Database, token: string, now = Math.
   if (!row) return null;
   if (row.last_seen_at <= now - 300) {
     try {
-      await db.prepare('UPDATE admin_sessions SET last_seen_at = ? WHERE id_hash = ? AND last_seen_at <= ? AND revoked_at IS NULL AND expires_at > ?')
-        .bind(now,hash,now-300,now).run();
+      if (opts.slideTtlSeconds !== undefined) {
+        const expiresAt = now + adminSessionTtl(opts.slideTtlSeconds);
+        const result = await db.prepare('UPDATE admin_sessions SET last_seen_at = ?, expires_at = MAX(expires_at, ?) WHERE id_hash = ? AND last_seen_at <= ? AND revoked_at IS NULL AND expires_at > ?')
+          .bind(now,expiresAt,hash,now-300,now).run();
+        if (result.meta.changes > 0 && expiresAt > row.expires_at) return { ...row, last_seen_at: now, expires_at: expiresAt, renewed: true };
+      } else {
+        await db.prepare('UPDATE admin_sessions SET last_seen_at = ? WHERE id_hash = ? AND last_seen_at <= ? AND revoked_at IS NULL AND expires_at > ?')
+          .bind(now,hash,now-300,now).run();
+      }
     } catch { /* Best-effort activity metadata must not log users out. */ }
   }
   return row;
