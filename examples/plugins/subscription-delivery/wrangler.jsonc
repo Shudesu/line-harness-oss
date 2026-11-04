@@ -1,0 +1,10 @@
+{
+  "name": "line-harness-plugin-subscription-delivery",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "d1_databases": [{
+    "binding": "DB", "database_name": "subscription-delivery",
+    "database_id": "REPLACE_WITH_PLUGIN_DATABASE_ID"
+  }]
+  // Optional after local verification: "triggers": { "crons": ["15 * * * *"] }
+}
