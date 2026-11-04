@@ -78,9 +78,10 @@ export class LineClient {
     const res = await fetch(url, options);
 
     // LINE returns 409 when a request with the same X-Line-Retry-Key was
-    // already accepted. For a caller retrying the exact same operation this
-    // is a successful idempotent outcome, not a delivery failure.
-    if (res.status === 409 && requestHeaders['X-Line-Retry-Key']) {
+    // already accepted, with the original accepted request ID in the response.
+    // A conflict without that evidence must remain an error.
+    if (res.status === 409 && requestHeaders['X-Line-Retry-Key']
+      && res.headers.get('x-line-accepted-request-id')) {
       return { data: { retryAccepted: true }, headers: res.headers };
     }
 
@@ -145,7 +146,8 @@ export class LineClient {
       body,
       retryKey ? { 'X-Line-Retry-Key': retryKey } : {},
     );
-    return { data, requestId: headers.get('x-line-request-id') };
+    // A retry's own request ID differs from the original accepted send.
+    return { data, requestId: headers.get('x-line-accepted-request-id') || headers.get('x-line-request-id') };
   }
 
   async broadcast(
@@ -159,7 +161,8 @@ export class LineClient {
       body,
       retryKey ? { 'X-Line-Retry-Key': retryKey } : {},
     );
-    return { data, requestId: headers.get('x-line-request-id') };
+    // A retry's own request ID differs from the original accepted send.
+    return { data, requestId: headers.get('x-line-accepted-request-id') || headers.get('x-line-request-id') };
   }
 
   async replyMessage(
