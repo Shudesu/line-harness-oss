@@ -29,10 +29,20 @@ describe('renderNotificationText', () => {
     expect(renderNotificationText('expired', ctx)).toContain('期限切れ');
   });
   test('前日リマインダ', () => {
-    expect(renderNotificationText('day_before', ctx)).toContain('明日のご予約');
+    expect(renderNotificationText('day_before', ctx)).toContain('ご予約のお知らせ');
   });
   test('当日 N 時間前', () => {
     const t = renderNotificationText('hours_before', ctx);
-    expect(t).toContain('本日のご予約まであと 2 時間');
+    expect(t).toContain('ご予約の開始前のお知らせ');
   });
+  test.each([
+    ['day_before', '明日'], ['hours_before', 'あと 2 時間'],
+  ] as const)('遅れて当日17時に処理した %s 通知は18時開始の日時で案内する', (kind, misleading) => {
+    const text = renderNotificationText(kind, { ...ctx, startsAtJst: '2026-08-10 18:00' });
+    expect(text).toContain('日時: 2026-08-10 18:00');
+    expect(text).toContain('メニュー: カット');
+    expect(text).toContain('担当: 山田');
+    expect(text).not.toContain(misleading);
+  });
+
 });

@@ -94,9 +94,11 @@ export function renderMeetReminderText(kind: MeetReminderKind, startsAt: string,
   const day = Number(iso.slice(8, 10));
   const time = iso.slice(11, 16);
   const dateLabel = `${month}月${day}日（${weekdays[jst.getUTCDay()]}）${time}`;
+  // Immediate or delayed reminders need an absolute date. Keep the payload
+  // independent of send time so retries can reuse the same LINE retry key.
   const lead = kind === 'day_before'
-    ? `明日${dateLabel}から`
-    : `本日${dateLabel}から（開始約1時間前）`;
+    ? `${dateLabel}から`
+    : `${dateLabel}から（まもなく開始）`;
 
   return `【個別相談リマインド】\n${lead}、Google Meetで個別相談を予定しています。\n\nお時間になりましたら、こちらからご参加ください。\n${meetUrl}\n\nよろしくお願いいたします！`;
 }
@@ -184,14 +186,16 @@ export async function registerMeetConsultation(
         .bind(crypto.randomUUID(), consultationId, item.kind, item.scheduledAt, nowIso, nowIso)
         .run();
     } else if (scheduleChanged || reminder.status === 'cancelled') {
+      // The row ID is also the LINE retry key. A changed/restarted delivery
+      // needs a fresh key; retries of an unchanged registration keep theirs.
       await db
         .prepare(
           `UPDATE meet_consultation_reminders
-              SET scheduled_at=?, status='pending', retry_count=0, sent_at=NULL,
+              SET id=?, scheduled_at=?, status='pending', retry_count=0, sent_at=NULL,
                   last_error=NULL, updated_at=?
             WHERE id=?`,
         )
-        .bind(item.scheduledAt, nowIso, reminder.id)
+        .bind(crypto.randomUUID(), item.scheduledAt, nowIso, reminder.id)
         .run();
     }
   }
@@ -243,9 +247,9 @@ export async function processDueMeetConsultationReminders(
   options: MeetReminderDeliveryOptions,
 ): Promise<{ sent: number; failed: number }> {
   const nowIso = options.now.toISOString();
-  const due = await db
-    .prepare(
-      `SELECT r.id, r.consultation_id, r.kind, r.retry_count,
+  // Recheck the original eligibility rules before each dispatch. Changes
+  // during an earlier send can invalidate the remaining batch snapshots.
+  const eligibleQuery = `SELECT r.id, r.consultation_id, r.kind, r.retry_count,
               c.title, c.starts_at, c.meet_url,
               f.line_user_id, la.channel_access_token
          FROM meet_consultation_reminders r
@@ -258,17 +262,23 @@ export async function processDueMeetConsultationReminders(
           AND c.status = 'confirmed'
           AND c.starts_at > ?
           AND f.is_following = 1
-          AND la.is_active = 1
-        ORDER BY r.scheduled_at ASC
-        LIMIT 100`,
-    )
+          AND la.is_active = 1`;
+  const due = await db
+    .prepare(`${eligibleQuery} ORDER BY r.scheduled_at ASC LIMIT 100`)
     .bind(MAX_RETRY, nowIso, nowIso)
     .all<DueMeetReminderRow>();
 
   let sent = 0;
   let failed = 0;
-  for (const row of due.results ?? []) {
+  for (const candidate of due.results ?? []) {
+    let row = candidate;
     try {
+      const current = await db
+        .prepare(`${eligibleQuery} AND r.id = ?`)
+        .bind(MAX_RETRY, nowIso, nowIso, candidate.id)
+        .first<DueMeetReminderRow>();
+      if (!current) continue;
+      row = current;
       const text = renderMeetReminderText(row.kind, row.starts_at, row.meet_url);
       await pushViaHarnessProxy(
         options.proxyBaseUrl,
@@ -282,7 +292,7 @@ export async function processDueMeetConsultationReminders(
         .prepare(
           `UPDATE meet_consultation_reminders
               SET status='sent', sent_at=?, last_error=NULL, updated_at=?
-            WHERE id=?`,
+            WHERE id=? AND status IN ('pending','failed')`,
         )
         .bind(nowIso, nowIso, row.id)
         .run();
@@ -293,7 +303,7 @@ export async function processDueMeetConsultationReminders(
         .prepare(
           `UPDATE meet_consultation_reminders
               SET status='failed', retry_count=?, last_error=?, updated_at=?
-            WHERE id=?`,
+            WHERE id=? AND status IN ('pending','failed')`,
         )
         .bind(
           retryCount,

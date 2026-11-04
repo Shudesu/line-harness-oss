@@ -196,7 +196,10 @@ function dueDB(state: { rows: DueRow[] }): D1Database {
       let bound: unknown[] = [];
       const stmt = {
         bind(...args: unknown[]) { bound = args; return stmt; },
-        async first<T>() { return null as T | null; },
+        async first<T>(): Promise<T | null> {
+          const result = await stmt.all<DueRow>();
+          return (result.results.find(row => row.id === bound[2]) ?? null) as T | null;
+        },
         async all<T>() {
           if (sql.includes('FROM event_booking_reminders r')) {
             const [nowIso] = bound as [string];
