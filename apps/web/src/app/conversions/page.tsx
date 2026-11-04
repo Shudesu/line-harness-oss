@@ -219,9 +219,9 @@ export default function ConversionsPage() {
         </LayerCard>
       )}
       <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
-        <Dialog>
-          <Dialog.Title>CVポイントを削除しますか？</Dialog.Title>
-          <Dialog.Description className="mt-2">「{deleteTarget?.name}」を削除します。この操作は取り消せません。</Dialog.Description>
+        <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">CVポイントを削除しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">「{deleteTarget?.name}」を削除します。この操作は取り消せません。</Dialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button>
             <Button type="button" variant="destructive" onClick={handleDelete}>削除</Button>

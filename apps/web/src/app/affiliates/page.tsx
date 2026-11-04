@@ -741,7 +741,7 @@ function CreateAffiliateModal({
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting) onClose() }}>
-      <Dialog className="w-full max-w-md p-6">
+      <Dialog className="p-6">
         <Dialog.Title className="mb-4 text-lg font-semibold text-kumo-strong">
           アフィリエイター新規作成
         </Dialog.Title>
@@ -992,7 +992,8 @@ function OfferFormModal({ initial, accounts, tags, scenarios, onClose, onSaved }
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !submitting) onClose() }}>
-      <Dialog className="w-full max-w-lg overflow-hidden p-0">
+      {/* 幅は Kumo の size で変える（PC は既定で 384px）。max-w-* はスマホで左右の余白を消す */}
+      <Dialog className="overflow-hidden p-0">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <Dialog.Title className="text-base font-semibold text-kumo-strong">
             {isEdit ? '案件を編集' : '案件を新規作成'}
