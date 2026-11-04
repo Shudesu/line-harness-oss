@@ -216,6 +216,7 @@ const internAccount: Resolver = async (c) =>
 export const RULES: Rule[] = [
   // KIDOUインターンの友だち追加リンク
   r(['GET', 'POST'], '/api/intern/join-links', internAccount),
+  r(['PUT'], '/api/intern/join-links/order', internAccount),
   r(['PATCH'], `/api/intern/join-links/${ID}`, internAccount),
   // KIDOUインターンの自動で送る文面
   r(['GET', 'PUT'], '/api/intern/line-copy', internAccount),

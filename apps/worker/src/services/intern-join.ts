@@ -6,7 +6,7 @@
 // friend_id なし・source_url「pending:LINEのユーザーID」で控えておき、追加の合図で付け替える。
 // INTERN_SURVEY_ACCOUNT_ID のアカウントでだけ動く。ほかのアカウントの動きは変えない。
 
-import { addTagToFriend, getEntryRouteByRefCode, jstNow, recordRefTracking, toJstString } from '@line-crm/db';
+import { addTagToFriend, getAccountSetting, getEntryRouteByRefCode, jstNow, recordRefTracking, setAccountSetting, toJstString } from '@line-crm/db';
 
 export const JOIN_REF_PREFIX = 'ki-';
 const JOIN_REF_RE = /^ki-[a-z0-9]{4,16}$/;
@@ -18,6 +18,8 @@ const NEW_FRIEND_WINDOW_MS = 30 * 60 * 1000;
 const PENDING_WINDOW_MS = 24 * 3600 * 1000;
 // 同じ人が同じリンクを開き直したときに、開いた数を二重に数えない
 const REOPEN_WINDOW_MS = 10 * 60 * 1000;
+// 管理画面で並べ替えた経路リンクの順番（entry_routes の id の並び）を置く account_settings のキー
+export const JOIN_ORDER_KEY = 'intern_join_order';
 
 export interface JoinConfig {
   accountId?: string;
@@ -228,8 +230,19 @@ export async function listJoinLinks(db: D1Database, accountId: string): Promise<
     )
     .bind(accountId)
     .first<{ total: number; without_link: number | null }>();
+  const order = await getJoinOrder(db, accountId);
+  const rank = new Map(order.map((id, i) => [id, i]));
+  // 並べ替えたあとに作ったリンク（順番の控えにないもの）は、今までどおり新しい順で上に出す
+  const sorted = [...(rows.results ?? [])].sort((a, b) => {
+    const ra = rank.get(a.id);
+    const rb = rank.get(b.id);
+    if (ra === undefined && rb === undefined) return 0;
+    if (ra === undefined) return -1;
+    if (rb === undefined) return 1;
+    return ra - rb;
+  });
   return {
-    links: (rows.results ?? []).map((r) => ({
+    links: sorted.map((r) => ({
       id: r.id,
       refCode: r.ref_code,
       name: r.name,
@@ -281,4 +294,29 @@ a{display:none;background:#06c755;color:#fff;text-decoration:none;font-weight:bo
   }).catch(go);
 })();
 </script></body></html>`;
+}
+
+async function getJoinOrder(db: D1Database, accountId: string): Promise<string[]> {
+  // 読めなくても一覧は新しい順で出す
+  const raw = await getAccountSetting(db, accountId, JOIN_ORDER_KEY).catch((err) => {
+    console.error('getJoinOrder error:', err);
+    return null;
+  });
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+// 経路リンクの並び順を保存する。経路リンク（ki-）でない id・重複は捨てる
+export async function saveJoinOrder(db: D1Database, accountId: string, ids: string[]): Promise<void> {
+  const rows = await db
+    .prepare(`SELECT id FROM entry_routes WHERE ref_code LIKE 'ki-%'`)
+    .all<{ id: string }>();
+  const known = new Set((rows.results ?? []).map((r) => r.id));
+  const order = [...new Set(ids)].filter((id) => known.has(id));
+  await setAccountSetting(db, accountId, JOIN_ORDER_KEY, JSON.stringify(order));
 }

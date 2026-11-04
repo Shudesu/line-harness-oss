@@ -2,6 +2,23 @@
 
 // KIDOUインターンの友だち追加リンク。大本のリンクと QR、どこから来たかを数える経路リンクの発行と人数
 import { useEffect, useState } from 'react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import Header from '@/components/layout/header'
 import { fetchApi } from '@/lib/api'
 
@@ -68,6 +85,98 @@ function CopyButton({ text, label = 'コピー' }: { text: string; label?: strin
   )
 }
 
+function SortableLinkRow({ link }: { link: JoinLink }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: link.id })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3"
+    >
+      {/* つかむのは「⋮⋮」だけ。ほかの場所はスマホで窓をスクロールできるようにしておく */}
+      <span className="cursor-grab touch-none px-1 text-lg text-gray-400" aria-label="つかんで動かす" {...attributes} {...listeners}>
+        ⋮⋮
+      </span>
+      <span className="text-sm font-medium text-gray-900">{link.name}</span>
+      {!link.isActive && <span className="text-xs text-gray-500">止めています</span>}
+    </div>
+  )
+}
+
+// 経路ごとの人数の表の並び順を、つかんで動かして変える
+function ReorderLinks({ links, onClose, onSaved }: { links: JoinLink[]; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [items, setItems] = useState<JoinLink[]>(links)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    setItems((current) => {
+      const from = current.findIndex((x) => x.id === active.id)
+      const to = current.findIndex((x) => x.id === over.id)
+      return arrayMove(current, from, to)
+    })
+  }
+
+  const save = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetchApi<{ success: boolean; error?: string }>('/api/intern/join-links/order', {
+        method: 'PUT',
+        body: JSON.stringify({ ids: items.map((x) => x.id) }),
+      })
+      if (!res.success) {
+        setError(res.error ?? '保存できませんでした')
+        return
+      }
+      await onSaved()
+      onClose()
+    } catch {
+      setError('保存できませんでした。時間をおいてもう一度お試しください')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+      <div className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
+        <h2 className="mb-1 text-sm font-bold text-gray-900">経路リンクの並べ替え</h2>
+        <p className="mb-4 text-xs text-gray-500">左の「⋮⋮」をつかんで上下に動かし、「保存」を押してください。あとから作ったリンクは一番上に出ます。</p>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={items.map((x) => x.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {items.map((link) => (
+                <SortableLinkRow key={link.id} link={link} />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+        {error && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs hover:bg-gray-200 disabled:opacity-50">
+            やめる
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            {saving ? '保存しています…' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function JoinLinksPage() {
   const [data, setData] = useState<JoinLinksData | null>(null)
   const [tags, setTags] = useState<TagRow[]>([])
@@ -77,6 +186,7 @@ export default function JoinLinksPage() {
   const [tagId, setTagId] = useState('')
   const [saving, setSaving] = useState(false)
   const [qrFor, setQrFor] = useState<string | null>(null)
+  const [reordering, setReordering] = useState(false)
 
   const load = async () => {
     setError('')
@@ -239,7 +349,18 @@ export default function JoinLinksPage() {
 
           {/* 経路ごとの人数 */}
           <section className="rounded-lg border border-gray-200 bg-white p-6">
-            <h2 className="mb-4 text-base font-bold text-gray-900">経路ごとの人数</h2>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-base font-bold text-gray-900">経路ごとの人数</h2>
+              {data.links.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setReordering(true)}
+                  className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  並べ替え
+                </button>
+              )}
+            </div>
             {data.links.length === 0 ? (
               <p className="text-sm text-gray-500">まだ経路リンクがありません。</p>
             ) : (
@@ -313,6 +434,8 @@ export default function JoinLinksPage() {
           </section>
         </div>
       )}
+
+      {reordering && data && <ReorderLinks links={data.links} onClose={() => setReordering(false)} onSaved={load} />}
     </div>
   )
 }

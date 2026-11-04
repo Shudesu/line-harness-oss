@@ -11,6 +11,7 @@ import {
   recordJoinOpen,
   renderJoinPage,
   resolveJoinRedirect,
+  saveJoinOrder,
   JOIN_REF_PREFIX,
 } from '../services/intern-join.js';
 
@@ -88,6 +89,23 @@ internJoin.post('/api/intern/join-links', async (c) => {
     return c.json({ success: true, data: { id: route.id, refCode: route.ref_code } }, 201);
   } catch (err) {
     console.error('POST /api/intern/join-links error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// 経路ごとの人数の表の並び順。ids は上から順の entry_routes の id
+internJoin.put('/api/intern/join-links/order', async (c) => {
+  const config = joinConfigFromEnv(c.env);
+  if (!config.accountId) return c.json({ success: false, error: 'KIDOUインターンのアカウントが設定されていません' }, 404);
+  const body = await c.req.json<{ ids?: unknown }>().catch(() => null);
+  if (!Array.isArray(body?.ids) || body.ids.length > 500 || !body.ids.every((x) => typeof x === 'string')) {
+    return c.json({ success: false, error: '並び順を読み取れませんでした' }, 400);
+  }
+  try {
+    await saveJoinOrder(c.env.DB, config.accountId, body.ids as string[]);
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('PUT /api/intern/join-links/order error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

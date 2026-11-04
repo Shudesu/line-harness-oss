@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
 import { toJstString } from '@line-crm/db';
-import { attachPendingJoinRef, isJoinRef, listJoinLinks, newJoinRef, recordJoinOpen, resolveJoinRedirect, type JoinConfig } from './intern-join.js';
+import { JOIN_ORDER_KEY, attachPendingJoinRef, isJoinRef, listJoinLinks, newJoinRef, recordJoinOpen, resolveJoinRedirect, saveJoinOrder, type JoinConfig } from './intern-join.js';
 
 // vite が node:sqlite を読めないため require で読む
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
@@ -47,6 +47,7 @@ beforeEach(() => {
     CREATE TABLE ref_tracking (id TEXT PRIMARY KEY, ref_code TEXT, friend_id TEXT, entry_route_id TEXT, source_url TEXT, fbclid TEXT, gclid TEXT, twclid TEXT,
       ttclid TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, user_agent TEXT, ip_address TEXT, created_at TEXT);
     CREATE TABLE friend_tags (friend_id TEXT, tag_id TEXT, assigned_at TEXT, PRIMARY KEY (friend_id, tag_id));
+    CREATE TABLE account_settings (id TEXT PRIMARY KEY, line_account_id TEXT, key TEXT, value TEXT, created_at TEXT, updated_at TEXT, UNIQUE(line_account_id, key));
     INSERT INTO entry_routes (id, ref_code, name, tag_id, is_active, created_at, updated_at) VALUES ('r1', 'ki-tiktok01', 'TikTok', 'tag-tiktok', 1, '2026-11-03T00:00:00.000+09:00', '');
     INSERT INTO entry_routes (id, ref_code, name, tag_id, is_active, created_at, updated_at) VALUES ('r2', 'ki-stopped1', '止めた', NULL, 0, '2026-11-02T00:00:00.000+09:00', '');
   `);
@@ -118,5 +119,38 @@ describe('LIFF で開いてから友だち追加', () => {
   it('ほかのアカウントの友だち追加では何もしない', async () => {
     await recordJoinOpen(db, config, { idToken: 't', ref: 'ki-tiktok01' }, okVerify);
     expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f9', lineUserId: USER, lineAccountId: 'other' })).toBeNull();
+  });
+});
+
+describe('経路ごとの人数の並び順', () => {
+  const ids = async () => (await listJoinLinks(db, ACCOUNT)).links.map((l) => l.id);
+
+  it('並べ替える前は新しい順', async () => {
+    expect(await ids()).toEqual(['r1', 'r2']);
+  });
+
+  it('保存した順に並び、あとから作ったリンクは上に出る。経路リンクでない id・重複は捨てる', async () => {
+    sqlite.exec(`INSERT INTO entry_routes (id, ref_code, name, is_active, created_at, updated_at) VALUES ('other', 'abc', 'ほか', 1, '2026-11-01', '')`);
+    await saveJoinOrder(db, ACCOUNT, ['r2', 'other', 'r1', 'r2', 'nope']);
+    expect(await ids()).toEqual(['r2', 'r1']);
+    expect(JSON.parse((sqlite.prepare('SELECT value FROM account_settings WHERE key = ?').get(JOIN_ORDER_KEY) as { value: string }).value)).toEqual(['r2', 'r1']);
+    sqlite.exec(`INSERT INTO entry_routes (id, ref_code, name, is_active, created_at, updated_at) VALUES ('r3', 'ki-new00001', '新しい', 1, '2026-11-04T00:00:00.000+09:00', '')`);
+    expect(await ids()).toEqual(['r3', 'r2', 'r1']);
+  });
+
+  it('空の並びを保存すると新しい順に戻る', async () => {
+    await saveJoinOrder(db, ACCOUNT, ['r2', 'r1']);
+    await saveJoinOrder(db, ACCOUNT, []);
+    expect(await ids()).toEqual(['r1', 'r2']);
+  });
+
+  it('ほかのアカウントの並び順は効かない', async () => {
+    await saveJoinOrder(db, 'other-account', ['r2', 'r1']);
+    expect(await ids()).toEqual(['r1', 'r2']);
+  });
+
+  it('控えが壊れていても新しい順で出す', async () => {
+    sqlite.exec(`INSERT INTO account_settings VALUES ('s1', '${ACCOUNT}', 'intern_join_order', '{oops', '', '')`);
+    expect(await ids()).toEqual(['r1', 'r2']);
   });
 });
