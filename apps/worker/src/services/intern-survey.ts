@@ -98,7 +98,7 @@ export const PICKED_UNLISTED_PREFIX = '大学名（一覧にない）：';
 // 付ける印。ハーネスの印は全アカウント共通なので、インターンのものは「ズ_」で始める
 export const TAG_CONSENTED = 'ズ_状態_ポリシー同意済み';
 export const TAG_ANSWERED = 'ズ_状態_アンケート回答済み';
-export const TAG_UNLOCKED = 'ズ_状態_メニュー解放済み';
+// メニューの鍵が開いたかの印は付けない（「アンケート回答済み」と必ず同時に付き、中身が同じため。11/04）
 // 学年・卒業年の印（ズ_学年_◯・ズ_卒業年_◯）は intern-grade.ts で答えに合わせて付け替える
 export { tagGrade, tagGraduationYear } from './intern-grade.js';
 
@@ -731,16 +731,12 @@ async function runEffects(
   for (const effect of effects ?? []) {
     try {
       if (effect === 'consented') await addTags(db, friendId, [TAG_CONSENTED]);
-      if (effect === 'unlock') {
-        await unlockMenu(lineClient, config, lineUserId);
-        await addTags(db, friendId, [TAG_UNLOCKED]);
-      }
+      if (effect === 'unlock') await unlockMenu(lineClient, config, lineUserId);
       if (effect === 'completed') {
         await addTags(db, friendId, [TAG_ANSWERED]);
         // 学年・卒業年の印は今の答えの分だけにする（答え直した人の古い印は外す）
         await syncAnswerTags(db, friendId, state as Record<string, unknown>);
         await unlockMenu(lineClient, config, lineUserId);
-        await addTags(db, friendId, [TAG_UNLOCKED]);
         await sendAnswersToMiniapp(config, lineUserId, state);
       }
     } catch (err) {
