@@ -34,6 +34,7 @@ import type {
   PoolAccount,
 } from '@line-crm/shared'
 import { getApiBase } from './api-base'
+import { withBasePath } from './base-path'
 
 /** Per-account delivery-health snapshot for the dashboard cards. */
 export type AccountDeliveryHealth = {
@@ -181,7 +182,14 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
       ...options?.headers,
     },
   })
-  if (!res.ok) throw new ApiError(res.status)
+  if (!res.ok) {
+    // Includes mutations sent with a legacy cookie before session exchange.
+    // Never replay a mutation automatically; let login establish fresh auth.
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.location.replace(withBasePath('/login'))
+    }
+    throw new ApiError(res.status)
+  }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
