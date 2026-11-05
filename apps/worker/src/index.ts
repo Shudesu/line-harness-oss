@@ -111,6 +111,8 @@ export type Env = {
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
     ADMIN_ALLOW_CROSS_SITE?: string; // 'true' opts into SameSite=None cross-site cookies
+    ADMIN_SESSION_TTL_SECONDS?: string; // Optional admin session lifetime (default 604800 = 7 days, max 2592000 = 30 days)
+    ADMIN_SESSION_SLIDING?: string;     // 'true' extends the session on use (idle timeout instead of absolute)
     // External SSO into the admin session (GET /admin/sso). Optional: when the
     // secret is unset the route answers like any unregistered path, so the
     // feature is entirely absent unless an operator opts in. ≥32 chars, shared
