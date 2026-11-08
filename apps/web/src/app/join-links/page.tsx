@@ -32,6 +32,7 @@ interface JoinLink {
   openedCount: number
   friendCount: number
   followingCount: number
+  surveyDoneCount: number
   latestFriendAt: string | null
 }
 
@@ -373,6 +374,7 @@ export default function JoinLinksPage() {
                       <th className="py-2 pr-4 text-right font-medium">開いた人</th>
                       <th className="py-2 pr-4 text-right font-medium">友だちになった人</th>
                       <th className="py-2 pr-4 text-right font-medium">いまも友だち</th>
+                      <th className="py-2 pr-4 text-right font-medium">アンケート回答</th>
                       <th className="py-2 pr-4 font-medium">最後の追加</th>
                       <th className="py-2 font-medium"></th>
                     </tr>
@@ -415,6 +417,12 @@ export default function JoinLinksPage() {
                           <td className="py-3 pr-4 text-right tabular-nums">{link.openedCount}</td>
                           <td className="py-3 pr-4 text-right font-bold tabular-nums text-gray-900">{link.friendCount}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{link.followingCount}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums">
+                            {link.surveyDoneCount}
+                            {link.friendCount > 0 && (
+                              <span className="ml-1 text-xs text-gray-500">（{Math.round((link.surveyDoneCount / link.friendCount) * 100)}%）</span>
+                            )}
+                          </td>
                           <td className="py-3 pr-4 text-gray-600">{formatDate(link.latestFriendAt)}</td>
                           <td className="py-3 text-right">
                             <button type="button" onClick={() => toggleActive(link)} className="text-xs text-gray-500 hover:text-gray-800 hover:underline">

@@ -25,6 +25,7 @@ import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import { attachPendingJoinRef } from '../services/intern-join.js';
+import { recordFollowEvent, recordUnfollowByLineUser } from '../services/intern-stats.js';
 import { handlePickedUniversity, handleSurveyPostback, handleSurveyText, startSurveyOnFollow, surveyConfigFromEnv } from '../services/intern-survey.js';
 import type { Env } from '../index.js';
 
@@ -244,6 +245,9 @@ async function handleEvent(
       console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
     }
 
+    // 数字タブ用：友だち追加（ブロック解除を含む）の日時を残す
+    await recordFollowEvent(db, { friendId: friend.id, lineAccountId, event: 'follow' });
+
     // KIDOUインターンの経路リンク：LIFF で控えておいた経路を新しい友だちに付ける（下の経路の読み取りより先に）
     try {
       const joinedRef = await attachPendingJoinRef(db, surveyConfig.accountId, { friendId: friend.id, lineUserId: userId, lineAccountId });
@@ -418,6 +422,8 @@ async function handleEvent(
     if (!userId) return;
 
     await updateFriendFollowStatus(db, userId, false);
+    // 数字タブ用：ブロックした日時を残す（friends には残らないため）
+    await recordUnfollowByLineUser(db, { lineUserId: userId, lineAccountId });
     return;
   }
 

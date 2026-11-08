@@ -198,6 +198,8 @@ export interface JoinLinkStats {
   friendCount: number;
   /** そのうち今も友だちの人（ブロックしていない） */
   followingCount: number;
+  /** アンケートを最後まで答えた人 */
+  surveyDoneCount: number;
   latestFriendAt: string | null;
 }
 
@@ -212,15 +214,16 @@ export async function listJoinLinks(db: D1Database, accountId: string): Promise<
          (SELECT COUNT(DISTINCT COALESCE(rt.friend_id, rt.source_url)) FROM ref_tracking rt WHERE rt.ref_code = er.ref_code) AS opened_count,
          (SELECT COUNT(*) FROM friends f WHERE f.ref_code = er.ref_code AND f.line_account_id = ?) AS friend_count,
          (SELECT COUNT(*) FROM friends f WHERE f.ref_code = er.ref_code AND f.line_account_id = ? AND f.is_following = 1) AS following_count,
+         (SELECT COUNT(*) FROM friends f WHERE f.ref_code = er.ref_code AND f.line_account_id = ? AND json_extract(f.metadata, '$.survey_step') = 'done') AS survey_done_count,
          (SELECT MAX(f.created_at) FROM friends f WHERE f.ref_code = er.ref_code AND f.line_account_id = ?) AS latest_friend_at
        FROM entry_routes er
        WHERE er.ref_code LIKE 'ki-%'
        ORDER BY er.created_at DESC`,
     )
-    .bind(accountId, accountId, accountId)
+    .bind(accountId, accountId, accountId, accountId)
     .all<{
       id: string; ref_code: string; name: string; tag_id: string | null; is_active: number; created_at: string;
-      opened_count: number; friend_count: number; following_count: number; latest_friend_at: string | null;
+      opened_count: number; friend_count: number; following_count: number; survey_done_count: number; latest_friend_at: string | null;
     }>();
   const totals = await db
     .prepare(
@@ -252,6 +255,7 @@ export async function listJoinLinks(db: D1Database, accountId: string): Promise<
       openedCount: r.opened_count ?? 0,
       friendCount: r.friend_count ?? 0,
       followingCount: r.following_count ?? 0,
+      surveyDoneCount: r.survey_done_count ?? 0,
       latestFriendAt: r.latest_friend_at,
     })),
     totalFriends: totals?.total ?? 0,

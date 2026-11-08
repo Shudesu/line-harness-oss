@@ -41,7 +41,7 @@ function friendRef(id: string) {
 beforeEach(() => {
   sqlite = new DatabaseSync(':memory:');
   sqlite.exec(`
-    CREATE TABLE friends (id TEXT PRIMARY KEY, line_user_id TEXT, line_account_id TEXT, ref_code TEXT, last_ref_code TEXT, last_ref_at TEXT, is_following INTEGER, created_at TEXT, updated_at TEXT);
+    CREATE TABLE friends (id TEXT PRIMARY KEY, line_user_id TEXT, line_account_id TEXT, ref_code TEXT, last_ref_code TEXT, last_ref_at TEXT, is_following INTEGER, metadata TEXT DEFAULT '{}', created_at TEXT, updated_at TEXT);
     CREATE TABLE entry_routes (id TEXT PRIMARY KEY, ref_code TEXT UNIQUE, name TEXT, tag_id TEXT, scenario_id TEXT, redirect_url TEXT, pool_id TEXT,
       intro_template_id TEXT, run_account_friend_add_scenarios INTEGER DEFAULT 1, is_active INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT);
     CREATE TABLE ref_tracking (id TEXT PRIMARY KEY, ref_code TEXT, friend_id TEXT, entry_route_id TEXT, source_url TEXT, fbclid TEXT, gclid TEXT, twclid TEXT,
@@ -119,6 +119,22 @@ describe('LIFF で開いてから友だち追加', () => {
   it('ほかのアカウントの友だち追加では何もしない', async () => {
     await recordJoinOpen(db, config, { idToken: 't', ref: 'ki-tiktok01' }, okVerify);
     expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f9', lineUserId: USER, lineAccountId: 'other' })).toBeNull();
+  });
+});
+
+describe('経路ごとの人数', () => {
+  it('アンケートを最後まで答えた人を経路ごとに数える（ほかのアカウントは数えない）', async () => {
+    sqlite.exec(`
+      INSERT INTO friends (id, line_user_id, line_account_id, ref_code, is_following, metadata, created_at, updated_at) VALUES
+        ('a', 'Ua', '${ACCOUNT}', 'ki-tiktok01', 1, '{"survey_step":"done"}', '2026-11-05T10:00:00.000+09:00', ''),
+        ('b', 'Ub', '${ACCOUNT}', 'ki-tiktok01', 0, '{"survey_step":"done"}', '2026-11-05T11:00:00.000+09:00', ''),
+        ('c', 'Uc', '${ACCOUNT}', 'ki-tiktok01', 1, '{"survey_step":"grade"}', '2026-11-05T12:00:00.000+09:00', ''),
+        ('d', 'Ud', 'other', 'ki-tiktok01', 1, '{"survey_step":"done"}', '2026-11-05T12:00:00.000+09:00', '');
+    `);
+    const tiktok = (await listJoinLinks(db, ACCOUNT)).links.find((l) => l.id === 'r1')!;
+    expect(tiktok.friendCount).toBe(3);
+    expect(tiktok.followingCount).toBe(2);
+    expect(tiktok.surveyDoneCount).toBe(2);
   });
 });
 

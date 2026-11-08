@@ -84,6 +84,7 @@ import { richMenuGroups } from './routes/rich-menu-groups.js';
 import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
 import { internJoin } from './routes/intern-join.js';
+import { internStats } from './routes/intern-stats.js';
 import { internCopy } from './routes/intern-copy.js';
 import { internRichMenus } from './routes/intern-richmenus.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
@@ -174,6 +175,7 @@ app.use('*', accountScopeMiddleware);
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
 app.route('/', internJoin);
+app.route('/', internStats);
 app.route('/', internCopy);
 app.route('/', internRichMenus);
 app.route('/', friends);
