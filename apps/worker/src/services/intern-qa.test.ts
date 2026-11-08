@@ -48,7 +48,13 @@ describe('Q&A のボタン', () => {
     expect(m.quickReply).toBeUndefined();
     const json = JSON.stringify(m);
     expect(json).toContain('すべて無料で利用できます');
-    expect(json).toContain('"data":"isv:qa"');
+    expect(json).toContain('"data":"isv:qamore"');
+  });
+
+  it('［ほかの質問を見る］でもカルーセルが出る（メニューの Q&A とは別の合図）', () => {
+    const r = reducePostback({ survey_step: 'done' }, 'isv:qamore', {});
+    expect(r?.patch).toBeNull();
+    expect((r?.messages[0] as any).contents.type).toBe('carousel');
   });
 
   it('知らない質問ならカルーセルを出し直す', () => {

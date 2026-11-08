@@ -40,13 +40,14 @@ export async function ensureFollowEventsTable(db: D1Database): Promise<void> {
 /** 友だち追加（ブロック解除を含む）・ブロックを1件記録する。失敗しても呼び出し元は止めない */
 export async function recordFollowEvent(
   db: D1Database,
-  opts: { friendId: string; lineAccountId: string | null | undefined; event: FollowEvent; at?: string },
+  opts: { friendId: string; lineAccountId: string | null | undefined; event: FollowEvent; at?: string; eventId?: string | null },
 ): Promise<void> {
   try {
     await ensureFollowEventsTable(db);
+    // LINE が同じ知らせを送り直したときは同じ webhookEventId が来るので、id にして二重に入れない
     await db
-      .prepare('INSERT INTO friend_follow_events (id, friend_id, line_account_id, event, occurred_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(crypto.randomUUID(), opts.friendId, opts.lineAccountId ?? null, opts.event, opts.at ?? jstNow())
+      .prepare('INSERT OR IGNORE INTO friend_follow_events (id, friend_id, line_account_id, event, occurred_at) VALUES (?, ?, ?, ?, ?)')
+      .bind(opts.eventId || crypto.randomUUID(), opts.friendId, opts.lineAccountId ?? null, opts.event, opts.at ?? jstNow())
       .run();
   } catch (err) {
     console.error('[intern-stats] failed to record follow event', err);
@@ -56,7 +57,7 @@ export async function recordFollowEvent(
 /** ブロックの記録用。LINE のユーザー ID から友だちの id を引いて記録する */
 export async function recordUnfollowByLineUser(
   db: D1Database,
-  opts: { lineUserId: string; lineAccountId: string | null | undefined },
+  opts: { lineUserId: string; lineAccountId: string | null | undefined; eventId?: string | null },
 ): Promise<void> {
   try {
     const row = await db
@@ -64,7 +65,7 @@ export async function recordUnfollowByLineUser(
       .bind(opts.lineUserId)
       .first<{ id: string; line_account_id: string | null }>();
     if (!row) return;
-    await recordFollowEvent(db, { friendId: row.id, lineAccountId: opts.lineAccountId ?? row.line_account_id, event: 'unfollow' });
+    await recordFollowEvent(db, { friendId: row.id, lineAccountId: opts.lineAccountId ?? row.line_account_id, event: 'unfollow', eventId: opts.eventId });
   } catch (err) {
     console.error('[intern-stats] failed to record unfollow', err);
   }
@@ -219,10 +220,14 @@ export async function getInternStats(db: D1Database, accountId: string, days: nu
     surveyDone: doneMap.get(date) ?? 0,
   }));
 
-  // 友だち追加から何日目にブロックしたか（記録のあるブロックだけ）。経過時間ではなく日本時間の日付どうしで数える
+  // 友だち追加から何日目にブロックしたか（記録のあるブロックだけ）。経過時間ではなく日本時間の日付どうしで数える。
+  // ブロック解除して戻った人は、そのブロックの直前の友だち追加から数える（記録が無ければ最初に友だちになった日）
   const gaps = await db
     .prepare(
-      `SELECT julianday(substr(e.occurred_at, 1, 10)) - julianday(substr(f.created_at, 1, 10)) AS gap
+      `SELECT julianday(substr(e.occurred_at, 1, 10)) - julianday(substr(COALESCE(
+                (SELECT MAX(p.occurred_at) FROM friend_follow_events p
+                  WHERE p.friend_id = e.friend_id AND p.event = 'follow' AND p.occurred_at <= e.occurred_at),
+                f.created_at), 1, 10)) AS gap
          FROM friend_follow_events e JOIN friends f ON f.id = e.friend_id
         WHERE e.line_account_id = ? AND e.event = 'unfollow'`,
     )

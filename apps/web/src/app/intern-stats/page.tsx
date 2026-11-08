@@ -237,7 +237,7 @@ export default function InternStatsPage() {
           <section className="rounded-lg border border-gray-200 bg-white p-6">
             <h2 className="mb-1 text-base font-bold text-gray-900">友だち追加から何日目にブロックしたか</h2>
             <p className="mb-4 text-sm text-gray-500">
-              友だちになった日を1日目と数えます（期間に関係なく、記録のあるブロック全部）。
+              友だちになった日を1日目と数えます（期間に関係なく、記録のあるブロック全部）。ブロック解除して戻った人がまたブロックしたときは、戻った日から数えます。
               {data.blocksWithoutTime > 0 && ` 記録を始める前にブロックした ${data.blocksWithoutTime} 人は日時が分からないため入っていません。`}
             </p>
             {blockAfterTotal === 0 ? (

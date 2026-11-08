@@ -74,6 +74,14 @@ describe('ブロックの記録', () => {
     ]);
   });
 
+  it('LINE が同じ知らせを送り直しても1件だけ記録する', async () => {
+    addFriend('a', { createdAt: '2026-11-08T09:00:00.000+09:00' });
+    await recordUnfollowByLineUser(db, { lineUserId: 'Ua', lineAccountId: ACCOUNT, eventId: 'ev-1' });
+    await recordUnfollowByLineUser(db, { lineUserId: 'Ua', lineAccountId: ACCOUNT, eventId: 'ev-1' });
+    await recordUnfollowByLineUser(db, { lineUserId: 'Ua', lineAccountId: ACCOUNT, eventId: 'ev-2' });
+    expect(sqlite.prepare('SELECT id FROM friend_follow_events ORDER BY id').all()).toEqual([{ id: 'ev-1' }, { id: 'ev-2' }]);
+  });
+
   it('知らない人のブロックは何もしない', async () => {
     await recordUnfollowByLineUser(db, { lineUserId: 'Unobody', lineAccountId: ACCOUNT });
     expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE name = 'friend_follow_events'").get()).toBeUndefined();
@@ -127,6 +135,16 @@ describe('数字の集計', () => {
     await recordFollowEvent(db, { friendId: 'n', lineAccountId: ACCOUNT, event: 'unfollow', at: '2026-11-08T01:00:00.000+09:00' });
     const s = await getInternStats(db, ACCOUNT, 7, NOW);
     expect(s.blockAfter.map((b) => b.count)).toEqual([1, 1, 0, 0, 0]);
+  });
+
+  it('ブロック解除して戻った人のブロックは、戻った日から数える', async () => {
+    // e は 11/8 に友だち追加 → 11/9 ブロック → 11/20 に戻る → 11/21 にまたブロック
+    await recordFollowEvent(db, { friendId: 'e', lineAccountId: ACCOUNT, event: 'unfollow', at: '2026-11-09T10:00:00.000+09:00' });
+    await recordFollowEvent(db, { friendId: 'e', lineAccountId: ACCOUNT, event: 'follow', at: '2026-11-20T10:00:00.000+09:00' });
+    await recordFollowEvent(db, { friendId: 'e', lineAccountId: ACCOUNT, event: 'unfollow', at: '2026-11-21T10:00:00.000+09:00' });
+    const s = await getInternStats(db, ACCOUNT, 7, NOW);
+    // b（当日）・e の1回目（2日目）・e の2回目（戻った日から2日目）
+    expect(s.blockAfter.map((b) => b.count)).toEqual([1, 2, 0, 0, 0]);
   });
 
   it('メニューのボタンごとの押された回数（ページを開くボタンは数えない）', async () => {

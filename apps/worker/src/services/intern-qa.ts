@@ -106,6 +106,8 @@ export const QA_SECTIONS: QaSection[] = [
 ];
 
 export const QA_PREFIX = 'qa';
+// 回答カードの［ほかの質問を見る］。メニューの Q&A（qa）と分けて、メニューの押された回数に混ざらないようにする
+export const QA_MORE = 'qamore';
 
 // カードの見た目はアンケートのカード（クリーム）にそろえる
 const CREAM = '#f6f1e7';
@@ -222,7 +224,7 @@ export function buildQaAnswer(
             cornerRadius: '8px',
             borderWidth: '1px',
             borderColor: LINE,
-            action: { type: 'postback', label: labels.more.slice(0, 20), data: `${prefix}${QA_PREFIX}`, displayText: labels.more.slice(0, 300) },
+            action: { type: 'postback', label: labels.more.slice(0, 20), data: `${prefix}${QA_MORE}`, displayText: labels.more.slice(0, 300) },
             contents: [{ type: 'text', text: labels.more, size: 'sm', color: SUB, align: 'center' }],
           },
         ],

@@ -15,7 +15,7 @@
 import type { LineClient } from '@line-crm/line-sdk';
 import { jstNow } from '@line-crm/db';
 import { UNIVERSITIES_TSV } from './intern-universities.js';
-import { buildQaAnswer, buildQaCarousel } from './intern-qa.js';
+import { buildQaAnswer, buildQaCarousel, QA_MORE } from './intern-qa.js';
 import { DEFAULT_COPY, fillInput, loadCopy, type InternCopy } from './intern-copy.js';
 import { resolveInternRichMenuIds } from './intern-richmenus.js';
 import { buildMessage } from './step-delivery.js';
@@ -562,7 +562,7 @@ export function reducePostback(state: SurveyState, data: string, config: SurveyC
 
   const copy = cp(config);
   const already = () => text(copy.done.already);
-  if (body === 'qa') return { patch: null, messages: [buildQaMessage(config)] };
+  if (body === 'qa' || body === QA_MORE) return { patch: null, messages: [buildQaMessage(config)] };
   // Q&A の質問のボタン。アンケートの途中でも答え終えたあとでも、回答だけ返す
   if (body.startsWith('qa:')) return { patch: null, messages: [buildQaAnswer(SURVEY_PREFIX, body.slice(3), copy.qa.sections, copy.qa)] };
   if (body === 'start') {

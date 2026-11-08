@@ -246,7 +246,7 @@ async function handleEvent(
     }
 
     // 数字タブ用：友だち追加（ブロック解除を含む）の日時を残す
-    await recordFollowEvent(db, { friendId: friend.id, lineAccountId, event: 'follow' });
+    await recordFollowEvent(db, { friendId: friend.id, lineAccountId, event: 'follow', eventId: event.webhookEventId });
 
     // KIDOUインターンの経路リンク：LIFF で控えておいた経路を新しい友だちに付ける（下の経路の読み取りより先に）
     try {
@@ -423,7 +423,7 @@ async function handleEvent(
 
     await updateFriendFollowStatus(db, userId, false);
     // 数字タブ用：ブロックした日時を残す（friends には残らないため）
-    await recordUnfollowByLineUser(db, { lineUserId: userId, lineAccountId });
+    await recordUnfollowByLineUser(db, { lineUserId: userId, lineAccountId, eventId: event.webhookEventId });
     return;
   }
 
