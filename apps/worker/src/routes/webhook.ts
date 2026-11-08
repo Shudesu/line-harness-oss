@@ -26,6 +26,7 @@ import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import { attachPendingJoinRef } from '../services/intern-join.js';
 import { recordFollowEvent, recordUnfollowByLineUser } from '../services/intern-stats.js';
+import { claimWebhookEvent } from '../services/webhook-dedupe.js';
 import { handlePickedUniversity, handleSurveyPostback, handleSurveyText, startSurveyOnFollow, surveyConfigFromEnv } from '../services/intern-survey.js';
 import type { Env } from '../index.js';
 
@@ -169,6 +170,11 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
+        // LINE が送り直した知らせ（前に受け取った番号）は処理しない。あいさつなどが2回送られないように
+        if (!(await claimWebhookEvent(db, event.webhookEventId))) {
+          console.log(`[webhook] skip redelivered event ${event.webhookEventId}`);
+          continue;
+        }
         await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES, surveyConfig);
       } catch (err) {
         console.error('Error handling webhook event:', err);
@@ -246,7 +252,7 @@ async function handleEvent(
     }
 
     // 数字タブ用：友だち追加（ブロック解除を含む）の日時を残す
-    await recordFollowEvent(db, { friendId: friend.id, lineAccountId, event: 'follow', eventId: event.webhookEventId });
+    await recordFollowEvent(db, { friendId: friend.id, lineAccountId, event: 'follow', eventId: event.webhookEventId, atMs: event.timestamp });
 
     // KIDOUインターンの経路リンク：LIFF で控えておいた経路を新しい友だちに付ける（下の経路の読み取りより先に）
     try {
@@ -423,7 +429,7 @@ async function handleEvent(
 
     await updateFriendFollowStatus(db, userId, false);
     // 数字タブ用：ブロックした日時を残す（friends には残らないため）
-    await recordUnfollowByLineUser(db, { lineUserId: userId, lineAccountId, eventId: event.webhookEventId });
+    await recordUnfollowByLineUser(db, { lineUserId: userId, lineAccountId, eventId: event.webhookEventId, atMs: event.timestamp });
     return;
   }
 

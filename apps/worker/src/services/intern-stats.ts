@@ -3,7 +3,7 @@
 // ブロックした日時は friends に残らない（is_following が 0 になるだけ）ので、follow / unfollow を
 // friend_follow_events に1件ずつ記録する。表は使うときに無ければ作る（本番の DB に手で流さなくてよいように。
 // 同じ中身を migrations/051 にも置いている）。記録を始める前のブロックは日時が分からない。
-import { jstNow } from '@line-crm/db';
+import { jstNow, toJstString } from '@line-crm/db';
 import { loadInternRichMenuChoice } from './intern-richmenus.js';
 
 export type FollowEvent = 'follow' | 'unfollow';
@@ -40,14 +40,16 @@ export async function ensureFollowEventsTable(db: D1Database): Promise<void> {
 /** 友だち追加（ブロック解除を含む）・ブロックを1件記録する。失敗しても呼び出し元は止めない */
 export async function recordFollowEvent(
   db: D1Database,
-  opts: { friendId: string; lineAccountId: string | null | undefined; event: FollowEvent; at?: string; eventId?: string | null },
+  opts: { friendId: string; lineAccountId: string | null | undefined; event: FollowEvent; at?: string; atMs?: number; eventId?: string | null },
 ): Promise<void> {
   try {
     await ensureFollowEventsTable(db);
+    // 日時は LINE で実際に追加・ブロックした時刻（知らせの timestamp）。無いときは受け取った時刻
+    const at = opts.at ?? (Number.isFinite(opts.atMs) && (opts.atMs as number) > 0 ? toJstString(new Date(opts.atMs as number)) : jstNow());
     // LINE が同じ知らせを送り直したときは同じ webhookEventId が来るので、id にして二重に入れない
     await db
       .prepare('INSERT OR IGNORE INTO friend_follow_events (id, friend_id, line_account_id, event, occurred_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(opts.eventId || crypto.randomUUID(), opts.friendId, opts.lineAccountId ?? null, opts.event, opts.at ?? jstNow())
+      .bind(opts.eventId || crypto.randomUUID(), opts.friendId, opts.lineAccountId ?? null, opts.event, at)
       .run();
   } catch (err) {
     console.error('[intern-stats] failed to record follow event', err);
@@ -57,7 +59,7 @@ export async function recordFollowEvent(
 /** ブロックの記録用。LINE のユーザー ID から友だちの id を引いて記録する */
 export async function recordUnfollowByLineUser(
   db: D1Database,
-  opts: { lineUserId: string; lineAccountId: string | null | undefined; eventId?: string | null },
+  opts: { lineUserId: string; lineAccountId: string | null | undefined; eventId?: string | null; atMs?: number },
 ): Promise<void> {
   try {
     const row = await db
@@ -65,7 +67,7 @@ export async function recordUnfollowByLineUser(
       .bind(opts.lineUserId)
       .first<{ id: string; line_account_id: string | null }>();
     if (!row) return;
-    await recordFollowEvent(db, { friendId: row.id, lineAccountId: opts.lineAccountId ?? row.line_account_id, event: 'unfollow', eventId: opts.eventId });
+    await recordFollowEvent(db, { friendId: row.id, lineAccountId: opts.lineAccountId ?? row.line_account_id, event: 'unfollow', eventId: opts.eventId, atMs: opts.atMs });
   } catch (err) {
     console.error('[intern-stats] failed to record unfollow', err);
   }
@@ -104,7 +106,15 @@ export interface MenuButtonRow {
   /** postback のときだけ数える。ページを開くボタンは数えられない */
   count: number | null;
   countInPeriod: number | null;
+  /** この日時から数えている（それより前の記録は数えない）。null なら記録の最初から */
+  countFrom: string | null;
 }
+
+// メニューの Q&A（isv:qa）は、回答カードの［ほかの質問を見る］も同じ合図を送っていた。合図を分けた版
+// （ハーネス e0beb943）を本番に出した時刻より前は区別できないので、それ以降に押された分だけを数える
+const MENU_COUNT_FROM: Record<string, string> = {
+  'isv:qa': '2026-11-08T14:07:03.000+09:00',
+};
 
 export interface InternStats {
   days: number;
@@ -320,13 +330,15 @@ async function getMenuButtonStats(db: D1Database, accountId: string, since: stri
         (typeof data.uri === 'string' && uriLabel(data.uri)) ||
         'ボタン';
       if (a.action_type === 'postback' && typeof data.data === 'string' && data.data) {
+        const countFrom = MENU_COUNT_FROM[data.data] ?? null;
         const counts = await db
           .prepare(
             `SELECT COUNT(*) AS total, SUM(CASE WHEN substr(created_at, 1, 10) >= ? THEN 1 ELSE 0 END) AS recent
                FROM messages_log
-              WHERE source = 'postback' AND direction = 'incoming' AND content = ? AND line_account_id = ?`,
+              WHERE source = 'postback' AND direction = 'incoming' AND content = ? AND line_account_id = ?
+                AND created_at >= ?`,
           )
-          .bind(since, data.data, accountId)
+          .bind(since, data.data, accountId, countFrom ?? '')
           .first<{ total: number; recent: number | null }>();
         out.push({
           menu: role.menu,
@@ -335,6 +347,7 @@ async function getMenuButtonStats(db: D1Database, accountId: string, since: stri
           kind: 'postback',
           count: counts?.total ?? 0,
           countInPeriod: counts?.recent ?? 0,
+          countFrom,
         });
       } else {
         out.push({
@@ -344,6 +357,7 @@ async function getMenuButtonStats(db: D1Database, accountId: string, since: stri
           kind: a.action_type === 'uri' ? 'uri' : 'other',
           count: null,
           countInPeriod: null,
+          countFrom: null,
         });
       }
     }

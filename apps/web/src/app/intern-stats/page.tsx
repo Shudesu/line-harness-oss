@@ -26,6 +26,7 @@ interface MenuButtonRow {
   kind: 'postback' | 'uri' | 'other'
   count: number | null
   countInPeriod: number | null
+  countFrom: string | null
 }
 
 interface InternStats {
@@ -285,7 +286,14 @@ export default function InternStatsPage() {
                           {b.menu === 'locked' ? '答える前' : '答えた後'}
                           <span className="ml-1 text-xs text-gray-400">（{b.menuName}）</span>
                         </td>
-                        <td className="py-2 pr-4 text-gray-900">{b.label}</td>
+                        <td className="py-2 pr-4 text-gray-900">
+                          {b.label}
+                          {b.countFrom && (
+                            <span className="mt-0.5 block text-xs text-gray-400">
+                              {formatDateTime(b.countFrom)} から数えています（それより前は回答カードの［ほかの質問を見る］と見分けられないため）
+                            </span>
+                          )}
+                        </td>
                         {b.count === null ? (
                           <td colSpan={2} className="py-2 text-right text-xs text-gray-400">
                             {b.kind === 'uri' ? 'ページを開くボタンのため数えられません' : '数えていません'}

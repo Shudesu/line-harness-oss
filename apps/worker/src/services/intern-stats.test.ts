@@ -82,6 +82,13 @@ describe('ブロックの記録', () => {
     expect(sqlite.prepare('SELECT id FROM friend_follow_events ORDER BY id').all()).toEqual([{ id: 'ev-1' }, { id: 'ev-2' }]);
   });
 
+  it('日時は LINE で実際にブロックした時刻（知らせの timestamp）で記録する', async () => {
+    addFriend('a', { createdAt: '2026-11-08T09:00:00.000+09:00' });
+    // 2026-11-07 15:30Z は日本時間で 11/8 の 0:30
+    await recordUnfollowByLineUser(db, { lineUserId: 'Ua', lineAccountId: ACCOUNT, eventId: 'ev-1', atMs: Date.parse('2026-11-07T15:30:00.000Z') });
+    expect(sqlite.prepare('SELECT occurred_at FROM friend_follow_events').get()).toEqual({ occurred_at: '2026-11-08T00:30:00.000+09:00' });
+  });
+
   it('知らない人のブロックは何もしない', async () => {
     await recordUnfollowByLineUser(db, { lineUserId: 'Unobody', lineAccountId: ACCOUNT });
     expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE name = 'friend_follow_events'").get()).toBeUndefined();
@@ -169,16 +176,18 @@ describe('数字の集計', () => {
       INSERT INTO messages_log VALUES
         ('m1', 'a', 'incoming', 'text', 'isv:start', 'postback', '${ACCOUNT}', '2026-10-01T10:00:00.000+09:00'),
         ('m2', 'a', 'incoming', 'text', 'isv:start', 'postback', '${ACCOUNT}', '2026-11-07T10:00:00.000+09:00'),
-        ('m3', 'a', 'incoming', 'text', 'isv:qa', 'postback', '${ACCOUNT}', '2026-11-08T10:00:00.000+09:00'),
-        ('m4', 'x', 'incoming', 'text', 'isv:qa', 'postback', 'other', '2026-11-08T10:00:00.000+09:00'),
-        ('m5', 'a', 'outgoing', 'text', 'isv:qa', 'postback', '${ACCOUNT}', '2026-11-08T10:00:00.000+09:00');
+        ('m3', 'a', 'incoming', 'text', 'isv:qa', 'postback', '${ACCOUNT}', '2026-11-08T14:30:00.000+09:00'),
+        ('m4', 'x', 'incoming', 'text', 'isv:qa', 'postback', 'other', '2026-11-08T14:30:00.000+09:00'),
+        ('m5', 'a', 'outgoing', 'text', 'isv:qa', 'postback', '${ACCOUNT}', '2026-11-08T14:30:00.000+09:00'),
+        -- 合図を分ける前の Q&A は［ほかの質問を見る］と見分けられないので数えない
+        ('m6', 'a', 'incoming', 'text', 'isv:qa', 'postback', '${ACCOUNT}', '2026-11-08T10:00:00.000+09:00');
     `);
     const s = await getInternStats(db, ACCOUNT, 7, NOW);
     expect(s.menuButtons).toEqual([
-      { menu: 'locked', menuName: '鍵付き', label: 'アンケートに答える', kind: 'postback', count: 2, countInPeriod: 1 },
-      { menu: 'unlocked', menuName: '解放後', label: 'マイページ', kind: 'uri', count: null, countInPeriod: null },
-      { menu: 'unlocked', menuName: '解放後', label: 'Q&A', kind: 'postback', count: 1, countInPeriod: 1 },
-      { menu: 'unlocked', menuName: '解放後', label: 'マイページ', kind: 'uri', count: null, countInPeriod: null },
+      { menu: 'locked', menuName: '鍵付き', label: 'アンケートに答える', kind: 'postback', count: 2, countInPeriod: 1, countFrom: null },
+      { menu: 'unlocked', menuName: '解放後', label: 'マイページ', kind: 'uri', count: null, countInPeriod: null, countFrom: null },
+      { menu: 'unlocked', menuName: '解放後', label: 'Q&A', kind: 'postback', count: 1, countInPeriod: 1, countFrom: '2026-11-08T14:07:03.000+09:00' },
+      { menu: 'unlocked', menuName: '解放後', label: 'マイページ', kind: 'uri', count: null, countInPeriod: null, countFrom: null },
     ]);
   });
 
