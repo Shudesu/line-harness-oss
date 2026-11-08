@@ -147,6 +147,15 @@ describe('数字の集計', () => {
     expect(s.blockAfter.map((b) => b.count)).toEqual([1, 2, 0, 0, 0]);
   });
 
+  it('別のアカウントへの友だち追加は、戻った日に数えない', async () => {
+    // e は 11/8 に友だち追加 → 11/20 に別のアカウントへ友だち追加 → 11/21 にこのアカウントでブロック
+    await recordFollowEvent(db, { friendId: 'e', lineAccountId: 'other', event: 'follow', at: '2026-11-20T10:00:00.000+09:00' });
+    await recordFollowEvent(db, { friendId: 'e', lineAccountId: ACCOUNT, event: 'unfollow', at: '2026-11-21T10:00:00.000+09:00' });
+    const s = await getInternStats(db, ACCOUNT, 7, NOW);
+    // b（当日）・e（最初の追加 11/8 から14日目）
+    expect(s.blockAfter.map((b) => b.count)).toEqual([1, 0, 0, 1, 0]);
+  });
+
   it('メニューのボタンごとの押された回数（ページを開くボタンは数えない）', async () => {
     sqlite.exec(`
       INSERT INTO account_settings VALUES ('s1', '${ACCOUNT}', '${INTERN_RICHMENUS_KEY}', '{"lockedGroupId":"g1","unlockedGroupId":"g2"}', '', '');

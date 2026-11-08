@@ -221,12 +221,13 @@ export async function getInternStats(db: D1Database, accountId: string, days: nu
   }));
 
   // 友だち追加から何日目にブロックしたか（記録のあるブロックだけ）。経過時間ではなく日本時間の日付どうしで数える。
-  // ブロック解除して戻った人は、そのブロックの直前の友だち追加から数える（記録が無ければ最初に友だちになった日）
+  // ブロック解除して戻った人は、同じアカウントでのそのブロックの直前の友だち追加から数える（記録が無ければ最初に友だちになった日）
   const gaps = await db
     .prepare(
       `SELECT julianday(substr(e.occurred_at, 1, 10)) - julianday(substr(COALESCE(
                 (SELECT MAX(p.occurred_at) FROM friend_follow_events p
-                  WHERE p.friend_id = e.friend_id AND p.event = 'follow' AND p.occurred_at <= e.occurred_at),
+                  WHERE p.friend_id = e.friend_id AND p.line_account_id = e.line_account_id
+                    AND p.event = 'follow' AND p.occurred_at <= e.occurred_at),
                 f.created_at), 1, 10)) AS gap
          FROM friend_follow_events e JOIN friends f ON f.id = e.friend_id
         WHERE e.line_account_id = ? AND e.event = 'unfollow'`,
