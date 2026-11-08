@@ -116,8 +116,18 @@ const MENU_COUNT_FROM: Record<string, string> = {
   'isv:qa': '2026-11-08T14:07:03.000+09:00',
 };
 
+// 事業メンバー（テストで友だちになった人）。アンケートの進み具合と日ごとの推移には数えない（そーご依頼 11/08）
+export const STATS_EXCLUDED_FRIEND_IDS: readonly string[] = [
+  'fc823056-2013-4948-b5fe-86a1b8eedb07', // そーご
+  '657bc31c-5025-4997-8132-84981f4f475f', // 小林 海智
+  '003d7be8-4ae6-4683-9239-e4809841d29a', // 澤畠 獅斗
+  '3f7fc5a9-a496-4575-9196-885dc296a135', // あんな
+];
+
 export interface InternStats {
   days: number;
+  /** アンケートの進み具合・日ごとの推移から外している事業メンバーの人数 */
+  excludedMembers: number;
   since: string;
   totals: { friends: number; following: number; blocked: number; surveyDone: number };
   funnel: FunnelRow[];
@@ -147,8 +157,16 @@ const BLOCK_BUCKETS: { label: string; max: number }[] = [
   { label: '31日目以降', max: Infinity },
 ];
 
-export async function getInternStats(db: D1Database, accountId: string, days: number, now = new Date()): Promise<InternStats> {
+export async function getInternStats(
+  db: D1Database,
+  accountId: string,
+  days: number,
+  now = new Date(),
+  excludedIds: readonly string[] = STATS_EXCLUDED_FRIEND_IDS,
+): Promise<InternStats> {
   await ensureFollowEventsTable(db);
+  // 事業メンバーを外す条件（進み具合と日ごとの推移だけに使う）。何も無いときは条件を足さない
+  const notMember = (col: string) => (excludedIds.length ? ` AND ${col} NOT IN (${excludedIds.map(() => '?').join(', ')})` : '');
   const dates = jstDates(days, now);
   const since = dates[0];
 
@@ -170,9 +188,9 @@ export async function getInternStats(db: D1Database, accountId: string, days: nu
     .prepare(
       `SELECT COALESCE(json_extract(metadata, '$.survey_step'), '') AS step,
          COUNT(*) AS n, SUM(CASE WHEN is_following = 1 THEN 0 ELSE 1 END) AS blocked
-       FROM friends WHERE line_account_id = ? GROUP BY step`,
+       FROM friends WHERE line_account_id = ?${notMember('id')} GROUP BY step`,
     )
-    .bind(accountId)
+    .bind(accountId, ...excludedIds)
     .all<{ step: string; n: number; blocked: number | null }>();
   const byStep = new Map<string, { n: number; blocked: number }>();
   for (const r of stepRows.results ?? []) byStep.set(r.step, { n: r.n, blocked: r.blocked ?? 0 });
@@ -185,10 +203,11 @@ export async function getInternStats(db: D1Database, accountId: string, days: nu
     }
     return { n, blocked };
   };
+  let funnelFriends = 0;
   let allBlocked = 0;
-  for (const v of byStep.values()) allBlocked += v.blocked;
+  for (const v of byStep.values()) { funnelFriends += v.n; allBlocked += v.blocked; }
   const funnel: FunnelRow[] = [
-    { key: 'friend', label: '友だちになった', count: friends, blocked: allBlocked },
+    { key: 'friend', label: '友だちになった', count: funnelFriends, blocked: allBlocked },
     { key: 'greeted', label: 'あいさつ・お願いのカードを受け取った', ...pick(reached(0)) },
     { key: 'consented', label: '同意した（大学の質問へ）', ...pick(reached(1)) },
     { key: 'university', label: '大学を答えた', ...pick(reached(2)) },
@@ -200,24 +219,24 @@ export async function getInternStats(db: D1Database, accountId: string, days: nu
   const newRows = await db
     .prepare(
       `SELECT substr(created_at, 1, 10) AS d, COUNT(*) AS n FROM friends
-        WHERE line_account_id = ? AND substr(created_at, 1, 10) >= ? GROUP BY d`,
+        WHERE line_account_id = ? AND substr(created_at, 1, 10) >= ?${notMember('id')} GROUP BY d`,
     )
-    .bind(accountId, since)
+    .bind(accountId, since, ...excludedIds)
     .all<{ d: string; n: number }>();
   const blockRows = await db
     .prepare(
       `SELECT substr(occurred_at, 1, 10) AS d, COUNT(*) AS n FROM friend_follow_events
-        WHERE line_account_id = ? AND event = 'unfollow' AND substr(occurred_at, 1, 10) >= ? GROUP BY d`,
+        WHERE line_account_id = ? AND event = 'unfollow' AND substr(occurred_at, 1, 10) >= ?${notMember('friend_id')} GROUP BY d`,
     )
-    .bind(accountId, since)
+    .bind(accountId, since, ...excludedIds)
     .all<{ d: string; n: number }>();
   const doneRows = await db
     .prepare(
       `SELECT substr(json_extract(metadata, '$.survey_completed_at'), 1, 10) AS d, COUNT(*) AS n FROM friends
         WHERE line_account_id = ? AND json_extract(metadata, '$.survey_completed_at') IS NOT NULL
-          AND substr(json_extract(metadata, '$.survey_completed_at'), 1, 10) >= ? GROUP BY d`,
+          AND substr(json_extract(metadata, '$.survey_completed_at'), 1, 10) >= ?${notMember('id')} GROUP BY d`,
     )
-    .bind(accountId, since)
+    .bind(accountId, since, ...excludedIds)
     .all<{ d: string; n: number }>();
   const toMap = (rows: { d: string; n: number }[] | undefined) => new Map((rows ?? []).map((r) => [r.d, r.n]));
   const newMap = toMap(newRows.results);
@@ -268,6 +287,7 @@ export async function getInternStats(db: D1Database, accountId: string, days: nu
 
   return {
     days,
+    excludedMembers: excludedIds.length,
     since,
     totals: { friends, following, blocked: friends - following, surveyDone: totals?.survey_done ?? 0 },
     funnel,

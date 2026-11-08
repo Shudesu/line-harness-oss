@@ -129,6 +129,23 @@ describe('数字の集計', () => {
     expect(s.daily.at(-1)).toEqual({ date: '2026-11-08', newFriends: 2, blocks: 0, surveyDone: 1 });
   });
 
+  it('事業メンバーは進み具合と日ごとの推移に数えない（合計には残す）', async () => {
+    // a（回答完了）と b（ブロック済み）をメンバーとして外す
+    const s = await getInternStats(db, ACCOUNT, 7, NOW, ['a', 'b']);
+    expect(s.excludedMembers).toBe(2);
+    expect(s.totals).toEqual({ friends: 5, following: 3, blocked: 2, surveyDone: 2 });
+    expect(s.funnel.map((f) => [f.key, f.count, f.blocked])).toEqual([
+      ['friend', 3, 1],
+      ['greeted', 2, 1],
+      ['consented', 1, 0],
+      ['university', 1, 0],
+      ['grade', 1, 0],
+      ['done', 1, 0],
+    ]);
+    expect(s.daily.at(-2)).toEqual({ date: '2026-11-07', newFriends: 1, blocks: 0, surveyDone: 0 });
+    expect(s.daily.at(-1)).toEqual({ date: '2026-11-08', newFriends: 2, blocks: 0, surveyDone: 1 });
+  });
+
   it('追加から何日目にブロックしたか・記録の無いブロック', async () => {
     await recordFollowEvent(db, { friendId: 'e', lineAccountId: ACCOUNT, event: 'unfollow', at: '2026-11-12T10:00:00.000+09:00' });
     const s = await getInternStats(db, ACCOUNT, 7, NOW);

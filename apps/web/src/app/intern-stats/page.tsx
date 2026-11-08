@@ -31,6 +31,7 @@ interface MenuButtonRow {
 
 interface InternStats {
   days: number
+  excludedMembers: number
   since: string
   totals: { friends: number; following: number; blocked: number; surveyDone: number }
   funnel: FunnelRow[]
@@ -157,7 +158,7 @@ export default function InternStatsPage() {
           {/* アンケートの進み具合 */}
           <section className="rounded-lg border border-gray-200 bg-white p-6">
             <h2 className="mb-1 text-base font-bold text-gray-900">アンケートの進み具合</h2>
-            <p className="mb-4 text-sm text-gray-500">これまでに友だちになった人が、どこまで進んだかです（期間に関係なく全員）。前の段より大きく減っているところで人が抜けています。</p>
+            <p className="mb-4 text-sm text-gray-500">これまでに友だちになった人が、どこまで進んだかです（期間に関係なく全員）。前の段より大きく減っているところで人が抜けています。{data.excludedMembers > 0 && `事業メンバー${data.excludedMembers}人は数えていません。`}</p>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-sm">
                 <thead>
@@ -194,6 +195,7 @@ export default function InternStatsPage() {
             <p className="mb-4 text-sm text-gray-500">
               日本時間の日付ごとです。「友だち追加」は初めて友だちになった人（ブロック解除で戻った人は入りません）。
               ブロックは {data.blockLogStartedAt ? `${formatDateTime(data.blockLogStartedAt)} から` : 'この画面を入れた日から'}記録しています。
+              {data.excludedMembers > 0 && `事業メンバー${data.excludedMembers}人は数えていません。`}
             </p>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[620px] text-sm">
