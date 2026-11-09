@@ -16,6 +16,7 @@ const dbMocks = {
   getAccountSetting: vi.fn(),
   setAccountSetting: vi.fn(),
   jstNow: vi.fn(() => '2026-08-10T12:00:00.000+09:00'),
+  toJstString: vi.fn(),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -430,6 +431,66 @@ describe('GET /api/line-accounts/delivery-health', () => {
 
     const body = (await res.json()) as { data: { accounts: Array<{ lineAccountId: string }> } };
     expect(body.data.accounts.map((a) => a.lineAccountId)).toEqual(['acc-1']);
+  });
+});
+
+describe('POST /api/line-accounts without a channel access token', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test('issues a token from channelId + channelSecret and records its expiry', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('/oauth/accessToken')
+        ? new Response(JSON.stringify({ access_token: 'issued-token', expires_in: 2_592_000 }))
+        : new Response('{}', { status: 404 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    dbMocks.toJstString.mockImplementation(
+      (date: Date) => new Date(date.getTime() + 9 * 3_600_000).toISOString().slice(0, -1) + '+09:00',
+    );
+    dbMocks.createLineAccount.mockResolvedValue({ ...fakeAccount, channel_access_token: 'issued-token' });
+
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channelId: '123456789', name: 'メイン', channelSecret: 'secret' }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.line.me/v2/oauth/accessToken');
+    expect(dbMocks.createLineAccount.mock.calls[0][1]).toMatchObject({
+      channelAccessToken: 'issued-token',
+      tokenExpiresAt: expect.stringMatching(/\+09:00$/),
+    });
+  });
+
+  test('rejects with 400 and registers nothing when the credentials cannot issue a token', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"invalid_client"}', { status: 400 })));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    dbMocks.createLineAccount.mockClear();
+
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channelId: '123456789', name: 'メイン', channelSecret: 'wrong' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(dbMocks.createLineAccount).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  test('still requires channelSecret', async () => {
+    const app = setupApp('owner');
+    const res = await app.request('/api/line-accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channelId: '123456789', name: 'メイン' }),
+    });
+    expect(res.status).toBe(400);
   });
 });
 

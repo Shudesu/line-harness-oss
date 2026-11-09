@@ -122,7 +122,6 @@ crons = ["*/5 * * * *"]
 ```bash
 wrangler secret put API_KEY
 wrangler secret put LINE_CHANNEL_SECRET
-wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 wrangler secret put LINE_CHANNEL_ID
 wrangler secret put LINE_LOGIN_CHANNEL_ID
 wrangler secret put LINE_LOGIN_CHANNEL_SECRET
@@ -270,7 +269,7 @@ wrangler d1 create line-crm
 | `DB` | D1 バインディング | wrangler.toml |
 | `API_KEY` | REST API 認証キー | `wrangler secret put` |
 | `LINE_CHANNEL_SECRET` | Messaging API チャネルシークレット | `wrangler secret put` |
-| `LINE_CHANNEL_ACCESS_TOKEN` | Messaging API アクセストークン | `wrangler secret put` |
+| `LINE_CHANNEL_ACCESS_TOKEN` | 任意。長期トークン（通常は不要・[Configuration](Configuration.md)） | `wrangler secret put` |
 | `LIFF_URL` | LIFF アプリ URL | `wrangler secret put` |
 | `LINE_CHANNEL_ID` | Messaging API チャネルID | `wrangler secret put` |
 | `LINE_LOGIN_CHANNEL_ID` | LINE Login チャネルID | `wrangler secret put` |

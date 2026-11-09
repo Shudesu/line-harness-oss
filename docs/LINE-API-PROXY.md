@@ -35,7 +35,7 @@ curl -X POST "https://<WORKER_URL>/line-api/v2/bot/message/push" \
 - アカウントが1つなら自動でそのアカウントから送信
 - 複数アカウント構成では `X-Line-Account-Id: <line_accounts.id または channel_id>` ヘッダーで送信元を指定(未指定は 400)
 
-**2. チャネルアクセストークン(drop-in 移行用)** — 既存スクリプトの Authorization をそのままに、ベースURLだけ差し替えれば動く。`line_accounts.channel_access_token`(is_active のみ)と `env.LINE_CHANNEL_ACCESS_TOKEN` に照合し、未登録トークンは 401(オープンリレー防止)。
+**2. チャネルアクセストークン(drop-in 移行用)** — 既存スクリプトの Authorization をそのままに、ベースURLだけ差し替えれば動く。`line_accounts.channel_access_token`(is_active のみ)と `env.LINE_CHANNEL_ACCESS_TOKEN` に照合し、未登録トークンは 401(オープンリレー防止)。`line_accounts` のトークンは Worker が自動で発行し直す（30日）ので、既存スクリプトの長期トークンを受け付けたいあいだは `LINE_CHANNEL_ACCESS_TOKEN` にその長期トークンを入れておく。
 
 ## 動作仕様
 
@@ -69,7 +69,7 @@ curl -X POST "https://<WORKER_URL>/line-api/v2/bot/message/push" \
 1. 全エージェント・スクリプトをプロキシ経由に切り替える(まずはベースURL差し替えの drop-in でよい)
 2. 動作確認後、各エージェントの認証を **harness API キー(系統1)に差し替え、.env からチャネルアクセストークンを削除**する
 3. LINE Developers コンソールでチャネルアクセストークンを**再発行**(旧トークン即失効)。以後トークンを知っているのは worker だけになり、直接送信は物理的に不可能になる
-   - 再発行後は D1 `line_accounts.channel_access_token` と `wrangler secret put LINE_CHANNEL_ACCESS_TOKEN` を新トークンに更新
+   - 再発行後は `wrangler secret delete LINE_CHANNEL_ACCESS_TOKEN` で長期トークンを Worker からも外す。Worker はチャネル ID + シークレットから自分でトークンを発行するので、新しい長期トークンを入れ直す必要はない
    - 順序厳守: 切替 → 確認 → 再発行。逆にするとエージェントの送信が切替完了まで全部落ちる
 4. 以後、新しいエージェントに配るのは **プロキシ URL + harness API キーのみ**
 

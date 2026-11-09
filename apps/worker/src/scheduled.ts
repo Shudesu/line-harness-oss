@@ -12,6 +12,7 @@ import { startBulkSendJobs } from './services/quota.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
 import { checkAccountHealth } from './services/ban-monitor.js';
 import { refreshLineAccessTokens } from './services/token-refresh.js';
+import { withDefaultLineToken } from './services/default-line-token.js';
 import { processInsightFetch } from './services/insight-fetcher.js';
 import { processDueReminders } from './services/booking-reminders.js';
 import { runExpirer } from './services/booking-expirer.js';
@@ -74,6 +75,9 @@ export async function scheduled(
     catch { console.warn('[ig-link] cleanup_failed'); }
   }
   await flushXGateEvents(env);
+  // LINE_CHANNEL_ACCESS_TOKEN が未設定なら、既定アカウントのトークンを env に詰める
+  // （services/default-line-token.ts）。
+  env = await withDefaultLineToken(env);
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);
 

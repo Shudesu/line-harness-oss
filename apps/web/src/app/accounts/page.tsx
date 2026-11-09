@@ -120,7 +120,7 @@ export default function AccountsPage() {
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
     setCreateError('')
-    if (!form.channelId || !form.name || !form.channelAccessToken || !form.channelSecret) {
+    if (!form.channelId || !form.name || !form.channelSecret) {
       setCreateError('Messaging APIの必須項目を入力してください')
       return
     }
@@ -129,7 +129,8 @@ export default function AccountsPage() {
       const response = await api.lineAccounts.create({
         channelId: form.channelId.trim(),
         name: form.name.trim(),
-        channelAccessToken: form.channelAccessToken.trim(),
+        // 空欄なら Worker が Channel ID + Secret から発行する
+        channelAccessToken: form.channelAccessToken.trim() || null,
         channelSecret: form.channelSecret.trim(),
         loginChannelId: form.loginChannelId.trim() || null,
         loginChannelSecret: form.loginChannelSecret.trim() || null,

@@ -29,6 +29,8 @@ export interface CreateLineAccountInput {
   name: string;
   channelAccessToken: string;
   channelSecret: string;
+  /** channelAccessToken の期限（JST ISO8601）。分からなければ省略（cron が発行し直す）。 */
+  tokenExpiresAt?: string | null;
   loginChannelId?: string | null;
   loginChannelSecret?: string | null;
   liffId?: string | null;
@@ -54,12 +56,12 @@ export async function createLineAccount(
   await db
     .prepare(
       `INSERT INTO line_accounts
-         (id, channel_id, name, channel_access_token, channel_secret,
+         (id, channel_id, name, channel_access_token, channel_secret, token_expires_at,
           login_channel_id, login_channel_secret, liff_id,
           is_active, display_order,
           og_site_name, og_default_image_url, og_default_description,
           created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -67,6 +69,7 @@ export async function createLineAccount(
       input.name,
       input.channelAccessToken,
       input.channelSecret,
+      input.tokenExpiresAt ?? null,
       input.loginChannelId ?? null,
       input.loginChannelSecret ?? null,
       input.liffId ?? null,

@@ -74,7 +74,6 @@ Worker secrets は `wrangler secret put` で Cloudflare 側に設定します。
 ```bash
 npx wrangler secret put API_KEY
 npx wrangler secret put LINE_CHANNEL_SECRET
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put LINE_CHANNEL_ID
 npx wrangler secret put LINE_LOGIN_CHANNEL_ID
 npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET

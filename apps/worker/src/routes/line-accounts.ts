@@ -19,6 +19,7 @@ import {
 } from '../services/follower-import.js';
 import type { FollowerImportClient } from '../services/follower-import.js';
 import type { Env } from '../index.js';
+import { issueChannelToken } from '../services/token-refresh.js';
 import { countAccountMonthlyMessages, jstYyyyMmDd } from '../services/quota.js';
 import { countDeliverableAudience } from '../services/quota-alert.js';
 
@@ -514,7 +515,8 @@ lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
     const body = await c.req.json<{
       channelId: string;
       name: string;
-      channelAccessToken: string;
+      /** 任意。省略するとチャネル ID + シークレットから Worker が発行する（推奨）。 */
+      channelAccessToken?: string | null;
       channelSecret: string;
       loginChannelId?: string | null;
       loginChannelSecret?: string | null;
@@ -524,9 +526,9 @@ lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
       ogDefaultDescription?: string | null;
     }>();
 
-    if (!body.channelId || !body.name || !body.channelAccessToken || !body.channelSecret) {
+    if (!body.channelId || !body.name || !body.channelSecret) {
       return c.json(
-        { success: false, error: 'channelId, name, channelAccessToken, and channelSecret are required' },
+        { success: false, error: 'channelId, name, and channelSecret are required' },
         400,
       );
     }
@@ -547,11 +549,35 @@ lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
     const dupError = await checkUniqueLoginAndLiff(c.env.DB, { loginChannelId, liffId }, null);
     if (dupError) return c.json({ success: false, error: dupError }, 409);
 
+    // トークンが渡されなければ、チャネル ID + シークレットから発行する。
+    // 発行できない = ID かシークレットが違うので、登録せずに 400 を返す。
+    let channelAccessToken = normalizeOptionalString(body.channelAccessToken) ?? null;
+    let tokenExpiresAt: string | null = null;
+    if (!channelAccessToken) {
+      try {
+        const issued = await issueChannelToken(body.channelId, body.channelSecret);
+        channelAccessToken = issued.accessToken;
+        tokenExpiresAt = issued.expiresAt;
+      } catch (err) {
+        console.error('[line-accounts] token issue failed', err);
+        return c.json(
+          {
+            success: false,
+            error: 'チャネル ID とチャネルシークレットからトークンを発行できませんでした。値を確認してください',
+          },
+          400,
+        );
+      }
+    }
+
+    // 発行したトークンは期限も記録し、cron が期限前に発行し直せるようにする。
+    // 手で渡されたトークンは期限が分からないので NULL（次の cron で発行し直される）。
     const account = await createLineAccount(c.env.DB, {
       channelId: body.channelId,
       name: body.name,
-      channelAccessToken: body.channelAccessToken,
+      channelAccessToken,
       channelSecret: body.channelSecret,
+      tokenExpiresAt,
       loginChannelId,
       loginChannelSecret,
       liffId,

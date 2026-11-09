@@ -24,6 +24,7 @@ import { generateApiKey } from "../lib/crypto.js";
 import { assertSetupWranglerConfigSafe } from "../lib/wrangler-config-preservation.js";
 import { buildLineIdentitySql, quoteSqlString } from "../lib/line-account-sql.js";
 import { validateSetupReleaseVersion } from "../lib/setup-release.js";
+import { issueShortLivedChannelToken } from "../lib/line-token.js";
 import {
   getAccountIds,
   setAccountId,
@@ -548,11 +549,29 @@ async function runSetupInner(
     p.log.success(`プロジェクト名: ${state.projectName}`);
   }
 
+  // Messaging API のトークンは長期トークンを聞かず、チャネル ID + シークレットから
+  // 30日トークンをその場で発行して使う（bot 情報の取得と line_accounts の初期値）。
+  // state ファイルには保存しない。line_accounts に入れた値は token_expires_at が
+  // NULL なので、Worker の cron が最初の tick で発行し直して期限の管理を始める。
+  // 旧版の state を再開した場合は、保存済みの長期トークンをそのまま使う。
+  let issuedChannelToken: string | null = null;
+
   // Step 4: Get LINE credentials (skip if already saved)
   if (!isDone(state, "credentials")) {
     const credentials = await promptLineCredentials();
+    // ID・シークレットの誤りはここで止める。後のステップ（Worker のデプロイ後）で
+    // 初めて分かると、credentials が完了扱いのまま再実行しても聞き直せなくなる。
+    try {
+      issuedChannelToken = await issueShortLivedChannelToken(
+        credentials.lineChannelId,
+        credentials.lineChannelSecret,
+      );
+    } catch (err) {
+      p.log.error(err instanceof Error ? err.message : String(err));
+      p.cancel("チャネル ID とチャネルシークレットを確認して、もう一度実行してください");
+      process.exit(1);
+    }
     state.lineChannelId = credentials.lineChannelId;
-    state.lineChannelAccessToken = credentials.lineChannelAccessToken;
     state.lineChannelSecret = credentials.lineChannelSecret;
     state.lineLoginChannelId = credentials.lineLoginChannelId;
     markDone(state, "credentials");
@@ -560,6 +579,17 @@ async function runSetupInner(
   } else {
     p.log.success("LINE チャネル情報: 入力済み（スキップ）");
   }
+
+  const channelToken = async (): Promise<string> => {
+    if (state.lineChannelAccessToken) return state.lineChannelAccessToken;
+    if (!issuedChannelToken) {
+      issuedChannelToken = await issueShortLivedChannelToken(
+        state.lineChannelId!,
+        state.lineChannelSecret!,
+      );
+    }
+    return issuedChannelToken;
+  };
 
   // Step 5: Ask for LIFF ID (skip if already saved)
   if (!isDone(state, "liffId")) {
@@ -677,7 +707,7 @@ async function runSetupInner(
   if (!state.botBasicId) {
     try {
       const botRes = await fetch("https://api.line.me/v2/bot/info", {
-        headers: { Authorization: `Bearer ${state.lineChannelAccessToken}` },
+        headers: { Authorization: `Bearer ${await channelToken()}` },
       });
       if (botRes.ok) {
         const bot = (await botRes.json()) as { basicId?: string };
@@ -728,7 +758,7 @@ async function runSetupInner(
   if (!isDone(state, "secrets")) {
     await setSecrets({
       workerName: state.workerName,
-      lineChannelAccessToken: state.lineChannelAccessToken!,
+      lineChannelAccessToken: state.lineChannelAccessToken,
       lineChannelSecret: state.lineChannelSecret!,
       lineLoginChannelId: state.lineLoginChannelId!,
       liffId: state.liffId!,
@@ -772,7 +802,7 @@ async function runSetupInner(
       // the CLI working against older databases that resumed an old install.
       const insertSql = `
 INSERT INTO line_accounts (id, channel_id, name, channel_access_token, channel_secret, is_active, created_at, updated_at)
-VALUES (${q(id)}, ${q(state.lineChannelId!)}, ${q("L Harness")}, ${q(state.lineChannelAccessToken!)}, ${q(state.lineChannelSecret!)}, 1, ${q(jstNowStr)}, ${q(jstNowStr)})
+VALUES (${q(id)}, ${q(state.lineChannelId!)}, ${q("L Harness")}, ${q(await channelToken())}, ${q(state.lineChannelSecret!)}, 1, ${q(jstNowStr)}, ${q(jstNowStr)})
 ON CONFLICT(channel_id) DO UPDATE SET
   channel_access_token = excluded.channel_access_token,
   channel_secret = excluded.channel_secret,

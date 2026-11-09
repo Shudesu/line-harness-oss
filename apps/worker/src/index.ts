@@ -81,6 +81,7 @@ import { adminSso } from './routes/admin-sso.js';
 import { mediaInquiries } from './routes/media-inquiries.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
 import { buildOgHtml } from './lib/og-html.js';
+import { withDefaultLineToken } from './services/default-line-token.js';
 import { loginUnconfiguredPage } from './lib/login-unconfigured.js';
 import {
   resolveOgForEvent,
@@ -94,6 +95,11 @@ export type Env = {
     IMAGES: R2Bucket;
     ASSETS: Fetcher;
     LINE_CHANNEL_SECRET: string;
+    /**
+     * 任意。未設定なら line_accounts の既定アカウントのトークン（チャネル ID + シークレット
+     * から Worker が発行したもの）を使う（services/default-line-token.ts）。設定するのは、
+     * LINE API プロキシの drop-in 認証で既存スクリプトの長期トークンを受け付けたい場合だけ。
+     */
     LINE_CHANNEL_ACCESS_TOKEN: string;
     API_KEY: string;
     ACCESS_REQUIRED?: string;
@@ -995,7 +1001,11 @@ app.notFound(notFoundHandler);
 export { TenantScheduler };
 
 export default {
-  fetch: app.fetch,
+  // LINE_CHANNEL_ACCESS_TOKEN が未設定なら、既定アカウントのトークンを env に詰めてから
+  // ルートに渡す（services/default-line-token.ts）。CORS の事前確認（OPTIONS）は
+  // LINE に何も送らないので D1 を読まずに通す。
+  fetch: async (request: Request, env: Env['Bindings'], ctx?: ExecutionContext) =>
+    app.fetch(request, request.method === 'OPTIONS' ? env : await withDefaultLineToken(env), ctx),
   scheduled,
 };
 // redeploy trigger

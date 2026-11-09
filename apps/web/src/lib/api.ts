@@ -653,7 +653,8 @@ export const api = {
     create: (data: {
       channelId: string;
       name: string;
-      channelAccessToken: string;
+      /** 省略・null なら Worker が Channel ID + Secret から発行する */
+      channelAccessToken?: string | null;
       channelSecret: string;
       loginChannelId?: string | null;
       loginChannelSecret?: string | null;
