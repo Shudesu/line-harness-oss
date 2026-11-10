@@ -1,0 +1,46 @@
+{
+  "purpose": "PR #426: preserve refreshed default tokens and bound concurrent account reads",
+  "scope": {
+    "http": "Non-OPTIONS requests without an explicit LINE_CHANNEL_ACCESS_TOKEN",
+    "scheduler": "Existing cron/DO tick; no trigger or interval changes"
+  },
+  "queryModel": {
+    "http": "One getLineAccounts SELECT per DB-binding/default-secret cache miss; concurrent requests share the same pending read; success, no match, and failure cached for 60 seconds.",
+    "scheduler": "Two existing account-table reads per tick: refreshLineAccessTokens, then post-refresh snapshot. Default-token resolution and cache publication reuse the second snapshot and add zero queries. The PR's extra pre-refresh lookup is removed.",
+    "writes": "No new writes. Existing refresh writes only for active accounts whose expiry is unknown or within 7 days.",
+    "readScope": "SELECT * FROM line_accounts; linear in configured account rows, independent of friend/message/history counts. No new index or migration."
+  },
+  "syntheticVerification": {
+    "concurrentRequests": [
+      1,
+      100,
+      1000
+    ],
+    "expectedQueries": [
+      1,
+      1,
+      1
+    ],
+    "baselineQueries": [
+      1,
+      100,
+      1000
+    ],
+    "schedulerQueriesPerTick": 2,
+    "failure": "Concurrent errors are shared and cached; one retry after TTL.",
+    "refreshRace": "An older delayed or failing HTTP read cannot restore a pre-refresh snapshot.",
+    "accountIsolation": "Separate DB bindings and default secrets cannot share cached tokens."
+  },
+  "costLimits": {
+    "realD1RowsRead": "Unmeasured; test call counts are not billed rows.",
+    "realWorkerCpu": "Unmeasured.",
+    "monthlyCost": "Unmeasured; no billing savings claimed.",
+    "worstCasePerDay": "For one stable DB/default-secret binding per isolate, steady HTTP cache misses start at most once each 60-second interval; scheduler continues its existing cadence. Isolate restarts add cold reads. Existing per-account refresh writes unchanged."
+  },
+  "safety": {
+    "explicitToken": "Existing env token wins without helper queries or cache mutation.",
+    "refreshFailure": "Existing refresh error handling retained; still-valid token remains usable; no promise of recovery for already-expired credentials when issuance fails.",
+    "rollback": "Revert only this follow-up commit; schema/config unchanged. Do not deploy an old production bundle over unrelated production changes.",
+    "productionOperations": "None: no real sends, production SQL, secret changes or deployments."
+  }
+}

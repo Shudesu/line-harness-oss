@@ -12,7 +12,7 @@ import { startBulkSendJobs } from './services/quota.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
 import { checkAccountHealth } from './services/ban-monitor.js';
 import { refreshLineAccessTokens } from './services/token-refresh.js';
-import { withDefaultLineToken } from './services/default-line-token.js';
+import { withDefaultLineTokenFromAccounts } from './services/default-line-token.js';
 import { processInsightFetch } from './services/insight-fetcher.js';
 import { processDueReminders } from './services/booking-reminders.js';
 import { runExpirer } from './services/booking-expirer.js';
@@ -75,21 +75,6 @@ export async function scheduled(
     catch { console.warn('[ig-link] cleanup_failed'); }
   }
   await flushXGateEvents(env);
-  // LINE_CHANNEL_ACCESS_TOKEN が未設定なら、既定アカウントのトークンを env に詰める
-  // （services/default-line-token.ts）。
-  env = await withDefaultLineToken(env);
-  // Get all active accounts from DB
-  const dbAccounts = await getLineAccounts(env.DB);
-
-  // Build LineClient map for insight fetching (keyed by account id)
-  const lineClients = new Map<string, LineClient>();
-  for (const account of dbAccounts) {
-    if (account.is_active) {
-      lineClients.set(account.id, new LineClient(account.channel_access_token));
-    }
-  }
-  const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
-
   // 配信系は1回だけ実行（内部でfriendのline_account_idから正しいlineClientを動的解決）
   // 以前はアカウントごとにループしていたが、アカウントフィルタなしのDBクエリで
   // 全アカウントの配信が各ループで重複実行されていたバグを修正
@@ -115,6 +100,20 @@ export async function scheduled(
   } catch (e) {
     console.error('token refresh error:', e);
   }
+
+  // Resolve every client from the post-refresh snapshot. Reuse this read for
+  // the default token and replace any pre-refresh HTTP cache without another query.
+  const dbAccounts = await getLineAccounts(env.DB);
+  env = withDefaultLineTokenFromAccounts(env, dbAccounts);
+
+  // Build LineClient map for insight fetching (keyed by account id)
+  const lineClients = new Map<string, LineClient>();
+  for (const account of dbAccounts) {
+    if (account.is_active) {
+      lineClients.set(account.id, new LineClient(account.channel_access_token));
+    }
+  }
+  const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
 
   try {
     const result = await processDueReminders(env.DB, {

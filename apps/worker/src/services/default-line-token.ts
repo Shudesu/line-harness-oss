@@ -25,10 +25,26 @@ interface DefaultTokenEnv {
 
 /** 同じ isolate の中で、リクエストのたびに D1 を読まないための短いキャッシュ。 */
 const CACHE_MS = 60_000;
-let cache: { token: string | null; until: number } | null = null;
+interface CacheEntry {
+  token: string | null;
+  until: number;
+  pending?: Promise<void>;
+}
+
+// A binding/default-account change must not reuse another environment's token.
+let caches = new WeakMap<D1Database, Map<string, CacheEntry>>();
+
+function entriesFor(env: DefaultTokenEnv): Map<string, CacheEntry> {
+  let entries = caches.get(env.DB);
+  if (!entries) {
+    entries = new Map();
+    caches.set(env.DB, entries);
+  }
+  return entries;
+}
 
 export function resetDefaultLineTokenCache(): void {
-  cache = null;
+  caches = new WeakMap();
 }
 
 function pickDefaultAccount(accounts: LineAccount[], envSecret: string | undefined): LineAccount | null {
@@ -41,22 +57,48 @@ function pickDefaultAccount(accounts: LineAccount[], envSecret: string | undefin
   return active.length === 1 ? active[0] : null;
 }
 
+/**
+ * Publish an authoritative post-refresh snapshot already read by scheduled().
+ * Replacing the entry also prevents an older in-flight read from restoring it.
+ * No additional D1 query is needed for the scheduler's default token.
+ */
+export function withDefaultLineTokenFromAccounts<E extends DefaultTokenEnv>(
+  env: E,
+  accounts: LineAccount[],
+  now: number = Date.now(),
+): E & { LINE_CHANNEL_ACCESS_TOKEN?: string } {
+  if (env.LINE_CHANNEL_ACCESS_TOKEN) return env;
+  const account = pickDefaultAccount(accounts, env.LINE_CHANNEL_SECRET);
+  const token = account?.channel_access_token ?? null;
+  entriesFor(env).set(env.LINE_CHANNEL_SECRET ?? '', { token, until: now + CACHE_MS });
+  return token ? { ...env, LINE_CHANNEL_ACCESS_TOKEN: token } : env;
+}
+
 export async function withDefaultLineToken<E extends DefaultTokenEnv>(
   env: E,
   now: number = Date.now(),
 ): Promise<E & { LINE_CHANNEL_ACCESS_TOKEN?: string }> {
   if (env.LINE_CHANNEL_ACCESS_TOKEN) return env;
-  if (!cache || cache.until <= now) {
-    try {
-      const account = pickDefaultAccount(await getLineAccounts(env.DB), env.LINE_CHANNEL_SECRET);
-      cache = { token: account?.channel_access_token ?? null, until: now + CACHE_MS };
-    } catch (err) {
-      // D1 が読めないときは env をそのまま返す（従来と同じ。送信側が失敗を扱う）。
-      // 障害中にリクエストのたびに D1 を読み直さないよう、失敗も同じ時間だけ覚える。
-      console.error('[default-line-token] resolve failed:', err);
-      cache = { token: null, until: now + CACHE_MS };
-      return env;
-    }
+  const entries = entriesFor(env);
+  const key = env.LINE_CHANNEL_SECRET ?? '';
+  let entry = entries.get(key);
+  if (!entry || (!entry.pending && entry.until <= now)) {
+    const loading: CacheEntry = { token: null, until: now + CACHE_MS };
+    entries.set(key, loading);
+    loading.pending = (async () => {
+      try {
+        const account = pickDefaultAccount(await getLineAccounts(env.DB), env.LINE_CHANNEL_SECRET);
+        loading.token = account?.channel_access_token ?? null;
+      } catch (err) {
+        // Share and cache failed reads too, so an outage does not amplify D1 load.
+        console.error('[default-line-token] resolve failed:', err);
+      }
+    })();
+    entry = loading;
   }
-  return cache.token ? { ...env, LINE_CHANNEL_ACCESS_TOKEN: cache.token } : env;
+  await entry.pending;
+  entry.pending = undefined;
+  // scheduled() may have published refreshed tokens while this read was pending.
+  const current = entries.get(key) ?? entry;
+  return current.token ? { ...env, LINE_CHANNEL_ACCESS_TOKEN: current.token } : env;
 }
