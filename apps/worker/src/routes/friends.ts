@@ -17,6 +17,7 @@ import {
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage } from '../services/step-delivery.js';
+import { runIdempotent } from '../services/idempotency.js';
 import type { Env } from '../index.js';
 
 const friends = new Hono<Env>();
@@ -605,66 +606,93 @@ friends.post('/api/friends/:id/messages', async (c) => {
       return c.json({ success: false, error: 'content is required' }, 400);
     }
 
-    const db = c.env.DB;
-    const friend = await getFriendById(db, friendId);
-    if (!friend) {
-      return c.json({ success: false, error: 'Friend not found' }, 404);
-    }
+    // Optional Idempotency-Key (scoped to the friend): an integration can
+    // retry the same send without a second delivery or a second chat-log row.
+    // Without the header the handler below runs exactly as before.
+    const messageRequest = {
+      messageType: body.messageType ?? 'text',
+      content: body.content,
+      altText: body.altText ?? null,
+      trackLinks: body.trackLinks !== false,
+    };
+    return await runIdempotent(c, `friend-message:${friendId}`, messageRequest, async (operation) => {
+      const db = c.env.DB;
+      const friend = await getFriendById(db, friendId);
+      if (!friend) {
+        return c.json({ success: false, error: 'Friend not found' }, 404);
+      }
 
-    const { LineClient } = await import('@line-crm/line-sdk');
-    // Resolve access token from friend's account (multi-account support)
-    // 送信アカウントを1回だけ決めて、トークンと**リンクの持ち主**の両方に同じ行を使う。
-    // トークンだけ差し替えて ID を取りこぼすと、送信は正しいアカウントから出るのに
-    // 本文中の URL は「持ち主なし」のトラッキングリンクとして登録され、
-    // アカウント単位の OGP・LIFF フォールバックと分析が送信元と食い違う
-    // （Codex review round 3 の指摘）。
-    const { getLineAccountById, resolveDefaultLineAccount } = await import('@line-crm/db');
-    const rawFriendAccountId =
-      ((friend as unknown as Record<string, unknown>).line_account_id as string | null) ?? null;
-    const sendAccount = rawFriendAccountId
-      ? await getLineAccountById(db, rawFriendAccountId)
-      : await resolveDefaultLineAccount(db);
-    const friendAccountId = sendAccount?.id ?? rawFriendAccountId;
-    const accessToken = sendAccount?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN;
-    const lineClient = new LineClient(accessToken);
-    const messageType = body.messageType ?? 'text';
+      // With a key, the chat-log ID and LINE's X-Line-Retry-Key are derived from
+      // it. If an attempt fails after LINE accepted the push, the retry reuses
+      // the same retry key (LINE answers 409 = already accepted, for 24h) and
+      // writes the one log row instead of delivering again.
+      const keyed = operation
+        ? { logId: await operation.deriveId('messages-log'), retryKey: await operation.deriveId('line-retry-key') }
+        : undefined;
+      if (keyed) {
+        const logged = await db.prepare(`SELECT id FROM messages_log WHERE id = ?`).bind(keyed.logId).first();
+        if (logged) return c.json({ success: true, data: { messageId: keyed.logId } });
+      }
 
-    // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
-    // trackLinks=false で明示的に短縮 OFF (URL をそのまま送る)
-    const sendWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
-    let tracked = { messageType, content: body.content };
-    if (body.trackLinks !== false) {
-      const { autoTrackContent } = await import('../services/auto-track.js');
-      tracked = await autoTrackContent(
-        db, messageType, body.content,
-        sendWorkerUrl,
-        { lineAccountId: friendAccountId },
-      );
-    }
-    // 1:1 送信なので /t リンクに f=<friendId> を焼き込み、LIFF 識別ホップなしで
-    // クリック帰属できるようにする（既存 /t リンクにも効くので trackLinks に関わらず実施）
-    {
-      const { appendFriendToTrackedLinks } = await import('../services/auto-track.js');
-      tracked = {
-        ...tracked,
-        content: await appendFriendToTrackedLinks(db, tracked.content, sendWorkerUrl, friend.id),
-      };
-    }
+      const { LineClient } = await import('@line-crm/line-sdk');
+      // Resolve access token from friend's account (multi-account support)
+      // 送信アカウントを1回だけ決めて、トークンと**リンクの持ち主**の両方に同じ行を使う。
+      // トークンだけ差し替えて ID を取りこぼすと、送信は正しいアカウントから出るのに
+      // 本文中の URL は「持ち主なし」のトラッキングリンクとして登録され、
+      // アカウント単位の OGP・LIFF フォールバックと分析が送信元と食い違う
+      // （Codex review round 3 の指摘）。
+      const { getLineAccountById, resolveDefaultLineAccount } = await import('@line-crm/db');
+      const rawFriendAccountId =
+        ((friend as unknown as Record<string, unknown>).line_account_id as string | null) ?? null;
+      const sendAccount = rawFriendAccountId
+        ? await getLineAccountById(db, rawFriendAccountId)
+        : await resolveDefaultLineAccount(db);
+      const friendAccountId = sendAccount?.id ?? rawFriendAccountId;
+      const accessToken = sendAccount?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN;
+      const lineClient = new LineClient(accessToken);
+      const messageType = body.messageType ?? 'text';
 
-    const message = buildMessage(tracked.messageType, tracked.content, body.altText);
-    await lineClient.pushMessage(friend.line_user_id, [message]);
+      // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+      // trackLinks=false で明示的に短縮 OFF (URL をそのまま送る)
+      const sendWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+      let tracked = { messageType, content: body.content };
+      if (body.trackLinks !== false) {
+        const { autoTrackContent } = await import('../services/auto-track.js');
+        tracked = await autoTrackContent(
+          db, messageType, body.content,
+          sendWorkerUrl,
+          { lineAccountId: friendAccountId },
+        );
+      }
+      // 1:1 送信なので /t リンクに f=<friendId> を焼き込み、LIFF 識別ホップなしで
+      // クリック帰属できるようにする（既存 /t リンクにも効くので trackLinks に関わらず実施）
+      {
+        const { appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+        tracked = {
+          ...tracked,
+          content: await appendFriendToTrackedLinks(db, tracked.content, sendWorkerUrl, friend.id),
+        };
+      }
 
-    // Log outgoing message
-    const logId = crypto.randomUUID();
-    await db
-      .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-         VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'manual', ?)`,
-      )
-      .bind(logId, friend.id, messageType, body.content, jstNow())
-      .run();
+      const message = buildMessage(tracked.messageType, tracked.content, body.altText);
+      if (keyed) {
+        await lineClient.pushMessage(friend.line_user_id, [message], keyed.retryKey);
+      } else {
+        await lineClient.pushMessage(friend.line_user_id, [message]);
+      }
 
-    return c.json({ success: true, data: { messageId: logId } });
+      // Log outgoing message
+      const logId = keyed?.logId ?? crypto.randomUUID();
+      await db
+        .prepare(
+          `INSERT ${keyed ? 'OR IGNORE ' : ''}INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
+           VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'manual', ?)`,
+        )
+        .bind(logId, friend.id, messageType, body.content, jstNow())
+        .run();
+
+      return c.json({ success: true, data: { messageId: logId } });
+    });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error('POST /api/friends/:id/messages error:', errMsg);

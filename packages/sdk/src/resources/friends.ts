@@ -64,14 +64,26 @@ export class FriendsResource {
     content: string,
     messageType: MessageType = 'text',
     altText?: string,
-    options?: { trackLinks?: boolean },
+    options?: {
+      trackLinks?: boolean
+      /**
+       * Retrying with the same key (per friend) does not deliver or log the
+       * message twice, and returns the original messageId. Reusing a key for
+       * a different message is rejected with 422.
+       */
+      idempotencyKey?: string
+    },
   ): Promise<{ messageId: string }> {
-    const res = await this.http.post<ApiResponse<{ messageId: string }>>(`/api/friends/${friendId}/messages`, {
+    const body = {
       messageType,
       content,
       ...(altText ? { altText } : {}),
       ...(options?.trackLinks !== undefined ? { trackLinks: options.trackLinks } : {}),
-    })
+    }
+    const path = `/api/friends/${friendId}/messages`
+    const res = options?.idempotencyKey
+      ? await this.http.post<ApiResponse<{ messageId: string }>>(path, body, { 'Idempotency-Key': options.idempotencyKey })
+      : await this.http.post<ApiResponse<{ messageId: string }>>(path, body)
     return res.data
   }
 

@@ -91,4 +91,17 @@ describe('FriendsResource', () => {
     await expect(new FriendsResource(http, 'default-account').findByLineUserId('')).rejects.toThrow('lineUserId')
     expect(http.get).toHaveBeenCalledTimes(1)
   })
+
+  it('sendMessage() sends Idempotency-Key only when idempotencyKey is given', async () => {
+    const http = mockHttp({ post: vi.fn().mockResolvedValue({ success: true, data: { messageId: 'm1' } }) })
+    const resource = new FriendsResource(http)
+    await resource.sendMessage('f1', 'hello')
+    expect(http.post).toHaveBeenLastCalledWith('/api/friends/f1/messages', { messageType: 'text', content: 'hello' })
+    await resource.sendMessage('f1', 'hello', 'text', undefined, { idempotencyKey: 'order-1' })
+    expect(http.post).toHaveBeenLastCalledWith(
+      '/api/friends/f1/messages',
+      { messageType: 'text', content: 'hello' },
+      { 'Idempotency-Key': 'order-1' },
+    )
+  })
 })

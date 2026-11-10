@@ -45,6 +45,8 @@ await client.broadcastToTag(tagId, 'text', 'VIP exclusive coupon: CODE123')
 ```ts
 const { items, total, hasNextPage } = await client.friends.list({ limit: 50, offset: 0 })
 const friend = await client.friends.get(friendId)
+// Safe to retry: the same key never delivers or logs the message twice
+await client.friends.sendMessage(friendId, 'Thanks!', 'text', undefined, { idempotencyKey: 'order-123:thanks' })
 // Exact LINE user ID lookup scoped to one account (null when not found)
 const linked = await client.friends.findByLineUserId('Uxxxxxxxx', lineAccountId)
 const count = await client.friends.count()
