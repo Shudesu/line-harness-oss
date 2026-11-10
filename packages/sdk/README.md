@@ -54,6 +54,8 @@ const linked = await client.friends.findByLineUserId('Uxxxxxxxx', lineAccountId)
 const count = await client.friends.count()
 await client.friends.addTag(friendId, tagId)
 await client.friends.removeTag(friendId, tagId)
+// Safe to retry: the same key replays the result without firing tag_change again
+await client.friends.addTag(friendId, tagId, { idempotencyKey: 'order-123:tag' })
 ```
 
 #### Tags

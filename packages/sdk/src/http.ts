@@ -33,8 +33,8 @@ export class HttpClient {
     return this.request<T>('PATCH', path, body)
   }
 
-  async delete<T = unknown>(path: string): Promise<T> {
-    return this.request<T>('DELETE', path)
+  async delete<T = unknown>(path: string, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>('DELETE', path, undefined, headers)
   }
 
   private async request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {

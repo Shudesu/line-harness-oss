@@ -51,12 +51,25 @@ export class FriendsResource {
     return res.data.count
   }
 
-  async addTag(friendId: string, tagId: string): Promise<void> {
-    await this.http.post(`/api/friends/${friendId}/tags`, { tagId })
+  /**
+   * With `idempotencyKey` (per friend), retrying the same call replays the
+   * first result and does not fire the tag's side effects (tag_change
+   * automations, scoring, webhooks) again.
+   */
+  async addTag(friendId: string, tagId: string, options?: { idempotencyKey?: string }): Promise<void> {
+    if (options?.idempotencyKey) {
+      await this.http.post(`/api/friends/${friendId}/tags`, { tagId }, { 'Idempotency-Key': options.idempotencyKey })
+    } else {
+      await this.http.post(`/api/friends/${friendId}/tags`, { tagId })
+    }
   }
 
-  async removeTag(friendId: string, tagId: string): Promise<void> {
-    await this.http.delete(`/api/friends/${friendId}/tags/${tagId}`)
+  async removeTag(friendId: string, tagId: string, options?: { idempotencyKey?: string }): Promise<void> {
+    if (options?.idempotencyKey) {
+      await this.http.delete(`/api/friends/${friendId}/tags/${tagId}`, { 'Idempotency-Key': options.idempotencyKey })
+    } else {
+      await this.http.delete(`/api/friends/${friendId}/tags/${tagId}`)
+    }
   }
 
   async sendMessage(

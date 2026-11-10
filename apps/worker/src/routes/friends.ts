@@ -478,27 +478,33 @@ friends.post('/api/friends/:id/tags', async (c) => {
       return c.json({ success: false, error: 'tagId is required' }, 400);
     }
 
-    const db = c.env.DB;
-    await addTagToFriend(db, friendId, body.tagId);
+    // This route fires tag_change on every call by design (a manual click is
+    // a signal). With an optional Idempotency-Key (scoped to the friend) an
+    // integration can retry without firing it again. Without the header the
+    // handler below runs exactly as before.
+    return await runIdempotent(c, `friend-tag:${friendId}`, { tagId: body.tagId, action: 'add' }, async () => {
+      const db = c.env.DB;
+      await addTagToFriend(db, friendId, body.tagId);
 
-    // Enroll in tag_added scenarios that match this tag
-    const allScenarios = await getScenarios(db);
-    for (const scenario of allScenarios) {
-      if (scenario.trigger_type === 'tag_added' && scenario.is_active && scenario.trigger_tag_id === body.tagId) {
-        const existing = await db
-          .prepare(`SELECT id FROM friend_scenarios WHERE friend_id = ? AND scenario_id = ?`)
-          .bind(friendId, scenario.id)
-          .first();
-        if (!existing) {
-          await enrollFriendInScenario(db, friendId, scenario.id);
+      // Enroll in tag_added scenarios that match this tag
+      const allScenarios = await getScenarios(db);
+      for (const scenario of allScenarios) {
+        if (scenario.trigger_type === 'tag_added' && scenario.is_active && scenario.trigger_tag_id === body.tagId) {
+          const existing = await db
+            .prepare(`SELECT id FROM friend_scenarios WHERE friend_id = ? AND scenario_id = ?`)
+            .bind(friendId, scenario.id)
+            .first();
+          if (!existing) {
+            await enrollFriendInScenario(db, friendId, scenario.id);
+          }
         }
       }
-    }
 
-    // イベントバス発火: tag_change
-    await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
+      // イベントバス発火: tag_change
+      await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
 
-    return c.json({ success: true, data: null }, 201);
+      return c.json({ success: true, data: null }, 201);
+    });
   } catch (err) {
     console.error('POST /api/friends/:id/tags error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -511,12 +517,14 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
     const friendId = c.req.param('id');
     const tagId = c.req.param('tagId');
 
-    await removeTagFromFriend(c.env.DB, friendId, tagId);
+    return await runIdempotent(c, `friend-tag:${friendId}`, { tagId, action: 'remove' }, async () => {
+      await removeTagFromFriend(c.env.DB, friendId, tagId);
 
-    // イベントバス発火: tag_change
-    await fireEvent(c.env.DB, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
+      // イベントバス発火: tag_change
+      await fireEvent(c.env.DB, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
 
-    return c.json({ success: true, data: null });
+      return c.json({ success: true, data: null });
+    });
   } catch (err) {
     console.error('DELETE /api/friends/:id/tags/:tagId error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);

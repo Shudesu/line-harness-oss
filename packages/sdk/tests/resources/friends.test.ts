@@ -104,4 +104,15 @@ describe('FriendsResource', () => {
       { 'Idempotency-Key': 'order-1' },
     )
   })
+
+  it('addTag() / removeTag() send Idempotency-Key only when idempotencyKey is given', async () => {
+    const http = mockHttp({ post: vi.fn().mockResolvedValue({ success: true }), delete: vi.fn().mockResolvedValue({ success: true }) })
+    const resource = new FriendsResource(http)
+    await resource.addTag('f1', 't1', { idempotencyKey: 'order-1:tag' })
+    expect(http.post).toHaveBeenCalledWith('/api/friends/f1/tags', { tagId: 't1' }, { 'Idempotency-Key': 'order-1:tag' })
+    await resource.removeTag('f1', 't1', { idempotencyKey: 'refund-1:tag' })
+    expect(http.delete).toHaveBeenCalledWith('/api/friends/f1/tags/t1', { 'Idempotency-Key': 'refund-1:tag' })
+    await resource.removeTag('f1', 't1')
+    expect(http.delete).toHaveBeenLastCalledWith('/api/friends/f1/tags/t1')
+  })
 })
