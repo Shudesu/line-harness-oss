@@ -69,12 +69,21 @@ export async function deleteScoringRule(db: D1Database, id: string): Promise<voi
 /** スコアイベントを記録し、friendsテーブルのスコアキャッシュを更新 */
 export async function addScore(
   db: D1Database,
-  input: { friendId: string; scoringRuleId?: string; scoreChange: number; reason?: string },
+  input: {
+    friendId: string; scoringRuleId?: string; scoreChange: number; reason?: string;
+    /**
+     * Caller-chosen ledger ID for idempotent scoring. When set, a second call
+     * with the same ID adds nothing (neither the ledger row nor the cached
+     * score). Omit it for the default behavior (a new row per call).
+     */
+    id?: string;
+  },
 ): Promise<void> {
-  const id = crypto.randomUUID();
+  const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO friend_scores (id, friend_id, scoring_rule_id, score_change, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+  const inserted = await db.prepare(`INSERT ${input.id ? 'OR IGNORE ' : ''}INTO friend_scores (id, friend_id, scoring_rule_id, score_change, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
     .bind(id, input.friendId, input.scoringRuleId ?? null, input.scoreChange, input.reason ?? null, now).run();
+  if (input.id && (inserted.meta?.changes ?? 0) === 0) return;
 
   // スコアキャッシュを更新
   await db.prepare(`UPDATE friends SET score = score + ?, updated_at = ? WHERE id = ?`)
@@ -102,7 +111,13 @@ export async function getActiveRulesByEvent(db: D1Database, eventType: string): 
 }
 
 /** イベント発生時にスコアリングルールを適用 */
-export async function applyScoring(db: D1Database, friendId: string, eventType: string): Promise<number> {
+export async function applyScoring(
+  db: D1Database,
+  friendId: string,
+  eventType: string,
+  /** Stable ledger ID per rule for an idempotent event; omit for the default behavior. */
+  scoreIdForRule?: (ruleId: string) => Promise<string>,
+): Promise<number> {
   const rules = await getActiveRulesByEvent(db, eventType);
   let totalChange = 0;
   for (const rule of rules) {
@@ -111,6 +126,7 @@ export async function applyScoring(db: D1Database, friendId: string, eventType: 
       scoringRuleId: rule.id,
       scoreChange: rule.score_value,
       reason: `${eventType} → ${rule.name}`,
+      ...(scoreIdForRule ? { id: await scoreIdForRule(rule.id) } : {}),
     });
     totalChange += rule.score_value;
   }

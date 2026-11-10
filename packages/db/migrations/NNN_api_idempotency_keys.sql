@@ -4,9 +4,13 @@
 -- Claim-first store for API requests sent with an Idempotency-Key header.
 -- The key and a hash of the request are written BEFORE any side effect, so a
 -- concurrent or repeated request can be told apart from a new one.
--- Rows exist only for keyed requests (one per keyed operation, like a log
--- row) and are kept: a completed key replays its response for as long as the
--- row exists. Timestamps are epoch milliseconds.
+-- Rows exist only for keyed requests and are kept:
+--   - one row per keyed API request (scope = the route's namespace); a
+--     completed key replays its response for as long as the row exists
+--   - one row per delivered outgoing webhook of such a request
+--     (scope = `event-webhook:...`, completed-only marker: no hash, no token,
+--     no response)
+-- Timestamps are epoch milliseconds.
 CREATE TABLE IF NOT EXISTS api_idempotency_keys (
   scope           TEXT NOT NULL,
   key             TEXT NOT NULL,

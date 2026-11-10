@@ -482,7 +482,7 @@ friends.post('/api/friends/:id/tags', async (c) => {
     // a signal). With an optional Idempotency-Key (scoped to the friend) an
     // integration can retry without firing it again. Without the header the
     // handler below runs exactly as before.
-    return await runIdempotent(c, `friend-tag:${friendId}`, { tagId: body.tagId, action: 'add' }, async () => {
+    return await runIdempotent(c, `friend-tag:${friendId}`, { tagId: body.tagId, action: 'add' }, async (operation) => {
       const db = c.env.DB;
       await addTagToFriend(db, friendId, body.tagId);
 
@@ -501,7 +501,13 @@ friends.post('/api/friends/:id/tags', async (c) => {
       }
 
       // イベントバス発火: tag_change
-      await fireEvent(db, 'tag_change', { friendId, eventData: { tagId: body.tagId, action: 'add' } });
+      const tagEvent = { friendId, eventData: { tagId: body.tagId, action: 'add' } };
+      if (operation) {
+        // A retried request skips the tag_change effects that already ran.
+        await fireEvent(db, 'tag_change', tagEvent, undefined, undefined, undefined, { operationId: operation.operationId });
+      } else {
+        await fireEvent(db, 'tag_change', tagEvent);
+      }
 
       return c.json({ success: true, data: null }, 201);
     });
@@ -517,11 +523,16 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
     const friendId = c.req.param('id');
     const tagId = c.req.param('tagId');
 
-    return await runIdempotent(c, `friend-tag:${friendId}`, { tagId, action: 'remove' }, async () => {
+    return await runIdempotent(c, `friend-tag:${friendId}`, { tagId, action: 'remove' }, async (operation) => {
       await removeTagFromFriend(c.env.DB, friendId, tagId);
 
       // イベントバス発火: tag_change
-      await fireEvent(c.env.DB, 'tag_change', { friendId, eventData: { tagId, action: 'remove' } });
+      const tagEvent = { friendId, eventData: { tagId, action: 'remove' } };
+      if (operation) {
+        await fireEvent(c.env.DB, 'tag_change', tagEvent, undefined, undefined, undefined, { operationId: operation.operationId });
+      } else {
+        await fireEvent(c.env.DB, 'tag_change', tagEvent);
+      }
 
       return c.json({ success: true, data: null });
     });

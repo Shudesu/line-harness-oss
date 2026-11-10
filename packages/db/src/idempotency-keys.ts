@@ -104,3 +104,30 @@ export async function releaseIdempotencyKey(db: D1Database, scope: string, key: 
     .bind(scope, key, token)
     .run();
 }
+
+// ── Completed-only markers ──────────────────────────────────────────────────
+// For effects that have no "in progress" state of their own (an outgoing
+// webhook delivery inside an already-claimed request): the row is written
+// only after the effect succeeded, so a missing row always means "do it".
+// These rows live under their own scope prefix (`event-webhook:`), which no
+// API route may use as a claim scope.
+
+/** Keys recorded as done under this scope (one indexed range read). */
+export async function getCompletedIdempotencyKeys(db: D1Database, scope: string): Promise<Set<string>> {
+  const rows = await db
+    .prepare(`SELECT key FROM api_idempotency_keys WHERE scope = ? AND status = 'completed'`)
+    .bind(scope)
+    .all<{ key: string }>();
+  return new Set(rows.results.map((row) => row.key));
+}
+
+/** Record (scope, key) as done. Recording twice is a no-op. */
+export async function recordIdempotencyKeyCompleted(db: D1Database, scope: string, key: string, now: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO api_idempotency_keys (scope, key, request_hash, claim_token, status, locked_until, created_at)
+       VALUES (?, ?, '', '', 'completed', 0, ?)`,
+    )
+    .bind(scope, key, now)
+    .run();
+}

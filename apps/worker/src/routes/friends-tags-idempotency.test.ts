@@ -42,6 +42,8 @@ describe('friend tag routes with Idempotency-Key', () => {
     expect([await call('POST'), await call('POST'), await call('DELETE'), await call('DELETE')]).toEqual([201, 201, 200, 200]);
     expect(fired()).toEqual(['add', 'add', 'remove', 'remove']);
     expect(count('api_idempotency_keys')).toBe(0);
+    // Unkeyed calls reach the event bus with exactly the original arguments.
+    expect(fireEvent.mock.calls.map((args) => args.length)).toEqual([3, 3, 3, 3]);
   });
 
   it('fires once per key for add and remove, and replays retries without firing', async () => {
@@ -50,6 +52,11 @@ describe('friend tag routes with Idempotency-Key', () => {
     expect([await call('DELETE', 'refund-1'), await call('DELETE', 'refund-1')]).toEqual([200, 200]);
     expect(count('friend_tags')).toBe(0);
     expect(fired()).toEqual(['add', 'remove']);
+    // Each keyed request is one operation for the event bus.
+    expect(fireEvent.mock.calls.map((args) => args[6])).toEqual([
+      { operationId: 'friend-tag:friend-a:order-1' },
+      { operationId: 'friend-tag:friend-a:refund-1' },
+    ]);
   });
 
   it('answers 409 while the same key is in progress, so tag_change is not fired twice', async () => {

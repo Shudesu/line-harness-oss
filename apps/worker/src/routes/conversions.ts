@@ -153,7 +153,7 @@ conversions.post('/api/conversions/track', async (c) => {
         ...(operation ? { id: await operation.deriveId('conversion-event') } : {}),
       });
 
-      if (eventAccount) {
+      if (eventAccount && operation) {
         await fireEvent(
           db,
           'cv_fire',
@@ -163,6 +163,9 @@ conversions.post('/api/conversions/track', async (c) => {
           },
           eventAccount.accessToken,
           eventAccount.accountId,
+          undefined,
+          // A retry after a failed attempt skips the effects that already ran.
+          { operationId: operation.operationId },
         );
       }
 

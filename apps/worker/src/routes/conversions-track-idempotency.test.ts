@@ -77,6 +77,8 @@ describe('POST /api/conversions/track with Idempotency-Key', () => {
       { friendId: 'friend-a', eventData: { amount: 100, conversionPointId: 'point-a', conversionEventId: retry.id } },
       'synthetic-token-a',
       'account-a',
+      undefined,
+      { operationId: 'conversion:payment-1' },
     );
 
     expect(await track({ fireEvent: true, metadata: { amount: 100 } }, 'payment-1')).toEqual(retry);
