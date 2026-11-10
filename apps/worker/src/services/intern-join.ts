@@ -1,9 +1,13 @@
 // KIDOUインターンの「経路リンク」（どこから友だち追加したかを数えるリンク）
 //
-// 流れ：/in/ki-xxxx → LIFF（LINE の中の小さな画面 /in/join）→ 本人を確かめて「この人はこの経路から来た」を記録
-// → 友だち追加の画面へ。友だち追加の合図（follow）が来たときに、記録しておいた経路を友だちに付ける。
-// LIFF を開いた時点ではまだ友だちでないことが多いので、友だちの記録がない人は ref_tracking に
-// friend_id なし・source_url「pending:LINEのユーザーID」で控えておき、追加の合図で付け替える。
+// 流れ（11/10〜）：/in/ki-xxxx を押したら「この経路が押された」を時刻つきで ref_tracking に記録し
+// （friend_id なし・source_url「tap:ブラウザごとの番号」）、そのまま友だち追加の画面へ送る。
+// LINE ログイン（「許可する」画面）は挟まない。挟むと押した人が途中でやめてしまうため。
+// 友だち追加の合図（follow）が来たら、直前 TAP_MATCH_WINDOW_MS 以内に押された、まだ誰にも付いていない
+// いちばん新しい記録の経路をその人に付ける（本人は確かめられないので、時刻の近さでの推定）。
+//
+// 11/10 までは LIFF（/in/join）で本人を確かめて source_url「pending:LINEのユーザーID」で控えていた。
+// その途中の人のために、合図のときは先に pending の控えを探す。
 // INTERN_SURVEY_ACCOUNT_ID のアカウントでだけ動く。ほかのアカウントの動きは変えない。
 
 import { addTagToFriend, getAccountSetting, getEntryRouteByRefCode, jstNow, recordRefTracking, setAccountSetting, toJstString } from '@line-crm/db';
@@ -11,6 +15,15 @@ import { addTagToFriend, getAccountSetting, getEntryRouteByRefCode, jstNow, reco
 export const JOIN_REF_PREFIX = 'ki-';
 const JOIN_REF_RE = /^ki-[a-z0-9]{4,16}$/;
 const PENDING_PREFIX = 'pending:';
+const TAP_PREFIX = 'tap:';
+const TAP_ID_RE = /^[a-z0-9]{16}$/;
+/** 押した番号を覚えておくクッキー（同じブラウザで押し直した人を1人と数える） */
+export const TAP_COOKIE = 'ki_tap';
+export const TAP_COOKIE_MAX_AGE_SEC = 30 * 24 * 3600;
+// 押してから友だち追加までをこの時間まで待つ（これより前に押された記録は付けない）
+const TAP_MATCH_WINDOW_MS = 5 * 60 * 1000;
+// リンクの下見に来るだけのロボット（SNS のプレビュー作り等）は押した数に入れない
+const BOT_UA_RE = /bot|crawl|spider|preview|facebookexternalhit|facebot|line-poker|slack|discord|whatsapp|telegram|embedly|curl|wget|python|headless/i;
 const DEFAULT_BOT_BASIC_ID = '@899hdfxg';
 // この時間より前に友だちになっていた人には、経路を付けない（前からの友だちを数えない）
 const NEW_FRIEND_WINDOW_MS = 30 * 60 * 1000;
@@ -46,8 +59,13 @@ export function isJoinRef(ref: string | null | undefined): ref is string {
   return !!ref && JOIN_REF_RE.test(ref);
 }
 
-/** 経路を数える準備ができているか（LIFF とログインのチャネルが設定済み） */
+/** 経路を数える準備ができているか（KIDOUインターンのアカウントが設定済み） */
 export function isJoinReady(config: JoinConfig): boolean {
+  return !!config.accountId;
+}
+
+/** 11/10 までの LIFF の受け口が使えるか（LIFF とログインのチャネルが設定済み） */
+function isLiffReady(config: JoinConfig): boolean {
   return !!(config.accountId && config.liffId && config.loginChannelId);
 }
 
@@ -66,12 +84,41 @@ function jstBefore(ms: number, now: Date = new Date()): string {
   return toJstString(new Date(now.getTime() - ms));
 }
 
-/** /in/:ref の行き先。準備前・止めたリンク・知らない記号は、ふつうの友だち追加へ（印刷したリンクも切らさない） */
-export async function resolveJoinRedirect(db: D1Database, config: JoinConfig, ref: string): Promise<string> {
-  if (!isJoinReady(config) || !isJoinRef(ref)) return friendAddUrl(config);
-  const route = await getEntryRouteByRefCode(db, ref);
-  if (!route || !route.is_active) return friendAddUrl(config);
-  return `https://liff.line.me/${config.liffId}?ref=${encodeURIComponent(ref)}`;
+export function isTapId(v: string | null | undefined): v is string {
+  return !!v && TAP_ID_RE.test(v);
+}
+
+export function newTapId(): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
+
+export function isBotUserAgent(ua: string | null | undefined): boolean {
+  return !ua || BOT_UA_RE.test(ua);
+}
+
+/**
+ * /in/:ref が押されたとき。動いている経路なら「押された」を記録する（行き先はいつも友だち追加の画面）。
+ * 準備前・止めたリンク・知らない記号・ロボットは記録しない。記録したら true
+ */
+export async function recordJoinTap(
+  db: D1Database,
+  config: JoinConfig,
+  opts: { ref: string; tapId: string; userAgent?: string | null },
+): Promise<boolean> {
+  if (!isJoinReady(config) || !isJoinRef(opts.ref) || !isTapId(opts.tapId)) return false;
+  if (isBotUserAgent(opts.userAgent)) return false;
+  const route = await getEntryRouteByRefCode(db, opts.ref);
+  if (!route || !route.is_active) return false;
+  await recordRefTracking(db, {
+    refCode: opts.ref,
+    friendId: null,
+    entryRouteId: route.id,
+    sourceUrl: TAP_PREFIX + opts.tapId,
+    userAgent: opts.userAgent?.slice(0, 500) ?? null,
+  });
+  return true;
 }
 
 async function verifyIdToken(idToken: string, channelId: string): Promise<string | null> {
@@ -109,7 +156,7 @@ export async function recordJoinOpen(
   opts: { idToken: string; ref: string; userAgent?: string | null },
   verify: (idToken: string, channelId: string) => Promise<string | null> = verifyIdToken,
 ): Promise<JoinResult> {
-  if (!isJoinReady(config)) return 'not_ready';
+  if (!isLiffReady(config)) return 'not_ready';
   if (!isJoinRef(opts.ref) || !opts.idToken) return 'invalid';
   const route = await getEntryRouteByRefCode(db, opts.ref);
   if (!route || !route.is_active) return 'invalid';
@@ -149,7 +196,7 @@ export async function recordJoinOpen(
   return 'ok';
 }
 
-/** 友だち追加の合図のとき。LIFF で控えておいた経路があれば、新しい友だちに付ける */
+/** 友だち追加の合図のとき。控えておいた経路（LIFF の控え、なければ直前に押された記録）を新しい友だちに付ける */
 export async function attachPendingJoinRef(
   db: D1Database,
   accountId: string | undefined,
@@ -164,23 +211,66 @@ export async function attachPendingJoinRef(
     )
     .bind(pendingKey, jstBefore(PENDING_WINDOW_MS))
     .first<{ ref_code: string }>();
-  if (!pending) return null;
-
-  // 控えをこの友だちに付け替える（開いた数の記録として残す）
-  await db
-    .prepare('UPDATE ref_tracking SET friend_id = ? WHERE source_url = ? AND friend_id IS NULL')
-    .bind(opts.friendId, pendingKey)
-    .run();
 
   const friend = await db
     .prepare('SELECT created_at FROM friends WHERE id = ?')
     .bind(opts.friendId)
     .first<{ created_at: string }>();
   // ブロック解除で戻ってきた前からの友だちには付けない
-  if (!friend || friend.created_at <= jstBefore(NEW_FRIEND_WINDOW_MS)) return null;
-  const route = await getEntryRouteByRefCode(db, pending.ref_code);
-  const attached = await attachRef(db, opts.friendId, pending.ref_code, route?.tag_id ?? null);
-  return attached ? pending.ref_code : null;
+  const isNewFriend = !!friend && friend.created_at > jstBefore(NEW_FRIEND_WINDOW_MS);
+
+  let ref: string;
+  if (pending) {
+    ref = pending.ref_code;
+    // 控えをこの友だちに付け替える（開いた数の記録として残す）
+    await db
+      .prepare('UPDATE ref_tracking SET friend_id = ? WHERE source_url = ? AND friend_id IS NULL')
+      .bind(opts.friendId, pendingKey)
+      .run();
+  } else {
+    // 押した記録は本人を確かめられないので、前からの友だちには使わない
+    // （押さずにブロック解除しただけの人が、直前に押した新しい人の記録を取らないように）
+    if (!isNewFriend) return null;
+    const tapRef = await claimRecentTap(db, opts.friendId);
+    if (!tapRef) return null;
+    ref = tapRef;
+  }
+
+  if (!isNewFriend) return null;
+  const route = await getEntryRouteByRefCode(db, ref);
+  const attached = await attachRef(db, opts.friendId, ref, route?.tag_id ?? null);
+  return attached ? ref : null;
+}
+
+/**
+ * 直前に押された、まだ誰にも付いていないいちばん新しい記録をこの友だちのものにする。
+ * 古い順でなく新しい順にするのは、押しただけで追加しなかった人の記録を後の人に付けにくくするため。
+ * 同じブラウザで押した記録（同じ tap: の番号・クッキーの有効期間内）もまとめて付ける。ほかの合図と取り合ったら次を探す
+ */
+async function claimRecentTap(db: D1Database, friendId: string): Promise<string | null> {
+  const since = jstBefore(TAP_MATCH_WINDOW_MS);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const tap = await db
+      .prepare(
+        `SELECT id, ref_code, source_url FROM ref_tracking
+         WHERE source_url LIKE 'tap:%' AND ref_code LIKE 'ki-%' AND friend_id IS NULL AND created_at > ?
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(since)
+      .first<{ id: string; ref_code: string; source_url: string }>();
+    if (!tap) return null;
+    const res = await db
+      .prepare('UPDATE ref_tracking SET friend_id = ? WHERE id = ? AND friend_id IS NULL')
+      .bind(friendId, tap.id)
+      .run();
+    if ((res.meta?.changes ?? 0) === 0) continue;
+    await db
+      .prepare('UPDATE ref_tracking SET friend_id = ? WHERE source_url = ? AND friend_id IS NULL AND created_at > ?')
+      .bind(friendId, tap.source_url, jstBefore(TAP_COOKIE_MAX_AGE_SEC * 1000))
+      .run();
+    return tap.ref_code;
+  }
+  return null;
 }
 
 // ── 管理画面の一覧 ─────────────────────────────────────────────
@@ -192,7 +282,7 @@ export interface JoinLinkStats {
   tagId: string | null;
   isActive: boolean;
   createdAt: string;
-  /** リンクを開いて LINE の画面まで来た人（同じ人は1回） */
+  /** リンクを押した人（同じ人・同じブラウザは1回。11/10 までは LINE の許可画面まで進んだ人） */
   openedCount: number;
   /** このリンクから友だちになった人 */
   friendCount: number;

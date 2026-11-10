@@ -315,11 +315,11 @@ export default function JoinLinksPage() {
           <section className="rounded-lg border border-gray-200 bg-white p-6">
             <h2 className="mb-1 text-base font-bold text-gray-900">経路リンクを作る</h2>
             <p className="mb-4 text-sm text-gray-500">
-              SNS や貼る場所ごとに1本ずつ作ります。押した人ははじめに LINE の「許可する」画面を通ってから、友だち追加に進みます。
+              SNS や貼る場所ごとに1本ずつ作ります。押すとすぐに友だち追加の画面が開きます（LINE の「許可する」画面は出ません）。
             </p>
             {!data.ready && (
               <p className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                経路を数える準備（LINE 側の設定）がまだ終わっていません。いま作ったリンクは、押すとふつうの友だち追加になり、人数は数えません。準備が終わると、同じリンクのまま数え始めます。
+                経路を数える準備がまだ終わっていません。いま作ったリンクは、押すとふつうの友だち追加になり、人数は数えません。準備が終わると、同じリンクのまま数え始めます。
               </p>
             )}
             <form onSubmit={create} className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -437,7 +437,7 @@ export default function JoinLinksPage() {
               </div>
             )}
             <p className="mt-4 text-xs text-gray-500">
-              「開いた人」は、リンクを押して LINE の画面まで進んだ人です。前から友だちだった人は「友だちになった人」には入りません。
+              「開いた人」は、リンクを押した人です（同じスマホで押し直しても1人）。前から友だちだった人は「友だちになった人」には入りません。<br />11月10日から、押した時刻と友だち追加の時刻の近さで経路を推定しています（本人の確認をやめ、押してすぐ友だち追加の画面が出るようにしたため）。同じ数分の間に別の経路から何人も来ると、取り違えが起きることがあります。11月9日までの「開いた人」は、LINE の「許可する」画面まで進んだ人の数です。
             </p>
           </section>
         </div>

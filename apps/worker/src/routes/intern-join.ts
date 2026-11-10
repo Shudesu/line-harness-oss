@@ -1,5 +1,6 @@
 // KIDOUインターンの「友だち追加リンク」タブと経路リンクの入口（仕組みは services/intern-join.ts）
 import { Hono } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { createEntryRoute, getEntryRouteById, getEntryRouteByRefCode, updateEntryRoute } from '@line-crm/db';
 import type { Env } from '../index.js';
 import {
@@ -8,26 +9,45 @@ import {
   joinConfigFromEnv,
   listJoinLinks,
   newJoinRef,
+  isTapId,
+  newTapId,
   recordJoinOpen,
+  recordJoinTap,
   renderJoinPage,
-  resolveJoinRedirect,
   saveJoinOrder,
   JOIN_REF_PREFIX,
+  TAP_COOKIE,
+  TAP_COOKIE_MAX_AGE_SEC,
 } from '../services/intern-join.js';
 
 const internJoin = new Hono<Env>();
 
-// LIFF の画面（LINE Developers の LIFF のエンドポイント URL をここにする）
+// 11/10 までの LIFF の画面。いまの経路リンクは使わないが、開いたままの人のために残す
 internJoin.get('/in/join', (c) => {
   const config = joinConfigFromEnv(c.env);
   return c.html(renderJoinPage(config), 200, { 'Cache-Control': 'no-store' });
 });
 
-// SNS に貼るリンク。LIFF へ送る（準備前・止めたリンクは、ふつうの友だち追加へ）
-internJoin.get('/in/:ref', async (c) => {
+// SNS に貼るリンク。押されたことを記録して、すぐ友だち追加の画面へ送る（ログインは挟まない）。
+// 記録は送ったあとに裏で行う（待たせない）。止めたリンク・知らない記号も友だち追加へ（印刷したリンクも切らさない）
+internJoin.get('/in/:ref', (c) => {
   const config = joinConfigFromEnv(c.env);
-  const url = await resolveJoinRedirect(c.env.DB, config, c.req.param('ref')).catch(() => friendAddUrl(config));
-  return c.redirect(url, 302);
+  const ref = c.req.param('ref');
+  const fromCookie = getCookie(c, TAP_COOKIE);
+  const tapId = isTapId(fromCookie) ? fromCookie : newTapId();
+  if (c.req.method === 'GET') {
+    setCookie(c, TAP_COOKIE, tapId, { path: '/in', maxAge: TAP_COOKIE_MAX_AGE_SEC, httpOnly: true, secure: true, sameSite: 'Lax' });
+    const work = recordJoinTap(c.env.DB, config, { ref, tapId, userAgent: c.req.header('user-agent') ?? null }).catch((err) => {
+      console.error('[intern-join] tap record failed', err);
+    });
+    try {
+      c.executionCtx.waitUntil(work);
+    } catch {
+      // テストなど executionCtx が無いときはそのまま流す
+    }
+  }
+  c.header('Cache-Control', 'no-store');
+  return c.redirect(friendAddUrl(config), 302);
 });
 
 // LIFF の画面から。本人の確かめは LINE の ID トークンで行う（ログイン不要の受け口）
