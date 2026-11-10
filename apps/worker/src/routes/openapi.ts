@@ -618,8 +618,20 @@ const spec = {
       post: {
         tags: ['Conversions'],
         summary: 'コンバージョン記録',
-        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { conversionPointId: { type: 'string' }, friendId: { type: 'string' }, userId: { type: 'string' }, affiliateCode: { type: 'string' }, metadata: { type: 'object' } }, required: ['conversionPointId', 'friendId'] } } } },
-        responses: { '201': { description: 'Tracked' } },
+        parameters: [
+          {
+            name: 'Idempotency-Key',
+            in: 'header',
+            schema: { type: 'string', maxLength: 255 },
+            description: 'The same key records one conversion; a retry replays the first response.',
+          },
+        ],
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { conversionPointId: { type: 'string' }, friendId: { type: 'string' }, userId: { type: 'string' }, affiliateCode: { type: 'string' }, metadata: { type: 'object' }, fireEvent: { type: 'boolean', description: 'Also fire cv_fire. Requires Idempotency-Key.' } }, required: ['conversionPointId', 'friendId'] } } } },
+        responses: {
+          '201': { description: 'Tracked (or replayed for a completed Idempotency-Key)' },
+          '409': { description: 'A request with this Idempotency-Key is still in progress' },
+          '422': { description: 'Idempotency-Key reused for a different request, or fireEvent for a friend whose LINE account cannot be determined' },
+        },
       },
     },
     '/api/conversions/events': {

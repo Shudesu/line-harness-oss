@@ -54,6 +54,29 @@ export interface FriendListParams {
   accountId?: string
 }
 
+// ─── Conversion ─────────────────────────────────────────
+export interface ConversionEvent {
+  id: string
+  conversionPointId: string
+  friendId: string
+  userId: string | null
+  affiliateCode: string | null
+  metadata: string | null
+  createdAt: string
+}
+
+export interface TrackConversionInput {
+  conversionPointId: string
+  friendId: string
+  userId?: string | null
+  affiliateCode?: string | null
+  metadata?: Record<string, unknown> | null
+  /** Also fire `cv_fire`. Requires `idempotencyKey`. */
+  fireEvent?: boolean
+  /** The same key records one conversion; a retry returns the recorded event. */
+  idempotencyKey?: string
+}
+
 // ─── Tag ────────────────────────────────────────────────
 export interface Tag {
   id: string

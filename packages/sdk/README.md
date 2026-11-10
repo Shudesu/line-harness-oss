@@ -47,6 +47,8 @@ const { items, total, hasNextPage } = await client.friends.list({ limit: 50, off
 const friend = await client.friends.get(friendId)
 // Safe to retry: the same key never delivers or logs the message twice
 await client.friends.sendMessage(friendId, 'Thanks!', 'text', undefined, { idempotencyKey: 'order-123:thanks' })
+// Record a conversion once per key and fire cv_fire for automations
+await client.conversions.track({ conversionPointId, friendId, fireEvent: true, idempotencyKey: 'payment-123' })
 // Exact LINE user ID lookup scoped to one account (null when not found)
 const linked = await client.friends.findByLineUserId('Uxxxxxxxx', lineAccountId)
 const count = await client.friends.count()
