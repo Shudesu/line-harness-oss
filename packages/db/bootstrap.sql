@@ -120,6 +120,19 @@ CREATE TABLE IF NOT EXISTS affiliates (
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+  scope           TEXT NOT NULL,
+  key             TEXT NOT NULL,
+  request_hash    TEXT NOT NULL,
+  claim_token     TEXT NOT NULL,
+  status          TEXT NOT NULL CHECK (status IN ('processing', 'completed')),
+  response_status INTEGER,
+  response_body   TEXT,
+  locked_until    INTEGER NOT NULL,
+  created_at      INTEGER NOT NULL,
+  PRIMARY KEY (scope, key)
+);
+
 CREATE TABLE IF NOT EXISTS auth_audit_log (
   id TEXT PRIMARY KEY,
   actor_id TEXT NOT NULL,

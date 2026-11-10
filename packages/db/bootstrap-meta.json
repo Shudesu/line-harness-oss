@@ -80,7 +80,8 @@
     "072_health_logs_composite_index.sql",
     "073_x_line_first_gates.sql",
     "074_security_hardening.sql",
-    "075_ig_link_token_uses.sql"
+    "075_ig_link_token_uses.sql",
+    "NNN_api_idempotency_keys.sql"
   ],
-  "migrationCount": 81
+  "migrationCount": 82
 }

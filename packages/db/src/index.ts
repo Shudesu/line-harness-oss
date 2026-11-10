@@ -1,6 +1,7 @@
 export { jstNow, toJstString, isTimeBefore } from './utils';
 export * from './friends';
 export * from './tags';
+export * from './idempotency-keys';
 export * from './scenarios';
 export * from './scenario-schedule';
 export * from './scenario-resolve';
