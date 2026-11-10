@@ -48,6 +48,8 @@ export interface FriendListParams {
   offset?: number
   tagId?: string
   search?: string
+  /** Exact LINE user ID match. Requires an account (accountId or the client default). */
+  lineUserId?: string
   metadata?: Record<string, string>
   accountId?: string
 }

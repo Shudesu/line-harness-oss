@@ -13,6 +13,7 @@ export class FriendsResource {
     if (params?.offset !== undefined) query.set('offset', String(params.offset))
     if (params?.tagId) query.set('tagId', params.tagId)
     if (params?.search) query.set('search', params.search)
+    if (params?.lineUserId !== undefined) query.set('lineUserId', params.lineUserId)
     if (params?.metadata) {
       for (const [key, value] of Object.entries(params.metadata)) {
         query.set(`metadata.${key}`, String(value))
@@ -24,6 +25,20 @@ export class FriendsResource {
     const path = qs ? `/api/friends?${qs}` : '/api/friends'
     const res = await this.http.get<ApiResponse<PaginatedData<Friend>>>(path)
     return res.data
+  }
+
+  /**
+   * Resolve a friend by LINE user ID within one LINE account. Returns null
+   * when the user is not a friend of that account — it never falls back to a
+   * friend of another account, so it is safe for payment / webhook linking.
+   */
+  async findByLineUserId(lineUserId: string, accountId?: string): Promise<Friend | null> {
+    const resolvedAccountId = accountId ?? this.defaultAccountId
+    if (!lineUserId || !resolvedAccountId) {
+      throw new Error('findByLineUserId requires lineUserId and an accountId (argument or client default)')
+    }
+    const { items } = await this.list({ lineUserId, accountId: resolvedAccountId, limit: 1 })
+    return items[0] ?? null
   }
 
   async get(id: string): Promise<Friend> {

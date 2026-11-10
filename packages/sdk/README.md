@@ -45,6 +45,8 @@ await client.broadcastToTag(tagId, 'text', 'VIP exclusive coupon: CODE123')
 ```ts
 const { items, total, hasNextPage } = await client.friends.list({ limit: 50, offset: 0 })
 const friend = await client.friends.get(friendId)
+// Exact LINE user ID lookup scoped to one account (null when not found)
+const linked = await client.friends.findByLineUserId('Uxxxxxxxx', lineAccountId)
 const count = await client.friends.count()
 await client.friends.addTag(friendId, tagId)
 await client.friends.removeTag(friendId, tagId)

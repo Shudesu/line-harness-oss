@@ -73,4 +73,22 @@ describe('FriendsResource', () => {
     await resource.removeTag('friend-1', 'tag-1')
     expect(http.delete).toHaveBeenCalledWith('/api/friends/friend-1/tags/tag-1')
   })
+
+  it('findByLineUserId() looks up one account by exact LINE user ID', async () => {
+    const friend = { id: '1', lineUserId: 'U123' }
+    const http = mockHttp({ get: vi.fn().mockResolvedValue({ success: true, data: { items: [friend], total: 1 } }) })
+    const resource = new FriendsResource(http, 'default-account')
+    expect(await resource.findByLineUserId('U123')).toEqual(friend)
+    expect(http.get).toHaveBeenCalledWith('/api/friends?limit=1&lineUserId=U123&lineAccountId=default-account')
+    await resource.findByLineUserId('U123', 'other-account')
+    expect(http.get).toHaveBeenLastCalledWith('/api/friends?limit=1&lineUserId=U123&lineAccountId=other-account')
+  })
+
+  it('findByLineUserId() returns null when not found and refuses to run without an account', async () => {
+    const http = mockHttp({ get: vi.fn().mockResolvedValue({ success: true, data: { items: [], total: 0 } }) })
+    expect(await new FriendsResource(http, 'default-account').findByLineUserId('U404')).toBeNull()
+    await expect(new FriendsResource(http).findByLineUserId('U123')).rejects.toThrow('accountId')
+    await expect(new FriendsResource(http, 'default-account').findByLineUserId('')).rejects.toThrow('lineUserId')
+    expect(http.get).toHaveBeenCalledTimes(1)
+  })
 })

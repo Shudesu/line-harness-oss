@@ -282,8 +282,18 @@ const spec = {
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
           { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
           { name: 'tagId', in: 'query', schema: { type: 'string' } },
+          { name: 'lineAccountId', in: 'query', schema: { type: 'string' } },
+          {
+            name: 'lineUserId',
+            in: 'query',
+            schema: { type: 'string' },
+            description: 'Exact LINE user ID match. Requires lineAccountId; never falls back to another account.',
+          },
         ],
-        responses: { '200': { description: 'Paginated friends list' } },
+        responses: {
+          '200': { description: 'Paginated friends list' },
+          '400': { description: 'lineUserId given without a value or without lineAccountId' },
+        },
       },
     },
     '/api/friends/count': {

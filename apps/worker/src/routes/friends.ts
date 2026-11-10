@@ -91,6 +91,19 @@ friends.get('/api/friends', async (c) => {
     const tagId = c.req.query('tagId');
     const lineAccountId = c.req.query('lineAccountId');
     const search = c.req.query('search');
+    // ?lineUserId=U... — exact-match lookup for external integrations
+    // (payment webhooks, plugins) that only know the LINE user ID. It always
+    // requires lineAccountId and never falls back to another account: a
+    // friend that belongs to a different account is "not found" (empty
+    // list). An empty value is rejected instead of being ignored, so a caller
+    // bug cannot silently turn the lookup into a full friend listing.
+    const lineUserId = c.req.query('lineUserId');
+    if (lineUserId !== undefined && (!lineUserId || !lineAccountId)) {
+      return c.json(
+        { success: false, error: 'lineUserId requires a non-empty value and lineAccountId' },
+        400,
+      );
+    }
     // ?includeTags=false skips tag enrichment. The list view needs tags
     // for filter chips, but autocomplete-style consumers (test-recipient
     // picker, broadcast recipient picker) only render id/displayName/picture
@@ -129,6 +142,10 @@ friends.get('/api/friends', async (c) => {
     if (search) {
       conditions.push('f.display_name LIKE ?');
       binds.push(`%${search}%`);
+    }
+    if (lineUserId) {
+      conditions.push('f.line_user_id = ?');
+      binds.push(lineUserId);
     }
     // Unhandled filter: chats.status === 'unread'.
     //
