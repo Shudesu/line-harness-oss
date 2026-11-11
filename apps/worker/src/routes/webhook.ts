@@ -27,6 +27,7 @@ import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import { attachPendingJoinRef } from '../services/intern-join.js';
 import { recordFollowEvent, recordUnfollowByLineUser } from '../services/intern-stats.js';
 import { claimWebhookEvent } from '../services/webhook-dedupe.js';
+import { parseAcademyRequestDone, sendAcademyRequestDone } from '../services/intern-academy.js';
 import { handlePickedUniversity, handleSurveyPostback, handleSurveyText, startSurveyOnFollow, surveyConfigFromEnv } from '../services/intern-survey.js';
 import type { Env } from '../index.js';
 
@@ -204,6 +205,21 @@ webhook.post('/intern/picked-university', async (c) => {
     name,
     unlisted: !!body?.unlisted,
   });
+  return c.json({ result });
+});
+
+// 会員サイトの講座リクエストに運営が「作りました」を付けたときの受け口。ミニアプリのサーバーが合言葉付きで送ってくる。
+// 送れたら SENT、友だちでない・ブロック中なら NOT_FOLLOWING（どちらも呼ぶ側は済みにする）。LINE に送れなければ 502 で送り直してもらう
+webhook.post('/intern/academy-request-done', async (c) => {
+  const config = surveyConfigFromEnv(c.env);
+  const key = c.req.header('x-bridge-key') || '';
+  if (!config.bridgeKey || key.length < 24 || key !== config.bridgeKey || !config.accountId) return c.json({ error: 'not found' }, 404);
+  const input = parseAcademyRequestDone(await c.req.json().catch(() => null));
+  if (!input) return c.json({ error: 'invalid' }, 400);
+  const account = await getLineAccountById(c.env.DB, config.accountId);
+  if (!account) return c.json({ error: 'not found' }, 404);
+  const result = await sendAcademyRequestDone(c.env.DB, new LineClient(account.channel_access_token), config.accountId, input);
+  if (result === 'LINE_FAILED') return c.json({ error: 'line_failed' }, 502);
   return c.json({ result });
 });
 

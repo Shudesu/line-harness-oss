@@ -26,10 +26,13 @@ export interface InternCopy {
   done: { already: string };
   remind: { text: string };
   qa: { sections: QaSection[]; answerKicker: string; more: string };
+  academyRequest: { done: string };
 }
 
 /** 文の中の {入力} は、学生が打った大学名に置き換える */
 export const INPUT_MARK = '{入力}';
+/** 会員サイトのリクエストの文の中の {講座名} は、できた講座・資料の名前に置き換える */
+export const COURSE_NAME_MARK = '{講座名}';
 
 export const DEFAULT_COPY: InternCopy = {
   consent: {
@@ -62,6 +65,9 @@ export const DEFAULT_COPY: InternCopy = {
   done: { already: 'アンケートは回答済みです。' },
   remind: { text: 'アンケートがまだ途中です。答えると、画面下のメニュー（求人・マイページなど）が使えるようになります。' },
   qa: { sections: QA_SECTIONS, answerKicker: 'よくある質問', more: 'ほかの質問を見る' },
+  academyRequest: {
+    done: 'リクエストいただいた内容をもとに、会員サイトに「{講座名}」を用意しました。\n\nよければ、のぞいてみてください。',
+  },
 };
 
 // LINE の決まりに合わせた上限
@@ -243,4 +249,9 @@ export async function saveCopy(db: D1Database, accountId: string, copy: InternCo
 /** 文の {入力} を置き換える */
 export function fillInput(t: string, input: string): string {
   return t.split(INPUT_MARK).join(input);
+}
+
+/** 文の {講座名} を置き換える */
+export function fillCourseName(t: string, title: string): string {
+  return t.split(COURSE_NAME_MARK).join(title);
 }

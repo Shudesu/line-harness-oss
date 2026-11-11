@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COPY, fillInput, mergeCopy, validateCopy } from './intern-copy.js';
+import { DEFAULT_COPY, fillCourseName, fillInput, mergeCopy, validateCopy } from './intern-copy.js';
 import { buildCandidatesMessage, buildGraduationYearQuestion, buildStartMessage, reducePostback } from './intern-survey.js';
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -93,5 +93,28 @@ describe('LINE の上限を超えないよう、送る前に切る', () => {
     copy.consent.title = 'あ'.repeat(1000);
     const m = buildStartMessage({ copy } as never) as { altText: string };
     expect(m.altText.length).toBe(400);
+  });
+});
+
+describe('会員サイトのリクエストの文', () => {
+  it('保存が古く項目が無いときは初期の文面', () => {
+    const c = mergeCopy({ consent: { title: 'x' } });
+    expect(c.academyRequest.done).toBe(DEFAULT_COPY.academyRequest.done);
+    expect(c.academyRequest.done).toContain('{講座名}');
+  });
+  it('直した文は残す', () => {
+    expect(mergeCopy({ academyRequest: { done: '新しい文' } }).academyRequest.done).toBe('新しい文');
+  });
+  it('空・長すぎる文は断る', () => {
+    const c = clone(DEFAULT_COPY) as any;
+    c.academyRequest.done = '';
+    const r = validateCopy(c);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some((e) => e.includes('academyRequest.done'))).toBe(true);
+    c.academyRequest.done = 'あ'.repeat(1001);
+    expect(validateCopy(c).ok).toBe(false);
+  });
+  it('{講座名} を置き換える', () => {
+    expect(fillCourseName('「{講座名}」を用意しました。{講座名}', 'ES')).toBe('「ES」を用意しました。ES');
   });
 });

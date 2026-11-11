@@ -33,6 +33,7 @@ interface Copy {
   done: { already: string }
   remind: { text: string }
   qa: { sections: QaSection[]; answerKicker: string; more: string }
+  academyRequest: { done: string }
 }
 interface Template {
   id: string
@@ -734,6 +735,22 @@ export default function LineCopyPage() {
           preview={<Bubble text={copy.remind.text} />}
         >
           <Field label="文" value={copy.remind.text} onChange={(v) => set('remind', { text: v })} rows={3} />
+        </Step>
+
+        <Step
+          no="会員サイト"
+          title="会員サイトのリクエスト"
+          when="運営画面でリクエストを「作りました」にしたとき、送った学生に1回だけ届きます。{講座名} は講座・資料の名前に、最後の行には講座へのリンクが自動で付きます。"
+          onReset={() => reset('academyRequest')}
+          preview={<Bubble text={copy.academyRequest.done.split('{講座名}').join('ESの書き方') + '\nhttps://liff.line.me/…'} />}
+        >
+          <Field
+            label="講座ができたときに送る文"
+            value={copy.academyRequest.done}
+            onChange={(v) => set('academyRequest', { done: v })}
+            rows={4}
+            max={1000}
+          />
         </Step>
       </div>
 

@@ -27,6 +27,7 @@ export class LineClient {
     method: string,
     path: string,
     body?: unknown,
+    extraHeaders?: Record<string, string>,
   ): Promise<{ data: unknown; headers: Headers }> {
     const url = `${LINE_API_BASE}${path}`;
 
@@ -35,6 +36,7 @@ export class LineClient {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.channelAccessToken}`,
+        ...extraHeaders,
       },
     };
 
@@ -75,9 +77,14 @@ export class LineClient {
 
   // ─── Messaging ───────────────────────────────────────────────────────────
 
-  async pushMessage(to: string, messages: Message[]): Promise<unknown> {
+  /**
+   * retryKey（UUID）を渡すと X-Line-Retry-Key を付ける。同じキーで送り直しても LINE 側で1回分にまとめられ、
+   * 2回目以降は 409 が返る。
+   */
+  async pushMessage(to: string, messages: Message[], opts?: { retryKey?: string }): Promise<unknown> {
     const body: PushMessageRequest = { to, messages };
-    const { data } = await this.request('POST', '/v2/bot/message/push', body);
+    const headers = opts?.retryKey ? { 'X-Line-Retry-Key': opts.retryKey } : undefined;
+    const { data } = await this.request('POST', '/v2/bot/message/push', body, headers);
     return data;
   }
 
