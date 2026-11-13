@@ -732,13 +732,18 @@ async function handleEvent(
 
     // 質問カードの「その他」に打たれた文（返事待ちで、まだ答えていない人だけ）。
     // 印を付けて教育配信を始め、ボタンで答えたときと同じお礼を返す。
-    if (rulesToTry.length === 0) {
+    // 文がそのまま一致する決まり（メニューの Q&A ボタンなど）は従来どおり優先し、
+    // 「含まれていたら」の決まりより答えを優先する（答えの文に偶然言葉が入っても取りこぼさない）。
+    // 答えは運営が読むべきものなので、お礼を返しても未読として残す。
+    let freeTextAnswered = false;
+    if (!rulesToTry.some((rule) => rule.match_type === 'exact')) {
       try {
         const answer = await findFreeTextAnswer(db, friend.id, lineAccountId);
         if (answer) {
           await applyPostbackTags(db, friend.id, answer.tagIds);
           rulesToTry = autoReplies.results.filter((rule) => rule.keyword === answer.replyKeyword);
           matched = true;
+          freeTextAnswered = true;
         }
       } catch (err) {
         console.error('[free-text-answer] failed', err);
@@ -784,7 +789,7 @@ async function handleEvent(
     }
 
     // auto_replies にマッチしなかった = 自発メッセージ → unread にする
-    if (!matched) {
+    if (!matched || freeTextAnswered) {
       await upsertChatOnMessage(db, friend.id);
     }
 
