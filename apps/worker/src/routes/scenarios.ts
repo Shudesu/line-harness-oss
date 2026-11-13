@@ -13,7 +13,7 @@ import {
   computeNextDeliveryAt,
 } from '@line-crm/db';
 import { computeScenarioStats } from '../services/scenario-stats.js';
-import { SUPPORTED_CONDITION_TYPES, isSupportedConditionType } from '../services/step-delivery.js';
+import { SUPPORTED_CONDITION_TYPES, isSupportedConditionType, parseTagsMatch } from '../services/step-delivery.js';
 import { resolveStepContent } from '@line-crm/db';
 import type {
   Scenario as DbScenario,
@@ -93,6 +93,9 @@ function validateStepCondition(
   // のような OSS issue #120 と同じ over-delivery を再現してしまう。
   if (typeof conditionValue !== 'string' || conditionValue === '') {
     return { ok: false, error: 'conditionValue must be a non-empty string when conditionType is set' };
+  }
+  if (conditionType === 'tags_match' && !parseTagsMatch(conditionValue)) {
+    return { ok: false, error: 'conditionValue for tags_match must be JSON {"all": ["tagId"...], "none": ["tagId"...]} with at least one tag' };
   }
   if (conditionType === 'metadata_equals' || conditionType === 'metadata_not_equals') {
     try {

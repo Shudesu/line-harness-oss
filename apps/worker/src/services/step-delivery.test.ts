@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { evaluateCondition, isSupportedConditionType, SUPPORTED_CONDITION_TYPES, processStepDeliveries, expandVariables } from './step-delivery.js';
+import { evaluateCondition, isSupportedConditionType, SUPPORTED_CONDITION_TYPES, processStepDeliveries, expandVariables, buildMessage } from './step-delivery.js';
 import type { LineClient } from '@line-crm/line-sdk';
+import { attachTagAndFireSideEffects } from './friend-tag-attach.js';
+
+vi.mock('./friend-tag-attach.js', () => ({ attachTagAndFireSideEffects: vi.fn(async () => ({ added: true })) }));
 
 /**
  * Regression coverage for OSS issue #120 — scenario step
@@ -90,6 +93,32 @@ describe('evaluateCondition', () => {
     it('returns false when the friend does not have the tag', async () => {
       const db = mockDb({ friendTags: new Set() });
       expect(await evaluateCondition(db, 'f1', { condition_type: 'tag_exists', condition_value: 'tag-A' })).toBe(false);
+    });
+  });
+
+  describe('tags_match', () => {
+    const cv = (v: unknown) => ({ condition_type: 'tags_match', condition_value: JSON.stringify(v) });
+    it('all のタグが全部あり、none のタグが1つもなければ送る', async () => {
+      const db = mockDb({ friendTags: new Set(['f1|pressed']) });
+      expect(await evaluateCondition(db, 'f1', cv({ all: ['pressed'], none: ['applied'] }))).toBe(true);
+    });
+    it('none のタグがあれば送らない（応募済み）', async () => {
+      const db = mockDb({ friendTags: new Set(['f1|pressed', 'f1|applied']) });
+      expect(await evaluateCondition(db, 'f1', cv({ all: ['pressed'], none: ['applied'] }))).toBe(false);
+    });
+    it('all のタグが欠けていれば送らない', async () => {
+      const db = mockDb({ friendTags: new Set() });
+      expect(await evaluateCondition(db, 'f1', cv({ all: ['pressed'], none: ['applied'] }))).toBe(false);
+    });
+    it('none だけでも使える', async () => {
+      const db = mockDb({ friendTags: new Set() });
+      expect(await evaluateCondition(db, 'f1', cv({ none: ['pressed', 'applied'] }))).toBe(true);
+    });
+    it('空・壊れた値は送らない側に倒す', async () => {
+      const db = mockDb({ friendTags: new Set() });
+      expect(await evaluateCondition(db, 'f1', cv({ all: [], none: [] }))).toBe(false);
+      expect(await evaluateCondition(db, 'f1', cv({ none: [1] }))).toBe(false);
+      expect(await evaluateCondition(db, 'f1', { condition_type: 'tags_match', condition_value: 'not json' })).toBe(false);
     });
   });
 
@@ -233,7 +262,7 @@ describe('condition-false jump (next_step_on_false)', () => {
    * one due friend_scenario at current_step_order=1, whose next step (order 2)
    * has a tag_exists condition the friend does NOT satisfy.
    */
-  function deliveryMockDb(opts: { nextStepOnFalse: number | null; steps?: number[] }): {
+  function deliveryMockDb(opts: { nextStepOnFalse: number | null; steps?: number[]; blankStep2?: boolean }): {
     db: D1Database;
     advances: AdvanceCall[];
     completes: string[];
@@ -246,16 +275,16 @@ describe('condition-false jump (next_step_on_false)', () => {
       scenario_id: 'sc1',
       step_order: order,
       message_type: 'text',
-      message_content: `msg ${order}`,
+      message_content: opts.blankStep2 && order === 2 ? '  ' : `msg ${order}`,
       template_id: null,
       delay_minutes: 10,
       offset_days: null,
       offset_minutes: null,
       delivery_time: null,
-      condition_type: order === 2 ? 'tag_exists' : null,
-      condition_value: order === 2 ? 'tag-X' : null,
+      condition_type: order === 2 && !opts.blankStep2 ? 'tag_exists' : null,
+      condition_value: order === 2 && !opts.blankStep2 ? 'tag-X' : null,
       next_step_on_false: order === 2 ? opts.nextStepOnFalse : null,
-      on_reach_tag_id: null,
+      on_reach_tag_id: opts.blankStep2 && order === 2 ? 'tag-S' : null,
     }));
 
     const db = {
@@ -381,6 +410,18 @@ describe('condition-false jump (next_step_on_false)', () => {
     expect(advances).toHaveLength(1);
     expect(advances[0].nextStepOrder).toBe(2); // no step 99 → sequential path
   });
+
+  it('中身が空白だけの段は送らずに進め、到達タグはシナリオ開始つきで付ける', async () => {
+    const { db, advances } = deliveryMockDb({ nextStepOnFalse: null, blankStep2: true });
+    const { client, push } = mockLineClient();
+
+    await processStepDeliveries(db, client);
+
+    expect(push).not.toHaveBeenCalled();
+    expect(advances).toHaveLength(1);
+    expect(advances[0].nextStepOrder).toBe(2);
+    expect(attachTagAndFireSideEffects).toHaveBeenCalledWith(db, 'f1', 'tag-S');
+  });
 });
 
 /**
@@ -432,5 +473,29 @@ describe('expandVariables comma cleanup scope', () => {
       expect(out).toBe('{"contents":[{"type":"text","text":"hello"}]}');
       expect(() => JSON.parse(out)).not.toThrow();
     });
+  });
+});
+
+describe('buildMessage flex shapes', () => {
+  const bubble = { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '先頭の文字' }] } };
+
+  it('sends a bare bubble as-is with altText from its first text', () => {
+    const msg = buildMessage('flex', JSON.stringify(bubble)) as { type: string; altText: string; contents: unknown };
+    expect(msg.type).toBe('flex');
+    expect(msg.altText).toBe('先頭の文字');
+    expect(msg.contents).toEqual(bubble);
+  });
+
+  it('unwraps { altText, contents } and keeps the chosen altText', () => {
+    const msg = buildMessage('flex', JSON.stringify({ altText: '【最後に。】', contents: bubble })) as { altText: string; contents: unknown };
+    expect(msg.altText).toBe('【最後に。】');
+    expect(msg.contents).toEqual(bubble);
+  });
+
+  it('unwraps a carousel too', () => {
+    const carousel = { type: 'carousel', contents: [bubble] };
+    const msg = buildMessage('flex', JSON.stringify({ altText: '紹介', contents: carousel })) as { altText: string; contents: unknown };
+    expect(msg.altText).toBe('紹介');
+    expect(msg.contents).toEqual(carousel);
   });
 });

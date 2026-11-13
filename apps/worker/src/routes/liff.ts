@@ -838,6 +838,20 @@ liffRoutes.get('/auth/callback', async (c) => {
       statusMessage: null,
     });
 
+    // Bind the friend to the account named in the login link when it isn't bound yet,
+    // so step delivery uses that account's token even before its webhook has fired.
+    // Never overwrite an existing binding (the follow webhook stays the source of truth).
+    if (accountParam && !friend.line_account_id) {
+      const linkAccount = await getLineAccountByChannelId(db, accountParam);
+      if (linkAccount) {
+        await db
+          .prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ? AND line_account_id IS NULL')
+          .bind(linkAccount.id, jstNow(), friend.id)
+          .run();
+        friend.line_account_id = linkAccount.id;
+      }
+    }
+
     // IG cross-platform UUID linkage (OAuth path — new friends & returning users
     // going through /auth/callback). Existing friends who bypass OAuth hit the
     // same helper from /api/liff/link and /api/liff/send-form-link.

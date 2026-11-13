@@ -9,12 +9,12 @@ import {
   jstNow,
   computeNextDeliveryAt,
   resolveStepContent,
-  addTagToFriend,
   type DeliveryMode,
 } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
+import { attachTagAndFireSideEffects } from './friend-tag-attach.js';
 
 /**
  * Replace template variables in message content.
@@ -219,50 +219,55 @@ async function processSingleDelivery(
   // Resolve template_id → templates table (参照型). template_id 未設定なら step 値そのまま。
   const resolved = await resolveStepContent(db, currentStep);
 
-  // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, {{metadata.KEY}}, etc.)
-  const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-  const friendWithMeta = { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1];
-  const expandedContent = expandVariables(resolved.messageContent, friendWithMeta, workerUrl, resolved.messageType);
-  // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
-  // リンクの所有アカウントは実際に配信するアカウント (= friend の account) に合わせる
-  const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
-  let trackedType: string = resolved.messageType;
-  let trackedContent = expandedContent;
-  if (workerUrl) {
-    const { autoTrackContent, appendFriendToTrackedLinks } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl, {
-      lineAccountId: friendAccountId ?? null,
-    });
-    trackedType = tracked.messageType;
-    // Per-friend push → bake f=<friendId> into /t links so clicks attribute
-    // without the LIFF identification hop (no consent screen on first tap).
-    trackedContent = await appendFriendToTrackedLinks(db, tracked.content, workerUrl, friend.id);
-  }
-  const message = buildMessage(trackedType, trackedContent);
-  // Resolve the correct LINE client for this friend's account
-  let deliveryClient = lineClient;
-  if (friendAccountId) {
-    const { getLineAccountById } = await import('@line-crm/db');
-    const account = await getLineAccountById(db, friendAccountId);
-    if (account) {
-      const { LineClient: LC } = await import('@line-crm/line-sdk');
-      deliveryClient = new LC(account.channel_access_token);
+  // 中身が空白だけの文字の段は、送らずに先へ進めて到達タグだけ付ける（空の吹き出しは送らない）。
+  // 例：一定時間たっても質問に答えていない人に、教育配信を始めるタグだけ付ける。
+  const nothingToSend = resolved.messageType === 'text' && resolved.messageContent.trim() === '';
+  if (!nothingToSend) {
+    // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, {{metadata.KEY}}, etc.)
+    const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
+    const friendWithMeta = { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1];
+    const expandedContent = expandVariables(resolved.messageContent, friendWithMeta, workerUrl, resolved.messageType);
+    // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
+    // リンクの所有アカウントは実際に配信するアカウント (= friend の account) に合わせる
+    const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
+    let trackedType: string = resolved.messageType;
+    let trackedContent = expandedContent;
+    if (workerUrl) {
+      const { autoTrackContent, appendFriendToTrackedLinks } = await import('./auto-track.js');
+      const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl, {
+        lineAccountId: friendAccountId ?? null,
+      });
+      trackedType = tracked.messageType;
+      // Per-friend push → bake f=<friendId> into /t links so clicks attribute
+      // without the LIFF identification hop (no consent screen on first tap).
+      trackedContent = await appendFriendToTrackedLinks(db, tracked.content, workerUrl, friend.id);
     }
-  }
-  await deliveryClient.pushMessage(friend.line_user_id, [message]);
+    const message = buildMessage(trackedType, trackedContent);
+    // Resolve the correct LINE client for this friend's account
+    let deliveryClient = lineClient;
+    if (friendAccountId) {
+      const { getLineAccountById } = await import('@line-crm/db');
+      const account = await getLineAccountById(db, friendAccountId);
+      if (account) {
+        const { LineClient: LC } = await import('@line-crm/line-sdk');
+        deliveryClient = new LC(account.channel_access_token);
+      }
+    }
+    await deliveryClient.pushMessage(friend.line_user_id, [message]);
 
-  // Log what we actually pushed: variables expanded, URLs auto-tracked, AND
-  // any cleanEmptyNodes() mutation or parse-failure text fallback applied by
-  // buildMessage(). Use scenario_step_id to recover the original template.
-  const logId = crypto.randomUUID();
-  const logPayload = messageToLogPayload(message);
-  await db
-    .prepare(
-      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, template_id_at_send, created_at)
-       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?, ?)`,
-    )
-    .bind(logId, friend.id, logPayload.messageType, logPayload.content, currentStep.id, resolved.templateIdAtSend, jstNow())
-    .run();
+    // Log what we actually pushed: variables expanded, URLs auto-tracked, AND
+    // any cleanEmptyNodes() mutation or parse-failure text fallback applied by
+    // buildMessage(). Use scenario_step_id to recover the original template.
+    const logId = crypto.randomUUID();
+    const logPayload = messageToLogPayload(message);
+    await db
+      .prepare(
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, template_id_at_send, created_at)
+         VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?, ?)`,
+      )
+      .bind(logId, friend.id, logPayload.messageType, logPayload.content, currentStep.id, resolved.templateIdAtSend, jstNow())
+      .run();
+  }
 
   // Determine next step (find the step after currentStep in the sorted list)
   const currentIndex = steps.indexOf(currentStep);
@@ -278,9 +283,10 @@ async function processSingleDelivery(
 
   // 到達タグ付与 (advance / complete の後 = 再送が起きてもタグ付与は影響しない順序)
   // 失敗してもログに残すだけで配信フローは止めない。
+  // 新しく付いたときは、そのタグで始まるシナリオも開始する。
   if (currentStep.on_reach_tag_id) {
     try {
-      await addTagToFriend(db, friend.id, currentStep.on_reach_tag_id);
+      await attachTagAndFireSideEffects(db, friend.id, currentStep.on_reach_tag_id);
     } catch (err) {
       console.error(`[scenario] tag attach failed step=${currentStep.id}:`, err);
     }
@@ -294,11 +300,37 @@ export const SUPPORTED_CONDITION_TYPES = [
   'tag_not_exists',
   'metadata_equals',
   'metadata_not_equals',
+  'tags_match',
 ] as const;
 export type ConditionType = (typeof SUPPORTED_CONDITION_TYPES)[number];
 
 export function isSupportedConditionType(value: unknown): value is ConditionType {
   return typeof value === 'string' && (SUPPORTED_CONDITION_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * tags_match の condition_value（JSON {"all": [タグID...], "none": [タグID...]}）を読む。
+ * 「このタグは全部ある」「このタグは1つもない」を1つの段で同時に見るためのもの
+ * （例：応募ボタンを押した・まだ応募していない人だけに送る）。
+ * 両方とも空、または文字列以外が混ざるものは null（＝送らない側に倒す）。
+ */
+export function parseTagsMatch(value: string): { all: string[]; none: string[] } | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const pick = (v: unknown): string[] | null => {
+    if (v === undefined) return [];
+    if (!Array.isArray(v) || !v.every((x) => typeof x === 'string' && x !== '')) return null;
+    return v as string[];
+  };
+  const all = pick((raw as { all?: unknown }).all);
+  const none = pick((raw as { none?: unknown }).none);
+  if (!all || !none || all.length + none.length === 0) return null;
+  return { all, none };
 }
 
 /**
@@ -350,6 +382,23 @@ export async function evaluateCondition(
         .bind(friendId, step.condition_value)
         .first();
       return !tag;
+    }
+    case 'tags_match': {
+      const parsed = parseTagsMatch(step.condition_value);
+      if (!parsed) {
+        console.error(
+          `[scenario] malformed condition_value for friend=${friendId} type=tags_match — skipping step`,
+        );
+        return false;
+      }
+      const has = async (tagId: string): Promise<boolean> =>
+        !!(await db
+          .prepare('SELECT 1 FROM friend_tags WHERE friend_id = ? AND tag_id = ?')
+          .bind(friendId, tagId)
+          .first());
+      for (const tagId of parsed.all) if (!(await has(tagId))) return false;
+      for (const tagId of parsed.none) if (await has(tagId)) return false;
+      return true;
     }
     case 'metadata_equals':
     case 'metadata_not_equals': {
@@ -477,7 +526,16 @@ export function buildMessage(messageType: string, messageContent: string, altTex
 
   if (messageType === 'flex') {
     try {
-      const contents = JSON.parse(messageContent);
+      let contents = JSON.parse(messageContent);
+      // Accept the full message shape { altText, contents } too: LINE rejects it if
+      // nested as-is, and its altText is the notification line the author chose.
+      if (
+        contents && typeof contents === 'object' && !('type' in contents) &&
+        contents.contents && (contents.contents.type === 'bubble' || contents.contents.type === 'carousel')
+      ) {
+        if (!altText && typeof contents.altText === 'string' && contents.altText) altText = contents.altText;
+        contents = contents.contents;
+      }
       // Remove empty text nodes (from {{#if_ref}} conditional blocks)
       cleanEmptyNodes(contents);
       // Extract first text element for altText (shown in notifications)

@@ -28,6 +28,8 @@ import { attachPendingJoinRef } from '../services/intern-join.js';
 import { recordFollowEvent, recordUnfollowByLineUser } from '../services/intern-stats.js';
 import { claimWebhookEvent } from '../services/webhook-dedupe.js';
 import { parseAcademyRequestDone, sendAcademyRequestDone } from '../services/intern-academy.js';
+import { applyPostbackTags, parsePostbackTags } from '../services/postback-tag.js';
+import { findFreeTextAnswer, isRepeatedAnswer } from '../services/free-text-answer.js';
 import { handlePickedUniversity, handleSurveyPostback, handleSurveyText, startSurveyOnFollow, surveyConfigFromEnv } from '../services/intern-survey.js';
 import type { Env } from '../index.js';
 
@@ -458,7 +460,20 @@ async function handleEvent(
     const friend = await ensureFriendFromWebhookUser(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
-    const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
+    const rawPostbackData = (event as unknown as { postback: { data: string } }).postback.data;
+
+    // 印を付けるボタン（lh_tag=...）。印を付けたあと、kw を自動返信のキーワードとして扱う。
+    const postbackTags = parsePostbackTags(rawPostbackData);
+    let repeatedAnswer = false;
+    if (postbackTags) {
+      try {
+        repeatedAnswer = await isRepeatedAnswer(db, friend.id, lineAccountId, postbackTags.tagIds);
+        if (!repeatedAnswer) await applyPostbackTags(db, friend.id, postbackTags.tagIds);
+      } catch (err) {
+        console.error('[postback-tag] failed', err);
+      }
+    }
+    const postbackData = postbackTags ? (repeatedAnswer ? '' : (postbackTags.keyword ?? '')) : rawPostbackData;
 
     // Match postback data against auto_replies (exact match on keyword)
     const autoReplyQuery = lineAccountId
@@ -485,7 +500,7 @@ async function handleEvent(
           `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
            VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'postback', ?, ?)`,
         )
-        .bind(crypto.randomUUID(), friend.id, postbackData, lineAccountId ?? null, jstNow())
+        .bind(crypto.randomUUID(), friend.id, rawPostbackData, lineAccountId ?? null, jstNow())
         .run();
     } catch (err) {
       console.error('Failed to log incoming postback', err);
@@ -499,7 +514,7 @@ async function handleEvent(
       return;
     }
 
-    for (const rule of autoReplies.results) {
+    for (const rule of postbackData ? autoReplies.results : []) {
       const isMatch = rule.match_type === 'exact'
         ? postbackData === rule.keyword
         : postbackData.includes(rule.keyword);
@@ -709,19 +724,32 @@ async function handleEvent(
 
     let matched = false;
     let replyTokenConsumed = false;
-    for (const rule of autoReplies.results) {
-      const isMatch =
-        rule.match_type === 'exact'
-          ? incomingText === rule.keyword
-          : incomingText.includes(rule.keyword);
+    let rulesToTry = autoReplies.results.filter((rule) =>
+      rule.match_type === 'exact'
+        ? incomingText === rule.keyword
+        : incomingText.includes(rule.keyword),
+    );
 
-      if (isMatch) {
-        // silent タイプ: 返信しないが matched=true にして unread / push を抑止する
-        if (rule.response_type === 'silent') {
+    // 質問カードの「その他」に打たれた文（返事待ちで、まだ答えていない人だけ）。
+    // 印を付けて教育配信を始め、ボタンで答えたときと同じお礼を返す。
+    if (rulesToTry.length === 0) {
+      try {
+        const answer = await findFreeTextAnswer(db, friend.id, lineAccountId);
+        if (answer) {
+          await applyPostbackTags(db, friend.id, answer.tagIds);
+          rulesToTry = autoReplies.results.filter((rule) => rule.keyword === answer.replyKeyword);
           matched = true;
-          break;
         }
+      } catch (err) {
+        console.error('[free-text-answer] failed', err);
+      }
+    }
 
+    // 先に作られた決まりを優先する（1つだけ返す）
+    const rule = rulesToTry[0];
+    if (rule) {
+      // silent タイプ: 返信しないが matched=true にして unread / push を抑止する
+      if (rule.response_type !== 'silent') {
         try {
           const { resolveMetadata: resolveMeta2 } = await import('../services/step-delivery.js');
           const resolvedMeta2 = await resolveMeta2(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
@@ -751,10 +779,8 @@ async function handleEvent(
         } catch (err) {
           console.error('Failed to send auto-reply', err);
         }
-
-        matched = true;
-        break;
       }
+      matched = true;
     }
 
     // auto_replies にマッチしなかった = 自発メッセージ → unread にする
