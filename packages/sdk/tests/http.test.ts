@@ -94,4 +94,19 @@ describe('HttpClient', () => {
     })
     vi.unstubAllGlobals()
   })
+  it('preserves the manual-review conflict fields without automatically retrying', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false, status: 409,
+      json: async () => ({ success: false, error: 'Check LINE delivery manually',
+        code: 'line_delivery_requires_review', requiresReview: true }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    try {
+      await expect(http.post('/api/friends/synthetic/messages', { content: 'Synthetic' }))
+        .rejects.toMatchObject({ status: 409, code: 'line_delivery_requires_review',
+          requiresReview: true, message: 'Check LINE delivery manually' })
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    } finally { vi.unstubAllGlobals() }
+  })
+
 })

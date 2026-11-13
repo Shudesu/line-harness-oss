@@ -6,6 +6,21 @@ const openapi = new Hono<Env>();
 const gateHeaders = ['X-Harness-Connection-Id','X-Harness-Event','X-Harness-Delivery-Id','X-Harness-Timestamp','X-Harness-Signature'].map(name=>({name,in:'header',required:true,schema:{type:'string'}}));
 const gateIdentityBody = {required:true,content:{'application/json':{schema:{type:'object',required:['idToken','accessToken'],properties:{idToken:{type:'string'},accessToken:{type:'string'},turnstileToken:{type:'string',description:'Required for initial strict participation'}}}}}};
 
+const friendIdempotencyHeader = {
+  name: 'Idempotency-Key', in: 'header', schema: { type: 'string', minLength: 1, maxLength: 255 },
+  description: 'Optional, per friend (tag add/remove share a scope). Retained indefinitely. Completed calls replay the original response; changed input returns 422. Keyed LINE sends freeze the first payload and never reclaim an in-flight send. An unresolved send at/after 24h requires manual review; do not replace its key. Without this header, existing behavior is unchanged.',
+};
+const lineIdempotencyConflict = {
+  description: 'API request or LINE send in progress; or unknown LINE delivery at/after 24h from its first start (code=line_delivery_requires_review, requiresReview=true). No automatic resend beyond 24h. Verify delivery manually; do not substitute a new key. LINE acceptance does not guarantee end-user receipt.',
+  content: { 'application/json': { schema: {
+    type: 'object', properties: {
+      success: { type: 'boolean', const: false }, error: { type: 'string' },
+      code: { type: 'string', enum: ['line_send_in_progress', 'line_delivery_requires_review'] },
+      requiresReview: { type: 'boolean' },
+    },
+  } } },
+};
+
 const spec = {
   openapi: '3.1.0',
   info: {
@@ -307,13 +322,33 @@ const spec = {
         responses: { '200': { description: 'Friend with tags' }, '404': { description: 'Not found' } },
       },
     },
+    '/api/friends/{id}/messages': {
+      post: {
+        tags: ['Friends'], summary: '友だちへ個別送信',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          friendIdempotencyHeader,
+        ],
+        requestBody: { content: { 'application/json': { schema: {
+          type: 'object', required: ['content'], properties: {
+            content: { type: 'string' }, messageType: { type: 'string', default: 'text' },
+            altText: { type: 'string' }, trackLinks: { type: 'boolean', default: true },
+          },
+        } } } },
+        responses: {
+          '200': { description: 'Sent or replayed original messageId' },
+          '409': lineIdempotencyConflict,
+          '422': { description: 'Idempotency-Key reused for different input' },
+        },
+      },
+    },
     '/api/friends/{id}/tags': {
       post: {
         tags: ['Friends'],
         summary: '友だちにタグ追加',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, friendIdempotencyHeader],
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { tagId: { type: 'string' } }, required: ['tagId'] } } } },
-        responses: { '201': { description: 'Tag added' } },
+        responses: { '201': { description: 'Tag added' }, '409': lineIdempotencyConflict, '422': { description: 'Idempotency-Key reused for different input' } },
       },
     },
     '/api/friends/{id}/tags/{tagId}': {
@@ -323,8 +358,9 @@ const spec = {
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'tagId', in: 'path', required: true, schema: { type: 'string' } },
+          friendIdempotencyHeader,
         ],
-        responses: { '200': { description: 'Tag removed' } },
+        responses: { '200': { description: 'Tag removed' }, '409': lineIdempotencyConflict, '422': { description: 'Idempotency-Key reused for different input' } },
       },
     },
     // ── Tags ────────────────────────────────────────────────────────────────
@@ -623,13 +659,13 @@ const spec = {
             name: 'Idempotency-Key',
             in: 'header',
             schema: { type: 'string', maxLength: 255 },
-            description: 'The same key records one conversion; a retry replays the first response.',
+            description: 'DB-wide conversion scope, not per account/caller. Retained indefinitely; namespace with integration/account/event IDs. The same key records one conversion; a completed response is replayed. Keyed automation pushes have persistent action keys; unresolved sends at/after 24h require manual review. Webhooks and non-send effects are not exactly-once.',
           },
         ],
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { conversionPointId: { type: 'string' }, friendId: { type: 'string' }, userId: { type: 'string' }, affiliateCode: { type: 'string' }, metadata: { type: 'object' }, fireEvent: { type: 'boolean', description: 'Also fire cv_fire. Requires Idempotency-Key.' } }, required: ['conversionPointId', 'friendId'] } } } },
         responses: {
           '201': { description: 'Tracked (or replayed for a completed Idempotency-Key)' },
-          '409': { description: 'A request with this Idempotency-Key is still in progress' },
+          '409': lineIdempotencyConflict,
           '422': { description: 'Idempotency-Key reused for a different request, or fireEvent for a friend whose LINE account cannot be determined' },
         },
       },

@@ -8,6 +8,7 @@ import {
 import type { Env } from '../index.js';
 import { createBroadcastRetryKey } from './broadcast-retry-key.js';
 import { bodyDigest } from './harness-gate-protocol.js';
+import { LineSendPendingError } from './idempotent-line-send.js';
 
 // Optional Idempotency-Key support for API routes that external integrations
 // (payment webhooks, plugins) retry. Requests WITHOUT the header run the
@@ -40,10 +41,13 @@ import { bodyDigest } from './harness-gate-protocol.js';
 //   - A retry after a 5xx / crash runs the handler again, so the handler's
 //     own side effects must tolerate a re-run (at-least-once on failure).
 //   - "completed" means the handler returned 2xx. Failures that the event bus
-//     handles internally (a failed automation action, a webhook non-2xx) are
-//     logged as before and are not retried by resending the request.
+//     handles internally (a failed non-send action, a webhook non-2xx) are
+//     logged as before and are not retried by resending the request. Keyed
+//     scoring and send failures propagate, keeping the API request retryable.
+//   - Keyed LINE sends have a separate durable state and a 24h retry cutoff;
+//     an API lease does not reclaim an in-flight LINE send.
 
-/** Longer than any request can run; a crashed attempt becomes retryable after this. */
+/** API ownership lease only; side effects must remain safe when attempts overlap. */
 const IDEMPOTENCY_LEASE_MS = 5 * 60_000;
 
 /** One claimed (scope, key): what a handler needs to make its own writes repeat-safe. */
@@ -111,6 +115,10 @@ export async function runIdempotent(
     response = await run({ operationId, deriveId: (...parts) => deriveIdempotentId(operationId, ...parts) });
   } catch (err) {
     await failIdempotencyKey(db, scope, key, claim.token);
+    if (err instanceof LineSendPendingError) {
+      return c.json({ success: false, error: err.message, code: err.code,
+        requiresReview: err.code === 'line_delivery_requires_review' }, 409);
+    }
     throw err;
   }
   if (response.status >= 500 || (response.status >= 400 && !claim.fresh)) {

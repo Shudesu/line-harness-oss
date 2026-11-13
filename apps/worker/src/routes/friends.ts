@@ -18,6 +18,7 @@ import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage } from '../services/step-delivery.js';
 import { runIdempotent } from '../services/idempotency.js';
+import { runIdempotentLineSend } from '../services/idempotent-line-send.js';
 import type { Env } from '../index.js';
 
 const friends = new Hono<Env>();
@@ -694,21 +695,25 @@ friends.post('/api/friends/:id/messages', async (c) => {
       }
 
       const message = buildMessage(tracked.messageType, tracked.content, body.altText);
-      if (keyed) {
-        await lineClient.pushMessage(friend.line_user_id, [message], keyed.retryKey);
-      } else {
-        await lineClient.pushMessage(friend.line_user_id, [message]);
-      }
-
-      // Log outgoing message
+      // Log success is part of the keyed send's durable completion boundary.
       const logId = keyed?.logId ?? crypto.randomUUID();
-      await db
-        .prepare(
+      const log = async () => {
+        await db.prepare(
           `INSERT ${keyed ? 'OR IGNORE ' : ''}INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
            VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'manual', ?)`,
         )
         .bind(logId, friend.id, messageType, body.content, jstNow())
         .run();
+      };
+      if (keyed) {
+        await runIdempotentLineSend(db, {
+          id: keyed.logId, retryKey: keyed.retryKey, accessToken,
+          accountId: friendAccountId ?? null, to: friend.line_user_id, messages: [message],
+        }, log);
+      } else {
+        await lineClient.pushMessage(friend.line_user_id, [message]);
+        await log();
+      }
 
       return c.json({ success: true, data: { messageId: logId } });
     });

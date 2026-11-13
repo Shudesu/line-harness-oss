@@ -133,6 +133,14 @@ CREATE TABLE IF NOT EXISTS api_idempotency_keys (
   PRIMARY KEY (scope, key)
 );
 
+CREATE TABLE IF NOT EXISTS api_line_sends (
+  id TEXT PRIMARY KEY,
+  request_body TEXT NOT NULL,
+  claim_token TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('sending', 'retryable', 'completed')),
+  first_started_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS auth_audit_log (
   id TEXT PRIMARY KEY,
   actor_id TEXT NOT NULL,

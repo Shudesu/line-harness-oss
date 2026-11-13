@@ -80,9 +80,13 @@ export class FriendsResource {
     options?: {
       trackLinks?: boolean
       /**
-       * Retrying with the same key (per friend) does not deliver or log the
-       * message twice, and returns the original messageId. Reusing a key for
-       * a different message is rejected with 422.
+       * Retained per friend indefinitely; a completed call replays messageId.
+       * An unresolved send never retries beyond 24h from its first start:
+       * throws LineHarnessError (409, code=line_delivery_requires_review,
+       * requiresReview=true). Check delivery manually; do not use a new key.
+       * In-flight sends return 409 (line_send_in_progress); a crashed in-flight
+       * attempt requires manual review after 24h. Changed input returns 422.
+       * No guarantee of end-user receipt. See docs/api-idempotency.md.
        */
       idempotencyKey?: string
     },

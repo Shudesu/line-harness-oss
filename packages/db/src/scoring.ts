@@ -81,13 +81,14 @@ export async function addScore(
 ): Promise<void> {
   const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
-  const inserted = await db.prepare(`INSERT ${input.id ? 'OR IGNORE ' : ''}INTO friend_scores (id, friend_id, scoring_rule_id, score_change, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.friendId, input.scoringRuleId ?? null, input.scoreChange, input.reason ?? null, now).run();
-  if (input.id && (inserted.meta?.changes ?? 0) === 0) return;
-
-  // スコアキャッシュを更新
-  await db.prepare(`UPDATE friends SET score = score + ?, updated_at = ? WHERE id = ?`)
-    .bind(input.scoreChange, now, input.friendId).run();
+  // D1 batch is a transaction. changes() belongs to the immediately preceding
+  // INSERT in this batch: ignored ledger IDs cannot increment the cache again.
+  await db.batch([
+    db.prepare(`INSERT ${input.id ? 'OR IGNORE ' : ''}INTO friend_scores (id, friend_id, scoring_rule_id, score_change, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(id, input.friendId, input.scoringRuleId ?? null, input.scoreChange, input.reason ?? null, now),
+    db.prepare(`UPDATE friends SET score = score + ?, updated_at = ? WHERE id = ? AND changes() > 0`)
+      .bind(input.scoreChange, now, input.friendId),
+  ]);
 }
 
 /** 友だちの現在スコアを取得 */

@@ -22,6 +22,7 @@ import {
   recordIdempotencyKeyCompleted,
 } from '@line-crm/db';
 import { deriveIdempotentId } from './idempotency.js';
+import { runIdempotentLineSend } from './idempotent-line-send.js';
 import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
@@ -42,7 +43,10 @@ import {
  *   - scoring:    the ledger row ID is derived per rule; a repeat adds nothing
  *   - automation: the log row ID is derived per automation; a logged
  *                 automation is not run again (one that died mid-way runs
- *                 again as a whole)
+ *                 again as a whole). Each keyed send action additionally has
+ *                 its own persisted state/retry key and immutable payload;
+ *                 an in-flight send is never reclaimed, and an unresolved
+ *                 send at/after 24h requires manual review.
  *   - webhook:    a delivery is recorded only after it got 2xx, and a
  *                 recorded delivery is not sent again. There is no "sending"
  *                 state: anything not recorded is sent, so a delivery is
@@ -109,7 +113,11 @@ export async function fireEvent(
       sendAdConversions(db, payload.friendId, payload.conversionEventName, payload.conversionValue),
     );
   }
-  await Promise.allSettled(phase1);
+  const phase1Results = await Promise.allSettled(phase1);
+  if (operationId) {
+    const failure = phase1Results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  }
 
   // Build an enriched payload with the freshly-updated score.
   const enrichedPayload: EventPayload = payload.friendId
@@ -225,6 +233,7 @@ async function processScoring(
     }
   } catch (err) {
     console.error('processScoring error:', err);
+    if (operationId) throw err;
   }
 }
 
@@ -263,11 +272,17 @@ async function processAutomations(
 
       const results: Array<{ action: string; success: boolean; error?: string }> = [];
 
-      for (const action of actions) {
+      for (const [actionIndex, action] of actions.entries()) {
         try {
-          await executeAction(db, action, payload, lineAccessToken, lineAccountId, dispatch);
+          const sendId = operationId && action.type === 'send_message'
+            ? await deriveIdempotentId(operationId, 'event-send', eventType, automation.id, String(actionIndex))
+            : undefined;
+          await executeAction(db, action, payload, lineAccessToken, lineAccountId, dispatch, sendId);
           results.push({ action: action.type, success: true });
         } catch (err) {
+          // Do not write a terminal automation log over a pending/failed keyed
+          // send: the caller must see the conflict or retryable failure.
+          if (operationId && action.type === 'send_message') throw err;
           const errorMsg = err instanceof Error ? err.message : String(err);
           results.push({ action: action.type, success: false, error: errorMsg });
         }
@@ -287,6 +302,7 @@ async function processAutomations(
     }
   } catch (err) {
     console.error('processAutomations error:', err);
+    if (operationId) throw err;
   }
 }
 
@@ -342,6 +358,7 @@ async function executeAction(
   lineAccessToken?: string,
   lineAccountId?: string | null,
   dispatch: TagAutomationDispatch = createTagAutomationDispatch(),
+  sendId?: string,
 ): Promise<void> {
   const friendId = payload.friendId;
   if (!friendId && action.type !== 'send_webhook') {
@@ -411,6 +428,23 @@ async function executeAction(
       } else {
         msg = { type: 'text', text: resolvedContent };
         logContent = resolvedContent;
+      }
+
+      if (sendId) {
+        // Keyed API events use push (reply has no retry-key guarantee). The
+        // request and stable log ID survive overlapping API lease owners.
+        await runIdempotentLineSend(db, {
+          id: sendId, retryKey: sendId, accessToken: lineAccessToken,
+          accountId: lineAccountId ?? null, to: friend.line_user_id, messages: [msg],
+        }, async ([sent]) => {
+          const content = sent.type === 'text' ? sent.text
+            : sent.type === 'flex' ? JSON.stringify(sent.contents) : JSON.stringify(sent);
+          await logOutgoingMessage(db, {
+            id: sendId, friendId, messageType: sent.type, content,
+            deliveryType: 'push', source: 'automation', lineAccountId,
+          });
+        });
+        break;
       }
 
       let deliveryType: 'reply' | 'push';
@@ -519,10 +553,12 @@ async function executeAction(
   }
 }
 
-/** 送信メッセージを messages_log に記録（失敗しても例外を上げない） */
+/** 送信ログ。キーなしは従来どおりbest-effort、キー付きは失敗を呼出元へ返す。 */
 export async function logOutgoingMessage(
   db: D1Database,
   params: {
+    /** Keyed send log: stable ID and strict failure propagation. */
+    id?: string;
     friendId: string;
     messageType: string;
     content: string;
@@ -534,11 +570,11 @@ export async function logOutgoingMessage(
   try {
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
+        `INSERT ${params.id ? 'OR IGNORE ' : ''}INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
          VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, ?, ?, ?, ?)`,
       )
       .bind(
-        crypto.randomUUID(),
+        params.id ?? crypto.randomUUID(),
         params.friendId,
         params.messageType,
         params.content,
@@ -550,5 +586,6 @@ export async function logOutgoingMessage(
       .run();
   } catch (err) {
     console.error('logOutgoingMessage failed:', err);
+    if (params.id) throw err;
   }
 }

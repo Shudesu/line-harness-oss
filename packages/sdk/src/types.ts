@@ -73,7 +73,7 @@ export interface TrackConversionInput {
   metadata?: Record<string, unknown> | null
   /** Also fire `cv_fire`. Requires `idempotencyKey`. */
   fireEvent?: boolean
-  /** The same key records one conversion; a retry returns the recorded event. */
+  /** DB-wide key retained indefinitely; namespace by integration/account. A retry returns the same event. */
   idempotencyKey?: string
 }
 
