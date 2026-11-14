@@ -48,8 +48,33 @@ export interface FriendListParams {
   offset?: number
   tagId?: string
   search?: string
+  /** Exact LINE user ID match. Requires an account (accountId or the client default). */
+  lineUserId?: string
   metadata?: Record<string, string>
   accountId?: string
+}
+
+// ─── Conversion ─────────────────────────────────────────
+export interface ConversionEvent {
+  id: string
+  conversionPointId: string
+  friendId: string
+  userId: string | null
+  affiliateCode: string | null
+  metadata: string | null
+  createdAt: string
+}
+
+export interface TrackConversionInput {
+  conversionPointId: string
+  friendId: string
+  userId?: string | null
+  affiliateCode?: string | null
+  metadata?: Record<string, unknown> | null
+  /** Also fire `cv_fire`. Requires `idempotencyKey`. */
+  fireEvent?: boolean
+  /** DB-wide key retained indefinitely; namespace by integration/account. A retry returns the same event. */
+  idempotencyKey?: string
 }
 
 // ─── Tag ────────────────────────────────────────────────

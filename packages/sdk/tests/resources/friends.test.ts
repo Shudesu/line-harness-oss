@@ -73,4 +73,46 @@ describe('FriendsResource', () => {
     await resource.removeTag('friend-1', 'tag-1')
     expect(http.delete).toHaveBeenCalledWith('/api/friends/friend-1/tags/tag-1')
   })
+
+  it('findByLineUserId() looks up one account by exact LINE user ID', async () => {
+    const friend = { id: '1', lineUserId: 'U123' }
+    const http = mockHttp({ get: vi.fn().mockResolvedValue({ success: true, data: { items: [friend], total: 1 } }) })
+    const resource = new FriendsResource(http, 'default-account')
+    expect(await resource.findByLineUserId('U123')).toEqual(friend)
+    expect(http.get).toHaveBeenCalledWith('/api/friends?limit=1&lineUserId=U123&lineAccountId=default-account')
+    await resource.findByLineUserId('U123', 'other-account')
+    expect(http.get).toHaveBeenLastCalledWith('/api/friends?limit=1&lineUserId=U123&lineAccountId=other-account')
+  })
+
+  it('findByLineUserId() returns null when not found and refuses to run without an account', async () => {
+    const http = mockHttp({ get: vi.fn().mockResolvedValue({ success: true, data: { items: [], total: 0 } }) })
+    expect(await new FriendsResource(http, 'default-account').findByLineUserId('U404')).toBeNull()
+    await expect(new FriendsResource(http).findByLineUserId('U123')).rejects.toThrow('accountId')
+    await expect(new FriendsResource(http, 'default-account').findByLineUserId('')).rejects.toThrow('lineUserId')
+    expect(http.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('sendMessage() sends Idempotency-Key only when idempotencyKey is given', async () => {
+    const http = mockHttp({ post: vi.fn().mockResolvedValue({ success: true, data: { messageId: 'm1' } }) })
+    const resource = new FriendsResource(http)
+    await resource.sendMessage('f1', 'hello')
+    expect(http.post).toHaveBeenLastCalledWith('/api/friends/f1/messages', { messageType: 'text', content: 'hello' })
+    await resource.sendMessage('f1', 'hello', 'text', undefined, { idempotencyKey: 'order-1' })
+    expect(http.post).toHaveBeenLastCalledWith(
+      '/api/friends/f1/messages',
+      { messageType: 'text', content: 'hello' },
+      { 'Idempotency-Key': 'order-1' },
+    )
+  })
+
+  it('addTag() / removeTag() send Idempotency-Key only when idempotencyKey is given', async () => {
+    const http = mockHttp({ post: vi.fn().mockResolvedValue({ success: true }), delete: vi.fn().mockResolvedValue({ success: true }) })
+    const resource = new FriendsResource(http)
+    await resource.addTag('f1', 't1', { idempotencyKey: 'order-1:tag' })
+    expect(http.post).toHaveBeenCalledWith('/api/friends/f1/tags', { tagId: 't1' }, { 'Idempotency-Key': 'order-1:tag' })
+    await resource.removeTag('f1', 't1', { idempotencyKey: 'refund-1:tag' })
+    expect(http.delete).toHaveBeenCalledWith('/api/friends/f1/tags/t1', { 'Idempotency-Key': 'refund-1:tag' })
+    await resource.removeTag('f1', 't1')
+    expect(http.delete).toHaveBeenLastCalledWith('/api/friends/f1/tags/t1')
+  })
 })

@@ -5,6 +5,7 @@ export { parseDelay } from './delay.js'
 // Resource classes (for advanced usage / type narrowing)
 export { FriendsResource } from './resources/friends.js'
 export { TagsResource } from './resources/tags.js'
+export { ConversionsResource } from './resources/conversions.js'
 export { ScenariosResource } from './resources/scenarios.js'
 export { BroadcastsResource } from './resources/broadcasts.js'
 export { RichMenusResource } from './resources/rich-menus.js'
@@ -27,6 +28,8 @@ export type {
   Friend,
   FriendListParams,
   Tag,
+  ConversionEvent,
+  TrackConversionInput,
   CreateTagInput,
   Scenario,
   ScenarioListItem,

@@ -13,6 +13,7 @@ export class FriendsResource {
     if (params?.offset !== undefined) query.set('offset', String(params.offset))
     if (params?.tagId) query.set('tagId', params.tagId)
     if (params?.search) query.set('search', params.search)
+    if (params?.lineUserId !== undefined) query.set('lineUserId', params.lineUserId)
     if (params?.metadata) {
       for (const [key, value] of Object.entries(params.metadata)) {
         query.set(`metadata.${key}`, String(value))
@@ -26,6 +27,20 @@ export class FriendsResource {
     return res.data
   }
 
+  /**
+   * Resolve a friend by LINE user ID within one LINE account. Returns null
+   * when the user is not a friend of that account — it never falls back to a
+   * friend of another account, so it is safe for payment / webhook linking.
+   */
+  async findByLineUserId(lineUserId: string, accountId?: string): Promise<Friend | null> {
+    const resolvedAccountId = accountId ?? this.defaultAccountId
+    if (!lineUserId || !resolvedAccountId) {
+      throw new Error('findByLineUserId requires lineUserId and an accountId (argument or client default)')
+    }
+    const { items } = await this.list({ lineUserId, accountId: resolvedAccountId, limit: 1 })
+    return items[0] ?? null
+  }
+
   async get(id: string): Promise<Friend> {
     const res = await this.http.get<ApiResponse<Friend>>(`/api/friends/${id}`)
     return res.data
@@ -36,12 +51,25 @@ export class FriendsResource {
     return res.data.count
   }
 
-  async addTag(friendId: string, tagId: string): Promise<void> {
-    await this.http.post(`/api/friends/${friendId}/tags`, { tagId })
+  /**
+   * With `idempotencyKey` (per friend), retrying the same call replays the
+   * first result and does not fire the tag's side effects (tag_change
+   * automations, scoring, webhooks) again.
+   */
+  async addTag(friendId: string, tagId: string, options?: { idempotencyKey?: string }): Promise<void> {
+    if (options?.idempotencyKey) {
+      await this.http.post(`/api/friends/${friendId}/tags`, { tagId }, { 'Idempotency-Key': options.idempotencyKey })
+    } else {
+      await this.http.post(`/api/friends/${friendId}/tags`, { tagId })
+    }
   }
 
-  async removeTag(friendId: string, tagId: string): Promise<void> {
-    await this.http.delete(`/api/friends/${friendId}/tags/${tagId}`)
+  async removeTag(friendId: string, tagId: string, options?: { idempotencyKey?: string }): Promise<void> {
+    if (options?.idempotencyKey) {
+      await this.http.delete(`/api/friends/${friendId}/tags/${tagId}`, { 'Idempotency-Key': options.idempotencyKey })
+    } else {
+      await this.http.delete(`/api/friends/${friendId}/tags/${tagId}`)
+    }
   }
 
   async sendMessage(
@@ -49,14 +77,30 @@ export class FriendsResource {
     content: string,
     messageType: MessageType = 'text',
     altText?: string,
-    options?: { trackLinks?: boolean },
+    options?: {
+      trackLinks?: boolean
+      /**
+       * Retained per friend indefinitely; a completed call replays messageId.
+       * An unresolved send never retries beyond 24h from its first start:
+       * throws LineHarnessError (409, code=line_delivery_requires_review,
+       * requiresReview=true). Check delivery manually; do not use a new key.
+       * In-flight sends return 409 (line_send_in_progress); a crashed in-flight
+       * attempt requires manual review after 24h. Changed input returns 422.
+       * No guarantee of end-user receipt. See docs/api-idempotency.md.
+       */
+      idempotencyKey?: string
+    },
   ): Promise<{ messageId: string }> {
-    const res = await this.http.post<ApiResponse<{ messageId: string }>>(`/api/friends/${friendId}/messages`, {
+    const body = {
       messageType,
       content,
       ...(altText ? { altText } : {}),
       ...(options?.trackLinks !== undefined ? { trackLinks: options.trackLinks } : {}),
-    })
+    }
+    const path = `/api/friends/${friendId}/messages`
+    const res = options?.idempotencyKey
+      ? await this.http.post<ApiResponse<{ messageId: string }>>(path, body, { 'Idempotency-Key': options.idempotencyKey })
+      : await this.http.post<ApiResponse<{ messageId: string }>>(path, body)
     return res.data
   }
 

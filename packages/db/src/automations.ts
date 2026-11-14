@@ -87,11 +87,15 @@ export async function getAutomationLogs(db: D1Database, automationId?: string, l
 
 export async function createAutomationLog(
   db: D1Database,
-  input: { automationId: string; friendId?: string; eventData?: string; actionsResult?: string; status: string },
+  input: {
+    automationId: string; friendId?: string; eventData?: string; actionsResult?: string; status: string;
+    /** Caller-chosen log ID for an idempotent event (a second insert is ignored). */
+    id?: string;
+  },
 ): Promise<void> {
-  const id = crypto.randomUUID();
+  const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO automation_logs (id, automation_id, friend_id, event_data, actions_result, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+  await db.prepare(`INSERT ${input.id ? 'OR IGNORE ' : ''}INTO automation_logs (id, automation_id, friend_id, event_data, actions_result, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .bind(id, input.automationId, input.friendId ?? null, input.eventData ?? null, input.actionsResult ?? null, input.status, now).run();
 }
 

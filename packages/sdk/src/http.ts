@@ -33,8 +33,8 @@ export class HttpClient {
     return this.request<T>('PATCH', path, body)
   }
 
-  async delete<T = unknown>(path: string): Promise<T> {
-    return this.request<T>('DELETE', path)
+  async delete<T = unknown>(path: string, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>('DELETE', path, undefined, headers)
   }
 
   private async request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
@@ -59,13 +59,17 @@ export class HttpClient {
 
     if (!res.ok) {
       let errorMessage = `HTTP ${res.status}`
+      let code: string | undefined
+      let requiresReview: boolean | undefined
       try {
-        const errorBody = (await res.json()) as { error?: string }
+        const errorBody = (await res.json()) as { error?: string; code?: string; requiresReview?: boolean }
         if (errorBody.error) errorMessage = errorBody.error
+        code = errorBody.code
+        requiresReview = errorBody.requiresReview
       } catch {
         // ignore parse errors
       }
-      throw new LineHarnessError(errorMessage, res.status, `${method} ${path}`)
+      throw new LineHarnessError(errorMessage, res.status, `${method} ${path}`, code, requiresReview)
     }
 
     return res.json() as Promise<T>
