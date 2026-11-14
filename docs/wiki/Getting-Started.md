@@ -22,8 +22,9 @@
 | 項目 | 場所 | 環境変数 |
 |------|------|---------|
 | チャネルシークレット | Basic settings | `LINE_CHANNEL_SECRET` |
-| チャネルアクセストークン | Messaging API → Issue | `LINE_CHANNEL_ACCESS_TOKEN` |
 | チャネルID | Basic settings | `LINE_CHANNEL_ID` |
+
+> チャネルアクセストークン（長期）は**発行しなくてよい**。Worker がチャネル ID + チャネルシークレットからトークンを発行し、期限前に自動で発行し直す（[Configuration](Configuration.md) の「チャネルアクセストークン」）。
 
 ### 1.2 LINE Login チャネル作成（必須）
 
@@ -132,10 +133,6 @@ pnpm db:migrate:local
 npx wrangler secret put LINE_CHANNEL_SECRET
 # プロンプトに LINE チャネルシークレットを入力
 
-# LINE チャネルアクセストークン
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-# プロンプトに チャネルアクセストークン（長期）を入力
-
 # 管理画面API認証キー（任意の文字列）
 npx wrangler secret put API_KEY
 # プロンプトに 任意のAPIキーを入力（例: sk-your-secret-key-here）
@@ -151,12 +148,14 @@ npx wrangler secret put LINE_LOGIN_CHANNEL_ID
 npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
 ```
 
+デプロイ後、管理画面の「アカウント」で Messaging API チャネルを登録する（Channel ID と Channel Secret だけでよい。Channel Access Token は空欄で自動発行）。`create-line-harness` を使った場合はこの登録まで自動で行われる。
+
 ### 全環境変数一覧
 
 | 変数名 | 必須 | 説明 |
 |--------|------|------|
 | `LINE_CHANNEL_SECRET` | 必須 | Messaging API チャネルシークレット |
-| `LINE_CHANNEL_ACCESS_TOKEN` | 必須 | Messaging API チャネルアクセストークン（長期） |
+| `LINE_CHANNEL_ACCESS_TOKEN` | 任意 | 長期トークン。通常は不要（アカウント登録時に自動発行）。LINE API プロキシの drop-in 認証で既存スクリプトの長期トークンを受け付けたい場合だけ設定 |
 | `API_KEY` | 必須 | 管理画面/SDK認証用のBearerトークン |
 | `LINE_CHANNEL_ID` | 任意 | Messaging API チャネルID |
 | `LIFF_URL` | 任意 | LIFF アプリ URL |

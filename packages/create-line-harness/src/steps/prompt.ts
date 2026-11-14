@@ -2,7 +2,6 @@ import * as p from "@clack/prompts";
 
 interface LineCredentials {
   lineChannelId: string;
-  lineChannelAccessToken: string;
   lineChannelSecret: string;
   lineLoginChannelId: string;
 }
@@ -60,32 +59,6 @@ export async function promptLineCredentials(): Promise<LineCredentials> {
     process.exit(0);
   }
 
-  // Step 2-3: Channel Access Token
-  p.log.message(
-    [
-      "■ Step 2-3. チャネルアクセストークン取得",
-      "",
-      "https://developers.line.biz/console/ にアクセス",
-      "→ Step 2 で設定したプロバイダーを選択",
-      "→ Messaging API チャネル",
-      "→ 「Messaging API設定」タブ",
-      "→ チャネルアクセストークンを発行",
-    ].join("\n"),
-  );
-
-  const lineChannelAccessToken = await p.password({
-    message: "チャネルアクセストークン（長期）",
-    validate(value) {
-      if (!value || value.trim().length < 10) {
-        return "チャネルアクセストークンを入力してください";
-      }
-    },
-  });
-  if (p.isCancel(lineChannelAccessToken)) {
-    p.cancel("セットアップをキャンセルしました");
-    process.exit(0);
-  }
-
   // ═══ Step 3: LINE Login チャネル設定 ═══
   p.log.step("═══ Step 3. LINE Login チャネル設定 ═══");
 
@@ -119,7 +92,6 @@ export async function promptLineCredentials(): Promise<LineCredentials> {
 
   return {
     lineChannelId: (lineChannelId as string).trim(),
-    lineChannelAccessToken: (lineChannelAccessToken as string).trim(),
     lineChannelSecret: (lineChannelSecret as string).trim(),
     lineLoginChannelId: (lineLoginChannelId as string).trim(),
   };

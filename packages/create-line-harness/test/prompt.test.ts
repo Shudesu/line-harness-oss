@@ -16,18 +16,17 @@ afterEach(() => { vi.restoreAllMocks(); });
 describe("LINE credential prompts", () => {
   it("uses masked prompts for both secrets, keeps IDs visible, and trims values", async () => {
     vi.mocked(p.text).mockResolvedValueOnce(" 12345 ").mockResolvedValueOnce(" 67890 ");
-    vi.mocked(p.password).mockResolvedValueOnce(" test-secret-value ").mockResolvedValueOnce(" test-access-token ");
+    vi.mocked(p.password).mockResolvedValueOnce(" test-secret-value ");
 
     expect(await promptLineCredentials()).toEqual({
       lineChannelId: "12345",
       lineLoginChannelId: "67890",
       lineChannelSecret: "test-secret-value",
-      lineChannelAccessToken: "test-access-token",
     });
     expect(p.text).toHaveBeenCalledTimes(2);
-    expect(p.password).toHaveBeenCalledTimes(2);
+    expect(p.password).toHaveBeenCalledTimes(1);
     expect(vi.mocked(p.password).mock.calls.map(([options]) => options.message)).toEqual([
-      "チャネルシークレット（英数字）", "チャネルアクセストークン（長期）",
+      "チャネルシークレット（英数字）",
     ]);
     const rendered = JSON.stringify([
       vi.mocked(p.log.step).mock.calls, vi.mocked(p.log.message).mock.calls,
@@ -43,9 +42,8 @@ describe("LINE credential prompts", () => {
     }
   });
 
-  it.each([0, 1])("preserves cancellation at secret prompt %i", async (index) => {
+  it("preserves cancellation at the secret prompt", async () => {
     vi.mocked(p.text).mockResolvedValue("12345");
-    if (index === 1) vi.mocked(p.password).mockResolvedValueOnce("test-secret-value");
     vi.mocked(p.password).mockResolvedValueOnce(Symbol("cancel"));
     vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exited"); });
 
@@ -53,6 +51,6 @@ describe("LINE credential prompts", () => {
     expect(process.exit).toHaveBeenCalledWith(0);
     expect(p.cancel).toHaveBeenCalledOnce();
     expect(p.text).toHaveBeenCalledOnce();
-    expect(p.password).toHaveBeenCalledTimes(index + 1);
+    expect(p.password).toHaveBeenCalledTimes(1);
   });
 });

@@ -42,7 +42,7 @@ crons = ["*/5 * * * *"]
 | 変数名 | 必須 | 型 | 説明 | 例 |
 |--------|------|-----|------|-----|
 | `LINE_CHANNEL_SECRET` | 必須 | string | Messaging API チャネルシークレット | `abc123def456...` |
-| `LINE_CHANNEL_ACCESS_TOKEN` | 必須 | string | Messaging API 長期アクセストークン | `eyJhbGciOi...` |
+| `LINE_CHANNEL_ACCESS_TOKEN` | 任意 | string | 長期アクセストークン。通常は不要（下の「チャネルアクセストークン」） | `eyJhbGciOi...` |
 | `API_KEY` | 必須 | string | REST API 認証用 Bearer トークン | `sk-my-secret-key` |
 | `LINE_CHANNEL_ID` | 任意 | string | Messaging API チャネルID | `1234567890` |
 | `LIFF_URL` | 任意 | string | LIFF アプリ URL | `https://liff.line.me/12345-abcde` |
@@ -53,12 +53,26 @@ crons = ["*/5 * * * *"]
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` | 互換用 | string | 旧サービスアカウント方式で使うメールアドレス | `calendar-sync@project.iam.gserviceaccount.com` |
 | `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | 互換用 | string | 旧サービスアカウント方式で使うPKCS#8秘密鍵 | `-----BEGIN PRIVATE KEY-----...` |
 
+### チャネルアクセストークン
+
+Messaging API のトークンは、`line_accounts` に登録したチャネル ID + チャネルシークレットから Worker が発行する（`POST /v2/oauth/accessToken`・有効期限30日）。`line_accounts.channel_access_token` に期限（`token_expires_at`）つきで置き、cron が残り7日を切ったら発行し直す。LINE Developers コンソールで長期トークンを発行する必要はない。
+
+- アカウントの登録（管理画面の「アカウント」・`POST /api/line-accounts`）では Channel Access Token を空欄にしてよい。その場で発行し、発行できなければ ID かシークレットの誤りとして登録しない
+- `LINE_CHANNEL_ACCESS_TOKEN` を設定しない場合、送信の既定トークンは `LINE_CHANNEL_SECRET` と同じシークレットを持つアカウント（無ければ有効なアカウントが1本だけのときのその1本）のトークンになる
+- `LINE_CHANNEL_ACCESS_TOKEN` を設定している場合は従来どおりその値を既定に使う。LINE API プロキシの drop-in 認証で、既存スクリプトの長期トークンを受け付けたいあいだは残しておく
+- チャネルシークレットは webhook の署名検証とトークンの発行に必要なので D1 に残る。シークレットの保護（Cloudflare アカウントと D1 へのアクセス管理）は引き続き必要
+
+#### 既存の環境から長期トークンを外す手順
+
+1. 管理画面の「アカウント」に Messaging API チャネルが登録されているか確認する（`create-line-harness` で作った環境は登録済み）
+2. `npx wrangler secret delete LINE_CHANNEL_ACCESS_TOKEN`
+3. 送信・webhook の返信が動くことを確かめてから、LINE Developers コンソールで長期トークンを再発行して旧トークンを失効させる（LINE API プロキシの drop-in 認証を使っているスクリプトがあれば、先に API キー認証へ切り替える）
+
 ### シークレット設定コマンド
 
 ```bash
 # 全シークレットを設定
 npx wrangler secret put LINE_CHANNEL_SECRET
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put API_KEY
 npx wrangler secret put LINE_CHANNEL_ID
 npx wrangler secret put LIFF_URL

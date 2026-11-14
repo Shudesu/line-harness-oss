@@ -1,7 +1,7 @@
 /**
  * Token auto-refresh — proactively renew LINE channel access tokens before expiry.
  *
- * LINE's stateless token API uses client_credentials grant:
+ * LINE's short-lived token API (v2) uses client_credentials grant:
  * POST channel_id + channel_secret → new access_token (30 days).
  * No refresh_token needed.
  *
@@ -10,7 +10,7 @@
  * - token_expires_at is NULL (legacy, unknown expiry — refresh once to start tracking)
  */
 
-import { getLineAccounts, updateLineAccount } from '@line-crm/db';
+import { getLineAccounts, toJstString, updateLineAccount } from '@line-crm/db';
 import type { LineAccount } from '@line-crm/db';
 
 const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60_000; // 7 days
@@ -55,6 +55,22 @@ async function issueNewToken(
   return res.json() as Promise<TokenResponse>;
 }
 
+/**
+ * Issue a token from channel ID + secret and compute its expiry in the same JST
+ * format as `line_accounts.token_expires_at`. Also used when an account is
+ * registered without a token (routes/line-accounts.ts).
+ */
+export async function issueChannelToken(
+  channelId: string,
+  channelSecret: string,
+): Promise<{ accessToken: string; expiresAt: string }> {
+  const token = await issueNewToken(channelId, channelSecret);
+  return {
+    accessToken: token.access_token,
+    expiresAt: toJstString(new Date(Date.now() + token.expires_in * 1000)),
+  };
+}
+
 export async function refreshLineAccessTokens(db: D1Database): Promise<void> {
   const accounts = await getLineAccounts(db);
 
@@ -63,16 +79,14 @@ export async function refreshLineAccessTokens(db: D1Database): Promise<void> {
     if (!shouldRefresh(account)) continue;
 
     try {
-      const token = await issueNewToken(account.channel_id, account.channel_secret);
-      const expiresAt = new Date(Date.now() + token.expires_in * 1000 + JST_OFFSET_MS);
-      const expiresAtJst = expiresAt.toISOString().slice(0, -1) + '+09:00';
+      const token = await issueChannelToken(account.channel_id, account.channel_secret);
 
       await updateLineAccount(db, account.id, {
-        channel_access_token: token.access_token,
-        token_expires_at: expiresAtJst,
+        channel_access_token: token.accessToken,
+        token_expires_at: token.expiresAt,
       });
 
-      console.log(`🔄 Token refreshed: ${account.name} (expires ${expiresAtJst})`);
+      console.log(`🔄 Token refreshed: ${account.name} (expires ${token.expiresAt})`);
     } catch (err) {
       console.error(`❌ Token refresh failed for ${account.name}:`, err);
     }

@@ -156,12 +156,11 @@ export function AccountFormSections({
           label="Channel Access Token"
           value={state.channelAccessToken}
           onChange={(v) => update({ channelAccessToken: v })}
-          required={showMessagingRequired}
           type="password"
           hint={
             showMessagingRequired
-              ? undefined
-              : '空欄なら現在の値を維持。再発行した場合のみ入力'
+              ? '空欄でOK。Channel ID と Channel Secret から自動で発行・更新します（長期トークンは不要）'
+              : '空欄なら現在の値を維持（トークンは自動で発行し直されます）'
           }
         />
         <TextField

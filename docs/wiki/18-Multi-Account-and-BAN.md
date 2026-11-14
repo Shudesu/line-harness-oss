@@ -374,7 +374,7 @@ LINE API のレート制限は 100,000 msg/min だが、安全マージンとし
 
 | 変数名 | 用途 | 設定方法 |
 |--------|------|----------|
-| LINE_CHANNEL_ACCESS_TOKEN | メインアカウントのトークン | `wrangler secret put` |
+| LINE_CHANNEL_ACCESS_TOKEN | 任意。通常は不要（各アカウントのトークンは Worker が発行。[Configuration](Configuration.md)） | `wrangler secret put` |
 | LINE_CHANNEL_SECRET | メインアカウントのシークレット | `wrangler secret put` |
 | API_KEY | API 認証キー | `wrangler secret put` |
 

@@ -3,7 +3,11 @@ import { wrangler } from "../lib/wrangler.js";
 
 interface SecretsOptions {
   workerName: string;
-  lineChannelAccessToken: string;
+  /**
+   * 旧版のセットアップを途中から再開したときだけ入る。新しいセットアップでは
+   * 長期トークンを聞かず、Worker がチャネル ID + シークレットから発行する。
+   */
+  lineChannelAccessToken?: string;
   lineChannelSecret: string;
   lineLoginChannelId: string;
   liffId: string;
@@ -15,7 +19,9 @@ export async function setSecrets(options: SecretsOptions): Promise<void> {
   s.start("シークレット設定中...");
 
   const secrets: Record<string, string> = {
-    LINE_CHANNEL_ACCESS_TOKEN: options.lineChannelAccessToken,
+    ...(options.lineChannelAccessToken
+      ? { LINE_CHANNEL_ACCESS_TOKEN: options.lineChannelAccessToken }
+      : {}),
     LINE_CHANNEL_SECRET: options.lineChannelSecret,
     LINE_LOGIN_CHANNEL_ID: options.lineLoginChannelId,
     LIFF_URL: `https://liff.line.me/${options.liffId}`,
