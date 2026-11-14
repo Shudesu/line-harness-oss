@@ -65,8 +65,8 @@ Webhookは成功後の記録前に障害が起きると重複し得るため受�
 
 ## DB変更・処理量の設計メモ
 
-- 新規 `NNN_api_line_sends.sql` とPR既存の冪等migrationは仮番号。
-  取り込み時に保守者が正式採番しbootstrapを再生成する。既存環境は両migration適用が必要。
+- `076_api_idempotency_keys.sql` と `077_api_line_sends.sql` を追加し、bootstrapを再生成済み。
+  既存環境はキー付きAPIの利用前に両migrationの適用が必要。
   [D1 batchのトランザクション保証](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)で
   加点台帳INSERTとscore UPDATEを一体に確定する。直前INSERTの `changes()` が0なら加算しない。
 - 入口はキー付きAPI要求/各自動化送信。初回送信は状態INSERT 1回＋完了UPDATE 1回、

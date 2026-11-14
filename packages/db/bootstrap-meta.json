@@ -81,8 +81,8 @@
     "073_x_line_first_gates.sql",
     "074_security_hardening.sql",
     "075_ig_link_token_uses.sql",
-    "NNN_api_idempotency_keys.sql",
-    "NNN_api_line_sends.sql"
+    "076_api_idempotency_keys.sql",
+    "077_api_line_sends.sql"
   ],
   "migrationCount": 83
 }

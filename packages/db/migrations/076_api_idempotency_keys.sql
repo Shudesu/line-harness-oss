@@ -1,4 +1,3 @@
--- Placeholder number (CONTRIBUTING.md): maintainers assign the final one.
 -- New table only. No existing table is altered, so re-applying is a no-op.
 --
 -- Claim-first store for API requests sent with an Idempotency-Key header.

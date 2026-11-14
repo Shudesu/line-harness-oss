@@ -6,7 +6,7 @@ import { sqliteD1 } from '../test-support/sqlite-d1.js';
 import { runIdempotent } from './idempotency.js';
 import type { Env } from '../index.js';
 
-const migration = readFileSync(new URL('../../../../packages/db/migrations/NNN_api_idempotency_keys.sql', import.meta.url), 'utf8');
+const migration = readFileSync(new URL('../../../../packages/db/migrations/076_api_idempotency_keys.sql', import.meta.url), 'utf8');
 
 describe('runIdempotent (Idempotency-Key state table)', () => {
   let fixture: ReturnType<typeof sqliteD1>;

@@ -1,4 +1,3 @@
--- Placeholder number: assign with the API idempotency migration at merge time.
 -- Retained indefinitely. A sending row is never reclaimed by a lease timeout.
 -- first_started_at is the earliest possible LINE request time (epoch ms).
 CREATE TABLE IF NOT EXISTS api_line_sends (
