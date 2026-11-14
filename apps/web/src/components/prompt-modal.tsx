@@ -45,7 +45,8 @@ export default function PromptModal({ isOpen, onClose, prompts }: PromptModalPro
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) onClose() }}>
-      <Dialog className="w-full max-w-lg max-h-[80vh] flex flex-col p-0">
+      {/* 幅は Kumo の size で変える（PC は既定で 384px）。max-w-* はスマホで左右の余白を消す */}
+      <Dialog className="max-h-[80vh] flex flex-col p-0">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <Dialog.Title className="text-base font-bold text-kumo-strong">CC プロンプトテンプレート</Dialog.Title>

@@ -76,8 +76,8 @@ export function ApplyToTagModal({ groupId, groupName, onClose }: Props) {
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && phase !== 'running') onClose() }}>
-      <Dialog className="w-full max-w-md p-6">
-          <Dialog.Title>
+      <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">
             友だちにこのメニューを表示
           </Dialog.Title>
           <p className="text-sm text-gray-500 mb-5 break-all">「{groupName}」</p>
@@ -154,7 +154,7 @@ export function ApplyToTagModal({ groupId, groupName, onClose }: Props) {
               </div>
             </>
           )}
-        <Dialog.Root role="alertdialog" open={confirmDefault} onOpenChange={setConfirmDefault}><Dialog><Dialog.Title>全員のデフォルトに設定しますか？</Dialog.Title><Dialog.Description className="mt-2">新規友だちを含む全員に表示され、同じアカウントの他メニューのデフォルト設定は解除されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setConfirmDefault(false)}>キャンセル</Button><Button type="button" variant="primary" onClick={() => void apply(true)}>設定する</Button></div></Dialog></Dialog.Root>
+        <Dialog.Root role="alertdialog" open={confirmDefault} onOpenChange={setConfirmDefault}><Dialog className="p-6"><Dialog.Title className="text-lg font-semibold text-kumo-strong">全員のデフォルトに設定しますか？</Dialog.Title><Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">新規友だちを含む全員に表示され、同じアカウントの他メニューのデフォルト設定は解除されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setConfirmDefault(false)}>キャンセル</Button><Button type="button" variant="primary" onClick={() => void apply(true)}>設定する</Button></div></Dialog></Dialog.Root>
       </Dialog>
     </Dialog.Root>
   )

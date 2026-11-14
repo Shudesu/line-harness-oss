@@ -210,7 +210,7 @@ export default function MenusPage() {
       )}
 
       {editing && <Modal menu={editing} tags={tags} onSave={save} onClose={() => setEditing(null)} />}
-      <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}><Dialog><Dialog.Title>メニューを削除しますか？</Dialog.Title><Dialog.Description className="mt-2">「{deleteTarget?.name}」を削除します。既存予約は維持されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={remove}>削除</Button></div></Dialog></Dialog.Root>
+      <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}><Dialog className="p-6"><Dialog.Title className="text-lg font-semibold text-kumo-strong">メニューを削除しますか？</Dialog.Title><Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">「{deleteTarget?.name}」を削除します。既存予約は維持されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={remove}>削除</Button></div></Dialog></Dialog.Root>
     </div>
   )
 }
@@ -248,9 +248,9 @@ function Modal({
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
-      <Dialog className="w-full max-w-md max-h-[90vh] overflow-y-auto p-0">
+      <Dialog className="max-h-[90vh] overflow-y-auto p-0">
         <div className="px-6 py-4 border-b border-gray-200">
-          <Dialog.Title>{form.id ? 'メニュー編集' : '新規メニュー'}</Dialog.Title>
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">{form.id ? 'メニュー編集' : '新規メニュー'}</Dialog.Title>
         </div>
         <div className="px-6 py-4 space-y-4">
             <Input
