@@ -6,6 +6,11 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/layout/header'
 import { sendApi } from '@/lib/api'
 import { cardToText, textToCard } from '@/lib/cream-card'
+import { useAccount } from '@/contexts/account-context'
+import AccountLineCopy from './account-copy'
+
+// KIDOUインターンの LINE（アンケートの仕組みで送る専用の作り）。ほかの LINE はシナリオと自動返信をそのまま並べる画面にする
+const INTERN_CHANNEL_ID = '2010069796'
 
 interface QaItem {
   id: string
@@ -371,6 +376,15 @@ function templatePreview(t: Template) {
 // ── 画面 ────────────────────────────────────────────────
 
 export default function LineCopyPage() {
+  const { selectedAccount, loading } = useAccount()
+  if (loading) return <p className="text-sm text-gray-500">読み込んでいます…</p>
+  if (selectedAccount && selectedAccount.channelId !== INTERN_CHANNEL_ID) {
+    return <AccountLineCopy key={selectedAccount.id} accountId={selectedAccount.id} accountName={selectedAccount.displayName || selectedAccount.name} />
+  }
+  return <InternLineCopy />
+}
+
+function InternLineCopy() {
   const [data, setData] = useState<CopyData | null>(null)
   const [copy, setCopy] = useState<Copy | null>(null)
   const [yearsText, setYearsText] = useState('')

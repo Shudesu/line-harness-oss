@@ -37,13 +37,14 @@ const ACCOUNT_SCOPED_PREFIXES = [
   '/inflow-links',
   '/booking',
   '/events',
+  '/line-copy',
 ]
 
 export type PageScope = 'account' | 'shared' | 'none'
 
 export function pageScope(pathname: string): PageScope {
   if (pathname === '/') return 'account'
-  // 設定まわりと、KIDOUインターン専用の友だち追加リンク・数字・自動で送る文面はアカウントの切替と関係しない
-  if (['/accounts', '/staff', '/updates', '/friend-add-settings', '/password', '/join-links', '/intern-stats', '/line-copy'].some((p) => pathname.startsWith(p))) return 'none'
+  // 設定まわりと、KIDOUインターン専用の友だち追加リンク・数字はアカウントの切替と関係しない（自動で送る文面は選んだ LINE ごとに変わる）
+  if (['/accounts', '/staff', '/updates', '/friend-add-settings', '/password', '/join-links', '/intern-stats'].some((p) => pathname.startsWith(p))) return 'none'
   return ACCOUNT_SCOPED_PREFIXES.some((p) => pathname.startsWith(p)) ? 'account' : 'shared'
 }
