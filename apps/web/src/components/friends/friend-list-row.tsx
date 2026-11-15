@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import type { FriendListItem } from '@/lib/api'
 import TagBadge from './tag-badge'
+import { readableIncoming } from '@/lib/postback-label'
 
 interface Props {
   friend: FriendListItem
@@ -118,7 +119,9 @@ export default function FriendListRow({ friend, onTagEditClick, showSurvey = tru
         {incoming ? (
           <>
             <p className="text-xs text-gray-700 line-clamp-2 break-all">
-              {incoming.messageType === 'text' ? incoming.content : `[${incoming.messageType}]`}
+              {incoming.messageType === 'text'
+                ? readableIncoming(incoming.content, (id) => friend.tags.find((t) => t.id === id)?.name)
+                : `[${incoming.messageType}]`}
             </p>
             <p className="text-[10px] text-gray-400 mt-1">
               ({formatJstTimestamp(incoming.createdAt)})

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { parseStickerMessageContent, stickerFallback } from '@line-crm/shared'
 import { api, fetchApi } from '@/lib/api'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
+import { readableIncoming } from '@/lib/postback-label'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
@@ -80,6 +81,17 @@ function StickerMessageImage({ content }: { content: string }) {
   )
 }
 
+// 印の ID → 名前。ボタンを押した記録（lh_tag=...）を読める言葉で見せるのに使う
+function useTagName(): (id: string) => string | undefined {
+  const [names, setNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    api.tags.list().then((res) => {
+      if (res.success) setNames(Object.fromEntries(res.data.map((t) => [t.id, t.name])))
+    }).catch(() => { /* 名前がなくても「ボタンを押した」とだけ出る */ })
+  }, [])
+  return useCallback((id: string) => names[id], [names])
+}
+
 function formatDatetime(iso: string | null): string {
   if (!iso) return '-'
   return new Date(iso).toLocaleString('ja-JP', {
@@ -140,11 +152,12 @@ interface MessageLog {
   createdAt: string
 }
 
-function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
+function DirectMessagePanel({ friendId, friend, onBack, onSent, tagName }: {
   friendId: string
   friend: FriendItem | null
   onBack: () => void
   onSent: () => void
+  tagName: (id: string) => string | undefined
 }) {
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
@@ -190,7 +203,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   }
 
   function renderContent(msg: MessageLog) {
-    if (msg.messageType === 'text') return msg.content
+    if (msg.messageType === 'text') return readableIncoming(msg.content, tagName)
     if (msg.messageType === 'flex') {
       try {
         const parsed = JSON.parse(msg.content)
@@ -296,6 +309,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
 
 export default function ChatsPage() {
   const { selectedAccountId } = useAccount()
+  const tagName = useTagName()
   const [chats, setChats] = useState<Chat[]>([])
   const [allFriends, setAllFriends] = useState<FriendItem[]>([])
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
@@ -847,7 +861,7 @@ export default function ChatsPage() {
                     if (chat.lastMessageType === 'audio') return '🎤 音声'
                     if (chat.lastMessageType === 'file') return '📎 ファイル'
                     if (chat.lastMessageType === 'location') return '📍 位置情報'
-                    return previewRaw.replace(/\n+/g, ' ').slice(0, 60)
+                    return readableIncoming(previewRaw, tagName).replace(/\n+/g, ' ').slice(0, 60)
                   })()
                   return (
                     <button
@@ -916,6 +930,7 @@ export default function ChatsPage() {
               friend={allFriends.find((f) => f.id === selectedFriendId) || null}
               onBack={() => setSelectedFriendId(null)}
               onSent={() => { setSelectedFriendId(null); loadChats(); }}
+              tagName={tagName}
             />
           ) : !selectedChatId ? (
             <div className="flex-1 flex items-center justify-center">
@@ -1032,7 +1047,7 @@ export default function ChatsPage() {
                     } else if (msg.messageType === 'sticker') {
                       bubbleContent = <StickerMessageImage content={msg.content} />
                     } else {
-                      bubbleContent = <span>{msg.content}</span>
+                      bubbleContent = <span>{readableIncoming(msg.content, tagName)}</span>
                     }
 
                     return (
