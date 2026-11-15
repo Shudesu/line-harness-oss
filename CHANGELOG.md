@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — calm UX (2026-11-16)
+
+- Admin dashboard keeps the shell (banner + sidebar) during the auth check and swaps only the content area to a partial skeleton; the check runs once on mount with a stale-while-revalidate optimistic display.
+- chats: lists and conversations keep the previous data while re-fetching; stale responses are discarded by generation counter, account switching shows a partial skeleton and same-chat refreshes only a thin progress bar; account resolution happens before the first list/friends fetch (no double mount fetch); scroll follows only right after switching or near the bottom (no runaway jumps while reading history); unread badge aggregation debounced to 5s.
+- worker: messages_log history fetch gets a rowid tie-break so same-second messages keep a stable order.
+- Copy "LINE CRM" replaced with "L Harness" in the UI.
+
 ## Unreleased
 
 ### リリース時の注意
