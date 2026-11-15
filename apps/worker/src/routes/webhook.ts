@@ -15,8 +15,11 @@ import {
   jstNow,
   getEntryRouteByRefCode,
   getMessageTemplateById,
+  recordSignatureFailure,
+  recordSignatureSuccess,
+  UNATTRIBUTED_ACCOUNT_ID,
 } from '@line-crm/db';
-import type { EntryRoute, Friend } from '@line-crm/db';
+import type { EntryRoute, Friend, LineAccount } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { matchAndReply } from '../services/auto-reply.js';
 import { buildMessage } from '../services/step-delivery.js';
@@ -35,6 +38,45 @@ const webhook = new Hono<Env>();
 // bursty batched deliveries (~100 events × ~5 KB) while still well below the
 // 128 MB Cloudflare Workers memory ceiling.
 const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
+
+// ── Signature-verification failure/success recording (B-05) ─────────────────
+//
+// The endpoint must keep answering 200 (LINE retries / treats non-2xx as
+// delivery failure), but a wrong or missing Channel secret silently discards
+// every event — previously only console.error. We now persist counts and
+// timestamps in the account_settings KVS (`health:sig_fail` / `health:sig_ok`)
+// for the connection-health endpoint. Logged text never contains the request
+// body or any secret.
+
+// In-isolate throttles. Failures that carry a well-formed but wrong signature
+// are recorded exactly (real LINE redeliveries / misconfigurations), while the
+// unsigned-junk fast path records at most once per 10s per isolate so an
+// unauthenticated flood cannot turn the pre-reject into a D1 write amplifier.
+const FAILURE_RECORD_MIN_INTERVAL_MS = 10_000;
+const SUCCESS_RECORD_MIN_INTERVAL_MS = 5 * 60_000;
+const lastRecordedMs = new Map<string, number>();
+
+function shouldRecord(key: string, minIntervalMs: number): boolean {
+  const now = Date.now();
+  if (now - (lastRecordedMs.get(key) ?? 0) < minIntervalMs) return false;
+  lastRecordedMs.set(key, now);
+  return true;
+}
+
+/**
+ * Best-effort account attribution. When exactly one active account is
+ * registered, LINE can only be delivering events for that channel, so
+ * signature failures (wrong secret) belong to it. Multi-account installs with
+ * no match record under the unattributed sentinel.
+ */
+function resolveHealthAccountId(
+  matchedAccountId: string | null,
+  accounts: LineAccount[],
+): string | null {
+  if (matchedAccountId) return matchedAccountId;
+  const active = accounts.filter((a) => a.is_active);
+  return active.length === 1 ? active[0].id : null;
+}
 
 async function ensureFriendFromWebhookUser(
   db: D1Database,
@@ -105,6 +147,25 @@ webhook.post('/webhook', async (c) => {
   const LINE_SIGNATURE_LENGTH = 44;
   if (signature.length !== LINE_SIGNATURE_LENGTH) {
     console.error('Missing or malformed LINE signature');
+    // B-05: keep the fast pre-reject free of awaited D1 work, but still record
+    // the condition (throttled per isolate) so a stripped/missing signature is
+    // visible in connection health instead of vanishing into the console.
+    if (shouldRecord(`missing:${signature.length}`, FAILURE_RECORD_MIN_INTERVAL_MS)) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const accounts = await getLineAccounts(db);
+            await recordSignatureFailure(
+              db,
+              resolveHealthAccountId(null, accounts),
+              'missing_signature',
+            );
+          } catch (err) {
+            console.error('Failed to record missing-signature webhook:', err);
+          }
+        })(),
+      );
+    }
     return c.json({ status: 'ok' }, 200);
   }
 
@@ -149,7 +210,34 @@ webhook.post('/webhook', async (c) => {
 
   if (!valid) {
     console.error('Invalid LINE signature');
+    // B-05: the request carried a well-formed signature that matched no
+    // registered secret — every event in it is silently discarded. Record the
+    // count + time (attributed to the single active account when there is one)
+    // so connection health can say "rejecting everything" instead of nothing.
+    try {
+      const accounts = await getLineAccounts(db);
+      await recordSignatureFailure(
+        db,
+        resolveHealthAccountId(matchedAccountId, accounts),
+        'unverified',
+      );
+    } catch (err) {
+      console.error('Failed to record invalid-signature webhook:', err);
+    }
     return c.json({ status: 'ok' }, 200);
+  }
+
+  // B-05: record last verified-receive time (throttled — at most one KVS write
+  // per 5 minutes per account per isolate) so the signature check can tell
+  // "rejecting everything" apart from "also seeing some bad traffic".
+  try {
+    const accounts = await getLineAccounts(db);
+    const healthAccountId = resolveHealthAccountId(matchedAccountId, accounts);
+    if (healthAccountId && shouldRecord(`ok:${healthAccountId}`, SUCCESS_RECORD_MIN_INTERVAL_MS)) {
+      await recordSignatureSuccess(db, healthAccountId);
+    }
+  } catch (err) {
+    console.error('Failed to record verified webhook:', err);
   }
 
   let body: WebhookRequestBody;

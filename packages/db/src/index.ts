@@ -35,6 +35,7 @@ export * from './mileage';
 export * from './affiliate-attribution';
 export * from './affiliate-report';
 export * from './account-settings';
+export * from './connection-health';
 export * from './webinars';
 export * from './admin-sso';
 
