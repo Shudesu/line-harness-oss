@@ -24,6 +24,17 @@ interface AccountStat {
   targetedReaches?: number | null;
   blocks?: number | null;
   warnings: string[];
+  /** PLAN.md 1-1 contract: checkedAt / overall / checks[] (B-05, B-10). */
+  connectionHealth?: {
+    checkedAt: string;
+    overall: "ok" | "warn" | "fail";
+    checks: Array<{
+      id: string;
+      status: string;
+      summary: string;
+      nextAction?: { kind: string; label: string; tool?: string; args?: Record<string, unknown> };
+    }>;
+  };
 }
 
 interface ApiEnvelope<T> {
@@ -194,6 +205,32 @@ export function registerAccountSummary(server: McpServer): void {
           } catch (err) {
             acc.warnings.push(
               `Health risk level unavailable: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+
+          // Connection health (B-05/B-10): signature failures, token refresh
+          // failures, 401s, and webhook endpoint/test results with nextAction.
+          try {
+            const connData = await fetchHarnessJson<AccountStat["connectionHealth"]>(
+              apiUrl,
+              apiKey,
+              `/api/line-accounts/${encodeURIComponent(acc.id)}/connection-health`,
+            );
+            if (connData.success && connData.data) {
+              acc.connectionHealth = connData.data;
+              for (const check of connData.data.checks) {
+                if (check.status === "fail" || check.status === "warn") {
+                  acc.warnings.push(`Connection health ${check.id} (${check.status}): ${check.summary}`);
+                }
+              }
+            } else if (connData.error && connData.error !== "Not found") {
+              acc.warnings.push(`Connection health unavailable: ${connData.error}`);
+            }
+            // "Not found" = the tenant Worker bundle predates this endpoint —
+            // no warning, otherwise every older bundle would spam warnings.
+          } catch (err) {
+            acc.warnings.push(
+              `Connection health unavailable: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
         }

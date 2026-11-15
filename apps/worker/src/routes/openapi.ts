@@ -632,6 +632,54 @@ const spec = {
       put: { tags: ['LINE Accounts'], summary: 'LINEアカウント更新', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' } } },
       delete: { tags: ['LINE Accounts'], summary: 'LINEアカウント削除', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' } } },
     },
+    '/api/line-accounts/{id}/connection-health': {
+      get: {
+        tags: ['LINE Accounts'],
+        summary: '接続ヘルス (PLAN.md 1-1契約: checks[] with id/status/summary/evidence/nextAction)',
+        description:
+          '署名検証失敗 (line.webhook.signature)・トークン再発行失敗 (line.token.refresh)・401 失効 (line.bot_info)・Webhook URL の一致/active (line.webhook.endpoint)・LINE 疎通テスト (line.webhook.test) を返す。?refresh=true で Webhook endpoint と疎通テストをその場で再実行する。署名失敗の記録は webhook 側が 200 応答のまま書き込む (B-05)。複数アカウントでどの secret にも一致しない署名失敗がある場合は line.webhook.signature.unattributed (warn) が追加される。probe 実行失敗 (unknown) を含むチェックが1つでもあると overall は warn になる。',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'refresh', in: 'query', schema: { type: 'boolean' }, description: 'Webhook endpoint/疎通テストを再実行' },
+        ],
+        responses: { '200': { description: 'Connection health snapshot' } },
+      },
+    },
+    '/api/line-accounts/{id}/webhook-endpoint': {
+      get: {
+        tags: ['LINE Accounts'],
+        summary: 'チャネルに登録された Webhook URL の確認 + LINE 疎通テスト',
+        description:
+          'GET /v2/bot/channel/webhook/endpoint と POST /v2/bot/channel/webhook/test を実行し、この Worker の期待 URL との一致・active 状態を返す (B-10)。結果は接続ヘルスにも記録される。LINE API 側の読み取りのみで書き換えない。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Probe result (expectedUrl / endpoint / matches / active / test)' } },
+      },
+      put: {
+        tags: ['LINE Accounts'],
+        summary: 'Webhook URL をこの Worker に設定・修正 (confirm 必須)',
+        description:
+          'PUT /v2/bot/channel/webhook/endpoint を呼ぶ。既存の URL が別の宛先のときは勝手に上書きせず requiresConfirm=true を返す (409)。実行には confirm=true が必要 (B-10)。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  confirm: { type: 'boolean' },
+                  endpoint: { type: 'string', description: '省略時はこの Worker の期待 URL (${WORKER_URL}/webhook)' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Set (probe result after the change)' },
+          '409': { description: 'requiresConfirm=true — existing foreign endpoint must be confirmed' },
+          '502': { description: 'LINE API error while setting the endpoint' },
+        },
+      },
+    },
     // ── Conversions ─────────────────────────────────────────────────────────
     '/api/conversions/points': {
       get: { tags: ['Conversions'], summary: 'CV ポイント一覧', responses: { '200': { description: 'All conversion points' } } },

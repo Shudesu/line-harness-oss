@@ -10,7 +10,12 @@
  * - token_expires_at is NULL (legacy, unknown expiry — refresh once to start tracking)
  */
 
-import { getLineAccounts, updateLineAccount } from '@line-crm/db';
+import {
+  clearTokenRefreshFailure,
+  getLineAccounts,
+  recordTokenRefreshFailure,
+  updateLineAccount,
+} from '@line-crm/db';
 import type { LineAccount } from '@line-crm/db';
 
 const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60_000; // 7 days
@@ -33,23 +38,42 @@ interface TokenResponse {
   token_type: string;
 }
 
+/**
+ * Typed token-issue failure. Keeps only the HTTP status — never the response
+ * body, which could echo credential material into logs (B-05: failures were
+ * previously console-only and included the raw LINE response).
+ */
+export class TokenIssueError extends Error {
+  constructor(public readonly status: number | null) {
+    super(status === null ? 'LINE token API unreachable' : `LINE token API ${status}`);
+    this.name = 'TokenIssueError';
+  }
+}
+
 async function issueNewToken(
   channelId: string,
   channelSecret: string,
 ): Promise<TokenResponse> {
-  const res = await fetch('https://api.line.me/v2/oauth/accessToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: channelId,
-      client_secret: channelSecret,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('https://api.line.me/v2/oauth/accessToken', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: channelId,
+        client_secret: channelSecret,
+      }),
+    });
+  } catch {
+    throw new TokenIssueError(null);
+  }
 
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`LINE token API ${res.status}: ${body}`);
+    // Read (and discard) the body so the connection is released, but never
+    // propagate or log it.
+    await res.text().catch(() => '');
+    throw new TokenIssueError(res.status);
   }
 
   return res.json() as Promise<TokenResponse>;
@@ -71,10 +95,22 @@ export async function refreshLineAccessTokens(db: D1Database): Promise<void> {
         channel_access_token: token.access_token,
         token_expires_at: expiresAtJst,
       });
+      // A successful refresh clears any stored failure record (B-05) so the
+      // connection-health check recovers as soon as the condition is fixed.
+      await clearTokenRefreshFailure(db, account.id);
 
       console.log(`🔄 Token refreshed: ${account.name} (expires ${expiresAtJst})`);
     } catch (err) {
-      console.error(`❌ Token refresh failed for ${account.name}:`, err);
+      const status = err instanceof TokenIssueError ? err.status : null;
+      const reason = status === null ? 'network' : String(status);
+      // Persist the failure time + coarse error type (B-05). Previously this
+      // was console.error-only and included the LINE response body.
+      try {
+        await recordTokenRefreshFailure(db, account.id, reason);
+      } catch (recordErr) {
+        console.error(`Token refresh failure recording failed for ${account.id}:`, recordErr);
+      }
+      console.error(`❌ Token refresh failed for ${account.name} (${reason})`);
     }
   }
 }
