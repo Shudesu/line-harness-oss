@@ -197,10 +197,14 @@ describe('POST /webhook — DoS defenses (#104)', () => {
 
 describe('POST /webhook — signature failure recording (B-05)', () => {
   // The in-isolate throttle keys off Date.now(); earlier tests in this file
-  // already recorded failures, so pin a clock that clears every window.
+  // already recorded failures, so pin a clock that clears every window. Each
+  // test gets its own minute slot so the per-isolate 10s throttle does not
+  // leak between tests.
   let clockSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let clockSlotMs = Date.now();
   beforeEach(() => {
-    clockSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000);
+    clockSlotMs += 60_000;
+    clockSpy = vi.spyOn(Date, 'now').mockReturnValue(clockSlotMs);
   });
   afterEach(() => {
     clockSpy?.mockRestore();
@@ -284,6 +288,34 @@ describe('POST /webhook — signature failure recording (B-05)', () => {
       expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
     });
     expect(recordSignatureFailure).toHaveBeenCalledWith(baseEnv.DB, null, 'missing_signature');
+  });
+
+  test('throttles unverified-signature recording so 44-char junk cannot amplify D1 writes', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-1', channel_secret: 'account-secret', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    for (let i = 0; i < 5; i++) {
+      const res = await app.request(
+        '/webhook',
+        {
+          method: 'POST',
+          headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+          body: JSON.stringify({ events: [] }),
+        },
+        baseEnv,
+        baseExecutionCtx,
+      );
+      expect(res.status).toBe(200);
+    }
+
+    // The first request records; the rest within the per-isolate window are
+    // suppressed, so the recording read+write happens once, not per request.
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
+    });
   });
 
   test('never logs the request body when a signature fails', async () => {

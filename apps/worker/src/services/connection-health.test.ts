@@ -8,6 +8,7 @@ const dbMocks = vi.hoisted(() => ({
   getWebhookEndpointCheck: vi.fn(),
   getWebhookTest: vi.fn(),
   jstNow: vi.fn(() => '2026-11-16T12:00:00.000+09:00'),
+  UNATTRIBUTED_ACCOUNT_ID: '__unattributed__',
   recordWebhookEndpointCheck: vi.fn().mockResolvedValue(undefined),
   recordWebhookTest: vi.fn().mockResolvedValue(undefined),
   probeWebhookEndpoint: vi.fn(),
@@ -145,6 +146,62 @@ describe('buildConnectionHealth — PLAN.md 1-1 contract', () => {
       client,
       'acc-1',
       'https://worker.example.test/webhook',
+    );
+  });
+
+  test('a probe failure without an HTTP status (network error) is unknown, not ok', async () => {
+    // Connection exceptions carry no errorStatus — matches:null must map to
+    // 'unknown' on its own, never silently to a healthy endpoint check.
+    dbMocks.getWebhookEndpointCheck.mockResolvedValue({
+      checkedAt: '2026-11-16T10:00:00.000+09:00',
+      endpoint: '',
+      expectedUrl: 'https://worker.example.test/webhook',
+      matches: null,
+      active: null,
+    });
+
+    const health = await buildConnectionHealth({} as D1Database, ACCOUNT);
+    const endpoint = health.checks.find((c) => c.id === 'line.webhook.endpoint')!;
+
+    expect(endpoint.status).toBe('unknown');
+    expect(health.overall).toBe('warn');
+  });
+
+  test('a webhook test that could not be executed (success null) is unknown, not fail', async () => {
+    dbMocks.getWebhookTest.mockResolvedValue({
+      checkedAt: '2026-11-16T10:00:00.000+09:00',
+      success: null,
+      message: null,
+    });
+
+    const health = await buildConnectionHealth({} as D1Database, ACCOUNT);
+    const testCheck = health.checks.find((c) => c.id === 'line.webhook.test')!;
+
+    expect(testCheck.status).toBe('unknown');
+    expect(health.overall).toBe('warn');
+  });
+
+  test('signature failures that match no registered secret surface as an unattributed warn check', async () => {
+    dbMocks.getSignatureFailureWindow
+      .mockResolvedValueOnce({ failures: 0, lastAt: null, lastReason: null }) // this account
+      .mockResolvedValueOnce({
+        failures: 7,
+        lastAt: '2026-11-16T11:58:00.000+09:00',
+        lastReason: 'unverified',
+      }); // __unattributed__
+
+    const health = await buildConnectionHealth({} as D1Database, ACCOUNT);
+    expect(health.checks.map((c) => c.id)).toContain('line.webhook.signature.unattributed');
+    const unattributed = health.checks.find(
+      (c) => c.id === 'line.webhook.signature.unattributed',
+    )!;
+    expect(unattributed.status).toBe('warn');
+    expect(unattributed.evidence).toMatchObject({ failures1h: 7 });
+    // getSignatureFailureWindow must be asked for the unattributed sentinel too.
+    expect(dbMocks.getSignatureFailureWindow).toHaveBeenCalledWith(
+      expect.anything(),
+      '__unattributed__',
+      1,
     );
   });
 });

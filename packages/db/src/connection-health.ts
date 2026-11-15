@@ -48,6 +48,16 @@ interface FailureRecord {
   lastAt: string;
   /** Failures bucketed by JST hour ("2026-11-16T03" of the +09:00 string). */
   hours: Record<string, number>;
+  /**
+   * Failures bucketed by JST minute ("2026-11-16T13:07"). Minute buckets are
+   * the only way to answer "failures in the last 60 minutes" correctly: with
+   * hour buckets alone a 12:59 failure vanished from the window at 13:01
+   * because only the bucket-start time was compared. Written alongside the
+   * hour buckets (which stay for the coarse 24h token-refresh window) since
+   * the first record that carries them. Readers treat this as optional
+   * (Partial<FailureRecord>) for documents written before it existed.
+   */
+  minutes: Record<string, number>;
   /** Coarse failure classification (HTTP status / 'network'). Never a body. */
   lastReason?: string;
 }
@@ -55,6 +65,10 @@ interface FailureRecord {
 function failureBucketHour(now: string): string {
   // jstNow() is "YYYY-MM-DDTHH:mm:ss.sss+09:00" — hour bucket = first 13 chars.
   return now.slice(0, 13);
+}
+
+function failureBucketMinute(now: string): string {
+  return now.slice(0, 16);
 }
 
 function pruneOldHours(hours: Record<string, number>, currentHour: string, keepHours: number): void {
@@ -65,15 +79,52 @@ function pruneOldHours(hours: Record<string, number>, currentHour: string, keepH
   }
 }
 
-async function bumpFailureBucket(
+function pruneOldMinutes(
+  minutes: Record<string, number>,
+  currentMinute: string,
+  keepMinutes: number,
+): void {
+  for (const minute of Object.keys(minutes)) {
+    const age =
+      new Date(`${currentMinute}:00+09:00`).getTime() - new Date(`${minute}:00+09:00`).getTime();
+    if (!Number.isFinite(age) || age > keepMinutes * 60_000) delete minutes[minute];
+  }
+}
+
+/**
+ * Minute buckets are only consumed by sub-hour windows (the 1h signature and
+ * 401 checks), so keeping a bit more than 2h of them bounds the document size
+ * while leaving headroom for the bucket-start boundary.
+ */
+const MINUTE_KEEP_MINUTES = 121;
+/** Hour buckets kept for the coarse 24h token-refresh window. */
+const HOUR_KEEP_HOURS = 26;
+
+/**
+ * The atomic SQL bump below never removes stale buckets, so bound the document
+ * by rewriting it without old keys every N bumps (per isolate — module scope
+ * matches the throttle pattern in the webhook route). The rewrite is a plain
+ * read-modify-write, so a concurrent bump can be lost to it — rare, and the
+ * counters are advisory only.
+ */
+const BUMPS_BETWEEN_PRUNES = 25;
+let bumpsSincePrune = 0;
+
+/**
+ * Legacy read-modify-write bump: used only as the fallback when the atomic
+ * SQL statement fails (corrupt stored value). Starts a fresh record when the
+ * stored value cannot be parsed.
+ */
+async function bumpFailureBucketLegacy(
   db: D1Database,
   accountId: string,
   key: string,
+  now: string,
   reason?: string,
 ): Promise<void> {
-  const now = jstNow();
   const hour = failureBucketHour(now);
-  let record: FailureRecord = { total: 0, lastAt: now, hours: {} };
+  const minute = failureBucketMinute(now);
+  let record: FailureRecord = { total: 0, lastAt: now, hours: {}, minutes: {} };
   const raw = await getAccountSetting(db, accountId, key);
   if (raw) {
     try {
@@ -82,6 +133,7 @@ async function bumpFailureBucket(
         total: typeof parsed.total === 'number' ? parsed.total : 0,
         lastAt: typeof parsed.lastAt === 'string' ? parsed.lastAt : now,
         hours: parsed.hours && typeof parsed.hours === 'object' ? parsed.hours : {},
+        minutes: parsed.minutes && typeof parsed.minutes === 'object' ? parsed.minutes : {},
       };
       if (parsed.lastReason !== undefined) record.lastReason = parsed.lastReason;
     } catch {
@@ -91,9 +143,119 @@ async function bumpFailureBucket(
   record.total += 1;
   record.lastAt = now;
   record.hours[hour] = (record.hours[hour] ?? 0) + 1;
+  record.minutes[minute] = (record.minutes[minute] ?? 0) + 1;
   if (reason !== undefined) record.lastReason = reason;
-  pruneOldHours(record.hours, hour, 26);
+  pruneOldHours(record.hours, hour, HOUR_KEEP_HOURS);
+  pruneOldMinutes(record.minutes, minute, MINUTE_KEEP_MINUTES);
   await setAccountSetting(db, accountId, key, JSON.stringify(record));
+}
+
+/**
+ * Bump the failure counters with an atomic SQL upsert so concurrent requests
+ * cannot lose increments (the previous read-modify-write of the whole JSON
+ * dropped failures recorded at the same moment). json_set creates missing
+ * intermediate objects and json_extract yields NULL on missing paths, so
+ * legacy documents without `minutes` (or without any buckets) bump correctly.
+ * The bucket keys are server-generated timestamps, never user input.
+ */
+async function bumpFailureBucket(
+  db: D1Database,
+  accountId: string,
+  key: string,
+  reason?: string,
+): Promise<void> {
+  const now = jstNow();
+  const hour = failureBucketHour(now);
+  const minute = failureBucketMinute(now);
+  const initial: FailureRecord = {
+    total: 1,
+    lastAt: now,
+    hours: { [hour]: 1 },
+    minutes: { [minute]: 1 },
+    ...(reason !== undefined ? { lastReason: reason } : {}),
+  };
+  try {
+    await db
+      .prepare(
+        `INSERT INTO account_settings (id, line_account_id, key, value, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (line_account_id, key) DO UPDATE SET
+           updated_at = excluded.updated_at,
+           value = json_set(
+             json_set(
+               json_set(
+                 json_set(
+                   json_set(
+                     account_settings.value,
+                     '$.total', COALESCE(json_extract(account_settings.value, '$.total'), 0) + 1
+                   ),
+                   '$.lastAt', ?
+                 ),
+                 '$."hours"."' || ? || '"',
+                 COALESCE(json_extract(account_settings.value, '$."hours"."' || ? || '"'), 0) + 1
+               ),
+               '$."minutes"."' || ? || '"',
+               COALESCE(json_extract(account_settings.value, '$."minutes"."' || ? || '"'), 0) + 1
+             ),
+             '$."lastReason"', ?
+           )`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        accountId,
+        key,
+        JSON.stringify(initial),
+        now,
+        now,
+        now,
+        hour,
+        hour,
+        minute,
+        minute,
+        reason ?? null,
+      )
+      .run();
+  } catch {
+    // Corrupt stored value or D1 error → legacy path (fresh record on garbage).
+    await bumpFailureBucketLegacy(db, accountId, key, now, reason);
+  }
+  await pruneFailureBucketsIfDue(db, accountId, key, now);
+}
+
+/**
+ * Occasionally strip buckets older than the keep windows so the KVS document
+ * stays small. Cheap: one read (+write only when due) per bump, and the write
+ * happens at most every BUMPS_BETWEEN_PRUNES bumps per isolate.
+ */
+async function pruneFailureBucketsIfDue(
+  db: D1Database,
+  accountId: string,
+  key: string,
+  now: string,
+): Promise<void> {
+  bumpsSincePrune += 1;
+  if (bumpsSincePrune < BUMPS_BETWEEN_PRUNES) return;
+  bumpsSincePrune = 0;
+  try {
+    const raw = await getAccountSetting(db, accountId, key);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Partial<FailureRecord>;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.total !== 'number') return;
+    const hours = { ...(parsed.hours ?? {}) };
+    const minutes = { ...(parsed.minutes ?? {}) };
+    pruneOldHours(hours, failureBucketHour(now), HOUR_KEEP_HOURS);
+    pruneOldMinutes(minutes, failureBucketMinute(now), MINUTE_KEEP_MINUTES);
+    const pruned: FailureRecord = {
+      total: parsed.total,
+      lastAt: typeof parsed.lastAt === 'string' ? parsed.lastAt : now,
+      hours,
+      minutes,
+      ...(parsed.lastReason !== undefined ? { lastReason: parsed.lastReason } : {}),
+    };
+    await setAccountSetting(db, accountId, key, JSON.stringify(pruned));
+  } catch {
+    // Pruning is best-effort storage hygiene; never fail the recording.
+  }
 }
 
 export interface FailureWindow {
@@ -117,12 +279,24 @@ async function countFailureWindow(
     return { failures: 0, lastAt: null, lastReason: null };
   }
   const now = jstNow();
-  const currentHour = failureBucketHour(now);
+  const windowMs = windowHours * 60 * 60_000;
   let failures = 0;
-  for (const [hour, count] of Object.entries(record.hours ?? {})) {
-    const age =
-      new Date(`${currentHour}:00+09:00`).getTime() - new Date(`${hour}:00+09:00`).getTime();
-    if (Number.isFinite(age) && age < windowHours * 60 * 60_000) failures += count;
+  // Sub-hour windows need minute buckets: hour buckets only carry the bucket
+  // start time, so a 12:59 failure was invisible to "last 60 minutes" at
+  // 13:01. Documents written before minute buckets fall back to the coarse
+  // hour count until the next failure creates minute buckets.
+  if (windowHours <= 2 && record.minutes) {
+    const nowMs = new Date(`${failureBucketMinute(now)}:00+09:00`).getTime();
+    for (const [minute, count] of Object.entries(record.minutes)) {
+      const age = nowMs - new Date(`${minute}:00+09:00`).getTime();
+      if (Number.isFinite(age) && age < windowMs) failures += count;
+    }
+  } else {
+    const nowMs = new Date(`${failureBucketHour(now)}:00+09:00`).getTime();
+    for (const [hour, count] of Object.entries(record.hours ?? {})) {
+      const age = nowMs - new Date(`${hour}:00+09:00`).getTime();
+      if (Number.isFinite(age) && age < windowMs) failures += count;
+    }
   }
   return {
     failures,
@@ -273,7 +447,12 @@ export async function getWebhookEndpointCheck(
 
 export interface WebhookTestRecord {
   checkedAt: string;
-  success: boolean;
+  /**
+   * true/false = LINE reported test success/failure;
+   * null = the test could not be executed (LINE API error / network failure) —
+   * an execution failure must not read as "test failed" downstream.
+   */
+  success: boolean | null;
   /** LINE's own message about the test result (no secrets; bounded). */
   message: string | null;
   errorStatus?: number;

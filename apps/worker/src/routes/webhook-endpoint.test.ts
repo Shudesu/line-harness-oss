@@ -104,7 +104,7 @@ describe('GET /api/line-accounts/:id/webhook-endpoint (B-10)', () => {
   });
 
   test('LINE API failures degrade to unknown instead of throwing', async () => {
-    lineClientMocks.getWebhookEndpoint.mockRejectedValue({ status: 401 });
+    lineClientMocks.getWebhookEndpoint.mockRejectedValueOnce({ status: 401 });
 
     const app = setupApp();
     const res = await app.request('/api/line-accounts/acc-1/webhook-endpoint');
@@ -112,6 +112,25 @@ describe('GET /api/line-accounts/:id/webhook-endpoint (B-10)', () => {
 
     expect(res.status).toBe(200);
     expect(body.data.status).toBe('unknown');
+  });
+
+  test('a webhook test that could not run (execution error) is unknown, not ok', async () => {
+    // Endpoint matches and is active, but the /webhook/test call itself fails:
+    // "couldn't run the test" must never be reported as status ok.
+    lineClientMocks.testWebhookEndpoint.mockRejectedValue({ status: 500 });
+
+    const app = setupApp();
+    const res = await app.request('/api/line-accounts/acc-1/webhook-endpoint');
+    const body = (await res.json()) as { data: { status: string; test: { success: number | null } } };
+
+    expect(res.status).toBe(200);
+    expect(body.data.status).toBe('unknown');
+    expect(body.data.test.success).toBeNull();
+    expect(dbMocks.recordWebhookTest).toHaveBeenCalledWith(
+      expect.anything(),
+      'acc-1',
+      expect.objectContaining({ success: null, errorStatus: 500 }),
+    );
   });
 });
 
@@ -167,7 +186,7 @@ describe('PUT /api/line-accounts/:id/webhook-endpoint (B-10)', () => {
   });
 
   test('LINE API errors while setting return 502 without retrying', async () => {
-    lineClientMocks.setWebhookEndpoint.mockRejectedValue({ status: 400 });
+    lineClientMocks.setWebhookEndpoint.mockRejectedValueOnce({ status: 400 });
 
     const app = setupApp();
     const res = await app.request('/api/line-accounts/acc-1/webhook-endpoint', {
@@ -177,5 +196,36 @@ describe('PUT /api/line-accounts/:id/webhook-endpoint (B-10)', () => {
     });
 
     expect(res.status).toBe(502);
+  });
+
+  test('a custom target is judged against the Worker expected URL, not against itself', async () => {
+    // Someone PUTs a foreign URL as the target. The channel now points there,
+    // and the post-set probe must compare it with the Worker's own expected
+    // URL — so the health record shows a mismatch, never "matches this Worker".
+    const customTarget = 'https://someone-else.example/webhook';
+    lineClientMocks.getWebhookEndpoint
+      .mockResolvedValueOnce({ endpoint: customTarget, active: true }) // pre-read
+      .mockResolvedValue({ endpoint: customTarget, active: true }); // post-set probe
+
+    const app = setupApp();
+    const res = await app.request('/api/line-accounts/acc-1/webhook-endpoint', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true, endpoint: customTarget }),
+    });
+
+    // The set happened, but the probe against the Worker's expected URL is a
+    // mismatch → outcome.ok is false.
+    expect(res.status).toBe(502);
+    expect(lineClientMocks.setWebhookEndpoint).toHaveBeenCalledWith(customTarget);
+    expect(dbMocks.recordWebhookEndpointCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      'acc-1',
+      expect.objectContaining({
+        endpoint: customTarget,
+        expectedUrl: 'https://worker.example.test/webhook',
+        matches: false,
+      }),
+    );
   });
 });

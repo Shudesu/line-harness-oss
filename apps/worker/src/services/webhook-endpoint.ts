@@ -90,7 +90,9 @@ export async function probeWebhookEndpoint(
     try {
       const record: WebhookTestRecord = {
         checkedAt: jstNow(),
-        success: test.success ?? false,
+        // null = the test could not be executed (network/API failure); the
+        // connection-health check maps that to 'unknown', not 'fail'.
+        success: test.success,
         message: test.message,
         ...(testError !== undefined ? { errorStatus: testError } : {}),
       };
@@ -120,7 +122,17 @@ export async function probeWebhookEndpoint(
     active,
     matches,
     test,
-    status: !setting ? 'unknown' : matches && active && test.success !== false ? 'ok' : 'fail',
+    // Execution failures (test.success === null) are 'unknown', not 'ok':
+    // "couldn't run the test" must never read as "the channel works".
+    status: !setting
+      ? 'unknown'
+      : !matches || !active
+        ? 'fail'
+        : test.success === true
+          ? 'ok'
+          : test.success === false
+            ? 'fail'
+            : 'unknown',
     ...(endpointError !== undefined ? { errorStatus: endpointError } : {}),
     ...(warning ? { warning } : {}),
   };
@@ -156,6 +168,12 @@ export interface SetWebhookEndpointOutcome {
  * the caller must pass confirm=true (MCP side reports this as a warning and
  * requires the confirm parameter). Empty endpoint also requires confirm —
  * configuring a webhook is a mutation of the channel either way.
+ *
+ * `expectedUrl` is this Worker's own webhook URL and is kept separate from
+ * `endpoint` (the URL being configured) on purpose: the post-set probe and the
+ * persisted health record must judge the channel against the Worker's real
+ * URL, so pointing the channel at some other service can never be recorded as
+ * "matches this Worker".
  */
 export async function setWebhookEndpointWithConfirm(
   db: D1Database,
@@ -163,6 +181,7 @@ export async function setWebhookEndpointWithConfirm(
   accountId: string,
   endpoint: string,
   confirm: boolean,
+  expectedUrl: string,
 ): Promise<SetWebhookEndpointOutcome> {
   let current: WebhookEndpointSetting | null = null;
   let currentError: number | undefined;
@@ -194,7 +213,10 @@ export async function setWebhookEndpointWithConfirm(
     };
   }
 
-  const probe = await probeWebhookEndpoint(db, client, accountId, endpoint);
+  // Probe against the Worker's expected URL, not the configured target: a
+  // target that deliberately points elsewhere must surface as matches=false
+  // in the health record instead of validating itself.
+  const probe = await probeWebhookEndpoint(db, client, accountId, expectedUrl);
   if (currentError !== undefined) {
     // The pre-read failed but the write succeeded — surface it for honesty.
     return { ok: probe.status === 'ok', probe, error: undefined };

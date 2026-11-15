@@ -637,7 +637,7 @@ const spec = {
         tags: ['LINE Accounts'],
         summary: '接続ヘルス (PLAN.md 1-1契約: checks[] with id/status/summary/evidence/nextAction)',
         description:
-          '署名検証失敗 (line.webhook.signature)・トークン再発行失敗 (line.token.refresh)・401 失効 (line.bot_info)・Webhook URL の一致/active (line.webhook.endpoint)・LINE 疎通テスト (line.webhook.test) を返す。?refresh=true で Webhook endpoint と疎通テストをその場で再実行する。署名失敗の記録は webhook 側が 200 応答のまま書き込む (B-05)。',
+          '署名検証失敗 (line.webhook.signature)・トークン再発行失敗 (line.token.refresh)・401 失効 (line.bot_info)・Webhook URL の一致/active (line.webhook.endpoint)・LINE 疎通テスト (line.webhook.test) を返す。?refresh=true で Webhook endpoint と疎通テストをその場で再実行する。署名失敗の記録は webhook 側が 200 応答のまま書き込む (B-05)。複数アカウントでどの secret にも一致しない署名失敗がある場合は line.webhook.signature.unattributed (warn) が追加される。probe 実行失敗 (unknown) を含むチェックが1つでもあると overall は warn になる。',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'refresh', in: 'query', schema: { type: 'boolean' }, description: 'Webhook endpoint/疎通テストを再実行' },

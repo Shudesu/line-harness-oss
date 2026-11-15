@@ -361,7 +361,9 @@ lineAccounts.get('/api/line-accounts/:id/webhook-endpoint', async (c) => {
 // PUT /api/line-accounts/:id/webhook-endpoint — B-10 fix (owner only).
 // Overwrites the channel's webhook URL with this Worker's expected URL.
 // Requires confirm=true: an existing URL that differs (someone else's receiver,
-// or another tool's endpoint) is never silently overwritten.
+// or another tool's endpoint) is never silently overwritten. A body `endpoint`
+// override is judged against the Worker's expected URL, never against itself —
+// pointing the channel elsewhere is recorded as a mismatch in health, not ok.
 lineAccounts.put('/api/line-accounts/:id/webhook-endpoint', requireRole('owner'), async (c) => {
   try {
     const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
@@ -379,6 +381,7 @@ lineAccounts.put('/api/line-accounts/:id/webhook-endpoint', requireRole('owner')
       account.id,
       target,
       body.confirm === true,
+      expectedUrl,
     );
     if (!outcome.ok && outcome.requiresConfirm) {
       return c.json({ success: false, requiresConfirm: true, error: outcome.error, data: { expectedUrl } }, 409);

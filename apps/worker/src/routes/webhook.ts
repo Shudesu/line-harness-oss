@@ -48,10 +48,13 @@ const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
 // for the connection-health endpoint. Logged text never contains the request
 // body or any secret.
 
-// In-isolate throttles. Failures that carry a well-formed but wrong signature
-// are recorded exactly (real LINE redeliveries / misconfigurations), while the
-// unsigned-junk fast path records at most once per 10s per isolate so an
-// unauthenticated flood cannot turn the pre-reject into a D1 write amplifier.
+// In-isolate throttles. Every failure path (missing/malformed signature and
+// well-formed-but-wrong signature alike) records at most once per 10s per
+// isolate, so an unauthenticated flood cannot turn the pre-reject into a D1
+// read+write amplifier — real LINE redeliveries / misconfigurations still
+// surface in connection health (count becomes approximate, presence and
+// lastAt stay exact). The unsigned-junk fast path additionally avoids all D1
+// work; the verified path records successes at most once per 5 minutes.
 const FAILURE_RECORD_MIN_INTERVAL_MS = 10_000;
 const SUCCESS_RECORD_MIN_INTERVAL_MS = 5 * 60_000;
 const lastRecordedMs = new Map<string, number>();
@@ -214,15 +217,25 @@ webhook.post('/webhook', async (c) => {
     // registered secret — every event in it is silently discarded. Record the
     // count + time (attributed to the single active account when there is one)
     // so connection health can say "rejecting everything" instead of nothing.
-    try {
-      const accounts = await getLineAccounts(db);
-      await recordSignatureFailure(
-        db,
-        resolveHealthAccountId(matchedAccountId, accounts),
-        'unverified',
+    // Throttled per isolate like the missing-signature fast path: an
+    // unauthenticated attacker sending well-formed 44-char junk must not turn
+    // the failure recording (read + write per request) into a D1 amplifier.
+    // The failure count is advisory; presence is what connection health needs.
+    if (shouldRecord('unverified', FAILURE_RECORD_MIN_INTERVAL_MS)) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const accounts = await getLineAccounts(db);
+            await recordSignatureFailure(
+              db,
+              resolveHealthAccountId(matchedAccountId, accounts),
+              'unverified',
+            );
+          } catch (err) {
+            console.error('Failed to record invalid-signature webhook:', err);
+          }
+        })(),
       );
-    } catch (err) {
-      console.error('Failed to record invalid-signature webhook:', err);
     }
     return c.json({ status: 'ok' }, 200);
   }

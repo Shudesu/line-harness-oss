@@ -26,6 +26,7 @@ import {
   getWebhookEndpointCheck,
   getWebhookTest,
   jstNow,
+  UNATTRIBUTED_ACCOUNT_ID,
   type WebhookEndpointCheckRecord,
   type WebhookTestRecord,
 } from '@line-crm/db';
@@ -185,9 +186,15 @@ function webhookEndpointCheck(
   let status: CheckStatus;
   let summary: string;
   let nextAction: ConnectionCheckNextAction | undefined;
-  if (record.errorStatus !== undefined && record.matches === null) {
+  if (record.matches === null) {
+    // null = the probe itself failed. Network exceptions carry no HTTP status,
+    // so this branch must not depend on errorStatus being set — a probe that
+    // could not run is 'unknown', never silently healthy.
     status = 'unknown';
-    summary = `Webhook URL の確認が LINE API エラーで失敗しました（${record.errorStatus}）`;
+    summary =
+      record.errorStatus !== undefined
+        ? `Webhook URL の確認が LINE API エラーで失敗しました（${record.errorStatus}）`
+        : 'Webhook URL の確認が通信エラーで失敗しました';
   } else if (record.matches === false) {
     status = 'fail';
     summary = record.endpoint
@@ -262,18 +269,24 @@ function webhookTestCheck(
   const stale = isStale(record.checkedAt, 24 * HOUR_MS, now);
   let status: CheckStatus;
   let summary: string;
-  if (record.errorStatus !== undefined && record.success !== true) {
-    status = 'unknown';
-    summary = `疎通テストが LINE API エラーで失敗しました（${record.errorStatus}）`;
-  } else if (record.success && endpointOk && !stale) {
+  if (record.success === true && endpointOk && !stale) {
     status = 'ok';
     summary = 'LINE の疎通テストに成功しています';
-  } else if (record.success && stale) {
+  } else if (record.success === true && stale) {
     status = 'warn';
     summary = '疎通テストに成功していますが、実行から24時間以上経っています';
-  } else {
+  } else if (record.success === false) {
     status = 'fail';
     summary = `LINE の疎通テストに失敗しています${record.message ? `（${record.message}）` : ''}`;
+  } else {
+    // success === null: the test could not be executed (LINE API error or a
+    // network exception without a status). An execution failure is unknown,
+    // not a failed delivery.
+    status = 'unknown';
+    summary =
+      record.errorStatus !== undefined
+        ? `疎通テストが LINE API エラーで失敗しました（${record.errorStatus}）`
+        : '疎通テストを実行できませんでした（通信エラー）';
   }
   return {
     id,
@@ -290,6 +303,24 @@ function webhookTestCheck(
             args: { action: 'check', accountId },
           } satisfies ConnectionCheckNextAction,
         }),
+  };
+}
+
+function unattributedSignatureCheck(
+  failures1h: number,
+  lastAt: string | null,
+  now: number,
+): ConnectionCheck {
+  return {
+    id: 'line.webhook.signature.unattributed',
+    status: 'warn',
+    summary: `複数アカウント構成で、登録されたどの Channel secret とも一致しない署名の受信が直近60分に ${failures1h} 件あります（どのチャネルか特定できません）。該当チャネルはイベントを全て破棄している可能性があります`,
+    evidence: { failures1h, lastAt },
+    nextAction: {
+      kind: 'human_console' as const,
+      label: '各チャネルの Channel secret を確認する',
+      docs: `${SECRET_DOCS}。全アカウントの Channel secret と管理画面の設定の一致を確認してください`,
+    },
   };
 }
 
@@ -322,6 +353,7 @@ export async function buildConnectionHealth(
   const [
     sigFail,
     sigSuccessAt,
+    unattributedSigFail,
     refreshFail,
     unauthorized,
     endpointRecord,
@@ -329,6 +361,10 @@ export async function buildConnectionHealth(
   ] = await Promise.all([
     getSignatureFailureWindow(db, account.id, 1),
     getSignatureSuccessAt(db, account.id),
+    // Multi-account installs record signature mismatches that match no
+    // registered secret under the unattributed sentinel — surface them so
+    // "some channel is discarding everything" is visible somewhere.
+    getSignatureFailureWindow(db, UNATTRIBUTED_ACCOUNT_ID, 1),
     getTokenRefreshFailureWindow(db, account.id, 24),
     getTokenUnauthorizedWindow(db, account.id, 1),
     getWebhookEndpointCheck(db, account.id),
@@ -342,12 +378,22 @@ export async function buildConnectionHealth(
     webhookEndpointCheck(endpointRecord, now, account.id),
     webhookTestCheck(testRecord, endpointRecord, now, account.id),
   ];
+  if (unattributedSigFail.failures > 0) {
+    checks.push(
+      unattributedSignatureCheck(unattributedSigFail.failures, unattributedSigFail.lastAt, now),
+    );
+  }
 
   const overall = checks.some((c) => c.status === 'fail')
     ? 'fail'
     : checks.some((c) => c.status === 'warn')
       ? 'warn'
-      : 'ok';
+      : // 'unknown' = a probe could not run / could not be read. An account
+        // with nothing verified yet (manual-only checks) stays ok, but any
+        // check that tried and failed to verify must not read as healthy.
+        checks.some((c) => c.status === 'unknown')
+        ? 'warn'
+        : 'ok';
 
   return { checkedAt, accountId: account.id, platform: 'line', overall, checks };
 }
