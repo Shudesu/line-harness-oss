@@ -160,6 +160,35 @@ interface MessageLog {
   createdAt: string
 }
 
+// チャット詳細の部分スケルトン。全画面スピナーの代わりに、ヘッダー・
+// メッセージバブル・入力欄の「形」を保ったまま取得を待つ。
+function DetailSkeleton() {
+  return (
+    <div className="flex-1 flex flex-col min-h-0" aria-hidden="true">
+      <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-200 flex items-center gap-2">
+        <div className="w-8 h-8 rounded-full bg-gray-200 animate-pulse" />
+        <div className="space-y-1">
+          <div className="h-3 w-28 bg-gray-200 rounded animate-pulse" />
+          <div className="h-2.5 w-16 bg-gray-100 rounded animate-pulse" />
+        </div>
+      </div>
+      <div className="flex-1 p-4 space-y-2 overflow-hidden" style={{ backgroundColor: '#7494C0' }}>
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className={`flex ${i % 2 ? 'justify-end' : 'justify-start'}`}>
+            <div
+              className="h-8 rounded-2xl bg-white/40 animate-pulse"
+              style={{ width: `${38 + ((i * 13) % 28)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex-shrink-0 p-3 border-t border-gray-200">
+        <div className="h-14 rounded-2xl bg-gray-100 animate-pulse" />
+      </div>
+    </div>
+  )
+}
+
 function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   friendId: string
   friend: FriendItem | null
@@ -174,17 +203,20 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   const sendLockRef = useRef(false)
 
   useEffect(() => {
+    // 会話切替の連打で古い応答が新しい会話を上書きしないよう破棄する
+    let cancelled = false
     const loadMessages = async () => {
       setLoadingMessages(true)
       try {
         const res = await fetchApi<{ success: boolean; data: MessageLog[] }>(
           `/api/friends/${friendId}/messages`
         )
-        if (res.success) setMessages(res.data)
+        if (!cancelled && res.success) setMessages(res.data)
       } catch { /* silent */ }
-      setLoadingMessages(false)
+      if (!cancelled) setLoadingMessages(false)
     }
     loadMessages()
+    return () => { cancelled = true }
   }, [friendId])
 
   const handleSend = async () => {
@@ -317,7 +349,7 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
 }
 
 export default function ChatsPage() {
-  const { selectedAccountId } = useAccount()
+  const { selectedAccountId, loading: accountLoading } = useAccount()
   const [chats, setChats] = useState<Chat[]>([])
   const [allFriends, setAllFriends] = useState<FriendItem[]>([])
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
@@ -416,23 +448,35 @@ export default function ChatsPage() {
     return params
   }, [statusFilter, selectedAccountId, unansweredOnly])
 
+  // 世代カウンタ: 素早いフィルタ切替・チャット切替で古い応答が後から届いても
+  // 新しい状態を上書きしない (古い応答は破棄する)
+  const chatsGenRef = useRef(0)
+  const detailGenRef = useRef(0)
+  // 一覧の初回ロード済みフラグ: 再取得中は前回の一覧を表示したまま
+  // 差し替える (stale-while-revalidate)。初回のみスケルトンを出す。
+  const chatsLoadedRef = useRef(false)
+
   const loadChats = useCallback(async () => {
-    setLoading(true)
+    const gen = ++chatsGenRef.current
+    if (!chatsLoadedRef.current) setLoading(true)
     setError('')
     try {
       const chatRes = await api.chats.list(buildListParams(null))
+      if (gen !== chatsGenRef.current) return
       if (chatRes.success) {
         const rows = chatRes.data as unknown as Chat[]
         setChats(rows)
+        chatsLoadedRef.current = true
         const last = rows[rows.length - 1]
         nextCursorRef.current = last?.lastMessageAt ? { at: last.lastMessageAt, id: last.id } : null
         // ページ丁度いっぱい返ってきた = 続きがある可能性が高い (unansweredOnly は全件返る)
         setHasMoreChats(!unansweredOnly && rows.length === CHAT_PAGE_SIZE)
       }
     } catch {
+      if (gen !== chatsGenRef.current) return
       setError('チャットの読み込みに失敗しました。もう一度お試しください。')
     } finally {
-      setLoading(false)
+      if (gen === chatsGenRef.current) setLoading(false)
     }
   }, [buildListParams, unansweredOnly])
 
@@ -476,7 +520,10 @@ export default function ChatsPage() {
     } catch { /* silent */ }
   }, [selectedAccountId])
 
-  useEffect(() => { void loadAllFriends() }, [loadAllFriends])
+  useEffect(() => {
+    if (accountLoading) return
+    void loadAllFriends()
+  }, [loadAllFriends, accountLoading])
 
   // Keep refs in sync so setChats updater can read the latest filter without stale closure
   useEffect(() => { statusFilterRef.current = statusFilter }, [statusFilter])
@@ -494,10 +541,14 @@ export default function ChatsPage() {
   }, [sendMode])
 
   const loadChatDetail = useCallback(async (chatId: string) => {
+    // 古い詳細の応答が後から届いて別のチャットに描画されないよう、
+    // 世代カウンタと選択中チャットIDで破棄を判断する
+    const gen = ++detailGenRef.current
     setDetailLoading(true)
     setError('')
     try {
       const res = await api.chats.get(chatId)
+      if (gen !== detailGenRef.current || selectedChatRef.current !== chatId) return
       if (res.success) {
         setChatDetail(res.data as unknown as ChatDetail)
         setNotes((res.data as unknown as ChatDetail).notes || '')
@@ -508,16 +559,21 @@ export default function ChatsPage() {
       }
     } catch (err) {
       // ネットワーク / parse / auth fail などの例外。empty catch だと原因不明だったので詳細を出す。
+      if (gen !== detailGenRef.current || selectedChatRef.current !== chatId) return
       const msg = err instanceof Error ? err.message : String(err)
       setError(`チャット詳細の読み込みに失敗しました: ${msg}`)
     } finally {
-      setDetailLoading(false)
+      if (gen === detailGenRef.current) setDetailLoading(false)
     }
   }, [])
 
+  // アカウント一覧の解決 (selectedAccountId の確定) を待ってから一覧を取得する。
+  // 旧実装は「accountId なしで1回 → 確定後に付きで1回」と二重fetchして
+  // スケルトンが二回点滅していた。
   useEffect(() => {
+    if (accountLoading) return
     loadChats()
-  }, [loadChats])
+  }, [loadChats, accountLoading])
 
   // Deep-link from other pages (e.g. /form-submissions): ?friend=<friendId>
   // chat list returns id = friend_id, so selectedChatId === friendId is correct.
@@ -574,13 +630,21 @@ export default function ChatsPage() {
 
   // 詳細が新しくロードされたら最下部（＝最新メッセージ）までスクロールする。
   // そこから上にスクロールすれば過去のメッセージを辿れる（LINE受信画面と同じUX）。
-  // ユーザーが手動でスクロールしたら delayed auto-scroll は発動させない。
+  // チャット切替直後のみ無条件で最下部へ。以降の追記（送信・再取得）では、
+  // 直前に最下部付近だったときだけ追従し、読み返し中に強制的に最下部へ
+  // 引きずられる「暴走スクロール」を防ぐ。
+  const lastDetailChatIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (!chatDetail?.messages || chatDetail.messages.length === 0) return
     const el = messagesScrollRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-    let userScrolled = false
+    const chatChanged = lastDetailChatIdRef.current !== chatDetail.id
+    lastDetailChatIdRef.current = chatDetail.id
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    let userScrolled = !chatChanged && !nearBottom
+    if (chatChanged || nearBottom) {
+      el.scrollTop = el.scrollHeight
+    }
     const onScroll = () => {
       if (!messagesScrollRef.current) return
       const current = messagesScrollRef.current
@@ -909,11 +973,7 @@ export default function ChatsPage() {
             <div className="flex-1 flex items-center justify-center">
               <p className="text-gray-400 text-sm">チャットを選択してください</p>
             </div>
-          ) : detailLoading ? (
-            <div className="flex-1 flex items-center justify-center">
-              <p className="text-gray-400 text-sm">読み込み中...</p>
-            </div>
-          ) : chatDetail ? (
+          ) : chatDetail && chatDetail.id === selectedChatId ? (
             <>
               {/* Chat Header — flex-shrink-0: 低いビューポートでもヘッダーとコンポーザーは
                   高さを保ち、縮むのはメッセージ一覧だけにする */}
@@ -991,6 +1051,10 @@ export default function ChatsPage() {
                   )}
                 </div>
               </div>
+              {/* 再取得中 (同じチャット) は表示を消さず、細い進行バーだけ出す */}
+              {detailLoading && (
+                <div aria-hidden="true" className="h-0.5 flex-shrink-0 bg-green-400/70 animate-pulse" />
+              )}
 
               {/* Messages — LINE-style chat bubbles */}
               <div ref={messagesScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>
@@ -1289,7 +1353,11 @@ export default function ChatsPage() {
                 </div>
               </div>
             </>
-          ) : null}
+          ) : (
+            /* 詳細の初回ロード中・未取得: 全画面スピナーの代わりに
+               ヘッダー・メッセージ・入力欄の形状を保った部分スケルトン */
+            <DetailSkeleton />
+          )}
         </div>
 
         {/* Right-most Panel: 友だち詳細サイドバー — chat detail を開いている時のみ表示 */}
