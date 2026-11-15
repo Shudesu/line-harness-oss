@@ -40,6 +40,20 @@ const ACCOUNT_SCOPED_PREFIXES = [
   '/line-copy',
 ]
 
+// KIDOUインターンの LINE アカウント。友だち追加リンク・数字はこのアカウント専用の画面
+export const INTERN_CHANNEL_ID = '2010069796'
+const INTERN_ONLY_PREFIXES = ['/join-links', '/intern-stats']
+
+/** KIDOUインターンの LINE を選んでいるか（アンケートなどインターン専用の部品を出すかの判定） */
+export function isInternAccount(account: { channelId: string } | null | undefined): boolean {
+  return account?.channelId === INTERN_CHANNEL_ID
+}
+
+/** インターン専用の画面かどうか（ほかのアカウントを開いているときはメニューに出さない） */
+export function isInternOnlyPage(pathname: string): boolean {
+  return INTERN_ONLY_PREFIXES.some((p) => pathname.startsWith(p))
+}
+
 export type PageScope = 'account' | 'shared' | 'none'
 
 export function pageScope(pathname: string): PageScope {

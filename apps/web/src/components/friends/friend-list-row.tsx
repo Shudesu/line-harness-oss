@@ -11,6 +11,8 @@ interface Props {
   // to the row body — the row body navigates to /chats and we don't want
   // the tag-edit affordance to compete with that primary click target.
   onTagEditClick?: () => void
+  // アンケートの欄を出すか（KIDOUインターンを選んでいるときだけ）
+  showSurvey?: boolean
 }
 
 // Single row of the L-step style friend list. Renders 6 columns:
@@ -19,7 +21,12 @@ interface Props {
 // `/chats?friend=<id>` so the operator can read history / reply / mark as
 // resolved without leaving the list. The "タグ" button at the end of the
 // last column opens an inline tag editor (handled by the parent table).
-export default function FriendListRow({ friend, onTagEditClick }: Props) {
+// 一覧の列の並び。アンケートの欄はKIDOUインターンを選んでいるときだけ（見出しと行で同じものを使う）
+export function friendListCols(showSurvey: boolean) {
+  return showSurvey ? 'grid-cols-[80px_200px_180px_120px_1fr_260px]' : 'grid-cols-[80px_200px_120px_1fr_260px]'
+}
+
+export default function FriendListRow({ friend, onTagEditClick, showSurvey = true }: Props) {
   const router = useRouter()
   const navigateToChat = () => router.push(`/chats?friend=${friend.id}`)
   const incoming = friend.latestIncomingMessage
@@ -44,7 +51,7 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           navigateToChat()
         }
       }}
-      className="grid grid-cols-[80px_200px_180px_120px_1fr_260px] gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50"
+      className={`grid ${friendListCols(showSurvey)} gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50`}
     >
       {/* 対応マーク — chats.status 由来 (unread / in_progress / resolved). */}
       <div className="pt-1">
@@ -88,7 +95,7 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
       </div>
 
       {/* アンケート — KIDOUインターンの登録アンケートの答え（metadata の survey_step / university_name / grade / graduation_year） */}
-      <SurveyAnswers metadata={friend.metadata} />
+      {showSurvey && <SurveyAnswers metadata={friend.metadata} />}
 
       {/* シナリオ */}
       <div className="pt-1">

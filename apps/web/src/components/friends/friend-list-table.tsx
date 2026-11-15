@@ -4,16 +4,19 @@ import { useState } from 'react'
 import type { Tag } from '@line-crm/shared'
 import type { FriendListItem } from '@/lib/api'
 import { api } from '@/lib/api'
-import FriendListRow from './friend-list-row'
+import FriendListRow, { friendListCols } from './friend-list-row'
 import TagBadge from './tag-badge'
 
 interface Props {
   friends: FriendListItem[]
   allTags: Tag[]
   onRefresh: () => void
+  // アンケートの欄を出すか（KIDOUインターンを選んでいるときだけ）
+  showSurvey?: boolean
 }
 
-export default function FriendListTable({ friends, allTags, onRefresh }: Props) {
+export default function FriendListTable({ friends, allTags, onRefresh, showSurvey = true }: Props) {
+  const cols = friendListCols(showSurvey)
   // Inline tag-management expander. The row's primary click navigates to
   // /chats; tag editing stays available here as a secondary action because
   // the chats page's FriendInfoSidebar currently only displays tags (no
@@ -83,10 +86,10 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
           and the body forced to min-w-[1060px]). */}
       <div className="overflow-x-auto">
         <div className="min-w-[1060px]">
-          <div className="hidden lg:grid grid-cols-[80px_200px_180px_120px_1fr_260px] gap-3 px-4 py-2 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+          <div className={`hidden lg:grid ${cols} gap-3 px-4 py-2 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wider`}>
             <div>対応マーク</div>
             <div>名前</div>
-            <div>アンケート</div>
+            {showSurvey && <div>アンケート</div>}
             <div>シナリオ</div>
             <div>受信メッセージ</div>
             <div>★つきタグ・友だち情報</div>
@@ -103,6 +106,7 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
                 <FriendListRow
                   friend={friend}
                   onTagEditClick={() => toggleExpand(friend.id)}
+                  showSurvey={showSurvey}
                 />
 
                 {isExpanded && (

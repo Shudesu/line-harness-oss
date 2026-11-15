@@ -20,6 +20,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import Header from '@/components/layout/header'
+import InternOnly from '@/components/intern-only'
 import { fetchApi } from '@/lib/api'
 
 interface JoinLink {
@@ -179,6 +180,14 @@ function ReorderLinks({ links, onClose, onSaved }: { links: JoinLink[]; onClose:
 }
 
 export default function JoinLinksPage() {
+  return (
+    <InternOnly title="友だち追加リンク">
+      <JoinLinksPageBody />
+    </InternOnly>
+  )
+}
+
+function JoinLinksPageBody() {
   const [data, setData] = useState<JoinLinksData | null>(null)
   const [tags, setTags] = useState<TagRow[]>([])
   const [loading, setLoading] = useState(true)

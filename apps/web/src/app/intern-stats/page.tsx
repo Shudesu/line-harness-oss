@@ -3,6 +3,7 @@
 // KIDOUインターンの数字。友だちの増減・ブロック・アンケートの進み具合・メニューのボタンの押された回数
 import { useEffect, useState } from 'react'
 import Header from '@/components/layout/header'
+import InternOnly from '@/components/intern-only'
 import { fetchApi } from '@/lib/api'
 
 interface FunnelRow {
@@ -81,6 +82,14 @@ function StatTile({ label, value, sub }: { label: string; value: number; sub?: s
 }
 
 export default function InternStatsPage() {
+  return (
+    <InternOnly title="数字">
+      <InternStatsPageBody />
+    </InternOnly>
+  )
+}
+
+function InternStatsPageBody() {
   const [days, setDays] = useState(30)
   const [data, setData] = useState<InternStats | null>(null)
   const [loading, setLoading] = useState(true)

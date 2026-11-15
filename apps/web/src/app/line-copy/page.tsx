@@ -7,10 +7,10 @@ import Header from '@/components/layout/header'
 import { sendApi } from '@/lib/api'
 import { cardToText, textToCard } from '@/lib/cream-card'
 import { useAccount } from '@/contexts/account-context'
+import { INTERN_CHANNEL_ID } from '@/lib/account-look'
 import AccountLineCopy from './account-copy'
 
 // KIDOUインターンの LINE（アンケートの仕組みで送る専用の作り）。ほかの LINE はシナリオと自動返信をそのまま並べる画面にする
-const INTERN_CHANNEL_ID = '2010069796'
 
 interface QaItem {
   id: string

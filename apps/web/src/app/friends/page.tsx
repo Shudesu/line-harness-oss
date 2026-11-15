@@ -8,6 +8,7 @@ import Header from '@/components/layout/header'
 import FriendListTable from '@/components/friends/friend-list-table'
 import CcPromptButton from '@/components/cc-prompt-button'
 import { useAccount } from '@/contexts/account-context'
+import { isInternAccount } from '@/lib/account-look'
 
 const ccPrompts = [
   {
@@ -47,7 +48,9 @@ const SURVEY_GROUP_KEYS: SurveyGroupKey[] = ['university_name', 'grade', 'gradua
 const surveyValueLabel = (key: SurveyGroupKey, value: string) => (key === 'graduation_year' ? `${value}年` : value)
 
 export default function FriendsPage() {
-  const { selectedAccountId } = useAccount()
+  const { selectedAccountId, selectedAccount } = useAccount()
+  // 登録アンケート（大学名・学年・卒業年）は KIDOUインターンだけの仕組み。ほかの LINE では絞り込みも欄も出さない
+  const showSurvey = isInternAccount(selectedAccount)
   const [friends, setFriends] = useState<FriendListItem[]>([])
   const [allTags, setAllTags] = useState<Tag[]>([])
   const [total, setTotal] = useState(0)
@@ -109,6 +112,11 @@ export default function FriendsPage() {
 
   // アンケートの答えごとの人数（絞り込みの選択肢と「グループで見る」）。友だちの状態の絞り込みだけ合わせる
   const loadSurveyGroups = useCallback(async () => {
+    // アンケートのない LINE では人数を取りに行かない
+    if (!showSurvey) {
+      setSurveyGroups(NO_GROUPS)
+      return
+    }
     const following = followFilter === 'all' ? undefined : followFilter
     try {
       const results = await Promise.all(
@@ -123,7 +131,7 @@ export default function FriendsPage() {
     } catch {
       setSurveyGroups(NO_GROUPS)
     }
-  }, [selectedAccountId, followFilter])
+  }, [selectedAccountId, followFilter, showSurvey])
 
   // 友だち・ブロック中の人数（選んでいるアカウントの全体。絞り込みとは別）
   const loadFollowCounts = useCallback(async () => {
@@ -157,6 +165,7 @@ export default function FriendsPage() {
     setPage(1)
     // アカウントが変わると答えの選択肢も変わるので、アンケートの絞り込みは外す
     setSurveyAnswers(NO_ANSWERS)
+    setSurveyFilter('')
   }, [selectedAccountId])
 
   useEffect(() => {
@@ -302,6 +311,7 @@ export default function FriendsPage() {
         </div>
 
         {/* アンケートの答えで絞り込む（KIDOUインターンの登録アンケート） */}
+        {showSurvey && (
         <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-100">
           <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">アンケート</span>
           <div className="flex items-center gap-2">
@@ -346,10 +356,11 @@ export default function FriendsPage() {
             </button>
           )}
         </div>
+        )}
       </div>
 
       {/* グループで見る — 答えごとの人数。札を押すとその人たちだけに絞る */}
-      {hasSurveyGroups && (
+      {showSurvey && hasSurveyGroups && (
         <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <span className="text-xs font-semibold text-gray-700 mr-1">グループで見る</span>
@@ -413,7 +424,7 @@ export default function FriendsPage() {
           ))}
         </div>
       ) : (
-        <FriendListTable friends={friends} allTags={allTags} onRefresh={loadFriends} />
+        <FriendListTable friends={friends} allTags={allTags} onRefresh={loadFriends} showSurvey={showSurvey} />
       )}
 
       {!loading && total > 0 && (

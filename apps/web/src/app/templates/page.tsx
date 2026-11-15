@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
+import { useAccount } from '@/contexts/account-context'
+import { isInternAccount } from '@/lib/account-look'
 import FlexPreviewComponent from '@/components/flex-preview'
 import CcPromptButton from '@/components/cc-prompt-button'
 import ImageUploader from '@/components/shared/image-uploader'
@@ -71,6 +73,7 @@ const ccPrompts = [
 ]
 
 export default function TemplatesPage() {
+  const { selectedAccount } = useAccount()
   const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -237,7 +240,8 @@ export default function TemplatesPage() {
         </div>
       )}
 
-      {/* KIDOUインターンのあいさつ・アンケート・Q&A は別の置き場。迷わないよう入口を出す */}
+      {/* KIDOUインターンのあいさつ・アンケート・Q&A は別の置き場。迷わないよう入口を出す（インターンを選んでいるときだけ） */}
+      {isInternAccount(selectedAccount) && (
       <Link
         href="/line-copy"
         className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 hover:bg-green-100"
@@ -247,6 +251,7 @@ export default function TemplatesPage() {
         </span>
         <span className="shrink-0 font-bold">開く →</span>
       </Link>
+      )}
 
       {/* Type filter */}
       <div className="mb-4 flex flex-wrap gap-2">
