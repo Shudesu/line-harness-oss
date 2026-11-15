@@ -1,5 +1,5 @@
-// KIDOUインターンの「友だち追加リンク」タブと経路リンクの入口（仕組みは services/intern-join.ts）
-import { Hono } from 'hono';
+// KIDOUインターン・軌道の「友だち追加リンク」タブと経路リンクの入口（仕組みは services/intern-join.ts）
+import { Hono, type Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { createEntryRoute, getEntryRouteById, getEntryRouteByRefCode, updateEntryRoute } from '@line-crm/db';
 import type { Env } from '../index.js';
@@ -10,6 +10,8 @@ import {
   listJoinLinks,
   newJoinRef,
   isTapId,
+  joinConfigForAccount,
+  joinConfigForRef,
   newTapId,
   recordJoinOpen,
   recordJoinTap,
@@ -31,8 +33,8 @@ internJoin.get('/in/join', (c) => {
 // SNS に貼るリンク。押されたことを記録して、すぐ友だち追加の画面へ送る（ログインは挟まない）。
 // 記録は送ったあとに裏で行う（待たせない）。止めたリンク・知らない記号も友だち追加へ（印刷したリンクも切らさない）
 internJoin.get('/in/:ref', (c) => {
-  const config = joinConfigFromEnv(c.env);
   const ref = c.req.param('ref');
+  const config = joinConfigForRef(joinConfigFromEnv(c.env), ref);
   const fromCookie = getCookie(c, TAP_COOKIE);
   const tapId = isTapId(fromCookie) ? fromCookie : newTapId();
   if (c.req.method === 'GET') {
@@ -68,21 +70,30 @@ internJoin.post('/api/intern/join', async (c) => {
 
 // ── 管理画面 ─────────────────────────────────────────────
 
+// 管理画面で選んでいる LINE（?lineAccountId=。なければ今までどおりインターン）の設定
+function adminJoinConfig(c: Context<Env>) {
+  const intern = joinConfigFromEnv(c.env);
+  const accountId = c.req.query('lineAccountId') || intern.accountId;
+  return joinConfigForAccount(intern, accountId);
+}
+const NOT_SUPPORTED = 'このアカウントでは友だち追加リンクを使えません';
+
 function publicBase(c: { req: { url: string; header: (name: string) => string | undefined } }): string {
   return new URL(c.req.url).origin;
 }
 
 internJoin.get('/api/intern/join-links', async (c) => {
-  const config = joinConfigFromEnv(c.env);
-  if (!config.accountId) return c.json({ success: false, error: 'KIDOUインターンのアカウントが設定されていません' }, 404);
+  const config = adminJoinConfig(c);
+  if (!config?.accountId) return c.json({ success: false, error: NOT_SUPPORTED }, 404);
   try {
-    const data = await listJoinLinks(c.env.DB, config.accountId);
+    const data = await listJoinLinks(c.env.DB, config.accountId, config.prefix);
     return c.json({
       success: true,
       data: {
         ...data,
         accountId: config.accountId,
         ready: isJoinReady(config),
+        hasSurvey: !!config.hasSurvey,
         botBasicId: config.botBasicId,
         friendAddUrl: friendAddUrl(config),
         linkBase: `${publicBase(c)}/in/`,
@@ -95,15 +106,15 @@ internJoin.get('/api/intern/join-links', async (c) => {
 });
 
 internJoin.post('/api/intern/join-links', async (c) => {
-  const config = joinConfigFromEnv(c.env);
-  if (!config.accountId) return c.json({ success: false, error: 'KIDOUインターンのアカウントが設定されていません' }, 404);
+  const config = adminJoinConfig(c);
+  if (!config?.accountId) return c.json({ success: false, error: NOT_SUPPORTED }, 404);
   const body = await c.req.json<{ name?: unknown; tagId?: unknown }>().catch(() => null);
   const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 60) : '';
   const tagId = typeof body?.tagId === 'string' && body.tagId ? body.tagId : null;
   if (!name) return c.json({ success: false, error: 'リンクの名前を入れてください' }, 400);
   try {
-    let refCode = newJoinRef();
-    for (let i = 0; i < 3 && (await getEntryRouteByRefCode(c.env.DB, refCode)); i++) refCode = newJoinRef();
+    let refCode = newJoinRef(config.prefix);
+    for (let i = 0; i < 3 && (await getEntryRouteByRefCode(c.env.DB, refCode)); i++) refCode = newJoinRef(config.prefix);
     // アカウントのシナリオ（友だち追加時）は今までどおり動かす。紹介文・専用シナリオは付けない
     const route = await createEntryRoute(c.env.DB, { refCode, name, tagId, runAccountFriendAddScenarios: true, isActive: true });
     return c.json({ success: true, data: { id: route.id, refCode: route.ref_code } }, 201);
@@ -115,14 +126,14 @@ internJoin.post('/api/intern/join-links', async (c) => {
 
 // 経路ごとの人数の表の並び順。ids は上から順の entry_routes の id
 internJoin.put('/api/intern/join-links/order', async (c) => {
-  const config = joinConfigFromEnv(c.env);
-  if (!config.accountId) return c.json({ success: false, error: 'KIDOUインターンのアカウントが設定されていません' }, 404);
+  const config = adminJoinConfig(c);
+  if (!config?.accountId) return c.json({ success: false, error: NOT_SUPPORTED }, 404);
   const body = await c.req.json<{ ids?: unknown }>().catch(() => null);
   if (!Array.isArray(body?.ids) || body.ids.length > 500 || !body.ids.every((x) => typeof x === 'string')) {
     return c.json({ success: false, error: '並び順を読み取れませんでした' }, 400);
   }
   try {
-    await saveJoinOrder(c.env.DB, config.accountId, body.ids as string[]);
+    await saveJoinOrder(c.env.DB, config.accountId, body.ids as string[], config.prefix);
     return c.json({ success: true });
   } catch (err) {
     console.error('PUT /api/intern/join-links/order error:', err);
@@ -131,11 +142,14 @@ internJoin.put('/api/intern/join-links/order', async (c) => {
 });
 
 internJoin.patch('/api/intern/join-links/:id', async (c) => {
+  const config = adminJoinConfig(c);
+  if (!config?.accountId) return c.json({ success: false, error: NOT_SUPPORTED }, 404);
   const id = c.req.param('id');
   const body = await c.req.json<{ name?: unknown; tagId?: unknown; isActive?: unknown }>().catch(() => null);
   try {
     const route = await getEntryRouteById(c.env.DB, id);
-    if (!route || !route.ref_code.startsWith(JOIN_REF_PREFIX)) return c.json({ success: false, error: 'Not found' }, 404);
+    // 選んでいる LINE のリンクだけ直せる
+    if (!route || !route.ref_code.startsWith(config.prefix ?? JOIN_REF_PREFIX)) return c.json({ success: false, error: 'Not found' }, 404);
     const patch: { name?: string; tagId?: string | null; isActive?: boolean } = {};
     if (typeof body?.name === 'string') {
       const name = body.name.trim().slice(0, 60);

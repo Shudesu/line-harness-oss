@@ -213,12 +213,15 @@ const friendRow = (g: number) => row('friends', 'line_account_id', g);
 const internAccount: Resolver = async (c) =>
   c.env.INTERN_SURVEY_ACCOUNT_ID ? { accounts: [c.env.INTERN_SURVEY_ACCOUNT_ID] } : { error: NEED_ACCOUNT };
 
+/** 友だち追加リンク：?lineAccountId= で選んだ LINE（なければ今までどおりインターン） */
+const joinAccount: Resolver = async (c, m) => (c.req.query('lineAccountId') ? { accounts: [c.req.query('lineAccountId')!] } : internAccount(c, m));
+
 export const RULES: Rule[] = [
-  // KIDOUインターンの友だち追加リンク
-  r(['GET', 'POST'], '/api/intern/join-links', internAccount),
+  // 友だち追加リンク（KIDOUインターン・軌道）
+  r(['GET', 'POST'], '/api/intern/join-links', joinAccount),
   r(['GET'], '/api/intern/stats', internAccount),
-  r(['PUT'], '/api/intern/join-links/order', internAccount),
-  r(['PATCH'], `/api/intern/join-links/${ID}`, internAccount),
+  r(['PUT'], '/api/intern/join-links/order', joinAccount),
+  r(['PATCH'], `/api/intern/join-links/${ID}`, joinAccount),
   // KIDOUインターンの自動で送る文面
   r(['GET', 'PUT'], '/api/intern/line-copy', internAccount),
   r(['GET', 'PUT'], '/api/intern/richmenus', internAccount),

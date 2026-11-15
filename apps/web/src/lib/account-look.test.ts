@@ -14,12 +14,12 @@ describe('isInternAccount', () => {
 })
 
 describe('isInternOnlyPage', () => {
-  it('友だち追加リンクと数字はインターン専用', () => {
-    expect(isInternOnlyPage('/join-links')).toBe(true)
+  it('数字はインターン専用', () => {
     expect(isInternOnlyPage('/intern-stats/')).toBe(true)
   })
 
   it('ほかの画面は対象外', () => {
+    expect(isInternOnlyPage('/join-links')).toBe(false)
     expect(isInternOnlyPage('/friends')).toBe(false)
     expect(isInternOnlyPage('/line-copy')).toBe(false)
     expect(isInternOnlyPage('/')).toBe(false)

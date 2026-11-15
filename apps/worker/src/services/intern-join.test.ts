@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
 import { toJstString } from '@line-crm/db';
-import { JOIN_ORDER_KEY, attachPendingJoinRef, isBotUserAgent, isJoinRef, isTapId, listJoinLinks, newJoinRef, newTapId, recordJoinOpen, recordJoinTap, saveJoinOrder, type JoinConfig } from './intern-join.js';
+import { ASAKATSU_JOIN, JOIN_ORDER_KEY, attachPendingJoinRef, joinConfigForAccount, joinConfigForRef, isBotUserAgent, isJoinRef, isTapId, listJoinLinks, newJoinRef, newTapId, recordJoinOpen, recordJoinTap, saveJoinOrder, type JoinConfig } from './intern-join.js';
 
 // vite が node:sqlite を読めないため require で読む
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
@@ -101,7 +101,7 @@ describe('押した記録（ログインなし）', () => {
   it('押した直後の友だち追加に経路とタグを付ける', async () => {
     await recordJoinTap(db, config, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE_UA });
     addFriend('f1', USER, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
     expect(friendRef('f1')).toBe('ki-tiktok01');
     expect(sqlite.prepare("SELECT tag_id FROM friend_tags WHERE friend_id = 'f1'").get()).toEqual({ tag_id: 'tag-tiktok' });
     expect(tapRows()[0].friend_id).toBe('f1');
@@ -111,8 +111,8 @@ describe('押した記録（ログインなし）', () => {
     await recordJoinTap(db, config, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE_UA });
     addFriend('f1', USER, new Date());
     addFriend('f2', USER2, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f2', lineUserId: USER2, lineAccountId: ACCOUNT })).toBeNull();
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f2', lineUserId: USER2, lineAccountId: ACCOUNT })).toBeNull();
     expect(friendRef('f2')).toBeNull();
   });
 
@@ -120,7 +120,7 @@ describe('押した記録（ログインなし）', () => {
     await recordJoinTap(db, config, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE_UA });
     ageTaps(6 * 60 * 1000);
     addFriend('f1', USER, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBeNull();
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBeNull();
   });
 
   it('同じブラウザで押し直した記録はまとめて1人と数え、まとめてその人に付ける', async () => {
@@ -131,7 +131,7 @@ describe('押した記録（ログインなし）', () => {
     let link = (await listJoinLinks(db, ACCOUNT)).links.find((l) => l.refCode === 'ki-tiktok01')!;
     expect(link.openedCount).toBe(2);
     addFriend('f1', USER, new Date());
-    await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT });
+    await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT });
     link = (await listJoinLinks(db, ACCOUNT)).links.find((l) => l.refCode === 'ki-tiktok01')!;
     expect(link.openedCount).toBe(2);
     expect(link.friendCount).toBe(1);
@@ -140,24 +140,24 @@ describe('押した記録（ログインなし）', () => {
   it('ブロック解除で戻った前からの友だちは、押した記録を使わず、直後の新しい人に付ける', async () => {
     await recordJoinTap(db, config, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE_UA });
     addFriend('f1', USER, new Date(Date.now() - 3 * 24 * 3600 * 1000));
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBeNull();
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBeNull();
     expect(friendRef('f1')).toBeNull();
     expect(tapRows()[0].friend_id).toBeNull();
     addFriend('f2', USER2, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f2', lineUserId: USER2, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f2', lineUserId: USER2, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
   });
 
   it('4分台に押された記録は付ける', async () => {
     await recordJoinTap(db, config, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE_UA });
     ageTaps(4 * 60 * 1000 + 50 * 1000);
     addFriend('f1', USER, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
   });
 
   it('ほかのアカウントの友だち追加では押した記録を使わない', async () => {
     await recordJoinTap(db, config, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE_UA });
     addFriend('f1', USER, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: 'other' })).toBeNull();
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: 'other' })).toBeNull();
     expect(tapRows()[0].friend_id).toBeNull();
   });
 
@@ -166,7 +166,7 @@ describe('押した記録（ログインなし）', () => {
     sqlite.exec("INSERT INTO entry_routes (id, ref_code, name, tag_id, is_active, created_at, updated_at) VALUES ('r3', 'ki-insta001', 'インスタ', NULL, 1, '', '')");
     await recordJoinTap(db, config, { ref: 'ki-insta001', tapId: newTapId(), userAgent: IPHONE_UA });
     addFriend('f1', USER, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
     expect(tapRows()[0].friend_id).toBeNull();
   });
 });
@@ -175,7 +175,7 @@ describe('LIFF で開いてから友だち追加', () => {
   it('まだ友だちでない人は控えておき、追加の合図で経路とタグを付ける', async () => {
     expect(await recordJoinOpen(db, config, { idToken: 't', ref: 'ki-tiktok01' }, okVerify)).toBe('ok');
     addFriend('f1', USER, new Date());
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
     expect(friendRef('f1')).toBe('ki-tiktok01');
     expect(sqlite.prepare('SELECT tag_id FROM friend_tags WHERE friend_id = ?').get('f1')).toEqual({ tag_id: 'tag-tiktok' });
     const { links, friendsWithoutLink } = await listJoinLinks(db, ACCOUNT);
@@ -195,7 +195,7 @@ describe('LIFF で開いてから友だち追加', () => {
     addFriend('f1', USER, new Date(Date.now() - 3 * 24 * 3600_000));
     await recordJoinOpen(db, config, { idToken: 't', ref: 'ki-tiktok01' }, okVerify);
     expect(friendRef('f1')).toBeNull();
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBeNull();
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBeNull();
     const tiktok = (await listJoinLinks(db, ACCOUNT)).links.find((l) => l.refCode === 'ki-tiktok01')!;
     expect(tiktok.openedCount).toBe(1);
     expect(tiktok.friendCount).toBe(0);
@@ -216,7 +216,7 @@ describe('LIFF で開いてから友だち追加', () => {
 
   it('ほかのアカウントの友だち追加では何もしない', async () => {
     await recordJoinOpen(db, config, { idToken: 't', ref: 'ki-tiktok01' }, okVerify);
-    expect(await attachPendingJoinRef(db, ACCOUNT, { friendId: 'f9', lineUserId: USER, lineAccountId: 'other' })).toBeNull();
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f9', lineUserId: USER, lineAccountId: 'other' })).toBeNull();
   });
 });
 
@@ -266,5 +266,62 @@ describe('経路ごとの人数の並び順', () => {
   it('控えが壊れていても新しい順で出す', async () => {
     sqlite.exec(`INSERT INTO account_settings VALUES ('s1', '${ACCOUNT}', 'intern_join_order', '{oops', '', '')`);
     expect(await ids()).toEqual(['r1', 'r2']);
+  });
+});
+
+describe('軌道の経路リンク（ka-）', () => {
+  const ASA = ASAKATSU_JOIN.accountId!;
+  const USER2 = 'U' + 'b'.repeat(32);
+  const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1';
+  beforeEach(() => {
+    sqlite.exec(`INSERT INTO entry_routes (id, ref_code, name, tag_id, is_active, created_at, updated_at) VALUES ('a1', 'ka-insta001', '軌道IG', 'tag-asa', 1, '2026-11-16T00:00:00.000+09:00', '')`);
+  });
+  function addAsaFriend(id: string, lineUserId: string) {
+    const now = toJstString(new Date());
+    sqlite.prepare('INSERT INTO friends (id, line_user_id, line_account_id, ref_code, is_following, created_at, updated_at) VALUES (?, ?, ?, NULL, 1, ?, ?)')
+      .run(id, lineUserId, ASA, now, now);
+  }
+
+  it('記号の頭でどちらの LINE のリンクかを決める', () => {
+    expect(joinConfigForRef(config, 'ka-insta001')).toBe(ASAKATSU_JOIN);
+    expect(joinConfigForRef(config, 'ki-tiktok01')).toBe(config);
+    expect(joinConfigForAccount(config, ASA)).toBe(ASAKATSU_JOIN);
+    expect(joinConfigForAccount(config, ACCOUNT)).toBe(config);
+    expect(joinConfigForAccount(config, 'other')).toBeNull();
+    expect(newJoinRef('ka-')).toMatch(/^ka-[a-z0-9]{8}$/);
+    expect(isJoinRef(newJoinRef('ka-'))).toBe(true);
+  });
+
+  it('軌道のリンクを押して軌道を友だち追加した人に経路とタグを付ける', async () => {
+    expect(await recordJoinTap(db, ASAKATSU_JOIN, { ref: 'ka-insta001', tapId: newTapId(), userAgent: IPHONE })).toBe(true);
+    addAsaFriend('g1', USER2);
+    expect(await attachPendingJoinRef(db, ASAKATSU_JOIN, { friendId: 'g1', lineUserId: USER2, lineAccountId: ASA })).toBe('ka-insta001');
+    expect(sqlite.prepare("SELECT tag_id FROM friend_tags WHERE friend_id = 'g1'").get()).toEqual({ tag_id: 'tag-asa' });
+  });
+
+  it('インターンのリンクの押した記録を軌道の友だちに付けない（逆も同じ）', async () => {
+    await recordJoinTap(db, config, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE });
+    addAsaFriend('g1', USER2);
+    expect(await attachPendingJoinRef(db, ASAKATSU_JOIN, { friendId: 'g1', lineUserId: USER2, lineAccountId: ASA })).toBeNull();
+
+    await recordJoinTap(db, ASAKATSU_JOIN, { ref: 'ka-insta001', tapId: newTapId(), userAgent: IPHONE });
+    addFriend('f1', USER, new Date());
+    expect(await attachPendingJoinRef(db, config, { friendId: 'f1', lineUserId: USER, lineAccountId: ACCOUNT })).toBe('ki-tiktok01');
+  });
+
+  it('記号の頭が違うリンクは記録しない', async () => {
+    expect(await recordJoinTap(db, ASAKATSU_JOIN, { ref: 'ki-tiktok01', tapId: newTapId(), userAgent: IPHONE })).toBe(false);
+    expect(await recordJoinTap(db, config, { ref: 'ka-insta001', tapId: newTapId(), userAgent: IPHONE })).toBe(false);
+  });
+
+  it('一覧と並び順はそのアカウントのリンクだけ', async () => {
+    addAsaFriend('g1', USER2);
+    const asa = await listJoinLinks(db, ASA, 'ka-');
+    expect(asa.links.map((l) => l.refCode)).toEqual(['ka-insta001']);
+    expect(asa.totalFriends).toBe(1);
+    expect((await listJoinLinks(db, ACCOUNT)).links.map((l) => l.refCode)).not.toContain('ka-insta001');
+    await saveJoinOrder(db, ASA, ['r1', 'a1'], 'ka-');
+    const saved = sqlite.prepare(`SELECT value FROM account_settings WHERE line_account_id = ?`).get(ASA) as { value: string };
+    expect(JSON.parse(saved.value)).toEqual(['a1']);
   });
 });

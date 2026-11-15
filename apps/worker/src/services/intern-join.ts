@@ -8,12 +8,13 @@
 //
 // 11/10 までは LIFF（/in/join）で本人を確かめて source_url「pending:LINEのユーザーID」で控えていた。
 // その途中の人のために、合図のときは先に pending の控えを探す。
-// INTERN_SURVEY_ACCOUNT_ID のアカウントでだけ動く。ほかのアカウントの動きは変えない。
+// KIDOUインターン（INTERN_SURVEY_ACCOUNT_ID・記号 ki-）と軌道（記号 ka-）で動く。記号の頭でどちらの LINE のリンクかを分ける。
+// ほかのアカウントの動きは変えない。
 
 import { addTagToFriend, getAccountSetting, getEntryRouteByRefCode, jstNow, recordRefTracking, setAccountSetting, toJstString } from '@line-crm/db';
 
 export const JOIN_REF_PREFIX = 'ki-';
-const JOIN_REF_RE = /^ki-[a-z0-9]{4,16}$/;
+const JOIN_REF_RE = /^k[ia]-[a-z0-9]{4,16}$/;
 const PENDING_PREFIX = 'pending:';
 const TAP_PREFIX = 'tap:';
 const TAP_ID_RE = /^[a-z0-9]{16}$/;
@@ -39,6 +40,34 @@ export interface JoinConfig {
   liffId?: string;
   loginChannelId?: string;
   botBasicId: string;
+  /** このアカウントの経路リンクの記号の頭（未指定は ki-） */
+  prefix?: string;
+  /** 経路の表に「アンケート回答」を出すか（インターンだけ） */
+  hasSurvey?: boolean;
+}
+
+/** 軌道（朝活）の経路リンク。LIFF は使わず、押した記録と友だち追加の時刻の近さで結び付ける */
+export const ASAKATSU_JOIN: JoinConfig = {
+  accountId: 'a60cb342-99ff-4ffc-b04a-3b4b2307e0f5',
+  botBasicId: '@055iiyaj',
+  prefix: 'ka-',
+};
+
+function prefixOf(config: JoinConfig): string {
+  return config.prefix ?? JOIN_REF_PREFIX;
+}
+
+/** 経路リンクの記号から、どの LINE のリンクかを決める（知らない記号はインターン扱い＝今までどおり） */
+export function joinConfigForRef(intern: JoinConfig, ref: string): JoinConfig {
+  return ref.startsWith(prefixOf(ASAKATSU_JOIN)) ? ASAKATSU_JOIN : intern;
+}
+
+/** 管理画面で選んでいる LINE の設定。経路リンクを使わないアカウントは null */
+export function joinConfigForAccount(intern: JoinConfig, accountId: string | null | undefined): JoinConfig | null {
+  if (!accountId) return null;
+  if (intern.accountId && accountId === intern.accountId) return intern;
+  if (accountId === ASAKATSU_JOIN.accountId) return ASAKATSU_JOIN;
+  return null;
 }
 
 export function joinConfigFromEnv(env: {
@@ -52,6 +81,8 @@ export function joinConfigFromEnv(env: {
     liffId: env.INTERN_JOIN_LIFF_ID,
     loginChannelId: env.INTERN_JOIN_LOGIN_CHANNEL_ID,
     botBasicId: env.INTERN_BOT_BASIC_ID || DEFAULT_BOT_BASIC_ID,
+    prefix: JOIN_REF_PREFIX,
+    hasSurvey: true,
   };
 }
 
@@ -73,11 +104,11 @@ export function friendAddUrl(config: JoinConfig): string {
   return `https://line.me/R/ti/p/${encodeURIComponent(config.botBasicId)}`;
 }
 
-/** 新しい経路の記号（ki- ＋英小文字と数字8けた） */
-export function newJoinRef(): string {
+/** 新しい経路の記号（ki- / ka- ＋英小文字と数字8けた） */
+export function newJoinRef(prefix: string = JOIN_REF_PREFIX): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   const bytes = crypto.getRandomValues(new Uint8Array(8));
-  return JOIN_REF_PREFIX + Array.from(bytes, (b) => chars[b % chars.length]).join('');
+  return prefix + Array.from(bytes, (b) => chars[b % chars.length]).join('');
 }
 
 function jstBefore(ms: number, now: Date = new Date()): string {
@@ -107,7 +138,7 @@ export async function recordJoinTap(
   config: JoinConfig,
   opts: { ref: string; tapId: string; userAgent?: string | null },
 ): Promise<boolean> {
-  if (!isJoinReady(config) || !isJoinRef(opts.ref) || !isTapId(opts.tapId)) return false;
+  if (!isJoinReady(config) || !isJoinRef(opts.ref) || !opts.ref.startsWith(prefixOf(config)) || !isTapId(opts.tapId)) return false;
   if (isBotUserAgent(opts.userAgent)) return false;
   const route = await getEntryRouteByRefCode(db, opts.ref);
   if (!route || !route.is_active) return false;
@@ -157,7 +188,7 @@ export async function recordJoinOpen(
   verify: (idToken: string, channelId: string) => Promise<string | null> = verifyIdToken,
 ): Promise<JoinResult> {
   if (!isLiffReady(config)) return 'not_ready';
-  if (!isJoinRef(opts.ref) || !opts.idToken) return 'invalid';
+  if (!isJoinRef(opts.ref) || !opts.ref.startsWith(prefixOf(config)) || !opts.idToken) return 'invalid';
   const route = await getEntryRouteByRefCode(db, opts.ref);
   if (!route || !route.is_active) return 'invalid';
   const lineUserId = await verify(opts.idToken, config.loginChannelId!);
@@ -199,17 +230,19 @@ export async function recordJoinOpen(
 /** 友だち追加の合図のとき。控えておいた経路（LIFF の控え、なければ直前に押された記録）を新しい友だちに付ける */
 export async function attachPendingJoinRef(
   db: D1Database,
-  accountId: string | undefined,
+  config: JoinConfig | null,
   opts: { friendId: string; lineUserId: string; lineAccountId: string | null },
 ): Promise<string | null> {
-  if (!accountId || opts.lineAccountId !== accountId) return null;
+  const accountId = config?.accountId;
+  if (!config || !accountId || opts.lineAccountId !== accountId) return null;
+  const prefix = prefixOf(config);
   const pendingKey = PENDING_PREFIX + opts.lineUserId;
   const pending = await db
     .prepare(
-      `SELECT ref_code FROM ref_tracking WHERE source_url = ? AND friend_id IS NULL AND created_at > ?
+      `SELECT ref_code FROM ref_tracking WHERE source_url = ? AND ref_code LIKE ? AND friend_id IS NULL AND created_at > ?
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .bind(pendingKey, jstBefore(PENDING_WINDOW_MS))
+    .bind(pendingKey, prefix + '%', jstBefore(PENDING_WINDOW_MS))
     .first<{ ref_code: string }>();
 
   const friend = await db
@@ -224,14 +257,14 @@ export async function attachPendingJoinRef(
     ref = pending.ref_code;
     // 控えをこの友だちに付け替える（開いた数の記録として残す）
     await db
-      .prepare('UPDATE ref_tracking SET friend_id = ? WHERE source_url = ? AND friend_id IS NULL')
-      .bind(opts.friendId, pendingKey)
+      .prepare('UPDATE ref_tracking SET friend_id = ? WHERE source_url = ? AND ref_code LIKE ? AND friend_id IS NULL')
+      .bind(opts.friendId, pendingKey, prefix + '%')
       .run();
   } else {
     // 押した記録は本人を確かめられないので、前からの友だちには使わない
     // （押さずにブロック解除しただけの人が、直前に押した新しい人の記録を取らないように）
     if (!isNewFriend) return null;
-    const tapRef = await claimRecentTap(db, opts.friendId);
+    const tapRef = await claimRecentTap(db, opts.friendId, prefix);
     if (!tapRef) return null;
     ref = tapRef;
   }
@@ -247,16 +280,16 @@ export async function attachPendingJoinRef(
  * 古い順でなく新しい順にするのは、押しただけで追加しなかった人の記録を後の人に付けにくくするため。
  * 同じブラウザで押した記録（同じ tap: の番号・クッキーの有効期間内）もまとめて付ける。ほかの合図と取り合ったら次を探す
  */
-async function claimRecentTap(db: D1Database, friendId: string): Promise<string | null> {
+async function claimRecentTap(db: D1Database, friendId: string, prefix: string): Promise<string | null> {
   const since = jstBefore(TAP_MATCH_WINDOW_MS);
   for (let attempt = 0; attempt < 3; attempt++) {
     const tap = await db
       .prepare(
         `SELECT id, ref_code, source_url FROM ref_tracking
-         WHERE source_url LIKE 'tap:%' AND ref_code LIKE 'ki-%' AND friend_id IS NULL AND created_at > ?
+         WHERE source_url LIKE 'tap:%' AND ref_code LIKE ? AND friend_id IS NULL AND created_at > ?
          ORDER BY created_at DESC LIMIT 1`,
       )
-      .bind(since)
+      .bind(prefix + '%', since)
       .first<{ id: string; ref_code: string; source_url: string }>();
     if (!tap) return null;
     const res = await db
@@ -265,8 +298,8 @@ async function claimRecentTap(db: D1Database, friendId: string): Promise<string 
       .run();
     if ((res.meta?.changes ?? 0) === 0) continue;
     await db
-      .prepare('UPDATE ref_tracking SET friend_id = ? WHERE source_url = ? AND friend_id IS NULL AND created_at > ?')
-      .bind(friendId, tap.source_url, jstBefore(TAP_COOKIE_MAX_AGE_SEC * 1000))
+      .prepare('UPDATE ref_tracking SET friend_id = ? WHERE source_url = ? AND ref_code LIKE ? AND friend_id IS NULL AND created_at > ?')
+      .bind(friendId, tap.source_url, prefix + '%', jstBefore(TAP_COOKIE_MAX_AGE_SEC * 1000))
       .run();
     return tap.ref_code;
   }
@@ -293,7 +326,7 @@ export interface JoinLinkStats {
   latestFriendAt: string | null;
 }
 
-export async function listJoinLinks(db: D1Database, accountId: string): Promise<{
+export async function listJoinLinks(db: D1Database, accountId: string, prefix: string = JOIN_REF_PREFIX): Promise<{
   links: JoinLinkStats[];
   totalFriends: number;
   friendsWithoutLink: number;
@@ -307,10 +340,10 @@ export async function listJoinLinks(db: D1Database, accountId: string): Promise<
          (SELECT COUNT(*) FROM friends f WHERE f.ref_code = er.ref_code AND f.line_account_id = ? AND json_extract(f.metadata, '$.survey_step') = 'done') AS survey_done_count,
          (SELECT MAX(f.created_at) FROM friends f WHERE f.ref_code = er.ref_code AND f.line_account_id = ?) AS latest_friend_at
        FROM entry_routes er
-       WHERE er.ref_code LIKE 'ki-%'
+       WHERE er.ref_code LIKE ?
        ORDER BY er.created_at DESC`,
     )
-    .bind(accountId, accountId, accountId, accountId)
+    .bind(accountId, accountId, accountId, accountId, prefix + '%')
     .all<{
       id: string; ref_code: string; name: string; tag_id: string | null; is_active: number; created_at: string;
       opened_count: number; friend_count: number; following_count: number; survey_done_count: number; latest_friend_at: string | null;
@@ -318,10 +351,10 @@ export async function listJoinLinks(db: D1Database, accountId: string): Promise<
   const totals = await db
     .prepare(
       `SELECT COUNT(*) AS total,
-         SUM(CASE WHEN ref_code IS NULL OR ref_code NOT LIKE 'ki-%' THEN 1 ELSE 0 END) AS without_link
+         SUM(CASE WHEN ref_code IS NULL OR ref_code NOT LIKE ? THEN 1 ELSE 0 END) AS without_link
        FROM friends WHERE line_account_id = ?`,
     )
-    .bind(accountId)
+    .bind(prefix + '%', accountId)
     .first<{ total: number; without_link: number | null }>();
   const order = await getJoinOrder(db, accountId);
   const rank = new Map(order.map((id, i) => [id, i]));
@@ -405,10 +438,11 @@ async function getJoinOrder(db: D1Database, accountId: string): Promise<string[]
   }
 }
 
-// 経路リンクの並び順を保存する。経路リンク（ki-）でない id・重複は捨てる
-export async function saveJoinOrder(db: D1Database, accountId: string, ids: string[]): Promise<void> {
+// 経路リンクの並び順を保存する。このアカウントの経路リンク（ki- / ka-）でない id・重複は捨てる
+export async function saveJoinOrder(db: D1Database, accountId: string, ids: string[], prefix: string = JOIN_REF_PREFIX): Promise<void> {
   const rows = await db
-    .prepare(`SELECT id FROM entry_routes WHERE ref_code LIKE 'ki-%'`)
+    .prepare(`SELECT id FROM entry_routes WHERE ref_code LIKE ?`)
+    .bind(prefix + '%')
     .all<{ id: string }>();
   const known = new Set((rows.results ?? []).map((r) => r.id));
   const order = [...new Set(ids)].filter((id) => known.has(id));

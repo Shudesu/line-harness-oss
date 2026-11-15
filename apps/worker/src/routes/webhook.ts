@@ -24,7 +24,7 @@ import {
 import type { EntryRoute, Friend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
-import { attachPendingJoinRef } from '../services/intern-join.js';
+import { attachPendingJoinRef, joinConfigForAccount } from '../services/intern-join.js';
 import { recordFollowEvent, recordUnfollowByLineUser } from '../services/intern-stats.js';
 import { claimWebhookEvent } from '../services/webhook-dedupe.js';
 import { parseAcademyRequestDone, sendAcademyRequestDone } from '../services/intern-academy.js';
@@ -272,9 +272,10 @@ async function handleEvent(
     // 数字タブ用：友だち追加（ブロック解除を含む）の日時を残す
     await recordFollowEvent(db, { friendId: friend.id, lineAccountId, event: 'follow', eventId: event.webhookEventId, atMs: event.timestamp });
 
-    // KIDOUインターンの経路リンク：LIFF で控えておいた経路を新しい友だちに付ける（下の経路の読み取りより先に）
+    // KIDOUインターン・軌道の経路リンク：控えておいた経路を新しい友だちに付ける（下の経路の読み取りより先に）
     try {
-      const joinedRef = await attachPendingJoinRef(db, surveyConfig.accountId, { friendId: friend.id, lineUserId: userId, lineAccountId });
+      const joinConfig = joinConfigForAccount({ accountId: surveyConfig.accountId, botBasicId: '' }, lineAccountId);
+      const joinedRef = await attachPendingJoinRef(db, joinConfig, { friendId: friend.id, lineUserId: userId, lineAccountId });
       if (joinedRef) (friend as { ref_code?: string | null }).ref_code = joinedRef;
     } catch (err) {
       console.error('[intern-join] failed to attach pending ref', err);

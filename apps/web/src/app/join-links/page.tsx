@@ -1,6 +1,7 @@
 'use client'
 
-// KIDOUインターンの友だち追加リンク。大本のリンクと QR、どこから来たかを数える経路リンクの発行と人数
+// 友だち追加リンク（KIDOUインターン・軌道）。大本のリンクと QR、どこから来たかを数える経路リンクの発行と人数。
+// 左上で選んでいる LINE のリンクだけを出す
 import { useEffect, useState } from 'react'
 import {
   DndContext,
@@ -20,8 +21,9 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import Header from '@/components/layout/header'
-import InternOnly from '@/components/intern-only'
 import { fetchApi } from '@/lib/api'
+import { useAccount } from '@/contexts/account-context'
+import { isInternAccount } from '@/lib/account-look'
 
 interface JoinLink {
   id: string
@@ -42,6 +44,8 @@ interface JoinLinksData {
   totalFriends: number
   friendsWithoutLink: number
   ready: boolean
+  /** 「アンケート回答」の欄を出すか（インターンだけ） */
+  hasSurvey: boolean
   botBasicId: string
   friendAddUrl: string
   linkBase: string
@@ -53,7 +57,10 @@ interface TagRow {
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
-const INFLOW_TAG_PREFIX = 'ズ_流入_'
+// 経路リンクで付けられるタグ（流入の印）の名前の頭
+function inflowTagPrefix(intern: boolean) {
+  return intern ? 'ズ_流入_' : '軌_流入_'
+}
 
 function qrSrc(url: string, size = 200) {
   return `${API_URL}/api/qr?size=${size}x${size}&data=${encodeURIComponent(url)}`
@@ -106,7 +113,7 @@ function SortableLinkRow({ link }: { link: JoinLink }) {
 }
 
 // 経路ごとの人数の表の並び順を、つかんで動かして変える
-function ReorderLinks({ links, onClose, onSaved }: { links: JoinLink[]; onClose: () => void; onSaved: () => Promise<void> }) {
+function ReorderLinks({ links, query, onClose, onSaved }: { links: JoinLink[]; query: string; onClose: () => void; onSaved: () => Promise<void> }) {
   const [items, setItems] = useState<JoinLink[]>(links)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -129,7 +136,7 @@ function ReorderLinks({ links, onClose, onSaved }: { links: JoinLink[]; onClose:
     setSaving(true)
     setError('')
     try {
-      const res = await fetchApi<{ success: boolean; error?: string }>('/api/intern/join-links/order', {
+      const res = await fetchApi<{ success: boolean; error?: string }>('/api/intern/join-links/order' + query, {
         method: 'PUT',
         body: JSON.stringify({ ids: items.map((x) => x.id) }),
       })
@@ -180,14 +187,22 @@ function ReorderLinks({ links, onClose, onSaved }: { links: JoinLink[]; onClose:
 }
 
 export default function JoinLinksPage() {
-  return (
-    <InternOnly title="友だち追加リンク">
-      <JoinLinksPageBody />
-    </InternOnly>
-  )
+  const { selectedAccountId, selectedAccount, loading: accountLoading } = useAccount()
+  if (accountLoading || !selectedAccountId) {
+    return (
+      <div>
+        <Header title="友だち追加リンク" />
+        <p className="text-sm text-gray-500">読み込んでいます…</p>
+      </div>
+    )
+  }
+  // アカウントを切り替えたら中身を作り直す（前の LINE のリンクを残さない）
+  return <JoinLinksPageBody key={selectedAccountId} accountId={selectedAccountId} accountName={selectedAccount?.name ?? ''} intern={isInternAccount(selectedAccount)} />
 }
 
-function JoinLinksPageBody() {
+function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: string; accountName: string; intern: boolean }) {
+  const query = '?lineAccountId=' + encodeURIComponent(accountId)
+  const INFLOW_TAG_PREFIX = inflowTagPrefix(intern)
   const [data, setData] = useState<JoinLinksData | null>(null)
   const [tags, setTags] = useState<TagRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -202,7 +217,7 @@ function JoinLinksPageBody() {
     setError('')
     try {
       const [res, tagRes] = await Promise.all([
-        fetchApi<{ success: boolean; data?: JoinLinksData; error?: string }>('/api/intern/join-links'),
+        fetchApi<{ success: boolean; data?: JoinLinksData; error?: string }>('/api/intern/join-links' + query),
         fetchApi<{ success: boolean; data?: TagRow[] }>('/api/tags').catch(() => ({ success: false, data: [] as TagRow[] })),
       ])
       if (res.success && res.data) setData(res.data)
@@ -225,7 +240,7 @@ function JoinLinksPageBody() {
     setSaving(true)
     setError('')
     try {
-      const res = await fetchApi<{ success: boolean; error?: string }>('/api/intern/join-links', {
+      const res = await fetchApi<{ success: boolean; error?: string }>('/api/intern/join-links' + query, {
         method: 'POST',
         body: JSON.stringify({ name: name.trim(), tagId: tagId || null }),
       })
@@ -247,7 +262,7 @@ function JoinLinksPageBody() {
     const next = !link.isActive
     if (!next && !window.confirm(`「${link.name}」を止めますか？\n止めても、リンクを押した人はふつうの友だち追加に進みます（人数は数えなくなります）。`)) return
     try {
-      await fetchApi('/api/intern/join-links/' + link.id, { method: 'PATCH', body: JSON.stringify({ isActive: next }) })
+      await fetchApi('/api/intern/join-links/' + link.id + query, { method: 'PATCH', body: JSON.stringify({ isActive: next }) })
       await load()
     } catch {
       setError('切り替えられませんでした')
@@ -258,7 +273,7 @@ function JoinLinksPageBody() {
     const value = window.prompt('リンクの名前', link.name)
     if (value === null || !value.trim() || value.trim() === link.name) return
     try {
-      await fetchApi('/api/intern/join-links/' + link.id, { method: 'PATCH', body: JSON.stringify({ name: value.trim() }) })
+      await fetchApi('/api/intern/join-links/' + link.id + query, { method: 'PATCH', body: JSON.stringify({ name: value.trim() }) })
       await load()
     } catch {
       setError('名前を変えられませんでした')
@@ -278,7 +293,7 @@ function JoinLinksPageBody() {
     <div>
       <Header
         title="友だち追加リンク"
-        description="KIDOUインターンの友だち追加リンクです。SNS ごとに経路リンクを作ると、どこから何人が友だちになったかを数えられます。"
+        description={`${accountName || "選んでいる LINE"}の友だち追加リンクです。SNS ごとに経路リンクを作ると、どこから何人が友だちになったかを数えられます。`}
       />
 
       {loading && <p className="text-sm text-gray-500">読み込んでいます…</p>}
@@ -336,6 +351,7 @@ function JoinLinksPageBody() {
                 <label className="mb-1 block text-xs font-medium text-gray-500">名前（例：TikTok プロフィール）</label>
                 <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} className={inputClass} placeholder="TikTok プロフィール" />
               </div>
+              {tags.length > 0 && (
               <div className="sm:w-56">
                 <label className="mb-1 block text-xs font-medium text-gray-500">付けるタグ（なくてもよい）</label>
                 <select value={tagId} onChange={(e) => setTagId(e.target.value)} className={inputClass}>
@@ -347,6 +363,7 @@ function JoinLinksPageBody() {
                   ))}
                 </select>
               </div>
+              )}
               <button
                 type="submit"
                 disabled={saving || !name.trim()}
@@ -383,7 +400,7 @@ function JoinLinksPageBody() {
                       <th className="py-2 pr-4 text-right font-medium">開いた人</th>
                       <th className="py-2 pr-4 text-right font-medium">友だちになった人</th>
                       <th className="py-2 pr-4 text-right font-medium">いまも友だち</th>
-                      <th className="py-2 pr-4 text-right font-medium">アンケート回答</th>
+                      {data.hasSurvey && <th className="py-2 pr-4 text-right font-medium">アンケート回答</th>}
                       <th className="py-2 pr-4 font-medium">最後の追加</th>
                       <th className="py-2 font-medium"></th>
                     </tr>
@@ -426,12 +443,14 @@ function JoinLinksPageBody() {
                           <td className="py-3 pr-4 text-right tabular-nums">{link.openedCount}</td>
                           <td className="py-3 pr-4 text-right font-bold tabular-nums text-gray-900">{link.friendCount}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{link.followingCount}</td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
-                            {link.surveyDoneCount}
-                            {link.friendCount > 0 && (
-                              <span className="ml-1 text-xs text-gray-500">（{Math.round((link.surveyDoneCount / link.friendCount) * 100)}%）</span>
-                            )}
-                          </td>
+                          {data.hasSurvey && (
+                            <td className="py-3 pr-4 text-right tabular-nums">
+                              {link.surveyDoneCount}
+                              {link.friendCount > 0 && (
+                                <span className="ml-1 text-xs text-gray-500">（{Math.round((link.surveyDoneCount / link.friendCount) * 100)}%）</span>
+                              )}
+                            </td>
+                          )}
                           <td className="py-3 pr-4 text-gray-600">{formatDate(link.latestFriendAt)}</td>
                           <td className="py-3 text-right">
                             <button type="button" onClick={() => toggleActive(link)} className="text-xs text-gray-500 hover:text-gray-800 hover:underline">
@@ -452,7 +471,7 @@ function JoinLinksPageBody() {
         </div>
       )}
 
-      {reordering && data && <ReorderLinks links={data.links} onClose={() => setReordering(false)} onSaved={load} />}
+      {reordering && data && <ReorderLinks links={data.links} query={query} onClose={() => setReordering(false)} onSaved={load} />}
     </div>
   )
 }
