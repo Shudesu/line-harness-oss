@@ -61,6 +61,10 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 function inflowTagPrefix(intern: boolean) {
   return intern ? 'ズ_流入_' : '軌_流入_'
 }
+// パートナーの紹介リンク（経路リンクとは別の流入経路）で付くタグの名前の頭
+function referralTagPrefix(intern: boolean) {
+  return intern ? 'ズ_紹介_' : '軌_紹介_'
+}
 
 // タグの選択欄で「新しいタグを作る」を選んだときの値
 const NEW_TAG = '__new__'
@@ -102,6 +106,21 @@ function formatDate(value: string | null) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return '—'
   return d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+}
+
+interface EntryRouteRow {
+  id: string
+  refCode: string
+  tagId: string | null
+}
+
+// 紹介タグの行。紹介リンクは LINE で本人を確かめるので、タグが付いている人をそのまま数える
+interface ReferralSummary {
+  tagId: string
+  label: string
+  linkCount: number
+  taggedCount: number
+  followingCount: number
 }
 
 interface TagSummary {
@@ -276,6 +295,7 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
   const INFLOW_TAG_PREFIX = inflowTagPrefix(intern)
   const [data, setData] = useState<JoinLinksData | null>(null)
   const [tags, setTags] = useState<TagRow[]>([])
+  const [referrals, setReferrals] = useState<ReferralSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [name, setName] = useState('')
@@ -338,6 +358,32 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
     }
   }
 
+  // 紹介タグ（例：軌_紹介_外崎）ごとに、付いている人と今も友だちの人を数える
+  const loadReferrals = async (allTags: TagRow[]): Promise<ReferralSummary[]> => {
+    const prefix = referralTagPrefix(intern)
+    const routes = await fetchApi<{ success: boolean; data?: EntryRouteRow[] }>('/api/entry-routes')
+    if (!routes.success || !routes.data) return []
+    const used = allTags.filter((t) => t.name.startsWith(prefix) && routes.data!.some((r) => r.tagId === t.id))
+    const countFriends = async (tid: string, extra: string) => {
+      const res = await fetchApi<{ success: boolean; data?: { total: number } }>(
+        `/api/friends${query}&tagId=${encodeURIComponent(tid)}&limit=1&includeTags=false${extra}`,
+      )
+      return res.success && res.data ? res.data.total : 0
+    }
+    return Promise.all(
+      used.map(async (t) => {
+        const [taggedCount, followingCount] = await Promise.all([countFriends(t.id, ''), countFriends(t.id, '&following=following')])
+        return {
+          tagId: t.id,
+          label: t.name.replace(prefix, '紹介：'),
+          linkCount: routes.data!.filter((r) => r.tagId === t.id).length,
+          taggedCount,
+          followingCount,
+        }
+      }),
+    )
+  }
+
   const load = async () => {
     setError('')
     try {
@@ -347,7 +393,10 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
       ])
       if (res.success && res.data) setData(res.data)
       else setError(res.error ?? '読み込めませんでした')
-      if (tagRes.success && tagRes.data) setTags(inflowTags(tagRes.data))
+      if (tagRes.success && tagRes.data) {
+        setTags(inflowTags(tagRes.data))
+        loadReferrals(tagRes.data).then(setReferrals, () => setReferrals([]))
+      }
     } catch {
       setError('読み込めませんでした。時間をおいてもう一度お試しください')
     } finally {
@@ -491,7 +540,7 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
           </section>
 
           {/* タグごとの人数（同じタグのリンクをまとめて数える） */}
-          {data.links.some((l) => l.tagId) && (
+          {(data.links.some((l) => l.tagId) || referrals.length > 0) && (
             <section className="rounded-lg border border-gray-200 bg-white p-6">
               <h2 className="mb-1 text-base font-bold text-gray-900">タグごとの人数</h2>
               <p className="mb-4 text-sm text-gray-500">同じタグを付けた経路リンクの人数を足し合わせています。</p>
@@ -509,7 +558,22 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
                     </tr>
                   </thead>
                   <tbody>
-                    {summarizeByTag(data.links).map((g) => (
+                    {[
+                      ...summarizeByTag(data.links).filter((g) => g.tagId),
+                      ...referrals,
+                      ...summarizeByTag(data.links).filter((g) => !g.tagId),
+                    ].map((g) =>
+                      'taggedCount' in g ? (
+                        <tr key={g.tagId} className="border-b border-gray-100">
+                          <td className="py-3 pr-4 font-medium text-gray-900">{g.label}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums text-gray-600">{g.linkCount} 本</td>
+                          <td className="py-3 pr-4 text-right tabular-nums text-gray-400">—</td>
+                          <td className="py-3 pr-4 text-right font-bold tabular-nums text-gray-900">{g.taggedCount}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums">{g.followingCount}</td>
+                          {data.hasSurvey && <td className="py-3 pr-4 text-right tabular-nums text-gray-400">—</td>}
+                          <td className="py-3 text-gray-400">—</td>
+                        </tr>
+                      ) : (
                       <tr key={g.tagId ?? ''} className="border-b border-gray-100">
                         <td className={`py-3 pr-4 ${g.tagId ? 'font-medium text-gray-900' : 'text-gray-500'}`}>
                           {g.tagId ? tagName(g.tagId) ?? '（一覧にないタグ）' : 'タグなし'}
@@ -528,12 +592,19 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
                         )}
                         <td className="py-3 text-gray-600">{formatDate(g.latestFriendAt)}</td>
                       </tr>
-                    ))}
+                      ),
+                    )}
                   </tbody>
                 </table>
               </div>
               <p className="mt-4 text-xs text-gray-500">
                 リンクのタグを付け替えると、そのリンクのこれまでの人数も新しいタグの側に移ります（友だちに付いたタグそのものは変わりません）。
+                {referrals.length > 0 && (
+                  <>
+                    <br />
+                    「紹介：」の行はパートナーの紹介リンクの分で、そのタグが付いている人の数です（前から友だちだった人が押した場合も含みます）。
+                  </>
+                )}
               </p>
             </section>
           )}
