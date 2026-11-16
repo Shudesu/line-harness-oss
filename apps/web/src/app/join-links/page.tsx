@@ -62,6 +62,37 @@ function inflowTagPrefix(intern: boolean) {
   return intern ? 'ズ_流入_' : '軌_流入_'
 }
 
+// タグの選択欄で「新しいタグを作る」を選んだときの値
+const NEW_TAG = '__new__'
+
+function TagSelect({
+  value,
+  tags,
+  prefix,
+  onChange,
+  className,
+  emptyLabel = '付けない',
+}: {
+  value: string
+  tags: TagRow[]
+  prefix: string
+  onChange: (value: string) => void
+  className: string
+  emptyLabel?: string
+}) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={className}>
+      <option value="">{emptyLabel}</option>
+      {tags.map((t) => (
+        <option key={t.id} value={t.id}>
+          {t.name.replace(prefix, '流入：')}
+        </option>
+      ))}
+      <option value={NEW_TAG}>＋ 新しいタグを作る…</option>
+    </select>
+  )
+}
+
 function qrSrc(url: string, size = 200) {
   return `${API_URL}/api/qr?size=${size}x${size}&data=${encodeURIComponent(url)}`
 }
@@ -213,6 +244,60 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
   const [qrFor, setQrFor] = useState<string | null>(null)
   const [reordering, setReordering] = useState(false)
 
+  const inflowTags = (rows: TagRow[]) => rows.filter((t) => t.name.startsWith(INFLOW_TAG_PREFIX))
+
+  // 流入タグをその場で作る（名前の頭は LINE ごとに決まっている）。同じ名前があればそれを使う。作れなければ null
+  const createInflowTag = async (): Promise<string | null> => {
+    const value = window.prompt(`新しい流入タグの名前（例：TikTok）\n「${INFLOW_TAG_PREFIX}」が頭に付きます。`)
+    const label = value?.trim().replace(new RegExp('^' + INFLOW_TAG_PREFIX), '')
+    if (!label) return null
+    const fullName = INFLOW_TAG_PREFIX + label
+    const same = tags.find((t) => t.name === fullName)
+    if (same) return same.id
+    try {
+      const res = await fetchApi<{ success: boolean; data?: TagRow; error?: string }>('/api/tags', {
+        method: 'POST',
+        body: JSON.stringify({ name: fullName, color: '#F59E0B' }),
+      })
+      if (!res.success || !res.data) {
+        setError(res.error ?? 'タグを作れませんでした')
+        return null
+      }
+      const created = res.data
+      setTags((prev) => [...prev, created])
+      return created.id
+    } catch {
+      setError('タグを作れませんでした。時間をおいてもう一度お試しください')
+      return null
+    }
+  }
+
+  const pickTag = async (value: string) => {
+    if (value !== NEW_TAG) {
+      setTagId(value)
+      return
+    }
+    const id = await createInflowTag()
+    if (id) setTagId(id)
+  }
+
+  // 作ったあとのリンクのタグを付け替える（これから友だちになる人から付く）
+  const changeTag = async (link: JoinLink, value: string) => {
+    const next = value === NEW_TAG ? await createInflowTag() : value || null
+    if (value === NEW_TAG && !next) return
+    if (next === link.tagId) return
+    try {
+      const res = await fetchApi<{ success: boolean; error?: string }>('/api/intern/join-links/' + link.id + query, {
+        method: 'PATCH',
+        body: JSON.stringify({ tagId: next }),
+      })
+      if (!res.success) setError(res.error ?? 'タグを付け替えられませんでした')
+      await load()
+    } catch {
+      setError('タグを付け替えられませんでした')
+    }
+  }
+
   const load = async () => {
     setError('')
     try {
@@ -222,7 +307,7 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
       ])
       if (res.success && res.data) setData(res.data)
       else setError(res.error ?? '読み込めませんでした')
-      if (tagRes.success && tagRes.data) setTags(tagRes.data.filter((t) => t.name.startsWith(INFLOW_TAG_PREFIX)))
+      if (tagRes.success && tagRes.data) setTags(inflowTags(tagRes.data))
     } catch {
       setError('読み込めませんでした。時間をおいてもう一度お試しください')
     } finally {
@@ -351,19 +436,10 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
                 <label className="mb-1 block text-xs font-medium text-gray-500">名前（例：TikTok プロフィール）</label>
                 <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} className={inputClass} placeholder="TikTok プロフィール" />
               </div>
-              {tags.length > 0 && (
               <div className="sm:w-56">
                 <label className="mb-1 block text-xs font-medium text-gray-500">付けるタグ（なくてもよい）</label>
-                <select value={tagId} onChange={(e) => setTagId(e.target.value)} className={inputClass}>
-                  <option value="">付けない</option>
-                  {tags.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name.replace(INFLOW_TAG_PREFIX, '流入：')}
-                    </option>
-                  ))}
-                </select>
+                <TagSelect value={tagId} tags={tags} prefix={INFLOW_TAG_PREFIX} onChange={pickTag} className={inputClass} />
               </div>
-              )}
               <button
                 type="submit"
                 disabled={saving || !name.trim()}
@@ -415,8 +491,17 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
                             <button type="button" onClick={() => rename(link)} className="text-left font-medium text-gray-900 hover:underline">
                               {link.name}
                             </button>
-                            {tag && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">{tag}</span>}
                             {!link.isActive && <span className="ml-2 text-xs text-gray-500">止めています</span>}
+                            <div className="mt-1" title="付け替えると、これから友だちになる人から新しいタグが付きます">
+                              <TagSelect
+                                value={link.tagId ?? ''}
+                                tags={tags}
+                                prefix={INFLOW_TAG_PREFIX}
+                                onChange={(v) => changeTag(link, v)}
+                                className={`rounded border px-1.5 py-0.5 text-xs ${tag ? 'border-gray-200 bg-gray-100 text-gray-700' : 'border-dashed border-gray-300 bg-white text-gray-500'}`}
+                                emptyLabel="タグなし"
+                              />
+                            </div>
                           </td>
                           <td className="py-3 pr-4">
                             <div className="flex items-center gap-2">
