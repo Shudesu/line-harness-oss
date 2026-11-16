@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
   getSignatureFailureWindow: vi.fn(),
@@ -85,6 +85,11 @@ describe('buildConnectionHealth — PLAN.md 1-1 contract', () => {
   });
 
   test('a token refresh failure and a 401 surface as their own failing checks', async () => {
+    // The fixture timestamps are absolute; pin "now" so the recency window does
+    // not expire as wall-clock time passes (this test began failing on its own).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-16T12:00:00.000+09:00'));
+    onTestFinished(() => { vi.useRealTimers(); });
     dbMocks.getTokenRefreshFailureWindow.mockResolvedValue({
       failures: 3,
       lastAt: '2026-11-16T09:00:00.000+09:00',
