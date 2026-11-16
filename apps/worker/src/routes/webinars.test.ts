@@ -999,11 +999,20 @@ describe('admin CRUD', () => {
     });
   });
 
-  test('DELETE /api/webinars/:id', async () => {
+  test.each(['owner', 'admin'] as const)('DELETE /api/webinars/:id — %s ロールは削除できる', async (role) => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
-    const res = await req('/api/webinars/w1', { method: 'DELETE' });
+    const res = await reqAsStaff('/api/webinars/w1', { method: 'DELETE' }, role);
     expect(res.status).toBe(200);
     expect(dbMocks.deleteWebinar).toHaveBeenCalledWith(expect.anything(), 'w1');
+  });
+
+  // Regression: DELETE /api/webinars/:id had no requireRole while POST/PUT did,
+  // so a staff key could delete any webinar.
+  test('DELETE /api/webinars/:id — staff ロールは 403 で削除されない', async () => {
+    dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+    const res = await reqAsStaff('/api/webinars/w1', { method: 'DELETE' }, 'staff');
+    expect(res.status).toBe(403);
+    expect(dbMocks.deleteWebinar).not.toHaveBeenCalled();
   });
 
   test('PUT /api/webinars/:id — 空 title は 400 で updateWebinar が呼ばれない', async () => {
