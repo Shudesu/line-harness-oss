@@ -12,8 +12,7 @@ import {
   getAffiliateLinkByRefCode,
   incrementAffiliateLinkClick,
 } from '@line-crm/db';
-import { scheduled } from './scheduled.js';
-import { TenantScheduler } from './durable-objects/tenant-scheduler.js';
+import { scheduledFromCron, TenantScheduler } from './durable-objects/tenant-scheduler.js';
 import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { webhook } from './routes/webhook.js';
@@ -996,6 +995,6 @@ export { TenantScheduler };
 
 export default {
   fetch: app.fetch,
-  scheduled,
+  scheduled: scheduledFromCron,
 };
 // redeploy trigger

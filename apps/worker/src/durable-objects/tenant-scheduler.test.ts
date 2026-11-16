@@ -1,6 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 
-const scheduledMock = vi.hoisted(() => vi.fn(async () => undefined));
+const scheduledMock = vi.hoisted(() => vi.fn(async (_event: { cron: string; scheduledTime: number }) => undefined));
 vi.mock('../scheduled.js', () => ({ scheduled: scheduledMock }));
 
 // cloudflare:workers は vitest.config.ts の alias で test-support/cloudflare-workers-stub.ts
@@ -8,6 +8,15 @@ vi.mock('../scheduled.js', () => ({ scheduled: scheduledMock }));
 
 import {
   runSchedulerTick,
+  scheduledFromCron,
+  isCronLive,
+  CRON_LIVENESS_WINDOW_MS,
+  LAST_CRON_TICK_KEY,
+  LAST_SIX_HOUR_CRON_TICK_KEY,
+  SIX_HOUR_SLOT_DONE_KEY,
+  SIX_HOUR_CATCH_UP_GRACE_MS,
+  sixHourSlot,
+  SIX_HOUR_CRON_LIVENESS_WINDOW_MS,
   ensureAlarmArmed,
   ensureSchedulerArmed,
   isSixHourBoundary,
@@ -117,11 +126,11 @@ describe('runSchedulerTick — work が例外を投げてもチェーンは生�
     consoleError.mockRestore();
   });
 
-  test('6時間境界 1本目 (分足) が throw しても 2本目 (6時間足) は呼ばれない — ただし次アラームは既に生きている', async () => {
+  test('6時間境界 1本目 (分足) が throw しても 2本目 (6時間足) は独立に呼ばれ、次アラームも生きている', async () => {
     // scheduled() 内部は個々のジョブを try/catch しているが、runJobs 自体が
     // 想定外の例外を投げるケース (例: D1 接続不可) をここでは検証する。
-    // 重要なのは「チェーンが死なない」ことであって、この tick 内で2本目まで
-    // 必ず走ることではない — 次 tick で再試行される。
+    // Cron でもトリガーごとに別の呼び出しなので、分足の失敗が6時間保守を
+    // 巻き込まないのが本来の形。チェーンも死なない。
     const storage = fakeStorage();
     const now = new Date('2026-08-23T18:00:00Z'); // 6時間境界
     const runJobs = vi.fn(async () => {
@@ -131,7 +140,7 @@ describe('runSchedulerTick — work が例外を投げてもチェーンは生�
 
     await runSchedulerTick(storage, runJobs, now);
 
-    expect(runJobs).toHaveBeenCalledTimes(1);
+    expect(runJobs).toHaveBeenCalledTimes(2);
     expect(storage.alarm()).toBe(now.getTime() + SCHEDULER_TICK_INTERVAL_MS);
     consoleError.mockRestore();
   });
@@ -292,5 +301,151 @@ describe('TenantScheduler クラス — DO ランタイムへの配線', () => {
 
     // 既にアーム済みなので ensureArmed() 単体では変化しない（冪等）。
     expect(storage.alarm()).toBe(armedAtStart);
+  });
+});
+
+describe('実行担当の一本化 — Cron が生きている間は Cron だけ、止まったら DO alarm が代行', () => {
+  const minute = Date.UTC(2026, 10, 16, 12, 0);
+  const event = { cron: '* * * * *', scheduledTime: minute } as ScheduledEvent;
+
+  function kvStorage() {
+    const base = fakeStorage(null);
+    const kv = new Map<string, unknown>();
+    return Object.assign(base, {
+      async get<T>(key: string) { return kv.get(key) as T | undefined; },
+      async put(key: string | Record<string, unknown>, value?: unknown) {
+        if (typeof key === 'string') kv.set(key, value);
+        else for (const [k, v] of Object.entries(key)) kv.set(k, v);
+      },
+    });
+  }
+  function fakeCtx(storage: ReturnType<typeof kvStorage>) {
+    let ready: Promise<void> = Promise.resolve();
+    return {
+      storage,
+      blockConcurrencyWhile(fn: () => Promise<void>) { ready = fn(); return ready; },
+      get ready() { return ready; },
+      waitUntil() {},
+    };
+  }
+
+  test('isCronLive: 窓の内側だけ true、記録なし・未来の値は false', () => {
+    expect(isCronLive(null, minute)).toBe(false);
+    expect(isCronLive(undefined, minute)).toBe(false);
+    expect(isCronLive(minute - 60_000, minute)).toBe(true);
+    expect(isCronLive(minute - CRON_LIVENESS_WINDOW_MS + 1, minute)).toBe(true);
+    expect(isCronLive(minute - CRON_LIVENESS_WINDOW_MS, minute)).toBe(false);
+    expect(isCronLive(minute + 1, minute)).toBe(false);
+  });
+
+  test('Cron と alarm が同じ分に鳴っても、ジョブは Cron からの1回だけ (6時間境界は Cron の2本ぶん)', async () => {
+    const storage = kvStorage();
+    const ctx = fakeCtx(storage);
+    const scheduler = new TenantScheduler(ctx as never, {} as never);
+    await ctx.ready;
+    const env = { TENANT_SCHEDULER: { idFromName: vi.fn(() => 'id'), get: vi.fn(() => scheduler) } };
+
+    // 12:00 UTC は6時間境界。Cron は分足と6時間足の2回呼ぶ。
+    await scheduledFromCron(event, env as never, {} as ExecutionContext);
+    await scheduledFromCron({ ...event, cron: '0 */6 * * *' } as ScheduledEvent, env as never, {} as ExecutionContext);
+    expect(env.TENANT_SCHEDULER.idFromName).toHaveBeenCalledWith(SCHEDULER_INSTANCE_NAME);
+    expect(storage.alarm()).not.toBeNull(); // Cron 経由でも alarm は自己修復される
+
+    // 同じ分の alarm はジョブを実行しない (再アームだけ)
+    await runSchedulerTick(storage, scheduledMock, new Date(Date.now()), async () => ({ minute: await storage.get<number>(LAST_CRON_TICK_KEY), sixHour: await storage.get<number>(LAST_SIX_HOUR_CRON_TICK_KEY) }));
+    expect(scheduledMock.mock.calls.map(([e]) => e.cron)).toEqual(['* * * * *', '0 */6 * * *']);
+    expect(storage.calls.at(-1)).toBe('setAlarm'); // 再アームは続ける
+  });
+
+  test('Cron の記録が途絶えたら alarm が従来どおりジョブを実行する (6時間境界も含む)', async () => {
+    const storage = kvStorage();
+    await storage.put(LAST_CRON_TICK_KEY, minute - CRON_LIVENESS_WINDOW_MS - 1);
+    await runSchedulerTick(storage, scheduledMock, new Date(minute), async () => ({ minute: await storage.get<number>(LAST_CRON_TICK_KEY), sixHour: await storage.get<number>(LAST_SIX_HOUR_CRON_TICK_KEY) }));
+    expect(scheduledMock.mock.calls.map(([e]) => e.cron)).toEqual(['* * * * *', '0 */6 * * *']);
+  });
+
+  test('5分足 Cron だけの構成でも、6時間保守は alarm が担う (分足ジョブだけ Cron に任せる)', async () => {
+    const storage = kvStorage();
+    await storage.put(LAST_CRON_TICK_KEY, minute - 30_000); // */5 の Cron は生きている
+    await runSchedulerTick(storage, scheduledMock, new Date(minute), async () => ({
+      minute: await storage.get<number>(LAST_CRON_TICK_KEY),
+      sixHour: await storage.get<number>(LAST_SIX_HOUR_CRON_TICK_KEY),
+    }));
+    expect(scheduledMock.mock.calls.map(([e]) => e.cron)).toEqual(['0 */6 * * *']);
+  });
+
+  test('6時間足 Cron が前回の境界で来ていれば、境界の alarm は6時間保守を重ねない', async () => {
+    const storage = kvStorage();
+    await storage.put(LAST_SIX_HOUR_CRON_TICK_KEY, minute - 6 * 60 * 60_000);
+    expect(isCronLive(minute - 6 * 60 * 60_000, minute, SIX_HOUR_CRON_LIVENESS_WINDOW_MS)).toBe(true);
+    await runSchedulerTick(storage, scheduledMock, new Date(minute), async () => ({
+      minute: null,
+      sixHour: await storage.get<number>(LAST_SIX_HOUR_CRON_TICK_KEY),
+    }));
+    expect(scheduledMock.mock.calls.map(([e]) => e.cron)).toEqual(['* * * * *']);
+  });
+
+  function live(storage: ReturnType<typeof kvStorage>) {
+    return async () => ({
+      minute: await storage.get<number>(LAST_CRON_TICK_KEY),
+      sixHour: await storage.get<number>(LAST_SIX_HOUR_CRON_TICK_KEY),
+      sixHourSlotDone: await storage.get<number>(SIX_HOUR_SLOT_DONE_KEY),
+    });
+  }
+  const mark = (storage: ReturnType<typeof kvStorage>) => (slot: number) => storage.put(SIX_HOUR_SLOT_DONE_KEY, slot);
+
+  test('6時間足 Cron が 06:00 を最後に止まっても、12:10 以降の alarm で12時の保守を1回だけ取り戻す', async () => {
+    const storage = kvStorage();
+    const six = Date.UTC(2026, 10, 16, 6, 0);
+    await storage.put({ [LAST_SIX_HOUR_CRON_TICK_KEY]: six, [SIX_HOUR_SLOT_DONE_KEY]: sixHourSlot(six) });
+    const twelve = Date.UTC(2026, 10, 16, 12, 0);
+    const sixHourCalls = () => scheduledMock.mock.calls.filter(([e]) => e.cron === '0 */6 * * *').length;
+    // 12:00 時点では 06:00 の記録がまだ有効なので Cron に任せる
+    await runSchedulerTick(storage, scheduledMock, new Date(twelve), live(storage), mark(storage));
+    expect(sixHourCalls()).toBe(0);
+    // 猶予後 (Cron の記録も失効) に取り戻す
+    await runSchedulerTick(storage, scheduledMock, new Date(twelve + SIX_HOUR_CATCH_UP_GRACE_MS + 60_000), live(storage), mark(storage));
+    expect(sixHourCalls()).toBe(1);
+    // 同じスロットでは繰り返さない
+    await runSchedulerTick(storage, scheduledMock, new Date(twelve + SIX_HOUR_CATCH_UP_GRACE_MS + 120_000), live(storage), mark(storage));
+    expect(sixHourCalls()).toBe(1);
+  });
+
+  test('alarm が境界の分を逃しても (DO だけの環境)、猶予後に6時間保守を取り戻す', async () => {
+    const storage = kvStorage();
+    const twelve = Date.UTC(2026, 10, 16, 12, 0);
+    await storage.put(SIX_HOUR_SLOT_DONE_KEY, sixHourSlot(twelve) - 1); // 06時台は実行済み
+    await runSchedulerTick(storage, scheduledMock, new Date(twelve + 60_000), live(storage), mark(storage));
+    expect(scheduledMock.mock.calls.map(([e]) => e.cron)).toEqual(['* * * * *']);
+    await runSchedulerTick(storage, scheduledMock, new Date(twelve + SIX_HOUR_CATCH_UP_GRACE_MS), live(storage), mark(storage));
+    expect(scheduledMock.mock.calls.map(([e]) => e.cron)).toEqual(['* * * * *', '* * * * *', '0 */6 * * *']);
+  });
+
+  test('記録の無い初回 tick がスロット途中なら、6時間保守を余分に走らせない', async () => {
+    const storage = kvStorage();
+    await runSchedulerTick(storage, scheduledMock, new Date(Date.UTC(2026, 10, 16, 13, 30)), live(storage), mark(storage));
+    expect(scheduledMock.mock.calls.map(([e]) => e.cron)).toEqual(['* * * * *']);
+  });
+
+  test('Cron の記録が読めなくても alarm はジョブを止めない (安全側)', async () => {
+    const storage = fakeStorage();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runSchedulerTick(storage, scheduledMock, new Date(minute + 60_000), async () => { throw new Error('storage down'); });
+    expect(scheduledMock).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
+  });
+
+  test('DO バインディングが無い環境では従来どおり Cron がジョブを実行する', async () => {
+    await scheduledFromCron(event, {} as never, {} as ExecutionContext);
+    expect(scheduledMock).toHaveBeenCalledTimes(1);
+    expect(scheduledMock.mock.calls[0][0]).toBe(event);
+  });
+
+  test('DO への記録に失敗しても Cron のジョブは止めない', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const env = { TENANT_SCHEDULER: { idFromName: vi.fn(), get: () => ({ noteCronTick: async () => { throw new Error('RPC failed'); } }) } };
+    await scheduledFromCron(event, env as never, {} as ExecutionContext);
+    expect(scheduledMock).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
   });
 });

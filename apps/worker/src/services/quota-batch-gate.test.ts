@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const dbMocks = {
   getBroadcasts: vi.fn(),
+  getScheduledBroadcastCandidates: vi.fn(),
   getBroadcastById: vi.fn(),
   getQueuedBroadcasts: vi.fn(),
   updateBroadcastStatus: vi.fn(),

@@ -442,17 +442,40 @@ export async function enrollFriendInScenario(
 export async function getFriendScenariosDueForDelivery(
   db: D1Database,
   now: string,
+  limit?: number,
 ): Promise<FriendScenario[]> {
-  // Fetch all active scenarios with a delivery time, then filter by epoch comparison
-  // to handle mixed timestamp formats (Z and +09:00) during migration
+  // 期限到来分だけを SQL で絞る (以前は active 全件を読んで JS で判定していたため、
+  // 毎分 active な friend_scenarios の件数ぶん D1 を読んでいた)。
+  // - next_delivery_at は Z / +09:00 が混在し得るので、文字列ではなく julianday()
+  //   で同じ時刻軸に揃えて比較する (idx_friend_scenarios_due_epoch を使う)。
+  // - julianday() は浮動小数なので約1msの余裕を持たせて取りこぼしを防ぎ、
+  //   厳密な判定と並び順は従来どおり下の JS (Date のエポック比較) で行う。
+  // - julianday() が解釈できない (NULL になる) 旧形式の値は従来どおり JS の判定に
+  //   回す (別枝で拾う。通常は0件)。
+  // - limit は期限の早い順に適用する。呼び出し側は先頭から最大 limit 件しか
+  //   処理しないので、処理対象は従来と同じになる。
+  const bounded = typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
   const result = await db
     .prepare(
-      `SELECT fs.* FROM friend_scenarios fs
+      `SELECT * FROM (
+         SELECT fs.* FROM friend_scenarios fs
+         INNER JOIN scenarios s ON fs.scenario_id = s.id
+         WHERE fs.status = 'active'
+           AND s.is_active = 1
+           AND fs.next_delivery_at IS NOT NULL
+           AND julianday(fs.next_delivery_at) <= julianday(?) + 0.00000002
+         ORDER BY julianday(fs.next_delivery_at) ASC
+         ${bounded ? 'LIMIT ?' : ''}
+       )
+       UNION ALL
+       SELECT fs.* FROM friend_scenarios fs
        INNER JOIN scenarios s ON fs.scenario_id = s.id
        WHERE fs.status = 'active'
          AND s.is_active = 1
-         AND fs.next_delivery_at IS NOT NULL`,
+         AND fs.next_delivery_at IS NOT NULL
+         AND julianday(fs.next_delivery_at) IS NULL`,
     )
+    .bind(...(bounded ? [now, Math.floor(limit!)] : [now]))
     .all<FriendScenario>();
   const nowMs = new Date(now).getTime();
   return result.results
