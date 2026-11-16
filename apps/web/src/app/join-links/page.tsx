@@ -104,6 +104,46 @@ function formatDate(value: string | null) {
   return d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
 }
 
+interface TagSummary {
+  tagId: string | null
+  linkCount: number
+  openedCount: number
+  friendCount: number
+  followingCount: number
+  surveyDoneCount: number
+  latestFriendAt: string | null
+}
+
+// 経路リンクの人数を、いま付いているタグごとに足し合わせる。人数の多い順で、タグなしは最後
+function summarizeByTag(links: JoinLink[]): TagSummary[] {
+  const groups = new Map<string, TagSummary>()
+  for (const link of links) {
+    const key = link.tagId ?? ''
+    const g = groups.get(key) ?? {
+      tagId: link.tagId,
+      linkCount: 0,
+      openedCount: 0,
+      friendCount: 0,
+      followingCount: 0,
+      surveyDoneCount: 0,
+      latestFriendAt: null,
+    }
+    g.linkCount += 1
+    g.openedCount += link.openedCount
+    g.friendCount += link.friendCount
+    g.followingCount += link.followingCount
+    g.surveyDoneCount += link.surveyDoneCount
+    if (link.latestFriendAt && (!g.latestFriendAt || new Date(link.latestFriendAt) > new Date(g.latestFriendAt))) {
+      g.latestFriendAt = link.latestFriendAt
+    }
+    groups.set(key, g)
+  }
+  return [...groups.values()].sort((a, b) => {
+    if (!a.tagId !== !b.tagId) return a.tagId ? -1 : 1
+    return b.friendCount - a.friendCount || b.openedCount - a.openedCount
+  })
+}
+
 function CopyButton({ text, label = 'コピー' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -449,6 +489,54 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
               </button>
             </form>
           </section>
+
+          {/* タグごとの人数（同じタグのリンクをまとめて数える） */}
+          {data.links.some((l) => l.tagId) && (
+            <section className="rounded-lg border border-gray-200 bg-white p-6">
+              <h2 className="mb-1 text-base font-bold text-gray-900">タグごとの人数</h2>
+              <p className="mb-4 text-sm text-gray-500">同じタグを付けた経路リンクの人数を足し合わせています。</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                      <th className="py-2 pr-4 font-medium">タグ</th>
+                      <th className="py-2 pr-4 text-right font-medium">リンク</th>
+                      <th className="py-2 pr-4 text-right font-medium">開いた人</th>
+                      <th className="py-2 pr-4 text-right font-medium">友だちになった人</th>
+                      <th className="py-2 pr-4 text-right font-medium">いまも友だち</th>
+                      {data.hasSurvey && <th className="py-2 pr-4 text-right font-medium">アンケート回答</th>}
+                      <th className="py-2 font-medium">最後の追加</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summarizeByTag(data.links).map((g) => (
+                      <tr key={g.tagId ?? ''} className="border-b border-gray-100">
+                        <td className={`py-3 pr-4 ${g.tagId ? 'font-medium text-gray-900' : 'text-gray-500'}`}>
+                          {g.tagId ? tagName(g.tagId) ?? '（一覧にないタグ）' : 'タグなし'}
+                        </td>
+                        <td className="py-3 pr-4 text-right tabular-nums text-gray-600">{g.linkCount} 本</td>
+                        <td className="py-3 pr-4 text-right tabular-nums">{g.openedCount}</td>
+                        <td className="py-3 pr-4 text-right font-bold tabular-nums text-gray-900">{g.friendCount}</td>
+                        <td className="py-3 pr-4 text-right tabular-nums">{g.followingCount}</td>
+                        {data.hasSurvey && (
+                          <td className="py-3 pr-4 text-right tabular-nums">
+                            {g.surveyDoneCount}
+                            {g.friendCount > 0 && (
+                              <span className="ml-1 text-xs text-gray-500">（{Math.round((g.surveyDoneCount / g.friendCount) * 100)}%）</span>
+                            )}
+                          </td>
+                        )}
+                        <td className="py-3 text-gray-600">{formatDate(g.latestFriendAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-4 text-xs text-gray-500">
+                リンクのタグを付け替えると、そのリンクのこれまでの人数も新しいタグの側に移ります（友だちに付いたタグそのものは変わりません）。
+              </p>
+            </section>
+          )}
 
           {/* 経路ごとの人数 */}
           <section className="rounded-lg border border-gray-200 bg-white p-6">
