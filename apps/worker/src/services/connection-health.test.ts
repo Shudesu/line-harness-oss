@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
   getSignatureFailureWindow: vi.fn(),
@@ -42,7 +42,14 @@ function healthyState() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Keep Date.now() aligned with jstNow() and the fixed health-window fixtures.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-16T12:00:00.000+09:00'));
   healthyState();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('buildConnectionHealth — PLAN.md 1-1 contract', () => {
