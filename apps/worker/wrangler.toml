@@ -53,10 +53,9 @@ class_name = "TenantScheduler"
 tag = "v1"
 new_sqlite_classes = ["TenantScheduler"]
 
-# Cron Trigger は引き続き残す。DO alarm と共存させる (自己ホスト環境が
-# cron のみで運用を続けられるようにするため)。両方が同じ分に発火しても、
-# scheduled() が呼ぶジョブ本体は元々 (6時間境界で2 trigger が同時に鳴る
-# 現行構成のもと) 同時実行に耐える楽観ロック/claim パターンで書かれている。
+# Cron Trigger は残す。Cron が動いている間は Cron が唯一の実行者で、DO alarm は
+# Cron が止まったときだけ代行する (scheduledFromCron / noteCronTick)。以前は
+# 両方が毎分ジョブを実行しており D1 読み取りが2倍になっていた。
 [triggers]
 crons = ["* * * * *", "0 */6 * * *"]
 

@@ -59,6 +59,24 @@ LEFT JOIN broadcast_insights bi ON b.id = bi.broadcast_id
   return result.results;
 }
 
+/**
+ * 予約配信の送信候補 (status='scheduled' かつ scheduled_at あり) だけを返す。
+ * 毎分の予約配信チェック用。getBroadcasts は一覧画面用に全件と最新 insight を
+ * 相関サブクエリで引くため、毎分呼ぶと broadcasts 全体を読んでしまう。
+ * 期限 (scheduled_at <= now) の判定は表記揺れ (Z / +09:00) に強い JS 側で行う。
+ * 並び順は getBroadcasts と同じ。
+ */
+export async function getScheduledBroadcastCandidates(db: D1Database): Promise<Broadcast[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM broadcasts
+        WHERE status = 'scheduled' AND scheduled_at IS NOT NULL
+        ORDER BY COALESCE(sent_at, scheduled_at, created_at) DESC`,
+    )
+    .all<Broadcast>();
+  return result.results;
+}
+
 export async function getBroadcastById(
   db: D1Database,
   id: string,

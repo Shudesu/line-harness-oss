@@ -170,7 +170,8 @@ export async function processStepDeliveries(
   }
 
   const now = jstNow();
-  const dueFriendScenarios = await getFriendScenariosDueForDelivery(db, now);
+  // ループは最大 MAX_ATTEMPTS_PER_CRON 件で打ち切るので、それ以上は読まない。
+  const dueFriendScenarios = await getFriendScenariosDueForDelivery(db, now, MAX_ATTEMPTS_PER_CRON);
 
   let sendCount = 0;
   let attemptCount = 0;

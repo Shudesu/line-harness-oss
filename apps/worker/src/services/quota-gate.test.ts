@@ -5,6 +5,7 @@ import { monthStartJst } from './quota.js';
 
 const dbMocks = {
   getBroadcasts: vi.fn(),
+  getScheduledBroadcastCandidates: vi.fn(),
   getBroadcastById: vi.fn(),
   createBroadcast: vi.fn(),
   updateBroadcast: vi.fn(),
@@ -66,7 +67,7 @@ beforeEach(() => {
   dbMocks.getLineAccountById.mockResolvedValue({ id: 'acc-1', channel_access_token: 'test-account-token', is_active: 1 });
   dbMocks.recoverStuckDeliveries.mockResolvedValue(0);
   dbMocks.getQueuedBroadcasts.mockResolvedValue([]);
-  dbMocks.getBroadcasts.mockResolvedValue([]);
+  dbMocks.getScheduledBroadcastCandidates.mockResolvedValue([]);
   dbMocks.getFriendScenariosDueForDelivery.mockResolvedValue([]);
 });
 
@@ -795,7 +796,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
 
   test('crossing the limit after the first due send stops the rest of the tick', async () => {
     const rows = [scheduledRow('sched-1'), scheduledRow('sched-2')];
-    dbMocks.getBroadcasts.mockResolvedValue(rows);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue(rows);
     dbMocks.getBroadcastById.mockImplementation(async (_db: unknown, id: string) =>
       rows.find((r) => r.id === id) ?? rows[0],
     );
@@ -817,7 +818,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
 
   test('a due send whose estimate alone would cross the limit is never claimed', async () => {
     const rows = [scheduledRow('sched-big')];
-    dbMocks.getBroadcasts.mockResolvedValue(rows);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue(rows);
     dbMocks.getBroadcastById.mockImplementation(async () => rows[0]);
     // 4999 used of 5000, audience estimate 500 → projected 5499 > 5000.
     const state = { monthly: 4999 };
@@ -879,7 +880,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
   };
 
   test('due dedup whose projected total would cross the limit is never claimed', async () => {
-    dbMocks.getBroadcasts.mockResolvedValue([dedupScheduledRow]);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue([dedupScheduledRow]);
     dbMocks.getBroadcastById.mockResolvedValue(dedupScheduledRow);
     dbMocks.getLineAccountById.mockResolvedValue({
       id: 'acc1', is_active: 1, channel_access_token: 'tok',
@@ -893,7 +894,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
   });
 
   test('due dedup within the budget is claimed and queued as before', async () => {
-    dbMocks.getBroadcasts.mockResolvedValue([dedupScheduledRow]);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue([dedupScheduledRow]);
     dbMocks.getBroadcastById.mockResolvedValue(dedupScheduledRow);
     dbMocks.getLineAccountById.mockResolvedValue({
       id: 'acc1', is_active: 1, channel_access_token: 'tok',
@@ -951,7 +952,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
   }
 
   test('due personalized tag send: judged by its account-filtered audience, not the unfiltered tag count', async () => {
-    dbMocks.getBroadcasts.mockResolvedValue([personalizedScheduledRow]);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue([personalizedScheduledRow]);
     dbMocks.getBroadcastById.mockResolvedValue(personalizedScheduledRow);
     // Other accounts share the tag (unfiltered 500 would project over), but
     // this account's personalized send goes to 1 friend: 4999 + 1 <= 5000.
@@ -963,7 +964,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
   });
 
   test('due personalized tag send whose own audience would cross the limit is skipped', async () => {
-    dbMocks.getBroadcasts.mockResolvedValue([personalizedScheduledRow]);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue([personalizedScheduledRow]);
     dbMocks.getBroadcastById.mockResolvedValue(personalizedScheduledRow);
     const { db, executed } = makePersonalizedScheduledDb({ monthly: 4999, personal: 2, unfilteredTag: 500 });
     await processScheduledBroadcasts(
@@ -974,7 +975,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
 
   test('a due send that fits within the remaining budget still goes out', async () => {
     const rows = [scheduledRow('sched-fit')];
-    dbMocks.getBroadcasts.mockResolvedValue(rows);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue(rows);
     dbMocks.getBroadcastById.mockImplementation(async () => rows[0]);
     const state = { monthly: 100 };
     const client = {
@@ -992,7 +993,7 @@ describe('processScheduledBroadcasts per-broadcast quota re-check', () => {
 
   test('no quotaEnv → every due broadcast sends as before', async () => {
     const rows = [scheduledRow('sched-1'), scheduledRow('sched-2')];
-    dbMocks.getBroadcasts.mockResolvedValue(rows);
+    dbMocks.getScheduledBroadcastCandidates.mockResolvedValue(rows);
     dbMocks.getBroadcastById.mockImplementation(async (_db: unknown, id: string) =>
       rows.find((r) => r.id === id) ?? rows[0],
     );
