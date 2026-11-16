@@ -875,9 +875,12 @@ webinarRoutes.put('/api/webinars/:id', requireRole('owner', 'admin'), async (c) 
   }
 });
 
-webinarRoutes.delete('/api/webinars/:id', async (c) => {
+// requireRole('owner', 'admin') matches POST/PUT /api/webinars above: deleting
+// a webinar is at least as destructive as editing it, so a staff key must not
+// be able to do it either.
+webinarRoutes.delete('/api/webinars/:id', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     await deleteWebinar(c.env.DB, id);
