@@ -1,15 +1,27 @@
 # Changelog
 
-## Unreleased — calm UX (2026-11-16)
+## [0.26.2] - 2026-11-16
+
+### ウェビナー管理
+
+- ウェビナーの削除、コメント一括更新、CTA一括更新をowner/adminに統一。
+- staffと権限コンテキスト未設定の要求を403で拒否し、DB処理を行わない回帰テストを追加。
+
+### 管理画面
 
 - Admin dashboard keeps the shell (banner + sidebar) during the auth check and swaps only the content area to a partial skeleton; the check runs once on mount with a stale-while-revalidate optimistic display.
 - chats: lists and conversations keep the previous data while re-fetching; stale responses are discarded by generation counter, account switching shows a partial skeleton and same-chat refreshes only a thin progress bar; account resolution happens before the first list/friends fetch (no double mount fetch); scroll follows only right after switching or near the bottom (no runaway jumps while reading history); unread badge aggregation debounced to 5s.
 - worker: messages_log history fetch gets a rowid tie-break so same-second messages keep a stable order.
 - Copy "LINE CRM" replaced with "L Harness" in the UI.
 
-## Unreleased
+### API・接続診断
+
+- LINE user IDによるアカウント内の友だち検索と、API更新の任意のIdempotency-Key対応を追加。[API仕様・移行条件](docs/api-idempotency.md)。
+- LINE接続ヘルス診断、Webhook endpointの確認・明示的な修正操作を追加。
 
 ### リリース時の注意
+
+- v0.26.1からの更新では、既存mainに取り込まれたmigration 074〜077が対象です。認証変更の移行条件と再ログインが必要なため、[v0.26.2リリースノート](docs/release-notes/v0.26.2.md)を先に確認してください。
 
 - Instagram連携リンクに署名付きトークン `igt` を追加。LINE Harnessを先に更新し、IG Harness側の対応後に `IG_LINK_TOKEN_POLICY=prefer` → `require` を推奨します。既定は `off` のままです。
 - migration `075_ig_link_token_uses.sql` を適用してください（spec 08原文の076ではなく、このブランチでは074に続く075）。`prefer` では未署名リンクのIG復帰マイルを付与せず、`require` では未署名リンクを紐付けません。[形式・環境変数・移行手順](docs/IG_LINK_TOKEN.md)。
