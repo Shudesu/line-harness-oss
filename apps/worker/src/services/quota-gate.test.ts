@@ -22,6 +22,7 @@ const dbMocks = {
   advanceFriendScenario: vi.fn(),
   completeFriendScenario: vi.fn(),
   claimFriendScenarioForDelivery: vi.fn(),
+  isScenarioDeliveryCurrent: vi.fn(),
   recoverStuckDeliveries: vi.fn(),
   pauseFriendScenarioDelivery: vi.fn(),
   getFriendById: vi.fn(),
@@ -63,6 +64,7 @@ const lineClient = {} as LineClient;
 
 beforeEach(() => {
   for (const fn of Object.values(dbMocks)) fn.mockClear();
+  dbMocks.isScenarioDeliveryCurrent.mockResolvedValue(true);
   dbMocks.getLineAccountById.mockResolvedValue({ id: 'acc-1', channel_access_token: 'test-account-token', is_active: 1 });
   dbMocks.recoverStuckDeliveries.mockResolvedValue(0);
   dbMocks.getQueuedBroadcasts.mockResolvedValue([]);
