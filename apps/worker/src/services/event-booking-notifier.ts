@@ -52,12 +52,12 @@ export function renderEventNotificationText(
       return `申し訳ございません、今回のイベント予約はお受けできませんでした。${detail}`;
     case 'cancelled_by_admin':
       return `運営側でイベント予約をキャンセルさせていただきました。${detail}\n\n詳細は LINE にてご連絡ください。`;
+    // Use the absolute date even when a scheduled notification is delayed.
     case 'reminder_day_before':
-      return appendExtra(`【リマインド】明日イベントが開催されます。${detail}`, ctx.reminderExtra);
+      return appendExtra(`【リマインド】イベント開催のお知らせです。${detail}`, ctx.reminderExtra);
     case 'reminder_hours_before': {
-      const hours = ctx.hoursBefore ?? 0;
       return appendExtra(
-        `【リマインド】まもなくイベント開始です（あと ${hours} 時間）。${detail}`,
+        `【リマインド】イベント開始前のお知らせです。${detail}`,
         ctx.reminderExtra,
       );
     }
@@ -65,6 +65,8 @@ export function renderEventNotificationText(
 }
 
 export interface SendEventNotificationParams {
+  /** Persisted delivery UUID, reused only for retries of that notification. */
+  retryKey?: string;
   channelAccessToken: string;
   toLineUserId: string;
   kind: EventNotificationKind;
@@ -76,7 +78,7 @@ export async function sendEventBookingNotification(
 ): Promise<void> {
   const text = renderEventNotificationText(params.kind, params.ctx);
   const client = new LineClient(params.channelAccessToken);
-  await client.pushMessage(params.toLineUserId, [{ type: 'text', text }]);
+  await client.pushMessage(params.toLineUserId, [{ type: 'text', text }], params.retryKey);
 }
 
 export type EventBookingNotificationSender = (

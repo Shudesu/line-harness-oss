@@ -26,8 +26,13 @@ const JST_OFFSET_MS = 9 * 3600_000;
 
 // Reminders that fall in the past are dropped. Pure function, no DB.
 export function computeRemindersForBooking(input: ComputeRemindersInput): ComputedReminder[] {
+  return computeReminderTimes(input, false);
+}
+
+function computeReminderTimes(input: ComputeRemindersInput, includePast: boolean): ComputedReminder[] {
   const out: ComputedReminder[] = [];
   const startMs = new Date(input.starts_at_utc).getTime();
+  if (!Number.isFinite(startMs)) return out;
   const nowMs = (input.now ?? new Date()).getTime();
 
   if (input.reminder_day_before_enabled) {
@@ -43,14 +48,14 @@ export function computeRemindersForBooking(input: ComputeRemindersInput): Comput
         0,
       ),
     );
-    if (dayBeforeUtc.getTime() > nowMs) {
+    if (includePast || dayBeforeUtc.getTime() > nowMs) {
       out.push({ kind: 'day_before', scheduled_at: dayBeforeUtc.toISOString() });
     }
   }
 
   if (input.reminder_hours_before != null && input.reminder_hours_before > 0) {
     const hoursBeforeMs = startMs - input.reminder_hours_before * 3600_000;
-    if (hoursBeforeMs > nowMs) {
+    if (includePast || hoursBeforeMs > nowMs) {
       out.push({ kind: 'hours_before', scheduled_at: new Date(hoursBeforeMs).toISOString() });
     }
   }
@@ -73,6 +78,42 @@ export async function insertRemindersForBooking(
          VALUES (?, ?, ?, ?, 'pending', 0)`,
       )
       .bind(crypto.randomUUID(), booking_id, r.kind, r.scheduled_at)
+      .run();
+  }
+}
+
+// Reconcile an admin edit without rotating an unchanged notification's ID or
+// retry state. Replaying after a partial failure also repairs missing rows.
+export async function reconcileRemindersForBooking(
+  db: D1Database,
+  bookingId: string,
+  input: ComputeRemindersInput,
+): Promise<void> {
+  const now = input.now ?? new Date();
+  const desired = computeReminderTimes({ ...input, now }, true);
+  for (const kind of ['day_before', 'hours_before'] as const) {
+    const schedule = desired.find(reminder => reminder.kind === kind);
+    const at = schedule?.scheduled_at ?? null;
+    // Due retries for the same schedule must survive an unrelated save. Sent
+    // and permanently failed rows remain immutable records of their attempts.
+    await db.prepare(`UPDATE event_booking_reminders SET status = 'cancelled'
+      WHERE booking_id = ? AND kind = ? AND status IN ('pending','failed')
+        AND (? IS NULL OR julianday(scheduled_at) IS NOT julianday(?))`)
+      .bind(bookingId, kind, at, at)
+      .run();
+    if (!schedule || new Date(schedule.scheduled_at).getTime() <= now.getTime()) continue;
+    // Check and insert in one statement so overlapping identical saves cannot
+    // both create a new reminder from the same missing-row snapshot.
+    await db.prepare(`INSERT INTO event_booking_reminders
+        (id, booking_id, kind, scheduled_at, status, retry_count)
+      SELECT ?, ?, ?, ?, 'pending', 0
+      WHERE NOT EXISTS (
+        SELECT 1 FROM event_booking_reminders
+         WHERE booking_id = ? AND kind = ? AND status != 'cancelled'
+           AND julianday(scheduled_at) = julianday(?)
+      )`)
+      .bind(crypto.randomUUID(), bookingId, kind, schedule.scheduled_at,
+        bookingId, kind, schedule.scheduled_at)
       .run();
   }
 }
@@ -130,9 +171,8 @@ export async function processDueEventReminders(
   // status: 'pending' or 'failed' (retryable). 'sent' / 'failed_permanent'
   // / 'cancelled' are excluded. Booking must still be confirmed and slot
   // start in the future at processing time.
-  const due = await db
-    .prepare(
-      `SELECT r.id, r.booking_id, r.kind, r.retry_count,
+  // Reuse the same eligibility rules when refreshing each queued row.
+  const eligibleQuery = `SELECT r.id, r.booking_id, r.kind, r.retry_count,
               e.name AS event_name, e.venue_name, e.venue_url,
               e.reminder_message_extra, e.reminder_hours_before,
               s.starts_at,
@@ -147,20 +187,26 @@ export async function processDueEventReminders(
         WHERE r.status IN ('pending','failed')
           AND r.scheduled_at <= ?
           AND b.status = 'confirmed'
-          AND s.starts_at > ?
-        LIMIT 100`,
-    )
+          AND s.starts_at > ?`;
+  const due = await db
+    .prepare(`${eligibleQuery}\n LIMIT 100`)
     .bind(params.now.toISOString(), params.now.toISOString())
     .all<DueEventReminderRow>();
 
   let sent = 0;
   let failed = 0;
-  for (const row of due.results ?? []) {
+  for (const candidate of due.results ?? []) {
+    const row = await db
+      .prepare(`${eligibleQuery}\n AND r.id = ?`)
+      .bind(params.now.toISOString(), params.now.toISOString(), candidate.id)
+      .first<DueEventReminderRow>();
+    if (!row) continue;
     // Optimistic claim: bump retry_count CAS-style on (id, retry_count).
     // If two cron invocations fetched the same row, only one of them wins
     // this UPDATE; the other gets changes=0 and skips. retry_count thus
-    // doubles as a claim epoch, sufficient on D1 without a dedicated lock
-    // column or a new migration.
+    // doubles as a claim epoch, not an in-flight lock: a later cron can
+    // read the bumped epoch while a request is still running. The persisted
+    // LINE retry key deduplicates that overlap within LINE's retry window.
     const claim = await db
       .prepare(
         `UPDATE event_booking_reminders
@@ -174,6 +220,7 @@ export async function processDueEventReminders(
 
     try {
       await params.sender({
+        retryKey: row.id,
         channelAccessToken: row.channel_access_token,
         toLineUserId: row.line_user_id,
         kind: notificationKindFor(row.kind),
@@ -188,7 +235,7 @@ export async function processDueEventReminders(
       });
       await db
         .prepare(
-          `UPDATE event_booking_reminders SET status='sent', sent_at = ? WHERE id = ?`,
+          `UPDATE event_booking_reminders SET status='sent', sent_at = ? WHERE id = ? AND status IN ('pending','failed','failed_permanent')`,
         )
         .bind(params.now.toISOString(), row.id)
         .run();
@@ -197,7 +244,7 @@ export async function processDueEventReminders(
       const newStatus = claimedRetry >= REMINDER_MAX_RETRY ? 'failed_permanent' : 'failed';
       await db
         .prepare(
-          `UPDATE event_booking_reminders SET status = ?, last_error = ? WHERE id = ?`,
+          `UPDATE event_booking_reminders SET status = ?, last_error = ? WHERE id = ? AND status IN ('pending','failed')`,
         )
         .bind(newStatus, e instanceof Error ? e.message : String(e), row.id)
         .run();
