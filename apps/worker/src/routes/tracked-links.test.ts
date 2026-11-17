@@ -234,7 +234,9 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
     expect(res.headers.get('location')!.startsWith('https://liff.line.me/2009554425-4IMBmLQ9?redirect=')).toBe(true);
   });
 
-  test('account without liff_id falls back to env.LIFF_URL', async () => {
+  test('account without liff_id goes straight to the link, never to another account LIFF', async () => {
+    // 2026-09-08 の事故の再発防止。liff_id を持たないアカウントのリンクを
+    // env.LIFF_URL へ落とすと、よその事業の LINE ログイン画面がその友だちに出る。
     dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-x' }));
     const env = {
       DB: makeDb({ accounts: [{ id: 'acc-x', liff_id: null }] }),
@@ -243,7 +245,22 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
     };
     const res = await request(env, LINE_UA);
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')!.startsWith('https://liff.line.me/2009554425-4IMBmLQ9?redirect=')).toBe(true);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+  });
+
+  test('scenario account without liff_id also skips the global LIFF', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ scenario_id: 'scn-x' }));
+    const env = {
+      DB: makeDb({
+        scenarios: [{ id: 'scn-x', line_account_id: 'acc-y' }],
+        accounts: [{ id: 'acc-y', liff_id: null }],
+      }),
+      LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
   });
 
   test('non-LINE browsers redirect straight to the original URL', async () => {

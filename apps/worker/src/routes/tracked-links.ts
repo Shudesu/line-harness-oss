@@ -350,8 +350,16 @@ trackedLinks.get('/t/:linkId', async (c) => {
     let liffBase: string | null = null;
     const account = await resolveLinkAccount(c.env.DB, link);
     const liffId = (account?.liff_id as string | null | undefined) ?? null;
-    if (liffId) liffBase = `https://liff.line.me/${liffId}`;
-    if (!liffBase && c.env.LIFF_URL) liffBase = c.env.LIFF_URL;
+    if (liffId) {
+      liffBase = `https://liff.line.me/${liffId}`;
+    } else if (!account && c.env.LIFF_URL) {
+      // 全体設定の LIFF を使うのは、リンクの持ち主が分からないときだけ。
+      // 持ち主が分かっていて liff_id が無いアカウントをここへ落とすと、
+      // よその事業の LINE ログイン画面がそのアカウントの友だちに出る。
+      // 2026-09-08 に実際に起きたので、liff_id が無いアカウントは LIFF を経由しない
+      // （本人の識別ができないぶんクリックは匿名で記録されるが、飛び先は正しいままになる）。
+      liffBase = c.env.LIFF_URL;
+    }
     if (liffBase) {
       const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
       const liffRedirect = `${liffBase}?redirect=${encodeURIComponent(directUrl)}`;
