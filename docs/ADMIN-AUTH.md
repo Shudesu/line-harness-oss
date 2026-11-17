@@ -12,7 +12,7 @@ Bearer-token access unchanged.
 1. **Login** — `POST /api/auth/login { apiKey }`. The Worker validates the key
    (staff table, `API_KEY`, or `LEGACY_API_KEY`) and sets two cookies:
    - `lh_admin_session` — an opaque, revocable ID (only its digest is stored in D1). **HttpOnly**, `Secure`, `Path=/`,
-     `Max-Age=604800`. JavaScript can never read it.
+     `Max-Age=604800` (see [Session lifetime](#session-lifetime-optional)). JavaScript can never read it.
    - `lh_csrf` — a random CSRF token. Readable, `Secure`. Also returned in the
      response body.
 2. **Authenticated requests** — the browser sends `lh_admin_session`
@@ -24,6 +24,20 @@ Bearer-token access unchanged.
    the current CSRF token (minting one if missing), letting the SPA recover the
    token after a reload without re-login.
 4. **Logout** — `POST /api/auth/logout` revokes the server-side session and expires both cookies.
+
+### Session lifetime (optional)
+
+By default a session lasts 7 days from login (`Max-Age=604800`) and then the
+user must log in again. Two optional Worker variables change this:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ADMIN_SESSION_TTL_SECONDS` | `604800` (7 days) | Session lifetime in seconds for both cookies and the D1 row. Clamped to 1–2592000 (30 days); invalid values use the default. |
+| `ADMIN_SESSION_SLIDING` | unset | `true` turns the lifetime into an idle timeout: an authenticated request more than 5 minutes after the last recorded activity extends `expires_at` to now + TTL (in the existing `last_seen_at` write) and re-issues both cookies. A session that is not used for the full TTL still expires. |
+
+Logout, `POST /api/auth/sessions/revoke`, deactivating a staff member,
+changing their role, and rotating their API key still end the session
+immediately, whatever these values are.
 
 ### Why the CSRF token is also returned in the body
 

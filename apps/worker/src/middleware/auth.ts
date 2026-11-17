@@ -1,5 +1,5 @@
 import type { Context, Next } from 'hono';
-import { getStaffByApiKey, getStaffById, parseStaffApiScopes, createAdminSession, getAdminSession, hashApiKey, staffCredentialFingerprint, type StaffApiScope } from '@line-crm/db';
+import { getStaffByApiKey, getStaffById, parseStaffApiScopes, createAdminSession, getAdminSession, adminSessionTtl, hashApiKey, staffCredentialFingerprint, type StaffApiScope } from '@line-crm/db';
 import { timingSafeEqualString } from '@line-crm/shared';
 import { allowsApiScope } from './api-scope.js';
 import { resolveAdminAuthConfig } from './admin-auth-config.js';
@@ -15,6 +15,15 @@ export const CSRF_HEADER = 'x-csrf-token';
 
 // 7 days, matching the previous localStorage session longevity.
 const SESSION_MAX_AGE = 604800;
+
+/**
+ * Admin session lifetime in seconds. ADMIN_SESSION_TTL_SECONDS overrides the
+ * 7-day default within the store's bounds (max 30 days); unset or invalid
+ * values keep the default.
+ */
+export function adminSessionMaxAge(env: Env['Bindings']): number {
+  return env.ADMIN_SESSION_TTL_SECONDS === undefined ? SESSION_MAX_AGE : adminSessionTtl(env.ADMIN_SESSION_TTL_SECONDS);
+}
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -57,8 +66,8 @@ function buildCookie(
 }
 
 /** HttpOnly session cookie carrying only an opaque revocable session token. */
-export function adminSessionCookie(token: string, sameSite: AdminSameSite): string {
-  return buildCookie(ADMIN_AUTH_COOKIE, token, sameSite, SESSION_MAX_AGE, true);
+export function adminSessionCookie(token: string, sameSite: AdminSameSite, maxAge = SESSION_MAX_AGE): string {
+  return buildCookie(ADMIN_AUTH_COOKIE, token, sameSite, maxAge, true);
 }
 
 /**
@@ -69,8 +78,8 @@ export function adminSessionCookie(token: string, sameSite: AdminSameSite): stri
  * header against this cookie, which the browser does send back to the API
  * (SameSite=None).
  */
-export function csrfCookie(token: string, sameSite: AdminSameSite): string {
-  return buildCookie(CSRF_COOKIE, token, sameSite, SESSION_MAX_AGE, false);
+export function csrfCookie(token: string, sameSite: AdminSameSite, maxAge = SESSION_MAX_AGE): string {
+  return buildCookie(CSRF_COOKIE, token, sameSite, maxAge, false);
 }
 
 export function expiredCookie(name: string, sameSite: AdminSameSite): string {
@@ -130,26 +139,42 @@ export function publicStaffProfile(staff: AuthenticatedStaff) {
 
 export async function issueAdminSession(c: Context<Env>, staff: AuthenticatedStaff, credential: string, method: 'api_key' | 'sso' = 'api_key') {
   if (staff.apiScopes != null) throw new Error('Scoped integration keys cannot create browser sessions');
+  const maxAge = adminSessionMaxAge(c.env);
   const session = await createAdminSession(c.env.DB, { staffId: staff.id, role: staff.role,
-    credentialFp: await hashApiKey(credential), authMethod: method });
+    credentialFp: await hashApiKey(credential), authMethod: method, ttlSeconds: maxAge });
   const config = resolveAdminAuthConfig(c.env, {requestOrigin: new URL(c.req.url).origin});
-  c.header('Set-Cookie', adminSessionCookie(session.token, config.sameSite), {append: true});
+  c.header('Set-Cookie', adminSessionCookie(session.token, config.sameSite, maxAge), {append: true});
 }
 
-export async function authenticateCookieSession(c: Context<Env>, token: string | null): Promise<AuthenticatedStaff | null> {
+/**
+ * `renew` (auth middleware only) applies ADMIN_SESSION_SLIDING: when the store
+ * extended the session, the cookies are re-issued with the new Max-Age.
+ */
+export async function authenticateCookieSession(c: Context<Env>, token: string | null, opts: { renew?: boolean } = {}): Promise<AuthenticatedStaff | null> {
   if (!token) return null;
-  const session = await getAdminSession(c.env.DB, token);
+  const sliding = opts.renew === true && c.env.ADMIN_SESSION_SLIDING === 'true';
+  const maxAge = adminSessionMaxAge(c.env);
+  const session = await getAdminSession(c.env.DB, token, undefined, sliding ? { slideTtlSeconds: maxAge } : {});
   if (!session) return null;
+  let staff: AuthenticatedStaff;
   if (session.staff_id === 'env-owner') {
     const matches = await Promise.all([c.env.API_KEY, c.env.LEGACY_API_KEY].map(async key =>
       !!key && await timingSafeEqualString(session.credential_fp, await hashApiKey(key))));
     if (session.role_at_issue !== 'owner' || !matches.some(Boolean)) return null;
-    return {id: 'env-owner', name: 'Owner', role: 'owner', sessionId: session.id_hash};
+    staff = {id: 'env-owner', name: 'Owner', role: 'owner', sessionId: session.id_hash};
+  } else {
+    const current = await getStaffById(c.env.DB, session.staff_id);
+    if (!current || current.is_active !== 1 || current.role !== session.role_at_issue || parseStaffApiScopes(current.api_scopes) != null) return null;
+    if (!await timingSafeEqualString(session.credential_fp, await staffCredentialFingerprint(current))) return null;
+    staff = {id: current.id, name: current.name, role: current.role, sessionId: session.id_hash};
   }
-  const current = await getStaffById(c.env.DB, session.staff_id);
-  if (!current || current.is_active !== 1 || current.role !== session.role_at_issue || parseStaffApiScopes(current.api_scopes) != null) return null;
-  if (!await timingSafeEqualString(session.credential_fp, await staffCredentialFingerprint(current))) return null;
-  return {id: current.id, name: current.name, role: current.role, sessionId: session.id_hash};
+  if (session.renewed) {
+    const { sameSite } = resolveAdminAuthConfig(c.env, {requestOrigin: new URL(c.req.url).origin});
+    c.header('Set-Cookie', adminSessionCookie(token, sameSite, maxAge), {append: true});
+    const csrf = csrfTokenFromCookie(c);
+    if (csrf) c.header('Set-Cookie', csrfCookie(csrf, sameSite, maxAge), {append: true});
+  }
+  return staff;
 }
 
 /** Optional second factor at the Worker; does not gate public LINE/LIFF routes. */
@@ -261,7 +286,7 @@ async function authenticateRequest(c: Context<Env>, next: Next): Promise<Respons
   const bearer = bearerToken(c);
   const cookie = cookieToken(c);
   const accessDenied = await requireAccess(c); if (accessDenied) return accessDenied;
-  const staff = bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookie);
+  const staff = bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookie, { renew: true });
   if (!staff) {
     if (bearer || cookie) {
       const limited = await limitAuth(c, 'key', bearer || cookie!);
