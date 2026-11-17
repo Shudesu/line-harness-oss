@@ -162,24 +162,18 @@ export async function getAvailability(
   // SQL とパラメータ数を一致させる。staffId 未指定時の no-WHERE バリアントは
   // ?1 と ?2 だけを参照するので bind() も 2 引数に留める。多いと D1 が
   // "Wrong number of parameter bindings" で 500 を返す（本番再現確認済）。
-  const staffStmt = params.staffId
-    ? db
-        .prepare(
-          `SELECT s.id, s.display_name, s.is_designation_optional
-             FROM staff s
-             INNER JOIN staff_menus sm ON sm.staff_id = s.id AND sm.menu_id = ?2 AND sm.is_offered = 1
-            WHERE s.line_account_id = ?1 AND s.is_active = 1 AND s.deleted_at IS NULL AND s.id = ?3`,
-        )
-        .bind(params.lineAccountId, params.menuId, params.staffId)
-    : db
-        .prepare(
-          `SELECT s.id, s.display_name, s.is_designation_optional
-             FROM staff s
-             INNER JOIN staff_menus sm ON sm.staff_id = s.id AND sm.menu_id = ?2 AND sm.is_offered = 1
-            WHERE s.line_account_id = ?1 AND s.is_active = 1 AND s.deleted_at IS NULL
-            ORDER BY s.is_designation_optional DESC, s.sort_order ASC`,
-        )
-        .bind(params.lineAccountId, params.menuId);
+  // staffId が指定されていても全スタッフを取得する。指名なし枠 (is_designation_optional)
+  // の空き枠は「対応可能な実スタッフの誰かが空いている時刻」の和集合として出すため、
+  // 実スタッフの行が必要になる。絞り込みは算出後に行う。
+  const staffStmt = db
+    .prepare(
+      `SELECT s.id, s.display_name, s.is_designation_optional
+         FROM staff s
+         INNER JOIN staff_menus sm ON sm.staff_id = s.id AND sm.menu_id = ?2 AND sm.is_offered = 1
+        WHERE s.line_account_id = ?1 AND s.is_active = 1 AND s.deleted_at IS NULL
+        ORDER BY s.is_designation_optional DESC, s.sort_order ASC`,
+    )
+    .bind(params.lineAccountId, params.menuId);
   const staffRows = await staffStmt.all<{
     id: string;
     display_name: string;
@@ -256,7 +250,11 @@ export async function getAvailability(
   }
 
   const by_staff: AvailabilityByStaff[] = [];
-  for (const s of staffRows.results) {
+  // 指名なし枠は自前のシフトを持たない前提で、実スタッフの和集合から作る。
+  // 先に実スタッフだけ回し、あとで和集合を組み立てる。
+  const realStaff = staffRows.results.filter((s) => !s.is_designation_optional);
+  const optionalStaff = staffRows.results.filter((s) => s.is_designation_optional);
+  for (const s of realStaff) {
     const slots: AvailabilityByStaff['slots'] = [];
     const hasWorkingHours =
       shifts.results.some((r) => r.staff_id === s.id) ||
@@ -296,5 +294,33 @@ export async function getAvailability(
     }
     by_staff.push({ staff_id: s.id, display_name: s.display_name, slots, has_working_hours: hasWorkingHours });
   }
-  return { by_staff, calendar_sync: calendarSync };
+
+  // 指名なし枠: 実スタッフのスロットを和集合にする (date+start で重複除去)。
+  // 「誰か 1 人でも空いていれば予約できる」という表示にするため。実際の担当は
+  // 予約確定時に割り当てる (routes/booking.ts の pickAssignableStaff)。
+  for (const opt of optionalStaff) {
+    const seen = new Set<string>();
+    const merged: AvailabilityByStaff['slots'] = [];
+    for (const entry of by_staff) {
+      for (const slot of entry.slots) {
+        const key = `${slot.date} ${slot.start}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(slot);
+      }
+    }
+    merged.sort((a, b) => (a.date === b.date ? a.start.localeCompare(b.start) : a.date.localeCompare(b.date)));
+    by_staff.push({
+      staff_id: opt.id,
+      display_name: opt.display_name,
+      slots: merged,
+      has_working_hours: by_staff.some((e) => e.has_working_hours),
+    });
+  }
+
+  // staffId 指定時はここで絞る (指名なし枠の和集合を組み終えたあと)
+  const filtered = params.staffId
+    ? by_staff.filter((e) => e.staff_id === params.staffId)
+    : by_staff;
+  return { by_staff: filtered, calendar_sync: calendarSync };
 }
