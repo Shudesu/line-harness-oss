@@ -1,4 +1,11 @@
 -- delivery_type 'test' support
+--
+-- (2026-07-28 追記) 下記の元コメントの前提は誤り: D1(SQLite) は既存カラムでも
+-- INSERT 時に CHECK 制約を強制するため、レガシー DB では 'test' の書き込みが
+-- constraint failed で失敗していた。レガシー DB の CHECK 更新は
+-- NNN_messages_log_delivery_type_test.sql(テーブル再構築)で行う。
+--
+-- 元コメント(誤った前提の記録として保存):
 -- SQLite cannot modify CHECK constraints, but D1 doesn't enforce CHECK on INSERT
 -- when the column already exists. We just document the intent here.
 -- The application code will write 'test' values; the schema.sql has the updated CHECK
