@@ -5,3 +5,4 @@ export * from "./message-group";
 export * from "./timing-safe";
 
 export * from './ig-link-token.js';
+export type { AdminExtension } from './admin-extensions.js';
