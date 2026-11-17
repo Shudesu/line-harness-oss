@@ -1,0 +1,19 @@
+name: stripe-subscriptions plugin
+on:
+  pull_request:
+    paths: ['examples/plugins/stripe-subscriptions/**', '.github/workflows/plugin-stripe-subscriptions-ci.yml']
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/plugins/stripe-subscriptions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
