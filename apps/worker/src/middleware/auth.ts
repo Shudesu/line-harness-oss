@@ -18,6 +18,15 @@ const SESSION_MAX_AGE = 604800;
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+function legacyCookieUpgradeActive(start: string | undefined): boolean {
+  // 固定の14日間。未設定・不正な日時・開始前は拒否し、再デプロイでも延長しない。
+  if (!start || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(start)) return false;
+  const startedAt = Date.parse(start);
+  if (!Number.isFinite(startedAt) || new Date(startedAt).toISOString() !== (start.length === 20 ? start.replace('Z', '.000Z') : start)) return false;
+  const now = Date.now();
+  return now >= startedAt && now < startedAt + 14 * 86400_000;
+}
+
 function parseCookieHeader(cookieHeader: string | undefined): Record<string, string> {
   if (!cookieHeader) return {};
   const cookies: Record<string, string> = {};
@@ -96,7 +105,7 @@ export async function authenticateApiToken(
 ): Promise<AuthenticatedStaff | null> {
   if (!token || token.length > 4096) return null;
 
-  const staff = await getStaffByApiKey(c.env.DB, token);
+  const staff = await getStaffByApiKey(c.env.DB, token, { migrateLegacy: c.env.STAFF_API_KEY_LAZY_HASH_ENABLED === 'true' });
   if (staff) {
     if (!['owner', 'admin', 'staff'].includes(staff.role)) return null;
     return { id: staff.id, name: staff.name, role: staff.role, ...(staff.api_scopes == null ? {} : { apiScopes: parseStaffApiScopes(staff.api_scopes) }) };
@@ -134,10 +143,27 @@ export async function issueAdminSession(c: Context<Env>, staff: AuthenticatedSta
     credentialFp: await hashApiKey(credential), authMethod: method });
   const config = resolveAdminAuthConfig(c.env, {requestOrigin: new URL(c.req.url).origin});
   c.header('Set-Cookie', adminSessionCookie(session.token, config.sameSite), {append: true});
+  return session;
 }
 
-export async function authenticateCookieSession(c: Context<Env>, token: string | null): Promise<AuthenticatedStaff | null> {
+export async function authenticateCookieSession(c: Context<Env>, token: string | null): Promise<AuthenticatedStaff | Response | null> {
   if (!token) return null;
+  if (!token.startsWith('lhs_') && legacyCookieUpgradeActive(c.env.ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT)) {
+    // 更新要求では交換しない。まずGET /api/auth/sessionでCookieとCSRFを取得する。
+    if (!SAFE_METHODS.has(c.req.method.toUpperCase())) return null;
+    c.header('Cache-Control', 'no-store');
+    const limited = await limitAuth(c, 'legacy_upgrade', token); if (limited) return limited;
+    const staff = await authenticateApiToken(c, token);
+    if (!staff || staff.apiScopes != null) {
+      await audit(c, 'legacy_cookie_upgrade', 'denied', staff?.id);
+      return null;
+    }
+    const config = resolveAdminAuthConfig(c.env, { requestOrigin: new URL(c.req.url).origin });
+    if (config.misconfigured) return c.json({success:false,error:config.misconfigured},500);
+    await audit(c, 'legacy_cookie_upgrade', 'attempted', staff.id);
+    const session = await issueAdminSession(c, staff, token);
+    return { ...staff, sessionId: session.sessionId };
+  }
   const session = await getAdminSession(c.env.DB, token);
   if (!session) return null;
   if (session.staff_id === 'env-owner') {
@@ -203,6 +229,7 @@ async function authenticateRequest(c: Context<Env>, next: Next): Promise<Respons
     const cookie = cookieToken(c);
     const accessOk = c.env.ACCESS_REQUIRED !== 'true' || await verifyAccessJwt(c.req.header('Cf-Access-Jwt-Assertion'), c.env);
     const staff = accessOk ? (bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookieToken(c))) : null;
+    if (staff instanceof Response) return staff;
     if (!staff && (bearer || cookie)) {
       const limited = await limitAuth(c, 'key', bearer || cookie!);
       if (limited) return limited;
@@ -262,6 +289,7 @@ async function authenticateRequest(c: Context<Env>, next: Next): Promise<Respons
   const cookie = cookieToken(c);
   const accessDenied = await requireAccess(c); if (accessDenied) return accessDenied;
   const staff = bearer ? await authenticateApiToken(c, bearer) : await authenticateCookieSession(c, cookie);
+  if (staff instanceof Response) return staff;
   if (!staff) {
     if (bearer || cookie) {
       const limited = await limitAuth(c, 'key', bearer || cookie!);

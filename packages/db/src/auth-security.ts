@@ -17,7 +17,7 @@ export async function consumeAuthRateLimit(db: D1Database, namespace: string, id
   return { allowed: row !== null, remaining: row ? Math.max(0,max-row.attempts) : 0, retryAfter: Math.max(1,expires-now) };
 }
 
-export type AuditAction = 'login' | 'logout' | 'sso' | 'key_rejected' | 'access_rejected' | 'staff_change' | 'admin_update' | 'key_migration' | 'sessions_revoke';
+export type AuditAction = 'login' | 'logout' | 'sso' | 'legacy_cookie_upgrade' | 'key_rejected' | 'access_rejected' | 'staff_change' | 'admin_update' | 'key_migration' | 'sessions_revoke';
 export type AuditOutcome = 'success' | 'denied' | 'attempted';
 /** No request bodies, URLs, credentials, arbitrary metadata or user agents. */
 export async function writeAuthAudit(db: D1Database, event: {

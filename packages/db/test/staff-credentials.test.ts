@@ -28,6 +28,40 @@ function setup(legacy = false) {
 }
 
 describe('hashed staff credentials', () => {
+  it.each([undefined, false])('preserves legacy credentials for rollback with migrateLegacy=%s', async migrateLegacy => {
+    const s=setup();s.add('old','lh_legacy-secret');
+    const before=s.sql.prepare('SELECT * FROM staff_members').get();
+    for(let i=0;i<2;i++) expect((await getStaffByApiKey(s.db,'lh_legacy-secret',{migrateLegacy}))?.id).toBe('old');
+    expect(s.sql.prepare('SELECT * FROM staff_members').get()).toEqual(before);
+    expect(s.queries).toHaveLength(4);
+    expect(s.queries.every(query=>query.startsWith('SELECT'))).toBe(true);
+    // 旧Workerの平文照会で引き続き認証できる。
+    expect(s.sql.prepare('SELECT id FROM staff_members WHERE api_key=? AND is_active=1').get('lh_legacy-secret')).toEqual({id:'old'});
+    expect(await getStaffByApiKey(s.db,'wrong')).toBeNull();
+    s.sql.exec('UPDATE staff_members SET is_active=0');
+    expect(await getStaffByApiKey(s.db,'lh_legacy-secret')).toBeNull();
+  });
+  it('uses current plaintext, ignoring a stale digest without rewriting either field', async () => {
+    const s=setup();s.add('old','lh_after');
+    const stale=await hashApiKey('lh_before');
+    s.sql.prepare('UPDATE staff_members SET api_key_hash=?').run(stale);
+    expect(await getStaffByApiKey(s.db,'lh_before')).toBeNull();
+    expect((await getStaffByApiKey(s.db,'lh_after'))?.id).toBe('old');
+    expect(s.sql.prepare('SELECT api_key,api_key_hash FROM staff_members').get()).toEqual({api_key:'lh_after',api_key_hash:stale});
+    expect(await backfillStaffApiKeyHashes(s.db)).toBe(1);
+    expect((await getStaffByApiKey(s.db,'lh_after'))?.api_key).toBe('hashed:old');
+  });
+  it.each([100, 10_000, 100_000])('uses two indexed reads and no writes with %i plaintext keys', async count => {
+    const s=setup();
+    s.sql.transaction(()=>{for(let i=0;i<count;i++)s.add(`id-${i}`,`lh_secret-${i}`);})();
+    expect((await getStaffByApiKey(s.db,'lh_secret-0'))?.id).toBe('id-0');
+    expect(s.queries).toHaveLength(2);
+    for (const query of s.queries) {
+      const plan=s.sql.prepare('EXPLAIN QUERY PLAN '+query).all('synthetic') as {detail:string}[];
+      expect(plan.some(row=>/SEARCH .* USING INDEX/.test(row.detail))).toBe(true);
+      expect(plan.some(row=>/SCAN|TEMP B-TREE/.test(row.detail))).toBe(false);
+    }
+  });
   it('returns new plaintext only once while storing a digest and display suffix', async () => {
     const s=setup();
     const created=await createStaffMember(s.db,{ name:'Test',role:'staff',apiScopes:['messages:read'] });
@@ -44,13 +78,13 @@ describe('hashed staff credentials', () => {
   });
   it('migrates an existing credential without changing the accepted key', async () => {
     const s=setup();s.add('old','lh_legacy-secret');
-    const row=await getStaffByApiKey(s.db,'lh_legacy-secret');
+    const row=await getStaffByApiKey(s.db,'lh_legacy-secret',{migrateLegacy:true});
     expect(row?.api_key).toBe('hashed:old');
     expect(row?.api_key_hash).toBe(await hashApiKey('lh_legacy-secret'));
     expect(row?.api_key_created_at).toBeNull(); // legacy creation time is unknown
-    expect(await getStaffByApiKey(s.db,'hashed:old')).toBeNull();
+    expect(await getStaffByApiKey(s.db,'hashed:old',{migrateLegacy:true})).toBeNull();
     s.sql.prepare('UPDATE staff_members SET is_active=0').run();
-    expect(await getStaffByApiKey(s.db,'lh_legacy-secret')).toBeNull();
+    expect(await getStaffByApiKey(s.db,'lh_legacy-secret',{migrateLegacy:true})).toBeNull();
   });
   it('fails closed on missing migration and database outages', async () => {
     const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
@@ -71,15 +105,42 @@ describe('hashed staff credentials', () => {
           s.sql.prepare('UPDATE staff_members SET api_key=?, api_key_hash=?, is_active=? WHERE id=?').run('hashed:old',newHash,revoked?0:1,'old');
         }
       });
-      expect(await getStaffByApiKey(s.db,'lh_legacy-secret')).toBeNull();
+      expect(await getStaffByApiKey(s.db,'lh_legacy-secret',{migrateLegacy:true})).toBeNull();
       expect(s.sql.prepare('SELECT api_key_hash FROM staff_members').get()).toEqual({api_key_hash:newHash});
     }
+  });
+  it('accepts a concurrent conversion with one indexed re-read after a lost CAS', async () => {
+    const s=setup();s.add('old','lh_legacy-secret');
+    const digest=await hashApiKey('lh_legacy-secret');
+    s.intercept(query=>{
+      if (query.startsWith('UPDATE')) {
+        s.intercept(()=>{});
+        s.sql.prepare('UPDATE staff_members SET api_key=?,api_key_hash=? WHERE id=?').run('hashed:old',digest,'old');
+      }
+    });
+    expect((await getStaffByApiKey(s.db,'lh_legacy-secret',{migrateLegacy:true}))?.id).toBe('old');
+    expect(s.queries).toHaveLength(4);
+    const plan=s.sql.prepare('EXPLAIN QUERY PLAN '+s.queries[3]).all(digest) as {detail:string}[];
+    expect(plan.some(row=>/SEARCH .* USING INDEX/.test(row.detail))).toBe(true);
+  });
+  it.each([false,true])('accepts conversion between the digest and plaintext reads with lazy migration %s', async migrateLegacy => {
+    const s=setup();s.add('old','lh_legacy-secret');
+    const digest=await hashApiKey('lh_legacy-secret');
+    s.intercept(query=>{
+      if (query.startsWith('SELECT * FROM staff_members WHERE api_key =')) {
+        s.intercept(()=>{});
+        s.sql.prepare('UPDATE staff_members SET api_key=?,api_key_hash=? WHERE id=?').run('hashed:old',digest,'old');
+      }
+    });
+    expect((await getStaffByApiKey(s.db,'lh_legacy-secret',{migrateLegacy}))?.id).toBe('old');
+    expect(s.queries).toHaveLength(3);
+    expect(s.queries.every(query=>query.startsWith('SELECT'))).toBe(true);
   });
   it('fails closed when the migration write fails', async () => {
     vi.spyOn(console,'warn').mockImplementation(()=>{});
     const s=setup();s.add('old','lh_legacy-secret');
     s.intercept(q=>{if(q.startsWith('UPDATE'))throw new Error('write unavailable');});
-    await expect(getStaffByApiKey(s.db,'lh_legacy-secret')).rejects.toThrow();
+    await expect(getStaffByApiKey(s.db,'lh_legacy-secret',{migrateLegacy:true})).rejects.toThrow();
   });
   it('bounds maintenance and leaves no plaintext after repeated batches', async () => {
     const s=setup();for(let i=0;i<5;i++)s.add(`id-${i}`,`lh_key-${i}`,i%2);
@@ -113,10 +174,10 @@ describe('hashed staff credentials', () => {
 
   it('reconciles a late legacy-worker key rotation without accepting the stale digest', async () => {
     const s=setup();s.add('old','lh_before');
-    expect((await getStaffByApiKey(s.db,'lh_before'))?.id).toBe('old');
+    expect((await getStaffByApiKey(s.db,'lh_before',{migrateLegacy:true}))?.id).toBe('old');
     s.sql.prepare('UPDATE staff_members SET api_key=? WHERE id=?').run('lh_after','old');
-    expect(await getStaffByApiKey(s.db,'lh_before')).toBeNull();
-    expect((await getStaffByApiKey(s.db,'lh_after'))?.id).toBe('old');
+    expect(await getStaffByApiKey(s.db,'lh_before',{migrateLegacy:true})).toBeNull();
+    expect((await getStaffByApiKey(s.db,'lh_after',{migrateLegacy:true}))?.id).toBe('old');
     expect(s.sql.prepare('SELECT api_key,api_key_hash FROM staff_members').get()).toEqual({api_key:'hashed:old',api_key_hash:await hashApiKey('lh_after')});
   });
 
@@ -124,9 +185,9 @@ describe('hashed staff credentials', () => {
     const s=setup();s.add('old','lh_before');
     s.sql.prepare('UPDATE staff_members SET api_key_hash=? WHERE id=?').run(await hashApiKey('lh_before'),'old');
     s.intercept(query=>{if(query.startsWith('UPDATE')){s.intercept(()=>{});s.sql.prepare('UPDATE staff_members SET api_key=? WHERE id=?').run('lh_after','old');}});
-    expect(await getStaffByApiKey(s.db,'lh_before')).toBeNull();
+    expect(await getStaffByApiKey(s.db,'lh_before',{migrateLegacy:true})).toBeNull();
     expect(await backfillStaffApiKeyHashes(s.db,{limit:1})).toBe(1);
-    expect((await getStaffByApiKey(s.db,'lh_after'))?.id).toBe('old');
+    expect((await getStaffByApiKey(s.db,'lh_after',{migrateLegacy:true}))?.id).toBe('old');
   });
 
 });

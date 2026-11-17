@@ -68,20 +68,33 @@ export async function staffCredentialFingerprint(staff: StaffMember): Promise<st
   return hashApiKey(staff.api_key);
 }
 
-/** Indexed digest lookup, with compare-and-swap upgrade of legacy credentials.
+/** Indexed digest lookup, with opt-in compare-and-swap upgrade of legacy credentials.
  * Never accept a storage placeholder or fall back on a schema/storage error. */
-export async function getStaffByApiKey(db: D1Database, apiKey: string): Promise<StaffMember | null> {
+export async function getStaffByApiKey(db: D1Database, apiKey: string, options: { migrateLegacy?: boolean } = {}): Promise<StaffMember | null> {
   if (!apiKey || apiKey.length > 4096 || apiKey.startsWith('hashed:')) return null;
   const digest = await hashApiKey(apiKey);
-  const found = await db.prepare('SELECT * FROM staff_members WHERE api_key_hash = ? AND is_active = 1')
+  const readDigest = () => db.prepare('SELECT * FROM staff_members WHERE api_key_hash = ? AND is_active = 1')
     .bind(digest).first<StaffMember>();
+  const found = await readDigest();
   if (found && found.api_key === `hashed:${found.id}`) return found;
   const legacy = await db.prepare('SELECT * FROM staff_members WHERE api_key = ? AND is_active = 1')
     .bind(apiKey).first<StaffMember>();
-  if (!legacy) return null;
-  return db.prepare(`UPDATE staff_members SET api_key_hash = ?, api_key_last4 = ?, api_key = ?
+  if (!legacy) {
+    // Conversion can also finish between the two indexed reads, including
+    // explicit backfill while lazy migration is disabled.
+    const concurrent = await readDigest();
+    return concurrent && concurrent.api_key === `hashed:${concurrent.id}` ? concurrent : null;
+  }
+  if (options.migrateLegacy !== true) return legacy;
+  const migrated = await db.prepare(`UPDATE staff_members SET api_key_hash = ?, api_key_last4 = ?, api_key = ?
     WHERE id = ? AND api_key = ? AND api_key_hash IS ? AND is_active = 1 RETURNING *`)
     .bind(digest, apiKey.slice(-4), `hashed:${legacy.id}`, legacy.id, apiKey, legacy.api_key_hash ?? null).first<StaffMember>();
+  if (migrated) return migrated;
+  // Another request/backfill may have converted the same key. One indexed
+  // re-read accepts only that conversion, never a rotation, revocation or
+  // late plaintext write with a stale digest. Storage errors still propagate.
+  const concurrent = await readDigest();
+  return concurrent?.id === legacy.id && concurrent.api_key === `hashed:${legacy.id}` ? concurrent : null;
 }
 
 /** One bounded scan of the pending-only index; no COUNT/full-table sweep. */

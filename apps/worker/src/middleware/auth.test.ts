@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authMiddleware } from './auth.js';
+import { hashApiKey } from '@line-crm/db';
 import { resolveCorsOrigin } from './admin-auth-config.js';
 import { adminAuth } from '../routes/admin-auth.js';
 import type { Env } from '../index.js';
@@ -334,5 +335,207 @@ describe('CORS allowed / blocked origins', () => {
       headers: { Origin: 'https://evil.example.com', Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
     }, crossSiteEnv());
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+});
+
+describe('期限付きの旧Cookie交換', () => {
+  const start = '2026-11-04T00:00:00Z';
+  const startMs = Date.parse(start);
+  function compatibilityEnv(overrides: Partial<Env['Bindings']> = {}) {
+    vi.spyOn(Date, 'now').mockReturnValue(startMs + 86400_000);
+    return env({ ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT: start, ...overrides });
+  }
+  afterEach(() => vi.restoreAllMocks());
+
+  test.each(['staff-key', 'env-key', 'legacy-env-key'])('%sを再検証し、通常のセッションとCSRFを発行する', async key => {
+    const bindings = compatibilityEnv({ LEGACY_API_KEY: 'legacy-env-key', ADMIN_ORIGIN: PAGES, ADMIN_ALLOW_CROSS_SITE: 'true' });
+    const a = app();
+    const res = await a.request('/api/auth/session', { headers: { Cookie: `lh_admin_session=${key}` } }, bindings);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    const session = cookieFor(res, 'lh_admin_session')!;
+    expect(session).toMatch(/^lh_admin_session=lhs_[A-Za-z0-9_-]{43};/);
+    for (const attr of ['HttpOnly', 'Secure', 'SameSite=None', 'Max-Age=604800']) expect(session).toContain(attr);
+    const body = await res.json() as { data: { id: string }; csrfToken: string };
+    expect(body.data.id).toBe(key === 'staff-key' ? 'staff-1' : 'env-owner');
+    const csrf = cookieFor(res, 'lh_csrf')!.split(';')[0];
+    const cookie = session.split(';')[0] + '; ' + csrf;
+    expect((await a.request('/api/protected', { method: 'POST', headers: { Cookie: cookie } }, bindings)).status).toBe(403);
+    expect((await a.request('/api/protected', { method: 'POST', headers: { Cookie: cookie, 'X-CSRF-Token': 'wrong' } }, bindings)).status).toBe(403);
+    expect((await a.request('/api/protected', { method: 'POST', headers: { Cookie: cookie, 'X-CSRF-Token': body.csrfToken } }, bindings)).status).toBe(200);
+    // 互換期間終了後も発行済みセッションは通常の検証を受ける。
+    bindings.ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT = '';
+    expect((await a.request('/api/protected', { headers: { Cookie: cookie } }, bindings)).status).toBe(200);
+    const sql = databases.at(-1)!.sqlite;
+    expect(sql.prepare('SELECT action,outcome,actor_id FROM auth_audit_log').all()).toEqual([
+      { action: 'legacy_cookie_upgrade', outcome: 'attempted', actor_id: body.data.id },
+    ]);
+    const dump = JSON.stringify(sql.prepare('SELECT * FROM admin_sessions').all()) + JSON.stringify(sql.prepare('SELECT * FROM auth_audit_log').all());
+    expect(dump).not.toContain(key);
+    expect(dump).not.toContain(session.split(';')[0].split('=')[1]);
+    if (key === 'staff-key') sql.exec("UPDATE staff_members SET is_active=0");
+    else if (key === 'env-key') bindings.API_KEY = 'rotated-env-key';
+    else bindings.LEGACY_API_KEY = undefined;
+    expect((await a.request('/api/protected', { headers: { Cookie: cookie } }, bindings)).status).toBe(401);
+  });
+
+  test.each([undefined, '', 'false', 'true', 'invalid', '2026-02-30T00:00:00Z', '2026-11-04', '2026-11-04T00:00:00', '2026-11-04T24:00:00Z'])('未設定・不正値 %s は旧Cookieを拒否する', async value => {
+    const bindings = compatibilityEnv({ ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT: value });
+    const res = await app().request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings);
+    expect(res.status).toBe(401);
+    expect(cookieFor(res, 'lh_admin_session')).toBeUndefined();
+  });
+
+  test.each([[-1, 401], [0, 200], [14 * 86400_000 - 1, 200], [14 * 86400_000, 401], [30 * 86400_000, 401]])('開始から %i ms の境界を判定する', async (elapsed, status) => {
+    const bindings = compatibilityEnv();
+    vi.spyOn(Date, 'now').mockReturnValue(startMs + elapsed);
+    const res = await app().request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings);
+    expect(res.status).toBe(status);
+    expect(!!cookieFor(res, 'lh_admin_session')).toBe(status === 200);
+  });
+
+  test('ミリ秒付きUTC日時を受け付ける', async () => {
+    const bindings = compatibilityEnv({ ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT: '2026-11-04T00:00:00.000Z' });
+    expect((await app().request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings)).status).toBe(200);
+  });
+
+  test.each(['POST', 'PUT', 'PATCH', 'DELETE'])('%sではCSRFの有無にかかわらず旧Cookieを交換しない', async method => {
+    const bindings = compatibilityEnv();
+    for (const csrf of [undefined, 'test-csrf']) {
+      const headers: Record<string, string> = { Cookie: 'lh_admin_session=staff-key; lh_csrf=test-csrf' };
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      const res = await app().request('/api/protected', { method, headers }, bindings);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ success: false, error: 'Unauthorized' });
+      expect(cookieFor(res, 'lh_admin_session')).toBeUndefined();
+    }
+    expect(databases.at(-1)!.sqlite.prepare('SELECT count(*) AS n FROM admin_sessions').get()).toEqual({ n: 1 });
+  });
+
+  test.each(["api_scopes='[]'", `api_scopes='["messages:read"]'`, "api_scopes='invalid'", 'is_active=0'])('%sのスタッフは交換できない', async change => {
+    const bindings = compatibilityEnv();
+    databases.at(-1)!.sqlite.exec('UPDATE staff_members SET ' + change);
+    const res = await app().request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings);
+    expect(res.status).toBe(401);
+    expect(cookieFor(res, 'lh_admin_session')).toBeUndefined();
+  });
+
+  test.each(['wrong', 'hashed:staff-1', 'lhs_invalid', TEST_SESSION])('%sはBearer資格情報への再解釈で復活しない', async token => {
+    const bindings = compatibilityEnv({ API_KEY: token.startsWith('lhs_') ? token : 'env-key' });
+    const sql = databases.at(-1)!.sqlite;
+    sql.exec('UPDATE admin_sessions SET revoked_at=1');
+    const res = await app().request('/api/protected', { headers: { Cookie: `lh_admin_session=${token}` } }, bindings);
+    expect(res.status).toBe(401);
+    expect(cookieFor(res, 'lh_admin_session')).toBeUndefined();
+  });
+
+  test.each([false, true])('six parallel legacy GETs succeed with lazy hashing %s without spending login quota', async lazy => {
+    const bindings = compatibilityEnv({ STAFF_API_KEY_LAZY_HASH_ENABLED: String(lazy) });
+    const sql = databases.at(-1)!.sqlite;
+    sql.exec("UPDATE staff_members SET api_key='staff-key',api_key_hash=NULL");
+    const a = app();
+    const responses = await Promise.all(Array.from({ length: 6 }, () =>
+      a.request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings)));
+    expect(responses.map(r => r.status)).toEqual(Array(6).fill(200));
+    expect(sql.prepare('SELECT count(*) AS n FROM admin_sessions').get()).toEqual({ n: 7 });
+    for (const response of responses) {
+      const cookie = cookieFor(response, 'lh_admin_session')!.split(';')[0];
+      expect((await a.request('/api/protected', { headers: { Cookie: cookie } }, bindings)).status).toBe(200);
+    }
+    for (let i = 0; i < 10; i++) {
+      expect((await a.request('/api/auth/login', { method: 'POST', body: JSON.stringify({ apiKey: 'staff-key' }) }, bindings)).status).toBe(200);
+    }
+    expect((await a.request('/api/auth/login', { method: 'POST', body: JSON.stringify({ apiKey: 'staff-key' }) }, bindings)).status).toBe(429);
+  });
+
+  test('bounds parallel upgrades per credential across IPs, independently of login and other credentials', async () => {
+    const bindings = compatibilityEnv();
+    const a = app();
+    const responses = await Promise.all(Array.from({ length: 36 }, (_, i) =>
+      a.request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key', 'CF-Connecting-IP': `192.0.2.${i + 1}` } }, bindings)));
+    expect(responses.filter(r => r.status === 200)).toHaveLength(30);
+    expect(responses.filter(r => r.status === 429)).toHaveLength(6);
+    for (const res of responses.filter(r => r.status === 429)) {
+      expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0);
+      expect(cookieFor(res, 'lh_admin_session')).toBeUndefined();
+    }
+    const sql = databases.at(-1)!.sqlite;
+    expect(sql.prepare('SELECT count(*) AS n FROM admin_sessions').get()).toEqual({ n: 31 });
+    expect(sql.prepare('SELECT count(*) AS n FROM auth_audit_log').get()).toEqual({ n: 30 });
+    const cookie = cookieFor(responses.find(r => r.status === 200)!, 'lh_admin_session')!.split(';')[0];
+    expect((await a.request('/api/protected', { headers: { Cookie: cookie } }, bindings)).status).toBe(200);
+    expect((await a.request('/api/forms/test', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings)).status).toBe(429);
+    expect((await a.request('/api/protected', { headers: { Cookie: 'lh_admin_session=env-key' } }, bindings)).status).toBe(200);
+    expect((await a.request('/api/auth/login', { method: 'POST', body: JSON.stringify({ apiKey: 'staff-key' }) }, bindings)).status).toBe(200);
+    // Fixed-window renewal, with no automatic retries in the server/client.
+    vi.spyOn(Date, 'now').mockReturnValue(startMs + 86400_000 + 300_000);
+    expect((await a.request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings)).status).toBe(200);
+  });
+
+  test.each(['lazy', 'migrate-keys'])('plaintext-cookie sessions survive %s conversion with the same credential fingerprint', async mode => {
+    const bindings = compatibilityEnv();
+    const sql = databases.at(-1)!.sqlite;
+    sql.exec("UPDATE staff_members SET api_key='staff-key',api_key_hash=NULL");
+    const a = app();
+    const upgraded = await a.request('/api/auth/session', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings);
+    expect(upgraded.status).toBe(200);
+    const cookie = cookieFor(upgraded, 'lh_admin_session')!.split(';')[0];
+    const idHash = await hashApiKey(cookie.split('=')[1]);
+    const fingerprint = await hashApiKey('staff-key');
+    const storedSession = () => sql.prepare('SELECT credential_fp FROM admin_sessions WHERE id_hash=?').get(idHash);
+    expect(storedSession()).toEqual({ credential_fp: fingerprint });
+    expect(sql.prepare('SELECT api_key_hash FROM staff_members').get()).toEqual({ api_key_hash: null });
+    bindings.STAFF_API_KEY_LAZY_HASH_ENABLED = 'true';
+    expect((await a.request('/api/protected', { headers: { Cookie: cookie } }, bindings)).status).toBe(200);
+    if (mode === 'lazy') {
+      expect((await a.request('/api/protected', { headers: { Authorization: 'Bearer staff-key' } }, bindings)).status).toBe(200);
+    } else {
+      // The explicit migration also works with lazy conversion disabled.
+      bindings.STAFF_API_KEY_LAZY_HASH_ENABLED = 'false';
+      const migration = await a.request('/api/auth/migrate-keys', { method: 'POST', headers: { Authorization: 'Bearer env-key' } }, bindings);
+      expect(migration.status).toBe(200);
+      expect(await migration.json()).toMatchObject({ data: { migrated: 1 } });
+    }
+    expect(sql.prepare('SELECT api_key,api_key_hash FROM staff_members').get()).toEqual({ api_key: 'hashed:staff-1', api_key_hash: fingerprint });
+    expect(storedSession()).toEqual({ credential_fp: fingerprint });
+    bindings.ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT = '';
+    expect((await a.request('/api/protected', { headers: { Cookie: cookie } }, bindings)).status).toBe(200);
+    const maintenance = await a.request('/api/auth/migrate-keys', { method: 'POST', headers: { Authorization: 'Bearer env-key' } }, bindings);
+    expect(await maintenance.json()).toMatchObject({ data: { migrated: 0 } });
+    expect((await a.request('/api/protected', { headers: { Cookie: cookie } }, bindings)).status).toBe(200);
+  });
+
+  test.each(['auth_rate_limits', 'admin_sessions', 'auth_audit_log'])('%sの障害ではCookieを発行せず拒否する', async table => {
+    const bindings = compatibilityEnv();
+    databases.at(-1)!.sqlite.exec('DROP TABLE ' + table);
+    const res = await app().request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings);
+    expect(res.status).toBe(503);
+    expect(cookieFor(res, 'lh_admin_session')).toBeUndefined();
+  });
+
+  test('Access必須・構成不正では旧Cookieを交換しない', async () => {
+    const bindings = compatibilityEnv({ ACCESS_REQUIRED: 'true' });
+    const request = () => app().request('/api/protected', { headers: { Cookie: 'lh_admin_session=staff-key' } }, bindings);
+    const denied = await request();
+    expect(denied.status).toBe(403);
+    expect(cookieFor(denied, 'lh_admin_session')).toBeUndefined();
+    bindings.ACCESS_REQUIRED = 'false';
+    bindings.ADMIN_ORIGIN = PAGES;
+    const misconfigured = await request();
+    expect(misconfigured.status).toBe(500);
+    expect(cookieFor(misconfigured, 'lh_admin_session')).toBeUndefined();
+  });
+
+  test.each([undefined, 'false', 'TRUE', 'true'])('遅延変換フラグ %s はBearer・ログイン・旧Cookieで共通', async flag => {
+    for (const kind of ['bearer', 'login', 'cookie']) {
+      const bindings = compatibilityEnv({ STAFF_API_KEY_LAZY_HASH_ENABLED: flag });
+      const sql = databases.at(-1)!.sqlite;
+      sql.exec("UPDATE staff_members SET api_key='staff-key',api_key_hash=NULL");
+      const res = await app().request(kind === 'login' ? '/api/auth/login' : '/api/protected', kind === 'login'
+        ? { method: 'POST', body: JSON.stringify({ apiKey: 'staff-key' }) }
+        : { headers: kind === 'bearer' ? { Authorization: 'Bearer staff-key' } : { Cookie: 'lh_admin_session=staff-key' } }, bindings);
+      expect(res.status).toBe(200);
+      expect(sql.prepare('SELECT api_key FROM staff_members').get()).toEqual({ api_key: flag === 'true' ? 'hashed:staff-1' : 'staff-key' });
+    }
   });
 });
