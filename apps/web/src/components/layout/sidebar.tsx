@@ -7,7 +7,7 @@ import { useAccount } from '@/contexts/account-context'
 import type { AccountWithStats } from '@/contexts/account-context'
 import { countryFlag } from '@/lib/country-flag'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
-import { accountTone, pageScope, isInternOnlyPage, isInternAccount } from '@/lib/account-look'
+import { accountTone, pageScope, isInternOnlyPage, isInternAccount, isAsakatsuOnlyPage, isAsakatsuAccount } from '@/lib/account-look'
 
 const appVersion = process.env.APP_VERSION || '0.0.0'
 const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
@@ -46,6 +46,7 @@ const menuItems = [
       { href: '/affiliates', label: 'アフィリエイト', icon: 'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 12.632a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z' },
       { href: '/conversions', label: 'CV計測', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
       { href: '/scoring', label: 'スコアリング', icon: 'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z' },
+      { href: '/screening', label: '二次審査', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2zm4-5l2 2 4-4' },
       { href: '/form-submissions', label: 'フォーム回答', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
       { href: '/duplicates', label: '重複検出', icon: 'M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z' },
     ],
@@ -100,7 +101,7 @@ const MENU_GROUPS: { label: string | null; hrefs: string[]; collapsible?: boolea
   { label: null, hrefs: ['/', '/notifications', '/chats', '/friends'] },
   { label: 'LINEで送る', hrefs: ['/broadcasts', '/scenarios', '/friend-add-settings', '/reminders', '/line-copy', '/templates'] },
   { label: 'LINEの画面・自動返信', hrefs: ['/rich-menus', '/auto-replies', '/automations'] },
-  { label: '結果を見る', hrefs: ['/intern-stats', '/join-links', '/form-submissions', '/inflow-links', '/conversions'] },
+  { label: '結果を見る', hrefs: ['/intern-stats', '/join-links', '/form-submissions', '/screening', '/inflow-links', '/conversions'] },
   { label: '設定', hrefs: ['/accounts', '/staff'] },
   {
     label: 'その他の機能',
@@ -330,6 +331,7 @@ export default function Sidebar() {
             if (item.href === '/staff' && staffRole !== 'owner') return false
             if (item.href === '/accounts' && staffRole === 'staff') return false
             if (isInternOnlyPage(item.href) && selectedAccount && !isInternAccount(selectedAccount)) return false
+            if (isAsakatsuOnlyPage(item.href) && selectedAccount && !isAsakatsuAccount(selectedAccount)) return false
             return true
           })
           if (items.length === 0) return null

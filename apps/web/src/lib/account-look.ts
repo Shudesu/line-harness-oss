@@ -39,6 +39,7 @@ const ACCOUNT_SCOPED_PREFIXES = [
   '/events',
   '/line-copy',
   '/join-links',
+  '/screening',
 ]
 
 // KIDOUインターンの LINE アカウント。数字はこのアカウント専用の画面
@@ -48,6 +49,20 @@ const INTERN_ONLY_PREFIXES = ['/intern-stats']
 /** KIDOUインターンの LINE を選んでいるか（アンケートなどインターン専用の部品を出すかの判定） */
 export function isInternAccount(account: { channelId: string } | null | undefined): boolean {
   return account?.channelId === INTERN_CHANNEL_ID
+}
+
+// 軌道（朝活）の LINE アカウント。二次審査はこのアカウント専用の画面
+export const ASAKATSU_CHANNEL_ID = '2008806062'
+const ASAKATSU_ONLY_PREFIXES = ['/screening']
+
+/** 軌道（朝活）の LINE を選んでいるか */
+export function isAsakatsuAccount(account: { channelId: string } | null | undefined): boolean {
+  return account?.channelId === ASAKATSU_CHANNEL_ID
+}
+
+/** 軌道専用の画面かどうか（ほかのアカウントを開いているときはメニューに出さない） */
+export function isAsakatsuOnlyPage(pathname: string): boolean {
+  return ASAKATSU_ONLY_PREFIXES.some((p) => pathname.startsWith(p))
 }
 
 /** インターン専用の画面かどうか（ほかのアカウントを開いているときはメニューに出さない） */
