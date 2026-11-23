@@ -333,6 +333,25 @@ describe('configurable mileage rules', () => {
     });
   });
 
+  it('skips friends flagged do_not_contact in metadata, even while still following', async () => {
+    sqlite.prepare(
+      `UPDATE friends
+          SET is_following = 1,
+              first_followed_at = '2026-05-01T10:00:00.000+09:00',
+              current_follow_started_at = '2026-05-01T10:00:00.000+09:00',
+              last_followed_at = '2026-05-01T10:00:00.000+09:00',
+              metadata = '{"do_not_contact": true}'
+        WHERE id = 'friend-1'`,
+    ).run();
+
+    const result = await enqueueFollowingMileageMilestones(db, {
+      now: '2026-08-10T10:00:00.000+09:00',
+      limitPerMilestone: 100,
+    });
+    expect(result).toMatchObject({ eventsCreated: 0, queued: 0 });
+    expect((await getMileageSummaryForFriend(db, 'friend-1')).available).toBe(0);
+  });
+
   it('resets the continuous-follow streak after a block and preserves earned miles', async () => {
     sqlite.prepare(
       `UPDATE friends

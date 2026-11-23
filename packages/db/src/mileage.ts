@@ -1528,6 +1528,14 @@ export interface FollowingMileageReconcileResult {
  * Materialize registration/continuous-follow milestones in bounded chunks.
  * Called on the existing 6-hour cron. Historic accounts are gradually caught
  * up without a full-table write spike; normal queue processing remains 5-minutely.
+ *
+ * Eligibility only checked `is_following`, so a friend who unfollowed nothing
+ * (still `is_following = 1`) but whose data a business app had already erased
+ * per a deletion/opt-out request kept getting new milestone rows written for
+ * them indefinitely — contradicting "all your data has been deleted" sent to
+ * that person. `metadata.do_not_contact` (a generic, app-set JSON flag; no
+ * core schema column) is checked here so any app honoring such a request can
+ * suppress all further writes for that friend without a migration.
  */
 export async function enqueueFollowingMileageMilestones(
   db: D1Database,
@@ -1565,6 +1573,8 @@ export async function enqueueFollowingMileageMilestones(
            FROM friends f
           WHERE f.is_following = 1
             AND ${eligibilitySql}
+            AND (f.metadata IS NULL OR json_extract(f.metadata, '$.do_not_contact') IS NULL
+                 OR json_extract(f.metadata, '$.do_not_contact') != 1)
             AND NOT EXISTS (
               SELECT 1 FROM engagement_events ee WHERE ee.id = ${eventIdSql}
             )
