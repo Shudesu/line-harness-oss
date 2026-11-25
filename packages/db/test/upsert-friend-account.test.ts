@@ -112,7 +112,7 @@ describe('upsertFriend line_account_id attribution', () => {
       if (!raced && /INSERT INTO friends/.test(sql)) {
         raced = true;
         sqlite
-          .prepare("INSERT INTO friends(id,line_user_id,display_name,ref_code) VALUES('callback-row','U1','From callback','noda1123')")
+          .prepare("INSERT INTO friends(id,line_user_id,display_name,ref_code) VALUES('callback-row','U1','From callback','qr-route')")
           .run();
       }
     });
@@ -122,7 +122,7 @@ describe('upsertFriend line_account_id attribution', () => {
     expect(friend.id).toBe('callback-row');
     const stored = row(sqlite, 'U1');
     expect(stored.line_account_id).toBe(ACC_A);
-    expect(stored.ref_code).toBe('noda1123');
+    expect(stored.ref_code).toBe('qr-route');
     expect(stored.display_name).toBe('From callback');
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM friends').get()).toEqual({ n: 1 });
   });
