@@ -19,6 +19,7 @@ import { buildOgHtml } from '../lib/og-html.js';
 import { resolveOgForTrackedLink } from '../lib/og-resolver.js';
 import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
+import { timingSafeEqualString } from '@line-crm/shared';
 
 const trackedLinks = new Hono<Env>();
 
@@ -88,6 +89,94 @@ async function resolveLinkAccount(
     .prepare(`SELECT * FROM line_accounts WHERE id = ?`)
     .bind(accountId)
     .first<Record<string, unknown>>();
+}
+
+/**
+ * How long one isolate may reuse its answer to "which accounts are active?".
+ *
+ * /t/ is a public redirect, so anything read per click is multiplied by the
+ * click volume. Staleness is bounded by this TTL and fails towards the previous
+ * answer: an account activated a moment ago is never mistaken for the only one
+ * (its id is not the cached one), and an account that just became the only one
+ * stays anonymous until the entry expires.
+ */
+export const ACTIVE_ACCOUNT_CACHE_TTL_MS = 60_000;
+
+interface ActiveAccountCacheEntry {
+  expiresAt: number;
+  /** Ids of up to two active accounts — enough to tell "exactly one" from "more". */
+  ids: string[];
+}
+
+/**
+ * Per-isolate cache, keyed by the D1 binding object so that two databases
+ * served by the same isolate never share an answer. A WeakMap needs no
+ * eviction; if the runtime hands out a new binding object it is only a miss.
+ *
+ * Only resolved answers are stored, never the pending query: on Workers a
+ * pending D1 read belongs to the request that started it, and a second click
+ * awaiting it could be left hanging if that first request is cancelled.
+ */
+const activeAccountCache = new WeakMap<D1Database, ActiveAccountCacheEntry>();
+
+async function getActiveAccountIds(db: D1Database): Promise<string[]> {
+  const cached = activeAccountCache.get(db);
+  if (cached && cached.expiresAt > Date.now()) return cached.ids;
+
+  // line_accounts has no index on is_active, so this reads the whole table
+  // (LIMIT 2 does not bound rows read). The table holds a handful of rows; the
+  // cache is what keeps it from being multiplied by clicks. Clicks that overlap
+  // while the cache is cold each issue their own read; a failed read throws
+  // before anything is stored, so the next click retries.
+  const res = await db
+    .prepare(`SELECT id FROM line_accounts WHERE is_active = 1 LIMIT 2`)
+    .all<{ id: string }>();
+  const ids = (res?.results ?? []).map((row) => row.id);
+  activeAccountCache.set(db, { expiresAt: Date.now() + ACTIVE_ACCOUNT_CACHE_TTL_MS, ids });
+  return ids;
+}
+
+/**
+ * Whether the global env.LIFF_URL can be treated as this account's own LIFF.
+ *
+ * True only when the account is active and
+ *   - env.LINE_CHANNEL_SECRET is configured and equals its channel_secret: it is
+ *     the default account (the same test the webhook uses to bind the env
+ *     channel to a DB row), or
+ *   - env.LINE_CHANNEL_SECRET is not configured and it is the only active
+ *     account, so there is no other business whose LIFF env.LIFF_URL could
+ *     belong to.
+ *
+ * A configured secret that does not match is decisive: env.LIFF_URL then
+ * belongs to the env channel, which need not be registered in line_accounts,
+ * so "the only active row" proves nothing.
+ *
+ * Any failure answers false: sending the click straight to the destination
+ * (anonymous) is safe, another account's LINE Login screen is not.
+ *
+ * Cost: the active-account read is reached only for a LINE in-app click without
+ * lu/f on a link whose owner has no liff_id, on an install without
+ * env.LINE_CHANNEL_SECRET. Once an answer is cached it is reused for
+ * ACTIVE_ACCOUNT_CACHE_TTL_MS per isolate per database; only clicks that
+ * overlap while the cache is cold read more than once.
+ */
+async function ownsGlobalLiff(
+  db: D1Database,
+  account: Record<string, unknown>,
+  envChannelSecret: string | undefined,
+): Promise<boolean> {
+  try {
+    if (!account.is_active) return false;
+    if (envChannelSecret) {
+      const secret = account.channel_secret;
+      return typeof secret === 'string' && secret !== '' && (await timingSafeEqualString(secret, envChannelSecret));
+    }
+    const activeIds = await getActiveAccountIds(db);
+    return activeIds.length === 1 && activeIds[0] === account.id;
+  } catch (err) {
+    console.error('ownsGlobalLiff error:', err);
+    return false;
+  }
 }
 
 // GET /api/tracked-links — list all
@@ -350,8 +439,24 @@ trackedLinks.get('/t/:linkId', async (c) => {
     let liffBase: string | null = null;
     const account = await resolveLinkAccount(c.env.DB, link);
     const liffId = (account?.liff_id as string | null | undefined) ?? null;
-    if (liffId) liffBase = `https://liff.line.me/${liffId}`;
-    if (!liffBase && c.env.LIFF_URL) liffBase = c.env.LIFF_URL;
+    if (liffId) {
+      liffBase = `https://liff.line.me/${liffId}`;
+    } else if (c.env.LIFF_URL && (!account || await ownsGlobalLiff(c.env.DB, account, c.env.LINE_CHANNEL_SECRET))) {
+      // 全体設定の LIFF (env.LIFF_URL) を使ってよいのは次のどれかのときだけ:
+      //   1. リンクの持ち主が分からない（持ち主を持たない古いリンク）
+      //   2. 持ち主が既定アカウント（env.LINE_CHANNEL_SECRET と同じチャネル）
+      //   3. env.LINE_CHANNEL_SECRET が未設定で、有効なアカウントが持ち主の1つだけ
+      //      （設定済みで一致しないなら LIFF_URL は env 側のチャネルのもの。DB に
+      //      登録されていないこともあるので「1つだけ」では判断しない）
+      // 2 と 3 は、liff_id を DB に入れず LIFF_URL だけで運用している単一アカウントの
+      // 自前環境のため。ここを外すと本人識別が効かず、クリックが全部匿名になる。
+      //
+      // それ以外（複数アカウントのうち liff_id を持たない、既定でないアカウント）を
+      // ここへ落とすと、よその事業の LINE ログイン画面がそのアカウントの友だちに出る。
+      // 2026-09-08 に実際に起きたので、そのアカウントは LIFF を経由しない
+      // （本人の識別ができないぶんクリックは匿名で記録されるが、飛び先は正しいままになる）。
+      liffBase = c.env.LIFF_URL;
+    }
     if (liffBase) {
       const directUrl = `${c.env.WORKER_URL || new URL(c.req.url).origin}/t/${linkId}`;
       const liffRedirect = `${liffBase}?redirect=${encodeURIComponent(directUrl)}`;
