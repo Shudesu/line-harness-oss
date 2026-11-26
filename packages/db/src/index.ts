@@ -48,7 +48,9 @@ export function createDb(d1: D1Database): D1Database {
 }
 
 export * from './admin-sessions.js';
-export * from './auth-security.js';
+export * from './machine-keys.js';
+export * from './passkeys.js';
+export * from './magic-links.js';
 
 export * from './ig-link-token-uses.js';
 

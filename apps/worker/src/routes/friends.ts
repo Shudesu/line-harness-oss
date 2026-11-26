@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getFriends,
@@ -21,7 +22,7 @@ import { runIdempotent } from '../services/idempotency.js';
 import { runIdempotentLineSend } from '../services/idempotent-line-send.js';
 import type { Env } from '../index.js';
 
-const friends = new Hono<Env>();
+const friends = createAuthorizedRouter<Env>();
 
 /**
  * Convert a D1 snake_case Friend row to the shared camelCase shape.

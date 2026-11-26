@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { validateMessageContent } from '@line-crm/shared';
 import { Hono } from 'hono';
 import {
@@ -27,7 +28,7 @@ import type {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const scenarios = new Hono<Env>();
+const scenarios = createAuthorizedRouter<Env>();
 
 /** Convert D1 snake_case Scenario row to shared camelCase shape */
 function serializeScenario(row: DbScenario) {

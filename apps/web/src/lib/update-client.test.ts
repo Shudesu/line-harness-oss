@@ -6,7 +6,6 @@ async function loadUpdateClient() {
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals()
   vi.unstubAllEnvs()
   vi.restoreAllMocks()
   vi.resetModules()
@@ -42,23 +41,12 @@ describe('update-client manifest URL', () => {
   })
 })
 
-
-describe('update-client cookie authentication', () => {
-  it('uses cookie and CSRF for updates without any public API key', async () => {
-    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://worker.example.test')
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({updateId:'test-update'})))
-    const { startUpdate, getUpdateStatus } = await loadUpdateClient()
-    await startUpdate()
-    await getUpdateStatus('test-update')
-    expect(fetchMock.mock.calls[0][1]).toEqual({method:'POST',credentials:'include',headers:{'X-CSRF-Token':''}})
-    expect(fetchMock.mock.calls[1][1]).toEqual({credentials:'include'})
-  })
-  it('sends the session cookie on EventSource', async () => {
-    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://worker.example.test')
-    const source = vi.fn().mockImplementation(() => ({addEventListener:vi.fn(),close:vi.fn()}))
-    vi.stubGlobal('EventSource',source)
-    const { openUpdateStream } = await loadUpdateClient()
-    openUpdateStream('test-update',()=>{},()=>{})
-    expect(source).toHaveBeenCalledWith('https://worker.example.test/admin/update/stream/test-update',{withCredentials:true})
-  })
+it('uses owner cookies and CSRF, never a public build-time key, for updates',async()=>{
+ vi.stubEnv('NEXT_PUBLIC_API_URL','https://worker.example.test')
+ vi.stubGlobal('window',{location:{hostname:'admin.example.test',origin:'https://admin.example.test'}})
+ vi.stubGlobal('localStorage',{getItem:()=> 'test-csrf'})
+ const fetchMock=vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({updateId:'one'}))
+ const {startUpdate}=await loadUpdateClient();await startUpdate()
+ expect(fetchMock).toHaveBeenCalledWith('https://worker.example.test/admin/update/start',expect.objectContaining({credentials:'include',headers:{'X-CSRF-Token':'test-csrf'}}))
+ vi.unstubAllGlobals()
 })

@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getScoringRules,
@@ -19,7 +20,7 @@ import {
 import type { MileageRuleRow } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const scoring = new Hono<Env>();
+const scoring = createAuthorizedRouter<Env>();
 
 function serializeMileageRule(rule: MileageRuleRow) {
   let conditions: Record<string, unknown> = {};

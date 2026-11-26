@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getUsers,
@@ -14,7 +15,7 @@ import type { User as DbUser } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { requireRole } from '../middleware/role-guard.js';
 
-const users = new Hono<Env>();
+const users = createAuthorizedRouter<Env>();
 
 function logUsersRouteError(route: string, error: unknown): void {
   console.error(`${route} failed`, {

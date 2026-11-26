@@ -1,7 +1,8 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 
-const conversations = new Hono<Env>();
+const conversations = createAuthorizedRouter<Env>();
 
 // GET /api/conversations?lineAccountId=&minHoursSince=&maxHoursSince=&limit=&offset=
 conversations.get('/api/conversations', async (c) => {

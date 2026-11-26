@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 export interface AccessEnv {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  ACCESS_OWNER_EMAILS?: string;
 }
 export function accessConfig(
   env: AccessEnv,
@@ -63,4 +64,13 @@ export async function verifyAccessJwt(
   } catch {
     return null;
   }
+}
+export function accessOwnerAllowed(env: AccessEnv, email: string): boolean {
+  return (
+    !!accessConfig(env) &&
+    (env.ACCESS_OWNER_EMAILS ?? '')
+      .split(',')
+      .map((v) => v.trim().toLowerCase())
+      .includes(email)
+  );
 }

@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getAccountHealthLogs,
@@ -9,7 +10,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const health = new Hono<Env>();
+const health = createAuthorizedRouter<Env>();
 
 // ========== Liveness ==========
 // Public (no auth, see middleware/auth.ts skip list): probed by

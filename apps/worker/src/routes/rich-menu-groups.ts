@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getRichMenuGroups,
@@ -34,7 +35,7 @@ import {
   type GroupInput,
 } from '../lib/rich-menu-publisher.js';
 
-export const richMenuGroups = new Hono<Env>();
+export const richMenuGroups = createAuthorizedRouter<Env>();
 
 // ----- Serialization (snake_case row → camelCase response) -----
 

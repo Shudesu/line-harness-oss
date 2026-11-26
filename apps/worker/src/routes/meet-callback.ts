@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { getFriendByLineUserId } from '@line-crm/db';
@@ -5,7 +6,7 @@ import { pushViaHarnessProxy } from '../services/line-proxy-send.js';
 import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
 import { verifyWebhookSignature } from '../services/webhook-signature.js';
 
-const app = new Hono<Env>();
+const app = createAuthorizedRouter<Env>();
 
 // Meet Harness calls this when a hearing session completes
 app.post('/api/meet-callback', async (c) => {

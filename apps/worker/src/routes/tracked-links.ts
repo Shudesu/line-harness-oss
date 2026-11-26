@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getTrackedLinks,
@@ -21,7 +22,7 @@ import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
 import { timingSafeEqualString } from '@line-crm/shared';
 
-const trackedLinks = new Hono<Env>();
+const trackedLinks = createAuthorizedRouter<Env>();
 
 function isHttpDestination(value: unknown): value is string {
   if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return false;

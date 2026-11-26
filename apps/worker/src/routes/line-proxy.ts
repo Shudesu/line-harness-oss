@@ -1,5 +1,6 @@
 import { timingSafeEqualString } from '@line-crm/shared';
-import { limitAuth, audit } from '../middleware/auth-security.js';
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
+import { staffRouteAllowed } from '../middleware/staff-policy.js';
 import { requireAccess } from '../middleware/auth.js';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
@@ -58,7 +59,7 @@ import {
  *   特定できないため転送のみ (reply token は webhook 受信者=worker しか持たない
  *   ので実運用では到達しない)。narrowcast は宛先が確定しないため転送のみ。
  */
-const lineProxy = new Hono<Env>();
+const lineProxy = createAuthorizedRouter<Env>();
 
 // LINE message payloads are small (multicast: 500 recipients + 5 messages).
 // 1 MiB matches the webhook body cap and bounds memory before upstream fetch.
@@ -179,10 +180,9 @@ async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCa
 
   // harness API キー経路 — worker 側でチャネルトークンを解決する。
   const staff = await authenticateApiToken(c, token);
-  if (!staff) {
-    const limited = await limitAuth(c, 'key', token); if (limited) return limited;
-    await audit(c, 'key_rejected', 'denied');
-    return c.json(AUTH_FAILED, 401);
+  if (!staff) return c.json(AUTH_FAILED, 401);
+  if (!staffRouteAllowed(staff, c.req.method.toUpperCase(), new URL(c.req.url).pathname, c.env)) {
+    return c.json({ message: 'この操作には管理者以上の権限が必要です' }, 403);
   }
   // Raw LINE proxy exposes a wider API than the message-scope allowlist.
   if (staff.apiScopes != null) return c.json({message:'Scoped keys cannot use the LINE proxy'},403);

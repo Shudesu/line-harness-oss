@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { timingSafeEqualString } from '@line-crm/shared';
 import { handleXGateWebhook } from '../services/x-gate-webhook.js';
 import { Hono } from 'hono';
@@ -31,7 +32,7 @@ import type { HarnessProxyDispatch } from '../services/line-proxy-send.js';
 import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
 import { ensureSchedulerArmed } from '../durable-objects/tenant-scheduler.js';
 
-const webhook = new Hono<Env>();
+const webhook = createAuthorizedRouter<Env>();
 
 // LINE webhook bodies are small (events array). Cap defends against unauthenticated
 // large-payload DoS before signature verification (#104). 1 MiB leaves room for

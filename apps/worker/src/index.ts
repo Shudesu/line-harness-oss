@@ -1,4 +1,13 @@
 import { xGates } from './routes/x-gates.js';
+import { inboundEvents } from './routes/inbound-events.js';
+import { setupCheck } from './routes/setup-check.js';
+import adminMagicLink from './routes/admin-magic-link.js';
+import adminPasskeys from './routes/admin-passkeys.js';
+import adminExtensions from './routes/admin-extensions.js';
+import adminAccess from './routes/admin-access.js';
+import machineKeys from './routes/machine-keys.js';
+import { createAuthorizedRouter } from './middleware/authorized-router.js';
+import { runWithOutboundConfig } from './lib/outbound-url.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
@@ -103,6 +112,23 @@ export type Env = {
     MEET_CALLBACK_SECRET?: string;
     STRIPE_WEBHOOK_SECRET?: string;
     LEGACY_API_KEY?: string;
+    STAFF_ROLE_POLICY?: 'strict' | 'legacy';
+    OUTBOUND_URL_POLICY?: 'warn' | 'enforce' | 'off';
+    OUTBOUND_ALLOWED_PORTS?: string;
+    OUTBOUND_ALLOWED_HOSTS?: string;
+    ADMIN_LEGACY_SESSION_COOKIE?: 'accept' | 'reject';
+    SECURITY_MIGRATION_STAGE?: string;
+    ADMIN_SESSION_TTL_SECONDS?: string;
+    MAGIC_LINK_EMAIL_PROVIDER?: string;
+    MAGIC_LINK_FROM?: string;
+    RESEND_API_KEY?: string;
+    MAGIC_LINK_EMAIL?: SendEmail;
+    WEBAUTHN_RP_ID?: string;
+    WEBAUTHN_ENABLED?: string;
+    ADMIN_EXTENSIONS?: string;
+    ADMIN_EXTENSION_SECRETS?: string;
+    API_KEY_LOGIN_MODE?: string;
+    ACCESS_OWNER_EMAILS?: string;
     LIFF_URL: string;
     LINE_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_ID: string;
@@ -169,12 +195,13 @@ export type Env = {
     TENANT_SCHEDULER: DurableObjectNamespace<TenantScheduler>;
   };
   Variables: {
+    principal?: import('./middleware/scopes.js').MachinePrincipal;
     staff: import('./middleware/auth.js').AuthenticatedStaff;
-    authRateChecked: boolean;
   };
 };
 
-const app = new Hono<Env>();
+const app = createAuthorizedRouter<Env>();
+app.use('*', (c, next) => runWithOutboundConfig(c.env, next, new URL(c.req.url).origin));
 
 // Private Workers Cache pilot: only responses that deliberately declare a
 // public Cache-Control policy may enter the cache. This wrapper runs after all
@@ -204,7 +231,7 @@ app.use('*', cors({
   origin: (origin, c) => resolveCorsOrigin(c.env, origin, c.req.url),
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Idempotency-Key'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-admin-api-key', 'Idempotency-Key'],
   maxAge: 600,
 }));
 
@@ -248,6 +275,13 @@ app.route('/', conversations);
 app.route('/', stripe);
 app.route('/', health);
 app.route('/', xGates);
+app.route('/', machineKeys);
+app.route('/', setupCheck);
+app.route('/', inboundEvents);
+app.route('/', adminAccess);
+app.route('/', adminPasskeys);
+app.route('/', adminMagicLink);
+app.route('/', adminExtensions);
 app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);

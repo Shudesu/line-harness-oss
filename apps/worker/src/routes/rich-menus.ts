@@ -1,9 +1,10 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
 import { getFriendById, getLineAccountById, resolveDefaultAccessToken } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const richMenus = new Hono<Env>();
+const richMenus = createAuthorizedRouter<Env>();
 
 /** Resolve LINE access token — uses accountId query param if provided, otherwise default */
 async function resolveLineClient(c: { env: Env['Bindings']; req: { query(key: string): string | undefined } }): Promise<LineClient> {

@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import {
@@ -10,7 +11,7 @@ import {
   parseActivityDigestHours,
 } from '../services/activity-digest.js';
 
-export const inbox = new Hono<Env>();
+export const inbox = createAuthorizedRouter<Env>();
 
 // GET /api/inbox/activity-digest?hours=3
 // Codex の定期レポートなど、読み取り専用の外部クライアント向け集約 API。

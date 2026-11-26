@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   createAffiliateOffer,
@@ -15,7 +16,7 @@ import type { Env } from '../index.js';
  * snake_case DB rows → camelCase responses via serializeOffer, mirroring
  * routes/affiliates.ts's serializeAffiliate.
  */
-const affiliateOffers = new Hono<Env>();
+const affiliateOffers = createAuthorizedRouter<Env>();
 
 function serializeOffer(row: AffiliateOffer) {
   return {

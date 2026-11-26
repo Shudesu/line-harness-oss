@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getNotificationRules,
@@ -9,7 +10,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const notifications = new Hono<Env>();
+const notifications = createAuthorizedRouter<Env>();
 
 // ========== 通知ルールCRUD ==========
 

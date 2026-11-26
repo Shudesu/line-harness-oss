@@ -62,8 +62,13 @@ export class HttpClient {
       let code: string | undefined
       let requiresReview: boolean | undefined
       try {
-        const errorBody = (await res.json()) as { error?: string; code?: string; requiresReview?: boolean }
+        const errorBody = (await res.json()) as { error?: string; required?: string; code?: string; requiresReview?: boolean }
         if (errorBody.error) errorMessage = errorBody.error
+        // 非公開版のスコープ不足メッセージは維持する
+        if (res.status === 403 && errorBody.error === 'insufficient_scope') {
+          const scope = ['read','write','send','admin'].includes(errorBody.required ?? '') ? errorBody.required : '人の管理者による操作'
+          errorMessage = `insufficient_scope: このキーには ${scope} 権限がありません`
+        }
         code = errorBody.code
         requiresReview = errorBody.requiresReview
       } catch {

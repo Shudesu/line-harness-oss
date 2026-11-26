@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { applyMileageRulesForEvent } from '@line-crm/db';
 import type { Env } from '../index.js';
@@ -8,7 +9,7 @@ const ALLOWED_EVENTS = new Set([
   'instagram_story_mentioned',
 ]);
 
-const instagramEngagement = new Hono<Env>();
+const instagramEngagement = createAuthorizedRouter<Env>();
 
 instagramEngagement.post('/api/integrations/ig-harness/engagement', async (c) => {
   let body: {

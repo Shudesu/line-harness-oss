@@ -1,7 +1,8 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 
-const setup = new Hono<Env>();
+const setup = createAuthorizedRouter<Env>();
 
 setup.get('/setup', (c) => {
   return c.html(`<!DOCTYPE html>

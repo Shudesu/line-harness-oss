@@ -1,8 +1,9 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { getQuotaUsage } from '../services/quota.js';
 
-export const usage = new Hono<Env>();
+export const usage = createAuthorizedRouter<Env>();
 
 // Deliberately NOT on the authMiddleware allowlist: quota numbers are
 // operational data for signed-in admins only.

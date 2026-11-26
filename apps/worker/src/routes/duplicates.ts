@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import {
@@ -65,7 +66,7 @@ function serializeDuplicatesStats(stats: DuplicatesStats): DuplicatesStatsDTO {
   };
 }
 
-export const duplicates = new Hono<Env>();
+export const duplicates = createAuthorizedRouter<Env>();
 
 duplicates.get('/api/duplicates/stats', async (c) => {
   try {

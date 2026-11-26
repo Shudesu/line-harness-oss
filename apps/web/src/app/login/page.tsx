@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { getApiBase } from '@/lib/api-base'
 import { Banner } from '@cloudflare/kumo/components/banner'
@@ -8,6 +8,18 @@ import { Input } from '@cloudflare/kumo/components/input'
 import { LayerCard } from '@cloudflare/kumo/components/layer-card'
 
 export default function LoginPage() {
+  const [passkeyEnabled,setPasskeyEnabled]=useState(false)
+  const [magicEnabled,setMagicEnabled]=useState(false)
+  const [email,setEmail]=useState('')
+  const [notice,setNotice]=useState('')
+  const [keyMode,setKeyMode]=useState('allow')
+  const [accessLogin, setAccessLogin] = useState<string | null>(null)
+  useEffect(() => {
+    const base = getApiBase(); if (!base) return
+    let cancelled = false
+    fetch(`${base}/api/auth/methods`).then(r=>r.ok?r.json():null).then(data=>{if(!cancelled){setPasskeyEnabled(!!data?.passkey?.enabled&&typeof window.PublicKeyCredential!=='undefined');setMagicEnabled(!!data?.magicLink?.enabled);if(data?.access?.enabled)setAccessLogin(`${base}/auth/access/login`);if(data?.apiKeyMode)setKeyMode(data.apiKeyMode)}}).catch(()=>{})
+    return ()=>{cancelled=true}
+  }, [])
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -70,6 +82,18 @@ export default function LoginPage() {
     }
   }
 
+  const loginWithPasskey=async()=>{setLoading(true);setError('');try{
+    const {startAuthentication}=await import('@simplewebauthn/browser')
+    const {fetchApi,setCsrfToken}=await import('@/lib/api')
+    const result=await fetchApi<{data:{options:Parameters<typeof startAuthentication>[0]['optionsJSON'];challengeId:string}}>('/api/auth/passkeys/login/options',{method:'POST',body:'{}'})
+    const response=await startAuthentication({optionsJSON:result.data.options})
+    const verified=await fetchApi<{csrfToken:string}>('/api/auth/passkeys/login/verify',{method:'POST',body:JSON.stringify({challengeId:result.data.challengeId,response})})
+    setCsrfToken(verified.csrfToken);router.push('/')
+  }catch(e){setError(e instanceof Error?e.message:'パスキーログインに失敗しました')}finally{setLoading(false)}}
+  const requestMagic=async()=>{setLoading(true);setError('');try{
+    const {fetchApi}=await import('@/lib/api');const result=await fetchApi<{message:string}>('/api/auth/magic-link',{method:'POST',body:JSON.stringify({email})});setNotice(result.message)
+  }catch(e){setError(e instanceof Error?e.message:'リクエストに失敗しました')}finally{setLoading(false)}}
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-kumo-brand p-4">
       <LayerCard className="w-full max-w-sm p-8 shadow-xl">
@@ -81,7 +105,12 @@ export default function LoginPage() {
           <p className="text-sm text-gray-500 mt-1">管理画面にログイン</p>
         </div>
 
-        <form onSubmit={handleLogin}>
+        {passkeyEnabled&&<Button className="w-full mb-4" disabled={loading} onClick={()=>void loginWithPasskey()}>パスキーでログイン</Button>}
+        {magicEnabled&&<div className="mb-4 space-y-2"><Input type="email" aria-label="メールアドレス" value={email} onChange={e=>setEmail(e.target.value)} placeholder="メールアドレス"/><Button disabled={loading||!email} onClick={()=>void requestMagic()}>ログイン用リンクを送る</Button>{notice&&<p>{notice}</p>}</div>}
+        {accessLogin && <a className="block border rounded p-3 mb-4 text-center" href={accessLogin}>Cloudflare Access でログイン</a>}
+        {keyMode==='break-glass' && <Banner variant="alert" title="緊急復旧用ログイン">オーナーの現在のAPIキーのみ利用でき、セッションは最大1時間です。</Banner>}
+        {keyMode==='disabled' && <Banner variant="secondary" title="APIキーでのログインは無効です">設定された本人認証からログインしてください。外部連携のAPIキーは引き続き利用できます。</Banner>}
+        {keyMode!=='disabled' && <form onSubmit={handleLogin}>
           <div className="mb-4">
             <Input
               label="API Key"
@@ -104,7 +133,7 @@ export default function LoginPage() {
           >
             ログイン
           </Button>
-        </form>
+        </form>}
       </LayerCard>
     </div>
   )

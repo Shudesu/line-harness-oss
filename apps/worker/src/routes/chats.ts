@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { validateMessageContent, parseMessageGroup } from '@line-crm/shared';
 import { buildMessages, messagesToLogPayload } from '../services/message-group.js';
 import { buildMessage } from '../services/broadcast.js';
@@ -20,7 +21,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const chats = new Hono<Env>();
+const chats = createAuthorizedRouter<Env>();
 
 function clampLoadingSeconds(value: number | undefined): number {
   const n = Number.isFinite(value) ? Math.floor(value as number) : 5;

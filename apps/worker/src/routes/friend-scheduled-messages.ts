@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono, type Context } from 'hono';
 import { getFriendById } from '@line-crm/db';
 import {
@@ -21,7 +22,7 @@ import type { Env } from '../index.js';
  *   DELETE /api/friends/:id/scheduled-messages/:msgId      (= cancel。行は消さず cancelled にする)
  *   GET    /api/scheduled-messages?status=pending&lineAccountId=&limit=
  */
-const friendScheduledMessages = new Hono<Env>();
+const friendScheduledMessages = createAuthorizedRouter<Env>();
 
 function staffLabel(c: Context<Env>): string | null {
   const staff = c.get('staff') as { id: string; name: string } | undefined;

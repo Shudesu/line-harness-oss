@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getAutoReplies,
@@ -9,7 +10,7 @@ import {
 import type { AutoReply as DbAutoReply } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const autoReplies = new Hono<Env>();
+const autoReplies = createAuthorizedRouter<Env>();
 
 interface EffectiveAccount {
   accountId: string;

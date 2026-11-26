@@ -1,5 +1,7 @@
 # Authentication hardening upgrade
 
+> **Update (security hardening port):** the D1-backed login rate limit and `auth_audit_log` writer described below were replaced by the hardening set documented in `docs/ADMIN-AUTH.md`, `docs/RBAC.md`, `docs/MACHINE-KEYS.md` and `docs/PASSKEYS-MAGIC-LINK.md`. Apply `packages/db/migrations/079_admin_security_keys_passkeys.sql` (additive, idempotent) before deploying that Worker. The `auth_rate_limits` / `auth_audit_log` tables are left in place and are no longer written. `ACCESS_REQUIRED=true` keeps working.
+
 This upgrade uses Workers and D1. It does not disable `workers_dev`, introduce a paid service, or put an Access gateway in front of public routes. Read this before upgrading an existing installation.
 
 ## Upgrade an existing self-hosted installation

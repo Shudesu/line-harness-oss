@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getTrafficPools,
@@ -14,7 +15,7 @@ import {
 import type { TrafficPoolWithAccount, PoolAccountWithDetails } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const trafficPools = new Hono<Env>();
+const trafficPools = createAuthorizedRouter<Env>();
 
 function serialize(pool: TrafficPoolWithAccount) {
   return {

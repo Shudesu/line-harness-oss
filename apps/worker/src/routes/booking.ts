@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { timingSafeEqualString } from '@line-crm/shared';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { calendarCredentialsFromEnv, calendarBrokerAvailable, calendarBrokerRequest, isBrokerRefreshToken } from '../services/google-calendar-broker.js';
@@ -48,7 +49,7 @@ import {
   verifyGoogleOAuthState,
 } from '../services/google-oauth.js';
 
-const booking = new Hono<Env>();
+const booking = createAuthorizedRouter<Env>();
 const GOOGLE_OAUTH_CALLBACK_PATH = '/api/booking/google-calendar/oauth/callback';
 const GOOGLE_OAUTH_STATE_TTL_MS = 10 * 60_000;
 

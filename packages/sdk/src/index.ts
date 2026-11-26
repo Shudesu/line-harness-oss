@@ -86,3 +86,4 @@ export type {
   CreateAdPlatformInput,
   UpdateAdPlatformInput,
 } from './resources/ad-platforms.js'
+export {createExtensionTicket,verifyExtensionTicket,type ExtensionTicket} from './extension-ticket.js'

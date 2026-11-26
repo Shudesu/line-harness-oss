@@ -1,3 +1,5 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
+import { checkWebhookActions } from '../lib/outbound-url.js';
 import { Hono } from 'hono';
 import {
   getAutomations,
@@ -9,7 +11,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const automations = new Hono<Env>();
+const automations = createAuthorizedRouter<Env>();
 
 // ========== 自動化ルールCRUD ==========
 
@@ -105,6 +107,8 @@ automations.post('/api/automations', async (c) => {
     if (!body.name || !body.eventType || !body.actions) {
       return c.json({ success: false, error: 'name, eventType, actions are required' }, 400);
     }
+    const urlCheck = checkWebhookActions(body.actions, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
+    if (!urlCheck.allowed) return c.json({ success: false, error: 'webhook_url_invalid', reason: urlCheck.warnings[0] }, 400);
     let item = await createAutomation(c.env.DB, body);
     // Save line_account_id if provided
     if (body.lineAccountId) {
@@ -117,6 +121,7 @@ automations.post('/api/automations', async (c) => {
     }
     return c.json({
       success: true,
+      ...(urlCheck.warnings.length ? { warnings: urlCheck.warnings } : {}),
       data: {
         id: item.id,
         name: item.name,
@@ -138,11 +143,20 @@ automations.put('/api/automations/:id', async (c) => {
   try {
     const id = c.req.param('id');
     const body = await c.req.json();
+    let actions = body.actions;
+    if (actions === undefined && body.isActive === true) {
+      const existing = await getAutomationById(c.env.DB, id);
+      if (!existing) return c.json({ success: false, error: 'Not found' }, 404);
+      actions = JSON.parse(existing.actions);
+    }
+    const urlCheck = actions === undefined ? { allowed: true, warnings: [] } : checkWebhookActions(actions, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
+    if (!urlCheck.allowed) return c.json({ success: false, error: 'webhook_url_invalid', reason: urlCheck.warnings[0] }, 400);
     await updateAutomation(c.env.DB, id, body);
     const updated = await getAutomationById(c.env.DB, id);
     if (!updated) return c.json({ success: false, error: 'Not found' }, 404);
     return c.json({
       success: true,
+      ...(urlCheck.warnings.length ? { warnings: urlCheck.warnings } : {}),
       data: {
         id: updated.id,
         name: updated.name,

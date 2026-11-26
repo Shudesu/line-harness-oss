@@ -187,3 +187,21 @@ export async function rateLimitMiddleware(c: Context<Env>, next: Next): Promise<
 
   c.header('X-RateLimit-Remaining', String(result.remaining));
 }
+
+/** Best-effort per-isolate burst limit; not a global quota. */
+export function staffBurstLimit(namespace:string,max:number) {
+ return async(c:Context<Env>,next:Next)=>{
+  const staff=c.get('staff');if(!staff)return c.json({error:'Unauthorized'},401);
+  const verdict=check(namespace+':'+new URL(c.req.url).origin+':'+staff.id,max,60_000);
+  if(!verdict.ok){c.header('Retry-After',String(verdict.retryAfter));return c.json({error:'Too many requests'},429);}return next();
+ };
+}
+
+export function publicBurstLimit(namespace:string,max:number,windowMs=60_000) {
+ return async(c:Context<Env>,next:Next)=>{
+  const verdict=check(namespace+':'+new URL(c.req.url).origin+':'+getClientIp(c),max,windowMs);
+  if(!verdict.ok){c.header('Retry-After',String(verdict.retryAfter));return c.json({error:'Too many requests'},429);}return next();
+ };
+}
+
+export function checkNamedBurst(key:string,max:number,windowMs:number):boolean {return check(key,max,windowMs).ok;}

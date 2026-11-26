@@ -1,5 +1,4 @@
 // Auth storage is integration-tested in security-hardening.test.ts.
-vi.mock('../middleware/auth-security.js', () => ({ limitAuth: async () => null, audit: async () => {} }));
 import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 
