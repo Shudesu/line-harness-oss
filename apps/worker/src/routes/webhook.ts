@@ -105,6 +105,8 @@ async function ensureFriendFromWebhookUser(
       displayName: profile?.displayName ?? null,
       pictureUrl: profile?.pictureUrl ?? null,
       statusMessage: profile?.statusMessage ?? null,
+      lineAccountId,
+      accountMode: 'rebind',
     });
     console.log(`[webhook] auto-registered existing friend userId=${userId} friendId=${friend.id}`);
   }
@@ -317,7 +319,21 @@ async function handleEvent(
 
     console.log(`[follow] userId=${userId} lineAccountId=${lineAccountId}`);
 
-    // プロフィール取得 & 友だち登録/更新
+    // Create/update the friend and attribute its LINE account in the very
+    // first write. During a follow burst the handler can be cut off right after
+    // this write (the isolate stops mid-waitUntil); a separate
+    // `UPDATE ... line_account_id` afterwards left friends — including rows
+    // /auth/callback created first — with line_account_id NULL, so they fell
+    // out of per-account broadcasts and automations. The profile lookup (an
+    // external API call) therefore runs after the account is attributed.
+    let friend = await upsertFriend(db, {
+      lineUserId: userId,
+      lineAccountId,
+      accountMode: 'rebind',
+    });
+
+    console.log(`[follow] friend.id=${friend.id} friend.line_account_id=${friend.line_account_id}`);
+
     let profile;
     try {
       profile = await lineClient.getProfile(userId);
@@ -327,20 +343,16 @@ async function handleEvent(
 
     console.log(`[follow] profile=${profile?.displayName ?? 'null'}`);
 
-    const friend = await upsertFriend(db, {
-      lineUserId: userId,
-      displayName: profile?.displayName ?? null,
-      pictureUrl: profile?.pictureUrl ?? null,
-      statusMessage: profile?.statusMessage ?? null,
-    });
-
-    console.log(`[follow] friend.id=${friend.id} friend.line_account_id=${(friend as any).line_account_id}`);
-
-    // Set line_account_id for multi-account tracking (always update on follow)
-    if (lineAccountId) {
-      await db.prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
-        .bind(lineAccountId, jstNow(), friend.id).run();
-      console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
+    if (profile) {
+      const displayName = profile.displayName ?? null;
+      const pictureUrl = profile.pictureUrl ?? null;
+      const statusMessage = profile.statusMessage ?? null;
+      const now = jstNow();
+      await db
+        .prepare('UPDATE friends SET display_name = ?, picture_url = ?, status_message = ?, updated_at = ? WHERE id = ?')
+        .bind(displayName, pictureUrl, statusMessage, now, friend.id)
+        .run();
+      friend = { ...friend, display_name: displayName, picture_url: pictureUrl, status_message: statusMessage, updated_at: now };
     }
 
     // 新規・再フォローのどちらでも、最初の友だち登録マイルを同じキーで非同期投入する。
@@ -749,3 +761,6 @@ async function handleEvent(
 }
 
 export { webhook };
+
+// Exported for the follow-burst regression test (webhook-follow-account.test.ts).
+export { handleEvent as handleWebhookEventForTest };
