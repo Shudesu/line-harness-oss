@@ -1416,6 +1416,13 @@ liffRoutes.post('/api/liff/link', async (c) => {
         creation.account?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN,
         lineUserId,
       );
+      // Cost (D1): this branch runs only for a request with no friend row
+      // whose friendship LINE just confirmed — in practice once per friend,
+      // in the seconds before the follow webhook lands; a visitor who is not
+      // a friend stops above with no extra D1 work. Per run: 1 indexed read
+      // (line_user_id), 1 single-row INSERT, 1 read by primary key. When the
+      // follow webhook inserts first: 2 indexed reads and no row written. No
+      // scans, no retries.
       // The account is written atomically with the new row. createOnly: if
       // the follow webhook won the race meanwhile, its row is used exactly as
       // it stands — attribution, profile (ours may be only the fallback name
