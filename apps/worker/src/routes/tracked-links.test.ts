@@ -377,6 +377,37 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
     expect(res.headers.get('location')).toBe('https://example.com/lp');
   });
 
+  test('sole active account whose secret differs from a configured env.LINE_CHANNEL_SECRET skips env.LIFF_URL', async () => {
+    // 主チャネルは env だけに設定され、DB には追加アカウント1件だけ、という構成。
+    // LIFF_URL は主チャネルのものなので、「有効なのは1つだけ」を理由に使わない。
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-sub' }));
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-sub', liff_id: null, channel_secret: 'sub-secret' }] }),
+      LIFF_URL: GLOBAL_LIFF,
+      LINE_CHANNEL_SECRET: 'env-secret',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes('is_active = 1')).length).toBe(0);
+  });
+
+  test('sole active account matching env.LINE_CHANNEL_SECRET uses env.LIFF_URL without the active-account read', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-solo', liff_id: null, channel_secret: 'env-secret' }] }),
+      LIFF_URL: GLOBAL_LIFF,
+      LINE_CHANNEL_SECRET: 'env-secret',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    const res = await request(env, LINE_UA);
+    expect(res.headers.get('location')!.startsWith(`${GLOBAL_LIFF}?redirect=`)).toBe(true);
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes('is_active = 1')).length).toBe(0);
+  });
+
   test('inactive owner never borrows env.LIFF_URL, even when one other account is active', async () => {
     dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-retired' }));
     const env = {
@@ -464,13 +495,39 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
       expect(lookups()).toBe(1);
     });
 
-    test('concurrent clicks on a cold isolate share a single read', async () => {
+    test('concurrent clicks on a cold isolate each read for themselves, then the answer is cached', async () => {
+      // 未完了の D1 読み取りは始めたリクエストのもの。別のクリックに待たせると、
+      // 最初のリクエストが切れたときに転送が返らなくなるので共有しない。
       dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
       const env = soloEnv({ accounts: [{ id: 'acc-solo', liff_id: null }] });
       const lookups = countActiveLookups(env.DB);
       const responses = await Promise.all(Array.from({ length: 20 }, () => request(env, LINE_UA)));
       expect(responses.every(toLiff)).toBe(true);
-      expect(lookups()).toBe(1);
+      const cold = lookups();
+      expect(cold).toBeGreaterThanOrEqual(1);
+      expect(cold).toBeLessThanOrEqual(20);
+
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+      expect(lookups()).toBe(cold); // warm now: no further reads
+    });
+
+    test('a click does not wait on another click\'s pending read', async () => {
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      const env = soloEnv({ accounts: [{ id: 'acc-solo', liff_id: null }] });
+      // The first click's active-account read never settles (its request was cancelled).
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      let stalled = false;
+      vi.spyOn(env.DB, 'prepare').mockImplementation((sql: string) => {
+        const stmt = realPrepare(sql);
+        if (!stalled && sql.includes('is_active = 1')) {
+          stalled = true;
+          (stmt as unknown as { all: () => Promise<unknown> }).all = () => new Promise(() => {});
+        }
+        return stmt;
+      });
+      void request(env, LINE_UA); // hangs forever
+      await Promise.resolve();
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
     });
 
     test('the cache expires: after the TTL the table is read again and a change is picked up', async () => {
