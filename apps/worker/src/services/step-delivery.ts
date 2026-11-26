@@ -442,10 +442,17 @@ async function processSingleDelivery(
     try {
       const added = await addTagToFriend(db, friend.id, currentStep.on_reach_tag_id);
       if (added) {
-        await fireEvent(db, 'tag_change', {
-          friendId: friend.id,
-          eventData: { tagId: currentStep.on_reach_tag_id, action: 'add' },
-        });
+        // 友だちがまだどのアカウントにも割り当てられていないときは、実際に配信した
+        // アカウントをイベントの所属にする (複数アカウント運用で automation の
+        // アカウント絞り込み・LINE アクションの認証情報が決まらなくなるのを防ぐ)。
+        // 割り当て済みならその友だち自身のアカウントが正。
+        await fireEvent(
+          db,
+          'tag_change',
+          { friendId: friend.id, eventData: { tagId: currentStep.on_reach_tag_id, action: 'add' } },
+          undefined,
+          friend.line_account_id ?? deliveryAccountId ?? undefined,
+        );
       }
     } catch (err) {
       console.error(`[scenario] reach tag attach / tag_change failed step=${currentStep.id}:`, err);

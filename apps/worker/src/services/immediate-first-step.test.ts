@@ -674,6 +674,23 @@ describe('on_reach_tag', () => {
     expect(tagChangeCalls()[0][4]).toBe('acct-7');
   });
 
+  it('still fires (friend-default account) when the caller channel has no line_accounts row', async () => {
+    dbMocks.getLineAccountByChannelId.mockResolvedValue(null);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { db } = makeDb();
+    await pushImmediateFirstStep(
+      db,
+      'friend-1',
+      'scn-1',
+      { ...ctx, accountChannelId: 'chan-unknown' },
+      { mode: 'every-click', targetLineUserId: 'U-1' },
+    );
+    expect(tagChangeCalls()).toHaveLength(1);
+    expect(tagChangeCalls()[0][2]).toEqual(TAG_EVENT);
+    expect(tagChangeCalls()[0][4]).toBeUndefined();
+    warnSpy.mockRestore();
+  });
+
   it("joins the caller's tag-automation dispatch so the cascade guard covers the reach tag", async () => {
     const dispatch = createTagAutomationDispatch();
     const { db } = makeDb();

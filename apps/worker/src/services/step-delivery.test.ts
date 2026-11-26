@@ -530,7 +530,7 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
    * Fake D1 driving processStepDeliveries through the full success path for a
    * single-step scenario (no condition) whose only step has on_reach_tag_id set.
    */
-  function successDeliveryMockDb(opts: { onReachTagId: string | null; alreadyTagged?: boolean }): {
+  function successDeliveryMockDb(opts: { onReachTagId: string | null; alreadyTagged?: boolean; scenarioAccountId?: string }): {
     db: D1Database;
     tagAttachCalls: Array<{ friendId: string; tagId: string }>;
     writes: string[];
@@ -570,7 +570,12 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
               };
             }
             if (sql.includes('FROM scenarios')) {
-              return { delivery_mode: 'relative', line_account_id: null };
+              return { delivery_mode: 'relative', line_account_id: opts.scenarioAccountId ?? null };
+            }
+            if (sql.includes('FROM line_accounts')) {
+              return opts.scenarioAccountId
+                ? { id: opts.scenarioAccountId, channel_access_token: 'tok-X', is_active: 1 }
+                : null;
             }
             return null;
           },
@@ -629,10 +634,35 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
     expect(push).toHaveBeenCalledTimes(1); // step was actually delivered
     expect(tagAttachCalls).toEqual([{ friendId: 'f1', tagId: 'tag-Z' }]);
     expect(fireEventMock).toHaveBeenCalledTimes(1);
-    expect(fireEventMock).toHaveBeenCalledWith(db, 'tag_change', {
-      friendId: 'f1',
-      eventData: { tagId: 'tag-Z', action: 'add' },
-    });
+    expect(fireEventMock).toHaveBeenCalledWith(
+      db,
+      'tag_change',
+      { friendId: 'f1', eventData: { tagId: 'tag-Z', action: 'add' } },
+      undefined, // token: resolved by the event bus from the account
+      undefined, // account: neither the friend nor the scenario is account-bound
+    );
+  });
+
+  it('attributes the event to the delivering account when the friend is not assigned to one yet', async () => {
+    // Multi-account tenant: the scenario belongs to account X, the friend row
+    // has no line_account_id. Without an account the event bus cannot pick
+    // X's automations / credentials.
+    const { db } = successDeliveryMockDb({ onReachTagId: 'tag-Z', scenarioAccountId: 'acct-X' });
+    const { client, push } = mockLineClient();
+    // An account-bound scenario pushes through its own LineClient (built from
+    // the account token), not the injected one — keep it off the network.
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await processStepDeliveries(db, client);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(push).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // delivered via account X's client
+    expect(fireEventMock).toHaveBeenCalledTimes(1);
+    expect(fireEventMock.mock.calls[0][4]).toBe('acct-X');
   });
 
   it('does not fire tag_change when the step has no on_reach_tag_id', async () => {

@@ -251,9 +251,18 @@ export async function pushImmediateFirstStep(
         // LIFF/OAuth entry points run before the follow webhook wires
         // friend.line_account_id; the caller-verified channel fills that gap
         // (an assigned friend's own account stays authoritative).
-        const eventAccountId = ctx.accountChannelId
-          ? (await resolveTagEventAccount(db, friendId, undefined, ctx.accountChannelId)).accountId
-          : undefined;
+        // The tag row is already written, so a channel that cannot be resolved
+        // must not swallow the event (a later attempt would see `added` =
+        // false and never fire it) — fall back to the event bus's own
+        // per-friend resolution.
+        let eventAccountId: string | null | undefined;
+        if (ctx.accountChannelId) {
+          try {
+            eventAccountId = (await resolveTagEventAccount(db, friendId, undefined, ctx.accountChannelId)).accountId;
+          } catch (err) {
+            console.warn('[immediate-first-step] tag event account unresolved, using the friend default:', err);
+          }
+        }
         await fireEvent(
           db,
           'tag_change',
