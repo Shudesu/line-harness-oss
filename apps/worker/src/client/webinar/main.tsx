@@ -1293,7 +1293,9 @@ function FormSheet({
                 <p className="text-2xl">🎉</p>
                 <p className="mt-2 text-lg font-bold">回答を送信しました</p>
                 <p className="mt-1 text-sm text-gray-500">
-                  空いている15分枠を1つ選んでください。
+                  {consultation
+                    ? `空いている${consultation.menu.durationMinutes}分枠を1つ選んでください。`
+                    : '空いている枠を1つ選んでください。'}
                 </p>
                 {(consultation?.fallbackUrl || completionUrl) && (
                   <button
@@ -1492,7 +1494,7 @@ function FormSheet({
                     : `あと${remainingRequiredCount}項目を選択`}
               </button>
               <p className="mt-2 text-center text-xs text-gray-500">
-                送信後、空いている15分枠を選べます
+                送信後、空いている枠を選べます
               </p>
             </div>
           </div>

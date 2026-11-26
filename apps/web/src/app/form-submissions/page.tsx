@@ -542,8 +542,8 @@ export default function FormSubmissionsPage() {
 
       {/* Rename dialog */}
       <Dialog.Root open={editingForm !== null} onOpenChange={(open) => { if (!open && !savingName) setEditingForm(null) }}>
-          <Dialog className="w-full max-w-md p-5">
-            <Dialog.Title>フォーム名を変更</Dialog.Title>
+          <Dialog className="p-5">
+            <Dialog.Title className="text-lg font-semibold text-kumo-strong">フォーム名を変更</Dialog.Title>
             <p className="mt-1 text-xs text-gray-400">
               回答データやURLは変わりませんが、回答者に表示されるフォーム名も変わります。
             </p>

@@ -181,7 +181,7 @@ export default function BookingStaffPage() {
 
       {editing && <Modal staff={editing} onSave={save} onClose={() => setEditing(null)} />}
       <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
-        <Dialog><Dialog.Title>スタッフを削除しますか？</Dialog.Title><Dialog.Description className="mt-2">「{deleteTarget?.display_name}」を削除します。既存予約は維持されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={remove}>削除</Button></div></Dialog>
+        <Dialog className="p-6"><Dialog.Title className="text-lg font-semibold text-kumo-strong">スタッフを削除しますか？</Dialog.Title><Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">「{deleteTarget?.display_name}」を削除します。既存予約は維持されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={remove}>削除</Button></div></Dialog>
       </Dialog.Root>
     </div>
   )
@@ -218,8 +218,8 @@ function Modal({
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
-      <Dialog className="w-full max-w-md max-h-[90vh] overflow-y-auto p-0">
-        <div className="px-6 py-4 border-b border-kumo-line"><Dialog.Title>{form.id ? 'スタッフ編集' : '新規スタッフ'}</Dialog.Title></div>
+      <Dialog className="max-h-[90vh] overflow-y-auto p-0">
+        <div className="px-6 py-4 border-b border-kumo-line"><Dialog.Title className="text-lg font-semibold text-kumo-strong">{form.id ? 'スタッフ編集' : '新規スタッフ'}</Dialog.Title></div>
         <div className="px-6 py-4 space-y-4">
             <Input
               label="内部名（管理用）"
