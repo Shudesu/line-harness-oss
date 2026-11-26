@@ -11,7 +11,7 @@ status: placeholder
 
 ## 章の目的
 
-- `npx create-line-harness` でゼロから自分の LINE Harness を稼働させられる
+- `npx create-line-harness` でゼロから自分の L Harness を稼働させられる
 - LIFF / LINE Login / Messaging API の役割の違いを区別して設定できる
 - 1 台の Mac Mini で複数アカウントを安全に運用するためのディレクトリ構成と環境変数分離を理解する
 
@@ -36,7 +36,7 @@ status: placeholder
 
 ## 次の章
 
-第 3 章では、立ち上がった LINE Harness で「友だち管理 / 配信 / 自動応答 / リッチメニュー」の 4 つの基本機能を回します。
+第 3 章では、立ち上がった L Harness で「友だち管理 / 配信 / 自動応答 / リッチメニュー」の 4 つの基本機能を回します。
 
 ---
 *このファイルはプレースホルダーです。本文は別セッションで執筆します。*

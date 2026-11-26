@@ -1,3 +1,5 @@
+// Auth storage is integration-tested in security-hardening.test.ts.
+vi.mock('../middleware/auth-security.js', () => ({ limitAuth: async () => null, audit: async () => {} }));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Route-level test for the approval queue endpoints:
@@ -22,6 +24,7 @@ const dbMocks = {
   getConversionApprovalQueue: vi.fn(),
   setConversionApproval: vi.fn(),
   getConversionApprovalNotifyInfo: vi.fn(),
+  syncAffiliateConversionMileage: vi.fn().mockResolvedValue(undefined),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -57,6 +60,7 @@ function req(method: string, path: string, body?: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   dbMocks.getLineAccounts.mockResolvedValue([]);
+  dbMocks.syncAffiliateConversionMileage.mockResolvedValue(undefined);
 });
 
 describe('GET /api/conversions/approvals', () => {
@@ -141,6 +145,11 @@ describe('PATCH /api/conversions/events/:id/approval', () => {
       'ev-1',
       'approved',
     );
+    expect(dbMocks.syncAffiliateConversionMileage).toHaveBeenCalledWith(
+      expect.anything(),
+      'ev-1',
+      'approved',
+    );
   });
 
   it('notifies the affiliate on approval', async () => {
@@ -209,8 +218,23 @@ describe('PATCH /api/conversions/events/:id/approval', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { approvalStatus: string } };
     expect(body.data.approvalStatus).toBe('approved');
+    expect(dbMocks.syncAffiliateConversionMileage).toHaveBeenCalledWith(
+      expect.anything(),
+      'ev-dup',
+      'approved',
+    );
     // Critical: notify must NOT be called for an idempotent no-op
     expect(notifyAffiliateApproval).not.toHaveBeenCalled();
     expect(dbMocks.getConversionApprovalNotifyInfo).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when the mileage projection fails so a retry can repair it', async () => {
+    dbMocks.setConversionApproval.mockResolvedValue(true);
+    dbMocks.syncAffiliateConversionMileage.mockRejectedValue(new Error('ledger unavailable'));
+    const res = await req('PATCH', '/api/conversions/events/ev-1/approval', {
+      status: 'approved',
+    });
+    expect(res.status).toBe(500);
+    expect(notifyAffiliateApproval).not.toHaveBeenCalled();
   });
 });

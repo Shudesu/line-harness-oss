@@ -2,17 +2,17 @@
 
 ## 概要
 
-LINE Harnessのリッチメニュー機能は、LINE Bot APIのリッチメニューエンドポイントを直接ラップする形で提供される。D1にリッチメニューデータを保持するのではなく、LINE Platform側のリッチメニューを管理する。作成・削除・デフォルト設定・ユーザー別アサイン・画像アップロードの全操作がAPI経由で行える。
+L Harnessのリッチメニュー機能は、LINE Bot APIのリッチメニューエンドポイントを直接ラップする形で提供される。D1にリッチメニューデータを保持するのではなく、LINE Platform側のリッチメニューを管理する。作成・削除・デフォルト設定・ユーザー別アサイン・画像アップロードの全操作がAPI経由で行える。
 
 ## アーキテクチャ
 
 ```
-管理者/AI → LINE Harness API → LINE Messaging API → LINE Platform
+管理者/AI → L Harness API → LINE Messaging API → LINE Platform
                                                        ↓
                                                 友だちのLINEアプリに表示
 ```
 
-リッチメニューの実体はLINE Platform上に存在する。LINE Harnessはプロキシとして機能し、LINE Messaging APIの`richmenu-*`エンドポイントを呼び出す。
+リッチメニューの実体はLINE Platform上に存在する。L Harnessはプロキシとして機能し、LINE Messaging APIの`richmenu-*`エンドポイントを呼び出す。
 
 ## データモデル
 
@@ -93,7 +93,7 @@ DELETE /api/friends/:friendId/rich-menu  — アサイン解除（デフォル�
 
 ## タグベースのメニュー切替
 
-LINE Harnessのオートメーション機能（14-Automation.md参照）と連携して、タグに基づくメニュー自動切替が可能。
+L Harnessのオートメーション機能（14-Automation.md参照）と連携して、タグに基づくメニュー自動切替が可能。
 
 ### 実現方法
 

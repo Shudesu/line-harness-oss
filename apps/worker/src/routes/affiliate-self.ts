@@ -11,11 +11,16 @@ import {
   getAffiliateLinkStats,
   listAffiliateOffers,
   enrollAffiliateInOffer,
+  getMileageSummaryForFriend,
+  getMileageHistoryForFriend,
+  getMileageSelfInsights,
+  getMileageEarningOpportunitiesForFriend,
   type Affiliate,
   type AffiliateLink,
   type AffiliateLinkStat,
 } from '@line-crm/db';
 import { resolveLinkBaseUrl } from '../lib/link-base-url.js';
+import { signCrossAccountToken } from '../lib/cross-account-token.js';
 import type { Env } from '../index.js';
 
 /**
@@ -35,7 +40,7 @@ const affiliateSelfRoutes = new Hono<Env>();
 /** Max self-issued links per affiliate. The 21st issuance is a 400. */
 const MAX_SELF_LINKS = 20;
 
-type ResolvedFriend = { id: string; display_name: string };
+type ResolvedFriend = { id: string; display_name: string; user_id: string | null };
 
 /**
  * Verify a LINE access token and resolve the backing friend row.
@@ -152,6 +157,53 @@ function serializeAffiliate(aff: Affiliate) {
     friendId: aff.friend_id,
   };
 }
+
+/**
+ * GET /api/liff/mileage/me — wallet for any verified LINE friend.
+ *
+ * This intentionally does not require affiliate registration. The same wallet
+ * will later receive webinar, CTA, Instagram and other engagement mileage.
+ */
+affiliateSelfRoutes.get('/api/liff/mileage/me', async (c) => {
+  try {
+    const token = c.req.query('lineAccessToken');
+    if (!token) {
+      return c.json({ success: false, error: 'lineAccessToken is required' }, 400);
+    }
+
+    const resolved = await resolveFriendFromLineToken(c.env, token);
+    if (resolved.status !== 'ok') return unresolvedResponse(c, resolved);
+
+    const requestedLimit = Number.parseInt(c.req.query('limit') ?? '', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 20;
+    const [mileage, history, insights, rawOpportunities] = await Promise.all([
+      getMileageSummaryForFriend(c.env.DB, resolved.friend.id),
+      getMileageHistoryForFriend(c.env.DB, resolved.friend.id, { limit }),
+      getMileageSelfInsights(c.env.DB, resolved.friend.id),
+      getMileageEarningOpportunitiesForFriend(c.env.DB, resolved.friend.id),
+    ]);
+    const opportunities = await Promise.all(rawOpportunities.map(async (opportunity) => {
+      if (opportunity.type !== 'friend_add'
+          || opportunity.completed
+          || !opportunity.targetAccountId
+          || !resolved.friend.user_id) {
+        return opportunity;
+      }
+      const token = await signCrossAccountToken(c.env.LINE_CHANNEL_SECRET, {
+        userId: resolved.friend.user_id,
+        targetAccountId: opportunity.targetAccountId,
+      });
+      const separator = opportunity.url.includes('?') ? '&' : '?';
+      return { ...opportunity, url: `${opportunity.url}${separator}crossAccountToken=${encodeURIComponent(token)}` };
+    }));
+    return c.json({ success: true, mileage, history, insights, opportunities });
+  } catch (err) {
+    console.error('GET /api/liff/mileage/me error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
 
 /**
  * POST /api/liff/affiliate/register — idempotent self-registration.
@@ -387,6 +439,7 @@ affiliateSelfRoutes.get('/api/liff/affiliate/offers', async (c) => {
         name: o.name,
         description: o.description,
         rewardAmount: o.reward_amount,
+        rewardMiles: o.reward_miles ?? 0,
         enrolled: Boolean(link),
         refCode: link ? link.ref_code : null,
         url: link ? `${baseUrl}/${link.ref_code}` : null,

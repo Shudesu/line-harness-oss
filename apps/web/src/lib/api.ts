@@ -33,6 +33,32 @@ import type {
   TrafficPool,
   PoolAccount,
 } from '@line-crm/shared'
+import { getApiBase } from './api-base'
+
+/** Per-account delivery-health snapshot for the dashboard cards. */
+export type AccountDeliveryHealth = {
+  lineAccountId: string
+  name: string
+  quota: {
+    type: string | null
+    limit: number | null
+    consumption: number | null
+    remaining: number | null
+  }
+  quotaAlert: boolean
+  insight: {
+    /** 'unready' = LINE がまだ前日分を集計していない状態（失敗とは別物） */
+    status: 'ready' | 'unready' | 'error'
+    date: string | null
+    followers: number | null
+    targetedReaches: number | null
+    blocks: number | null
+    followersDelta: number | null
+    blocksDelta: number | null
+  }
+  messagesThisMonth: number | null
+  errors: string[]
+}
 
 /** Affiliate offer (案件) as returned by the worker. */
 export type AffiliateOffer = {
@@ -40,6 +66,8 @@ export type AffiliateOffer = {
   name: string
   description: string | null
   rewardAmount: number | null
+  rewardMiles: number
+  mileageProgramId: string
   lineAccountId: string | null
   tagId: string | null
   scenarioId: string | null
@@ -69,6 +97,8 @@ export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
   dedupPriority: string[] | null;
   failedAccountIds: string[] | null;
   trackLinks: boolean;
+  /** Saved include/exclude conditions; honoured by send, scheduler and preview-count. */
+  segmentConditions?: import('@/components/broadcasts/segment-conditions').SegmentCondition | null;
 };
 
 export type BroadcastInsight = {
@@ -83,12 +113,20 @@ export type BroadcastInsight = {
   fetchedAt?: string | null
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL
-if (!API_URL) {
-  throw new Error(
-    'NEXT_PUBLIC_API_URL is not set. Build cannot proceed without a valid API URL. ' +
-    'Set it in .env.production (local) or GitHub Secrets (CI).'
-  )
+// Resolved lazily on each call, not cached in a module-scope constant. This
+// module runs once in Node during the static export pass (where `window` is
+// undefined) and again in the browser; a module-scope `const` would freeze
+// whatever `getApiBase()` returned during that first (Node) pass — the
+// unresolved placeholder for a shared build — for the lifetime of the page.
+function apiUrl(): string {
+  const url = getApiBase()
+  if (!url) {
+    throw new Error(
+      'NEXT_PUBLIC_API_URL is not set. Cannot resolve the API base URL. ' +
+      'Set it in .env.production (local) or GitHub Secrets (CI).'
+    )
+  }
+  return url
 }
 
 /**
@@ -135,7 +173,7 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
     const token = getCsrfToken()
     if (token) csrfHeaders['X-CSRF-Token'] = token
   }
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${apiUrl()}${path}`, {
     ...options,
     // Send the HttpOnly session cookie with every request.
     credentials: 'include',
@@ -173,6 +211,26 @@ export type FriendListParams = {
 }
 
 export type FriendWithTags = Friend & { tags: Tag[] }
+export type FollowerImportState = {
+  version: 1
+  capability: 'unknown' | 'available' | 'unavailable'
+  phase: 'not_started' | 'importing_ids' | 'hydrating_profiles' | 'completed'
+  eligibilityCheckedAt: string | null
+  startedAt: string | null
+  completedAt: string | null
+  updatedAt: string
+  received: number
+  imported: number
+  reactivated: number
+  claimedUnassigned: number
+  alreadyPresent: number
+  conflicts: number
+  invalid: number
+  profilesProcessed: number
+  profilesUpdated: number
+  profileErrors: number
+  lastError: string | null
+}
 export type FriendFormSubmission = {
   id: string
   formId: string
@@ -182,6 +240,78 @@ export type FriendFormSubmission = {
   createdAt: string
 }
 export type FriendDetail = FriendWithTags & { formSubmissions: FriendFormSubmission[] }
+export type MileageSummary = {
+  programId: string
+  programName: string
+  available: number
+  pending: number
+  lifetimeEarned: number
+  spent: number
+}
+export type MileageHistoryItem = {
+  id: string
+  entryType: 'grant' | 'reversal' | 'spend' | 'expiration' | 'adjustment'
+  status: 'pending' | 'available' | 'void'
+  amount: number
+  reason: string
+  source: string
+  sourceEventId: string | null
+  occurredAt: string
+}
+export type MileageRule = {
+  id: string
+  name: string
+  eventType: string
+  source: string | null
+  amount: number
+  initialStatus: 'pending' | 'available'
+  conditions: {
+    dailyCapActions?: number
+    uniquePerSubject?: boolean
+    uniquePerSubjectPerDay?: boolean
+    ignoreMultiplier?: boolean
+    beneficiary?: 'actor' | 'referrer'
+    uniquePerReferredFriend?: boolean
+    uniquePerReferredFriendPerSubject?: boolean
+  }
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+export type MileageAdminMember = {
+  identityKey: string
+  primaryFriendId: string
+  displayName: string
+  pictureUrl: string | null
+  accountCount: number
+  accountNames: string[]
+  available: number
+  pending: number
+  lifetimeEarned: number
+  actionCount: number
+  messageCount: number
+  linkClickCount: number
+  formCount: number
+  bookingCount: number
+  webinarCount: number
+  instagramCount: number
+  followingDays: number
+  unfollowCount: number
+  referralMiles: number
+  qualityReferralCount: number
+  lastActivityAt: string | null
+}
+export type MileageAdminOverview = {
+  summary: {
+    totalMembers: number
+    totalAvailable: number
+    activeMembers30d: number
+    totalActions: number
+    queuedEvents: number
+  }
+  members: MileageAdminMember[]
+  pagination: { total: number; limit: number; offset: number }
+}
 /** Friend list items, optionally hydrated with chat status (when ?includeChatStatus=true) */
 export type FriendListItem = FriendWithTags & Partial<{
   latestIncomingMessage: { content: string; messageType: string; createdAt: string } | null
@@ -190,7 +320,15 @@ export type FriendListItem = FriendWithTags & Partial<{
   handled: boolean
 }>
 
+export type QuotaUsage = {
+  friends: { used: number; max: number }
+  monthlyMessages: { used: number; max: number }
+  exceeded: boolean
+  noticeUrl: string | null
+}
+
 export const api = {
+  usage: () => fetchApi<ApiResponse<QuotaUsage>>('/api/usage'),
   friends: {
     list: (params?: FriendListParams) => {
       const query: Record<string, string> = {}
@@ -209,6 +347,10 @@ export const api = {
     },
     get: (id: string) =>
       fetchApi<ApiResponse<FriendDetail>>(`/api/friends/${id}`),
+    mileage: (id: string, limit = 10) =>
+      fetchApi<ApiResponse<{ summary: MileageSummary; history: MileageHistoryItem[] }>>(
+        `/api/friends/${id}/mileage?limit=${limit}`,
+      ),
     count: (params?: { accountId?: string }) => {
       const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
       return fetchApi<ApiResponse<{ count: number }>>('/api/friends/count' + query)
@@ -234,6 +376,16 @@ export const api = {
     create: (data: { name: string; color: string }) =>
       fetchApi<ApiResponse<Tag>>('/api/tags', {
         method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateMileage: (id: string, data: {
+      rewardMiles: number
+      referralRewardMiles: number
+      multiplierBps: number | null
+      multiplierPriority: number
+    }) =>
+      fetchApi<ApiResponse<{ tag: Tag; queued: number }>>(`/api/tags/${id}/mileage`, {
+        method: 'PATCH',
         body: JSON.stringify(data),
       }),
     delete: (id: string) =>
@@ -345,9 +497,12 @@ export const api = {
       accountIds?: string[]
       dedupPriority?: string[]
       trackLinks?: boolean
-    }) =>
+    }, options?: { idempotencyKey?: string }) =>
       fetchApi<ApiResponse<ApiBroadcast>>('/api/broadcasts', {
         method: 'POST',
+        headers: options?.idempotencyKey
+          ? { 'Idempotency-Key': options.idempotencyKey }
+          : undefined,
         body: JSON.stringify(data),
       }),
     update: (
@@ -360,6 +515,7 @@ export const api = {
         targetTagId?: string | null
         scheduledAt?: string | null
         trackLinks?: boolean
+        segmentConditions?: import('@/components/broadcasts/segment-conditions').SegmentCondition | null
       }
     ) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}`, {
@@ -491,6 +647,10 @@ export const api = {
   lineAccounts: {
     list: () =>
       fetchApi<ApiResponse<LineAccount[]>>('/api/line-accounts'),
+    deliveryHealth: () =>
+      fetchApi<ApiResponse<{ insightDate: string; accounts: AccountDeliveryHealth[] }>>(
+        '/api/line-accounts/delivery-health',
+      ),
     get: (id: string) =>
       fetchApi<ApiResponse<LineAccount>>(`/api/line-accounts/${id}`),
     create: (data: {
@@ -552,6 +712,23 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ ordered }),
       }),
+    followerImportState: (id: string) =>
+      fetchApi<ApiResponse<FollowerImportState>>(`/api/line-accounts/${id}/follower-import`),
+    detectFollowerImport: (id: string) =>
+      fetchApi<ApiResponse<FollowerImportState>>(
+        `/api/line-accounts/${id}/follower-import/detect`,
+        { method: 'POST' },
+      ),
+    startFollowerImport: (id: string) =>
+      fetchApi<ApiResponse<FollowerImportState>>(
+        `/api/line-accounts/${id}/follower-import/start`,
+        { method: 'POST' },
+      ),
+    stepFollowerImport: (id: string) =>
+      fetchApi<ApiResponse<{ state: FollowerImportState; busy: boolean }>>(
+        `/api/line-accounts/${id}/follower-import/step`,
+        { method: 'POST' },
+      ),
   },
   conversions: {
     points: () =>
@@ -901,6 +1078,37 @@ export const api = {
         `/api/friends/${friendId}/score`,
       ),
   },
+  mileage: {
+    overview: (params?: { accountId?: string; search?: string; limit?: number; offset?: number }) => {
+      const query = new URLSearchParams()
+      if (params?.accountId) query.set('accountId', params.accountId)
+      if (params?.search) query.set('search', params.search)
+      if (params?.limit !== undefined) query.set('limit', String(params.limit))
+      if (params?.offset !== undefined) query.set('offset', String(params.offset))
+      const suffix = query.toString() ? `?${query.toString()}` : ''
+      return fetchApi<ApiResponse<MileageAdminOverview>>(`/api/mileage/overview${suffix}`)
+    },
+    rules: () => fetchApi<ApiResponse<MileageRule[]>>('/api/mileage/rules'),
+    createRule: (data: {
+      name: string
+      eventType: string
+      source?: string | null
+      amount: number
+      initialStatus?: 'pending' | 'available'
+      conditions?: MileageRule['conditions'] | null
+    }) => fetchApi<ApiResponse<MileageRule>>('/api/mileage/rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+    updateRule: (id: string, data: Partial<Pick<MileageRule,
+      'name' | 'eventType' | 'source' | 'amount' | 'initialStatus' | 'conditions' | 'isActive'
+    >>) => fetchApi<ApiResponse<MileageRule>>(`/api/mileage/rules/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+    deleteRule: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/mileage/rules/${id}`, { method: 'DELETE' }),
+  },
   webhooks: {
     incoming: {
       list: () =>
@@ -1050,7 +1258,7 @@ export const api = {
         minWaitMinutes?: number;
         page?: number;
         pageSize?: number;
-      }) => {
+      }, request?: Pick<RequestInit, 'signal'>) => {
         const p = new URLSearchParams();
         if (opts?.q) p.set('q', opts.q);
         if (opts?.account) p.set('account', opts.account);
@@ -1074,14 +1282,14 @@ export const api = {
             lastIncomingType: string;
             lastIncomingContent: string;
           }>;
-        }>>(`/api/inbox/unanswered${qs ? `?${qs}` : ''}`);
+        }>>(`/api/inbox/unanswered${qs ? `?${qs}` : ''}`, request);
       },
-      count: () =>
+      count: (request?: Pick<RequestInit, 'signal'>) =>
         fetchApi<ApiResponse<{
           total: number;
           byAccount: Array<{ accountId: string; accountName: string; count: number }>;
           oldestWaitMinutes: number | null;
-        }>>('/api/inbox/unanswered/count'),
+        }>>('/api/inbox/unanswered/count', request),
     },
   },
   richMenuGroups: {
@@ -1094,6 +1302,7 @@ export const api = {
         size: 'large' | 'compact';
         defaultPageId: string | null;
         isDefaultForAll: boolean;
+        selected: boolean;
         status: 'draft' | 'published';
         publishingAt: string | null;
         thumbnailR2Key: string | null;
@@ -1110,6 +1319,7 @@ export const api = {
         size: 'large' | 'compact';
         defaultPageId: string | null;
         isDefaultForAll: boolean;
+        selected: boolean;
         status: 'draft' | 'published';
         publishingAt: string | null;
         createdAt: string;
@@ -1139,6 +1349,7 @@ export const api = {
       name: string;
       chatBarText: string;
       size: 'large' | 'compact';
+      selected: boolean;
       pages: Array<{
         id?: string;
         name: string;
@@ -1162,6 +1373,7 @@ export const api = {
       name?: string;
       chatBarText?: string;
       isDefaultForAll?: boolean;
+      selected?: boolean;
       pages?: Array<{
         id?: string;
         name: string;
@@ -1206,6 +1418,7 @@ export const api = {
           richMenuId: string;
           name: string;
           chatBarText: string;
+          selected: boolean;
           size: { width: number; height: number };
           areasCount: number;
           isCurrentDefault: boolean;
@@ -1236,7 +1449,7 @@ export const api = {
     // クッキーや Authorization が必要 — 代わりに admin が cache-busting できる
     // タイムスタンプを付けるパターンで利用)。
     externalImageUrl: (richMenuId: string, accountId: string) =>
-      `${API_URL}/api/rich-menu-groups/external/${richMenuId}/image?accountId=${encodeURIComponent(accountId)}`,
+      `${apiUrl()}/api/rich-menu-groups/external/${richMenuId}/image?accountId=${encodeURIComponent(accountId)}`,
 
     applyToTag: (
       groupId: string,
@@ -1255,7 +1468,7 @@ export const api = {
     uploadImage: async (groupId: string, pageId: string, file: File) => {
       const csrf = getCsrfToken();
       const res = await fetch(
-        `${API_URL}/api/rich-menu-groups/${groupId}/pages/${pageId}/image`,
+        `${apiUrl()}/api/rich-menu-groups/${groupId}/pages/${pageId}/image`,
         {
           method: 'POST',
           credentials: 'include',
@@ -1283,7 +1496,7 @@ export const api = {
     //   v1 ではドラフト編集中のプレビュー用 = 認証バイパスでも実害は低いので、
     //   後続 PR で worker 側を whitelist 化する想定。
     imageUrl: (key: string) =>
-      `${API_URL}/api/rich-menu-images/${encodeURIComponent(key)}`,
+      `${apiUrl()}/api/rich-menu-images/${encodeURIComponent(key)}`,
   },
   messageTemplates: {
     list: () =>
@@ -1390,6 +1603,7 @@ export const api = {
       name: string
       description?: string | null
       rewardAmount?: number
+      rewardMiles?: number
       lineAccountId?: string | null
       tagId?: string | null
       scenarioId?: string | null
@@ -1402,6 +1616,7 @@ export const api = {
       name: string
       description: string | null
       rewardAmount: number
+      rewardMiles: number
       lineAccountId: string | null
       tagId: string | null
       scenarioId: string | null
@@ -1503,6 +1718,9 @@ export interface BookingStaff {
   sort_order: number;
   is_designation_optional: number;
   is_active: number;
+  // 1 if the staff has an active weekly rule or a future dated shift.
+  // Only present on list responses (computed by the worker).
+  has_working_hours?: number;
 }
 
 export interface BookingShift {
@@ -1532,6 +1750,24 @@ export interface BookingRequest {
   menu_name: string;
   staff_name: string;
   friend_name: string | null;
+  requested_at: string;
+}
+
+export interface BookingAvailabilityRule {
+  id: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+  is_active: number;
+}
+
+export interface BookingGoogleCalendarConnection {
+  id: string;
+  calendar_id: string;
+  auth_type: string;
+  is_active: number;
+  last_verified_at: string | null;
+  last_error: string | null;
 }
 
 function withAccount(path: string, accountId: string): string {
@@ -1623,6 +1859,40 @@ export const bookingApi = {
     fetchApi<{ inserted: number }>(
       withAccount(`/api/booking/admin/staff/${staffId}/shifts/generate`, accountId),
       { method: 'POST', body: JSON.stringify(body) },
+    ),
+  getAvailabilityRules: (accountId: string, staffId: string) =>
+    fetchApi<{ rules: BookingAvailabilityRule[] }>(
+      withAccount(`/api/booking/admin/staff/${staffId}/availability-rules`, accountId),
+    ),
+  putAvailabilityRules: (
+    accountId: string,
+    staffId: string,
+    rules: Array<{ weekday: number; start_time: string; end_time: string }>,
+  ) =>
+    fetchApi<{ ok: true; count: number }>(
+      withAccount(`/api/booking/admin/staff/${staffId}/availability-rules`, accountId),
+      { method: 'PUT', body: JSON.stringify({ rules }) },
+    ),
+  getGoogleCalendar: (accountId: string, staffId: string) =>
+    fetchApi<{
+      connection: BookingGoogleCalendarConnection | null;
+      service_account: { configured: boolean; email: string | null };
+      oauth: { configured: boolean; managed?: boolean };
+    }>(withAccount(`/api/booking/admin/staff/${staffId}/google-calendar`, accountId)),
+  startGoogleCalendarOAuth: (accountId: string, staffId: string) =>
+    fetchApi<{ authorization_url: string }>(
+      withAccount(`/api/booking/admin/staff/${staffId}/google-calendar/oauth/start`, accountId),
+      { method: 'POST' },
+    ),
+  putGoogleCalendar: (accountId: string, staffId: string, calendarId: string) =>
+    fetchApi<{ ok: true; calendar_id: string; last_verified_at: string }>(
+      withAccount(`/api/booking/admin/staff/${staffId}/google-calendar`, accountId),
+      { method: 'PUT', body: JSON.stringify({ calendar_id: calendarId }) },
+    ),
+  deleteGoogleCalendar: (accountId: string, staffId: string) =>
+    fetchApi<{ ok: true }>(
+      withAccount(`/api/booking/admin/staff/${staffId}/google-calendar`, accountId),
+      { method: 'DELETE' },
     ),
   // Requests
   listRequests: (accountId: string, status: string = 'requested') =>
@@ -1881,13 +2151,25 @@ export type WebinarAnalytics = {
     sessions: number
     firstJoinedAt: string
     latestJoinedAt: string
-    maxWatchedSeconds: number
+    latestWatchedSeconds?: number
+    /** 旧Worker/旧管理画面とのローリングデプロイ互換。 */
+    maxWatchedSeconds?: number
     ctaClickedAt: string | null
     registered: boolean
     formSubmittedAt: string | null
   }>
   sessions: Array<{ sessionStartAt: number; viewers: number; avgWatchedSeconds: number; ctaClicks: number }>
   dropoff: Array<{ bucketStart: number; viewers: number }>
+  formFunnel: {
+    ctaImpressions: number
+    ctaClicks: number
+    formOpens: number
+    formStarts: number
+    submitAttempts: number
+    submitSuccesses: number
+    submitErrors: number
+    fieldCompletions: Array<{ fieldName: string; users: number }>
+  }
 }
 
 export type WebinarUserComment = {

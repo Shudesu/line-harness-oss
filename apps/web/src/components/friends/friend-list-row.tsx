@@ -1,6 +1,9 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { TagIcon } from '@phosphor-icons/react'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Button } from '@cloudflare/kumo/components/button'
 import type { FriendListItem } from '@/lib/api'
 import TagBadge from './tag-badge'
 
@@ -42,22 +45,16 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           navigateToChat()
         }
       }}
-      className="grid grid-cols-[80px_220px_120px_1fr_280px] gap-3 px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer items-start focus:outline-none focus:bg-gray-50"
+      className="grid cursor-pointer grid-cols-[80px_220px_120px_1fr_280px] items-start gap-3 border-b border-kumo-line px-4 py-3 hover:bg-kumo-tint focus:bg-kumo-tint focus:outline-none"
     >
       {/* 対応マーク — chats.status 由来 (unread / in_progress / resolved). */}
       <div className="pt-1">
         {friend.chatStatus === 'unread' ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-red-100 text-red-700">
-            未対応
-          </span>
+          <Badge variant="error" appearance="dot">未対応</Badge>
         ) : friend.chatStatus === 'in_progress' ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-yellow-100 text-yellow-700">
-            対応中
-          </span>
+          <Badge variant="warning" appearance="dot">対応中</Badge>
         ) : (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-gray-100 text-gray-500">
-            対応済み
-          </span>
+          <Badge variant="neutral" appearance="dot">対応済み</Badge>
         )}
       </div>
 
@@ -67,18 +64,18 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           <img
             src={friend.pictureUrl}
             alt={friend.displayName}
-            className="w-9 h-9 rounded-full object-cover bg-gray-100 flex-shrink-0"
+            className="h-9 w-9 flex-shrink-0 rounded-full bg-kumo-tint object-cover"
           />
         ) : (
-          <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-sm font-medium flex-shrink-0">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-kumo-fill text-sm font-medium text-kumo-subtle">
             {friend.displayName?.charAt(0) ?? '?'}
           </div>
         )}
         <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{friend.displayName}</p>
-          <p className="text-[10px] text-gray-400 mt-0.5">登録: {formatJstDate(friend.createdAt)}</p>
+          <p className="truncate text-sm font-medium text-kumo-strong">{friend.displayName}</p>
+          <p className="mt-0.5 text-[10px] text-kumo-subtle">登録: {formatJstDate(friend.createdAt)}</p>
           {!isFollowing && (
-            <p className="text-[10px] text-red-400 mt-0.5">ブロック / 退会</p>
+            <p className="mt-0.5 text-[10px] text-kumo-danger">ブロック / 退会</p>
           )}
         </div>
       </div>
@@ -87,15 +84,15 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
       <div className="pt-1">
         {scenario ? (
           <div>
-            <p className="text-xs font-medium text-blue-700 truncate" title={scenario.name}>
+            <p className="truncate text-xs font-medium text-kumo-link" title={scenario.name}>
               {scenario.name}
             </p>
-            <p className="text-[10px] text-gray-400 mt-0.5">
+            <p className="mt-0.5 text-[10px] text-kumo-subtle">
               {scenario.status === 'active' ? '配信中' : scenario.status === 'delivering' ? '配信処理中' : scenario.status}
             </p>
           </div>
         ) : (
-          <span className="text-xs text-gray-400">停止中</span>
+          <span className="text-xs text-kumo-subtle">停止中</span>
         )}
       </div>
 
@@ -103,15 +100,15 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
       <div className="min-w-0">
         {incoming ? (
           <>
-            <p className="text-xs text-gray-700 line-clamp-2 break-all">
+            <p className="line-clamp-2 break-all text-xs text-kumo-default">
               {incoming.messageType === 'text' ? incoming.content : `[${incoming.messageType}]`}
             </p>
-            <p className="text-[10px] text-gray-400 mt-1">
+            <p className="mt-1 text-[10px] text-kumo-subtle">
               ({formatJstTimestamp(incoming.createdAt)})
             </p>
           </>
         ) : (
-          <span className="text-xs text-gray-400">受信なし</span>
+          <span className="text-xs text-kumo-subtle">受信なし</span>
         )}
       </div>
 
@@ -125,14 +122,14 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           </div>
         )}
         {friend.firstTrackedLinkName && (
-          <p className="text-[10px] text-gray-500">
-            <span className="text-gray-400">ASP_LP名：</span>
+          <p className="text-[10px] text-kumo-default">
+            <span className="text-kumo-subtle">ASP_LP名：</span>
             {friend.firstTrackedLinkName}
           </p>
         )}
         {friend.refCode && !friend.firstTrackedLinkName && (
-          <p className="text-[10px] text-gray-500">
-            <span className="text-gray-400">流入：</span>
+          <p className="text-[10px] text-kumo-default">
+            <span className="text-kumo-subtle">流入：</span>
             {friend.refCode}
           </p>
         )}
@@ -143,8 +140,8 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
           const igAccountId = meta?.ig_account_id as string | undefined
           if (!igUsername && !igAccountId) return null
           return (
-            <p className="text-[10px] text-pink-600">
-              <span className="text-gray-400">IG流入：</span>
+            <p className="text-[10px] text-kumo-badge-purple">
+              <span className="text-kumo-subtle">IG流入：</span>
               {igUsername ? `@${igUsername}` : igAccountId}
             </p>
           )
@@ -152,16 +149,19 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
         {friend.tags.length === 0 && !friend.firstTrackedLinkName && !friend.refCode &&
           !(friend as unknown as { metadata?: Record<string, unknown> }).metadata?.ig_account_username &&
           !(friend as unknown as { metadata?: Record<string, unknown> }).metadata?.ig_account_id && (
-          <span className="text-[10px] text-gray-300">—</span>
+          <span className="text-[10px] text-kumo-inactive">—</span>
         )}
         {onTagEditClick && (
-          <button
+          <Button
             type="button"
+            size="xs"
+            variant="ghost"
+            icon={TagIcon}
             onClick={(e) => { e.stopPropagation(); onTagEditClick() }}
-            className="text-[10px] text-blue-600 hover:text-blue-800 underline mt-0.5"
+            className="mt-0.5 px-0 text-kumo-link"
           >
             タグ編集
-          </button>
+          </Button>
         )}
       </div>
     </div>

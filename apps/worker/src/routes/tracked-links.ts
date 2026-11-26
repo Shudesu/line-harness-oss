@@ -18,8 +18,19 @@ import { isLinkPreviewBot } from '../lib/og-bot.js';
 import { buildOgHtml } from '../lib/og-html.js';
 import { resolveOgForTrackedLink } from '../lib/og-resolver.js';
 import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const trackedLinks = new Hono<Env>();
+
+function isHttpDestination(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
   // Prefer the short code (baseUrl may be a branded short domain).
@@ -135,8 +146,11 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       ogImageUrl?: string | null;
     }>();
 
-    if (!body.name || !body.originalUrl) {
+    if (!body || typeof body.name !== 'string' || !body.name.trim() || !body.originalUrl) {
       return c.json({ success: false, error: 'name and originalUrl are required' }, 400);
+    }
+    if (!isHttpDestination(body.originalUrl)) {
+      return c.json({ success: false, error: 'originalUrl must be a valid http or https URL' }, 400);
     }
 
     const link = await createTrackedLink(c.env.DB, {
@@ -247,14 +261,29 @@ function getAndroidPackage(url: string): string | null {
   }
 }
 
+function serializeInlineScriptString(value: string): string {
+  // JSON escapes JS string delimiters, but HTML still recognizes </script>
+  // inside a string. Escape '<' before embedding JSON in a script element.
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 function buildAppRedirectHtml(destinationUrl: string): string {
-  const escaped = destinationUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const destinationJson = serializeInlineScriptString(destinationUrl);
+  const destinationAttribute = destinationUrl
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
   const androidPackage = getAndroidPackage(destinationUrl);
   // intent://path#Intent;scheme=https;package=com.xxx;S.browser_fallback_url=https://...;end
   const intentUrl = androidPackage
-    ? `intent://${destinationUrl.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=${androidPackage};S.browser_fallback_url=${encodeURIComponent(destinationUrl)};end`
+    ? `intent://${destinationUrl.replace(/^https?:\/\//i, '')}#Intent;scheme=https;package=${androidPackage};S.browser_fallback_url=${encodeURIComponent(destinationUrl)};end`
     : null;
-  const intentEscaped = intentUrl ? intentUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;') : '';
+  const intentJson = serializeInlineScriptString(intentUrl ?? '');
 
   return `<!DOCTYPE html>
 <html><head>
@@ -267,14 +296,14 @@ function buildAppRedirectHtml(destinationUrl: string): string {
 <script>
 (function(){
   var isAndroid = /Android/i.test(navigator.userAgent);
-  if(isAndroid && "${intentEscaped}"){
-    window.location.href="${intentEscaped}";
+  if(isAndroid && ${intentJson}){
+    window.location.href=${intentJson};
   } else {
-    window.location.href="${escaped}";
+    window.location.href=${destinationJson};
   }
 })();
 </script>
-<noscript><meta http-equiv="refresh" content="0;url=${escaped}"></noscript>
+<noscript><meta http-equiv="refresh" content="0;url=${destinationAttribute}"></noscript>
 </body></html>`;
 }
 
@@ -290,6 +319,11 @@ trackedLinks.get('/t/:linkId', async (c) => {
 
   if (!link || !link.is_active) {
     return c.json({ success: false, error: 'Link not found' }, 404);
+  }
+  // Also protect legacy and automatically created records. An allowed app
+  // hostname does not make a javascript: (or other non-web) URL safe to open.
+  if (!isHttpDestination(link.original_url)) {
+    return c.json({ success: false, error: 'Invalid link destination' }, 400);
   }
 
   // Bot UA (LINE/X/Facebook 等のリンクプレビュー) → OGP HTML を返して終了。
@@ -339,7 +373,19 @@ trackedLinks.get('/t/:linkId', async (c) => {
     (async () => {
       try {
         // Record the click (link.id, not the raw param — it may be a short code)
-        await recordLinkClick(c.env.DB, link.id, friendId);
+        const click = await recordLinkClick(c.env.DB, link.id, friendId);
+
+        if (friendId) {
+          await awardActivityMileage(c.env.DB, {
+            eventType: 'link_clicked',
+            source: 'tracked_link',
+            sourceEventId: click.id,
+            friendId,
+            subjectKey: link.id,
+            metadata: { trackedLinkId: link.id, linkName: link.name },
+            occurredAt: click.clicked_at,
+          });
+        }
 
         // Run automatic actions if a friend is identified
         if (friendId) {

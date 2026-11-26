@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for suggesting an improvement. LINE Harness prioritizes security, delivery safety, setup reliability, and broadly useful CRM workflows.
+        Thanks for suggesting an improvement. L Harness prioritizes security, delivery safety, setup reliability, and broadly useful CRM workflows.
 
         Large or industry-specific ideas may be redirected to plugins or split into smaller issues.
   - type: textarea

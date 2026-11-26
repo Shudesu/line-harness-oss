@@ -1,34 +1,24 @@
+import { xGates } from './routes/x-gates.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { LineClient } from '@line-crm/line-sdk';
 import {
-  getLineAccounts,
   getTrafficPoolBySlug,
   getTrafficPoolById,
   getRandomPoolAccount,
   getPoolAccounts,
   getEntryRouteByRefCode,
+  getLineAccountByChannelId,
   getLineAccountById,
   getAffiliateLinkByRefCode,
   incrementAffiliateLinkClick,
 } from '@line-crm/db';
-import { processStepDeliveries } from './services/step-delivery.js';
-import { processScheduledBroadcasts, processQueuedBroadcasts } from './services/broadcast.js';
-import { processReminderDeliveries } from './services/reminder-delivery.js';
-import { checkAccountHealth } from './services/ban-monitor.js';
-import { refreshLineAccessTokens } from './services/token-refresh.js';
-import { processInsightFetch } from './services/insight-fetcher.js';
-import { processDueReminders } from './services/booking-reminders.js';
-import { runExpirer } from './services/booking-expirer.js';
-import { processDueEventReminders } from './services/event-booking-reminders.js';
-import { runEventBookingExpirer } from './services/event-booking-expirer.js';
-import { sendEventBookingNotification } from './services/event-booking-notifier.js';
-import { sendBookingNotification } from './services/booking-notifier.js';
-import { DEFAULT_ACCOUNT_SETTINGS } from './services/booking-types.js';
+import { scheduled } from './scheduled.js';
+import { TenantScheduler } from './durable-objects/tenant-scheduler.js';
 import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { webhook } from './routes/webhook.js';
 import { friends } from './routes/friends.js';
+import { friendScheduledMessages } from './routes/friend-scheduled-messages.js';
 import { tags } from './routes/tags.js';
 import { scenarios } from './routes/scenarios.js';
 import { broadcasts } from './routes/broadcasts.js';
@@ -39,6 +29,7 @@ import { affiliates } from './routes/affiliates.js';
 import { affiliateOffers } from './routes/affiliate-offers.js';
 import { duplicates } from './routes/duplicates.js';
 import { usersGrouped } from './routes/users-grouped.js';
+import { usage } from './routes/usage.js';
 import { inbox } from './routes/inbox.js';
 import { openapi } from './routes/openapi.js';
 import { liffRoutes } from './routes/liff.js';
@@ -46,14 +37,17 @@ import { affiliateSelfRoutes } from './routes/affiliate-self.js';
 // Round 3 ルート
 import { webhooks } from './routes/webhooks.js';
 import { calendar } from './routes/calendar.js';
+import { meetConsultations } from './routes/meet-consultations.js';
 import { reminders } from './routes/reminders.js';
 import { scoring } from './routes/scoring.js';
 import { templates } from './routes/templates.js';
 import { chats } from './routes/chats.js';
 import { conversations } from './routes/conversations.js';
-// notifications ルート (notification_rules CRUD + notifications 一覧) は
-// インボックス機能 (/api/inbox/unanswered) に置き換えたため削除。
-// DB テーブル notification_rules / notifications は archive 目的で残してある。
+// notifications ルート: 一度インボックス機能 (/api/inbox/unanswered) に置き換えて
+// 削除したが、クォータ不足通知 (services/quota-alert.ts, 2026-09-01 事故対応) が
+// notifications / notification_rules に書き込むようになったため再マウント。
+// 書き込み側だけ復活して読み手が居ないと「通知したつもり」になるのが最悪のため。
+import { notifications } from './routes/notifications.js';
 import { stripe } from './routes/stripe.js';
 import { health } from './routes/health.js';
 import { automations } from './routes/automations.js';
@@ -70,6 +64,7 @@ import { setup } from './routes/setup.js';
 import { autoReplies } from './routes/auto-replies.js';
 import { adminAuth } from './routes/admin-auth.js';
 import { resolveCorsOrigin } from './middleware/admin-auth-config.js';
+import { defaultCachePolicyMiddleware } from './middleware/cache-policy.js';
 import booking from './routes/booking.js';
 import events from './routes/events.js';
 import { trafficPools } from './routes/traffic-pools.js';
@@ -80,10 +75,14 @@ import { profileRefresh } from './routes/profile-refresh.js';
 import { richMenuGroups } from './routes/rich-menu-groups.js';
 import { lineProxy } from './routes/line-proxy.js';
 import { webinarRoutes } from './routes/webinars.js';
+import { instagramEngagement } from './routes/instagram-engagement.js';
 import adminVersion from './routes/admin-version.js';
 import adminUpdate from './routes/admin-update.js';
+import { adminSso } from './routes/admin-sso.js';
+import { mediaInquiries } from './routes/media-inquiries.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
 import { buildOgHtml } from './lib/og-html.js';
+import { loginUnconfiguredPage } from './lib/login-unconfigured.js';
 import {
   resolveOgForEvent,
   resolveOgForForm,
@@ -98,6 +97,11 @@ export type Env = {
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;
     API_KEY: string;
+    ACCESS_REQUIRED?: string;
+    ACCESS_TEAM_DOMAIN?: string;
+    ACCESS_AUD?: string;
+    MEET_CALLBACK_SECRET?: string;
+    STRIPE_WEBHOOK_SECRET?: string;
     LEGACY_API_KEY?: string;
     LIFF_URL: string;
     LINE_CHANNEL_ID: string;
@@ -108,15 +112,26 @@ export type Env = {
     ADMIN_ORIGIN?: string;          // Comma-separated admin web origin allowlist for credentialed CORS
     ADMIN_COOKIE_SAMESITE?: string; // Optional override: 'Strict' | 'Lax' | 'None'
     ADMIN_ALLOW_CROSS_SITE?: string; // 'true' opts into SameSite=None cross-site cookies
+    // External SSO into the admin session (GET /admin/sso). Optional: when the
+    // secret is unset the route answers like any unregistered path, so the
+    // feature is entirely absent unless an operator opts in. ≥32 chars, shared
+    // with the token issuer. See routes/admin-sso.ts and docs/ADMIN-AUTH.md.
+    ADMIN_SSO_SECRET?: string;
+    X_GATE_TURNSTILE_SITE_KEY?: string;
+    X_GATE_TURNSTILE_SECRET_KEY?: string;
+    X_GATE_TURNSTILE_HOSTNAMES?: string;
+    X_HARNESS_GATE_SECRET?: string;
+    X_HARNESS_CONNECTION_ID?: string;
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
+    IG_LINK_TOKEN_SECRET?: string; // Optional dedicated spec 08 HMAC secret
+    IG_LINK_TOKEN_POLICY?: 'off' | 'prefer' | 'require';
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
     // Phase 5 self-update — consumed by /admin/update/*. Defaults live in
-    // wrangler.toml [vars]; secrets (CF_API_TOKEN, ADMIN_API_KEY) come from
+    // wrangler.toml [vars]; secret (CF_API_TOKEN) come from
     // `wrangler secret put`. All are optional at the type level so the rest
     // of the worker still type-checks in test environments that don't set
     // them; the /admin/update/* route guards on their presence at runtime.
-    ADMIN_API_KEY?: string;
     CF_API_TOKEN?: string;
     CF_ACCOUNT_ID?: string;
     WORKER_NAME?: string;
@@ -127,13 +142,59 @@ export type Env = {
     WORKER_PUBLIC_URL?: string;
     ADMIN_PUBLIC_URL?: string;
     LIFF_PUBLIC_URL?: string;
+    // Google Calendar booking sync. Store the private key as a Worker secret.
+    // Calendar owners only enter/share their Google Calendar ID in admin UI.
+    GOOGLE_SERVICE_ACCOUNT_EMAIL?: string;
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?: string;
+    // Keyless Google Calendar connection. User grants access once via OAuth;
+    // the Worker keeps a refresh token and never needs a service-account key.
+    GOOGLE_OAUTH_CLIENT_ID?: string;
+    GOOGLE_OAUTH_CLIENT_SECRET?: string;
+    GOOGLE_CALENDAR_BROKER_URL?: string;
+    GOOGLE_CALENDAR_TENANT_ID?: string;
+    GOOGLE_CALENDAR_BROKER_SECRET?: string;
+    /** Days to keep messages_log rows. Unset/invalid = keep forever. */
+    LOG_RETENTION_DAYS?: string;
+    /** Max friends (is_following=1). Unset/invalid = unlimited. */
+    QUOTA_FRIENDS_MAX?: string;
+    /** Max outgoing push messages per JST month. Unset/invalid = unlimited. */
+    QUOTA_MONTHLY_MESSAGES_MAX?: string;
+    /** Optional URL shown to admins when a quota is exceeded. */
+    QUOTA_NOTICE_URL?: string;
+    // 分・6時間の定期ジョブを自走させる DO。バインディング名 TENANT_SCHEDULER は
+    // テナントを自動プロビジョニングする側 (scripts/lib/tenant-wrangler.ts) にも
+    // 同名で書いてあり、ここと食い違うと「デプロイは成功するがアラームは一生
+    // armed されない」という気づきにくい壊れ方をするので、変更するときは
+    // 両方揃えること。実体は durable-objects/tenant-scheduler.ts の TenantScheduler。
+    TENANT_SCHEDULER: DurableObjectNamespace<TenantScheduler>;
   };
   Variables: {
-    staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    staff: import('./middleware/auth.js').AuthenticatedStaff;
+    authRateChecked: boolean;
   };
 };
 
 const app = new Hono<Env>();
+
+// Private Workers Cache pilot: only responses that deliberately declare a
+// public Cache-Control policy may enter the cache. This wrapper runs after all
+// downstream handlers and supplies no-store to every unmarked response.
+app.use('*', defaultCachePolicyMiddleware);
+
+// Public form endpoint used by the-harness.com. Keep this allowlist separate
+// from credentialed admin CORS so the media origin gains access to this route
+// only, never to the admin API surface.
+app.use('/api/public/media-inquiries', cors({
+  origin: (origin) => [
+    'https://the-harness.com',
+    'https://www.the-harness.com',
+    'http://localhost:4321',
+    'http://127.0.0.1:4321',
+  ].includes(origin) ? origin : '',
+  allowMethods: ['POST', 'OPTIONS'],
+  allowHeaders: ['Content-Type'],
+  maxAge: 600,
+}));
 
 // CORS — credentialed cookie auth cannot use a wildcard origin. Reflect only
 // same-origin requests and origins on the ADMIN_ORIGIN allowlist; everything
@@ -143,7 +204,7 @@ app.use('*', cors({
   origin: (origin, c) => resolveCorsOrigin(c.env, origin, c.req.url),
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-admin-api-key'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Idempotency-Key'],
   maxAge: 600,
 }));
 
@@ -156,6 +217,7 @@ app.use('*', authMiddleware);
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
 app.route('/', friends);
+app.route('/', friendScheduledMessages);
 app.route('/', tags);
 app.route('/', scenarios);
 app.route('/', broadcasts);
@@ -166,21 +228,26 @@ app.route('/', affiliates);
 app.route('/', affiliateOffers);
 app.route('/', duplicates);
 app.route('/', usersGrouped);
+app.route('/', usage);
 app.route('/', inbox);
 app.route('/', openapi);
 app.route('/', liffRoutes);
 app.route('/', affiliateSelfRoutes);
+app.route('/', mediaInquiries);
 
 // Mount route groups — Round 3
 app.route('/', webhooks);
 app.route('/', calendar);
+app.route('/', meetConsultations);
 app.route('/', reminders);
 app.route('/', scoring);
 app.route('/', templates);
 app.route('/', chats);
+app.route('/', notifications);
 app.route('/', conversations);
 app.route('/', stripe);
 app.route('/', health);
+app.route('/', xGates);
 app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
@@ -203,6 +270,7 @@ app.route('/', dedupPreview);
 app.route('/', profileRefresh);
 app.route('/', richMenuGroups);
 app.route('/', webinarRoutes);
+app.route('/', instagramEngagement);
 // LINE Messaging API 互換プロキシ — 外部エージェントの直接送信を messages_log に残す
 app.route('/', lineProxy);
 
@@ -210,11 +278,15 @@ app.route('/', lineProxy);
 // /admin/ but intentionally unauthenticated: the dashboard fetches /admin/version
 // before login to render the upgrade banner, and the returned hashes are
 // derivable from the deployed bundle. /admin/update/* (Task 18) layers
-// ADMIN_API_KEY middleware on subpaths.
+// owner-session middleware on subpaths.
 app.route('/admin', adminVersion);
-// Phase 5 Task 18 — self-update endpoints guarded by x-admin-api-key.
-// authMiddleware skips non-/api/ paths so this router owns its own auth gate.
+// Phase 5 Task 18 — self-update endpoints guarded by owner sessions.
+// Shared middleware validates the cookie and CSRF; the router requires owner.
 app.route('/admin/update', adminUpdate);
+// External SSO — establishes the admin session from a signed, single-use token.
+// Inert (404) unless ADMIN_SSO_SECRET is configured. authMiddleware skips
+// non-/api/ paths, so this route owns its own verification.
+app.route('/', adminSso);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {
@@ -238,15 +310,36 @@ app.get('/api/qr', async (c) => {
 // Desktop: QR code encodes LIFF URL.
 // Stuck users opt into /r/:ref/help for Safari escape instructions.
 app.get('/r/:ref', async (c) => {
+  const xGateCampaign=c.env.X_HARNESS_GATE_SECRET&&c.env.X_HARNESS_CONNECTION_ID
+    ? await c.env.DB.prepare('SELECT gate_id,line_account_id FROM x_gate_campaigns WHERE tracked_link_id=? AND is_active=1').bind(c.req.param('ref')).first<{gate_id:string;line_account_id:string}>()
+    : null;
   const ref = c.req.param('ref');
-  const formId = c.req.query('form') || '';
+  const formId = xGateCampaign ? '' : c.req.query('form') || '';
 
   // Resolve LIFF URL — priority:
+  //   0. URL query ?account= (explicit single-account pin — admin-issued
+  //      per-account links must never be re-routed by a colliding ref_code)
   //   1. entry_route.pool_id (if ref maps to a referral link)
   //   2. URL query ?pool=
   //   3. 'main' fallback
   let liffUrl = c.env.LIFF_URL;
   let pool: Awaited<ReturnType<typeof getTrafficPoolBySlug>> | null = null;
+
+  // 0. ?account= pins the destination account and wins over any ref-derived
+  // pool/affiliate resolution. The ref still rides through to LIFF below, so
+  // attribution (friends.ref_code / ref_tracking via /api/liff/link) keeps
+  // working; only the account choice is fixed. Unknown channel_id or an
+  // account without liff_id falls through to the normal resolution chain.
+  const accountParam = c.req.query('account') || '';
+  let accountResolved = false;
+  if(xGateCampaign){const account=await getLineAccountById(c.env.DB,xGateCampaign.line_account_id);if(!account?.liff_id)return c.html(loginUnconfiguredPage(),503);liffUrl=`https://liff.line.me/${account.liff_id}`;accountResolved=true;}
+  if (accountParam && !xGateCampaign) {
+    const account = await getLineAccountByChannelId(c.env.DB, accountParam);
+    if (account?.liff_id) {
+      liffUrl = `https://liff.line.me/${account.liff_id}`;
+      accountResolved = true;
+    }
+  }
 
   // 1. entry_route lookup. getTrafficPoolById (unlike getTrafficPoolBySlug)
   // does not filter on is_active, so we ignore disabled pools explicitly to
@@ -258,7 +351,7 @@ app.get('/r/:ref', async (c) => {
   // double-count every successful click in getEntryRouteFunnel. Landing-page
   // drop-off (clicks that never reach OAuth) is therefore not visible in the
   // funnel; that limitation is intentional pending a dedicated click table.
-  const route = await getEntryRouteByRefCode(c.env.DB, ref);
+  const route = accountResolved ? null : await getEntryRouteByRefCode(c.env.DB, ref);
   if (route?.pool_id) {
     const candidate = await getTrafficPoolById(c.env.DB, route.pool_id);
     if (candidate?.is_active) pool = candidate;
@@ -274,7 +367,7 @@ app.get('/r/:ref', async (c) => {
   // through to LIFF state below so the existing ref_tracking flow attributes
   // the eventual friend-add via /auth/callback + /api/liff/link.
   let affiliateResolved = false;
-  if (!route) {
+  if (!route && !accountResolved) {
     const affiliateLink = await getAffiliateLinkByRefCode(c.env.DB, ref);
     if (affiliateLink) {
       await incrementAffiliateLinkClick(c.env.DB, ref);
@@ -290,7 +383,7 @@ app.get('/r/:ref', async (c) => {
   // 2 / 3. fallback to URL query or 'main'. Skipped for affiliate refs, whose
   // account is already resolved above; falling through to the 'main' pool would
   // override the affiliate's chosen account.
-  if (!pool && !affiliateResolved) {
+  if (!pool && !affiliateResolved && !accountResolved) {
     const poolSlug = c.req.query('pool') || 'main';
     pool = await getTrafficPoolBySlug(c.env.DB, poolSlug);
   }
@@ -307,16 +400,27 @@ app.get('/r/:ref', async (c) => {
     }
   }
 
+  // L Harness Cloud tenants are provisioned without LIFF config. When neither
+  // env LIFF_URL nor the resolved pool/affiliate account provides one,
+  // `liffUrl.match()` below throws on undefined (500) — return setup guidance.
+  if (!liffUrl) {
+    return c.html(loginUnconfiguredPage(), 503);
+  }
+
   // Build LIFF URL with params (direct link for Universal Link)
   const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
   const liffParams = new URLSearchParams();
   if (liffIdMatch) liffParams.set('liffId', liffIdMatch[1]);
   if (ref) liffParams.set('ref', ref);
   if (formId) liffParams.set('form', formId);
-  const gate = c.req.query('gate');
+  // Parity with /auth/line's qrParams — keeps the account hint on the LIFF URL.
+  if (accountParam && !xGateCampaign) liffParams.set('account', accountParam);
+  const gate = xGateCampaign?.gate_id ?? c.req.query('gate');
   if (gate) liffParams.set('gate', gate);
   const xh = c.req.query('xh');
   if (xh) liffParams.set('xh', xh);
+  const igt = c.req.query('igt');
+  if (igt !== undefined) liffParams.set('igt', igt);
   const ig = c.req.query('ig');
   if (ig) liffParams.set('ig', ig);
   const iga = c.req.query('iga');
@@ -329,8 +433,8 @@ app.get('/r/:ref', async (c) => {
   // friend-add gate (initSalonBooking, initEventBooking); page=book/form
   // would bypass that gate and bypass ref-based attribution, so they are
   // intentionally excluded until those initializers are unified.
-  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar']);
-  const page = c.req.query('page');
+  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar','xgate']);
+  const page = xGateCampaign ? 'xgate' : c.req.query('page');
   if (page && PAGE_PASSTHROUGH_ALLOWED.has(page)) liffParams.set('page', page);
   const id = c.req.query('id');
   if (id) liffParams.set('id', id);
@@ -837,7 +941,11 @@ export async function notFoundHandler(
     return c.html(html);
   }
 
-  // Serve static assets (admin dashboard, LIFF pages).
+  // Serve static assets. Since the three-surfaces bundle (2026-08-24) the ASSETS
+  // binding can hold up to three surfaces at once — root (this Worker's own
+  // dist/client, i.e. the LIFF app / friend-add flow), `/<adminBasePath>` (admin
+  // dashboard), `/liff-app` (apps/liff) — see the SPA-fallback comment below for
+  // how a deep link under one of those prefixes finds its own index.html.
   // ASSETS binding is missing when wrangler runs without a built `dist/client`
   // (fresh clone, vitest, or a deploy where the assets directive was stripped).
   // Without this guard every GET / surfaces as
@@ -852,8 +960,29 @@ export async function notFoundHandler(
   // アセットストアに実ファイルが無く 404 で返る。HTML を要求する GET
   // ナビゲーションに限り index.html を返してクライアントルーターに任せる。
   // それ以外 (存在しない .js/.png への参照など) は 404 のまま透過する。
+  //
+  // three-surfaces bundle（2026-08-24）
+  // 以降、このオリジンは複数のクライアントルート SPA を配信する — root は LIFF アプリ
+  // （friend-add フロー本体）、`/<adminBasePath>/*`（例: `/console`）は admin、
+  // `/liff-app/*` は apps/liff。フォールバック先を root 固定にすると、admin や
+  // apps/liff の深いリンクが LIFF アプリの index.html に着地して壊れる。
+  // どのプレフィックスが実際に存在するかは line-harness 側のビルド（basePath 設定）が
+  // 決めるので、ここでは決め打ちせず「先頭パスセグメント配下に index.html があれば
+  // それを使う、無ければ root にフォールバック」という汎用ロジックにしてある —
+  // 既存の root 直下ルート（/webinar/:slug, /events/:id, /book 等）はどのみち
+  // 該当セグメント名のディレクトリを持たないので、1回余分に 404 を踏んで root へ
+  // 落ちるだけで従来の挙動と変わらない。
   const accept = c.req.header('accept') ?? '';
   if (c.req.method === 'GET' && accept.includes('text/html')) {
+    const firstSegment = path.split('/').find((s) => s.length > 0);
+    if (firstSegment) {
+      const prefixedRes = await c.env.ASSETS.fetch(
+        new Request(new URL(`/${firstSegment}/index.html`, c.req.url).toString(), {
+          headers: c.req.raw.headers,
+        }),
+      );
+      if (prefixedRes.status !== 404) return prefixedRes;
+    }
     return c.env.ASSETS.fetch(
       new Request(new URL('/', c.req.url).toString(), { headers: c.req.raw.headers }),
     );
@@ -862,156 +991,10 @@ export async function notFoundHandler(
 }
 app.notFound(notFoundHandler);
 
-// Scheduled handler for cron triggers — runs for all active LINE accounts
-async function scheduled(
-  event: ScheduledEvent,
-  env: Env['Bindings'],
-  ctx: ExecutionContext,
-): Promise<void> {
-  // Get all active accounts from DB
-  const dbAccounts = await getLineAccounts(env.DB);
-
-  // Build LineClient map for insight fetching (keyed by account id)
-  const lineClients = new Map<string, LineClient>();
-  for (const account of dbAccounts) {
-    if (account.is_active) {
-      lineClients.set(account.id, new LineClient(account.channel_access_token));
-    }
-  }
-  const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
-
-  // 配信系は1回だけ実行（内部でfriendのline_account_idから正しいlineClientを動的解決）
-  // 以前はアカウントごとにループしていたが、アカウントフィルタなしのDBクエリで
-  // 全アカウントの配信が各ループで重複実行されていたバグを修正
-  // Phase 1: 復旧処理 (batch_offset=-1 → 0 にする軽量な UPDATE のみ) を queue 処理より
-  // 先に await 完了させる。これで stalled/stuck から復旧した配信が同じ cron tick の
-  // processQueuedBroadcasts に拾われ、復旧レイテンシが 1 tick 縮む。recover は inline 送信を
-  // 含まない高速処理なので、先に await しても他ジョブを starve させない。
-  const { recoverStalledBroadcasts, recoverStuckDeliveries } = await import('@line-crm/db');
-  await Promise.allSettled([
-    recoverStalledBroadcasts(env.DB),
-    recoverStuckDeliveries(env.DB),
-  ]);
-
-  // Booking / event-booking リマインドは時刻厳守 + 軽量 (数件/tick、上限100件) なので、
-  // 重い配信・insight ジョブより先に実行する。以前は最後に置かれていたため、
-  // 手前のジョブが invocation を止めると数時間分のリマインドが未送信のまま
-  // starts_at を過ぎ、「開始後は送らない」ガードで永久 pending になる事故が
-  // 発生した (2026-06-01 / 2026-06-15、計 10 件送り漏れ)。
-  // token refresh はリマインドより先に済ませる (失効直後トークンでの 401 送信を防ぐ。
-  // 旧順序では refresh が先だった invariant の維持)。
-  try {
-    await refreshLineAccessTokens(env.DB);
-  } catch (e) {
-    console.error('token refresh error:', e);
-  }
-
-  try {
-    const result = await processDueReminders(env.DB, {
-      now: new Date(),
-      sender: sendBookingNotification,
-      reminderHoursBefore: DEFAULT_ACCOUNT_SETTINGS.reminder_hours_before,
-    });
-    if (result.sent + result.failed > 0) {
-      console.log(`[booking-reminders] sent=${result.sent} failed=${result.failed}`);
-    }
-  } catch (e) {
-    console.error('booking-reminders error:', e);
-  }
-
-  try {
-    const result = await processDueEventReminders(env.DB, {
-      now: new Date(),
-      sender: sendEventBookingNotification,
-    });
-    if (result.sent + result.failed > 0) {
-      console.log(`[event-booking-reminders] sent=${result.sent} failed=${result.failed}`);
-    }
-  } catch (e) {
-    console.error('event-booking-reminders error:', e);
-  }
-
-  // ウェビナー予約リマインド (セッション選択メニュー)。時刻厳守・軽量なので
-  // booking 系リマインドと同じく重いジョブより先に実行する。
-  try {
-    const { processWebinarReminders } = await import('./services/webinar-reminders.js');
-    const liffMatch = /liff\.line\.me\/([^/?]+)/.exec(env.LIFF_URL ?? '');
-    const result = await processWebinarReminders(
-      env.DB,
-      {
-        proxyBaseUrl:
-          env.WORKER_PUBLIC_URL ?? 'https://your-worker.your-subdomain.workers.dev',
-        defaultAccessToken: env.LINE_CHANNEL_ACCESS_TOKEN,
-        defaultLiffId: liffMatch?.[1] ?? null,
-        proxyDispatch: (request) => Promise.resolve(lineProxy.fetch(request, env, ctx)),
-      },
-    );
-    if (result.sent + result.failed > 0) {
-      console.log(`[webinar-reminders] sent=${result.sent} failed=${result.failed}`);
-    }
-  } catch (e) {
-    console.error('webinar-reminders error:', e);
-  }
-
-  // Phase 2: 配信系と定期ジョブを並列実行する。processScheduledBroadcasts は tag/all の
-  // inline 送信を含み時間がかかり得るため、queue 処理と並列にして互いを block しない
-  // (barrier 化すると長い scheduled 送信が queue 処理を待たせる)。scheduled dedup は
-  // status='sending', batch_offset=0 に enqueue され、同 tick もしくは次 tick (最大5分、
-  // 5分 cron の粒度内) で processQueuedBroadcasts に拾われて分割送信される。
-  const jobs = [];
-  jobs.push(
-    processStepDeliveries(env.DB, defaultLineClient, env.WORKER_URL),
-    processScheduledBroadcasts(env.DB, defaultLineClient, env.WORKER_URL),
-    processReminderDeliveries(env.DB, defaultLineClient),
-  );
-  jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL));
-  jobs.push(checkAccountHealth(env.DB));
-
-  await Promise.allSettled(jobs);
-
-  // Fetch broadcast insights (runs daily, self-throttled)
-  try {
-    await processInsightFetch(env.DB, lineClients, defaultLineClient);
-  } catch (e) {
-    console.error('Insight fetch error:', e);
-  }
-
-  // Booking expirer — runs only on the 6h cron tick.
-  if (event.cron === '0 */6 * * *') {
-    try {
-      const result = await runExpirer(env.DB, {
-        now: new Date(),
-        sender: sendBookingNotification,
-      });
-      console.log(
-        `[booking-expirer] expired=${result.expired} idempotency_purged=${result.idempotencyPurged}`,
-      );
-    } catch (e) {
-      console.error('booking-expirer error:', e);
-    }
-  }
-
-  // Event-booking expirer — 6h cron tick.
-  if (event.cron === '0 */6 * * *') {
-    try {
-      const result = await runEventBookingExpirer(env.DB, { now: new Date() });
-      console.log(
-        `[event-booking-expirer] expired=${result.expired} idempotency_purged=${result.idempotencyPurged}`,
-      );
-    } catch (e) {
-      console.error('event-booking-expirer error:', e);
-    }
-  }
-
-  // Cross-account duplicate detection — disabled.
-  // The cron used to materialize duplicates into the tag system but the 1k-subrequest
-  // budget can't drain a 1k+ candidate backlog, and a live SELECT against
-  // friends.picture_url / display_name / status_message gives the same answer
-  // on demand. Replacement: a /api/duplicates endpoint plus a dashboard view
-  // (planned alongside the multi-provider UI work). Keeping the service file
-  // (apps/worker/src/services/duplicate-detect.ts) and the existing
-  // `重複:` tag rows untouched until that replacement lands.
-}
+// wrangler.toml の [[durable_objects.bindings]] class_name は同スクリプトからの
+// named export を解決するので、メインエントリである index.ts から再 export する
+// 必要がある（実装自体は durable-objects/tenant-scheduler.ts に置いてある）。
+export { TenantScheduler };
 
 export default {
   fetch: app.fetch,

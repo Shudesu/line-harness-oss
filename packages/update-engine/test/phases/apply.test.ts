@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash } from 'node:crypto';
 import { runApply } from '../../src/phases/apply.js';
 import { createEventEmitter } from '../../src/events.js';
+import { hashWorkerAsset } from '../../src/cf-api/assets.js';
 import type { ParsedBundle } from '../../src/bundle.js';
 import type {
   UpdateContext,
@@ -60,6 +60,7 @@ const sampleCtx = (overrides: Partial<UpdateContext> = {}): UpdateContext => ({
 
 const sampleBundle = (overrides: Partial<ParsedBundle> = {}): ParsedBundle => ({
   workerJs: Buffer.from("export default {fetch(){return new Response('hi')}}"),
+  workerAssetFiles: new Map([['index.html', Buffer.from('<html>worker assets</html>')]]),
   adminFiles: new Map([['index.html', Buffer.from('<html>a</html>')]]),
   liffFiles: new Map([['index.html', Buffer.from('<html>l</html>')]]),
   migrations: new Map([
@@ -108,6 +109,8 @@ interface RouteSpec {
 interface RouterRoutes {
   d1?: RouteSpec;
   bindings?: RouteSpec;
+  assetsSession?: RouteSpec;
+  assetsUpload?: RouteSpec;
   workerPut?: RouteSpec;
   /** First Pages project (admin) — admin Pages calls. */
   adminUploadToken?: RouteSpec;
@@ -159,6 +162,12 @@ function makeRouter(routes: RouterRoutes): ReturnType<typeof vi.fn> {
     if (url.endsWith(`/workers/scripts/${WORKER_NAME}/bindings`)) {
       return respond(next('bindings'));
     }
+    if (url.endsWith(`/workers/scripts/${WORKER_NAME}/assets-upload-session`)) {
+      return respond(next('assetsSession'));
+    }
+    if (url.includes(`/accounts/${ACCOUNT_ID}/workers/assets/upload`)) {
+      return respond(next('assetsUpload'));
+    }
     if (url.endsWith(`/workers/scripts/${WORKER_NAME}`) && method === 'PUT') {
       return respond(next('workerPut'));
     }
@@ -204,17 +213,17 @@ function makeRouter(routes: RouterRoutes): ReturnType<typeof vi.fn> {
   }) as unknown as ReturnType<typeof vi.fn>;
 }
 
-function sha256Hex(buf: Buffer): string {
-  return createHash('sha256').update(buf).digest('hex');
-}
-
 /**
  * Reasonable defaults that let the entire apply phase pass. Individual
  * tests can spread + override only what they need.
  */
 function defaultRoutes(bundle: ParsedBundle): RouterRoutes {
-  const adminHashes = Array.from(bundle.adminFiles.values()).map(sha256Hex);
-  const liffHashes = Array.from(bundle.liffFiles.values()).map(sha256Hex);
+  const adminHashes = Array.from(bundle.adminFiles).map(([path, content]) =>
+    hashWorkerAsset(path, content),
+  );
+  const liffHashes = Array.from(bundle.liffFiles).map(([path, content]) =>
+    hashWorkerAsset(path, content),
+  );
   return {
     d1: { defaults: { ok: true, status: 200, body: { success: true, result: [] } } },
     bindings: {
@@ -222,6 +231,20 @@ function defaultRoutes(bundle: ParsedBundle): RouterRoutes {
         ok: true,
         status: 200,
         body: { success: true, result: [{ type: 'd1', name: 'DB', database_id: D1_ID }] },
+      },
+    },
+    assetsSession: {
+      defaults: {
+        ok: true,
+        status: 200,
+        body: { result: { buckets: [], jwt: 'ASSETS_JWT' } },
+      },
+    },
+    assetsUpload: {
+      defaults: {
+        ok: true,
+        status: 200,
+        body: { result: { jwt: 'ASSETS_COMPLETION_JWT' } },
       },
     },
     workerPut: { defaults: { ok: true, status: 200, body: { success: true } } },
@@ -524,6 +547,7 @@ describe('runApply', () => {
     expect(metadata.bindings).toEqual([
       { type: 'd1', name: 'DB', database_id: D1_ID },
       { type: 'plain_text', name: 'ENV', text: 'prod' },
+      { type: 'assets', name: 'ASSETS' },
     ]);
     expect(metadata.keep_bindings).toEqual(['secret_text', 'secret_key']);
   });

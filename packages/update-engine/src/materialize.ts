@@ -5,13 +5,16 @@
  * (`https://__LH_WORKER_URL__`) into the admin bundle because the real
  * Worker URL only exists once a customer installs. Every deploy path that
  * ships bundle admin files to Pages (CLI setup, CLI update, worker-side
- * self-update) MUST rewrite that placeholder to the install's Worker URL
- * first — deploying the files verbatim produces an admin UI that calls
- * `https://__LH_WORKER_URL__/api/...` and breaks on arrival.
+ * self-update) for a per-tenant / self-hosted install MUST rewrite that
+ * placeholder to the install's Worker URL first — deploying the files
+ * verbatim produces an admin UI that calls `https://__LH_WORKER_URL__/api/...`
+ * and breaks on arrival. Shared builds are never materialized here; their
+ * build pipeline explicitly selects same-origin API mode instead — see
+ * admin-url-placeholder.ts.
  */
 
-/** Placeholder origin baked into release admin builds by release.yml. */
-export const ADMIN_URL_PLACEHOLDER = 'https://__LH_WORKER_URL__';
+import { ADMIN_URL_PLACEHOLDER } from './admin-url-placeholder.js';
+export { ADMIN_URL_PLACEHOLDER };
 
 /**
  * Extensions we treat as text for placeholder substitution. Everything else
@@ -88,7 +91,7 @@ export function findResidualPlaceholders(files: Map<string, Buffer>): string[] {
 /**
  * Classify a D1 / SQLite error message as "schema object already exists".
  *
- * LINE Harness migrations are additive-only (enforced by
+ * L Harness migrations are additive-only (enforced by
  * scripts/check-migrations.ts) and use INSERT OR IGNORE for seed data, so
  * re-applying a migration against a database that already has it fails ONLY
  * with duplicate-object errors. Setup has always swallowed these

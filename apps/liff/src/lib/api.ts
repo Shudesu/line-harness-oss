@@ -29,6 +29,13 @@ export interface AvailabilityResponse {
     staff_id: string;
     display_name: string;
     slots: Array<{ date: string; start: string; end: string }>;
+    has_working_hours?: boolean;
+  }>;
+  calendar_sync?: Array<{
+    staff_id: string;
+    configured: boolean;
+    ok: boolean;
+    error?: 'unavailable';
   }>;
 }
 

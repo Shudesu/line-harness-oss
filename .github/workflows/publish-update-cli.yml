@@ -1,0 +1,68 @@
+name: Publish Update CLI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-update-cli
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 + tags — update-engine の upgrade-matrix テストが
+      # 旧リリースタグ (v0.14.1 等) の bootstrap/schema を `git show` で読むため、
+      # shallow checkout だと全テストが invalid object name で落ちる。
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      # npm Trusted Publishing requires npm CLI 11.5.1 or later.
+      - name: Install dependencies and current npm CLI
+        run: |
+          npm install --global npm@11
+          pnpm install --frozen-lockfile
+
+      - name: Test and build publishable packages
+        run: |
+          pnpm --filter @line-harness/update-engine test
+          pnpm --filter @line-harness/update-engine build
+          pnpm --filter create-line-harness test
+          pnpm --filter create-line-harness build
+
+      - name: Pack and publish with npm OIDC
+        run: |
+          pack_dir="$RUNNER_TEMP/line-harness-packs"
+          mkdir -p "$pack_dir"
+
+          update_version=$(node -p "require('./packages/update-engine/package.json').version")
+          cli_version=$(node -p "require('./packages/create-line-harness/package.json').version")
+
+          pnpm --dir packages/update-engine pack --pack-destination "$pack_dir"
+          pnpm --dir packages/create-line-harness pack --pack-destination "$pack_dir"
+
+          if npm view "@line-harness/update-engine@$update_version" version >/dev/null 2>&1; then
+            echo "@line-harness/update-engine@$update_version is already published"
+          else
+            npm publish "$pack_dir/line-harness-update-engine-$update_version.tgz" --access public
+          fi
+
+          if npm view "create-line-harness@$cli_version" version >/dev/null 2>&1; then
+            echo "create-line-harness@$cli_version is already published"
+          else
+            npm publish "$pack_dir/create-line-harness-$cli_version.tgz" --access public
+          fi

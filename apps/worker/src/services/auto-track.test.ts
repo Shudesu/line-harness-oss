@@ -4,6 +4,7 @@ const dbMocks = {
   getOrCreateAutoTrackedLink: vi.fn(),
   getTrackedLinkBaseUrl: vi.fn(),
   getLinkBaseUrl: vi.fn(),
+  getLineAccountById: vi.fn(),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -210,5 +211,28 @@ describe('decorateForFriendPush — shared cron/instant pipeline', () => {
     });
     expect(dbMocks.getOrCreateAutoTrackedLink).not.toHaveBeenCalled();
     expect(out.content).toBe(`${SHORT}/t/xYz9876?f=${FRIEND}`);
+  });
+
+  test("substitutes {{liff_id}} with the delivering account's LIFF (multi-account form URLs)", async () => {
+    dbMocks.getLineAccountById.mockResolvedValue({ id: 'acc-1b', liff_id: '2009668520-YghzbHx9' });
+    const content = 'フォーム: https://liff.line.me/{{liff_id}}?page=form&id=f-1&liffId={{liff_id}}';
+    const out = await decorateForFriendPush(DB, 'text', content, WORKER, {
+      lineAccountId: 'acc-1b',
+      friendId: FRIEND,
+    });
+    expect(dbMocks.getLineAccountById).toHaveBeenCalledWith(DB, 'acc-1b');
+    expect(out.content).toBe(
+      'フォーム: https://liff.line.me/2009668520-YghzbHx9?page=form&id=f-1&liffId=2009668520-YghzbHx9',
+    );
+  });
+
+  test('{{liff_id}} with no resolvable account is left unresolved (logged), content otherwise intact', async () => {
+    const content = 'https://liff.line.me/{{liff_id}}?page=form';
+    const out = await decorateForFriendPush(DB, 'text', content, WORKER, {
+      lineAccountId: null,
+      friendId: FRIEND,
+    });
+    expect(dbMocks.getLineAccountById).not.toHaveBeenCalled();
+    expect(out.content).toContain('{{liff_id}}');
   });
 });

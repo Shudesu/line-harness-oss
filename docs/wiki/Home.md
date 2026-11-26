@@ -1,8 +1,8 @@
-# LINE Harness Wiki
+# L Harness Wiki
 
-## LINE Harness とは
+## L Harness とは
 
-LINE Harness は、LINE公式アカウント向けのオープンソース CRM / マーケティングオートメーションツールです。L社 や U社 の代替として、無料（または低コスト）で運用できます。
+L Harness は、LINE公式アカウント向けのオープンソース CRM / マーケティングオートメーションツールです。L社 や U社 の代替として、無料（または低コスト）で運用できます。
 
 **コンセプト**: AIがLINEを安全に操作するための基盤。人間は監視し、AI（Claude Code等）がAPIを通じて操作します。全機能がREST APIとして公開されており、管理画面はデータの可視化専用です。
 
@@ -55,7 +55,7 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 
 ## L社 / U社 との比較
 
-| 項目 | L社 | U社 | LINE Harness |
+| 項目 | L社 | U社 | L Harness |
 |------|--------|-------|-------------|
 | 月額 | 2,980円〜 | 9,700円〜 | 無料〜$5 |
 | ステップ配信 | あり | あり | あり |
@@ -104,7 +104,10 @@ LINE Harness は、LINE公式アカウント向けのオープンソース CRM /
 21. **[Operations](22-Operations.md)** — 運用、監視、トラブルシューティング
 22. **[Claude Code Integration](23-Claude-Code-Integration.md)** — AI連携、プロンプト例
 23. **[MCP Server](24-MCP-Server.md)** — MCP Server セットアップ、ツール一覧、URL自動追跡
+25. **[Staff Management](25-Staff-Management.md)** — スタッフ、権限、APIキー管理
+26. **[Manual Update](26-Manual-Update.md)** — CLIインストール環境の安全な手動更新
 27. **[Affiliate ASP](27-Affiliate-ASP.md)** — セルフサーブ型アフィリエイト計測、last-touch帰属、重複フラグ、API
+28. **[Google Calendar & Webinar Booking](28-Google-Calendar-and-Webinar-Booking.md)** — 受付時間、OAuth接続、ライブCTA即時予約、Meet発行、リマインド
 
 ## D1テーブル一覧（42テーブル）
 

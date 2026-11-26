@@ -7,6 +7,7 @@ import UsersFilters from '@/components/users/users-filters'
 import UsersTable from '@/components/users/users-table'
 import { api } from '@/lib/api'
 import type { UserRowData } from '@/components/users/user-row'
+import { Button } from '@cloudflare/kumo/components/button'
 
 const PAGE_SIZE = 50
 
@@ -132,15 +133,18 @@ export default function UsersPage() {
             }}
           />
         </div>
-        <button
+        <Button
           type="button"
           onClick={() => setPendingForceRefresh(true)}
           disabled={refreshing}
-          className="mt-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          className="mt-1"
+          size="sm"
+          variant="secondary"
+          loading={refreshing}
           title="worker キャッシュをバイパスして再集計"
         >
           {refreshing ? '再計算中…' : '再計算'}
-        </button>
+        </Button>
       </div>
 
       {error && (

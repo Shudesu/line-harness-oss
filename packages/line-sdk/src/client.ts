@@ -18,6 +18,56 @@ export interface FollowersInsight {
   blocks?: number;
 }
 
+export interface FollowerIdsPage {
+  userIds: string[];
+  next?: string;
+}
+
+export interface MessageQuota {
+  /** 'limited' (value holds the plan's monthly cap) or 'none' (no cap). */
+  type: string;
+  value?: number;
+}
+
+export interface MessageQuotaConsumption {
+  totalUsage: number;
+}
+
+/** Response of GET/PUT /v2/bot/channel/webhook/endpoint. */
+export interface WebhookEndpointSetting {
+  endpoint: string;
+  active: boolean;
+}
+
+/**
+ * Response of POST /v2/bot/channel/webhook/test.
+ * LINE POSTs a test event to the configured webhook URL and reports whether
+ * the receiving side answered correctly (signature verification etc.).
+ */
+export interface WebhookTestResult {
+  success: boolean;
+  message?: string;
+  timestamp?: string;
+  detail?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * LINE API が非 2xx を返したときの typed error。status とレスポンス本文を
+ * 機械可読に保持する — 呼び出し元が「429 かつ月間上限超過」のような判別を
+ * message 文字列のパースなしで行えるようにする。
+ */
+export class LineApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly statusText: string,
+    public readonly responseBody: string,
+  ) {
+    super(`LINE API error: ${status} ${statusText} — ${responseBody}`);
+    this.name = 'LineApiError';
+  }
+}
+
 export class LineClient {
   constructor(private readonly channelAccessToken: string) {}
 
@@ -27,6 +77,7 @@ export class LineClient {
     method: string,
     path: string,
     body?: unknown,
+    requestHeaders: Record<string, string> = {},
   ): Promise<{ data: unknown; headers: Headers }> {
     const url = `${LINE_API_BASE}${path}`;
 
@@ -35,6 +86,7 @@ export class LineClient {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.channelAccessToken}`,
+        ...requestHeaders,
       },
     };
 
@@ -44,11 +96,16 @@ export class LineClient {
 
     const res = await fetch(url, options);
 
+    // LINE returns 409 when a request with the same X-Line-Retry-Key was
+    // already accepted. For a caller retrying the exact same operation this
+    // is a successful idempotent outcome, not a delivery failure.
+    if (res.status === 409 && requestHeaders['X-Line-Retry-Key']) {
+      return { data: { retryAccepted: true }, headers: res.headers };
+    }
+
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(
-        `LINE API error: ${res.status} ${res.statusText} — ${text}`,
-      );
+      throw new LineApiError(res.status, res.statusText, text);
     }
 
     // Some endpoints (e.g. push, reply) return an empty body with 200.
@@ -75,9 +132,19 @@ export class LineClient {
 
   // ─── Messaging ───────────────────────────────────────────────────────────
 
-  async pushMessage(to: string, messages: Message[]): Promise<unknown> {
-    const body: PushMessageRequest = { to, messages };
-    const { data } = await this.request('POST', '/v2/bot/message/push', body);
+  async pushMessage(
+    to: string,
+    messages: Message[],
+    retryKey?: string,
+    customAggregationUnits?: string[],
+  ): Promise<unknown> {
+    const body: PushMessageRequest = { to, messages, customAggregationUnits };
+    const { data } = await this.request(
+      'POST',
+      '/v2/bot/message/push',
+      body,
+      retryKey ? { 'X-Line-Retry-Key': retryKey } : {},
+    );
     return data;
   }
 
@@ -85,6 +152,7 @@ export class LineClient {
     to: string[],
     messages: Message[],
     customAggregationUnits?: string[],
+    retryKey?: string,
   ): Promise<{ data: unknown; requestId: string | null }> {
     const body: Record<string, unknown> = { to, messages };
     if (customAggregationUnits) {
@@ -94,18 +162,21 @@ export class LineClient {
       'POST',
       '/v2/bot/message/multicast',
       body,
+      retryKey ? { 'X-Line-Retry-Key': retryKey } : {},
     );
     return { data, requestId: headers.get('x-line-request-id') };
   }
 
   async broadcast(
     messages: Message[],
+    retryKey?: string,
   ): Promise<{ data: unknown; requestId: string | null }> {
     const body: BroadcastRequest = { messages };
     const { data, headers } = await this.request(
       'POST',
       '/v2/bot/message/broadcast',
       body,
+      retryKey ? { 'X-Line-Retry-Key': retryKey } : {},
     );
     return { data, requestId: headers.get('x-line-request-id') };
   }
@@ -186,10 +257,41 @@ export class LineClient {
     if (res.status === 404) return null;
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`LINE API error: ${res.status} ${res.statusText} — ${text}`);
+      throw new LineApiError(res.status, res.statusText, text);
     }
     const data = (await res.json()) as { richMenuId: string };
     return data.richMenuId;
+  }
+
+  // ─── Webhook endpoint settings (Messaging API channel config) ─────────────
+
+  /**
+   * Read the webhook URL registered on this channel and whether the
+   * subscription is active. GET only — never mutates the channel.
+   */
+  async getWebhookEndpoint(): Promise<WebhookEndpointSetting> {
+    const { data } = await this.request('GET', '/v2/bot/channel/webhook/endpoint');
+    return data as WebhookEndpointSetting;
+  }
+
+  /**
+   * Overwrite the webhook URL registered on this channel (PUT).
+   * Callers must never silently replace an endpoint they did not configure —
+   * read getWebhookEndpoint() and confirm with the operator first.
+   */
+  async setWebhookEndpoint(endpoint: string): Promise<void> {
+    await this.request('PUT', '/v2/bot/channel/webhook/endpoint', { endpoint });
+  }
+
+  /**
+   * Ask LINE to send a test webhook to the currently registered URL and
+   * report whether the receiving side responded correctly. GET-like in
+   * effect (no message is delivered to users), but LINE does hit the
+   * registered endpoint URL.
+   */
+  async testWebhookEndpoint(): Promise<WebhookTestResult> {
+    const { data } = await this.request('POST', '/v2/bot/channel/webhook/test', {});
+    return data as WebhookTestResult;
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -233,9 +335,7 @@ export class LineClient {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(
-        `LINE API error: ${res.status} ${res.statusText} — ${text}`,
-      );
+      throw new LineApiError(res.status, res.statusText, text);
     }
   }
 
@@ -281,5 +381,41 @@ export class LineClient {
       `/v2/bot/insight/followers?date=${encodeURIComponent(date)}`,
     );
     return data as FollowersInsight;
+  }
+
+  /**
+   * Get the monthly message quota of the LINE Official Account's plan.
+   * GET only — no messages are sent.
+   */
+  async getMessageQuota(): Promise<MessageQuota> {
+    const { data } = await this.request('GET', '/v2/bot/message/quota');
+    return data as MessageQuota;
+  }
+
+  /**
+   * Get the number of messages already counted against this month's quota.
+   * GET only — no messages are sent.
+   */
+  async getMessageQuotaConsumption(): Promise<MessageQuotaConsumption> {
+    const { data } = await this.request('GET', '/v2/bot/message/quota/consumption');
+    return data as MessageQuotaConsumption;
+  }
+
+  /**
+   * Get one page of users who currently follow the LINE Official Account.
+   * Verified/premium accounts only. Pass the returned `next` value as
+   * `start` until `next` is absent to retrieve the full audience.
+   */
+  async getFollowerIds(
+    limit = 1000,
+    start?: string,
+  ): Promise<FollowerIdsPage> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (start) params.set('start', start);
+    const { data } = await this.request(
+      'GET',
+      `/v2/bot/followers/ids?${params.toString()}`,
+    );
+    return data as FollowerIdsPage;
   }
 }

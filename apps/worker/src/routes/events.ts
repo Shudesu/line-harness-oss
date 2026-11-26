@@ -39,6 +39,7 @@ import {
   nextStatus,
   type EventBookingAction,
 } from '../services/event-booking-state.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const events = new Hono<Env>();
 
@@ -1093,6 +1094,15 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
       }
     }
   }
+
+  await awardActivityMileage(c.env.DB, {
+    eventType: 'booking_created',
+    source: 'event_booking',
+    sourceEventId: id,
+    friendId: friend.id,
+    metadata: { bookingType: 'event', eventId: event.id, slotId: slot.id },
+    occurredAt: nowIso,
+  });
 
   if (status === 'confirmed') {
     const reminders = computeRemindersForBooking({

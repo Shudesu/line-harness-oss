@@ -1,3 +1,7 @@
+import { authDb, seedAuthStaff, TEST_SESSION } from '../test-support/auth-db.js';
+import { afterEach } from 'vitest';
+const databases: ReturnType<typeof authDb>[] = [];
+afterEach(() => databases.splice(0).forEach(d => d.sqlite.close()));
 import { describe, expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -6,21 +10,16 @@ import { resolveCorsOrigin } from './admin-auth-config.js';
 import { adminAuth } from '../routes/admin-auth.js';
 import type { Env } from '../index.js';
 
-vi.mock('@line-crm/db', () => ({
-  getStaffByApiKey: vi.fn(async (_db: unknown, token: string) => {
-    if (token !== 'staff-key') return null;
-    return { id: 'staff-1', name: 'Staff One', role: 'admin' };
-  }),
-}));
-
 const PAGES = 'https://your-admin.pages.dev';
 const WORKERS = 'https://your-worker.your-subdomain.workers.dev';
 
 function env(overrides: Partial<Env['Bindings']> = {}): Env['Bindings'] {
+  const database = authDb(); databases.push(database); seedAuthStaff(database.sqlite);
   return {
-    DB: {} as D1Database,
+    DB: database.db,
     IMAGES: {} as R2Bucket,
     ASSETS: {} as Fetcher,
+    TENANT_SCHEDULER: {} as Env['Bindings']['TENANT_SCHEDULER'],
     LINE_CHANNEL_SECRET: 'secret',
     LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
     API_KEY: 'env-key',
@@ -54,6 +53,8 @@ function app() {
   a.post('/api/forms/:id/submit', (c) => c.json({ success: true }));
   a.post('/api/forms/:id/partial', (c) => c.json({ success: true }));
   a.post('/api/forms/:id/opened', (c) => c.json({ success: true }));
+  a.get('/api/booking/google-calendar/oauth/callback', (c) => c.text('oauth-callback'));
+  a.post('/api/booking/google-calendar/oauth/callback', (c) => c.text('wrong-method'));
   return a;
 }
 
@@ -82,7 +83,8 @@ describe('admin login cookie attributes', () => {
     expect(body.csrfToken).toBeTruthy();
 
     const session = cookieFor(res, 'lh_admin_session') ?? '';
-    expect(session).toContain('lh_admin_session=staff-key');
+    expect(session).toContain('lh_admin_session=lhs_');
+    expect(session).not.toContain('staff-key');
     expect(session).toContain('HttpOnly');
     expect(session).toContain('Secure');
     expect(session).toContain('SameSite=None');
@@ -135,7 +137,7 @@ describe('topology guard', () => {
 describe('protected API access', () => {
   test('accepts the admin session cookie (GET, no CSRF needed)', async () => {
     const res = await app().request('/api/protected', {
-      headers: { Cookie: 'lh_admin_session=staff-key' },
+      headers: { Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
     }, crossSiteEnv());
     expect(res.status).toBe(200);
     const body = await res.json() as { data: { id: string } };
@@ -203,11 +205,28 @@ describe('public form method boundaries', () => {
   });
 });
 
+describe('Google OAuth callback boundary', () => {
+  test('allows only unauthenticated GET callback through to signed-state validation', async () => {
+    const get = await app().request(
+      '/api/booking/google-calendar/oauth/callback?state=signed&code=code',
+      {},
+      crossSiteEnv(),
+    );
+    expect(get.status).toBe(200);
+    expect(await get.text()).toBe('oauth-callback');
+
+    const post = await app().request('/api/booking/google-calendar/oauth/callback', {
+      method: 'POST',
+    }, crossSiteEnv());
+    expect(post.status).toBe(401);
+  });
+});
+
 describe('CSRF protection', () => {
   test('cookie-authenticated POST without an X-CSRF-Token is rejected', async () => {
     const res = await app().request('/api/protected', {
       method: 'POST',
-      headers: { Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc' },
+      headers: { Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA; lh_csrf=token-abc' },
     }, crossSiteEnv());
     expect(res.status).toBe(403);
     expect((await res.json() as { error: string }).error).toMatch(/csrf/i);
@@ -217,7 +236,7 @@ describe('CSRF protection', () => {
     const res = await app().request('/api/protected', {
       method: 'POST',
       headers: {
-        Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc',
+        Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA; lh_csrf=token-abc',
         'X-CSRF-Token': 'token-WRONG',
       },
     }, crossSiteEnv());
@@ -228,7 +247,7 @@ describe('CSRF protection', () => {
     const res = await app().request('/api/protected', {
       method: 'POST',
       headers: {
-        Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc',
+        Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA; lh_csrf=token-abc',
         'X-CSRF-Token': 'token-abc',
       },
     }, crossSiteEnv());
@@ -258,7 +277,7 @@ describe('logout', () => {
 describe('session endpoint', () => {
   test('returns the staff identity and a CSRF token', async () => {
     const res = await app().request('/api/auth/session', {
-      headers: { Cookie: 'lh_admin_session=staff-key; lh_csrf=token-abc' },
+      headers: { Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA; lh_csrf=token-abc' },
     }, crossSiteEnv());
     expect(res.status).toBe(200);
     const body = await res.json() as { data: { id: string }; csrfToken: string };
@@ -268,7 +287,7 @@ describe('session endpoint', () => {
 
   test('mints and sets a CSRF cookie when none is present', async () => {
     const res = await app().request('/api/auth/session', {
-      headers: { Cookie: 'lh_admin_session=staff-key' },
+      headers: { Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
     }, crossSiteEnv());
     expect(res.status).toBe(200);
     const body = await res.json() as { csrfToken: string };
@@ -280,7 +299,7 @@ describe('session endpoint', () => {
 describe('CORS allowed / blocked origins', () => {
   test('allowlisted admin origin is echoed back', async () => {
     const res = await app().request('/api/protected', {
-      headers: { Origin: PAGES, Cookie: 'lh_admin_session=staff-key' },
+      headers: { Origin: PAGES, Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
     }, crossSiteEnv());
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(PAGES);
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
@@ -289,7 +308,7 @@ describe('CORS allowed / blocked origins', () => {
   test('Cloudflare Pages preview origin for the admin project is echoed back', async () => {
     const preview = 'https://abc123.your-admin.pages.dev';
     const res = await app().request('/api/protected', {
-      headers: { Origin: preview, Cookie: 'lh_admin_session=staff-key' },
+      headers: { Origin: preview, Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
     }, crossSiteEnv());
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(preview);
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
@@ -312,7 +331,7 @@ describe('CORS allowed / blocked origins', () => {
 
   test('unknown origin gets no Access-Control-Allow-Origin header', async () => {
     const res = await app().request('/api/protected', {
-      headers: { Origin: 'https://evil.example.com', Cookie: 'lh_admin_session=staff-key' },
+      headers: { Origin: 'https://evil.example.com', Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
     }, crossSiteEnv());
     expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });

@@ -1,20 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash } from 'node:crypto';
 import {
   deployPagesProject,
   getLatestDeployment,
   rollbackPagesDeployment,
+  verifyPagesDeploymentUrl,
 } from '../../src/cf-api/pages.js';
+import { hashWorkerAsset } from '../../src/cf-api/assets.js';
 import type { CfApiCreds } from '../../src/types.js';
 
 const creds: CfApiCreds = {
   accountId: 'acct123',
   apiToken: 'tok_abc',
 };
-
-function sha256Hex(buf: Buffer): string {
-  return createHash('sha256').update(buf).digest('hex');
-}
 
 describe('deployPagesProject', () => {
   const originalFetch = globalThis.fetch;
@@ -31,8 +28,8 @@ describe('deployPagesProject', () => {
   it('runs full happy path: 4 calls in order, returns { deploymentId, url }', async () => {
     const indexHtml = Buffer.from('<html>hi</html>');
     const appJs = Buffer.from('console.log("ok")');
-    const hashIndex = sha256Hex(indexHtml);
-    const hashApp = sha256Hex(appJs);
+    const hashIndex = hashWorkerAsset('index.html', indexHtml);
+    const hashApp = hashWorkerAsset('app.js', appJs);
 
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock
@@ -89,6 +86,14 @@ describe('deployPagesProject', () => {
     expect(url3).toBe(
       'https://api.cloudflare.com/client/v4/pages/assets/check-missing',
     );
+    const [, checkMissingInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(checkMissingInit.body as string)).toEqual({
+      hashes: [
+        // Wrangler-compatible BLAKE3(base64(bytes) + extension), not SHA-256.
+        'c7c80743d6c079822f72f66347942cee',
+        '6b3bb7f1a2e692baf095ebe8cd936e88',
+      ],
+    });
 
     // Step 4 URL
     const [url4] = fetchMock.mock.calls[2] as [string, RequestInit];
@@ -148,7 +153,7 @@ describe('deployPagesProject', () => {
 
   it('base64-encodes file content in upload payload', async () => {
     const content = Buffer.from('binary\x00\x01\x02data');
-    const hash = sha256Hex(content);
+    const hash = hashWorkerAsset('bin.dat', content);
 
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock
@@ -181,9 +186,9 @@ describe('deployPagesProject', () => {
 
     const [, uploadInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     const uploadBody = JSON.parse(uploadInit.body as string);
-    expect(Array.isArray(uploadBody.payload)).toBe(true);
-    expect(uploadBody.payload).toHaveLength(1);
-    const entry = uploadBody.payload[0];
+    expect(Array.isArray(uploadBody)).toBe(true);
+    expect(uploadBody).toHaveLength(1);
+    const entry = uploadBody[0];
     expect(entry.key).toBe(hash);
     expect(entry.value).toBe(content.toString('base64'));
     expect(entry.base64).toBe(true);
@@ -197,7 +202,7 @@ describe('deployPagesProject', () => {
     for (let i = 0; i < 51; i++) {
       const content = Buffer.from(`file-${i}`);
       files.set(`asset-${i}.txt`, content);
-      hashes.push(sha256Hex(content));
+      hashes.push(hashWorkerAsset(`asset-${i}.txt`, content));
     }
 
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
@@ -224,14 +229,14 @@ describe('deployPagesProject', () => {
 
     const [, firstUpload] = fetchMock.mock.calls[2] as [string, RequestInit];
     const [, secondUpload] = fetchMock.mock.calls[3] as [string, RequestInit];
-    expect(JSON.parse(firstUpload.body as string).payload).toHaveLength(50);
-    expect(JSON.parse(secondUpload.body as string).payload).toHaveLength(1);
+    expect(JSON.parse(firstUpload.body as string)).toHaveLength(50);
+    expect(JSON.parse(secondUpload.body as string)).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('retries a transient Pages asset upload 5xx', async () => {
     const content = Buffer.from('retry me');
-    const hash = sha256Hex(content);
+    const hash = hashWorkerAsset('index.html', content);
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock
       .mockResolvedValueOnce({
@@ -271,8 +276,8 @@ describe('deployPagesProject', () => {
   it('sends manifest with /{path} → hash mapping in final FormData', async () => {
     const indexHtml = Buffer.from('<html/>');
     const appJs = Buffer.from('x');
-    const hashIndex = sha256Hex(indexHtml);
-    const hashApp = sha256Hex(appJs);
+    const hashIndex = hashWorkerAsset('index.html', indexHtml);
+    const hashApp = hashWorkerAsset('assets/app.js', appJs);
 
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock
@@ -319,7 +324,7 @@ describe('deployPagesProject', () => {
 
   it('uses JWT for check-missing & upload, API token for token & deployment calls', async () => {
     const content = Buffer.from('a');
-    const hash = sha256Hex(content);
+    const hash = hashWorkerAsset('a.txt', content);
 
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock
@@ -400,6 +405,49 @@ describe('deployPagesProject', () => {
       }),
     ).rejects.toThrow(/invalid path/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('verifyPagesDeploymentUrl', () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('retries an initially broken deployment until the asset tree serves', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 500 } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200 } as Response);
+
+    await expect(
+      verifyPagesDeploymentUrl('https://deployment.pages.dev/', {
+        attempts: 3,
+        delayMs: 0,
+      }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a deploy stage that remains HTTP 500', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({ ok: false, status: 500 } as Response);
+
+    await expect(
+      verifyPagesDeploymentUrl('https://broken.pages.dev/', {
+        attempts: 3,
+        delayMs: 0,
+      }),
+    ).rejects.toThrow(
+      'Pages deployment health check failed: HTTP 500 (https://broken.pages.dev/)',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 

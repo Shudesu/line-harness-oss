@@ -1,6 +1,7 @@
 import { jstNow } from './utils.js';
 import { createAffiliateLink } from './affiliate-links.js';
 import type { AffiliateLink } from './affiliate-links.js';
+import { ensureDefaultMileageProgram } from './mileage.js';
 // =============================================================================
 // Affiliate Offers (案件) — ASP Phase 2
 // =============================================================================
@@ -14,6 +15,8 @@ export interface AffiliateOffer {
   name: string;
   description: string | null;
   reward_amount: number;
+  reward_miles: number;
+  mileage_program_id: string;
   line_account_id: string | null;
   tag_id: string | null;
   scenario_id: string | null;
@@ -28,6 +31,9 @@ export interface CreateAffiliateOfferInput {
   description?: string | null;
   /** Fixed reward per conversion, in yen. Defaults to 0. */
   rewardAmount?: number;
+  /** Harness miles granted when the conversion is approved. Defaults to 0. */
+  rewardMiles?: number;
+  mileageProgramId?: string;
   lineAccountId?: string | null;
   tagId?: string | null;
   scenarioId?: string | null;
@@ -39,18 +45,24 @@ export async function createAffiliateOffer(
 ): Promise<AffiliateOffer> {
   const id = crypto.randomUUID();
   const now = jstNow();
+  if (!input.mileageProgramId || input.mileageProgramId === 'default') {
+    await ensureDefaultMileageProgram(db);
+  }
 
   await db
     .prepare(
       `INSERT INTO affiliate_offers
-         (id, name, description, reward_amount, line_account_id, tag_id, scenario_id, is_active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+         (id, name, description, reward_amount, reward_miles, mileage_program_id,
+          line_account_id, tag_id, scenario_id, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     )
     .bind(
       id,
       input.name,
       input.description ?? null,
       input.rewardAmount ?? 0,
+      input.rewardMiles ?? 0,
+      input.mileageProgramId ?? 'default',
       input.lineAccountId ?? null,
       input.tagId ?? null,
       input.scenarioId ?? null,
@@ -88,6 +100,8 @@ export type UpdateAffiliateOfferInput = Partial<
     | 'name'
     | 'description'
     | 'reward_amount'
+    | 'reward_miles'
+    | 'mileage_program_id'
     | 'line_account_id'
     | 'tag_id'
     | 'scenario_id'
@@ -112,6 +126,8 @@ export async function updateAffiliateOffer(
   set('name');
   set('description');
   set('reward_amount');
+  set('reward_miles');
+  set('mileage_program_id');
   set('line_account_id');
   set('tag_id');
   set('scenario_id');

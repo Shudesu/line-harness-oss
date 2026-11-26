@@ -20,6 +20,7 @@ export interface RichMenuGroup {
   size: 'large' | 'compact';
   default_page_id: string | null;
   is_default_for_all: number;
+  selected: number;
   status: 'draft' | 'published';
   publishing_at: string | null;
   created_at: string;
@@ -77,6 +78,7 @@ export interface CreateRichMenuGroupInput {
   name: string;
   chatBarText: string;
   size: 'large' | 'compact';
+  selected: boolean;
   pages: RichMenuPageInput[];
 }
 
@@ -84,6 +86,7 @@ export interface UpdateRichMenuGroupMetaInput {
   name?: string;
   chatBarText?: string;
   isDefaultForAll?: boolean;
+  selected?: boolean;
 }
 
 export interface RichMenuPageWithAreas extends RichMenuPage {
@@ -185,8 +188,8 @@ export async function createRichMenuGroup(
       .prepare(
         `INSERT INTO rich_menu_groups
            (id, account_id, name, chat_bar_text, size, default_page_id,
-            is_default_for_all, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 0, 'draft', ?, ?)`,
+            is_default_for_all, selected, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'draft', ?, ?)`,
       )
       .bind(
         groupId,
@@ -195,6 +198,7 @@ export async function createRichMenuGroup(
         input.chatBarText,
         input.size,
         defaultPageId,
+        input.selected ? 1 : 0,
         now,
         now,
       ),
@@ -258,6 +262,10 @@ export async function updateRichMenuGroupMeta(
   if (patch.isDefaultForAll !== undefined) {
     sets.push('is_default_for_all = ?');
     vals.push(patch.isDefaultForAll ? 1 : 0);
+  }
+  if (patch.selected !== undefined) {
+    sets.push('selected = ?');
+    vals.push(patch.selected ? 1 : 0);
   }
   if (sets.length === 0) return;
   sets.push('updated_at = ?');

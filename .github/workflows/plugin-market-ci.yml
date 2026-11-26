@@ -1,0 +1,74 @@
+name: Plugin Market CI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/web/**'
+      - 'examples/plugins/**'
+      - 'packages/plugin-template/**'
+      - 'packages/sdk/**'
+      - 'packages/shared/**'
+      - 'packages/update-engine/**'
+      - 'scripts/create-plugin.test.ts'
+      - 'scripts/plugin-tag-rules.test.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'vitest.config.ts'
+      - '.github/workflows/plugin-market-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'examples/plugins/**'
+      - 'packages/plugin-template/**'
+      - 'packages/sdk/**'
+      - 'packages/shared/**'
+      - 'packages/update-engine/**'
+      - 'scripts/create-plugin.test.ts'
+      - 'scripts/plugin-tag-rules.test.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'vitest.config.ts'
+      - '.github/workflows/plugin-market-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  market-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @line-crm/shared --filter @line-harness/update-engine build
+      - run: pnpm exec vitest run scripts/create-plugin.test.ts scripts/plugin-tag-rules.test.ts
+      - run: pnpm --filter web test
+      - run: pnpm --filter web build
+        env:
+          NEXT_BASE_PATH: /console
+          NEXT_PUBLIC_API_URL: https://example.invalid
+  plugin-starters:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        template: [tag-rules, integration]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate outside the main checkout
+        run: node examples/plugins/create-plugin.mjs "$RUNNER_TEMP/plugin-smoke" "${{ matrix.template }}"
+      - name: Install and build the independent plugin
+        working-directory: ${{ runner.temp }}/plugin-smoke
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+          npm run build:mcp --if-present

@@ -9,6 +9,7 @@ import {
 } from '@line-crm/db';
 import type { EntryRoute } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { isReservedRef } from '../lib/reserved-refs.js';
 
 const entryRoutes = new Hono<Env>();
 
@@ -53,6 +54,10 @@ entryRoutes.get('/api/entry-routes/:id', async (c) => {
   }
 });
 
+// Reserved product refs — see lib/reserved-refs.ts for the full contract.
+const reservedRefError = (code: string) =>
+  `「${code}」は予約済みの ref コードです（管理画面の友だち追加リンクが使用）。別の ref コードを指定してください`;
+
 // POST /api/entry-routes — create
 entryRoutes.post('/api/entry-routes', async (c) => {
   try {
@@ -69,6 +74,9 @@ entryRoutes.post('/api/entry-routes', async (c) => {
     }>();
     if (!body.refCode || !body.name) {
       return c.json({ success: false, error: 'refCode and name are required' }, 400);
+    }
+    if (isReservedRef(body.refCode)) {
+      return c.json({ success: false, error: reservedRefError(body.refCode) }, 400);
     }
     const row = await createEntryRoute(c.env.DB, body);
     return c.json({ success: true, data: serialize(row) }, 201);
@@ -95,6 +103,9 @@ entryRoutes.patch('/api/entry-routes/:id', async (c) => {
         isActive: boolean;
       }>
     >();
+    if (body.refCode && isReservedRef(body.refCode)) {
+      return c.json({ success: false, error: reservedRefError(body.refCode) }, 400);
+    }
     const row = await updateEntryRoute(c.env.DB, id, body);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     return c.json({ success: true, data: serialize(row) });

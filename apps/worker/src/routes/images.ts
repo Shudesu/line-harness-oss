@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Env } from '../index.js';
 
 const images = new Hono<Env>();
@@ -72,9 +72,34 @@ images.post('/api/images', async (c) => {
   }
 });
 
+// Private image reads use the common staff/scope auth gate. Historical flat
+// incoming keys remain readable here without rewriting message history or R2.
+async function serveIncomingImage(c: Context<Env>) {
+  c.header('Cache-Control', 'private, no-store');
+  c.header('X-Content-Type-Options', 'nosniff');
+  const key = c.req.param('key') ?? '';
+  if (!/^incoming-[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)$/.test(key)) {
+    return c.json({ success: false, error: 'Image not found' }, 404);
+  }
+  const object = await c.env.IMAGES.get(key);
+  if (!object) return c.json({ success: false, error: 'Image not found' }, 404);
+  c.header('Content-Type', object.httpMetadata?.contentType || 'application/octet-stream');
+  return c.body(object.body);
+}
+images.get('/api/incoming-images/:key', serveIncomingImage);
+
 // GET /images/:key — serve image (public, no auth)
 images.get('/images/:key', async (c) => {
-  const key = c.req.param('key');
+  const key = c.req.param('key') ?? '';
+  if (/^incoming-[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)$/.test(key) && c.get('staff')) {
+    return serveIncomingImage(c);
+  }
+  // Only flat image filenames are public. This also rejects encoded aliases.
+  if (!/^[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)$/.test(key) || /^incoming-/i.test(key)) {
+    c.header('Cache-Control', 'private, no-store');
+    c.header('X-Content-Type-Options', 'nosniff');
+    return c.json({ success: false, error: 'Image not found' }, 404);
+  }
   const object = await c.env.IMAGES.get(key);
 
   if (!object) {
@@ -92,7 +117,10 @@ images.get('/images/:key', async (c) => {
 // DELETE /api/images/:key — delete image
 images.delete('/api/images/:key', async (c) => {
   try {
-    const key = c.req.param('key');
+    const key = c.req.param('key') ?? '';
+    if (!/^[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)$/.test(key) || /^incoming-/i.test(key)) {
+      return c.json({ success: false, error: 'Image not found' }, 404);
+    }
     await c.env.IMAGES.delete(key);
     return c.json({ success: true, data: null });
   } catch (err) {

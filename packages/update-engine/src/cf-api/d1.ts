@@ -9,13 +9,13 @@ import { authHeader, d1QueryApiUrl, readBodyExcerpt } from './_shared.js';
  * against a customer's D1 instance using only their CF API token + account
  * id + database id — no `wrangler` binary required at runtime.
  *
- * Batch / transaction support is intentionally out of scope for v1; migrations
- * are applied one statement at a time so a failure surfaces against the exact
- * SQL that broke.
+ * Ordinary migrations use single statements. The legacy mileage adapter uses
+ * one deliberate atomic multi-statement request so claims and its ledger stamp
+ * either commit together or roll back together.
  */
 
 /**
- * Execute a single SQL statement against a D1 database.
+ * Execute SQL against a D1 database (including one deliberate atomic unit).
  *
  * Returns the raw Cloudflare API envelope (`{ success, result, ... }`) so
  * callers can inspect `result[0].results` for SELECT rows or `meta` for
@@ -50,5 +50,12 @@ export async function executeD1Query(opts: {
     throw new Error(`D1 query failed HTTP ${res.status}: ${excerpt}`);
   }
 
-  return (await res.json()) as { success: boolean; result: any[] };
+  const body = (await res.json()) as { success: boolean; result: any[] };
+  if (body.success !== true || !Array.isArray(body.result) ||
+      body.result.some((result) => result?.success === false)) {
+    // An HTTP 200 alone is not proof that the SQL committed. Do not expose
+    // provider error payloads here, which may include SQL or customer data.
+    throw new Error('D1 query returned an unsuccessful SQL result');
+  }
+  return body;
 }

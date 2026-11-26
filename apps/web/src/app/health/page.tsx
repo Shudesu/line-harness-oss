@@ -4,6 +4,15 @@ import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
 import { api } from '@/lib/api'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Table } from '@cloudflare/kumo/components/table'
 
 interface LineAccount {
   id: string
@@ -166,21 +175,14 @@ export default function HealthPage() {
 
       {/* Error */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="読み込めませんでした" description={error} />
       )}
 
       {/* Loading */}
       {loading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          読み込み中...
-        </div>
+        <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>
       ) : accounts.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-          <p className="mb-2">LINEアカウントが登録されていません</p>
-          <p className="text-xs text-gray-300">先にアカウント管理からLINEアカウントを登録してください</p>
-        </div>
+        <Empty title="LINEアカウントが登録されていません" description="先にアカウント管理から登録してください。" />
       ) : (
         <>
           {/* Account Health Cards */}
@@ -193,15 +195,16 @@ export default function HealthPage() {
 
               return (
                 <div key={account.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                  <button
+                  <Button
+                    type="button"
+                    variant="ghost"
                     onClick={() => handleExpand(account.id)}
-                    className="w-full p-4 text-left hover:bg-gray-50 transition-colors"
+                    className="h-auto w-full justify-start p-4 text-left"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div
-                          className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-                          style={{ backgroundColor: '#06C755' }}
+                          className="w-10 h-10 rounded-lg flex items-center justify-center bg-kumo-brand text-kumo-inverse font-bold text-sm"
                         >
                           L
                         </div>
@@ -225,22 +228,21 @@ export default function HealthPage() {
                         </svg>
                       </div>
                     </div>
-                  </button>
+                  </Button>
 
                   {/* Expanded: Health Logs */}
                   {isExpanded && (
                     <div className="border-t border-gray-200 p-4">
                       {risk === 'danger' && (
                         <div className="mb-3">
-                          <button
+                          <Button type="button" size="sm" variant="destructive"
                             onClick={() => {
                               setMigrateFrom(account.id)
                               setMigrateToId('')
                             }}
-                            className="px-3 py-1.5 rounded-lg text-white text-xs font-medium bg-red-500 hover:bg-red-600 transition-colors"
                           >
                             友だちを移行する
-                          </button>
+                          </Button>
                         </div>
                       )}
 
@@ -248,40 +250,27 @@ export default function HealthPage() {
                         <p className="text-sm text-gray-400 text-center py-4">ヘルスログがありません</p>
                       ) : (
                         <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="text-left text-xs text-gray-500 border-b border-gray-100">
-                                <th className="pb-2 pr-3 font-medium">エラーコード</th>
-                                <th className="pb-2 pr-3 font-medium">エラー数</th>
-                                <th className="pb-2 pr-3 font-medium">チェック期間</th>
-                                <th className="pb-2 pr-3 font-medium">リスク</th>
-                                <th className="pb-2 font-medium">日時</th>
-                              </tr>
-                            </thead>
-                            <tbody>
+                          <Table>
+                            <Table.Header><Table.Row><Table.Head>エラーコード</Table.Head><Table.Head>エラー数</Table.Head><Table.Head>チェック期間</Table.Head><Table.Head>リスク</Table.Head><Table.Head>日時</Table.Head></Table.Row></Table.Header>
+                            <Table.Body>
                               {logs.map((log) => {
                                 const logConfig = riskConfig[log.riskLevel]
                                 return (
-                                  <tr key={log.id} className="border-b border-gray-50">
-                                    <td className="py-2 pr-3 font-mono text-gray-700">
+                                  <Table.Row key={log.id}>
+                                    <Table.Cell className="font-mono">
                                       {log.errorCode !== null ? log.errorCode : '-'}
-                                    </td>
-                                    <td className="py-2 pr-3 text-gray-700">{log.errorCount}</td>
-                                    <td className="py-2 pr-3 text-gray-500">{log.checkPeriod}</td>
-                                    <td className="py-2 pr-3">
-                                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${logConfig.bgColor} ${logConfig.textColor}`}>
-                                        <span className={`w-1.5 h-1.5 rounded-full ${logConfig.color} ${log.riskLevel === 'danger' ? 'animate-pulse' : ''}`} />
-                                        {logConfig.label}
-                                      </span>
-                                    </td>
-                                    <td className="py-2 text-gray-400 text-xs">
+                                    </Table.Cell>
+                                    <Table.Cell>{log.errorCount}</Table.Cell>
+                                    <Table.Cell className="text-kumo-subtle">{log.checkPeriod}</Table.Cell>
+                                    <Table.Cell><Badge variant={({ normal: 'success', warning: 'warning', danger: 'error' } as Record<string, BadgeVariant>)[log.riskLevel]}>{logConfig.label}</Badge></Table.Cell>
+                                    <Table.Cell className="text-kumo-subtle text-xs">
                                       {new Date(log.createdAt).toLocaleString('ja-JP')}
-                                    </td>
-                                  </tr>
+                                    </Table.Cell>
+                                  </Table.Row>
                                 )
                               })}
-                            </tbody>
-                          </table>
+                            </Table.Body>
+                          </Table>
                         </div>
                       )}
                     </div>
@@ -300,41 +289,30 @@ export default function HealthPage() {
               <form onSubmit={handleMigrate}>
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-1">移行先アカウント</label>
-                  <select
+                  <Select
+                    label="移行先アカウント"
                     value={migrateToId}
-                    onChange={(e) => setMigrateToId(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-                    required
-                  >
-                    <option value="">選択してください</option>
-                    {accounts
-                      .filter((a) => a.id !== migrateFrom && a.isActive)
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.channelId})
-                        </option>
-                      ))}
-                  </select>
+                    onValueChange={(value) => setMigrateToId(value ?? '')}
+                    placeholder="選択してください"
+                    items={Object.fromEntries(accounts.filter((account) => account.id !== migrateFrom && account.isActive).map((account) => [account.id, `${account.name} (${account.channelId})`]))}
+                  />
                 </div>
                 <div className="flex items-center gap-3">
-                  <button
-                    type="submit"
+                  <Button type="submit" variant="primary" loading={migrating}
                     disabled={migrating || !migrateToId}
-                    className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    style={{ backgroundColor: '#06C755' }}
                   >
-                    {migrating ? '移行中...' : '移行を開始'}
-                  </button>
-                  <button
+                    移行を開始
+                  </Button>
+                  <Button
                     type="button"
                     onClick={() => {
                       setMigrateFrom(null)
                       setMigrateToId('')
                     }}
-                    className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+                    variant="secondary"
                   >
                     キャンセル
-                  </button>
+                  </Button>
                 </div>
               </form>
             </div>
@@ -344,68 +322,57 @@ export default function HealthPage() {
           <div>
             <h2 className="text-lg font-bold text-gray-900 mb-4">移行履歴</h2>
             {migrations.length === 0 ? (
-              <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">
-                移行履歴はありません
-              </div>
+              <Empty title="移行履歴はありません" description="移行を開始すると進捗がここに表示されます。" />
             ) : (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[640px]">
-                    <thead>
-                      <tr className="text-left text-xs text-gray-500 bg-gray-50 border-b border-gray-200">
-                        <th className="px-4 py-3 font-medium">移行元</th>
-                        <th className="px-4 py-3 font-medium">移行先</th>
-                        <th className="px-4 py-3 font-medium">ステータス</th>
-                        <th className="px-4 py-3 font-medium">進捗</th>
-                        <th className="px-4 py-3 font-medium">開始日時</th>
-                        <th className="px-4 py-3 font-medium">完了日時</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  <Table className="min-w-[640px]">
+                    <Table.Header><Table.Row><Table.Head>移行元</Table.Head><Table.Head>移行先</Table.Head><Table.Head>ステータス</Table.Head><Table.Head>進捗</Table.Head><Table.Head>開始日時</Table.Head><Table.Head>完了日時</Table.Head></Table.Row></Table.Header>
+                    <Table.Body>
                       {migrations.map((migration) => {
                         const status = statusConfig[migration.status]
                         const progress = migration.totalCount > 0
                           ? Math.round((migration.migratedCount / migration.totalCount) * 100)
                           : 0
                         return (
-                          <tr key={migration.id} className="border-b border-gray-100 hover:bg-gray-50">
-                            <td className="px-4 py-3 text-gray-900 font-medium">
+                          <Table.Row key={migration.id}>
+                            <Table.Cell className="font-medium text-kumo-strong">
                               {getAccountName(migration.fromAccountId)}
-                            </td>
-                            <td className="px-4 py-3 text-gray-900 font-medium">
+                            </Table.Cell>
+                            <Table.Cell className="font-medium text-kumo-strong">
                               {getAccountName(migration.toAccountId)}
-                            </td>
-                            <td className="px-4 py-3">
+                            </Table.Cell>
+                            <Table.Cell>
                               <span className={`inline-flex text-xs font-medium px-2.5 py-1 rounded-full ${status.bgColor} ${status.textColor}`}>
                                 {status.label}
                               </span>
-                            </td>
-                            <td className="px-4 py-3">
+                            </Table.Cell>
+                            <Table.Cell>
                               <div className="flex items-center gap-2">
                                 <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
                                   <div
-                                    className="h-full rounded-full transition-all"
-                                    style={{ width: `${progress}%`, backgroundColor: '#06C755' }}
+                                    className="h-full rounded-full bg-kumo-brand transition-all"
+                                    style={{ width: `${progress}%` }}
                                   />
                                 </div>
                                 <span className="text-xs text-gray-500">
                                   {migration.migratedCount}/{migration.totalCount}
                                 </span>
                               </div>
-                            </td>
-                            <td className="px-4 py-3 text-gray-400 text-xs">
+                            </Table.Cell>
+                            <Table.Cell className="text-kumo-subtle text-xs">
                               {new Date(migration.createdAt).toLocaleString('ja-JP')}
-                            </td>
-                            <td className="px-4 py-3 text-gray-400 text-xs">
+                            </Table.Cell>
+                            <Table.Cell className="text-kumo-subtle text-xs">
                               {migration.completedAt
                                 ? new Date(migration.completedAt).toLocaleString('ja-JP')
                                 : '-'}
-                            </td>
-                          </tr>
+                            </Table.Cell>
+                          </Table.Row>
                         )
                       })}
-                    </tbody>
-                  </table>
+                    </Table.Body>
+                  </Table>
                 </div>
               </div>
             )}

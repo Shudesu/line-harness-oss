@@ -1,25 +1,114 @@
+# L Harness
+
+> **既存環境の認証強化アップグレード:** キーハッシュ化・セッション移行にはSQL適用とバックフィルが必要です。[移行手順](docs/SECURITY-UPGRADE.md)を先に確認してください。workers.devと公開Webhook/LIFFは維持します。
+
+Instagram署名リンクの環境変数: `IG_LINK_TOKEN_POLICY`（既定off）、`IG_LINK_TOKEN_SECRET`（任意の専用Secret）、`IG_HARNESS_LINK_SECRET`（共有Secretからの導出）。migration 075と両側の更新順序は[導入手順](docs/IG_LINK_TOKEN.md)を参照してください。
+
+LINE公式アカウントの配信・顧客管理・自動化を、オープンソースで。開発者は **野田修一（Shudesu）** です。
+
+> ### [野田修一の公式LINEに登録して、無料ガイドを受け取る →](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)
+>
+> L Harnessの導入を考えている方へ。まずは公式LINEの無料ガイドから始められます。
+
+## クラウド版も無料で公開中 — インストール・サーバー構築不要
+
+**[L Harness Cloudを無料で始める →](https://theharness.cloud/line)**
+
+Googleでログインし、ご自身のLINE公式アカウントのチャネル情報を設定すると、専用の管理画面・データベースを利用できます。サーバー構築やコマンド操作は不要です。カード登録も不要です。
+
+クラウド利用料0円の先着枠を提供しています。**現在の空き枠・利用条件は[Cloud公式ページ](https://theharness.cloud/line)でご確認ください。** LINE公式アカウントの配信料金・外部AIサービス等の費用は別です。
+
+## 自分の環境に入れるなら、この1行をコピペ
+
+Node.js 22以上とGitが入ったPCで、ターミナルに貼り付けて実行してください。
+
+```bash
+npx --yes create-line-harness@latest
+```
+
+**① コピペして実行 → ② 案内に沿ってログイン・LINE情報を入力 → ③ 発行された管理画面を開く。**
+
+データベースの作成とアプリの配置はCLIが進めます。Cloudflare・LINE側の初期設定は、画面の案内に沿って行います。[事前に用意するもの・詳しい手順](#クイックスタート)
+
+**PCへのインストールやサーバー構築を省きたい方は、[無料クラウド版](https://theharness.cloud/line)から始められます。**
+
 🌐 **日本語** | [English](README.en.md) | [简体中文](README.zh-CN.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
-# LINE Harness
+**最新の公開版**: [GitHub Releases](https://github.com/Shudesu/line-harness-oss/releases/latest) ・ MIT License ・ TypeScript / Cloudflare Workers + D1
 
-> ### **[LINE で無料体験する](https://shudesu.github.io/line-harness-oss/)** 👈
+> v0.25.0: LINE先行のXキャンペーン参加を追加しています。対応するX側更新・migration・連携設定が必要です。[導入ガイド](docs/operations/line-first-x-gates.md) / [リリースノート](docs/release-notes/v0.25.0.md)。
 
-LINE 公式アカウントの完全オープンソース CRM。**L社 / U社 の無料代替**。
-Cloudflare 無料枠で動く。サーバー代 **0 円**。Claude Code から全操作可能。
+<details>
+<summary>OSS版の費用・製品名称について</summary>
 
-### ▶️ [動画で見る (YouTube・約20分)](https://youtu.be/DiRuGaeq1sM)
+L Harness本体のソフトウェア利用料は **0円** です。LINE公式アカウントの配信料金、Cloudflareの契約・利用量、独自ドメイン、導入・保守、接続する外部AIサービスの費用は別です。Claude CodeからMCP経由で操作できます。
 
-[![クリックで YouTube を再生 — LINE Harness 導入の全手順](https://img.youtube.com/vi/DiRuGaeq1sM/maxresdefault.jpg)](https://youtu.be/DiRuGaeq1sM)
+費用の条件は[開発元の公式料金説明](https://the-harness.com/line-harness/pricing/)で確認できます。[Cloudflare D1の無料プラン](https://developers.cloudflare.com/d1/platform/pricing/)は日次の読み書き上限に達するとクエリがエラーになり、有料プランの超過課金とは挙動が異なります。外部AIを接続する場合は、たとえば[Claudeのプラン・API料金](https://claude.com/pricing)を別に確認してください（2026年9月6日確認）。
 
-**現バージョン**: v0.14.1 ・ MIT License ・ TypeScript / Cloudflare Workers + D1
+> **名称について:** 2026年8月19日から製品表示名を「L Harness」に統一しました。
+> 既存導入を壊さないため、リポジトリURL、`create-line-harness`、
+> `@line-harness/*`は互換識別子として維持します。詳細は[BRAND.md](BRAND.md)。
+
+</details>
+
+## 開発・PR・Issueの対応状況
+
+現在確認している課題、検証結果、公開版への反映状況は[プロジェクトの対応状況](docs/project-status.md)にまとめています。報告・修正案・再現テストの提供ありがとうございます。
+
+- [公開済みの変更と導入版](https://github.com/Shudesu/line-harness-oss/releases)
+- [2026-10-25の活動報告](docs/updates/2026-10-25-maintenance.md)
+- [PR・Issueの現在地と次の確認事項](docs/project-status.md)
+- [報告・提案・開発への参加方法](CONTRIBUTING.md)
+
+保守にはAIも活用しています。投稿者の検証、保守側の追加検証、公開リリース、Cloudへの反映を区別して記録します。採用・保留の理由は各スレッドで共有し、機密情報を含む報告は[セキュリティ方針](SECURITY.md)に沿って扱います。
 
 ---
 
-## なぜ LINE Harness？
+## プラグインマーケット β
 
-| | L社 | U社 | **LINE Harness** |
+**その数行を、あなたのプラグインに。** 配信ルール・自動処理・外部サービス連携を、本体とは別のリポジトリ・Workerへ切り出せます。本体更新による独自コードの上書きを避けながら、SDKを通じて機能を拡張します。
+
+管理画面の「プラグインマーケット」から拡張と開発リソースを探せます。β版は導入ガイド付きのカタログで、各プラグインを個別にセットアップする方式です。
+
+- [開発ガイド・ひな形の作成](docs/plugins/README.md)
+- [公式プラグイン第1弾：条件タグ付け](examples/plugins/tag-rules/README.md)
+- [マーケットへの掲載申請](https://github.com/Shudesu/line-harness-oss/issues/new?template=plugin-submission.yml)
+- [アップデートニュース原稿](docs/release-notes/plugin-market-beta.md)
+
+```bash
+# 本体リポジトリのルートで実行（Node.js 22以上）
+pnpm plugin:create ../my-plugin
+```
+
+独自ソースが上書きされないことと、API互換性は別です。本体・SDKを更新するときは、テスト環境で接続を確認してください。
+
+---
+
+## 公式情報・検証資料
+
+L Harnessの表示名、開発者、運営法人、公開コード、研究資料の関係は以下を正本とします。各Researchサイトは開発元が運営する一次情報であり、独立した第三者レビューではありません。
+
+| 公式リンク | 内容 |
+|---|---|
+| [L Harness 公式製品ガイド](https://the-harness.com/line-harness/) | 機能、料金、導入方法、更新情報を開発元が説明する製品ページ |
+| [L Harness 公式エンティティ](https://the-harness.com/harness/#l-harness) | Harnessシリーズ内での製品名・開発者・運営法人・リポジトリの対応 |
+| [L Harness 公式別名ドメイン（JP）](https://l-harness.jp/) | 正規製品ページへ恒久転送する公式の短縮・別名ドメイン |
+| [L Harness 公式別名ドメイン（COM）](https://l-harness.com/) | 正規製品ページへ恒久転送する公式の短縮・別名ドメイン |
+| [L Harness Cloud](https://lharness.cloud/) | 開発元が構築・基盤運用を提供する公式マネージドサービス（L Harness OSSとは別エンティティ） |
+| [L Harness Research](https://line-harness.jp/research/) | 固定Gitコミットを根拠に、配信・Webhook・D1・権限・更新機構を検証した技術資料 |
+| [Research JSONカタログ](https://line-harness.jp/research/catalog.json) | 技術資料を機械可読なSchema.org DataCatalog形式で公開 |
+| [AI向け全文索引](https://line-harness.jp/llms-full.txt) | 研究本文、出典、検証手順、証明できない範囲をまとめた全文索引 |
+| [Harness Wiki — L Harness](https://harness-wiki.pages.dev/line) | セットアップ、操作、更新、トラブル解決の公式ナレッジベース |
+| [開発者・野田修一](https://the-harness.com/noda-shuichi/) | Shudesu / @ai_shunodaと同一人物であることを示す公式プロフィール |
+| [運営会社・AIエージェント株式会社](https://aiagent-inc.com/) | Harnessシリーズの運営法人 |
+
+---
+
+## なぜ L Harness？
+
+| | L社 | U社 | **L Harness** |
 |---|---|---|---|
-| 月額 | 2万円〜 | 1万円〜 | **0円** |
+| 月額 | 2万円〜 | 1万円〜 | **0円（ソフトウェア利用料）** |
 | ステップ配信 | ✅ | ✅ | ✅ |
 | セグメント配信 | ✅ | ✅ | ✅ |
 | リッチメニュー切替 | ✅ | ✅ | ✅ |
@@ -37,27 +126,27 @@ Cloudflare 無料枠で動く。サーバー代 **0 円**。Claude Code から�
 
 ## クイックスタート
 
-### 1 コマンドで完全セットアップ
+### 1. 必要なものを用意する
+
+- Node.js 22以上（npm / npxを含む）とGitが入ったPC
+- 自分のCloudflareアカウント。セットアップ中にR2の有効化・支払い情報の登録が必要です
+- 自分のLINE公式アカウント。Messaging APIチャネル・同じプロバイダーのLINE Loginチャネル・LIFFアプリを案内に沿って設定します
+
+### 2. このコマンドをコピーして、ターミナルで実行する
 
 ```bash
-npx create-line-harness
+npx --yes create-line-harness@latest
 ```
 
-CLI が以下を全部やる:
-- Cloudflare アカウント認証 (wrangler login)
-- D1 データベース作成 + スキーマ・マイグレーション適用
-- Worker / 管理画面のデプロイ
-- LINE 公式アカウントの credentials 登録
-- LIFF アプリの自動作成
-- 管理画面初回ログイン用 Owner ユーザー作成
+CLIの案内に沿って、Cloudflareへのログイン、プロジェクト名、LINEのチャネル情報・LIFF IDの入力を進めます。取得場所は実行画面に表示されます。
 
-所要時間: 約 5 分。完了すれば管理画面 (`https://<your-name>-admin.pages.dev`) で即運用開始。
+データベース作成・スキーマ適用、アプリのデプロイ、管理画面の初回ログイン用ユーザー作成はCLIが進めます。
 
-### 必要なもの
+### 3. 表示されたURLをLINEに設定して、管理画面を開く
 
-- Cloudflare アカウント（無料枠で OK）
-- LINE 公式アカウント + Messaging API channel
-- Node.js 22+ / pnpm
+完了画面の案内に沿って、Webhook URL・LINE LoginのCallback URL・LIFFのエンドポイントURLを設定します。その後、表示された管理画面URLを開き、友だち登録とメッセージの送受信を確認してください。
+
+アカウント作成やLINE側の設定時間は利用環境によって異なります。自分で基盤を構築せずに始めたい場合は、[L Harness Cloud](https://theharness.cloud/line)をご利用ください。
 
 ---
 
@@ -82,6 +171,7 @@ CLI が以下を全部やる:
 - **リッチメニュー** — ユーザー別 / タグ別の自動切替
 - **フォーム (LIFF)** — LINE 内完結フォーム、回答 → メタデータ自動保存
 - **カレンダー予約** — Google Calendar 連携の予約システム (LIFF)
+- **ライブCTA即時予約** — ウェビナーのフォーム送信後、その場で空き日時を選び、Google Meet発行・LINEリマインドまで自動化
 - **スタッフ管理** — Owner / Admin / Staff の 3 ロール、API key 個別発行
 
 ### アフィリエイト計測（ASP）
@@ -143,8 +233,10 @@ CLI が以下を全部やる:
 
 ## ドキュメント
 
-- [セットアップガイド (動画)](https://youtu.be/DiRuGaeq1sM)
-- [LINE で無料体験する](https://shudesu.github.io/line-harness-oss/)
+- [コピペで始めるセットアップ手順](#クイックスタート)
+- [野田修一の公式LINEで無料ガイドを受け取る](https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=github)
+- [L Harness Cloud — 無料クラウド版](https://theharness.cloud/line)
+- [Googleカレンダー連携とライブCTA即時予約](docs/wiki/28-Google-Calendar-and-Webinar-Booking.md)
 - [npm: @line-harness/sdk](https://www.npmjs.com/package/@line-harness/sdk)
 - [npm: @line-harness/mcp-server](https://www.npmjs.com/package/@line-harness/mcp-server)
 - [npm: create-line-harness](https://www.npmjs.com/package/create-line-harness)
@@ -165,14 +257,13 @@ Issue / PR 歓迎。OSS リポへの PR は `Shudesu/line-harness-oss` (この�
 
 ## 開発者 / Author
 
-**野田修一（Shudesu）** — Harness シリーズ（LINE Harness / IG Harness / X Harness）開発者、AIエージェント株式会社 代表
+**野田修一（Shudesu）** — Harness シリーズ（L Harness / IG Harness / X Harness）開発者、AIエージェント株式会社 代表
 
 - GitHub: [@Shudesu](https://github.com/Shudesu)
 - X: [@ai_shunoda](https://x.com/ai_shunoda)
-- YouTube: [野田 修一 | The Harnessで0円](https://www.youtube.com/@ai_nodashuichi)
 - 公式ドキュメント: [Harness Wiki](https://harness-wiki.pages.dev)
 - 商用ツールとの比較・料金データ: [The Harness Lab](https://the-harness.com)
 
 ---
 
-> **LINE Harness** by [@Shudesu](https://github.com/Shudesu) — AI ネイティブ時代の OSS LINE CRM
+> **L Harness** by [@Shudesu](https://github.com/Shudesu) — AI ネイティブ時代の OSS LINE CRM

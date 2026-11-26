@@ -1,6 +1,7 @@
 'use client'
 
 import type { DeliveryMode } from '@line-crm/shared'
+import { Input } from '@cloudflare/kumo/components/input'
 
 export interface ScheduleValue {
   delayMinutes: number
@@ -37,20 +38,20 @@ interface Props {
   onChange: (next: ScheduleValue) => void
 }
 
-const inputCls =
-  'w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500'
+const inputCls = 'w-20'
 
 export default function ScheduleInput({ mode, value, onChange }: Props) {
   if (mode === 'relative') {
     return (
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">遅延 (分)</label>
-        <input
+        <Input
           type="number"
           min={0}
           className={inputCls + ' w-full'}
           value={value.delayMinutes}
           onChange={(e) => onChange({ ...value, delayMinutes: Math.max(0, Number(e.target.value) || 0) })}
+          aria-label="遅延（分）"
         />
         <p className="text-xs text-gray-400 mt-0.5">前のステップから</p>
       </div>
@@ -61,15 +62,16 @@ export default function ScheduleInput({ mode, value, onChange }: Props) {
       <div className="space-y-2">
         <label className="block text-xs font-medium text-gray-600">購読開始から</label>
         <div className="flex items-center gap-2 flex-wrap">
-          <input
+          <Input
             type="number"
             min={0}
             className={inputCls}
             value={value.offsetDays}
             onChange={(e) => onChange({ ...value, offsetDays: Math.max(0, Number(e.target.value) || 0) })}
+            aria-label="購読開始からの日数"
           />
           <span className="text-sm text-gray-700">日</span>
-          <input
+          <Input
             type="number"
             min={0}
             max={23}
@@ -78,9 +80,10 @@ export default function ScheduleInput({ mode, value, onChange }: Props) {
             onChange={(e) =>
               onChange({ ...value, offsetHours: Math.max(0, Math.min(23, Number(e.target.value) || 0)) })
             }
+            aria-label="購読開始からの時間"
           />
           <span className="text-sm text-gray-700">時間</span>
-          <input
+          <Input
             type="number"
             min={0}
             max={59}
@@ -92,6 +95,7 @@ export default function ScheduleInput({ mode, value, onChange }: Props) {
                 offsetMinutesRemainder: Math.max(0, Math.min(59, Number(e.target.value) || 0)),
               })
             }
+            aria-label="購読開始からの分"
           />
           <span className="text-sm text-gray-700">分後に配信</span>
         </div>
@@ -103,19 +107,20 @@ export default function ScheduleInput({ mode, value, onChange }: Props) {
     <div className="space-y-2">
       <label className="block text-xs font-medium text-gray-600">購読開始から</label>
       <div className="flex items-center gap-2 flex-wrap">
-        <input
+        <Input
           type="number"
           min={0}
           className={inputCls}
           value={value.offsetDays}
           onChange={(e) => onChange({ ...value, offsetDays: Math.max(0, Number(e.target.value) || 0) })}
+          aria-label="購読開始からの日数"
         />
         <span className="text-sm text-gray-700">日後の</span>
-        <input
+        <Input
           type="time"
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
           value={value.deliveryTime}
           onChange={(e) => onChange({ ...value, deliveryTime: e.target.value })}
+          aria-label="配信時刻"
         />
         <span className="text-sm text-gray-700">に配信</span>
       </div>

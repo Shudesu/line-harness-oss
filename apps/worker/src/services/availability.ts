@@ -5,6 +5,8 @@
 
 import type { AvailabilityByStaff } from './booking-types.js';
 import { SLOT_GRANULARITY_MINUTES } from './booking-types.js';
+import { getStaffGoogleBusy } from './booking-calendar-sync.js';
+import type { GoogleCalendarCredentials } from './google-oauth.js';
 
 export interface Interval {
   start: string; // HH:MM
@@ -98,12 +100,45 @@ export interface GetAvailabilityParams {
   to: string;
   now: Date;
   minLeadTimeMinutes: number;
+  googleCredentials?: GoogleCalendarCredentials;
+}
+
+export interface CalendarSyncState {
+  staff_id: string;
+  configured: boolean;
+  ok: boolean;
+  error?: 'unavailable';
+}
+
+function weekdayForDate(date: string): number {
+  return new Date(`${date}T00:00:00Z`).getUTCDay();
+}
+
+function googleBusyForJstDate(
+  intervals: Array<{ start: string; end: string }>,
+  date: string,
+): Interval[] {
+  const dayStart = new Date(`${date}T00:00:00+09:00`).getTime();
+  const dayEnd = dayStart + 24 * 60 * 60_000;
+  return intervals.flatMap((interval) => {
+    const start = Math.max(new Date(interval.start).getTime(), dayStart);
+    const end = Math.min(new Date(interval.end).getTime(), dayEnd);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) return [];
+    const startMin = Math.floor((start - dayStart) / 60_000);
+    const endMin = Math.ceil((end - dayStart) / 60_000);
+    return [{ start: fromMin(startMin), end: fromMin(endMin) }];
+  });
+}
+
+export interface AvailabilityResult {
+  by_staff: AvailabilityByStaff[];
+  calendar_sync: CalendarSyncState[];
 }
 
 export async function getAvailability(
   db: D1Database,
   params: GetAvailabilityParams,
-): Promise<{ by_staff: AvailabilityByStaff[] }> {
+): Promise<AvailabilityResult> {
   const menu = await db
     .prepare(
       `SELECT m.duration_minutes, m.buffer_after_minutes,
@@ -121,7 +156,7 @@ export async function getAvailability(
       override_duration: number | null;
     }>();
   if (!menu) {
-    return { by_staff: [] };
+    return { by_staff: [], calendar_sync: [] };
   }
 
   // SQL とパラメータ数を一致させる。staffId 未指定時の no-WHERE バリアントは
@@ -150,7 +185,7 @@ export async function getAvailability(
     display_name: string;
     is_designation_optional: number;
   }>();
-  if (!staffRows.results.length) return { by_staff: [] };
+  if (!staffRows.results.length) return { by_staff: [], calendar_sync: [] };
 
   const staffIds = staffRows.results.map((s) => s.id);
   const dates = eachDate(params.from, params.to);
@@ -165,6 +200,15 @@ export async function getAvailability(
     )
     .bind(...staffIds, params.from, params.to)
     .all<{ staff_id: string; work_date: string; start_time: string; end_time: string }>();
+
+  const rules = await db
+    .prepare(
+      `SELECT staff_id, weekday, start_time, end_time
+         FROM staff_availability_rules
+        WHERE staff_id IN (${placeholders}) AND is_active = 1`,
+    )
+    .bind(...staffIds)
+    .all<{ staff_id: string; weekday: number; start_time: string; end_time: string }>();
 
   // Coarse range filter: from の前日 00:00 UTC 〜 to の翌日 00:00 UTC で十分な余裕
   const rangeStart = new Date(`${params.from}T00:00:00Z`);
@@ -190,12 +234,45 @@ export async function getAvailability(
   };
   const minLeadAt = new Date(params.now.getTime() + params.minLeadTimeMinutes * 60_000);
 
+  const googleBusyByStaff = new Map<string, Array<{ start: string; end: string }> | null>();
+  const calendarSync: CalendarSyncState[] = [];
+  for (const staff of staffRows.results) {
+    try {
+      const busy = await getStaffGoogleBusy(db, params.googleCredentials ?? {}, {
+        lineAccountId: params.lineAccountId,
+        staffId: staff.id,
+        timeMin: new Date(`${params.from}T00:00:00+09:00`).toISOString(),
+        timeMax: new Date(new Date(`${params.to}T00:00:00+09:00`).getTime() + 24 * 60 * 60_000).toISOString(),
+      });
+      googleBusyByStaff.set(staff.id, busy);
+      calendarSync.push({ staff_id: staff.id, configured: busy !== null, ok: true });
+    } catch (error) {
+      // Configured calendar must fail closed. Showing slots while Google is
+      // unreachable can create double bookings.
+      console.error(`Google Calendar availability failed for staff=${staff.id}`, error);
+      googleBusyByStaff.set(staff.id, []);
+      calendarSync.push({ staff_id: staff.id, configured: true, ok: false, error: 'unavailable' });
+    }
+  }
+
   const by_staff: AvailabilityByStaff[] = [];
   for (const s of staffRows.results) {
     const slots: AvailabilityByStaff['slots'] = [];
+    const hasWorkingHours =
+      shifts.results.some((r) => r.staff_id === s.id) ||
+      rules.results.some((r) => r.staff_id === s.id);
+    const syncState = calendarSync.find((state) => state.staff_id === s.id);
+    if (syncState?.configured && !syncState.ok) {
+      by_staff.push({ staff_id: s.id, display_name: s.display_name, slots, has_working_hours: hasWorkingHours });
+      continue;
+    }
     for (const date of dates) {
       const shift = shifts.results.find((r) => r.staff_id === s.id && r.work_date === date);
-      if (!shift) continue;
+      const rule = rules.results.find(
+        (r) => r.staff_id === s.id && r.weekday === weekdayForDate(date),
+      );
+      const working = shift ?? rule;
+      if (!working) continue;
       const dayBookings = bookings.results
         .filter((b) => b.staff_id === s.id)
         .filter((b) => jstDateStr(new Date(b.starts_at)) === date)
@@ -203,8 +280,10 @@ export async function getAvailability(
           start: jstHHMM(new Date(b.starts_at)),
           end: jstHHMM(new Date(b.block_ends_at)),
         }));
+      const googleBusy = googleBusyByStaff.get(s.id);
+      if (googleBusy) dayBookings.push(...googleBusyForJstDate(googleBusy, date));
       const daySlots = computeSlots({
-        working: [{ start: shift.start_time, end: shift.end_time }],
+        working: [{ start: working.start_time, end: working.end_time }],
         busy: dayBookings,
         menu: menuForCalc,
         granularityMinutes: SLOT_GRANULARITY_MINUTES,
@@ -215,7 +294,7 @@ export async function getAvailability(
         slots.push({ date, start: slot.start, end: slot.end });
       }
     }
-    by_staff.push({ staff_id: s.id, display_name: s.display_name, slots });
+    by_staff.push({ staff_id: s.id, display_name: s.display_name, slots, has_working_hours: hasWorkingHours });
   }
-  return { by_staff };
+  return { by_staff, calendar_sync: calendarSync };
 }

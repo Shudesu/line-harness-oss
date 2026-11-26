@@ -1,3 +1,6 @@
+import { timingSafeEqualString } from '@line-crm/shared';
+import { limitAuth, audit } from '../middleware/auth-security.js';
+import { requireAccess } from '../middleware/auth.js';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
@@ -15,6 +18,21 @@ import type { Friend, LineAccount } from '@line-crm/db';
 import { authenticateApiToken } from '../middleware/auth.js';
 import { messageToLogPayload } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
+import {
+  getQuotaUsage,
+  quotaEnabled,
+  quotaConfig,
+  estimateSendAudience,
+  wouldExceedMonthlyQuota,
+} from '../services/quota.js';
+import {
+  allTargetGuardAudience,
+  getLinePlanQuotaShortfall,
+  LINE_MONTHLY_LIMIT_MESSAGE,
+  notifyQuotaAlert,
+  readPlanQuotaSnapshot,
+  type PlanQuotaShortfall,
+} from '../services/quota-alert.js';
 
 /**
  * LINE Messaging API 互換プロキシ。
@@ -60,6 +78,19 @@ const MESSAGE_SEND_PATHS = new Set([
   '/v2/bot/message/narrowcast',
 ]);
 
+/**
+ * 送信ゲートが返す 429 の出どころ。
+ *
+ * ゲートの本文は LINE の limit レスポンスと同じ形にしてある（既存クライアントが
+ * そのまま扱えるように）。ただし `You have reached your monthly limit.` は
+ * LINE 自身が返す文面と一字一句同じなので、429 を見ても「LINE のプラン枠に
+ * 当たった」のか「harness が止めた」のかが応答から判別できなかった。
+ * 実際に本番で 1:1 送信の 429 を前者と誤って切り分けかけている
+ * （枠は 30,000 中 200 しか使っていなかった）。message は互換のため変えず、
+ * source と reason を足して由来と理由を機械可読にする。
+ */
+const LIMIT_SOURCE = 'line-harness';
+
 // Unknown recipients cost a getProfile subrequest plus ~4 D1 queries each; cap
 // them so a multicast full of strangers cannot exhaust the Workers subrequest
 // budget. Overflow is skipped WITH a console.warn — never silently.
@@ -100,6 +131,8 @@ type ResolvedCaller = {
   upstreamToken: string;
   /** line_accounts.id when the channel is DB-registered, else null (env default). */
   lineAccountId: string | null;
+  /** line_accounts.name for the resolved account (quota-alert display), else null. */
+  accountName: string | null;
   /** Total number of registered accounts — used to scope broadcast logging. */
   accountCount: number;
 };
@@ -121,24 +154,38 @@ function asMessages(value: unknown): Message[] {
  * or the env default token. Returns a Response on auth/validation failure.
  */
 async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCaller | Response> {
+  const denied = await requireAccess(c); if (denied) return denied;
   const accounts = await getLineAccounts(c.env.DB);
   const active = accounts.filter((a) => a.is_active);
 
-  const byChannelToken = active.find((a) => a.channel_access_token === token);
+  const matches = await Promise.all(active.map(a => timingSafeEqualString(a.channel_access_token, token)));
+  const byChannelToken = active.find((_, index) => matches[index]);
   if (byChannelToken) {
     return {
       upstreamToken: token,
       lineAccountId: byChannelToken.id,
+      accountName: byChannelToken.name ?? null,
       accountCount: active.length,
     };
   }
-  if (token === c.env.LINE_CHANNEL_ACCESS_TOKEN) {
-    return { upstreamToken: token, lineAccountId: null, accountCount: active.length };
+  if (await timingSafeEqualString(token, c.env.LINE_CHANNEL_ACCESS_TOKEN)) {
+    return {
+      upstreamToken: token,
+      lineAccountId: null,
+      accountName: null,
+      accountCount: active.length,
+    };
   }
 
   // harness API キー経路 — worker 側でチャネルトークンを解決する。
   const staff = await authenticateApiToken(c, token);
-  if (!staff) return c.json(AUTH_FAILED, 401);
+  if (!staff) {
+    const limited = await limitAuth(c, 'key', token); if (limited) return limited;
+    await audit(c, 'key_rejected', 'denied');
+    return c.json(AUTH_FAILED, 401);
+  }
+  // Raw LINE proxy exposes a wider API than the message-scope allowlist.
+  if (staff.apiScopes != null) return c.json({message:'Scoped keys cannot use the LINE proxy'},403);
 
   const requestedId = c.req.header('X-Line-Account-Id');
   let account: LineAccount | undefined;
@@ -160,6 +207,7 @@ async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCa
     return {
       upstreamToken: account.channel_access_token,
       lineAccountId: account.id,
+      accountName: account.name ?? null,
       accountCount: active.length,
     };
   }
@@ -167,10 +215,32 @@ async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCa
     return {
       upstreamToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
       lineAccountId: null,
+      accountName: null,
       accountCount: active.length,
     };
   }
   return c.json({ message: 'No LINE account configured' }, 400);
+}
+
+/**
+ * Number of multicast recipients that have no friends row yet (unique ids,
+ * counted in IN-clause chunks of ≤100 binds — the D1 parameter cap; a typical
+ * multicast of up to 100 recipients is a single SELECT).
+ */
+async function countUnknownRecipients(db: D1Database, userIds: string[]): Promise<number> {
+  const unique = [...new Set(userIds.filter((u): u is string => typeof u === 'string'))];
+  let known = 0;
+  for (let i = 0; i < unique.length; i += 100) {
+    const chunk = unique.slice(i, i + 100);
+    const row = await db
+      .prepare(
+        `SELECT COUNT(DISTINCT line_user_id) as count FROM friends WHERE line_user_id IN (${chunk.map(() => '?').join(', ')})`,
+      )
+      .bind(...chunk)
+      .first<{ count: number }>();
+    known += row?.count ?? 0;
+  }
+  return unique.length - known;
 }
 
 /** Look up friends for a set of userIds in IN-clause chunks (≤100 binds each). */
@@ -373,8 +443,16 @@ async function logProxySend(
           .all<{ id: string }>();
         friendIds = (result.results ?? []).map((r) => r.id);
       } else if (lineAccountId) {
+        // Legacy NULL-account rows receive this channel's broadcast too, so
+        // include them — matching the projection population
+        // (estimateSendAudience). On multi-account installs a NULL row is
+        // thus logged for every account's broadcast; over-recording is the
+        // safe direction for a limiting feature, and an account-only filter
+        // would make recorded usage drift below reality on every send.
         const result = await db
-          .prepare('SELECT id FROM friends WHERE is_following = 1 AND line_account_id = ?')
+          .prepare(
+            'SELECT id FROM friends WHERE is_following = 1 AND (line_account_id = ? OR line_account_id IS NULL)',
+          )
           .bind(lineAccountId)
           .all<{ id: string }>();
         friendIds = (result.results ?? []).map((r) => r.id);
@@ -387,6 +465,11 @@ async function logProxySend(
         );
         return;
       }
+      // delivery_type stays NULL (not 'broadcast') on purpose: the monthly quota
+      // count in line-accounts.ts matches LINE's "delivered messages" dashboard
+      // via `delivery_type IS NULL OR = 'push'`, and a broadcast counts toward
+      // that quota. Tagging these would silently undercount the month. Use
+      // source='external' plus broadcast_id to tell broadcasts apart instead.
       const rows = friendIds.flatMap((friendId) => rowsFor(friendId, null));
       await insertLogRows(db, rows, source);
       console.log(`[line-proxy] broadcast logged for ${friendIds.length} friends`);
@@ -400,6 +483,122 @@ async function logProxySend(
     }
   } catch (err) {
     console.error('[line-proxy] logProxySend failed:', err);
+  }
+}
+
+// LINE 自身が月間クォータ超過時に返す 429 本文の message (一字一句)。上流応答が
+// クォータ起因かの判定に使う。レート制限の 429 とはこの文言で区別できる。
+// 定義は quota-alert.ts と共有 (worker 内部送信経路の 429 判定と単一定義)。
+
+/** waitUntil が使えない環境 (テスト等) では inline await にフォールバックする。 */
+async function runInBackground(c: Context<Env>, task: Promise<unknown>): Promise<void> {
+  try {
+    c.executionCtx.waitUntil(task);
+  } catch {
+    await task;
+  }
+}
+
+/**
+ * LINE プラン自体の月間クォータ (getMessageQuota) の送信前ガード。quotaEnv の
+ * harness 独自上限とは別物: 2026-09-01 の一斉配信事故 (プランクォータ不足で配信
+ * 全滅・誰も気づけず) は quotaEnv 未設定の環境でも起きるため、一斉送信
+ * (broadcast/multicast/narrowcast) は限度設定の有無に関わらず常時チェックする
+ * (1:1 push は止めない方針も quotaEnv ゲートと同じ)。不足が確定したら
+ * オペレーターに通知して 429 を返す。チェック API の失敗は fail-open —
+ * 送信は止めない (getLinePlanQuotaShortfall 内)。
+ */
+async function guardLinePlanQuota(
+  c: Context<Env>,
+  caller: ResolvedCaller,
+  audience: number | (() => Promise<number>),
+): Promise<Response | null> {
+  // cacheKey = トークン: multicast の 500人チャンクごとに quota API を2回叩かない
+  // よう 30秒 TTL のスナップショットキャッシュを効かせる (quota-alert.ts 参照)。
+  const shortfall = await getLinePlanQuotaShortfall(
+    new LineClient(caller.upstreamToken),
+    audience,
+    caller.upstreamToken,
+  );
+  if (!shortfall) return null;
+  // 通知は応答を待たせない — fireOutgoingWebhooks は外部 HTTP を含むため、
+  // 遅い webhook 先が 429 応答のレイテンシに化けるのを防ぐ (通知は best-effort
+  // で例外を握りつぶすので background 化しても失敗が失われる情報は変わらない)。
+  await runInBackground(c, notifyQuotaAlert(c.env.DB, {
+    lineAccountId: caller.lineAccountId ?? 'default',
+    accountName: caller.accountName,
+    shortfall,
+    source: 'proxy-pre-send',
+  }));
+  // message は LINE 自身のクォータ超過応答と同文言 (既存クライアントがそのまま
+  // 扱える)。原因は本当に LINE プランの残量だが、429 を返しているのは harness
+  // なので source を明示し (quotaEnv ゲートと同じ規約 — LIMIT_SOURCE 参照)、
+  // reason と quota で機械可読に詳細を添える。
+  return c.json(
+    {
+      message: LINE_MONTHLY_LIMIT_MESSAGE,
+      source: LIMIT_SOURCE,
+      reason: 'line-plan-quota-insufficient',
+      quota: shortfall,
+    },
+    429,
+  );
+}
+
+/** 上流 429 本文が LINE の月間クォータ超過応答かどうか。 */
+function isLineMonthlyLimitBody(bodyText: string): boolean {
+  try {
+    const parsed = JSON.parse(bodyText) as { message?: unknown };
+    return parsed.message === LINE_MONTHLY_LIMIT_MESSAGE;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * LINE がクォータ超過 429 で拒否した一斉送信をオペレーターに通知する (送信前
+ * ガードが fail-open で素通りした場合の最後の網)。429 の事実が確定しているので
+ * 通知は無条件 — 残量詳細は quota API から読み直して添える (不足判定は経ない:
+ * consumption API のラグで remaining > audience に見えても 429 は起きている)。
+ * 読み直しに失敗したら limit=0 の合成 shortfall で「超過の事実」だけ通知する
+ * (quota-alert.ts が文言を分ける)。audience の COUNT 失敗も通知は殺さず 0 に
+ * 落とす — 表示用の数字の欠落で最後の網ごと沈黙させない。
+ * best-effort: 例外は握りつぶす。
+ */
+async function notifyUpstreamPlanQuota429(
+  db: D1Database,
+  caller: ResolvedCaller,
+  audience: number | (() => Promise<number>),
+): Promise<void> {
+  try {
+    let audienceCount = 0;
+    try {
+      audienceCount = typeof audience === 'function' ? await audience() : audience;
+    } catch (err) {
+      console.error('[line-proxy] audience count for quota alert failed (using 0):', err);
+    }
+    let shortfall: PlanQuotaShortfall = {
+      limit: 0,
+      consumption: 0,
+      remaining: 0,
+      audience: audienceCount,
+    };
+    try {
+      // 429 直後の再読なので cacheKey は渡さない — ガード時の 30秒キャッシュを
+      // 引き当てると「超過前の残量」を通知に載せてしまう。
+      const snapshot = await readPlanQuotaSnapshot(new LineClient(caller.upstreamToken));
+      if (snapshot) shortfall = { ...snapshot, audience: audienceCount };
+    } catch (err) {
+      console.error('[line-proxy] quota re-read after upstream 429 failed:', err);
+    }
+    await notifyQuotaAlert(db, {
+      lineAccountId: caller.lineAccountId ?? 'default',
+      accountName: caller.accountName,
+      shortfall,
+      source: 'proxy-upstream-429',
+    });
+  } catch (err) {
+    console.error('[line-proxy] upstream 429 quota alert failed:', err);
   }
 }
 
@@ -472,6 +671,163 @@ function proxyHandler(prefix: string, upstreamBase: string, logSends: boolean) {
       }
     }
 
+    // Usage-limit gate for the two bulk-send endpoints only. Proxy sends are
+    // recorded in messages_log (they count toward the tally), so they get the
+    // same fences as the built-in send paths: refuse while over a limit, and
+    // refuse a send whose projection (recipient count for multicast, follower
+    // count for broadcast) would cross the monthly limit. 1:1 push and reply
+    // pass through untouched — one-to-one conversations are never paused.
+    // With no limits configured this adds zero queries. The error shape
+    // mirrors the LINE API's own limit response so existing clients handle it —
+    // but that made a harness-side refusal indistinguishable from LINE's own
+    // (identical status and message), so each response also carries
+    // `source: 'line-harness'` and a `reason` code. See LIMIT_SOURCE.
+    // Bulk-send request body, parsed ONCE and shared by the quotaEnv gate and
+    // the LINE plan quota guard below (each used to run its own JSON.parse of
+    // the same rawBody, with subtly diverging recipient counts).
+    const isBulkSend =
+      isMessageSend
+      && (path === '/v2/bot/message/broadcast'
+        || path === '/v2/bot/message/multicast'
+        || path === '/v2/bot/message/narrowcast');
+    let bulkParsed: ParsedSend = {};
+    if (isBulkSend && rawBody) {
+      try {
+        bulkParsed = JSON.parse(rawBody) as ParsedSend;
+      } catch {
+        // malformed body — no projection, let upstream reject it
+      }
+    }
+
+    if (isBulkSend && quotaEnabled(c.env)) {
+      const usage = await getQuotaUsage(c.env.DB, c.env);
+      let estimate: number | null = null;
+      if (usage.monthlyMessages.max > 0) {
+        // Narrowcast: LINE resolves the audience server-side (demographic /
+        // audience-group targeting), so the worker can neither project the
+        // recipient count nor record the send — logProxySend only warns. A
+        // bulk send whose usage cannot be recorded is not allowed while a
+        // monthly limit is active; without one it passes through as before.
+        if (path === '/v2/bot/message/narrowcast') {
+          return c.json(
+            {
+              message: 'Sends without a determinable recipient list are not available while send limits are active.',
+              source: LIMIT_SOURCE,
+              reason: 'narrowcast-unrecordable',
+            },
+            429,
+          );
+        }
+        // A broadcast from an unregistered env token on a multi-account
+        // install is exactly the case logProxySend refuses to log (the
+        // recipient set is unknowable). A send whose usage cannot be recorded
+        // cannot be allowed while a monthly limit is active — it would never
+        // count toward the tally. Register the channel to send broadcasts.
+        if (
+          path === '/v2/bot/message/broadcast'
+          && caller.lineAccountId === null
+          && caller.accountCount > 1
+        ) {
+          return c.json(
+            {
+              message: 'Broadcast requires a registered channel account.',
+              source: LIMIT_SOURCE,
+              reason: 'broadcast-unregistered-channel',
+            },
+            429,
+          );
+        }
+        // logProxySend inserts one row per recipient per message, so the
+        // projection multiplies the audience by the messages array length
+        // (LINE allows 1–5 per request). A missing/empty/non-array messages
+        // field falls back to 1 — the upstream rejects such payloads anyway.
+        const toList: unknown[] | null = Array.isArray(bulkParsed.to) ? bulkParsed.to : null;
+        const messageCount =
+          Array.isArray(bulkParsed.messages) && bulkParsed.messages.length > 0
+            ? bulkParsed.messages.length
+            : 1;
+        if (path === '/v2/bot/message/multicast') {
+          estimate = toList === null ? null : toList.length * messageCount;
+          // logProxySend stops creating friend rows for unknown recipients at
+          // MAX_FRIEND_CREATIONS — anyone beyond the cap would be sent to but
+          // never recorded. A send whose usage cannot be fully recorded is not
+          // allowed while a monthly limit is active, so refuse when more
+          // recipients are unregistered than logging can register. Sends with
+          // at most MAX_FRIEND_CREATIONS recipients can never exceed the cap,
+          // so they skip the COUNT entirely.
+          if (toList && toList.length > MAX_FRIEND_CREATIONS) {
+            const unknown = await countUnknownRecipients(c.env.DB, toList as string[]);
+            if (unknown > MAX_FRIEND_CREATIONS) {
+              return c.json(
+                {
+                  message: 'Too many unregistered recipients.',
+                  source: LIMIT_SOURCE,
+                  reason: 'too-many-unregistered-recipients',
+                },
+                429,
+              );
+            }
+          }
+        } else {
+          const followers = await estimateSendAudience(c.env.DB, {
+            target_type: 'all',
+            line_account_id: caller.lineAccountId,
+          } as { target_type: string });
+          estimate = followers === null ? null : followers * messageCount;
+        }
+      }
+      if (usage.exceeded || wouldExceedMonthlyQuota(usage, estimate)) {
+        // usage.exceeded は友だち数上限でも立つ。message は既存クライアント
+        // 互換のため据え置くが、reason まで monthly と言ってしまうと運用者を
+        // 「追加メッセージを買う」という誤った対処に誘導する。実際に効いた
+        // 上限を見て分ける（境界は getQuotaUsage と同じ非対称: friends は超過、
+        // monthly は到達で打ち止め）。
+        const monthlyOver =
+          usage.monthlyMessages.max > 0 && usage.monthlyMessages.used >= usage.monthlyMessages.max;
+        const friendsOver = usage.friends.max > 0 && usage.friends.used > usage.friends.max;
+        return c.json(
+          {
+            message: 'You have reached your monthly limit.',
+            source: LIMIT_SOURCE,
+            reason: friendsOver && !monthlyOver ? 'friends-exceeded' : 'monthly-messages-exceeded',
+          },
+          429,
+        );
+      }
+    }
+
+    // LINE プランクォータの送信前ガード (guardLinePlanQuota 参照)。audience は
+    // 上流 429 の通知 (下) でも使うためここで組み立てる。broadcast は lazy —
+    // 上限なしプランでは COUNT クエリ自体が走らない。
+    let bulkAudience: number | (() => Promise<number>) = 0;
+    if (isBulkSend) {
+      if (path === '/v2/bot/message/multicast') {
+        // LINE のクォータ消費は「ユニークな受信者数」ベース (1リクエストの複数
+        // メッセージは1通扱い、重複宛先は1人) なので Set で数える — 重複入りの
+        // payload を過大計上して送れる送信を誤ブロックしないため。
+        bulkAudience = Array.isArray(bulkParsed.to)
+          ? new Set(bulkParsed.to.filter((t): t is string => typeof t === 'string')).size
+          : 0;
+      } else if (path === '/v2/bot/message/broadcast') {
+        if (caller.lineAccountId || caller.accountCount <= 1) {
+          // broadcast の需要 = 配信可能友だち数。legacy NULL 行の扱いは worker
+          // 内部の一斉配信と同じ単一定義 (allTargetGuardAudience) を共有する。
+          bulkAudience = allTargetGuardAudience(
+            c.env.DB,
+            caller.lineAccountId,
+            caller.accountCount <= 1,
+          );
+        }
+        // else: マルチアカウント + 未登録 env トークン — 対象が確定しないため
+        // audience 0 のまま、remaining=0 (何も送れない) のときだけブロックする。
+      }
+      // narrowcast: LINE 側で対象が解決されるため audience 0 のまま —
+      // remaining=0 の「何も送れない」状態だけブロックし、上流 429 の検知 (下)
+      // で silent failure を拾う。
+      const blocked = await guardLinePlanQuota(c, caller, bulkAudience);
+      if (blocked) return blocked;
+    }
+
     const headers: Record<string, string> = {
       Authorization: `Bearer ${caller.upstreamToken}`,
     };
@@ -496,11 +852,24 @@ function proxyHandler(prefix: string, upstreamBase: string, logSends: boolean) {
       // Log in the background where possible: a multicast to hundreds of
       // friends must not delay the client response (timeout → client retry →
       // double send). Falls back to inline await outside a Workers runtime.
+      //
+      // Exception: while a monthly send limit is active, bulk sends
+      // (broadcast/multicast) are logged BEFORE the response returns. With
+      // background logging, a client firing sequential bulk sends could pass
+      // the next request's gate before the previous rows landed — awaiting
+      // here makes each 200 mean "already counted", at the cost of added
+      // response latency for these two endpoints only. 1:1 push and reply
+      // keep background logging (they are never gated). Truly concurrent
+      // parallel requests remain a bounded residue (rate limiting caps the
+      // burst width).
       const logging = logProxySend(c.env.DB, caller, path, rawBody, logSource);
-      try {
-        c.executionCtx.waitUntil(logging);
-      } catch {
+      const awaitBeforeResponse =
+        (path === '/v2/bot/message/broadcast' || path === '/v2/bot/message/multicast')
+        && quotaConfig(c.env).monthlyMessagesMax > 0;
+      if (awaitBeforeResponse) {
         await logging;
+      } else {
+        await runInBackground(c, logging);
       }
     }
 
@@ -513,6 +882,25 @@ function proxyHandler(prefix: string, upstreamBase: string, logSends: boolean) {
     ]) {
       const value = upstream.headers.get(name);
       if (value) responseHeaders.set(name, value);
+    }
+
+    // LINE がクォータ超過 429 で拒否した一斉送信は、外部クライアントにエラーが
+    // 返るだけでオペレーターは気づけない (2026-09-01 事故の形)。LINE 自身の月間
+    // 上限文言に一致したときだけ通知する — レート制限の 429 では発火しない。
+    // 判定に本文が要るためこの分岐だけバッファする (429 本文は小さな JSON)。
+    // 応答はステータス・本文とも据え置きで、クライアントから見た挙動は不変。
+    if (isBulkSend && upstream.status === 429) {
+      const bodyText = await upstream.text();
+      if (isLineMonthlyLimitBody(bodyText)) {
+        await runInBackground(c, notifyUpstreamPlanQuota429(c.env.DB, caller, bulkAudience));
+      } else {
+        // 文言不一致の 429 は検知網の外に落ちる。LINE が将来文言を変えたときに
+        // 網の失効へ気づけるよう、レート制限も含め必ず痕跡を残す。
+        console.warn(
+          `[line-proxy] bulk send got a non-quota-matched 429 from LINE: ${bodyText.slice(0, 200)}`,
+        );
+      }
+      return new Response(bodyText, { status: upstream.status, headers: responseHeaders });
     }
 
     // Stream the body through — api-data downloads (images, video) can be

@@ -85,13 +85,19 @@ export interface TrackConversionInput {
   userId?: string | null;
   affiliateCode?: string | null;
   metadata?: string | null;
+  /**
+   * Caller-chosen event ID for idempotent ingestion. When set, a second call
+   * with the same ID records nothing and returns the existing event. Omit it
+   * for the default behavior (a new random ID per call).
+   */
+  id?: string;
 }
 
 export async function trackConversion(
   db: D1Database,
   input: TrackConversionInput,
 ): Promise<ConversionEvent> {
-  const id = crypto.randomUUID();
+  const id = input.id ?? crypto.randomUUID();
   const now = jstNow();
 
   // Resolve last-touch affiliate attribution before inserting the event.
@@ -103,7 +109,7 @@ export async function trackConversion(
 
   await db
     .prepare(
-      `INSERT INTO conversion_events (id, conversion_point_id, friend_id, user_id, affiliate_code, metadata, created_at, affiliate_id, attributed_ref_code, approval_status)
+      `INSERT ${input.id ? 'OR IGNORE ' : ''}INTO conversion_events (id, conversion_point_id, friend_id, user_id, affiliate_code, metadata, created_at, affiliate_id, attributed_ref_code, approval_status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(

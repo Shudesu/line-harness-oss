@@ -1,15 +1,15 @@
 # 23. Claude Code 連携ガイド
 
-LINE Harness を Claude Code (AI) から操作するための完全ガイド。API ファーストで設計されており、全操作が CLI/API から実行可能。
+L Harness を Claude Code (AI) から操作するための完全ガイド。API ファーストで設計されており、全操作が CLI/API から実行可能。
 
 ---
 
 ## 概要
 
-LINE Harness は「AI-first CRM」として設計されている。管理画面での手動操作ではなく、Claude Code からの自然言語指示で全機能を操作することを前提としている。
+L Harness は「AI-first CRM」として設計されている。管理画面での手動操作ではなく、Claude Code からの自然言語指示で全機能を操作することを前提としている。
 
 ```
-[ユーザー] --自然言語--> [Claude Code] --curl/SDK--> [LINE Harness API] --LINE API--> [友だち]
+[ユーザー] --自然言語--> [Claude Code] --curl/SDK--> [L Harness API] --LINE API--> [友だち]
 ```
 
 ---
@@ -26,12 +26,12 @@ curl -s -H "Authorization: Bearer YOUR_API_KEY" \
 
 ### 2. line-harness スキルの設定
 
-Claude Code のスキルとして登録することで、自然言語から LINE Harness 操作が可能になる。
+Claude Code のスキルとして登録することで、自然言語から L Harness 操作が可能になる。
 
 CLAUDE.md またはプロジェクトの memory に以下を記載:
 
 ```markdown
-## LINE Harness
+## L Harness
 
 - API URL: https://your-worker.your-subdomain.workers.dev
 - API Key: (wrangler secretで管理)
@@ -332,11 +332,11 @@ done
 
 ### Cron + Claude Code
 
-launchd や cron で定期的に Claude Code を実行し、LINE Harness を自動操作:
+launchd や cron で定期的に Claude Code を実行し、L Harness を自動操作:
 
 ```bash
 # 毎週月曜日に CV レポートを Slack に送信
-0 9 * * 1 claude -m "LINE Harness のCVレポートを取得して、Slack の #marketing チャネルに投稿して"
+0 9 * * 1 claude -m "L Harness のCVレポートを取得して、Slack の #marketing チャネルに投稿して"
 ```
 
 ### Webhook トリガー

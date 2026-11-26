@@ -19,12 +19,18 @@ export class BroadcastsResource {
     return res.data
   }
 
-  async create(input: CreateBroadcastInput & { lineAccountId?: string }): Promise<Broadcast> {
-    const body = { ...input }
+  async create(input: CreateBroadcastInput & { lineAccountId?: string; idempotencyKey?: string }): Promise<Broadcast> {
+    const { idempotencyKey, ...body } = input
     if (!body.lineAccountId && this.defaultAccountId) {
       body.lineAccountId = this.defaultAccountId
     }
-    const res = await this.http.post<ApiResponse<Broadcast>>('/api/broadcasts', body)
+    const res = idempotencyKey
+      ? await this.http.post<ApiResponse<Broadcast>>(
+          '/api/broadcasts',
+          body,
+          { 'Idempotency-Key': idempotencyKey },
+        )
+      : await this.http.post<ApiResponse<Broadcast>>('/api/broadcasts', body)
     return res.data
   }
 

@@ -6,6 +6,11 @@ export interface Friend {
   picture_url: string | null;
   status_message: string | null;
   is_following: number;
+  first_followed_at?: string | null;
+  current_follow_started_at?: string | null;
+  last_followed_at?: string | null;
+  last_unfollowed_at?: string | null;
+  unfollow_count?: number;
   user_id: string | null;
   line_account_id: string | null;
   metadata: string;
@@ -176,6 +181,15 @@ export async function upsertFriend(
          SET display_name = ?,
              picture_url = ?,
              status_message = ?,
+             first_followed_at = COALESCE(first_followed_at, created_at),
+             current_follow_started_at = CASE
+               WHEN is_following = 0 OR current_follow_started_at IS NULL THEN ?
+               ELSE current_follow_started_at
+             END,
+             last_followed_at = CASE
+               WHEN is_following = 0 THEN ?
+               ELSE COALESCE(last_followed_at, created_at)
+             END,
              is_following = 1,
              updated_at = ?
          WHERE line_user_id = ?`,
@@ -184,6 +198,8 @@ export async function upsertFriend(
         'displayName' in input ? (input.displayName ?? null) : existing.display_name,
         'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
         'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
+        now,
+        now,
         now,
         input.lineUserId,
       )
@@ -195,8 +211,11 @@ export async function upsertFriend(
   const id = crypto.randomUUID();
   await db
     .prepare(
-      `INSERT INTO friends (id, line_user_id, display_name, picture_url, status_message, is_following, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO friends
+         (id, line_user_id, display_name, picture_url, status_message, is_following,
+          first_followed_at, current_follow_started_at, last_followed_at,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -204,6 +223,9 @@ export async function upsertFriend(
       input.displayName ?? null,
       input.pictureUrl ?? null,
       input.statusMessage ?? null,
+      now,
+      now,
+      now,
       now,
       now,
     )
@@ -217,13 +239,35 @@ export async function updateFriendFollowStatus(
   lineUserId: string,
   isFollowing: boolean,
 ): Promise<void> {
+  const now = jstNow();
+  if (isFollowing) {
+    await db
+      .prepare(
+        `UPDATE friends
+            SET first_followed_at = COALESCE(first_followed_at, created_at),
+                current_follow_started_at = CASE
+                  WHEN is_following = 0 OR current_follow_started_at IS NULL THEN ?
+                  ELSE current_follow_started_at
+                END,
+                last_followed_at = CASE WHEN is_following = 0 THEN ? ELSE last_followed_at END,
+                is_following = 1, updated_at = ?
+          WHERE line_user_id = ?`,
+      )
+      .bind(now, now, now, lineUserId)
+      .run();
+    return;
+  }
   await db
     .prepare(
       `UPDATE friends
-       SET is_following = ?, updated_at = ?
-       WHERE line_user_id = ?`,
+          SET is_following = 0,
+              current_follow_started_at = NULL,
+              last_unfollowed_at = CASE WHEN is_following = 1 THEN ? ELSE last_unfollowed_at END,
+              unfollow_count = unfollow_count + CASE WHEN is_following = 1 THEN 1 ELSE 0 END,
+              updated_at = ?
+        WHERE line_user_id = ?`,
     )
-    .bind(isFollowing ? 1 : 0, jstNow(), lineUserId)
+    .bind(now, now, lineUserId)
     .run();
 }
 

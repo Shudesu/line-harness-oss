@@ -1,4 +1,4 @@
-# Architecture — LINE Harness アーキテクチャ
+# Architecture — L Harness アーキテクチャ
 
 ## 全体構成図
 
@@ -342,7 +342,7 @@ function jstNow(): string {
 
 ## ステルス設計
 
-LINE Harness は全操作が通常のLINE公式アカウント使用に見えるように設計:
+L Harness は全操作が通常のLINE公式アカウント使用に見えるように設計:
 
 1. **ジッター配信**: ステップ配信の `next_delivery_at` に ±5分のランダムオフセット
 2. **バッチ間遅延**: 一斉配信で500件ずつバッチ処理、バッチ間にステルス遅延

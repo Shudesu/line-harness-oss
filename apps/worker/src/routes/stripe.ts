@@ -3,9 +3,11 @@ import {
   getStripeEvents,
   getStripeEventByStripeId,
   createStripeEvent,
-  jstNow,
+  addTagToFriend,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
+import { verifyWebhookSignature } from '../services/webhook-signature.js';
 
 const stripe = new Hono<Env>();
 
@@ -53,53 +55,26 @@ stripe.get('/api/integrations/stripe/events', async (c) => {
 
 // ========== Stripe Webhookレシーバー ==========
 
-/** Stripe署名検証 */
-async function verifyStripeSignature(secret: string, rawBody: string, sigHeader: string): Promise<boolean> {
-  // Stripe署名形式: t=timestamp,v1=signature
-  const parts = Object.fromEntries(
-    sigHeader.split(',').map((p) => {
-      const [k, ...v] = p.split('=');
-      return [k, v.join('=')];
-    }),
-  );
-  const timestamp = parts.t;
-  const expectedSig = parts.v1;
-  if (!timestamp || !expectedSig) return false;
-
-  const encoder = new TextEncoder();
-  const signedPayload = `${timestamp}.${rawBody}`;
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
-  const computedSig = Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  return computedSig === expectedSig;
-}
-
 stripe.post('/api/integrations/stripe/webhook', async (c) => {
   try {
-    const stripeSecret = (c.env as unknown as Record<string, string | undefined>).STRIPE_WEBHOOK_SECRET;
+    const stripeSecret = c.env.STRIPE_WEBHOOK_SECRET;
+    if (!stripeSecret?.trim()) {
+      return c.json({ success: false, error: 'Stripe webhook is not configured' }, 503);
+    }
+    const rawBody = await c.req.text();
+    const valid = await verifyWebhookSignature(stripeSecret, rawBody, c.req.header('Stripe-Signature') ?? '');
+    if (!valid) {
+      return c.json({ success: false, error: 'Stripe signature verification failed' }, 401);
+    }
     let body: StripeWebhookBody;
-
-    if (stripeSecret) {
-      // 署名検証モード（本番環境）
-      const sigHeader = c.req.header('Stripe-Signature') ?? '';
-      const rawBody = await c.req.text();
-
-      const valid = await verifyStripeSignature(stripeSecret, rawBody, sigHeader);
-      if (!valid) {
-        return c.json({ success: false, error: 'Stripe signature verification failed' }, 401);
-      }
+    try {
       body = JSON.parse(rawBody) as StripeWebhookBody;
-    } else {
-      // シークレット未設定（開発環境向け）
-      body = await c.req.json<StripeWebhookBody>();
+    } catch {
+      return c.json({ success: false, error: 'Invalid JSON' }, 400);
+    }
+    if (!body || typeof body.id !== 'string' || !body.id ||
+        typeof body.type !== 'string' || !body.data?.object?.id) {
+      return c.json({ success: false, error: 'Invalid Stripe event' }, 400);
     }
 
     // 冪等性チェック
@@ -137,12 +112,25 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
           .bind(`purchased_${productId}`)
           .first<{ id: string }>();
         if (tag) {
-          await db
-            .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
-            .bind(friendId, tag.id, jstNow())
-            .run();
+          await addTagToFriend(db, friendId, tag.id);
         }
       }
+
+      await awardActivityMileage(db, {
+        eventType: 'purchase_completed',
+        source: 'stripe',
+        sourceEventId: body.id,
+        friendId,
+        subjectKey: productId || 'first_purchase',
+        metadata: {
+          stripeEventId: body.id,
+          paymentIntentId: obj.id,
+          productId: productId ?? null,
+          amount: obj.amount ?? null,
+          currency: obj.currency ?? null,
+        },
+        occurredAt: event.processed_at,
+      });
 
       // イベントバスに発火（自動化ルール用）
       const { fireEvent } = await import('../services/event-bus.js');
@@ -155,10 +143,7 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
         .prepare(`SELECT id FROM tags WHERE name = 'subscription_cancelled'`)
         .first<{ id: string }>();
       if (cancelledTag) {
-        await db
-          .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
-          .bind(friendId, cancelledTag.id, jstNow())
-          .run();
+        await addTagToFriend(db, friendId, cancelledTag.id);
       }
     }
 

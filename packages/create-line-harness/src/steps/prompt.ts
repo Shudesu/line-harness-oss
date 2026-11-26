@@ -47,9 +47,8 @@ export async function promptLineCredentials(): Promise<LineCredentials> {
     ].join("\n"),
   );
 
-  const lineChannelSecret = await p.text({
+  const lineChannelSecret = await p.password({
     message: "チャネルシークレット（英数字）",
-    placeholder: "同じページに表示されている Channel Secret",
     validate(value) {
       if (!value || value.trim().length < 10) {
         return "チャネルシークレットを入力してください";
@@ -74,9 +73,8 @@ export async function promptLineCredentials(): Promise<LineCredentials> {
     ].join("\n"),
   );
 
-  const lineChannelAccessToken = await p.text({
+  const lineChannelAccessToken = await p.password({
     message: "チャネルアクセストークン（長期）",
-    placeholder: "上の手順で発行したトークン",
     validate(value) {
       if (!value || value.trim().length < 10) {
         return "チャネルアクセストークンを入力してください";

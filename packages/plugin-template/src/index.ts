@@ -1,14 +1,13 @@
 /**
- * LINE Harness Plugin: MyService
+ * L Harness Plugin: MyService
  *
- * Cloudflare Worker that syncs data from MyService → LINE Harness
+ * Cloudflare Worker that syncs data from MyService → L Harness
  * and sends notifications based on external conditions.
  *
  * Replace "MyService" with your actual service name throughout this template.
  */
 
 import { syncExternalData } from './sync.js'
-import { checkAndNotify } from './notify.js'
 
 export interface Env {
   LINE_HARNESS_API_URL: string
@@ -29,11 +28,10 @@ export default {
   ): Promise<void> {
     console.log('[MyService Plugin] Cron triggered')
 
-    // Step 1: Sync external data → LINE Harness tags/metadata
+    // Step 1: Sync external data → L Harness tags/metadata
     await syncExternalData(env)
 
-    // Step 2: Check conditions and send notifications
-    await checkAndNotify(env)
+    // 通知例は src/notify.ts。イベント単位の重複防止・再送を実装してから接続する。
   },
 
   /**
@@ -56,24 +54,9 @@ export default {
 
     // Webhook endpoint: receives events from MyService
     if (url.pathname === '/webhook' && request.method === 'POST') {
-      try {
-        const body = await request.json() as Record<string, unknown>
-        console.log('[MyService Plugin] Webhook received:', JSON.stringify(body))
-
-        // TODO: Validate webhook signature from MyService
-        // TODO: Process the webhook event
-        // Example: a booking was confirmed → tag the friend, send confirmation message
-
-        return new Response(JSON.stringify({ received: true }), {
-          headers: { 'Content-Type': 'application/json' },
-        })
-      } catch (error) {
-        console.error('[MyService Plugin] Webhook error:', error)
-        return new Response(JSON.stringify({ error: 'Invalid request' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
+      // 連携先の仕様に従って署名検証とイベント処理を実装してから有効化する。
+      // 未実装のイベントを受領済みにせず、本文・顧客データもログへ出さない。
+      return Response.json({ error: 'Webhook integration is not configured' }, { status: 501 })
     }
 
     return new Response('Not Found', { status: 404 })

@@ -1,4 +1,4 @@
-# Configuration — LINE Harness 設定リファレンス
+# Configuration — L Harness 設定リファレンス
 
 ## wrangler.toml
 
@@ -48,6 +48,10 @@ crons = ["*/5 * * * *"]
 | `LIFF_URL` | 任意 | string | LIFF アプリ URL | `https://liff.line.me/12345-abcde` |
 | `LINE_LOGIN_CHANNEL_ID` | 任意 | string | LINE Login チャネルID（UUID連携用） | `9876543210` |
 | `LINE_LOGIN_CHANNEL_SECRET` | 任意 | string | LINE Login チャネルシークレット | `xyz789...` |
+| `GOOGLE_OAUTH_CLIENT_ID` | 推奨 | string | GoogleカレンダーOAuth接続用クライアントID | `123.apps.googleusercontent.com` |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | 推奨 | string | OAuthクライアントの秘密鍵（Worker secretとして保存） | `GOCSPX-...` |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | 互換用 | string | 旧サービスアカウント方式で使うメールアドレス | `calendar-sync@project.iam.gserviceaccount.com` |
+| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | 互換用 | string | 旧サービスアカウント方式で使うPKCS#8秘密鍵 | `-----BEGIN PRIVATE KEY-----...` |
 
 ### シークレット設定コマンド
 
@@ -60,6 +64,10 @@ npx wrangler secret put LINE_CHANNEL_ID
 npx wrangler secret put LIFF_URL
 npx wrangler secret put LINE_LOGIN_CHANNEL_ID
 npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID
+npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
 
 # 設定済みシークレット一覧確認
 npx wrangler secret list
@@ -82,6 +90,22 @@ export type Env = {
   };
 };
 ```
+
+### 予約とGoogleカレンダーの同期
+
+新規環境ではOAuth方式を推奨します。
+
+1. Google Calendar APIとOAuth同意画面を設定します。
+2. `calendar.events` と `calendar.events.freebusy` の2スコープを許可します。
+3. OAuthクライアントのコールバックURIへ `<WORKER_URL>/api/booking/google-calendar/oauth/callback` を登録します。
+4. `GOOGLE_OAUTH_CLIENT_ID` と `GOOGLE_OAUTH_CLIENT_SECRET` をWorker secretへ設定します。
+5. L Harnessの「予約管理 → スタッフ → 受付時間」で「Googleアカウントで接続」を押します。
+
+サービスアカウントキーやカレンダー共有は不要です。組織ポリシー `iam.disableServiceAccountKeyCreation` が有効な環境でも、この方式なら接続できます。
+
+接続後は、L Harnessの受付時間からGoogleの「予定あり」を除外します。予約が確定するとGoogle Meet付きの予定を作成し、前日・1時間前のLINEリマインドも登録します。Google側を確認できない場合は、二重予約を防ぐため該当スタッフの枠を一時的に非表示にします。
+
+詳しい設定手順、ライブCTAから予約確定までの流れ、エラー解決方法は [Googleカレンダー連携とライブCTA即時予約](28-Google-Calendar-and-Webinar-Booking.md) を参照してください。
 
 ### 管理画面の環境変数
 
@@ -206,7 +230,7 @@ app.use('*', cors({
 
 ### 設計方針
 
-LINE Harness は全タイムスタンプを **JST (UTC+9)** で統一しています。理由:
+L Harness は全タイムスタンプを **JST (UTC+9)** で統一しています。理由:
 - LINE公式アカウントの利用者は日本が大多数
 - Cron 配信の時間計算で UTC 変換ミスを防ぐ
 - D1 (SQLite) にはタイムゾーン機能がないため、アプリケーション層で統一
