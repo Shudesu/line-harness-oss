@@ -116,7 +116,18 @@ function AccountSwitcher() {
   const { accounts, selectedAccount, setSelectedAccountId, loading } = useAccount()
   const [open, setOpen] = useState(false)
 
-  if (loading || accounts.length === 0) return null
+  // 読み込み中は消さずに固定高さのスケルトンを置く（ガクッと動くのを防ぐ）
+  if (loading) {
+    return (
+      <div className="border-b border-kumo-line px-3 py-3" aria-hidden="true">
+        <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-kumo-subtle">
+          操作中のLINEアカウント
+        </p>
+        <div className="h-12 rounded bg-kumo-line/50 animate-pulse" />
+      </div>
+    )
+  }
+  if (accounts.length === 0) return null
 
   const displayName = selectedAccount?.displayName || selectedAccount?.name || ''
 
@@ -193,10 +204,13 @@ export default function Sidebar() {
   // (裏の countUnanswered は messages_log 全走査を含む重い集計なので間隔は詰めない。)
   // チャット画面での status 変更・手動返信直後は UNANSWERED_REFRESH_EVENT で
   // 即時再取得する (ポーリング待ちだと操作してもバッジが減らないと感じるため)。
+  // ただし countUnanswered は重い集計なので、送信連打等でイベントが
+  // 連発しても 5 秒に 1 回にまとめる (デバウンス)。
   const [unansweredCount, setUnansweredCount] = useState<number>(0)
   const polling = useActivityPolling({
     intervalMs: 5 * 60_000,
     refreshEvent: UNANSWERED_REFRESH_EVENT,
+    eventDebounceMs: 5000,
     load: async (signal) => {
       const { api } = await import('@/lib/api')
       return api.inbox.unanswered.count({ signal })

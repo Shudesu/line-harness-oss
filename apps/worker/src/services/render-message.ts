@@ -1,3 +1,4 @@
+import { parseMessageGroup, packMessageItems } from '@line-crm/shared';
 // Broadcast template variables are expanded by L Harness before calling
 // the Messaging API. LINE's official textV2.substitution supports mentions
 // and LINE emoji only; it does not provide arbitrary recipient-name strings.
@@ -61,6 +62,8 @@ export function renderBroadcastMessageContent(
   content: string,
   context: BroadcastRenderContext,
 ): string {
+  const group = parseMessageGroup(content);
+  if (group) return packMessageItems(group.map(item => ({ ...item, messageContent: renderBroadcastMessageContent(item.messageType, item.messageContent, context) }))).messageContent;
   if (messageType !== 'flex') return renderMessageContent(content, context);
   const parsed = JSON.parse(content) as unknown;
   return JSON.stringify(renderJsonValue(parsed, context));

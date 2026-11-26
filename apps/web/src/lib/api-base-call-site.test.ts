@@ -61,7 +61,7 @@ describe('getApiBase() call-site guard', () => {
 
   it('detector does not flag call-time usage inside a function body (self-test)', () => {
     // Indented (inside a function/handler) — the correct pattern used
-    // throughout the codebase, e.g. components/auth-guard.tsx.
+    // throughout the codebase, e.g. contexts/auth-context.tsx.
     expect(MODULE_SCOPE_CAPTURE.test('  const apiUrl = getApiBase()')).toBe(false)
     expect(MODULE_SCOPE_CAPTURE.test('        const apiUrl = getApiBase()')).toBe(false)
     // A function declaration wrapping the call is never itself flagged.

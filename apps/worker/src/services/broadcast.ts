@@ -1,3 +1,5 @@
+import { buildMessages } from './message-group.js';
+import { countSegmentAudience, savedSegmentAudience } from './saved-segment.js';
 import { BroadcastDeliveryError, BROADCAST_RECORDING_ERROR, broadcastDeliveryFailure, isDefiniteLineRejection } from './broadcast-delivery-error.js';
 import { BroadcastSenderError, resolveBroadcastSender } from './broadcast-sender.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
@@ -195,6 +197,24 @@ export async function processBroadcastSend(
     );
   }
 
+  // Saved segment conditions (include/exclude tags etc.) always go through the
+  // resumable segment queue so the executor delivers only to the matching
+  // audience. Must run before the personalized/target branches, which would
+  // otherwise overwrite segment_conditions with the plain target marker.
+  const segmentAudience = savedSegmentAudience(broadcast);
+  if (segmentAudience) {
+    const { total, missingName } = await countSegmentAudience(db, broadcast, segmentAudience);
+    if (hasRecipientVariables(broadcast.message_content) && missingName > 0) {
+      throw new Error(`Cannot personalize broadcast: ${missingName} recipient(s) have no display name`);
+    }
+    await db.prepare(
+      `UPDATE broadcasts
+          SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
+        WHERE id = ?`,
+    ).bind(total, JSON.stringify(segmentAudience), broadcast.id).run();
+    return (await getBroadcastById(db, broadcastId))!;
+  }
+
   // A recipient variable cannot be delivered through LINE broadcast or
   // multicast because those endpoints accept one shared Message object.
   // Convert scheduled/direct sends into the resumable queue path.
@@ -287,7 +307,7 @@ export async function processBroadcastSend(
   }
   assertNoUnresolvedBroadcastVariables(finalContent);
   const altText = (broadcast as unknown as Record<string, unknown>).alt_text as string | undefined;
-  const message = buildMessage(finalType, finalContent, altText || undefined);
+  const message = buildMessages(finalType, finalContent, buildMessage, altText || undefined);
   let totalCount = 0;
   let successCount = 0;
   let attempted = false;
@@ -332,7 +352,7 @@ export async function processBroadcastSend(
       );
       totalCount = followerRow?.count ?? 0;
       attempted = true;
-      const { requestId } = await lineClient.broadcast([message], retryKey);
+      const { requestId } = await lineClient.broadcast(message, retryKey);
       accepted = true;
       successCount = totalCount;
       await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
@@ -367,8 +387,8 @@ export async function processBroadcastSend(
 
         // Stealth: add slight variation to text messages
         let batchMessage = message;
-        if (message.type === 'text' && totalBatches > 1) {
-          batchMessage = { ...message, text: addMessageVariation(message.text, batchIndex) };
+        if (totalBatches > 1) {
+          batchMessage = message.map(item => item.type === 'text' ? { ...item, text: addMessageVariation(item.text, batchIndex) } : item);
         }
 
         let batchAccepted = false;
@@ -380,7 +400,7 @@ export async function processBroadcastSend(
             JSON.stringify(batchMessage),
           );
           attempted = true;
-          await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
+          await lineClient.multicast(lineUserIds, batchMessage, [unit], retryKey);
           batchAccepted = true;
           accepted = true;
           successCount += batch.length;
@@ -643,7 +663,7 @@ async function processQueuedBroadcastBatches(
     finalContent = renderBroadcastMessageContent(finalType, finalContent, { liffId });
   }
   const altText = raw.alt_text as string | undefined;
-  const message = buildMessage(finalType, finalContent, altText || undefined);
+  const message = buildMessages(finalType, finalContent, buildMessage, altText || undefined);
 
   // multi-account-dedup: delegate to processMultiAccountDedupBroadcast.
   // dedup ループは内部で per-account に {{liff_id}} 置換 + buildMessage する。
@@ -739,7 +759,7 @@ async function processQueuedBroadcastBatches(
       finalType,
       finalContent,
     );
-    const { requestId } = await lineClient.broadcast([message], retryKey);
+    const { requestId } = await lineClient.broadcast(message, retryKey);
     await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
     await createBroadcastInsight(db, broadcast.id);
     await updateBroadcastStatus(db, broadcast.id, 'sent', { totalCount: followerCount, successCount: followerCount });
@@ -814,7 +834,7 @@ async function processQueuedBroadcastBatches(
             displayName: friend.display_name,
           });
           assertNoUnresolvedBroadcastVariables(renderedContent);
-          const personalizedMessage = buildMessage(finalType, renderedContent, altText || undefined);
+          const personalizedMessage = buildMessages(finalType, renderedContent, buildMessage, altText || undefined);
           const retryKey = await createBroadcastRetryKey(
             broadcast.id,
             'personalized-push',
@@ -822,7 +842,7 @@ async function processQueuedBroadcastBatches(
             finalType,
             renderedContent,
           );
-          await lineClient.pushMessage(friend.line_user_id, [personalizedMessage], retryKey, [unit]);
+          await lineClient.pushMessage(friend.line_user_id, personalizedMessage, retryKey, [unit]);
           recipientAccepted = true;
 
           await db.prepare(
@@ -880,8 +900,8 @@ async function processQueuedBroadcastBatches(
 
     // テキストメッセージのバリエーション
     let batchMessage = message;
-    if (message.type === 'text' && totalBatches > 1) {
-      batchMessage = { ...message, text: addMessageVariation((message as { text: string }).text, batchIndex) };
+    if (totalBatches > 1) {
+      batchMessage = message.map(item => item.type === 'text' ? { ...item, text: addMessageVariation(item.text, batchIndex) } : item);
     }
 
     try {
@@ -891,7 +911,7 @@ async function processQueuedBroadcastBatches(
         ...batch.map((f) => f.id),
         JSON.stringify(batchMessage),
       );
-      await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
+      await lineClient.multicast(lineUserIds, batchMessage, [unit], retryKey);
     } catch (err) {
       console.error(`Queued broadcast batch ${batchIndex} send failed:`, broadcastDeliveryFailure(err));
       await setBroadcastLastError(db, broadcast.id, [recordingError, broadcastDeliveryFailure(err)].filter(Boolean).join("\n"));

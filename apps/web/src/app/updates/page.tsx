@@ -18,9 +18,6 @@ import { Table } from '@cloudflare/kumo/components/table'
 function apiUrl(): string {
   return getApiBase()!
 }
-// self-update を構成した環境 (create-line-harness セットアップ) でのみ設定される。
-// 未設定 = 自動アップデート非構成環境なので、この画面は fetch せず案内のみ表示する。
-const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY
 const MANUAL_UPDATE_GUIDE_URL =
   'https://github.com/Shudesu/line-harness-oss/blob/main/docs/wiki/26-Manual-Update.md' 
 
@@ -41,9 +38,9 @@ type LoadState =
   | { kind: 'unconfigured' }
   | { kind: 'error'; message: string }
 
-async function fetchHistory(adminKey: string): Promise<Row[]> {
+async function fetchHistory(): Promise<Row[]> {
   const r = await fetch(`${apiUrl()}/admin/update/history`, {
-    headers: { 'x-admin-api-key': adminKey },
+    credentials: 'include',
   })
   if (!r.ok) throw new Error(`history fetch ${r.status}`)
   const j = (await r.json()) as { history: Row[] }
@@ -54,11 +51,7 @@ export default function UpdatesPage() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
 
   useEffect(() => {
-    if (!ADMIN_KEY) {
-      setState({ kind: 'unconfigured' })
-      return
-    }
-    fetchHistory(ADMIN_KEY)
+    fetchHistory()
       .then((rows) => setState({ kind: 'ready', rows }))
       .catch((e) => {
         // 401/403 = キー不一致 or 未構成。ネットワーク失敗も含め、
@@ -77,8 +70,8 @@ export default function UpdatesPage() {
       <Link href="/news" className="mb-6 block rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">新機能を知る：アップデートニュース →</Link>
       {state.kind === 'loading' && <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>}
       {state.kind === 'unconfigured' && (
-        <Banner className="mb-4" variant="secondary" title="自動アップデートは未構成">
-          この環境では自動アップデートが構成されていないため、履歴はありません。
+        <Banner className="mb-4" variant="secondary" title="オーナーでログインしてください">
+          履歴の閲覧にはオーナーのセッションが必要です。
           <br />
           自動アップデートは <code className="text-xs">create-line-harness</code>{' '}
           でセットアップした環境で利用できます。自前でデプロイしている場合は{' '}

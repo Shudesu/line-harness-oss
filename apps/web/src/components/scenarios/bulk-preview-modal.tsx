@@ -1,5 +1,7 @@
 'use client'
 
+import { MessagePreview } from '@/components/messages/message-composer'
+
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { Banner } from '@cloudflare/kumo/components/banner'
@@ -96,9 +98,9 @@ export default function BulkPreviewModal({ open, scenarioId, onClose }: Props) {
                   <span className="text-xs text-blue-600">{s.messageType}</span>
                   <span className="text-gray-400 group-open:rotate-90 transition-transform">▶</span>
                 </summary>
-                <pre className="mt-2 text-xs text-gray-700 whitespace-pre-wrap break-words bg-gray-50 p-2 rounded max-h-48 overflow-y-auto">
-                  {s.messageContent}
-                </pre>
+                <div className="mt-2 text-xs text-gray-700 whitespace-pre-wrap break-words bg-gray-50 p-2 rounded max-h-48 overflow-y-auto">
+                  <MessagePreview messageType={s.messageType} messageContent={s.messageContent} />
+                </div>
               </details>
             ))}
           </div>

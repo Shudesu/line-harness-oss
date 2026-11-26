@@ -1,3 +1,4 @@
+import { validateMessageContent } from '@line-crm/shared';
 import { Hono } from 'hono';
 import {
   getScenarios,
@@ -355,6 +356,11 @@ scenarios.post('/api/scenarios/:id/steps', async (c) => {
       );
     }
 
+    if (!body.templateId) {
+      const contentError = validateMessageContent(body.messageType, body.messageContent);
+      if (contentError) return c.json({ success: false, error: contentError }, 400);
+    }
+
     const scenarioRow = await c.env.DB
       .prepare(`SELECT delivery_mode FROM scenarios WHERE id = ?`)
       .bind(scenarioId)
@@ -546,6 +552,13 @@ scenarios.put('/api/scenarios/:id/steps/:stepId', async (c) => {
     const effectiveMessageContent = templateSnapshot
       ? templateSnapshot.message_content
       : body.messageContent;
+
+    if (effectiveMessageType !== undefined || effectiveMessageContent !== undefined) {
+      const previous = await c.env.DB.prepare('SELECT message_type, message_content FROM scenario_steps WHERE id = ? AND scenario_id = ?').bind(stepId, scenarioId).first<{ message_type: string; message_content: string }>();
+      if (!previous) return c.json({ success: false, error: 'Step not found' }, 404);
+      const contentError = validateMessageContent(effectiveMessageType ?? previous.message_type, effectiveMessageContent ?? previous.message_content);
+      if (contentError) return c.json({ success: false, error: contentError }, 400);
+    }
 
     const updated = await updateScenarioStep(c.env.DB, stepId, {
       step_order: body.stepOrder,

@@ -1,7 +1,8 @@
+import { audit, limitAuth } from '../middleware/auth-security.js';
 import { Hono } from 'hono';
 import { consumeAdminSsoJti } from '@line-crm/db';
 import type { Env } from '../index.js';
-import { adminSessionCookie, csrfCookie } from '../middleware/auth.js';
+import { issueAdminSession, csrfCookie, requireAccess } from '../middleware/auth.js';
 import {
   parseAllowedOrigins,
   resolveAdminAuthConfig,
@@ -123,6 +124,8 @@ adminSso.get('/admin/sso', async (c) => {
 
   // Feature disabled → indistinguishable from a route that does not exist.
   if (!secret) return c.notFound();
+  const limited = await limitAuth(c, 'login'); if (limited) return limited;
+  const denied = await requireAccess(c); if (denied) return denied;
 
   const noStore = (response: Response): Response => {
     response.headers.set('Cache-Control', 'no-store');
@@ -205,7 +208,8 @@ adminSso.get('/admin/sso', async (c) => {
   console.log(`${LOG} accepted jti=${jti} sub=${subject} exp=${exp} purged=${ledger.purged}`);
 
   const csrfToken = crypto.randomUUID();
-  c.header('Set-Cookie', adminSessionCookie(c.env.API_KEY, config.sameSite), { append: true });
+  await audit(c, 'sso', 'attempted', 'env-owner');
+  await issueAdminSession(c, {id:'env-owner',name:'Owner',role:'owner'}, c.env.API_KEY, 'sso');
   c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
   return noStore(c.redirect(adminHomeUrl(c.env), 302));
 });
