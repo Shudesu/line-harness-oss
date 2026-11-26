@@ -22,6 +22,9 @@ let store: ReturnType<typeof sqliteD1>;
 let env: Env['Bindings'];
 /** Login channel the mocked LINE verify endpoint accepts the id_token for. */
 let tokenChannel: string;
+/** Whether LINE reports the caller as a friend of the account behind `token`. */
+let isFriendOf: (token: string) => boolean;
+let profileTokens: string[];
 /** Every statement that wrote to `friends`, in order. */
 let friendWrites: string[];
 
@@ -30,9 +33,9 @@ function addAccount(id: string, opts: { login?: string | null; secret?: string; 
     .prepare(
       `INSERT INTO line_accounts
          (id, channel_id, name, channel_access_token, channel_secret, login_channel_id, is_active, display_order)
-       VALUES (?, ?, ?, 'token', ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, `ch-${id}`, id, opts.secret ?? `secret-${id}`, opts.login ?? null, opts.active ?? 1, opts.order ?? 0);
+    .run(id, `ch-${id}`, id, `token-${id}`, opts.secret ?? `secret-${id}`, opts.login ?? null, opts.active ?? 1, opts.order ?? 0);
 }
 
 function friendRow(lineUserId = NEW_USER) {
@@ -88,6 +91,8 @@ beforeEach(() => {
     LIFF_URL: 'https://liff.line.me/123-Test',
   } as Env['Bindings'];
   tokenChannel = ENV_LOGIN;
+  isFriendOf = () => true;
+  profileTokens = [];
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input);
@@ -96,6 +101,13 @@ beforeEach(() => {
       return clientId === tokenChannel
         ? Response.json({ sub: NEW_USER, name: 'Verified Name' })
         : Response.json({ error: 'invalid_request' }, { status: 400 });
+    }
+    if (url === `https://api.line.me/v2/bot/profile/${NEW_USER}`) {
+      const token = String(new Headers(init?.headers).get('Authorization')).replace('Bearer ', '');
+      profileTokens.push(token);
+      return isFriendOf(token)
+        ? Response.json({ userId: NEW_USER, displayName: 'LINE Name', pictureUrl: 'https://example.com/p.jpg' })
+        : Response.json({ message: 'Not found' }, { status: 404 });
     }
     throw new Error(`Unexpected network destination: ${url}`);
   });
@@ -116,7 +128,8 @@ describe('/api/liff/link before the follow webhook', () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ success: true, data: { alreadyLinked: false } });
-    expect(friendRow()).toMatchObject({ line_account_id: 'acc-b', ref_code: 'route-1', display_name: 'First Visit' });
+    expect(friendRow()).toMatchObject({ line_account_id: 'acc-b', ref_code: 'route-1', display_name: 'LINE Name' });
+    expect(profileTokens).toEqual(['token-acc-b']);
     expect(friendRow()!.user_id).toBeTruthy();
     // The account is part of the statement that creates the row.
     expect(friendWrites[0]).toMatch(/INSERT INTO friends[\s\S]*line_account_id/);
@@ -162,6 +175,7 @@ describe('/api/liff/link before the follow webhook', () => {
 
     expect(res.status).toBe(200);
     expect(friendRow()?.line_account_id).toBe('acc-main');
+    expect(profileTokens).toEqual(['token-acc-main']);
   });
 
   test('env-only install (no account rows) → friend is created with NULL, as the follow webhook stores it', async () => {
@@ -169,6 +183,7 @@ describe('/api/liff/link before the follow webhook', () => {
 
     expect(res.status).toBe(200);
     expect(friendRow()).toMatchObject({ line_account_id: null, ref_code: 'route-1' });
+    expect(profileTokens).toEqual(['env-token']);
   });
 
   test('Login channel shared by several accounts → no friend row is created (404), nothing unattributed', async () => {
@@ -184,6 +199,32 @@ describe('/api/liff/link before the follow webhook', () => {
     expect(store.sqlite.prepare('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 0 });
   });
 
+  test('a visitor who has not added the account gets 404 and no friend / user / ref rows', async () => {
+    // The LIFF client posts here on every open, before the friend-add gate.
+    addAccount('acc-a', { login: 'login-a' });
+    tokenChannel = 'login-a';
+    isFriendOf = () => false;
+
+    const res = await link({ ref: 'route-1' });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ success: false, error: 'Friend not found' });
+    for (const table of ['friends', 'users', 'ref_tracking']) {
+      expect(store.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+    }
+  });
+
+  test('a failing profile lookup is not treated as friendship', async () => {
+    addAccount('acc-a', { login: 'login-a' });
+    tokenChannel = 'login-a';
+    isFriendOf = () => { throw new Error('network down'); };
+
+    const res = await link();
+
+    expect(res.status).toBe(404);
+    expect(friendRow()).toBeUndefined();
+  });
+
   test('a shared Login channel with only one active account is not ambiguous', async () => {
     addAccount('acc-old', { login: 'login-shared', active: 0, order: 1 });
     addAccount('acc-live', { login: 'login-shared', order: 2 });
@@ -193,6 +234,8 @@ describe('/api/liff/link before the follow webhook', () => {
 
     expect(res.status).toBe(200);
     expect(friendRow()?.line_account_id).toBe('acc-live');
+    // The same (active) account is used for the friendship check.
+    expect(profileTokens).toEqual(['token-acc-live']);
   });
 
   test('a friend the follow webhook already created keeps its account and is not re-created', async () => {
@@ -208,10 +251,11 @@ describe('/api/liff/link before the follow webhook', () => {
     expect(res.status).toBe(200);
     expect(friendRow()).toMatchObject({ id: 'f-follow', line_account_id: 'acc-a', ref_code: 'route-1' });
     expect(friendWrites.some((sql) => /INSERT INTO friends/.test(sql))).toBe(false);
+    expect(profileTokens).toEqual([]);
   });
 });
 
-test('losing the insert race to the follow webhook keeps its account and profile picture', async () => {
+test('losing the insert race to the follow webhook keeps its account and profile', async () => {
   addAccount('acc-a', { login: 'login-a' });
   addAccount('acc-b', { login: 'login-b' });
   tokenChannel = 'login-b';
@@ -228,7 +272,7 @@ test('losing the insert race to the follow webhook keeps its account and profile
           if (!raced && /INSERT INTO friends/.test(sql)) {
             raced = true;
             store.sqlite
-              .prepare("INSERT INTO friends (id, line_user_id, display_name, picture_url, line_account_id) VALUES ('f-follow', ?, 'From follow', 'https://example.com/p.jpg', 'acc-a')")
+              .prepare("INSERT INTO friends (id, line_user_id, display_name, picture_url, line_account_id) VALUES ('f-follow', ?, 'LINE Name', 'https://example.com/p.jpg', 'acc-a')")
               .run(NEW_USER);
           }
           return stmt.run<T>();
@@ -242,8 +286,8 @@ test('losing the insert race to the follow webhook keeps its account and profile
 
   expect(res.status).toBe(200);
   const row = store.sqlite
-    .prepare('SELECT id, line_account_id, picture_url, ref_code FROM friends WHERE line_user_id = ?')
+    .prepare('SELECT id, line_account_id, display_name, picture_url, ref_code FROM friends WHERE line_user_id = ?')
     .get(NEW_USER);
-  expect(row).toEqual({ id: 'f-follow', line_account_id: 'acc-a', picture_url: 'https://example.com/p.jpg', ref_code: 'route-1' });
+  expect(row).toEqual({ id: 'f-follow', line_account_id: 'acc-a', display_name: 'LINE Name', picture_url: 'https://example.com/p.jpg', ref_code: 'route-1' });
   expect(store.sqlite.prepare('SELECT COUNT(*) AS n FROM friends').get()).toEqual({ n: 1 });
 });
