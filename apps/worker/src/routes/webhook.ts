@@ -1,3 +1,5 @@
+import { timingSafeEqualString } from '@line-crm/shared';
+import { handleXGateWebhook } from '../services/x-gate-webhook.js';
 import { Hono } from 'hono';
 import { verifySignature, LineClient } from '@line-crm/line-sdk';
 import type { WebhookRequestBody, WebhookEvent, TextEventMessage } from '@line-crm/line-sdk';
@@ -13,14 +15,21 @@ import {
   jstNow,
   getEntryRouteByRefCode,
   getMessageTemplateById,
+  recordSignatureFailure,
+  recordSignatureSuccess,
+  UNATTRIBUTED_ACCOUNT_ID,
 } from '@line-crm/db';
-import type { EntryRoute, Friend } from '@line-crm/db';
+import type { EntryRoute, Friend, LineAccount } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { matchAndReply } from '../services/auto-reply.js';
 import { buildMessage } from '../services/step-delivery.js';
 import { pushImmediateFirstStep } from '../services/immediate-first-step.js';
 import type { Env } from '../index.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
+import { replyViaHarnessProxy } from '../services/line-proxy-send.js';
+import type { HarnessProxyDispatch } from '../services/line-proxy-send.js';
+import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
+import { ensureSchedulerArmed } from '../durable-objects/tenant-scheduler.js';
 
 const webhook = new Hono<Env>();
 
@@ -29,6 +38,48 @@ const webhook = new Hono<Env>();
 // bursty batched deliveries (~100 events × ~5 KB) while still well below the
 // 128 MB Cloudflare Workers memory ceiling.
 const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
+
+// ── Signature-verification failure/success recording (B-05) ─────────────────
+//
+// The endpoint must keep answering 200 (LINE retries / treats non-2xx as
+// delivery failure), but a wrong or missing Channel secret silently discards
+// every event — previously only console.error. We now persist counts and
+// timestamps in the account_settings KVS (`health:sig_fail` / `health:sig_ok`)
+// for the connection-health endpoint. Logged text never contains the request
+// body or any secret.
+
+// In-isolate throttles. Every failure path (missing/malformed signature and
+// well-formed-but-wrong signature alike) records at most once per 10s per
+// isolate, so an unauthenticated flood cannot turn the pre-reject into a D1
+// read+write amplifier — real LINE redeliveries / misconfigurations still
+// surface in connection health (count becomes approximate, presence and
+// lastAt stay exact). The unsigned-junk fast path additionally avoids all D1
+// work; the verified path records successes at most once per 5 minutes.
+const FAILURE_RECORD_MIN_INTERVAL_MS = 10_000;
+const SUCCESS_RECORD_MIN_INTERVAL_MS = 5 * 60_000;
+const lastRecordedMs = new Map<string, number>();
+
+function shouldRecord(key: string, minIntervalMs: number): boolean {
+  const now = Date.now();
+  if (now - (lastRecordedMs.get(key) ?? 0) < minIntervalMs) return false;
+  lastRecordedMs.set(key, now);
+  return true;
+}
+
+/**
+ * Best-effort account attribution. When exactly one active account is
+ * registered, LINE can only be delivering events for that channel, so
+ * signature failures (wrong secret) belong to it. Multi-account installs with
+ * no match record under the unattributed sentinel.
+ */
+function resolveHealthAccountId(
+  matchedAccountId: string | null,
+  accounts: LineAccount[],
+): string | null {
+  if (matchedAccountId) return matchedAccountId;
+  const active = accounts.filter((a) => a.is_active);
+  return active.length === 1 ? active[0].id : null;
+}
 
 async function ensureFriendFromWebhookUser(
   db: D1Database,
@@ -99,6 +150,25 @@ webhook.post('/webhook', async (c) => {
   const LINE_SIGNATURE_LENGTH = 44;
   if (signature.length !== LINE_SIGNATURE_LENGTH) {
     console.error('Missing or malformed LINE signature');
+    // B-05: keep the fast pre-reject free of awaited D1 work, but still record
+    // the condition (throttled per isolate) so a stripped/missing signature is
+    // visible in connection health instead of vanishing into the console.
+    if (shouldRecord(`missing:${signature.length}`, FAILURE_RECORD_MIN_INTERVAL_MS)) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const accounts = await getLineAccounts(db);
+            await recordSignatureFailure(
+              db,
+              resolveHealthAccountId(null, accounts),
+              'missing_signature',
+            );
+          } catch (err) {
+            console.error('Failed to record missing-signature webhook:', err);
+          }
+        })(),
+      );
+    }
     return c.json({ status: 'ok' }, 200);
   }
 
@@ -117,9 +187,8 @@ webhook.post('/webhook', async (c) => {
     valid = await verifySignature(envSecret, rawBody, signature);
     if (valid) {
       const accounts = await getLineAccounts(db);
-      const main = accounts.find(
-        (a) => a.is_active && a.channel_secret === envSecret,
-      );
+      const matches = await Promise.all(accounts.map(a => timingSafeEqualString(a.channel_secret, envSecret)));
+      const main = accounts.find((a, i) => a.is_active && matches[i]);
       if (main) {
         channelAccessToken = main.channel_access_token;
         matchedAccountId = main.id;
@@ -131,7 +200,7 @@ webhook.post('/webhook', async (c) => {
     const accounts = await getLineAccounts(db);
     for (const account of accounts) {
       if (!account.is_active) continue;
-      if (envSecret && account.channel_secret === envSecret) continue; // already tried via fast path
+      if (envSecret && await timingSafeEqualString(account.channel_secret, envSecret)) continue; // already tried via fast path
       const isValid = await verifySignature(account.channel_secret, rawBody, signature);
       if (isValid) {
         channelAccessToken = account.channel_access_token;
@@ -144,7 +213,44 @@ webhook.post('/webhook', async (c) => {
 
   if (!valid) {
     console.error('Invalid LINE signature');
+    // B-05: the request carried a well-formed signature that matched no
+    // registered secret — every event in it is silently discarded. Record the
+    // count + time (attributed to the single active account when there is one)
+    // so connection health can say "rejecting everything" instead of nothing.
+    // Throttled per isolate like the missing-signature fast path: an
+    // unauthenticated attacker sending well-formed 44-char junk must not turn
+    // the failure recording (read + write per request) into a D1 amplifier.
+    // The failure count is advisory; presence is what connection health needs.
+    if (shouldRecord('unverified', FAILURE_RECORD_MIN_INTERVAL_MS)) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const accounts = await getLineAccounts(db);
+            await recordSignatureFailure(
+              db,
+              resolveHealthAccountId(matchedAccountId, accounts),
+              'unverified',
+            );
+          } catch (err) {
+            console.error('Failed to record invalid-signature webhook:', err);
+          }
+        })(),
+      );
+    }
     return c.json({ status: 'ok' }, 200);
+  }
+
+  // B-05: record last verified-receive time (throttled — at most one KVS write
+  // per 5 minutes per account per isolate) so the signature check can tell
+  // "rejecting everything" apart from "also seeing some bad traffic".
+  try {
+    const accounts = await getLineAccounts(db);
+    const healthAccountId = resolveHealthAccountId(matchedAccountId, accounts);
+    if (healthAccountId && shouldRecord(`ok:${healthAccountId}`, SUCCESS_RECORD_MIN_INTERVAL_MS)) {
+      await recordSignatureSuccess(db, healthAccountId);
+    }
+  } catch (err) {
+    console.error('Failed to record verified webhook:', err);
   }
 
   let body: WebhookRequestBody;
@@ -159,9 +265,22 @@ webhook.post('/webhook', async (c) => {
 
   // 非同期処理 — LINE は ~1s 以内のレスポンスを要求
   const processingPromise = (async () => {
+    const proxyDispatch: HarnessProxyDispatch = (request) =>
+      dispatchLineProxyLocally(request, c.env, c.executionCtx);
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES);
+        await handleEvent(
+          db,
+          lineClient,
+          event,
+          channelAccessToken,
+          matchedAccountId,
+          c.env.WORKER_URL || new URL(c.req.url).origin,
+          c.env.LIFF_URL,
+          c.env.IMAGES,
+          proxyDispatch,
+          c.env,
+        );
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -169,6 +288,12 @@ webhook.post('/webhook', async (c) => {
   })();
 
   c.executionCtx.waitUntil(processingPromise);
+
+  // 定期ジョブ用 DO の自己修復チェック。何らかの理由で alarm チェーンが
+  // 切れていても、次に届いた webhook がここで直す。getAlarm() 1回で済む
+  // 軽さなので毎リクエストで呼んでよい。応答を遅らせないよう waitUntil に
+  // 逃がし、失敗しても webhook 応答（LINE 側の ~1s タイムアウト）には影響しない。
+  c.executionCtx.waitUntil(ensureSchedulerArmed(c.env));
 
   return c.json({ status: 'ok' }, 200);
 });
@@ -182,6 +307,8 @@ async function handleEvent(
   workerUrl?: string,
   liffUrl?: string,
   r2?: R2Bucket,
+  proxyDispatch?: HarnessProxyDispatch,
+  gateEnv?: Env['Bindings'],
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -228,6 +355,8 @@ async function handleEvent(
       metadata: { lineAccountId },
       occurredAt: firstFollowedAt,
     });
+
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'follow',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:(event as any).webhookEventId ?? 'follow:'+userId+':'+event.timestamp}))return;
 
     // Resolve referral link (entry_route) for this friend.
     // /auth/callback (OAuth path) writes friends.ref_code in parallel with
@@ -344,6 +473,7 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
+    if(gateEnv?.X_HARNESS_GATE_SECRET&&lineAccountId)await db.prepare('UPDATE x_gate_entries SET following=0 WHERE line_user_id=? AND line_account_id=?').bind(userId,lineAccountId).run();
     await updateFriendFollowStatus(db, userId, false);
     return;
   }
@@ -375,13 +505,26 @@ async function handleEvent(
       console.error('Failed to log incoming postback', err);
     }
 
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'postback',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:(event as any).webhookEventId ?? 'postback:'+event.replyToken,data:postbackData}))return;
+
     // postback data を auto_replies にマッチさせて返信 (テキスト経路と共通)。
     // silent + automation で「返信なしでタグだけ付ける」構成もここで成立する。
     const { matched: postbackMatched, replyTokenConsumed: postbackReplyTokenConsumed } =
       await matchAndReply(db, lineClient, friend, postbackData, event.replyToken, {
+        inputKind: 'postback',
         lineAccountId,
         workerUrl,
+        liffUrl,
         logContext: 'postback',
+        replyMessage: workerUrl
+          ? (token, messages) => replyViaHarnessProxy(
+              workerUrl,
+              lineAccessToken,
+              token,
+              messages,
+              proxyDispatch,
+            )
+          : undefined,
       });
 
     // イベントバス発火: 専用イベント postback_received。
@@ -495,10 +638,10 @@ async function handleEvent(
     // 受信メッセージをログに記録
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?)`,
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
+         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?, ?)`,
       )
-      .bind(logId, friend.id, incomingText, now)
+      .bind(logId, friend.id, incomingText, lineAccountId, now)
       .run();
 
     await awardActivityMileage(db, {
@@ -509,6 +652,8 @@ async function handleEvent(
       metadata: { messageType: 'text' },
       occurredAt: now,
     });
+
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'message',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:textMessage.id,data:incomingText}))return;
 
     // Cross-account trigger: send message from another account via UUID
     if (incomingText === '体験を完了する' && lineAccountId) {
@@ -569,7 +714,21 @@ async function handleEvent(
       friend,
       incomingText,
       event.replyToken,
-      { lineAccountId, workerUrl },
+      {
+        inputKind: 'text',
+        lineAccountId,
+        workerUrl,
+        liffUrl,
+        replyMessage: workerUrl
+          ? (token, messages) => replyViaHarnessProxy(
+              workerUrl,
+              lineAccessToken,
+              token,
+              messages,
+              proxyDispatch,
+            )
+          : undefined,
+      },
     );
 
     // auto_replies にマッチしなかった = 自発メッセージ → unread にする

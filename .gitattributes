@@ -1,0 +1,8 @@
+# SQL files must stay LF in the working tree on every platform.
+#
+# packages/db/scripts/generate-bootstrap.mjs embeds SQL text read from
+# schema.sql / migrations into bootstrap.sql and compares the result
+# byte-for-byte. With core.autocrlf=true a Windows checkout rewrites these
+# files to CRLF, which makes `generate-bootstrap.mjs --check` (and the
+# bootstrap.sql sync test) fail even with no real schema drift.
+*.sql text eol=lf

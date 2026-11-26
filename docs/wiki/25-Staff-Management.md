@@ -1,6 +1,6 @@
 # 25. スタッフ管理 (Staff Management)
 
-LINE Harness のスタッフ管理機能。APIキーごとにロール（owner / admin / staff）を割り当て、操作権限を制御する。
+L Harness のスタッフ管理機能。APIキーごとにロール（owner / admin / staff）を割り当て、操作権限を制御する。
 
 ---
 
@@ -164,3 +164,8 @@ CREATE TABLE staff_members (
 ```
 
 マイグレーション: `packages/db/migrations/011_staff_members.sql`
+
+
+## APIキーの保存・スコープ
+
+キーは作成・再発行時だけ表示し、DBにはSHA-256と末尾4文字を保存します。ロールに加え`apiScopes`で権限を制限できます。`null`は従来互換、`[]`は拒否、`messages:read`/`messages:send`は読み取り/個別送信の許可です。スコープ付きキーは管理画面セッションやLINEプロキシには使用できません。既存環境は[認証強化の移行手順](../SECURITY-UPGRADE.md)を実施してください。

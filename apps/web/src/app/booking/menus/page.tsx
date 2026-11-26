@@ -4,8 +4,20 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/layout/header'
 import { api, bookingApi, type BookingMenu } from '@/lib/api'
+import { getApiBase } from '@/lib/api-base'
 import type { Tag } from '@line-crm/shared'
 import { useAccount } from '@/contexts/account-context'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Table } from '@cloudflare/kumo/components/table'
 
 const EMPTY: Partial<BookingMenu> = {
   name: '',
@@ -29,9 +41,10 @@ export default function MenusPage() {
   // 直近にコピーした行だけ「コピー済」が出る。
   const [copiedMenuId, setCopiedMenuId] = useState<string | null>(null)
   const [tags, setTags] = useState<Tag[]>([])
+  const [deleteTarget, setDeleteTarget] = useState<BookingMenu | null>(null)
 
   const liffId = selectedAccount?.liffId ?? null
-  const workerBase = process.env.NEXT_PUBLIC_API_URL ?? ''
+  const workerBase = getApiBase() ?? ''
 
   async function copyMenuUrl(menuId: string) {
     if (!workerBase || !liffId) return
@@ -94,10 +107,11 @@ export default function MenusPage() {
     await load()
   }
 
-  async function remove(id: string) {
+  async function remove() {
     if (!selectedAccountId) return
-    if (!confirm('このメニューを削除しますか？（既存予約は維持されます）')) return
-    await bookingApi.deleteMenu(selectedAccountId, id)
+    if (!deleteTarget) return
+    await bookingApi.deleteMenu(selectedAccountId, deleteTarget.id)
+    setDeleteTarget(null)
     await load()
   }
 
@@ -107,79 +121,61 @@ export default function MenusPage() {
         title="メニュー"
         description="予約メニューの登録・編集"
         action={
-          <button
+          <Button
+            type="button"
+            variant="primary"
             onClick={() => setEditing(EMPTY)}
             disabled={!selectedAccountId}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
           >
             + 新規メニュー
-          </button>
+          </Button>
         }
       />
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="メニューを読み込めませんでした" description={error} />
       )}
 
       {!selectedAccountId ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          サイドバーでアカウントを選択してください
-        </div>
+        <Empty title="アカウントが未選択です" description="サイドバーで操作するアカウントを選択してください。" />
       ) : loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          読み込み中…
-        </div>
+        <LayerCard className="p-12"><Loader className="mx-auto" /></LayerCard>
       ) : items.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center text-sm text-gray-500">
-          まだメニューがありません。右上の「+ 新規メニュー」から追加してください。
-        </div>
+        <Empty title="まだメニューがありません" description="右上の「+ 新規メニュー」から追加してください。" />
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <LayerCard className="overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">名前</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">カテゴリ</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">所要</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">料金</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">並び順</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase">有効</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
+            <Table className="min-w-[640px]">
+              <Table.Header><Table.Row><Table.Head>名前</Table.Head><Table.Head>カテゴリ</Table.Head><Table.Head>所要</Table.Head><Table.Head className="text-right">料金</Table.Head><Table.Head className="text-right">並び順</Table.Head><Table.Head className="text-center">有効</Table.Head><Table.Head className="text-right">操作</Table.Head></Table.Row></Table.Header>
+              <Table.Body>
                 {items.map((m) => (
-                  <tr key={m.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-sm font-medium">{m.name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">
+                  <Table.Row key={m.id}>
+                    <Table.Cell className="font-medium">{m.name}</Table.Cell>
+                    <Table.Cell className="text-kumo-subtle">
                       {m.category_label ? (
                         <span className="inline-block px-2 py-0.5 rounded bg-gray-100 text-xs">{m.category_label}</span>
                       ) : (
                         '-'
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-600 tabular-nums">
+                    </Table.Cell>
+                    <Table.Cell className="text-kumo-subtle tabular-nums">
                       {m.duration_minutes}分
                       {m.buffer_after_minutes > 0 && (
                         <span className="text-xs text-gray-400 ml-1">+{m.buffer_after_minutes}</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-right tabular-nums">¥{m.base_price.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-sm text-right tabular-nums text-gray-500">{m.sort_order}</td>
-                    <td className="px-4 py-3 text-center">
+                    </Table.Cell>
+                    <Table.Cell className="text-right tabular-nums">¥{m.base_price.toLocaleString()}</Table.Cell>
+                    <Table.Cell className="text-right tabular-nums text-kumo-subtle">{m.sort_order}</Table.Cell>
+                    <Table.Cell className="text-center">
                       {m.is_active ? (
-                        <span className="inline-block px-2 py-0.5 rounded bg-green-100 text-green-800 text-xs">ON</span>
+                        <Badge variant="success">ON</Badge>
                       ) : (
-                        <span className="inline-block px-2 py-0.5 rounded bg-gray-100 text-gray-500 text-xs">OFF</span>
+                        <Badge variant="neutral">OFF</Badge>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
+                    </Table.Cell>
+                    <Table.Cell className="text-right">
                       <div className="inline-flex gap-2 text-xs">
-                        <button onClick={() => setEditing(m)} className="text-blue-600 hover:underline">編集</button>
+                        <Button type="button" size="xs" variant="ghost" onClick={() => setEditing(m)}>編集</Button>
                         <Link href={`/booking/menus/staff?menu_id=${m.id}`} className="text-blue-600 hover:underline">
                           スタッフ割当
                         </Link>
@@ -193,27 +189,28 @@ export default function MenusPage() {
                           // 有効化されるまでコピー不可にする。
                           <span className="text-gray-300" title="メニューを有効化するとコピーできます">専用URL</span>
                         ) : (
-                          <button
+                          <Button
                             type="button"
+                            size="xs"
+                            variant="ghost"
                             onClick={() => copyMenuUrl(m.id)}
-                            className="text-blue-600 hover:underline"
-                            title={`${workerBase}/o?liffId=${encodeURIComponent(liffId)}&page=salon-book&menu_id=${encodeURIComponent(m.id)}`}
                           >
                             {copiedMenuId === m.id ? '✓ コピー済' : '専用URL'}
-                          </button>
+                          </Button>
                         )}
-                        <button onClick={() => remove(m.id)} className="text-red-600 hover:underline">削除</button>
+                        <Button type="button" size="xs" variant="destructive" onClick={() => setDeleteTarget(m)}>削除</Button>
                       </div>
-                    </td>
-                  </tr>
+                    </Table.Cell>
+                  </Table.Row>
                 ))}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table>
           </div>
-        </div>
+        </LayerCard>
       )}
 
       {editing && <Modal menu={editing} tags={tags} onSave={save} onClose={() => setEditing(null)} />}
+      <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}><Dialog><Dialog.Title>メニューを削除しますか？</Dialog.Title><Dialog.Description className="mt-2">「{deleteTarget?.name}」を削除します。既存予約は維持されます。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button><Button type="button" variant="destructive" onClick={remove}>削除</Button></div></Dialog></Dialog.Root>
     </div>
   )
 }
@@ -250,39 +247,34 @@ function Modal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
+      <Dialog className="w-full max-w-md max-h-[90vh] overflow-y-auto p-0">
         <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-base font-semibold">{form.id ? 'メニュー編集' : '新規メニュー'}</h2>
+          <Dialog.Title>{form.id ? 'メニュー編集' : '新規メニュー'}</Dialog.Title>
         </div>
         <div className="px-6 py-4 space-y-4">
-          <Field label="名前" required>
-            <input
+            <Input
+              label="名前"
               type="text"
               value={form.name ?? ''}
               onChange={(e) => set('name', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              required
               placeholder="例: カット"
             />
-          </Field>
-          <Field label="カテゴリ">
-            <input
+            <Input
+              label="カテゴリ"
               type="text"
               value={form.category_label ?? ''}
               onChange={(e) => set('category_label', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               placeholder="例: カット / カラー / パーマ"
             />
-          </Field>
-          <Field label="説明">
-            <textarea
+            <InputArea
+              label="説明"
               value={form.description ?? ''}
-              onChange={(e) => set('description', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-              rows={2}
+              onValueChange={(value) => set('description', value)}
+              minRows={2}
               placeholder="顧客に表示される説明文"
             />
-          </Field>
           <div className="grid grid-cols-2 gap-3">
             <NumField
               label="所要時間（分）"
@@ -307,64 +299,40 @@ function Modal({
               onChange={(v) => set('sort_order', v)}
             />
           </div>
-          <Field label="予約申込時に自動付与するタグ">
-            <select
+          <div>
+            <Select
+              label="予約申込時に自動付与するタグ"
               value={form.auto_tag_id ?? ''}
-              onChange={(e) => set('auto_tag_id', e.target.value === '' ? null : e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-            >
-              <option value="">— なし —</option>
-              {tags.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+              onValueChange={(value) => set('auto_tag_id', value || null)}
+              placeholder="— なし —"
+              items={Object.fromEntries(tags.map((tag) => [tag.id, tag.name]))}
+            />
             <p className="mt-1 text-xs text-gray-500">
               このメニューが予約されると、申込者の友だちに自動でこのタグが付きます。タグは既存のものから選択してください (友だち画面 / シナリオ等で使われているタグ)。
             </p>
-          </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          </div>
+          <Checkbox
+              label="有効（顧客に表示する）"
               checked={Boolean(form.is_active)}
-              onChange={(e) => set('is_active', e.target.checked ? 1 : 0)}
-              className="rounded"
+              onCheckedChange={(checked) => set('is_active', checked ? 1 : 0)}
             />
-            有効（顧客に表示する）
-          </label>
-          {err && <p className="text-xs text-red-600">{err}</p>}
+          {err && <Banner size="sm" variant="error" title="保存できませんでした" description={err} />}
         </div>
         <div className="px-6 py-4 border-t border-gray-200 flex gap-2 justify-end">
-          <button
+          <Button type="button" variant="secondary"
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
           >
             キャンセル
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="primary" loading={saving}
             onClick={submit}
             disabled={saving}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
           >
-            {saving ? '保存中…' : '保存'}
-          </button>
+            保存
+          </Button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-xs font-medium text-gray-600 mb-1">
-        {label}
-        {required && <span className="text-red-500 ml-0.5">*</span>}
-      </span>
-      {children}
-    </label>
+      </Dialog>
+    </Dialog.Root>
   )
 }
 
@@ -374,14 +342,5 @@ function NumField({
   value,
   onChange,
 }: { label: string; required?: boolean; value: number; onChange: (v: number) => void }) {
-  return (
-    <Field label={label} required={required}>
-      <input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 tabular-nums"
-      />
-    </Field>
-  )
+  return <Input label={label} type="number" value={value} onChange={(e) => onChange(Number(e.target.value))} className="tabular-nums" required={required} />
 }

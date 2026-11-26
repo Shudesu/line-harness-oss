@@ -33,6 +33,32 @@ import type {
   TrafficPool,
   PoolAccount,
 } from '@line-crm/shared'
+import { getApiBase } from './api-base'
+
+/** Per-account delivery-health snapshot for the dashboard cards. */
+export type AccountDeliveryHealth = {
+  lineAccountId: string
+  name: string
+  quota: {
+    type: string | null
+    limit: number | null
+    consumption: number | null
+    remaining: number | null
+  }
+  quotaAlert: boolean
+  insight: {
+    /** 'unready' = LINE がまだ前日分を集計していない状態（失敗とは別物） */
+    status: 'ready' | 'unready' | 'error'
+    date: string | null
+    followers: number | null
+    targetedReaches: number | null
+    blocks: number | null
+    followersDelta: number | null
+    blocksDelta: number | null
+  }
+  messagesThisMonth: number | null
+  errors: string[]
+}
 
 /** Affiliate offer (案件) as returned by the worker. */
 export type AffiliateOffer = {
@@ -71,6 +97,8 @@ export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
   dedupPriority: string[] | null;
   failedAccountIds: string[] | null;
   trackLinks: boolean;
+  /** Saved include/exclude conditions; honoured by send, scheduler and preview-count. */
+  segmentConditions?: import('@/components/broadcasts/segment-conditions').SegmentCondition | null;
 };
 
 export type BroadcastInsight = {
@@ -85,12 +113,20 @@ export type BroadcastInsight = {
   fetchedAt?: string | null
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL
-if (!API_URL) {
-  throw new Error(
-    'NEXT_PUBLIC_API_URL is not set. Build cannot proceed without a valid API URL. ' +
-    'Set it in .env.production (local) or GitHub Secrets (CI).'
-  )
+// Resolved lazily on each call, not cached in a module-scope constant. This
+// module runs once in Node during the static export pass (where `window` is
+// undefined) and again in the browser; a module-scope `const` would freeze
+// whatever `getApiBase()` returned during that first (Node) pass — the
+// unresolved placeholder for a shared build — for the lifetime of the page.
+function apiUrl(): string {
+  const url = getApiBase()
+  if (!url) {
+    throw new Error(
+      'NEXT_PUBLIC_API_URL is not set. Cannot resolve the API base URL. ' +
+      'Set it in .env.production (local) or GitHub Secrets (CI).'
+    )
+  }
+  return url
 }
 
 /**
@@ -137,7 +173,7 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
     const token = getCsrfToken()
     if (token) csrfHeaders['X-CSRF-Token'] = token
   }
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${apiUrl()}${path}`, {
     ...options,
     // Send the HttpOnly session cookie with every request.
     credentials: 'include',
@@ -284,7 +320,15 @@ export type FriendListItem = FriendWithTags & Partial<{
   handled: boolean
 }>
 
+export type QuotaUsage = {
+  friends: { used: number; max: number }
+  monthlyMessages: { used: number; max: number }
+  exceeded: boolean
+  noticeUrl: string | null
+}
+
 export const api = {
+  usage: () => fetchApi<ApiResponse<QuotaUsage>>('/api/usage'),
   friends: {
     list: (params?: FriendListParams) => {
       const query: Record<string, string> = {}
@@ -471,6 +515,7 @@ export const api = {
         targetTagId?: string | null
         scheduledAt?: string | null
         trackLinks?: boolean
+        segmentConditions?: import('@/components/broadcasts/segment-conditions').SegmentCondition | null
       }
     ) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}`, {
@@ -602,6 +647,10 @@ export const api = {
   lineAccounts: {
     list: () =>
       fetchApi<ApiResponse<LineAccount[]>>('/api/line-accounts'),
+    deliveryHealth: () =>
+      fetchApi<ApiResponse<{ insightDate: string; accounts: AccountDeliveryHealth[] }>>(
+        '/api/line-accounts/delivery-health',
+      ),
     get: (id: string) =>
       fetchApi<ApiResponse<LineAccount>>(`/api/line-accounts/${id}`),
     create: (data: {
@@ -1209,7 +1258,7 @@ export const api = {
         minWaitMinutes?: number;
         page?: number;
         pageSize?: number;
-      }) => {
+      }, request?: Pick<RequestInit, 'signal'>) => {
         const p = new URLSearchParams();
         if (opts?.q) p.set('q', opts.q);
         if (opts?.account) p.set('account', opts.account);
@@ -1233,14 +1282,14 @@ export const api = {
             lastIncomingType: string;
             lastIncomingContent: string;
           }>;
-        }>>(`/api/inbox/unanswered${qs ? `?${qs}` : ''}`);
+        }>>(`/api/inbox/unanswered${qs ? `?${qs}` : ''}`, request);
       },
-      count: () =>
+      count: (request?: Pick<RequestInit, 'signal'>) =>
         fetchApi<ApiResponse<{
           total: number;
           byAccount: Array<{ accountId: string; accountName: string; count: number }>;
           oldestWaitMinutes: number | null;
-        }>>('/api/inbox/unanswered/count'),
+        }>>('/api/inbox/unanswered/count', request),
     },
   },
   richMenuGroups: {
@@ -1253,6 +1302,7 @@ export const api = {
         size: 'large' | 'compact';
         defaultPageId: string | null;
         isDefaultForAll: boolean;
+        selected: boolean;
         status: 'draft' | 'published';
         publishingAt: string | null;
         thumbnailR2Key: string | null;
@@ -1269,6 +1319,7 @@ export const api = {
         size: 'large' | 'compact';
         defaultPageId: string | null;
         isDefaultForAll: boolean;
+        selected: boolean;
         status: 'draft' | 'published';
         publishingAt: string | null;
         createdAt: string;
@@ -1298,6 +1349,7 @@ export const api = {
       name: string;
       chatBarText: string;
       size: 'large' | 'compact';
+      selected: boolean;
       pages: Array<{
         id?: string;
         name: string;
@@ -1321,6 +1373,7 @@ export const api = {
       name?: string;
       chatBarText?: string;
       isDefaultForAll?: boolean;
+      selected?: boolean;
       pages?: Array<{
         id?: string;
         name: string;
@@ -1365,6 +1418,7 @@ export const api = {
           richMenuId: string;
           name: string;
           chatBarText: string;
+          selected: boolean;
           size: { width: number; height: number };
           areasCount: number;
           isCurrentDefault: boolean;
@@ -1395,7 +1449,7 @@ export const api = {
     // クッキーや Authorization が必要 — 代わりに admin が cache-busting できる
     // タイムスタンプを付けるパターンで利用)。
     externalImageUrl: (richMenuId: string, accountId: string) =>
-      `${API_URL}/api/rich-menu-groups/external/${richMenuId}/image?accountId=${encodeURIComponent(accountId)}`,
+      `${apiUrl()}/api/rich-menu-groups/external/${richMenuId}/image?accountId=${encodeURIComponent(accountId)}`,
 
     applyToTag: (
       groupId: string,
@@ -1414,7 +1468,7 @@ export const api = {
     uploadImage: async (groupId: string, pageId: string, file: File) => {
       const csrf = getCsrfToken();
       const res = await fetch(
-        `${API_URL}/api/rich-menu-groups/${groupId}/pages/${pageId}/image`,
+        `${apiUrl()}/api/rich-menu-groups/${groupId}/pages/${pageId}/image`,
         {
           method: 'POST',
           credentials: 'include',
@@ -1442,7 +1496,7 @@ export const api = {
     //   v1 ではドラフト編集中のプレビュー用 = 認証バイパスでも実害は低いので、
     //   後続 PR で worker 側を whitelist 化する想定。
     imageUrl: (key: string) =>
-      `${API_URL}/api/rich-menu-images/${encodeURIComponent(key)}`,
+      `${apiUrl()}/api/rich-menu-images/${encodeURIComponent(key)}`,
   },
   messageTemplates: {
     list: () =>
@@ -1664,6 +1718,9 @@ export interface BookingStaff {
   sort_order: number;
   is_designation_optional: number;
   is_active: number;
+  // 1 if the staff has an active weekly rule or a future dated shift.
+  // Only present on list responses (computed by the worker).
+  has_working_hours?: number;
 }
 
 export interface BookingShift {
@@ -1693,6 +1750,7 @@ export interface BookingRequest {
   menu_name: string;
   staff_name: string;
   friend_name: string | null;
+  requested_at: string;
 }
 
 export interface BookingAvailabilityRule {
@@ -1819,7 +1877,13 @@ export const bookingApi = {
     fetchApi<{
       connection: BookingGoogleCalendarConnection | null;
       service_account: { configured: boolean; email: string | null };
+      oauth: { configured: boolean; managed?: boolean };
     }>(withAccount(`/api/booking/admin/staff/${staffId}/google-calendar`, accountId)),
+  startGoogleCalendarOAuth: (accountId: string, staffId: string) =>
+    fetchApi<{ authorization_url: string }>(
+      withAccount(`/api/booking/admin/staff/${staffId}/google-calendar/oauth/start`, accountId),
+      { method: 'POST' },
+    ),
   putGoogleCalendar: (accountId: string, staffId: string, calendarId: string) =>
     fetchApi<{ ok: true; calendar_id: string; last_verified_at: string }>(
       withAccount(`/api/booking/admin/staff/${staffId}/google-calendar`, accountId),
@@ -2087,7 +2151,9 @@ export type WebinarAnalytics = {
     sessions: number
     firstJoinedAt: string
     latestJoinedAt: string
-    maxWatchedSeconds: number
+    latestWatchedSeconds?: number
+    /** 旧Worker/旧管理画面とのローリングデプロイ互換。 */
+    maxWatchedSeconds?: number
     ctaClickedAt: string | null
     registered: boolean
     formSubmittedAt: string | null

@@ -127,8 +127,13 @@ export async function updateCalendarBookingEventId(db: D1Database, id: string, e
 /** 空きスロット計算用: 指定日範囲の予約一覧を取得 */
 export async function getBookingsInRange(db: D1Database, connectionId: string, startAt: string, endAt: string): Promise<CalendarBookingRow[]> {
   const result = await db
-    .prepare(`SELECT * FROM calendar_bookings WHERE connection_id = ? AND start_at >= ? AND end_at <= ? AND status != 'cancelled' ORDER BY start_at ASC`)
-    .bind(connectionId, startAt, endAt)
+    .prepare(`SELECT * FROM calendar_bookings
+              WHERE connection_id = ?
+                AND julianday(start_at) < julianday(?)
+                AND julianday(end_at) > julianday(?)
+                AND status != 'cancelled'
+              ORDER BY julianday(start_at) ASC`)
+    .bind(connectionId, endAt, startAt)
     .all<CalendarBookingRow>();
   return result.results;
 }

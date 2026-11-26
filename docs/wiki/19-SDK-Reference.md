@@ -1,6 +1,10 @@
 # 19. SDK リファレンス
 
-`@line-harness/sdk` -- LINE Harness の AI ネイティブ TypeScript SDK。全リソースへのプログラムアクセスとワークフローヘルパーを提供。
+`@line-harness/sdk` -- L Harness の AI ネイティブ TypeScript SDK。全リソースへのプログラムアクセスとワークフローヘルパーを提供。
+
+
+任意の冪等キー、24時間を超える未確定送信の要確認応答、保存期間・CVキーのスコープは
+[API / SDK 冪等キー仕様](../api-idempotency.md) を参照。
 
 ---
 

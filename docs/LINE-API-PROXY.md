@@ -53,6 +53,15 @@ curl -X POST "https://<WORKER_URL>/line-api/v2/bot/message/push" \
 - **未知の宛先**: DB に friend が居ない userId への push/multicast は、プロフィール取得の上で friend 行を自動作成する(webhook の自動登録と同じ挙動)。1リクエストあたりの自動作成は 20 件まで(subrequest 予算保護)。超過分は記録スキップ + warn ログ。
 - **ログ失敗は送信を壊さない**: 記録に失敗しても LINE 側の送信は成功済みなので、レスポンスは 200 のまま返す(クライアント再送 = 二重送信を防ぐ)。
 
+### 一斉送信の 429 (クォータ関連)
+
+一斉送信 (broadcast / multicast / narrowcast) だけは完全な透過転送ではなく、2種類の 429 を返し得る:
+
+1. **harness 独自の月間上限** (`QUOTA_MONTHLY_MESSAGES_MAX` 設定時のみ) — 上限超過・超過見込みの一斉送信を転送前に拒否する。
+2. **LINE プランクォータの送信前ガード** (常時有効) — LINE プラン自体の残りメッセージ数が配信対象数に足りないことが確定した場合、転送前に拒否してオペレーターへ通知する (`quota_alert`)。レスポンスは LINE 互換の `message` に加えて `reason: "line-plan-quota-insufficient"` と `quota: {limit, consumption, remaining, audience}` を含む。この 429 は月替わり・追加メッセージ購入・プラン変更まで解消しないため、**Retry-After 前提の自動リトライはしないこと**。クォータ確認 API の失敗時は fail-open (送信を止めない)。
+
+また、転送した一斉送信に LINE 自身がクォータ超過の 429 (`You have reached your monthly limit.`) を返した場合も、応答をそのまま返しつつオペレーターへ通知する。プロキシ由来のクォータ通知は同一アカウントにつき1時間に1回に dedup される。
+
 ## 運用ルール(これをやらないと根本解決にならない)
 
 チャネルトークン認証(系統2)は移行用の互換モード。**トークンを持っているエージェントは api.line.me を直接叩けてしまう**ので、プロキシの存在だけでは強制力がない。以下の手順で直接送信の経路を潰す:

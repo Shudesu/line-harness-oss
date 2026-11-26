@@ -276,6 +276,39 @@ describe('getAvailability', () => {
       minLeadTimeMinutes: 60,
     });
     expect(result.by_staff[0].slots).toEqual([]);
+    expect(result.by_staff[0].has_working_hours).toBe(false);
+  });
+
+  test('曜日ルールがあれば枠ゼロでも has_working_hours=true（満席と未設定を区別）', async () => {
+    const db = stubDB({
+      menu: { duration_minutes: 60, buffer_after_minutes: 0, override_duration: null, override_price: null },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [],
+      // 2026-05-09 is Saturday
+      rules: [{ staff_id: 'S1', weekday: 6, start_time: '10:00', end_time: '11:00' }],
+      // 10:00-11:00 JST fully booked = 01:00-02:00 UTC
+      bookings: [{ staff_id: 'S1', starts_at: '2026-05-09T01:00:00Z', block_ends_at: '2026-05-09T02:00:00Z' }],
+    });
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1', menuId: 'M1', from: '2026-05-09', to: '2026-05-09',
+      now: new Date('2026-05-08T00:00:00Z'), minLeadTimeMinutes: 0,
+    });
+    expect(result.by_staff[0].slots).toEqual([]);
+    expect(result.by_staff[0].has_working_hours).toBe(true);
+  });
+
+  test('範囲内シフトがあれば has_working_hours=true', async () => {
+    const db = stubDB({
+      menu: { duration_minutes: 60, buffer_after_minutes: 0, override_duration: null, override_price: null },
+      staff: [{ id: 'S1', display_name: '山田', is_designation_optional: 0 }],
+      shifts: [{ staff_id: 'S1', work_date: '2026-05-09', start_time: '10:00', end_time: '12:00' }],
+      bookings: [],
+    });
+    const result = await getAvailability(db, {
+      lineAccountId: 'A1', menuId: 'M1', from: '2026-05-09', to: '2026-05-09',
+      now: new Date('2026-05-08T00:00:00Z'), minLeadTimeMinutes: 60,
+    });
+    expect(result.by_staff[0].has_working_hours).toBe(true);
   });
 
   test('曜日ルールは有限シフトなしでも将来の日付に適用される', async () => {

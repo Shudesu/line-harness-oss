@@ -1,5 +1,9 @@
 'use client'
 
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
+import { Input } from '@cloudflare/kumo/components/input'
+import { Select } from '@cloudflare/kumo/components/select'
+
 interface AccountOption {
   id: string
   name: string
@@ -22,33 +26,21 @@ export default function UsersFilters({
 }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
-      <input
+      <Input
         type="search"
         value={q}
         onChange={(e) => onChange({ q: e.target.value })}
         placeholder="名前・X・メール・電話・LINE ID で検索"
-        className="min-w-[240px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
+        aria-label="ユーザー検索"
+        className="min-w-[240px] flex-1"
       />
-      <label className="flex items-center gap-2 text-sm text-gray-700">
-        <input
-          type="checkbox"
-          checked={onlyDups}
-          onChange={(e) => onChange({ onlyDups: e.target.checked })}
-        />
-        重複のみ
-      </label>
-      <select
+      <Checkbox label="重複のみ" checked={onlyDups} onCheckedChange={(checked) => onChange({ onlyDups: checked })} />
+      <Select
         value={account}
-        onChange={(e) => onChange({ account: e.target.value })}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm"
-      >
-        <option value="">全アカウント</option>
-        {accountOptions.map((a) => (
-          <option key={a.id} value={a.id}>
-            {a.name}
-          </option>
-        ))}
-      </select>
+        onValueChange={(value) => onChange({ account: value ?? '' })}
+        aria-label="LINEアカウント"
+        items={[{ value: '', label: '全アカウント' }, ...accountOptions.map((option) => ({ value: option.id, label: option.name }))]}
+      />
     </div>
   )
 }

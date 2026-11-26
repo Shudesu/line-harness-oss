@@ -18,6 +18,9 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
 import { api } from '@/lib/api'
 import { countryFlag } from '@/lib/country-flag'
 
@@ -45,15 +48,15 @@ function SortableRow({ account }: { account: AccountItem }) {
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-3 bg-white border border-gray-200 rounded-lg p-3 cursor-grab"
+      className="flex cursor-grab items-center gap-3 rounded-lg border border-kumo-line bg-kumo-base p-3"
       {...attributes}
       {...listeners}
     >
-      <span className="text-gray-400 text-lg">⋮⋮</span>
+      <span className="text-lg text-kumo-subtle">⋮⋮</span>
       {countryFlag(account.country) && (
         <span className="text-lg">{countryFlag(account.country)}</span>
       )}
-      <span className="text-sm font-medium">{account.displayName || account.name}</span>
+      <span className="text-sm font-medium text-kumo-default">{account.displayName || account.name}</span>
     </div>
   )
 }
@@ -61,6 +64,7 @@ function SortableRow({ account }: { account: AccountItem }) {
 export default function ReorderMode({ accounts, onClose, onSaved }: Props) {
   const [items, setItems] = useState<AccountItem[]>(accounts)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -79,22 +83,28 @@ export default function ReorderMode({ accounts, onClose, onSaved }: Props) {
 
   const handleSave = async () => {
     setSaving(true)
-    const ordered = items.map((a, idx) => ({ id: a.id, displayOrder: idx }))
-    const res = await api.lineAccounts.updateOrder(ordered)
-    setSaving(false)
-    if (res.success) {
-      onSaved()
+    setError('')
+    try {
+      const ordered = items.map((account, index) => ({ id: account.id, displayOrder: index }))
+      const response = await api.lineAccounts.updateOrder(ordered)
+      if (!response.success) {
+        setError(response.error || '保存に失敗しました')
+        return
+      }
+      await onSaved()
       onClose()
-    } else {
-      alert('保存失敗: ' + (res.error || 'unknown'))
+    } catch {
+      setError('保存に失敗しました')
+    } finally {
+      setSaving(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-5 max-h-[80vh] overflow-y-auto">
-        <h2 className="text-sm font-bold mb-4">並び替えモード</h2>
-        <p className="text-xs text-gray-500 mb-4">ドラッグで順序変更。サイドバーの並びにも反映されます。</p>
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onClose() }}>
+      <Dialog size="base" className="max-h-[80vh] overflow-y-auto p-5">
+        <Dialog.Title className="mb-2 text-base font-bold text-kumo-strong">アカウントを並び替え</Dialog.Title>
+        <Dialog.Description className="mb-4 text-xs text-kumo-subtle">ドラッグまたはキーボードで順序を変更します。サイドバーにも反映されます。</Dialog.Description>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
             <div className="space-y-2">
@@ -102,20 +112,12 @@ export default function ReorderMode({ accounts, onClose, onSaved }: Props) {
             </div>
           </SortableContext>
         </DndContext>
-        <div className="flex gap-2 mt-5 justify-end">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs">
-            キャンセル
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-3 py-1.5 rounded-lg text-xs text-white disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            {saving ? '保存中...' : '保存'}
-          </button>
+        {error ? <Banner className="mt-4" variant="error" title="並び順を保存できません" description={error} /> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="secondary" disabled={saving} onClick={onClose}>キャンセル</Button>
+          <Button type="button" variant="primary" loading={saving} onClick={() => void handleSave()}>保存</Button>
         </div>
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }

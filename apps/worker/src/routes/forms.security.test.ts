@@ -25,6 +25,9 @@ vi.mock('@line-crm/db', () => ({
   getTrackedLinkById: vi.fn(),
   getMessageTemplateById: vi.fn(),
   getLineAccountById: mocks.getLineAccountById,
+  // フォームの公開 URL（formUrl）組み立てに使う。既定は「1本に決まらない」= null で、
+  // その場合 formUrl も null になる（LIFF 未構成テナントと同じ扱い）。
+  resolveDefaultLineAccount: vi.fn(async () => null),
   enrollFriendInScenario: vi.fn(),
   jstNow: vi.fn(() => '2026-08-04T12:00:00+09:00'),
 }));
@@ -68,7 +71,8 @@ const baseForm = {
 
 function env() {
   const run = vi.fn(async () => ({ success: true }));
-  const bind = vi.fn((..._args: unknown[]) => ({ run }));
+  const first = vi.fn(async () => null as { slug: string } | null);
+  const bind = vi.fn((..._args: unknown[]) => ({ run, first }));
   const prepare = vi.fn((_sql: string) => ({ bind }));
   return {
     bindings: {
@@ -79,6 +83,7 @@ function env() {
     } as Env['Bindings'],
     prepare,
     bind,
+    first,
   };
 }
 
@@ -131,6 +136,16 @@ describe('public form representation', () => {
     expect(body.data).not.toHaveProperty('onSubmitTagId');
     expect(body.data).not.toHaveProperty('onSubmitScenarioId');
     expect(JSON.stringify(body.data)).not.toContain('Bearer secret');
+  });
+
+  test('returns the active webinar consultation route for the LIFF form', async () => {
+    const { bindings, first } = env();
+    first.mockResolvedValue({ slug: 'ritz-voice-1-l1b' });
+    const res = await app().request('/api/forms/form-1', {}, bindings);
+    expect(res.status).toBe(200);
+
+    const body = await res.json() as { data: Record<string, unknown> };
+    expect(body.data.consultationWebinarSlug).toBe('ritz-voice-1-l1b');
   });
 
   test('keeps the full representation for an authenticated admin', async () => {
@@ -255,6 +270,7 @@ describe('LIFF identity enforcement', () => {
   });
 
   test('ignores _skipWebhook and checks the webhook for the authenticated friend', async () => {
+    mocks.getFormById.mockResolvedValue({...baseForm,fields:JSON.stringify([{name:'answer',label:'回答',type:'text'}]),on_submit_webhook_url:'https://verify.example.test/validate?answer={answer}'});
     mocks.verifyCallerLineUserId.mockResolvedValue('line-real');
     mocks.getFriendByLineUserId.mockResolvedValue({
       id: 'friend-real',
@@ -281,14 +297,14 @@ describe('LIFF identity enforcement', () => {
         friendId: 'victim-friend',
         lineUserId: 'victim-line-user',
         _skipWebhook: true,
-        data: { x_username: 'alice' },
+        data: { answer: 'alice' },
       }),
     }, bindings);
 
     expect(res.status).toBe(201);
     expect(webhookFetch).toHaveBeenCalledOnce();
     expect(webhookFetch.mock.calls[0][0]).toBe(
-      'https://verify.example.test/api/engagement-gates/gate-1/verify?username=alice',
+      'https://verify.example.test/validate?answer=alice',
     );
     expect(webhookFetch.mock.calls[0][1]).toMatchObject({
       method: 'GET',
@@ -309,6 +325,7 @@ describe('LIFF identity enforcement', () => {
   });
 
   test('webhook rejection reply goes through the Harness proxy', async () => {
+    mocks.getFormById.mockResolvedValue({...baseForm,fields:JSON.stringify([{name:'answer',label:'回答',type:'text'}]),on_submit_webhook_url:'https://verify.example.test/validate?answer={answer}'});
     mocks.verifyCallerLineUserId.mockResolvedValue('line-real');
     mocks.getFriendByLineUserId.mockResolvedValue({
       id: 'friend-real',
@@ -338,7 +355,7 @@ describe('LIFF identity enforcement', () => {
         Authorization: 'Bearer valid-line-id-token',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ data: { x_username: 'alice' } }),
+      body: JSON.stringify({ data: { answer: 'alice' } }),
     }, bindings);
 
     expect(res.status).toBe(201);
@@ -354,3 +371,6 @@ describe('LIFF identity enforcement', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('api.line.me'))).toBe(false);
   });
 });
+
+// Mileage behavior has its own tests; avoid unrelated lazy imports leaking across booking tests.
+vi.mock('../services/activity-mileage.js',()=>({awardActivityMileage:vi.fn().mockResolvedValue(undefined)}));

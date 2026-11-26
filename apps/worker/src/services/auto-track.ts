@@ -1,5 +1,7 @@
-import { getOrCreateAutoTrackedLink } from '@line-crm/db';
+import { parseMessageGroup, packMessageItems } from '@line-crm/shared';
+import { getOrCreateAutoTrackedLink, getLineAccountById } from '@line-crm/db';
 import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
+import { renderBroadcastMessageContent } from './render-message.js';
 
 // Domains where Universal Links / App Links should be used
 const APP_LINK_DOMAINS = new Set([
@@ -191,6 +193,8 @@ export async function appendFriendToTrackedLinks(
   workerUrl: string,
   friendId: string | null | undefined,
 ): Promise<string> {
+  const group = parseMessageGroup(content);
+  if (group) return packMessageItems(await Promise.all(group.map(async item => ({ ...item, messageContent: item.messageType === 'image' ? item.messageContent : await appendFriendToTrackedLinks(db, item.messageContent, workerUrl, friendId) })))).messageContent;
   if (!friendId) return content;
   // Tracked links are always built as `${base}/t/${code}` (worker base, short
   // domain, and legacy UUID form alike), so content without the literal
@@ -231,6 +235,15 @@ export async function autoTrackContent(
   workerUrl: string,
   options?: AutoTrackOptions,
 ): Promise<AutoTrackResult> {
+  const group = parseMessageGroup(content);
+  if (group) {
+    const items = await Promise.all(group.map(async item => {
+      const result = await autoTrackContent(db, item.messageType, item.messageContent, workerUrl, options);
+      return { messageType: result.messageType as typeof item.messageType, messageContent: result.content };
+    }));
+    const packed = packMessageItems(items);
+    return { messageType: packed.messageType, content: packed.messageContent };
+  }
   if (messageType === 'image') return { messageType, content };
 
   // Extract first so URL-free messages (the common case in per-friend
@@ -371,8 +384,29 @@ export async function decorateForFriendPush(
   workerUrl: string | undefined,
   opts: { lineAccountId: string | null; friendId: string },
 ): Promise<AutoTrackResult> {
-  if (!workerUrl) return { messageType, content };
-  const tracked = await autoTrackContent(db, messageType, content, workerUrl, {
+  // {{liff_id}} → the delivering account's LIFF. A LIFF URL must belong to the
+  // recipient's own account or LINE shows the other account's consent screen
+  // and the funnel dies mid-hop. Broadcasts already substitute per account
+  // (broadcast.ts / dedup-broadcast.ts); this brings scenario steps, instant
+  // welcomes, and every other decorate caller in line so one shared scenario
+  // can serve friends across accounts.
+  let rendered = content;
+  if (/\{\{\s*liff_id\s*\}\}/.test(content)) {
+    let liffId: string | null = null;
+    if (opts.lineAccountId) {
+      const account = await getLineAccountById(db, opts.lineAccountId);
+      liffId = (account as { liff_id?: string | null } | null)?.liff_id ?? null;
+    }
+    if (liffId) {
+      rendered = renderBroadcastMessageContent(messageType, content, { liffId });
+    } else {
+      console.error(
+        `[decorate] {{liff_id}} in content but no LIFF resolvable (account=${opts.lineAccountId ?? 'none'}) — left unresolved`,
+      );
+    }
+  }
+  if (!workerUrl) return { messageType, content: rendered };
+  const tracked = await autoTrackContent(db, messageType, rendered, workerUrl, {
     lineAccountId: opts.lineAccountId,
   });
   const decorated = await appendFriendToTrackedLinks(db, tracked.content, workerUrl, opts.friendId);

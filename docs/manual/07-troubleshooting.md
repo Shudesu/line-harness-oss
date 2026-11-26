@@ -17,7 +17,7 @@ status: placeholder
 
 ## 想定読者
 
-- 既に LINE Harness を稼働させている全運用者
+- 既に L Harness を稼働させている全運用者
 - 過去の事故を踏まないために事前に目を通しておきたい新規導入者
 
 ## 目次
@@ -54,7 +54,7 @@ status: placeholder
 - CF Pages プロジェクト名はユニークに（`feedback-cf-pages-naming`）
 
 ### OSS 同期 / シークレット系
-- LINE Harness OSS sync は手動運用（`feedback-line-harness-oss-manual-sync`）
+- L Harness OSS sync は手動運用（`feedback-line-harness-oss-manual-sync`）
 - CLAUDE.md にシークレット書くな（`feedback-no-secrets-in-claude-md`）
 - 公開ドキュメントに実値書くな（`feedback-no-real-values-in-wiki`）
 

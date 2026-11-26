@@ -51,11 +51,18 @@ import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import { resolveSession, parseScheduleRules, upcomingSessions } from '../services/webinar-schedule.js';
 import { sendWebinarRegistrationConfirmation } from '../services/webinar-reminders.js';
 import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
+import {
+  bookWebinarConsultation,
+  getWebinarConsultationAvailability,
+  WebinarConsultationError,
+} from '../services/webinar-consultation-booking.js';
 import { signWebinarToken, verifyWebinarToken } from '../lib/webinar-token.js';
 import {
   awardWebinarCtaMileage,
   awardWebinarPositionMileage,
 } from '../services/webinar-mileage.js';
+import { requireRole } from '../middleware/role-guard.js';
+import { safeDecode } from '../utils/safe-decode.js';
 import type { Env } from '../index.js';
 
 const webinarRoutes = new Hono<Env>();
@@ -436,24 +443,29 @@ webinarRoutes.post('/api/liff/webinars/:slug/register', async (c) => {
     ) {
       return c.json({ error: 'invalid_session' }, 400);
     }
-    await upsertWebinarRegistration(c.env.DB, webinar.id, auth.friendId, sessionStartAt);
-    const liffMatch = /liff\.line\.me\/([^/?]+)/.exec(c.env.LIFF_URL ?? '');
-    c.executionCtx.waitUntil(
-      sendWebinarRegistrationConfirmation(
-        c.env.DB,
-        webinar,
-        auth.friendId,
-        sessionStartAt,
-        {
-          proxyBaseUrl: new URL(c.req.url).origin,
-          defaultAccessToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
-          defaultLiffId: liffMatch?.[1] ?? null,
-          proxyDispatch: (request) =>
-            dispatchLineProxyLocally(request, c.env, c.executionCtx),
-        },
-      ),
+    const created = await upsertWebinarRegistration(
+      c.env.DB, webinar.id, auth.friendId, sessionStartAt,
     );
-    return c.json({ ok: true, sessionStartAt });
+    // LIFF の二重タップや通信再試行でも、同一予約の受付確認は1通だけ送る。
+    if (created) {
+      const liffMatch = /liff\.line\.me\/([^/?]+)/.exec(c.env.LIFF_URL ?? '');
+      c.executionCtx.waitUntil(
+        sendWebinarRegistrationConfirmation(
+          c.env.DB,
+          webinar,
+          auth.friendId,
+          sessionStartAt,
+          {
+            proxyBaseUrl: new URL(c.req.url).origin,
+            defaultAccessToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
+            defaultLiffId: liffMatch?.[1] ?? null,
+            proxyDispatch: (request) =>
+              dispatchLineProxyLocally(request, c.env, c.executionCtx),
+          },
+        ),
+      );
+    }
+    return c.json({ ok: true, sessionStartAt, created });
   } catch (err) {
     console.error('POST webinar register error:', err);
     return c.json({ error: 'internal_error' }, 500);
@@ -561,6 +573,72 @@ webinarRoutes.post('/api/liff/webinars/:slug/funnel-event', async (c) => {
   }
 });
 
+// ライブCTAのフォーム送信後、その画面を離れずに個別相談の空き枠を表示する。
+// 予約メニューは webinar_followup_configs.booking_menu_id を唯一の権威とし、
+// URL/body から任意の menu/staff を指定させない。
+webinarRoutes.get('/api/liff/webinars/:slug/consultation-slots', async (c) => {
+  try {
+    const auth = await resolveWebinarCaller(c, c.req.param('slug'));
+    if (auth instanceof Response) return auth;
+    const data = await getWebinarConsultationAvailability(c.env.DB, {
+      webinarId: auth.webinar.id,
+      accountId: auth.webinar.account_id,
+      friendId: auth.friendId,
+      now: new Date(),
+      credentials: {
+        email: c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        privateKey: c.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+        oauthClientId: c.env.GOOGLE_OAUTH_CLIENT_ID,
+        oauthClientSecret: c.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      },
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    if (error instanceof WebinarConsultationError) {
+      return c.json({ ok: false, error: error.code }, error.status);
+    }
+    console.error('GET webinar consultation slots error:', error);
+    return c.json({ ok: false, error: 'internal_error' }, 500);
+  }
+});
+
+// 空き枠をサーバー側で再検証し、即時確定→Google Meet発行→相談リマインド登録
+// →LINE確定通知まで一括処理する。Google接続/Meet発行が失敗した場合は、内部予約を
+// cancelled に戻して「日程だけ確定・Meetなし」の中途半端な状態を残さない。
+webinarRoutes.post('/api/liff/webinars/:slug/consultation-book', async (c) => {
+  try {
+    const auth = await resolveWebinarCaller(c, c.req.param('slug'));
+    if (auth instanceof Response) return auth;
+    const body = await c.req.json<{ startsAt?: unknown }>();
+    if (typeof body.startsAt !== 'string') {
+      return c.json({ ok: false, error: 'invalid_starts_at' }, 422);
+    }
+    const data = await bookWebinarConsultation(c.env.DB, {
+      webinarId: auth.webinar.id,
+      webinarTitle: auth.webinar.title,
+      accountId: auth.webinar.account_id,
+      friendId: auth.friendId,
+      startsAt: body.startsAt,
+      now: new Date(),
+      credentials: {
+        email: c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        privateKey: c.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+        oauthClientId: c.env.GOOGLE_OAUTH_CLIENT_ID,
+        oauthClientSecret: c.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      },
+      proxyBaseUrl: new URL(c.req.url).origin,
+      proxyDispatch: (request) => dispatchLineProxyLocally(request, c.env, c.executionCtx),
+    });
+    return c.json({ ok: true, data }, data.created ? 201 : 200);
+  } catch (error) {
+    if (error instanceof WebinarConsultationError) {
+      return c.json({ ok: false, error: error.code }, error.status);
+    }
+    console.error('POST webinar consultation book error:', error);
+    return c.json({ ok: false, error: 'internal_error' }, 500);
+  }
+});
+
 // ----------------------------------------------------------------
 // HLS アセット配信
 // ----------------------------------------------------------------
@@ -584,7 +662,11 @@ webinarRoutes.get('/webinar-assets/:token/:slug/*', async (c) => {
   if (!webinar || !webinar.video_prefix) return c.json({ error: 'not_found' }, 404);
 
   const prefix = `/webinar-assets/${token}/${slug}/`;
-  const rest = decodeURIComponent(c.req.path.slice(prefix.length));
+  // decodeURIComponent throws on malformed percent escapes (e.g. a lone `%`).
+  // This path is reachable by any viewer with a valid HMAC token, so use
+  // safeDecode to fall back to the raw value instead of a 500 (same fix as
+  // the /assets/:revision/* upload route above).
+  const rest = safeDecode(c.req.path.slice(prefix.length));
   if (!rest || rest.includes('..') || rest.startsWith('/')) {
     return c.json({ error: 'bad_path' }, 400);
   }
@@ -737,7 +819,11 @@ webinarRoutes.get('/api/webinars', async (c) => {
   }
 });
 
-webinarRoutes.post('/api/webinars', async (c) => {
+// requireRole('owner', 'admin') mirrors PUT /api/webinars/:id below: a staff
+// key could otherwise create a webinar with an arbitrary videoPrefix and
+// status: 'active' directly, reaching the same end state that POST
+// .../video's completeness check exists to prevent.
+webinarRoutes.post('/api/webinars', requireRole('owner', 'admin'), async (c) => {
   try {
     const body = await c.req.json<WebinarBody>();
     const input = validateWebinarBody(body, { requireCore: true });
@@ -765,9 +851,13 @@ webinarRoutes.get('/api/webinars/:id', async (c) => {
   }
 });
 
-webinarRoutes.put('/api/webinars/:id', async (c) => {
+webinarRoutes.put('/api/webinars/:id', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    // Non-null assertion matches the other requireRole-gated routes in this
+    // file (see /assets/:revision/* and /video below): adding a middleware
+    // argument changes Hono's inferred param() return type to
+    // `string | undefined` even though :id is a required path segment.
+    const id = c.req.param('id')!;
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     const body = await c.req.json<WebinarBody>();
@@ -785,9 +875,9 @@ webinarRoutes.put('/api/webinars/:id', async (c) => {
   }
 });
 
-webinarRoutes.delete('/api/webinars/:id', async (c) => {
+webinarRoutes.delete('/api/webinars/:id', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     await deleteWebinar(c.env.DB, id);
@@ -816,9 +906,9 @@ webinarRoutes.get('/api/webinars/:id/comments', async (c) => {
   }
 });
 
-webinarRoutes.put('/api/webinars/:id/comments', async (c) => {
+webinarRoutes.put('/api/webinars/:id/comments', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     const body = await c.req.json<{ comments?: unknown }>();
@@ -876,9 +966,9 @@ webinarRoutes.get('/api/webinars/:id/ctas', async (c) => {
 
 // CTA カード一括置換。kind='form' は forms 実在チェック、kind='url' は https? 必須。
 // 全要素検証 → 不正が1件でもあれば何も書かない (comments と同じ all-or-nothing)。
-webinarRoutes.put('/api/webinars/:id/ctas', async (c) => {
+webinarRoutes.put('/api/webinars/:id/ctas', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     const body = await c.req.json<{ ctas?: unknown }>();
@@ -982,7 +1072,9 @@ webinarRoutes.get('/api/webinars/:id/analytics', async (c) => {
           sessions: p.sessions,
           firstJoinedAt: p.first_joined_at,
           latestJoinedAt: p.latest_joined_at,
-          maxWatchedSeconds: p.max_watched_seconds,
+          latestWatchedSeconds: p.latest_watched_seconds,
+          // デプロイ中に旧管理画面が残っていても NaN にしない互換フィールド。
+          maxWatchedSeconds: p.latest_watched_seconds,
           ctaClickedAt: p.cta_clicked_at,
           registered: Boolean(p.registered),
           formSubmittedAt: p.form_submitted_at,
@@ -1038,6 +1130,244 @@ webinarRoutes.get('/api/webinars/:id/user-comments', async (c) => {
     console.error('GET /api/webinars/:id/user-comments error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
+});
+
+/** HLS only. Anything else lands in a bucket the delivery route serves publicly. */
+const UPLOADABLE_EXTENSIONS = ['.m3u8', '.ts'];
+const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+
+// PUT /api/webinars/:id/assets/:revision/* - upload one HLS file
+//
+// Writes under a revision the tenant is not serving yet: video_prefix still
+// points at the previous upload (or nothing), so a half-finished set is never
+// playable. POST /api/webinars/:id/video promotes it once every file is here.
+// The "not serving yet" half of that is enforced below, not just assumed: a
+// PUT whose computed prefix matches the current video_prefix is rejected
+// before it reaches R2.
+webinarRoutes.put('/api/webinars/:id/assets/:revision/*', requireRole('owner', 'admin'), async (c) => {
+  const id = c.req.param('id')!;
+  const revision = c.req.param('revision')!;
+
+  // Digits only: a revision carrying a slash or .. would escape the key layout
+  // and let one webinar write into another's prefix.
+  if (!/^\d+$/.test(revision)) {
+    return c.json({ success: false, error: 'revision must be digits' }, 400);
+  }
+
+  const webinar = await getWebinarById(c.env.DB, id);
+  if (!webinar) return c.json({ success: false, error: 'webinar not found' }, 404);
+
+  // The revision scheme only isolates uploads from viewers if a re-upload can
+  // never land on the revision currently being served: video_prefix flips to
+  // a new revision only via POST .../video, so if the computed prefix already
+  // equals it, this write would overwrite objects active viewers are fetching
+  // mid-playback (a finish retry replaying the same revision, or an agent
+  // reusing a stale epoch value). Reject before touching R2.
+  const prefix = `webinars/${webinar.slug}/${revision}`;
+  if (webinar.video_prefix === prefix) {
+    return c.json(
+      { success: false, error: 'このリビジョンは現在公開中です。新しいリビジョンでアップロードし直してください。' },
+      409,
+    );
+  }
+
+  const marker = `/assets/${revision}/`;
+  // decodeURIComponent throws on malformed percent escapes (e.g. a lone `%`).
+  // The path is client-controlled, so use safeDecode to fall back to the raw
+  // value instead of letting the exception turn this into a 500 — the raw
+  // value still runs through the traversal/extension checks below, so a
+  // malformed escape can't be used to smuggle past them.
+  const rest = safeDecode(c.req.path.slice(c.req.path.indexOf(marker) + marker.length));
+  // A double-encoded dot segment (e.g. %252e%252e%2f) survives one safeDecode
+  // pass as the literal string "%2e%2e/", which contains no ".." substring —
+  // so the traversal check above would miss it. HLS filenames from the
+  // pipeline (master.m3u8, index.m3u8, seg_00001.ts) never carry a '%', so
+  // rejecting anything still percent-bearing after decoding is safe.
+  if (!rest || rest.includes('..') || rest.startsWith('/') || rest.includes('%')) {
+    return c.json({ success: false, error: 'bad path' }, 400);
+  }
+  if (!UPLOADABLE_EXTENSIONS.some((ext) => rest.endsWith(ext))) {
+    return c.json({ success: false, error: 'only .m3u8 and .ts may be uploaded' }, 400);
+  }
+
+  // Checked before reading the body so an oversized upload is rejected without
+  // buffering it into the isolate.
+  const declared = Number(c.req.header('Content-Length') ?? '0');
+  if (declared > MAX_ASSET_BYTES) {
+    return c.json({ success: false, error: 'file too large' }, 413);
+  }
+
+  const body = await c.req.arrayBuffer();
+  if (body.byteLength > MAX_ASSET_BYTES) {
+    return c.json({ success: false, error: 'file too large' }, 413);
+  }
+
+  const key = `webinars/${webinar.slug}/${revision}/${rest}`;
+  await c.env.IMAGES.put(key, body, {
+    httpMetadata: { contentType: rest.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t' },
+  });
+
+  return c.json({ success: true, key });
+});
+
+// A .m3u8 playlist's non-comment, non-empty lines are URIs — variant
+// playlists inside master.m3u8, segments inside a variant playlist. Query
+// strings (some packagers append cache-busting params) aren't part of the R2
+// key, so they're stripped before the URI is used to look anything up.
+function parseM3u8Uris(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'))
+    .map((line) => line.split('?')[0]);
+}
+
+// A rendition holds ~1,200 segments — more than one R2 list() page — so this
+// pages via cursor/truncated to collect every key under `prefix`.
+//
+// Completeness is checked by key-set membership, not by counting objects.
+// A count can't catch a segment that arrived under the wrong name (it would
+// still count as "present"), and it can't even be compared to a playlist's
+// segment count in the first place: the variant's own index.m3u8 lives
+// under the same prefix as its segments, so a count of objects under that
+// prefix is always one higher than the segment count the playlist
+// references. With N segments referenced and exactly one missing, the
+// count comes out to N, so `count < N` never fires and a broken revision
+// gets promoted. Comparing the actual keys instead of a count sidesteps the
+// off-by-one entirely, because the playlist file is simply never one of the
+// keys being looked up.
+async function listR2Keys(bucket: R2Bucket, prefix: string): Promise<Set<string>> {
+  const keys = new Set<string>();
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await bucket.list({ prefix, cursor });
+    for (const obj of page.objects) keys.add(obj.key);
+    if (!page.truncated) return keys;
+    cursor = page.cursor;
+  }
+}
+
+// POST /api/webinars/:id/video - promote an uploaded revision to the live one
+//
+// The completeness check is the point of this endpoint. Flipping video_prefix
+// to a revision whose segments are still uploading would serve a playlist
+// that references files that are not there yet. Task 1's upload endpoint
+// writes one file per request with no ordering guarantee, so master.m3u8
+// landing is not evidence that anything it points at has arrived — this walks
+// the playlist tree (master -> variants -> segments) and confirms every file
+// referenced is actually present in R2.
+webinarRoutes.post('/api/webinars/:id/video', requireRole('owner', 'admin'), async (c) => {
+  const id = c.req.param('id')!;
+  const body = await c.req.json<{ revision?: string; durationSeconds?: number }>();
+
+  const revision = String(body.revision ?? '');
+  if (!/^\d+$/.test(revision)) {
+    return c.json({ success: false, error: 'revision must be digits' }, 400);
+  }
+  const durationSeconds = Number(body.durationSeconds);
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return c.json({ success: false, error: 'durationSeconds must be a positive number' }, 400);
+  }
+
+  const webinar = await getWebinarById(c.env.DB, id);
+  if (!webinar) return c.json({ success: false, error: 'webinar not found' }, 404);
+
+  const videoPrefix = `webinars/${webinar.slug}/${revision}`;
+
+  // Captured before video_prefix is overwritten below. A prior value that
+  // differs from the one we're about to set means viewers could be
+  // mid-playback on a different revision right now — see the warning built
+  // into the success response. If the prior value already equals videoPrefix
+  // (e.g. finish retried after a timed-out response, same revision), nobody
+  // is actually switched, so this must not count as a replacement.
+  const isReplacement =
+    webinar.video_prefix !== null && webinar.video_prefix !== undefined && webinar.video_prefix !== videoPrefix;
+
+  const master = await c.env.IMAGES.get(`${videoPrefix}/master.m3u8`);
+  if (!master) {
+    return c.json(
+      { success: false, error: `master.m3u8 not found under ${videoPrefix} — upload is incomplete` },
+      400,
+    );
+  }
+
+  // Variant URIs in master.m3u8 are relative to videoPrefix (e.g. "0/index.m3u8").
+  const variantUris = parseM3u8Uris(await master.text());
+  if (variantUris.length === 0) {
+    return c.json(
+      { success: false, error: `master.m3u8 under ${videoPrefix} references no variant playlists — upload is incomplete` },
+      400,
+    );
+  }
+
+  // Listed once for the whole revision rather than per-variant — cheaper,
+  // and every variant's segments are checked against the same set anyway.
+  const revisionKeys = await listR2Keys(c.env.IMAGES, `${videoPrefix}/`);
+
+  for (const variantUri of variantUris) {
+    const variantKey = `${videoPrefix}/${variantUri}`;
+    const variant = await c.env.IMAGES.get(variantKey);
+    if (!variant) {
+      return c.json(
+        { success: false, error: `variant playlist missing: ${variantKey} — upload is incomplete` },
+        400,
+      );
+    }
+
+    // Segment URIs inside a variant playlist are relative to that playlist's
+    // own directory, not to videoPrefix.
+    const segmentUris = parseM3u8Uris(await variant.text());
+    const variantPrefix = variantKey.slice(0, variantKey.lastIndexOf('/'));
+
+    // Same class of hole as the "master.m3u8 references no variants" check
+    // above, one level down: a variant playlist that exists but is truncated
+    // to just its header/comment lines (interrupted encode, cut-off write)
+    // parses to zero segment URIs. `missingKeys` below would then be empty —
+    // there is nothing to be "missing" — and the revision would be promoted
+    // with a variant that has no playable media at all.
+    if (segmentUris.length === 0) {
+      return c.json(
+        { success: false, error: `${variantKey} references no segments — upload is incomplete` },
+        400,
+      );
+    }
+
+    const missingKeys = segmentUris
+      .map((uri) => `${variantPrefix}/${uri}`)
+      .filter((segmentKey) => !revisionKeys.has(segmentKey));
+    if (missingKeys.length > 0) {
+      return c.json(
+        {
+          success: false,
+          error:
+            `${variantPrefix} is missing segments (e.g. ${missingKeys.slice(0, 3).join(', ')}) — ` +
+            `upload is incomplete`,
+        },
+        400,
+      );
+    }
+  }
+
+  const updated = await updateWebinar(c.env.DB, id, { videoPrefix, durationSeconds: Math.floor(durationSeconds) });
+  if (!updated) return c.json({ success: false, error: 'webinar not found' }, 404);
+
+  // The delivery route (GET /webinar-assets/:token/:slug/*) resolves
+  // video_prefix from the DB on every request, and the HMAC token only signs
+  // slug:expiry — nothing pins a viewer to the revision they started
+  // watching. So flipping video_prefix here does reach anyone currently
+  // watching, mid-segment, on their very next request. Warn only when this
+  // call actually replaced a live revision (previous video_prefix was
+  // non-null); a first upload has no one to disturb.
+  return c.json({
+    success: true,
+    videoPrefix,
+    ...(isReplacement
+      ? {
+          warning:
+            '現在視聴中の人がいる場合、この切替で新しい動画に切り替わります。再生が途中で乱れたり止まったりすることがあるため、再読み込みが必要になる場合があります。',
+        }
+      : {}),
+  });
 });
 
 export { webinarRoutes };

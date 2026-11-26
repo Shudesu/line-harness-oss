@@ -317,7 +317,7 @@ vi.mock('./stealth.js', () => ({
 
 // Import the mocked module's symbols AFTER vi.mock declarations
 import { getLineAccountById } from '@line-crm/db';
-import { processMultiAccountDedupBroadcast } from './dedup-broadcast.js';
+import { processMultiAccountDedupBroadcast, projectedDedupAudience } from './dedup-broadcast.js';
 import type { LineClient, Message } from '@line-crm/line-sdk';
 
 class MockLineClient {
@@ -337,6 +337,15 @@ class MockLineClient {
   async pushMessage(to: string, messages: unknown[], retryKey?: string, units?: string[]) {
     this.calls.push({ method: 'push', args: [to, messages, retryKey, units, this.token] });
     return {};
+  }
+  // 送信前プランクォータガード用。デフォルトは上限なしプラン (= ガード素通り)。
+  quota: { type: string; value?: number } = { type: 'none' };
+  quotaConsumption = 0;
+  async getMessageQuota() {
+    return this.quota;
+  }
+  async getMessageQuotaConsumption() {
+    return { totalUsage: this.quotaConsumption };
   }
 }
 
@@ -451,11 +460,70 @@ describe('processMultiAccountDedupBroadcast', () => {
     );
 
     expect(result.failedAccountIds).toEqual([]);
+    expect(result.quotaSkippedSummary).toBeNull();
     expect(result.successCount).toBe(4);
     expect(result.totalCount).toBe(4);
     expect(clients).toHaveLength(2);
     expect(clients[0].calls).toHaveLength(1);
     expect(clients[1].calls).toHaveLength(1);
+  });
+
+  it('プランクォータ不足のアカウントは送信せずスキップし failed + last_error 要約に記録する', async () => {
+    const { db } = makeSendDb({
+      selectedCounts: [
+        { line_account_id: 'acc1', cnt: 2 },
+        { line_account_id: 'acc2', cnt: 2 },
+      ],
+      rankedRows: [
+        { friend_id: 'f1', line_user_id: 'u1', line_account_id: 'acc1' },
+        { friend_id: 'f2', line_user_id: 'u2', line_account_id: 'acc1' },
+        { friend_id: 'f3', line_user_id: 'u3', line_account_id: 'acc2' },
+        { friend_id: 'f4', line_user_id: 'u4', line_account_id: 'acc2' },
+      ],
+      accountMeta: [
+        { id: 'acc1', name: 'A1', country: 'JP' },
+        { id: 'acc2', name: 'A2', country: 'TH' },
+      ],
+    });
+
+    vi.mocked(getLineAccountById).mockImplementation(async (_db: D1Database, id: string) => {
+      if (id === 'acc1') return { id, channel_access_token: 'tok1', is_active: 1 } as never;
+      if (id === 'acc2') return { id, name: 'A2', channel_access_token: 'tok2', is_active: 1 } as never;
+      return null;
+    });
+
+    const clients: MockLineClient[] = [];
+    const factory = (token: string) => {
+      const c = new MockLineClient(token);
+      if (token === 'tok2') {
+        // acc2 は上限200通のプランで残り1通 (< 対象2人) → スキップされるべき
+        c.quota = { type: 'limited', value: 200 };
+        c.quotaConsumption = 199;
+      }
+      clients.push(c);
+      return c as unknown as LineClient;
+    };
+
+    const result = await processMultiAccountDedupBroadcast(
+      db,
+      {
+        id: 'b1',
+        account_ids: '["acc1","acc2"]',
+        dedup_priority: '["acc1","acc2"]',
+        message_type: 'text',
+        message_content: 'hello',
+      },
+      factory,
+    );
+
+    expect(result.failedAccountIds).toEqual(['acc2']);
+    expect(result.quotaSkippedSummary).toContain('A2');
+    expect(result.quotaSkippedSummary).toContain('残り1通');
+    // acc1 は通常配信、acc2 は multicast/push を一切呼ばれない
+    expect(result.successCount).toBe(2);
+    const acc2Client = clients.find((c) => c.token === 'tok2')!;
+    expect(acc2Client.calls).toHaveLength(0);
+    expect(result.complete).toBe(true);
   });
 
   it('one account multicast throws: other succeeds, failedAccountIds = [thrower]', async () => {
@@ -794,6 +862,107 @@ describe('processMultiAccountDedupBroadcast', () => {
     expect(last.sentIdentKeys).toHaveLength(500); // 送った分の進捗は永続化済み
   });
 
+  it('usage limit crossed mid-send: yields at the batch boundary with complete=false', async () => {
+    const N = 1000; // 2 batches (500 + 500)
+    const base = makeSendDb({
+      selectedCounts: [{ line_account_id: 'acc1', cnt: N }],
+      rankedRows: Array.from({ length: N }, (_, i) => ({
+        friend_id: `f${i}`, line_user_id: `u${i}`, line_account_id: 'acc1',
+      })),
+      accountMeta: [{ id: 'acc1', name: 'A1', country: 'JP' }],
+    });
+    // Quota COUNTs read a live tally that grows as batches are logged, so the
+    // run starts under the limit (0 < 400) and crosses it after batch 1.
+    const state = { logged: 0 };
+    const db = {
+      prepare(sql: string) {
+        if (sql.includes('COUNT') && sql.includes('messages_log')) {
+          const stmt = {
+            bind() { return stmt; },
+            async first() { return { count: state.logged }; },
+          };
+          return stmt;
+        }
+        if (sql.includes('SUM(success_count)')) {
+          const stmt = {
+            bind() { return stmt; },
+            async first() { return { count: 0 }; },
+          };
+          return stmt;
+        }
+        return (base.db as unknown as { prepare(sql: string): unknown }).prepare(sql);
+      },
+      async batch(stmts: unknown[]) {
+        state.logged += Math.max(0, stmts.length - 1); // minus the progress UPDATE
+        return (base.db as unknown as { batch(s: unknown[]): Promise<unknown[]> }).batch(stmts);
+      },
+    } as unknown as D1Database;
+    vi.mocked(getLineAccountById).mockImplementation(async (_db: D1Database, id: string) =>
+      id === 'acc1' ? ({ id, channel_access_token: 'tok1', is_active: 1 } as never) : null,
+    );
+    const clients: MockLineClient[] = [];
+    const factory = (token: string) => {
+      const c = new MockLineClient(token);
+      clients.push(c);
+      return c as unknown as LineClient;
+    };
+
+    const result = await processMultiAccountDedupBroadcast(
+      db,
+      { id: 'b-quota', account_ids: '["acc1"]', dedup_priority: '["acc1"]', message_type: 'text', message_content: 'hello' },
+      factory,
+      { now: () => 0, quotaEnv: { QUOTA_MONTHLY_MESSAGES_MAX: '400' } },
+    );
+
+    expect(result.complete).toBe(false); // yielded — caller resumes next tick
+    const c = clients.find((x) => x.token === 'tok1');
+    expect(c?.calls.length).toBe(1); // batch 1 only; batch 2 held back
+    expect(result.successCount).toBe(500); // sent progress is persisted
+  });
+
+  it('usage limit not configured: quota tally queries never run', async () => {
+    const N = 600;
+    const base = makeSendDb({
+      selectedCounts: [{ line_account_id: 'acc1', cnt: N }],
+      rankedRows: Array.from({ length: N }, (_, i) => ({
+        friend_id: `f${i}`, line_user_id: `u${i}`, line_account_id: 'acc1',
+      })),
+      accountMeta: [{ id: 'acc1', name: 'A1', country: 'JP' }],
+    });
+    const quotaSqls: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        if ((sql.includes('COUNT') && sql.includes('messages_log')) || sql.includes('SUM(success_count)')) {
+          quotaSqls.push(sql);
+        }
+        return (base.db as unknown as { prepare(sql: string): unknown }).prepare(sql);
+      },
+      async batch(stmts: unknown[]) {
+        return (base.db as unknown as { batch(s: unknown[]): Promise<unknown[]> }).batch(stmts);
+      },
+    } as unknown as D1Database;
+    vi.mocked(getLineAccountById).mockImplementation(async (_db: D1Database, id: string) =>
+      id === 'acc1' ? ({ id, channel_access_token: 'tok1', is_active: 1 } as never) : null,
+    );
+    const clients: MockLineClient[] = [];
+    const factory = (token: string) => {
+      const c = new MockLineClient(token);
+      clients.push(c);
+      return c as unknown as LineClient;
+    };
+
+    const result = await processMultiAccountDedupBroadcast(
+      db,
+      { id: 'b-noquota', account_ids: '["acc1"]', dedup_priority: '["acc1"]', message_type: 'text', message_content: 'hello' },
+      factory,
+      { now: () => 0, quotaEnv: {} },
+    );
+
+    expect(result.complete).toBe(true);
+    expect(quotaSqls).toEqual([]);
+    expect(result.successCount).toBe(600);
+  });
+
   it('within time budget: sends all batches and reports complete=true', async () => {
     const N = 1000; // 20 batches
     const { db } = makeSendDb({
@@ -824,5 +993,69 @@ describe('processMultiAccountDedupBroadcast', () => {
     const c = clients.find((x) => x.token === 'tok1');
     expect(c?.calls.length).toBe(2); // 500人ずつ全 batch を送信
     expect(result.successCount).toBe(1000);
+  });
+});
+
+describe('projectedDedupAudience', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('sums the preview winners of active accounts', async () => {
+    const { db } = makeSendDb({
+      selectedCounts: [
+        { line_account_id: 'acc1', cnt: 3 },
+        { line_account_id: 'acc2', cnt: 2 },
+      ],
+      rankedRows: [
+        { friend_id: 'f1', line_user_id: 'u1', line_account_id: 'acc1' },
+        { friend_id: 'f2', line_user_id: 'u2', line_account_id: 'acc1' },
+        { friend_id: 'f3', line_user_id: 'u3', line_account_id: 'acc1' },
+        { friend_id: 'f4', line_user_id: 'u4', line_account_id: 'acc2' },
+        { friend_id: 'f5', line_user_id: 'u5', line_account_id: 'acc2' },
+      ],
+      accountMeta: [
+        { id: 'acc1', name: 'A1', country: null },
+        { id: 'acc2', name: 'A2', country: null },
+      ],
+    });
+    vi.mocked(getLineAccountById).mockImplementation(async (_db: D1Database, id: string) =>
+      ({ id, channel_access_token: 't', is_active: 1 } as never),
+    );
+    const total = await projectedDedupAudience(db, {
+      account_ids: '["acc1","acc2"]',
+      dedup_priority: '["acc1","acc2"]',
+      target_tag_id: null,
+    });
+    expect(total).toBe(5);
+  });
+
+  it('excludes inactive or missing accounts (matches the executor skip)', async () => {
+    const { db } = makeSendDb({
+      selectedCounts: [
+        { line_account_id: 'acc1', cnt: 3 },
+        { line_account_id: 'acc2', cnt: 2 },
+      ],
+      rankedRows: [
+        { friend_id: 'f1', line_user_id: 'u1', line_account_id: 'acc1' },
+        { friend_id: 'f2', line_user_id: 'u2', line_account_id: 'acc1' },
+        { friend_id: 'f3', line_user_id: 'u3', line_account_id: 'acc1' },
+        { friend_id: 'f4', line_user_id: 'u4', line_account_id: 'acc2' },
+        { friend_id: 'f5', line_user_id: 'u5', line_account_id: 'acc2' },
+      ],
+      accountMeta: [
+        { id: 'acc1', name: 'A1', country: null },
+        { id: 'acc2', name: 'A2', country: null },
+      ],
+    });
+    vi.mocked(getLineAccountById).mockImplementation(async (_db: D1Database, id: string) =>
+      id === 'acc1' ? ({ id, channel_access_token: 't', is_active: 1 } as never) : null,
+    );
+    const total = await projectedDedupAudience(db, {
+      account_ids: '["acc1","acc2"]',
+      dedup_priority: '["acc1","acc2"]',
+      target_tag_id: null,
+    });
+    expect(total).toBe(3);
   });
 });

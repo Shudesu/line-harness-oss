@@ -1,5 +1,8 @@
+import { validateMessageContent, parseMessageGroup } from '@line-crm/shared';
+import { buildMessages, messagesToLogPayload } from '../services/message-group.js';
+import { buildMessage } from '../services/broadcast.js';
 import { Hono } from 'hono';
-import { extractFlexAltText } from '../utils/flex-alt-text.js';
+import { messageToLogPayload } from '../services/step-delivery.js';
 import {
   getOperators,
   getOperatorById,
@@ -11,6 +14,7 @@ import {
   createChat,
   getFriendById,
   getLineAccountById,
+  resolveDefaultLineAccount,
   updateChat,
   jstNow,
 } from '@line-crm/db';
@@ -100,26 +104,31 @@ async function resolveOrCreateChat(db: D1Database, id: string): Promise<ChatLike
     .first<ChatLike>())!;
 }
 
+/**
+ * Resolve the sending token and tracking-link owner from the same account.
+ * Unassigned legacy friends can use the sole active account or the existing
+ * environment fallback. An assigned but unavailable account never falls back
+ * to another bot.
+ */
 async function resolveFriendAndAccessToken(
   db: D1Database,
   friendId: string,
-  defaultAccessToken: string,
+  envAccessToken: string,
 ) {
   const friend = await getFriendById(db, friendId);
   if (!friend) {
-    return { friend: null, accessToken: defaultAccessToken };
+    return { friend: null, accessToken: envAccessToken, lineAccountId: null };
   }
 
-  if (!friend.line_account_id) {
-    return { friend, accessToken: defaultAccessToken };
+  const account = friend.line_account_id
+    ? await getLineAccountById(db, friend.line_account_id)
+    : await resolveDefaultLineAccount(db);
+  if (friend.line_account_id && (!account?.is_active || !account.channel_access_token?.trim())) {
+    throw new Error('LINE account credentials are unavailable');
   }
-
-  const account = await getLineAccountById(db, friend.line_account_id);
-  if (!account) {
-    return { friend, accessToken: defaultAccessToken };
-  }
-
-  return { friend, accessToken: account.channel_access_token };
+  const accessToken = account?.channel_access_token || envAccessToken;
+  if (!accessToken?.trim()) throw new Error('LINE account credentials are unavailable');
+  return { friend, accessToken, lineAccountId: account?.id ?? null };
 }
 
 // ========== オペレーターCRUD ==========
@@ -257,13 +266,15 @@ chats.get('/api/chats', async (c) => {
     // chats を lookup する (無条件時は 全friend × chats lookup を省く)。
     const pageNeedsChats = Boolean(status || operatorId);
 
-    // preview は **最新の incoming (ユーザー発)** を優先する。auto_reply / scenario 等の
-    // outbound が直後に書き込まれて preview を上書きすると「ユーザーが何と言ったか」が
-    // 一覧から見えなくなる (operator triage の主目的が損なわれる)。
-    // incoming が無い (broadcast push など outbound only) chat は最新 outbound にフォールバック。
+    // preview は direction/source を問わず **実際の最新メッセージ** を表示する。
+    // incoming を常に優先すると、プロキシ経由の manual/external 送信が messages_log に
+    // 正しく保存されていても、一覧には何日も前の incoming とその日時が残って見える。
+    // また page の並び順は最新 any なのにレスポンスの lastMessageAt だけ過去の incoming に
+    // なるため、フロントが作るページング cursor と SQL のソートキーも食い違っていた。
+    // 未対応モードだけは取得後に unansweredMap の incoming で明示的に上書きする。
     // text 以外 (flex/image/sticker 等) は content を NULL にして payload size を抑える
     // (フロントは type で 📋 Flex / 📷 画像 等のラベルを出すので content は不要)。
-    // any_agg / in_agg の bare column (content 等) は「単一 MAX() を含む集約は max 行の
+    // any_agg の bare column (content 等) は「単一 MAX() を含む集約は max 行の
     // 値を返す」という SQLite の documented 挙動で argmax として使っている。
     // 集約は page 確定後の friend に絞って実行する (全 friend 分の content を
     // materialize しない)。last_any は並び順決定専用のスリムな全走査 1 回のみ。
@@ -305,25 +316,9 @@ chats.get('/api/chats', async (c) => {
           AND friend_id IN (SELECT friend_id FROM page)
         GROUP BY friend_id
       ),
-      in_agg AS (
-        SELECT friend_id,
-          CASE WHEN message_type = 'text' THEN SUBSTR(content, 1, 200) ELSE NULL END AS content,
-          message_type,
-          MAX(created_at) AS created_at
-        FROM messages_log
-        WHERE direction = 'incoming'
-          AND (delivery_type IS NULL OR delivery_type != 'test')
-          AND friend_id IN (SELECT friend_id FROM page)
-        GROUP BY friend_id
-      ),
       recent_msg AS (
-        SELECT a.friend_id,
-          COALESCE(i.content, a.content) AS content,
-          CASE WHEN i.friend_id IS NOT NULL THEN 'incoming' ELSE a.direction END AS direction,
-          COALESCE(i.message_type, a.message_type) AS message_type,
-          COALESCE(i.created_at, a.created_at) AS preview_at
-        FROM any_agg a
-        LEFT JOIN in_agg i ON i.friend_id = a.friend_id
+        SELECT friend_id, content, direction, message_type, created_at AS preview_at
+        FROM any_agg
       )
       SELECT
         f.id AS id,
@@ -352,7 +347,7 @@ chats.get('/api/chats', async (c) => {
 
     // placeholder 順 = SQL 出現順: last_any(account) → deduped 内 chats(account) →
     // page 条件 → cursor (beforeAt ×2 + beforeId) → LIMIT。
-    // any_agg / in_agg は page で friend が確定済みのため account filter 不要。
+    // any_agg は page で friend が確定済みのため account filter 不要。
     const allBindings: unknown[] = [];
     if (lineAccountId) allBindings.push(lineAccountId, lineAccountId);
     allBindings.push(...conditionBindings);
@@ -450,7 +445,7 @@ chats.get('/api/chats/:id', async (c) => {
         `SELECT id, friend_id, direction, message_type, content, created_at
          FROM messages_log
          WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')
-         ORDER BY created_at DESC LIMIT 1000`,
+         ORDER BY created_at DESC, rowid DESC LIMIT 1000`,
       )
       .bind(resolvedFriendId)
       .all();
@@ -565,10 +560,17 @@ chats.post('/api/chats/:id/send', async (c) => {
     const chat = await resolveOrCreateChat(c.env.DB, chatId);
     if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
 
-    const body = await c.req.json<{ messageType?: string; content: string }>();
-    if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
+    const body = await c.req.json<{ messageType?: string; content: string; trackLinks?: boolean }>();
+    if (typeof body.content !== 'string' || !body.content) return c.json({ success: false, error: 'content is required' }, 400);
+    const messageType = body.messageType ?? 'text';
+    if (!['text', 'flex', 'image'].includes(messageType)) {
+      return c.json({ success: false, error: 'Unsupported message type' }, 400);
+    }
 
-    const { friend, accessToken } = await resolveFriendAndAccessToken(
+    const contentError = validateMessageContent(messageType, body.content);
+    if (contentError) return c.json({ success: false, error: contentError }, 400);
+
+    const { friend, accessToken, lineAccountId } = await resolveFriendAndAccessToken(
       c.env.DB,
       chat.friend_id,
       c.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -578,30 +580,28 @@ chats.post('/api/chats/:id/send', async (c) => {
     // LINE APIでメッセージ送信
     const { LineClient } = await import('@line-crm/line-sdk');
     const lineClient = new LineClient(accessToken);
-    const messageType = body.messageType ?? 'text';
 
-    if (messageType === 'text') {
-      await lineClient.pushTextMessage(friend.line_user_id, body.content);
-    } else if (messageType === 'flex') {
-      const contents = JSON.parse(body.content);
-      await lineClient.pushFlexMessage(friend.line_user_id, extractFlexAltText(contents), contents);
-    } else if (messageType === 'image') {
-      const parsed = JSON.parse(body.content) as {
-        originalContentUrl: string;
-        previewImageUrl: string;
-      };
-      await lineClient.pushImageMessage(
-        friend.line_user_id,
-        parsed.originalContentUrl,
-        parsed.previewImageUrl,
-      );
+    const sendWorkerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+    const { autoTrackContent, appendFriendToTrackedLinks } = await import('../services/auto-track.js');
+    let tracked = { messageType, content: body.content };
+    if (body.trackLinks !== false) {
+      tracked = await autoTrackContent(c.env.DB, messageType, body.content, sendWorkerUrl, { lineAccountId });
+    }
+    // Opt-out disables raw URL wrapping, but existing tracked links still get
+    // this 1:1 recipient. Image URLs are media and must remain untouched.
+    if (tracked.messageType !== 'image' || parseMessageGroup(tracked.content)) {
+      tracked.content = await appendFriendToTrackedLinks(c.env.DB, tracked.content, sendWorkerUrl, friend.id);
     }
 
-    // メッセージログに記録
+    const messages = buildMessages(tracked.messageType, tracked.content, buildMessage);
+    await lineClient.pushMessage(friend.line_user_id, messages);
+
+    // One row per request/recipient preserves quota accounting; the UI expands the group.
+    const log = messagesToLogPayload(messages, messageToLogPayload);
     const logId = crypto.randomUUID();
     await c.env.DB
-      .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, created_at) VALUES (?, ?, 'outgoing', ?, ?, 'manual', ?)`)
-      .bind(logId, friend.id, messageType, body.content, jstNow())
+      .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, line_account_id, created_at) VALUES (?, ?, 'outgoing', ?, ?, 'manual', ?, ?)`)
+      .bind(logId, friend.id, log.messageType, log.content, lineAccountId, jstNow())
       .run();
 
     // チャットの最終メッセージ日時を更新（chat.id を直接使う — friend_id で呼ばれても resolveOrCreateChat 済み）

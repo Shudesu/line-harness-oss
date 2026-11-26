@@ -24,6 +24,9 @@ vi.mock('../../src/cf-api/workers.js', () => ({
   ]),
   putWorkerScript: vi.fn(async () => undefined),
 }));
+vi.mock('../../src/cf-api/assets.js', () => ({
+  uploadWorkerAssets: vi.fn(async () => 'assets-jwt'),
+}));
 vi.mock('../../src/cf-api/pages.js', () => ({
   deployPagesProject: vi.fn(async ({ projectName }: { projectName: string }) => ({
     deploymentId: `${projectName}-dep`,
@@ -64,15 +67,17 @@ function ctx(overrides: Partial<UpdateContext> = {}): UpdateContext {
   };
 }
 
-function bundle(): ParsedBundle {
+function bundle(overrides: Partial<ParsedBundle> = {}): ParsedBundle {
   return {
     workerJs: Buffer.from('export default {}'),
+    workerAssetFiles: new Map([['index.html', Buffer.from('<html>worker assets</html>')]]),
     adminFiles: new Map([
       ['chunk.js', Buffer.from(`fetch("${ADMIN_URL_PLACEHOLDER}/api")`)],
       ['logo.png', Buffer.from('binarydata')],
     ]),
     liffFiles: new Map([['index.html', Buffer.from('<html>l</html>')]]),
     migrations: new Map(),
+    ...overrides,
   };
 }
 
@@ -135,13 +140,39 @@ describe('runApply — install topologies', () => {
     expect(projects).toEqual(['admin-proj', 'liff-proj']);
   });
 
-  it('uploads the Worker with keep_assets + nodejs_compat and preserved bindings', async () => {
+  it('blocks a worker-assets install when the release omitted worker-assets/', async () => {
+    const { ev } = emitter();
+    await expect(
+      runApply(
+        ctx({ liffPagesProject: '' }),
+        bundle({ workerAssetFiles: new Map() }),
+        ev,
+      ),
+    ).rejects.toThrow(/cannot be updated safely/);
+    expect(putWorkerScript).not.toHaveBeenCalled();
+  });
+
+  it('keeps old assets only for a legacy Pages install and legacy bundle', async () => {
+    const { ev } = emitter();
+    await runApply(ctx(), bundle({ workerAssetFiles: new Map() }), ev);
+
+    const args = vi.mocked(putWorkerScript).mock.calls[0][0];
+    expect(args.keepAssets).toBe(true);
+    expect(args.assets).toBeUndefined();
+  });
+
+  it('uploads the Worker with current LIFF assets + nodejs_compat and preserved bindings', async () => {
     const { ev } = emitter();
     await runApply(ctx(), bundle(), ev);
 
     expect(putWorkerScript).toHaveBeenCalledTimes(1);
     const args = vi.mocked(putWorkerScript).mock.calls[0][0];
-    expect(args.keepAssets).toBe(true);
+    expect(args.keepAssets).toBeUndefined();
+    expect(args.assets).toEqual({
+      jwt: 'assets-jwt',
+      binding: 'ASSETS',
+      runWorkerFirst: true,
+    });
     expect(args.compatibilityFlags).toEqual(['nodejs_compat']);
     expect(args.bindings).toEqual([
       { type: 'd1', name: 'DB', database_id: 'd1id' },

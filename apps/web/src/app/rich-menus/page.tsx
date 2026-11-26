@@ -6,6 +6,11 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { api } from '@/lib/api'
 import { ApplyToTagModal } from '@/components/rich-menus/apply-to-tag-modal'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Table } from '@cloudflare/kumo/components/table'
 
 type RichMenuGroupListItem = {
   id: string
@@ -14,26 +19,20 @@ type RichMenuGroupListItem = {
   size: 'large' | 'compact'
   status: 'draft' | 'published'
   isDefaultForAll: boolean
+  selected: boolean
   thumbnailR2Key: string | null
   updatedAt: string
 }
 
 function StatusBadge({ status }: { status: 'draft' | 'published' }) {
-  const cls =
-    status === 'published'
-      ? 'bg-green-100 text-green-800'
-      : 'bg-gray-100 text-gray-700'
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded ${cls}`}>
-      {status === 'published' ? 'LINE 登録済み' : '下書き'}
-    </span>
-  )
+  return <Badge variant={status === 'published' ? 'success' : 'neutral'}>{status === 'published' ? 'LINE 登録済み' : '下書き'}</Badge>
 }
 
 type LineMenu = {
   richMenuId: string
   name: string
   chatBarText: string
+  selected: boolean
   size: { width: number; height: number }
   areasCount: number
   isCurrentDefault: boolean
@@ -57,6 +56,7 @@ export default function RichMenusListPage() {
   const [externalError, setExternalError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [applyTo, setApplyTo] = useState<RichMenuGroupListItem | null>(null)
+  const [pendingAction, setPendingAction] = useState<{ kind: 'delete-group'; group: RichMenuGroupListItem } | { kind: 'delete-external' | 'import'; menu: LineMenu } | null>(null)
 
   const reload = useCallback(async () => {
     if (!selectedAccount?.id) return
@@ -102,7 +102,7 @@ export default function RichMenusListPage() {
     reload()
   }, [reload])
 
-  async function handleDelete(group: RichMenuGroupListItem) {
+  async function handleDelete(group: RichMenuGroupListItem, confirmed = false) {
     if (group.status === 'published') {
       alert(
         `「${group.name}」は LINE に登録されています。\n\n` +
@@ -110,7 +110,8 @@ export default function RichMenusListPage() {
       )
       return
     }
-    if (!confirm(`「${group.name}」を削除します。元には戻せません。`)) return
+    if (!confirmed) { setPendingAction({ kind: 'delete-group', group }); return }
+    setPendingAction(null)
     try {
       const res = await api.richMenuGroups.delete(group.id)
       if (!res.success) throw new Error(res.error ?? '削除失敗')
@@ -120,15 +121,10 @@ export default function RichMenusListPage() {
     }
   }
 
-  async function handleDeleteExternal(menu: LineMenu) {
+  async function handleDeleteExternal(menu: LineMenu, confirmed = false) {
     if (!selectedAccount?.id) return
-    if (
-      !confirm(
-        `LINE 上のリッチメニュー「${menu.name}」(richMenuId: ${menu.richMenuId.slice(0, 14)}...) を削除します。\n\n` +
-          'この管理画面外で作成されたメニューを LINE 公式アカウントから消します。元に戻せません。\n\n続行しますか？',
-      )
-    )
-      return
+    if (!confirmed) { setPendingAction({ kind: 'delete-external', menu }); return }
+    setPendingAction(null)
     try {
       const res = await api.richMenuGroups.deleteExternal(menu.richMenuId, selectedAccount.id)
       if (!res.success) throw new Error(res.error ?? '削除失敗')
@@ -138,15 +134,10 @@ export default function RichMenusListPage() {
     }
   }
 
-  async function handleImport(menu: LineMenu) {
+  async function handleImport(menu: LineMenu, confirmed = false) {
     if (!selectedAccount?.id) return
-    if (
-      !confirm(
-        `「${menu.name}」を管理画面に取り込みます。\n\n` +
-          '取り込み後は「管理画面で作成・編集するメニュー」セクションに表示され、編集や友だちへの再適用が可能になります。\n\n続行しますか？',
-      )
-    )
-      return
+    if (!confirmed) { setPendingAction({ kind: 'import', menu }); return }
+    setPendingAction(null)
     try {
       const res = await api.richMenuGroups.importFromLine(menu.richMenuId, selectedAccount.id)
       if (!res.success) throw new Error(res.error ?? '取り込み失敗')
@@ -165,8 +156,7 @@ export default function RichMenusListPage() {
         action={
           <Link
             href="/rich-menus/new"
-            className="inline-flex items-center gap-1 px-4 py-2 text-white rounded-lg text-sm font-medium transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
+            className="inline-flex items-center gap-1 rounded-lg bg-kumo-brand px-4 py-2 text-sm font-medium text-kumo-inverse hover:bg-kumo-brand-hover"
           >
             <span className="text-lg leading-none">+</span> 新規作成
           </Link>
@@ -184,9 +174,7 @@ export default function RichMenusListPage() {
       )}
 
       {selectedAccount && !loading && error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded mb-4">
-          {error}
-        </div>
+        <Banner className="mb-4" variant="error" title="読み込めませんでした" description={error} />
       )}
 
       {/* LINE 公式アカウントの現状 (admin 管理外の rich menu も含む) */}
@@ -219,8 +207,7 @@ export default function RichMenusListPage() {
           </p>
           <Link
             href="/rich-menus/new"
-            className="inline-flex items-center gap-1 px-4 py-2 text-white rounded-lg text-sm font-medium transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
+            className="inline-flex items-center gap-1 rounded-lg bg-kumo-brand px-4 py-2 text-sm font-medium text-kumo-inverse hover:bg-kumo-brand-hover"
           >
             <span className="text-lg leading-none">+</span> 最初のメニューを作る
           </Link>
@@ -271,18 +258,17 @@ export default function RichMenusListPage() {
                     {g.isDefaultForAll && (
                       <span className="text-blue-600 font-medium">★ 全員のデフォルト</span>
                     )}
+                    <span>{g.selected ? '初期表示: 開く' : '初期表示: 閉じる'}</span>
                   </div>
                 </div>
               </Link>
               <div className="border-t border-gray-100 px-4 py-2.5 flex justify-end gap-4 text-xs">
                 {g.status === 'published' && (
-                  <button
+                  <Button type="button" size="xs" variant="primary"
                     onClick={() => setApplyTo(g)}
-                    className="font-medium hover:underline"
-                    style={{ color: '#06C755' }}
                   >
                     友だちに表示
-                  </button>
+                  </Button>
                 )}
                 <Link
                   href={`/rich-menus/edit?id=${g.id}`}
@@ -290,13 +276,11 @@ export default function RichMenusListPage() {
                 >
                   編集
                 </Link>
-                <button
+                <Button type="button" size="xs" variant="destructive"
                   onClick={() => handleDelete(g)}
-                  className="text-gray-400 hover:text-red-600 hover:underline"
-                  title={g.status === 'published' ? 'LINE から取り下げてから削除' : '削除'}
                 >
                   削除
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -310,6 +294,9 @@ export default function RichMenusListPage() {
           onClose={() => setApplyTo(null)}
         />
       )}
+      <Dialog.Root role="alertdialog" open={pendingAction !== null} onOpenChange={(open) => { if (!open) setPendingAction(null) }}>
+        <Dialog><Dialog.Title>{pendingAction?.kind === 'import' ? '管理画面に取り込みますか？' : 'リッチメニューを削除しますか？'}</Dialog.Title><Dialog.Description className="mt-2">{pendingAction?.kind === 'import' ? '取り込み後は管理画面から編集と再適用ができます。' : 'この操作は元に戻せません。'}</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setPendingAction(null)}>キャンセル</Button><Button type="button" variant={pendingAction?.kind === 'import' ? 'primary' : 'destructive'} onClick={() => { if (pendingAction?.kind === 'delete-group') void handleDelete(pendingAction.group, true); else if (pendingAction?.kind === 'delete-external') void handleDeleteExternal(pendingAction.menu, true); else if (pendingAction?.kind === 'import') void handleImport(pendingAction.menu, true) }}>実行する</Button></div></Dialog>
+      </Dialog.Root>
     </main>
   )
 }
@@ -393,20 +380,12 @@ function ExternalSection({
         </div>
       ) : (
         <div className="border border-gray-200 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr className="text-left text-xs font-medium text-gray-600">
-                <th className="px-3 py-2 w-[88px]">画像</th>
-                <th className="px-3 py-2">名前</th>
-                <th className="px-3 py-2">サイズ</th>
-                <th className="px-3 py-2">管理状態</th>
-                <th className="px-3 py-2 w-px"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
+          <Table>
+            <Table.Header><Table.Row><Table.Head className="w-[88px]">画像</Table.Head><Table.Head>名前</Table.Head><Table.Head>サイズ</Table.Head><Table.Head>管理状態</Table.Head><Table.Head /></Table.Row></Table.Header>
+            <Table.Body>
               {sortedMenus.map((m) => (
-                <tr key={m.richMenuId} className="text-gray-700">
-                  <td className="px-3 py-2.5">
+                <Table.Row key={m.richMenuId}>
+                  <Table.Cell>
                     <div
                       className="w-20 bg-gray-100 rounded overflow-hidden"
                       style={{
@@ -426,8 +405,8 @@ function ExternalSection({
                         loading="lazy"
                       />
                     </div>
-                  </td>
-                  <td className="px-3 py-2.5">
+                  </Table.Cell>
+                  <Table.Cell>
                     <div className="flex items-center gap-2 mb-1">
                       {m.isCurrentDefault && (
                         <span
@@ -445,12 +424,12 @@ function ExternalSection({
                     <div className="text-[10px] text-gray-400 font-mono truncate max-w-[280px]">
                       {m.richMenuId}
                     </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap">
+                  </Table.Cell>
+                  <Table.Cell className="text-xs text-kumo-subtle whitespace-nowrap">
                     {m.size.width}×{m.size.height}
                     <div className="text-[10px] text-gray-400">{m.areasCount} エリア</div>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs">
+                  </Table.Cell>
+                  <Table.Cell className="text-xs">
                     {m.adminManaged && m.adminInfo ? (
                       <Link
                         href={`/rich-menus/edit?id=${m.adminInfo.groupId}`}
@@ -467,32 +446,27 @@ function ExternalSection({
                         管理画面外
                       </span>
                     )}
-                  </td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                  </Table.Cell>
+                  <Table.Cell className="text-right whitespace-nowrap">
                     {!m.adminManaged && (
                       <div className="flex flex-col items-end gap-1">
-                        <button
+                        <Button type="button" size="xs" variant="primary"
                           onClick={() => onImport(m)}
-                          className="text-xs font-medium hover:underline"
-                          style={{ color: '#06C755' }}
-                          title="管理画面に取り込んで以後 UI で操作可能にする"
                         >
                           管理画面に取り込む
-                        </button>
-                        <button
+                        </Button>
+                        <Button type="button" size="xs" variant="destructive"
                           onClick={() => onDeleteExternal(m)}
-                          className="text-xs text-gray-400 hover:text-red-600 hover:underline"
-                          title="LINE から削除 (管理画面外メニューのみ)"
                         >
                           LINE から削除
-                        </button>
+                        </Button>
                       </div>
                     )}
-                  </td>
-                </tr>
+                  </Table.Cell>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
+            </Table.Body>
+          </Table>
         </div>
       )}
     </section>

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '@/lib/api'
+import { getApiBase } from '@/lib/api-base'
 import Header from '@/components/layout/header'
 import type { EntryRoute, EntryRouteFunnel } from '@line-crm/shared'
 
@@ -41,7 +42,7 @@ export default function InflowLinkDetailPage() {
     )
   }
 
-  const url = `${process.env.NEXT_PUBLIC_API_URL ?? ''}/r/${route.refCode}`
+  const url = `${getApiBase() ?? ''}/r/${route.refCode}`
 
   return (
     <div>

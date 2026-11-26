@@ -7,6 +7,8 @@ import type { Scenario, LineAccount } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Switch } from '@cloudflare/kumo/components/switch'
 
 type ScenarioWithCount = Scenario & {
   stepCount?: number
@@ -306,13 +308,15 @@ function AccountSection({
       {row.scenarios.length === 0 && !row.loadError ? (
         <div className="px-4 py-6 text-center text-sm text-gray-500">
           このアカウントには friend_add トリガーのシナリオがありません。
-          <button
+          <Button
             type="button"
             onClick={onCreate}
-            className="ml-2 text-green-700 underline hover:text-green-800"
+            className="ml-2"
+            size="xs"
+            variant="ghost"
           >
             このアカウントでシナリオを作成
-          </button>
+          </Button>
         </div>
       ) : (
         <ul className="divide-y divide-gray-100">
@@ -362,20 +366,11 @@ function Toggle({
   onClick: () => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Switch
+      checked={value}
+      onCheckedChange={onClick}
       disabled={disabled}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-        value ? 'bg-green-500' : 'bg-gray-300'
-      } ${disabled ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
       aria-label={value ? '無効化' : '有効化'}
-    >
-      <span
-        className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
-          value ? 'translate-x-5' : 'translate-x-0.5'
-        }`}
-      />
-    </button>
+    />
   )
 }

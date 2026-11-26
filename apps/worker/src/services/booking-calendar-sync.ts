@@ -1,14 +1,17 @@
+import { calendarBrokerRequest, isBrokerRefreshToken } from './google-calendar-broker.js';
 import { GoogleCalendarClient, type BusyInterval } from './google-calendar.js';
+import { getGoogleServiceAccountToken } from './google-service-account.js';
 import {
-  getGoogleServiceAccountToken,
-  type GoogleServiceAccountCredentials,
-} from './google-service-account.js';
+  refreshGoogleOAuthAccessToken,
+  type GoogleCalendarCredentials,
+} from './google-oauth.js';
 
 export interface StaffCalendarConnection {
   id: string;
   calendar_id: string;
   auth_type: string;
   access_token: string | null;
+  refresh_token: string | null;
 }
 
 export async function getStaffCalendarConnection(
@@ -18,7 +21,7 @@ export async function getStaffCalendarConnection(
 ): Promise<StaffCalendarConnection | null> {
   return db
     .prepare(
-      `SELECT id, calendar_id, auth_type, access_token
+      `SELECT id, calendar_id, auth_type, access_token, refresh_token
          FROM google_calendar_connections
         WHERE line_account_id = ? AND staff_id = ? AND is_active = 1
         LIMIT 1`,
@@ -29,18 +32,37 @@ export async function getStaffCalendarConnection(
 
 async function clientForConnection(
   connection: StaffCalendarConnection,
-  credentials: GoogleServiceAccountCredentials,
+  credentials: GoogleCalendarCredentials,
 ): Promise<GoogleCalendarClient> {
-  const accessToken = connection.auth_type === 'service_account'
-    ? await getGoogleServiceAccountToken(credentials)
-    : connection.access_token;
+  let accessToken: string | null | undefined;
+  if (connection.auth_type === 'service_account') {
+    accessToken = await getGoogleServiceAccountToken(credentials);
+  } else if (connection.auth_type === 'oauth' && connection.refresh_token && isBrokerRefreshToken(connection.refresh_token)) {
+    const token = await calendarBrokerRequest<{ accessToken: string }>(credentials, 'token', {
+      action: 'refresh', refreshToken: connection.refresh_token,
+    });
+    accessToken = token.accessToken;
+  } else if (connection.auth_type === 'oauth' && connection.refresh_token) {
+    const clientId = credentials.oauthClientId?.trim();
+    const clientSecret = credentials.oauthClientSecret?.trim();
+    if (!clientId || !clientSecret) throw new Error('google_oauth_client_not_configured');
+    // access_token の期限列を持たない既存スキーマでも確実に動くよう、利用時に更新する。
+    // 更新トークンは長期保持し、短命なアクセストークンだけを毎回取り直す。
+    accessToken = await refreshGoogleOAuthAccessToken({
+      refreshToken: connection.refresh_token,
+      clientId,
+      clientSecret,
+    });
+  } else {
+    accessToken = connection.access_token;
+  }
   if (!accessToken) throw new Error('google_calendar_access_token_missing');
   return new GoogleCalendarClient({ calendarId: connection.calendar_id, accessToken });
 }
 
 export async function getStaffGoogleBusy(
   db: D1Database,
-  credentials: GoogleServiceAccountCredentials,
+  credentials: GoogleCalendarCredentials,
   input: { lineAccountId: string; staffId: string; timeMin: string; timeMax: string },
 ): Promise<BusyInterval[] | null> {
   const connection = await getStaffCalendarConnection(db, input.lineAccountId, input.staffId);
@@ -51,7 +73,7 @@ export async function getStaffGoogleBusy(
 
 export async function verifyStaffCalendarConnection(
   connection: StaffCalendarConnection,
-  credentials: GoogleServiceAccountCredentials,
+  credentials: GoogleCalendarCredentials,
 ): Promise<void> {
   const client = await clientForConnection(connection, credentials);
   const now = new Date();
@@ -61,15 +83,17 @@ export async function verifyStaffCalendarConnection(
 /** Create the external event once a booking becomes confirmed. */
 export async function syncConfirmedBookingToGoogle(
   db: D1Database,
-  credentials: GoogleServiceAccountCredentials,
+  credentials: GoogleCalendarCredentials,
   bookingId: string,
-): Promise<{ synced: boolean; eventId?: string; calendarId?: string }> {
+  options: { addGoogleMeet?: boolean } = {},
+): Promise<{ synced: boolean; eventId?: string; calendarId?: string; meetUrl?: string }> {
   const row = await db
     .prepare(
       `SELECT b.id, b.starts_at, b.ends_at, b.customer_note, b.external_event_id,
               f.display_name AS friend_name, m.name AS menu_name,
               s.display_name AS staff_name,
-              gc.id AS connection_id, gc.calendar_id, gc.auth_type, gc.access_token
+              gc.id AS connection_id, gc.calendar_id, gc.auth_type,
+              gc.access_token, gc.refresh_token
          FROM bookings b
          INNER JOIN friends f ON f.id = b.friend_id
          INNER JOIN menus m ON m.id = b.menu_id
@@ -94,6 +118,7 @@ export async function syncConfirmedBookingToGoogle(
       calendar_id: string | null;
       auth_type: string | null;
       access_token: string | null;
+      refresh_token: string | null;
     }>();
   if (!row || row.external_event_id || !row.connection_id || !row.calendar_id || !row.auth_type) {
     return { synced: false };
@@ -104,17 +129,21 @@ export async function syncConfirmedBookingToGoogle(
     calendar_id: row.calendar_id,
     auth_type: row.auth_type,
     access_token: row.access_token,
+    refresh_token: row.refresh_token,
   };
   const client = await clientForConnection(connection, credentials);
   const created = await client.createEvent({
+    // Google event IDはbase32hexのみ。UUIDのハイフンを除けば0-9/a-fだけとなり有効。
+    externalId: row.id.replace(/-/g, '').toLowerCase(),
     summary: `${row.friend_name ?? 'お客様'}｜${row.menu_name}`,
     start: row.starts_at,
     end: row.ends_at,
     description: [
-      `LINE Harness予約（担当: ${row.staff_name}）`,
+      `L Harness予約（担当: ${row.staff_name}）`,
       `予約ID: ${row.id}`,
       row.customer_note ? `メモ: ${row.customer_note}` : '',
     ].filter(Boolean).join('\n'),
+    addGoogleMeet: options.addGoogleMeet,
   });
   await db
     .prepare(
@@ -125,18 +154,23 @@ export async function syncConfirmedBookingToGoogle(
     )
     .bind(created.eventId, row.calendar_id, bookingId)
     .run();
-  return { synced: true, eventId: created.eventId, calendarId: row.calendar_id };
+  return {
+    synced: true,
+    eventId: created.eventId,
+    calendarId: row.calendar_id,
+    meetUrl: created.meetUrl,
+  };
 }
 
 export async function removeBookingFromGoogle(
   db: D1Database,
-  credentials: GoogleServiceAccountCredentials,
+  credentials: GoogleCalendarCredentials,
   bookingId: string,
 ): Promise<void> {
   const row = await db
     .prepare(
       `SELECT b.external_event_id, b.external_calendar_id,
-              gc.id, gc.auth_type, gc.access_token
+              gc.id, gc.auth_type, gc.access_token, gc.refresh_token
          FROM bookings b
          LEFT JOIN google_calendar_connections gc
            ON gc.calendar_id = b.external_calendar_id
@@ -151,6 +185,7 @@ export async function removeBookingFromGoogle(
       id: string | null;
       auth_type: string | null;
       access_token: string | null;
+      refresh_token: string | null;
     }>();
   if (!row?.external_event_id || !row.external_calendar_id || !row.id || !row.auth_type) return;
   const client = await clientForConnection({
@@ -158,6 +193,7 @@ export async function removeBookingFromGoogle(
     calendar_id: row.external_calendar_id,
     auth_type: row.auth_type,
     access_token: row.access_token,
+    refresh_token: row.refresh_token,
   }, credentials);
   await client.deleteEvent(row.external_event_id);
 }

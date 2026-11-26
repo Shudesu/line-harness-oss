@@ -255,6 +255,11 @@ conversations.get('/api/conversations/:friendId', async (c) => {
           : m.delivery_type === 'reply' ? 'auto_reply'
           : 'manual'
       ),
+      // Already selected above for the source inference — expose it so callers
+      // can attribute a send back to its broadcast (source='broadcast' alone
+      // says a broadcast sent it, not which one).
+      broadcastId: m.broadcast_id ?? null,
+      scenarioStepId: m.scenario_step_id ?? null,
       createdAt: m.created_at,
     }));
 

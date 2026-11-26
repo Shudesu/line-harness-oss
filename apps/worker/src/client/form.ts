@@ -1,3 +1,4 @@
+import { initXGate } from './x-gate.js';
 /**
  * LIFF Form Page — Dynamic form renderer for LINE surveys / questionnaires
  *
@@ -21,7 +22,7 @@ declare const liff: {
 };
 
 const UUID_STORAGE_KEY = 'lh_uuid';
-const FORM_VERSION = '2.0.0'; // cache buster
+const FORM_VERSION = '2.1.0'; // cache buster
 
 interface FormField {
   name: string;
@@ -45,6 +46,39 @@ interface FormDef {
   webhookGateId: string | null;
   onSubmitMessageContent?: string | null;
   onSubmitWebhookFailMessage?: string | null;
+  consultationWebinarSlug?: string | null;
+  xGateMigrationRequired?: boolean;
+}
+
+interface ConsultationSlot {
+  date: string;
+  start: string;
+  end: string;
+  startsAt: string;
+}
+
+interface ConsultationAvailability {
+  calendarReady: boolean;
+  fallbackUrl: string | null;
+  menu: { id: string; name: string; durationMinutes: number };
+  staff: { id: string; name: string };
+  slots: ConsultationSlot[];
+  existingBooking: {
+    bookingId: string;
+    status: string;
+    startsAt: string;
+    meetUrl: string | null;
+  } | null;
+}
+
+interface BookedConsultation {
+  bookingId: string;
+  status: 'confirmed';
+  startsAt: string;
+  endsAt: string;
+  meetUrl: string;
+  externalEventId: string;
+  created: boolean;
 }
 
 interface XFollowerSuggestion {
@@ -116,30 +150,7 @@ function renderField(field: FormField): string {
   const placeholder = field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : '';
   const requiredMark = field.required ? '<span class="required-mark">*</span>' : '';
 
-  // If this is an x_username field, render a fuzzy-search autocomplete input
-  if (field.name === 'x_username') {
-    return `
-      <div class="form-field">
-        <label class="form-label" for="field-${escapeHtml(field.name)}">
-          ${escapeHtml(field.label)}${requiredMark}
-        </label>
-        <div class="x-autocomplete-wrap">
-          <input
-            type="text"
-            name="${escapeHtml(field.name)}"
-            id="field-${escapeHtml(field.name)}"
-            class="form-input x-autocomplete-input"
-            placeholder="${field.placeholder ? escapeHtml(field.placeholder) : 'X ID or 名前で検索（3文字以上）'}"
-            autocomplete="off"
-            ${required} />
-          <ul class="x-suggest-list" id="x-suggest-list" hidden></ul>
-          <p class="x-suggest-hint" id="x-suggest-hint" hidden>3文字以上入力してください</p>
-        </div>
-        <div class="x-conditions" id="x-conditions" hidden></div>
-        <p class="x-conditions-result" id="x-conditions-result" hidden></p>
-      </div>
-    `;
-  }
+  if (field.name === 'x_username') return '';
 
   let inputHtml = '';
 
@@ -371,6 +382,30 @@ function injectStyles(): void {
     .form-success .check { width: 64px; height: 64px; border-radius: 50%; background: #06C755; color: #fff; font-size: 32px; line-height: 64px; margin: 0 auto 16px; }
     .form-success h2 { font-size: 20px; color: #06C755; margin-bottom: 12px; }
     .form-success p { font-size: 14px; color: #666; line-height: 1.6; }
+    .consultation-card { background:#fff; border-radius:16px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+    .consultation-head { text-align:center; margin-bottom:20px; }
+    .consultation-head .calendar-icon { font-size:32px; line-height:1; }
+    .consultation-head h2 { margin:8px 0 6px; font-size:21px; color:#1f2937; }
+    .consultation-head p { margin:0; font-size:13px; line-height:1.6; color:#6b7280; }
+    .consultation-date { margin-top:18px; }
+    .consultation-date h3 { margin:0 0 8px; font-size:14px; color:#374151; }
+    .consultation-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+    .slot-btn { border:1.5px solid #06C755; border-radius:9px; padding:11px 4px; background:#fff; color:#049f45; font-size:14px; font-weight:700; cursor:pointer; }
+    .slot-btn:active { background:#ecfdf3; }
+    .slot-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .consultation-status { margin:14px 0 0; text-align:center; font-size:13px; color:#dc2626; font-weight:600; }
+    .consultation-loading { text-align:center; padding:44px 20px; }
+    .consultation-loading h2 { margin:14px 0 6px; font-size:20px; color:#1f2937; }
+    .consultation-loading p { margin:0; color:#6b7280; font-size:14px; }
+    .consultation-spinner { width:30px; height:30px; margin:0 auto; border:3px solid #d1fae5; border-top-color:#06C755; border-radius:50%; animation:x-spin .8s linear infinite; }
+    .consultation-empty { margin:16px 0 0; padding:18px; border-radius:12px; background:#f9fafb; text-align:center; color:#6b7280; font-size:14px; }
+    .consultation-primary { display:block; width:100%; box-sizing:border-box; margin-top:16px; padding:13px 16px; border:0; border-radius:999px; background:#06C755; color:#fff; text-align:center; text-decoration:none; font-size:15px; font-weight:700; cursor:pointer; }
+    .consultation-secondary { display:block; margin:14px auto 0; border:0; background:transparent; color:#6b7280; font-size:13px; text-decoration:underline; cursor:pointer; }
+    .consultation-confirmed { text-align:center; }
+    .consultation-confirmed .check { font-size:38px; }
+    .consultation-confirmed h2 { margin:8px 0; color:#1f2937; font-size:21px; }
+    .consultation-confirmed .time { margin:14px 0; padding:13px; border-radius:12px; background:#ecfdf3; color:#166534; font-size:17px; font-weight:700; }
+    .consultation-confirmed .note { color:#6b7280; font-size:12px; line-height:1.6; }
   `;
   document.head.appendChild(style);
 }
@@ -623,6 +658,221 @@ function renderSuccess(): void {
   }
 }
 
+function consultationDateTime(startsAt: string): string {
+  return new Date(startsAt).toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function consultationDateLabel(date: string): string {
+  return new Date(`${date}T00:00:00+09:00`).toLocaleDateString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  });
+}
+
+function safeHttpsUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function closeFormWindow(): void {
+  if (liff.isInClient()) {
+    liff.closeWindow();
+  } else {
+    window.close();
+  }
+}
+
+function renderConsultationConfirmed(booking: BookedConsultation): void {
+  const app = getApp();
+  const meetUrl = safeHttpsUrl(booking.meetUrl);
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card consultation-confirmed">
+        <div class="check">✅</div>
+        <h2>個別相談が確定しました</h2>
+        <div class="time">${escapeHtml(consultationDateTime(booking.startsAt))}</div>
+        ${meetUrl ? `<a class="consultation-primary" href="${escapeHtml(meetUrl)}" target="_blank" rel="noreferrer">Google Meetを確認する</a>` : ''}
+        <p class="note">LINEにも参加リンクを送りました。前日と開始1時間前にもお知らせします。</p>
+        <button class="consultation-secondary" id="closeConsultationBtn">閉じる</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+function renderConsultationFallback(
+  webinarSlug: string,
+  message: string,
+  fallbackUrl: string | null = null,
+): void {
+  const app = getApp();
+  const safeFallbackUrl = safeHttpsUrl(fallbackUrl);
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card">
+        <div class="consultation-head">
+          <div class="calendar-icon">📅</div>
+          <h2>回答を受け付けました</h2>
+          <p>${escapeHtml(message)}</p>
+        </div>
+        ${safeFallbackUrl ? `<a class="consultation-primary" href="${escapeHtml(safeFallbackUrl)}">予約カレンダーを開く</a>` : '<button class="consultation-primary" id="retryConsultationBtn">空き枠を再読み込み</button>'}
+        <button class="consultation-secondary" id="closeConsultationBtn">あとで予約する</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('retryConsultationBtn')?.addEventListener('click', () => {
+    void renderConsultationBooking(webinarSlug);
+  });
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+function renderConsultationSlots(
+  webinarSlug: string,
+  availability: ConsultationAvailability,
+): void {
+  const existing = availability.existingBooking;
+  if (existing?.status === 'confirmed' && existing.meetUrl) {
+    renderConsultationConfirmed({
+      bookingId: existing.bookingId,
+      status: 'confirmed',
+      startsAt: existing.startsAt,
+      endsAt: '',
+      meetUrl: existing.meetUrl,
+      externalEventId: '',
+      created: false,
+    });
+    return;
+  }
+
+  if (!availability.calendarReady) {
+    renderConsultationFallback(
+      webinarSlug,
+      '空き枠を自動取得できませんでした。予約カレンダーから日時を選んでください。',
+      availability.fallbackUrl,
+    );
+    return;
+  }
+
+  const grouped = availability.slots.reduce<Record<string, ConsultationSlot[]>>((all, slot) => {
+    (all[slot.date] ??= []).push(slot);
+    return all;
+  }, {});
+  const slotHtml = Object.entries(grouped).map(([date, slots]) => `
+    <section class="consultation-date">
+      <h3>${escapeHtml(consultationDateLabel(date))}</h3>
+      <div class="consultation-grid">
+        ${slots.map((slot) => `<button class="slot-btn" data-starts-at="${escapeHtml(slot.startsAt)}">${escapeHtml(slot.start)}</button>`).join('')}
+      </div>
+    </section>
+  `).join('');
+
+  const app = getApp();
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card">
+        <div class="consultation-head">
+          <div class="calendar-icon">📅</div>
+          <h2>このまま相談日時を確定</h2>
+          <p>空いている15分枠だけを表示しています。<br>選ぶとGoogle Meetまで自動発行されます。</p>
+        </div>
+        ${slotHtml || '<div class="consultation-empty">現在、選べる枠がありません。</div>'}
+        <p class="consultation-status" id="consultationStatus" hidden></p>
+        <button class="consultation-secondary" id="closeConsultationBtn">あとで予約する</button>
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll<HTMLButtonElement>('.slot-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const startsAt = button.dataset.startsAt;
+      if (!startsAt) return;
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.slot-btn'));
+      const status = document.getElementById('consultationStatus');
+      buttons.forEach((item) => { item.disabled = true; });
+      const original = button.textContent;
+      button.textContent = '確定中...';
+      if (status) status.hidden = true;
+      try {
+        const response = await apiCall(
+          `/api/liff/webinars/${encodeURIComponent(webinarSlug)}/consultation-book`,
+          { method: 'POST', body: JSON.stringify({ startsAt }) },
+        );
+        const json = await response.json() as {
+          ok?: boolean;
+          data?: BookedConsultation;
+          error?: string;
+        };
+        if (!response.ok || !json.ok || !json.data) {
+          if (response.status === 409) {
+            await renderConsultationBooking(webinarSlug);
+            return;
+          }
+          throw new Error(json.error || '日程を確定できませんでした');
+        }
+        renderConsultationConfirmed(json.data);
+      } catch {
+        buttons.forEach((item) => { item.disabled = false; });
+        button.textContent = original;
+        if (status) {
+          status.textContent = '日程を確定できませんでした。もう一度お試しください。';
+          status.hidden = false;
+        }
+      }
+    });
+  });
+  document.getElementById('closeConsultationBtn')?.addEventListener('click', closeFormWindow);
+  window.scrollTo(0, 0);
+}
+
+async function renderConsultationBooking(webinarSlug: string): Promise<void> {
+  const app = getApp();
+  app.innerHTML = `
+    <div class="form-page">
+      <div class="consultation-card consultation-loading">
+        <div class="consultation-spinner"></div>
+        <h2>回答を受け付けました</h2>
+        <p>実際の空き枠を確認しています...</p>
+      </div>
+    </div>
+  `;
+  window.scrollTo(0, 0);
+  try {
+    const response = await apiCall(
+      `/api/liff/webinars/${encodeURIComponent(webinarSlug)}/consultation-slots`,
+    );
+    const json = await response.json() as {
+      ok?: boolean;
+      data?: ConsultationAvailability;
+      error?: string;
+    };
+    if (!response.ok || !json.ok || !json.data) {
+      throw new Error(json.error || 'availability_failed');
+    }
+    renderConsultationSlots(webinarSlug, json.data);
+  } catch {
+    renderConsultationFallback(
+      webinarSlug,
+      '空き枠を読み込めませんでした。通信環境を確認して、もう一度お試しください。',
+    );
+  }
+}
+
 function renderFormError(message: string): void {
   const app = getApp();
   app.innerHTML = `
@@ -747,34 +997,7 @@ async function submitForm(): Promise<void> {
 
     // Webhook gate — pre-verified by /repliers endpoint
     if (state.formDef.hasSubmitWebhook) {
-      // Check that user was selected from pre-verified repliers list
-      const xField = ((data.x_username as string) ?? '').trim().replace(/^@/, '');
-      if (!xField || xField !== state.verifiedXUsername) {
-        state.submitting = false;
-        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '送信する'; }
-        const existing = getApp().querySelector('.form-error-msg');
-        if (existing) existing.remove();
-        const errEl = document.createElement('p');
-        errEl.className = 'form-error-msg';
-        errEl.style.cssText = 'color:#e53e3e;font-size:14px;margin:8px 0;text-align:center;';
-        errEl.textContent = !xField
-          ? 'X IDを入力してください'
-          : 'X IDを入力後、入力欄の外をタップして確認してください';
-        submitBtn?.parentElement?.insertBefore(errEl, submitBtn);
-        return;
-      }
-
-      // Show success animation (conditions already verified by repliers endpoint)
-      const allPassConditions: Record<string, boolean | null> = {
-        reply: true,
-        like: true,
-        repost: true,
-        follow: true,
-      };
-      if (submitBtn) submitBtn.textContent = '判定中...';
-      await showSubmitConditions(allPassConditions, true);
-      await new Promise(r => setTimeout(r, 500));
-
+      if (submitBtn) submitBtn.textContent = '確認中...';
       // Webhook passed — submit data to server, then show success
       // If message is Flex JSON, show generic success (Flex is sent via LINE push)
       const rawMsg = state.formDef.onSubmitMessageContent || '条件をクリアしました！';
@@ -819,7 +1042,11 @@ async function submitForm(): Promise<void> {
       throw new Error(`${res.status}: ${errMsg}`);
     }
 
-    renderSuccess();
+    if (state.formDef.consultationWebinarSlug) {
+      await renderConsultationBooking(state.formDef.consultationWebinarSlug);
+    } else {
+      renderSuccess();
+    }
   } catch (err) {
     state.submitting = false;
     if (submitBtn) {
@@ -837,302 +1064,12 @@ async function submitForm(): Promise<void> {
   }
 }
 
-function attachXAutocomplete(): void {
-  const input = document.querySelector<HTMLInputElement>('.x-autocomplete-input');
-  if (!input) return;
-
-  const suggestList = document.getElementById('x-suggest-list') as HTMLUListElement | null;
-  const hint = document.getElementById('x-suggest-hint');
-  const conditionsEl = document.getElementById('x-conditions');
-  const conditionsResult = document.getElementById('x-conditions-result');
-  if (!suggestList) return;
-
-  let verifyTimer: ReturnType<typeof setTimeout> | null = null;
-  let focusedIndex = -1;
-  let replierPool: XFollowerSuggestion[] = [];
-
-  // Prefetch repliers on form load
-  const gateIdForPool = getGateId();
-  if (state.xHarnessBaseUrl && gateIdForPool) {
-    fetch(`${state.xHarnessBaseUrl}/api/engagement-gates/${encodeURIComponent(gateIdForPool)}/repliers`)
-      .then(r => r.json())
-      .then((json: { success: boolean; data?: XFollowerSuggestion[] }) => {
-        replierPool = json.data ?? [];
-        _replierPoolReady = true;
-        // If page 2 is already visible, remove loading overlay
-        const overlay = document.getElementById('x-loading-overlay');
-        if (overlay) {
-          overlay.remove();
-          input.disabled = false;
-          input.focus();
-        }
-      })
-      .catch(() => {
-        _replierPoolReady = true;
-        const overlay = document.getElementById('x-loading-overlay');
-        if (overlay) {
-          overlay.remove();
-          input.disabled = false;
-        }
-      });
-  } else {
-    _replierPoolReady = true;
-  }
-
-  function hideConditions(): void {
-    if (conditionsEl) conditionsEl.hidden = true;
-    if (conditionsResult) conditionsResult.hidden = true;
-  }
-
-  function hideSuggestions(): void {
-    suggestList!.hidden = true;
-    suggestList!.innerHTML = '';
-    focusedIndex = -1;
-    if (hint) hint.hidden = true;
-  }
-
-  function selectSuggestion(username: string): void {
-    input!.value = username;
-    state.verifiedXUsername = username;
-    hideSuggestions();
-    input!.focus();
-    void triggerVerify(username);
-  }
-
-  function updateFocus(items: NodeListOf<Element>): void {
-    items.forEach((el, i) => {
-      el.classList.toggle('focused', i === focusedIndex);
-    });
-    const focused = items[focusedIndex] as HTMLElement | undefined;
-    focused?.scrollIntoView({ block: 'nearest' });
-  }
-
-  interface VerifyCondition {
-    type: string;
-    label: string;
-    required: boolean;
-    passed: boolean;
-  }
-
-  interface VerifyResult {
-    eligible: boolean;
-    userNotFound?: boolean;
-    conditions?: VerifyCondition[];
-  }
-
-  function renderConditions(result: VerifyResult): void {
-    if (!conditionsEl || !conditionsResult) return;
-
-    if (result.userNotFound) {
-      conditionsEl.hidden = true;
-      conditionsResult.innerHTML = '❌ Xアカウントが見つかりません<br><span style="font-size:11px;font-weight:normal">IDを確認してもう一度お試しください</span>';
-      conditionsResult.className = 'x-conditions-summary fail';
-      conditionsResult.hidden = false;
-      return;
-    }
-
-    const conditionDefs = [
-      { key: 'reply', label: 'リプライ' },
-      { key: 'like', label: 'いいね' },
-      { key: 'repost', label: 'リポスト' },
-      { key: 'follow', label: 'フォロー' },
-    ];
-
-    const conditions = result.conditions ?? [];
-
-    // Build a lookup by type
-    const condMap: Record<string, VerifyCondition> = {};
-    for (const c of conditions) {
-      condMap[c.type] = c;
-    }
-
-    let rowsHtml = '';
-    for (const def of conditionDefs) {
-      const cond = condMap[def.key];
-      if (!cond) continue; // not part of this gate, skip
-      if (!cond.required) {
-        rowsHtml += `
-          <div class="x-condition-row">
-            <div class="x-condition-check na">—</div>
-            <span>${escapeHtml(def.label)}</span>
-          </div>`;
-      } else if (cond.passed) {
-        rowsHtml += `
-          <div class="x-condition-row">
-            <div class="x-condition-check pass">✓</div>
-            <span>${escapeHtml(def.label)}</span>
-          </div>`;
-      } else {
-        rowsHtml += `
-          <div class="x-condition-row">
-            <div class="x-condition-check fail">✗</div>
-            <span>${escapeHtml(def.label)}</span>
-          </div>`;
-      }
-    }
-
-    if (rowsHtml) {
-      conditionsEl.innerHTML = `<div class="x-conditions-card">${rowsHtml}</div>`;
-      conditionsEl.hidden = false;
-    } else {
-      conditionsEl.hidden = true;
-    }
-
-    if (result.eligible) {
-      conditionsResult.textContent = '🎉 条件クリア！特典を受け取れます';
-      conditionsResult.className = 'x-conditions-summary pass';
-    } else {
-      conditionsResult.textContent = '条件を満たしていません';
-      conditionsResult.className = 'x-conditions-summary fail';
-    }
-    conditionsResult.hidden = false;
-  }
-
-  async function triggerVerify(username: string): Promise<void> {
-    const clean = username.trim().replace(/^@/, '');
-    if (!state.xHarnessBaseUrl || !clean) return;
-    const gateId = getGateId();
-    if (!gateId) return;
-
-    try {
-      const url = `${state.xHarnessBaseUrl}/api/engagement-gates/${encodeURIComponent(gateId)}/verify?username=${encodeURIComponent(clean)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('verify failed');
-      const json = await res.json() as { success: boolean; data?: VerifyResult };
-      const verifyData = json.data;
-      if (verifyData) {
-        renderConditions(verifyData);
-        // Mark as verified so submit is allowed even without selecting from suggestions
-        // Allow submit for any verified user (server-side webhook does final eligibility check)
-        if (!verifyData.userNotFound) {
-          state.verifiedXUsername = clean;
-          if (input) input.value = clean; // normalize input (strip @)
-        }
-      }
-    } catch {
-      // Hide stale gate condition rows before showing the error message
-      hideConditions();
-      // Show helpful message on verify error (e.g. X API down)
-      if (conditionsResult) {
-        conditionsResult.innerHTML = '⚠️ 確認中にエラーが発生しました<br><span style="font-size:11px;font-weight:normal">しばらく待ってからもう一度お試しください</span>';
-        conditionsResult.className = 'x-conditions-summary fail';
-        conditionsResult.hidden = false;
-      }
-    }
-  }
-
-  function showSuggestions(suggestions: XFollowerSuggestion[]): void {
-    suggestList!.innerHTML = '';
-    focusedIndex = -1;
-
-    if (suggestions.length === 0) {
-      suggestList!.hidden = true;
-      if (hint) {
-        hint.innerHTML = replierPool.length === 0
-          ? '<span style="color:#e53e3e">⏳ まだリアクションがありません</span><br><span style="font-size:11px;color:#888">ポストにリポスト＆フォローしてから再度お試しください</span>'
-          : '<span style="color:#888">候補に表示されなくても、そのままIDを入力して送信できます</span>';
-        hint.hidden = false;
-      }
-      return;
-    }
-
-    if (hint) hint.hidden = true;
-    for (const s of suggestions) {
-      const li = document.createElement('li');
-      li.className = 'x-suggest-item';
-      li.dataset.username = s.username;
-      const avatarHtml = s.profileImageUrl
-        ? `<img class="x-suggest-avatar" src="${escapeHtml(s.profileImageUrl)}" alt="" />`
-        : `<div class="x-suggest-avatar-placeholder">@</div>`;
-      li.innerHTML = `
-        ${avatarHtml}
-        <div class="x-suggest-names">
-          <span class="x-suggest-display">${escapeHtml(s.displayName)}</span>
-          <span class="x-suggest-username">@${escapeHtml(s.username)}</span>
-        </div>
-      `;
-      li.addEventListener('mousedown', (e) => {
-        e.preventDefault(); // prevent input blur before click
-        selectSuggestion(s.username);
-      });
-      suggestList!.appendChild(li);
-    }
-    suggestList!.hidden = false;
-  }
-
-  input.addEventListener('input', () => {
-    const q = input.value.trim().replace(/^@/, ''); // strip leading @
-    if (verifyTimer !== null) clearTimeout(verifyTimer);
-    // Clear verified flag when user types manually
-    if (q !== state.verifiedXUsername) state.verifiedXUsername = '';
-
-    if (!q) {
-      hideSuggestions();
-      hideConditions();
-      return;
-    }
-
-    if (q.length < 3) {
-      hideSuggestions();
-      hideConditions();
-      if (hint) { hint.textContent = '3文字以上入力してください'; hint.hidden = false; }
-      return;
-    }
-
-    if (hint) hint.hidden = true;
-    const qLower = q.toLowerCase();
-    const matches = replierPool.filter(r =>
-      r.username.toLowerCase().includes(qLower) ||
-      r.displayName.toLowerCase().includes(qLower)
-    ).slice(0, 5);
-    showSuggestions(matches);
-  });
-
-  input.addEventListener('keydown', (e) => {
-    const items = suggestList!.querySelectorAll('.x-suggest-item');
-    if (!items.length) return;
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      focusedIndex = Math.min(focusedIndex + 1, items.length - 1);
-      updateFocus(items);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      focusedIndex = Math.max(focusedIndex - 1, 0);
-      updateFocus(items);
-    } else if (e.key === 'Enter' && focusedIndex >= 0) {
-      e.preventDefault();
-      const focused = items[focusedIndex] as HTMLElement;
-      const username = focused.dataset.username;
-      if (username) selectSuggestion(username);
-    } else if (e.key === 'Escape') {
-      hideSuggestions();
-    }
-  });
-
-  input.addEventListener('blur', () => {
-    // Small delay so mousedown on suggestion can fire first
-    setTimeout(() => {
-      hideSuggestions();
-      // Trigger verify on blur if input has a value
-      const username = input.value.trim().replace(/^@/, '');
-      if (username && getGateId()) {
-        if (verifyTimer !== null) clearTimeout(verifyTimer);
-        verifyTimer = setTimeout(() => {
-          void triggerVerify(username);
-        }, 300);
-      }
-    }, 150);
-  });
-}
-
 function attachFormEvents(): void {
   const form = document.getElementById('liff-form');
   form?.addEventListener('submit', (e) => {
     e.preventDefault();
     void submitForm();
   });
-  attachXAutocomplete();
 }
 
 // ========== Init ==========
@@ -1204,6 +1141,10 @@ export async function initForm(formId: string | null): Promise<void> {
       return;
     }
 
+    if(json.data.xGateMigrationRequired){
+      if(json.data.webhookGateId){await initXGate(json.data.webhookGateId);return;}
+      renderFormError('この企画は参加方法が更新されています。作成者から案内された参加リンクを開いてください。');return;
+    }
     state.formDef = json.data;
 
     // Use only the trusted origin derived from the stored webhook. The raw

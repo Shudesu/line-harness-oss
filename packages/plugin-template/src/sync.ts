@@ -1,5 +1,5 @@
 /**
- * Sync: pull data from MyService and update LINE Harness friends.
+ * Sync: pull data from MyService and update L Harness friends.
  *
  * Common patterns:
  * - Sync customer status → metadata fields
@@ -34,7 +34,7 @@ export async function syncExternalData(env: Env): Promise<void> {
   // Fetch customers from the external service
   const customers = await myService.listCustomers()
 
-  // Ensure required tags exist in LINE Harness
+  // Ensure required tags exist in L Harness
   const allTags = await harness.tags.list()
   const tagMap = new Map(allTags.map((t) => [t.name, t.id]))
 

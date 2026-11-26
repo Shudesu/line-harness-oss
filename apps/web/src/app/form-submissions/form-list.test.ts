@@ -3,8 +3,8 @@ import { displayFormName, sortFormsByLatestAnswer } from './form-list'
 
 describe('displayFormName', () => {
   test('escaped line breaks and uneven whitespace are made readable', () => {
-    expect(displayFormName('Step1.\\nLINE  Harnessを体験する(3分)')).toBe(
-      'Step1. LINE Harnessを体験する(3分)',
+    expect(displayFormName('Step1.\\nL  Harnessを体験する(3分)')).toBe(
+      'Step1. L Harnessを体験する(3分)',
     )
   })
 })

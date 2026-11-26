@@ -1,4 +1,4 @@
-# Getting Started — LINE Harness 初期セットアップガイド
+# Getting Started — L Harness 初期セットアップガイド
 
 ## 前提条件
 
@@ -36,7 +36,7 @@ LINE Login チャネルを作り、`/auth/line?ref=xxx` 経由で友だち追加
 - **広告クリックID記録**（gclid/fbclid/UTM）
 - **マルチアカウント横断の同一人物判定**
 
-が全て自動化される。これが LINE Harness の核心機能。
+が全て自動化される。これが L Harness の核心機能。
 
 1. LINE Developers Console → 同一プロバイダー内で「LINE Login」チャネルを作成
 2. 「LIFF」タブで LIFF アプリを追加
@@ -200,7 +200,7 @@ pnpm dev:web
    ```
 3. 「Use webhook」を有効化
 4. 「Verify」ボタンで接続テスト → 成功すればOK
-5. 「Auto-reply messages」を **無効** に設定（LINE Harness側で制御するため）
+5. 「Auto-reply messages」を **無効** に設定（L Harness側で制御するため）
 6. 「Greeting messages」を **無効** に設定（シナリオで制御するため）
 
 ## 7. 管理画面デプロイ
@@ -271,7 +271,7 @@ curl -s https://your-worker.your-subdomain.workers.dev/api/friends \
 curl -X POST https://your-worker.your-subdomain.workers.dev/api/friends/{friendId}/messages \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"content": "LINE Harness から送信テスト！"}'
+  -d '{"content": "L Harness から送信テスト！"}'
 ```
 
 ### 8.3 管理画面ログイン確認

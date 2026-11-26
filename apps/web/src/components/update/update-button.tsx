@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { startUpdate } from '@/lib/update-client'
 import { ProgressModal } from './progress-modal'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
 
 /**
  * Kicks off an update via `POST /admin/update/start` and mounts a
@@ -12,15 +14,17 @@ import { ProgressModal } from './progress-modal'
 export function UpdateButton({ targetVersion }: { targetVersion: string }) {
   const [loading, setLoading] = useState(false)
   const [updateId, setUpdateId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function onClick() {
     setLoading(true)
+    setError(null)
     try {
       const r = await startUpdate()
       setUpdateId(r.updateId)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      alert(`update failed: ${msg}`)
+      setError(`update failed: ${msg}`)
     } finally {
       setLoading(false)
     }
@@ -28,14 +32,17 @@ export function UpdateButton({ targetVersion }: { targetVersion: string }) {
 
   return (
     <>
-      <button
+      <Button
         type="button"
         onClick={onClick}
         disabled={loading}
-        className="text-sm px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+        size="sm"
+        variant="primary"
+        loading={loading}
       >
         {loading ? '開始中...' : `v${targetVersion} にアップデート`}
-      </button>
+      </Button>
+      {error && <Banner className="mt-2" size="sm" variant="error" title="アップデートを開始できませんでした" description={error} />}
       {updateId && (
         <ProgressModal
           updateId={updateId}

@@ -8,6 +8,7 @@ import {
   updateLineAccountFields,
   updateLineAccountOrder,
   deleteLineAccount,
+  getLatestRiskLevel,
 } from '@line-crm/db';
 import type { LineAccount as DbLineAccount } from '@line-crm/db';
 import { requireRole } from '../middleware/role-guard.js';
@@ -19,8 +20,44 @@ import {
 } from '../services/follower-import.js';
 import type { FollowerImportClient } from '../services/follower-import.js';
 import type { Env } from '../index.js';
+import { countAccountMonthlyMessages, jstYyyyMmDd } from '../services/quota.js';
+import { countDeliverableAudience } from '../services/quota-alert.js';
+import {
+  buildConnectionHealth,
+  type ConnectionHealth,
+} from '../services/connection-health.js';
+import {
+  expectedWebhookUrl,
+  probeWebhookEndpoint,
+  setWebhookEndpointWithConfirm,
+} from '../services/webhook-endpoint.js';
 
 const lineAccounts = new Hono<Env>();
+
+/** Origin used for webhook endpoint expectations (same rule as webhook.ts). */
+function workerOrigin(c: { env: Env['Bindings']; req: { url: string } }): string {
+  return c.env.WORKER_URL || new URL(c.req.url).origin;
+}
+
+/**
+ * B-10: after an account is added or its credentials rotated, read the
+ * webhook URL registered on the channel and run LINE's /webhook/test. The
+ * probe never throws and results land in the account_settings KVS for the
+ * connection-health endpoint — account registration must not fail because a
+ * probe (or its KVS write) did.
+ */
+async function recordWebhookHealthAfterChange(
+  db: D1Database,
+  env: Env['Bindings'],
+  account: DbLineAccount,
+): Promise<void> {
+  try {
+    const client = new LineClient(account.channel_access_token);
+    await probeWebhookEndpoint(db, client, account.id, expectedWebhookUrl(env.WORKER_URL));
+  } catch (err) {
+    console.error('[line-accounts] webhook endpoint probe failed (non-fatal)', err);
+  }
+}
 
 function serializeLineAccount(row: DbLineAccount) {
   return {
@@ -56,6 +93,29 @@ function serializeLineAccountFull(row: DbLineAccount) {
   };
 }
 
+/** Show the last 4 chars so the UI can say "configured" without leaking the value. */
+function maskSecret(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return `****${value.slice(-4)}`;
+}
+
+/**
+ * GET responses carry masked secrets only. The admin UI never reads these back
+ * (its edit form leaves the fields blank and only sends a value when changing
+ * one), so masking costs nothing there — but an API key handed to an MCP agent
+ * is owner-role, and returning the plaintext channel token would let a leaked
+ * key take over the LINE channel itself, far beyond this harness.
+ * POST/PUT still echo the full values: those are the caller's own input.
+ */
+function serializeLineAccountMasked(row: DbLineAccount) {
+  return {
+    ...serializeLineAccount(row),
+    channelAccessToken: maskSecret(row.channel_access_token),
+    channelSecret: maskSecret(row.channel_secret),
+    loginChannelSecret: maskSecret(row.login_channel_secret),
+  };
+}
+
 // Fetch bot profile (displayName, pictureUrl) from LINE API
 async function fetchBotProfile(accessToken: string): Promise<{ displayName?: string; pictureUrl?: string; basicId?: string }> {
   try {
@@ -87,15 +147,10 @@ lineAccounts.get('/api/line-accounts', async (c) => {
              INNER JOIN friends f ON f.id = fs.friend_id
              WHERE fs.status = 'active' AND f.line_account_id = ?`,
           ).bind(item.id).first<{ count: number }>(),
-          db.prepare(
-            // 「今月送信」(messagesThisMonth) は LINE 公式ダッシュボードの「配信済みの無料メッセージ数」と
-            // 揃える設計: push 系のみ + 当月 1 日 00:00 以降。reply API 経由 (1-on-1 chat) は LINE quota 外なので
-            // delivery_type='push' で除外。以前は date('now', '-30 days') の rolling window で月初に bias 残って
-            // 公式 dashboard と数桁ズレてた (例: 公式 10 通 vs UI 10,609 通) → start of month に揃えた。
-            `SELECT COUNT(*) as count FROM messages_log ml
-             INNER JOIN friends f ON f.id = ml.friend_id
-             WHERE ml.direction = 'outgoing' AND (ml.delivery_type IS NULL OR ml.delivery_type = 'push') AND ml.created_at >= date('now', 'start of month') AND f.line_account_id = ?`,
-          ).bind(item.id).first<{ count: number }>(),
+          // 「今月送信」(messagesThisMonth) は LINE 公式ダッシュボードの「配信済みの無料メッセージ数」に
+          // 近い概算 (マルチアカウント運用では NULL プール分だけ上振れする —
+          // countAccountMonthlyMessages の注意書き参照)。定義は services/quota.ts に一本化。
+          countAccountMonthlyMessages(db, item.id),
         ]);
 
         return {
@@ -106,7 +161,7 @@ lineAccounts.get('/api/line-accounts', async (c) => {
           stats: {
             friendCount: friendCount?.count ?? 0,
             activeScenarios: scenarioCount?.count ?? 0,
-            messagesThisMonth: msgCount?.count ?? 0,
+            messagesThisMonth: msgCount,
           },
         };
       }),
@@ -118,17 +173,269 @@ lineAccounts.get('/api/line-accounts', async (c) => {
   }
 });
 
-// GET /api/line-accounts/:id - get single (secrets only for owner/admin)
+/**
+ * LINE's insight endpoints have a low rate limit (60 requests/hour), and a
+ * followers insight that reached status 'ready' for a past date never changes
+ * again — so 'ready' results are kept in the Workers Cache for 6h to stop
+ * dashboard reloads from burning the budget. Non-ready results are never
+ * cached (LINE finishes aggregating during the day and we must retry).
+ * caches.default is absent under vitest/node, where the guard falls through
+ * to the live (mocked) client.
+ */
+async function getFollowersInsightCached(
+  client: LineClient,
+  lineAccountId: string,
+  date: string,
+): Promise<Awaited<ReturnType<LineClient['getFollowersInsight']>>> {
+  type Insight = Awaited<ReturnType<LineClient['getFollowersInsight']>>;
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  const key = `https://line-harness.internal/insight-cache/${encodeURIComponent(lineAccountId)}/${date}`;
+  if (cache) {
+    try {
+      const hit = await cache.match(key);
+      if (hit) return (await hit.json()) as Insight;
+    } catch {
+      // Cache read failures must never break the endpoint.
+    }
+  }
+  const insight = await client.getFollowersInsight(date);
+  if (cache && insight.status === 'ready') {
+    try {
+      await cache.put(
+        key,
+        new Response(JSON.stringify(insight), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=21600' },
+        }),
+      );
+    } catch {
+      // Best-effort: a failed put just means the next request refetches.
+    }
+  }
+  return insight;
+}
+
+// GET /api/line-accounts/delivery-health — per-account broadcast-health snapshot
+// for the dashboard: LINE plan quota vs. this month's consumption, follower /
+// block counts with day-over-day deltas, and the harness-side monthly send count.
+//
+// Born from the 2026-09-01 incident where two accounts ran out of monthly quota
+// and every all-target send failed silently — the quota was visible nowhere in
+// the UI. quotaAlert flags the state where the remaining quota can no longer
+// cover one all-target broadcast (remaining < deliverable audience).
+//
+// IMPORTANT: declared BEFORE the /:id routes below so Hono matches the literal
+// "delivery-health" segment first (same ordering rule as PATCH /order).
+lineAccounts.get('/api/line-accounts/delivery-health', async (c) => {
+  try {
+    const db = c.env.DB;
+    const items = (await getLineAccounts(db)).filter((item) => item.is_active);
+    // audience フォールバックの NULL 行ポリシーは監視 (ban-monitor) ・送信ガードと
+    // 同じ定義に揃える: 単一アカウント運用では legacy NULL 行こそが友だちの本体。
+    // ここだけ厳密一致で数えると、insight 未取得時に audience≈0 → quotaAlert=false
+    // となり、ban-monitor が warning を出している状態でダッシュボードだけ正常表示になる。
+    const singleAccountInstall = items.length <= 1;
+    // LINE's followers insight is only 'ready' for completed JST days: ask for
+    // yesterday, and the day before for the day-over-day delta.
+    const insightDate = jstYyyyMmDd(1);
+    const prevInsightDate = jstYyyyMmDd(2);
+
+    const accounts = await Promise.all(
+      items.map(async (account) => {
+        const client = new LineClient(account.channel_access_token);
+        const [quotaRes, consumptionRes, insightRes, prevInsightRes, msgCountRes, friendCountRes] =
+          await Promise.allSettled([
+            client.getMessageQuota(),
+            client.getMessageQuotaConsumption(),
+            getFollowersInsightCached(client, account.id, insightDate),
+            getFollowersInsightCached(client, account.id, prevInsightDate),
+            countAccountMonthlyMessages(db, account.id),
+            countDeliverableAudience(db, account.id, singleAccountInstall),
+          ]);
+
+        // Partial failures degrade to null fields (one revoked token must not
+        // blank the whole dashboard). take() records every failure in errors
+        // so value extraction and error bookkeeping cannot drift apart, and
+        // the UI can say 取得失敗 instead of rendering a silent zero.
+        const errors: string[] = [];
+        const take = <T>(r: PromiseSettledResult<T>, name: string): T | null => {
+          if (r.status === 'fulfilled') return r.value;
+          errors.push(name);
+          return null;
+        };
+
+        const quota = take(quotaRes, 'quota');
+        const consumptionData = take(consumptionRes, 'consumption');
+        const insightRaw = take(insightRes, 'insight');
+        const prevInsightRaw = take(prevInsightRes, 'prevInsight');
+        const messagesThisMonth = take(msgCountRes, 'messagesThisMonth');
+        const deliverableFriendCount = take(friendCountRes, 'friendCount');
+
+        const limit =
+          quota?.type === 'limited' && typeof quota.value === 'number' ? quota.value : null;
+        const consumption = consumptionData?.totalUsage ?? null;
+        const remaining =
+          limit !== null && consumption !== null ? Math.max(0, limit - consumption) : null;
+
+        // 'unready' (LINE has not aggregated the day yet) is a distinct state
+        // from a failed call: the UI must render "集計待ち", not "正常".
+        const insightStatus: 'ready' | 'unready' | 'error' =
+          insightRaw === null ? 'error' : insightRaw.status === 'ready' ? 'ready' : 'unready';
+        const insight = insightStatus === 'ready' ? insightRaw : null;
+        const prevInsight = prevInsightRaw?.status === 'ready' ? prevInsightRaw : null;
+        const followers = insight?.followers ?? null;
+        const targetedReaches = insight?.targetedReaches ?? null;
+        const blocks = insight?.blocks ?? null;
+        const prevFollowers = prevInsight?.followers ?? null;
+        const prevBlocks = prevInsight?.blocks ?? null;
+
+        // "全員配信が不可能" check: an all-target broadcast costs one message per
+        // deliverable friend — targetedReaches (followers minus blocked). When
+        // the insight is unavailable, fall back to the DB following count
+        // (close to targetedReaches; the raw followers number would include
+        // blocked users and over-alert). remaining === 0 always alerts: with
+        // nothing left to send, no audience estimate is needed to know bulk
+        // sends will fail.
+        const audience = targetedReaches ?? deliverableFriendCount ?? null;
+        const quotaAlert =
+          quota?.type === 'limited' &&
+          remaining !== null &&
+          (remaining === 0 || (audience !== null && remaining < audience));
+
+        return {
+          lineAccountId: account.id,
+          name: account.name,
+          quota: {
+            type: quota?.type ?? null,
+            limit,
+            consumption,
+            remaining,
+          },
+          quotaAlert,
+          insight: {
+            status: insightStatus,
+            date: insight ? insightDate : null,
+            followers,
+            targetedReaches,
+            blocks,
+            followersDelta:
+              followers !== null && prevFollowers !== null ? followers - prevFollowers : null,
+            blocksDelta: blocks !== null && prevBlocks !== null ? blocks - prevBlocks : null,
+          },
+          messagesThisMonth,
+          errors,
+        };
+      }),
+    );
+
+    return c.json({ success: true, data: { insightDate, accounts } });
+  } catch (err) {
+    console.error('GET /api/line-accounts/delivery-health error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/line-accounts/:id/webhook-endpoint — B-10 probe.
+// Reads the webhook URL registered on the LINE channel, compares it with this
+// Worker's expected URL, and runs LINE's /webhook/test. Results are persisted
+// for the connection-health check below. Read-only against LINE.
+lineAccounts.get('/api/line-accounts/:id/webhook-endpoint', async (c) => {
+  try {
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+    const expectedUrl = expectedWebhookUrl(workerOrigin(c));
+    const probe = await probeWebhookEndpoint(
+      c.env.DB,
+      new LineClient(account.channel_access_token),
+      account.id,
+      expectedUrl,
+    );
+    return c.json({ success: true, data: probe });
+  } catch (err) {
+    console.error('GET /api/line-accounts/:id/webhook-endpoint error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// PUT /api/line-accounts/:id/webhook-endpoint — B-10 fix (owner only).
+// Overwrites the channel's webhook URL with this Worker's expected URL.
+// Requires confirm=true: an existing URL that differs (someone else's receiver,
+// or another tool's endpoint) is never silently overwritten. A body `endpoint`
+// override is judged against the Worker's expected URL, never against itself —
+// pointing the channel elsewhere is recorded as a mismatch in health, not ok.
+lineAccounts.put('/api/line-accounts/:id/webhook-endpoint', requireRole('owner'), async (c) => {
+  try {
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+    const body = await c.req.json<{ confirm?: boolean; endpoint?: string }>().catch(() => ({}) as { confirm?: boolean; endpoint?: string });
+    const expectedUrl = expectedWebhookUrl(workerOrigin(c));
+    const target = typeof body.endpoint === 'string' && body.endpoint.trim() !== ''
+      ? body.endpoint.trim()
+      : expectedUrl;
+    const outcome = await setWebhookEndpointWithConfirm(
+      c.env.DB,
+      new LineClient(account.channel_access_token),
+      account.id,
+      target,
+      body.confirm === true,
+      expectedUrl,
+    );
+    if (!outcome.ok && outcome.requiresConfirm) {
+      return c.json({ success: false, requiresConfirm: true, error: outcome.error, data: { expectedUrl } }, 409);
+    }
+    if (!outcome.ok) {
+      return c.json({ success: false, error: outcome.error ?? 'Webhook endpoint update failed' }, 502);
+    }
+    return c.json({ success: true, data: outcome.probe });
+  } catch (err) {
+    console.error('PUT /api/line-accounts/:id/webhook-endpoint error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/line-accounts/:id/connection-health — PLAN.md 1-1 contract (B-05/B-10).
+// Same JSON as MCP account_summary surfaces: checkedAt / accountId / platform /
+// overall / checks[] with id・status・summary・evidence・nextAction.
+// ?refresh=true re-runs the live webhook endpoint + test probes on the spot.
+lineAccounts.get('/api/line-accounts/:id/connection-health', async (c) => {
+  try {
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+    const refresh = c.req.query('refresh') === 'true';
+    const riskLevel = await getLatestRiskLevel(c.env.DB, account.id);
+    const data: ConnectionHealth = await buildConnectionHealth(c.env.DB, account, {
+      refresh,
+      riskLevel,
+      ...(refresh
+        ? {
+            client: new LineClient(account.channel_access_token),
+            expectedUrl: expectedWebhookUrl(workerOrigin(c)),
+          }
+        : {}),
+    });
+    return c.json({ success: true, data });
+  } catch (err) {
+    console.error('GET /api/line-accounts/:id/connection-health error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/line-accounts/:id - get single (secrets masked; staff sees none at all)
 lineAccounts.get('/api/line-accounts/:id', async (c) => {
   try {
-    const account = await getLineAccountById(c.env.DB, c.req.param('id'));
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
     const staff = c.get('staff');
     const data = staff?.role === 'staff'
       ? serializeLineAccount(account)
-      : serializeLineAccountFull(account);
+      : serializeLineAccountMasked(account);
     return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/line-accounts/:id error:', err);
@@ -144,7 +451,7 @@ lineAccounts.get('/api/line-accounts/:id/follower-insight', async (c) => {
       return c.json({ success: false, error: 'date query is required in yyyyMMdd format' }, 400);
     }
 
-    const account = await getLineAccountById(c.env.DB, c.req.param('id'));
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
@@ -417,6 +724,11 @@ lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
     } catch (err) {
       console.error('[line-accounts] failed to auto-enroll into main pool', err);
     }
+
+    // B-10: probe the channel's webhook URL right after registration so a
+    // misconfigured URL / inactive toggle shows up in connection health
+    // immediately instead of surfacing as "no events arrive".
+    await recordWebhookHealthAfterChange(c.env.DB, c.env, account);
 
     return c.json({ success: true, data: serializeLineAccountFull(account) }, 201);
   } catch (err) {
@@ -699,7 +1011,16 @@ lineAccounts.put('/api/line-accounts/:id', requireRole('owner'), async (c) => {
       }
     }
 
-    return c.json({ success: true, data: serializeLineAccountFull(updated) });
+    // B-10: a credential rotation invalidates the previous webhook probe —
+    // re-probe (non-fatal) so connection health reflects the current token.
+    if (credentialsTouched) {
+      await recordWebhookHealthAfterChange(c.env.DB, c.env, updated);
+    }
+
+    // Masked, not full: an update may touch only non-secret fields (or send an
+    // empty body), in which case the echoed secrets would be the *stored* ones —
+    // reopening exactly the read path the GET masking above closes.
+    return c.json({ success: true, data: serializeLineAccountMasked(updated) });
   } catch (err) {
     console.error('PUT /api/line-accounts/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);

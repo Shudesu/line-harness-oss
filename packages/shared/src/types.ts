@@ -271,6 +271,8 @@ export interface Broadcast {
   totalCount: number;
   /** 配信成功人数 */
   successCount: number;
+  /** 直近の送信失敗理由 (クォータ不足ガード等)。送信成功で null に戻る */
+  lastError?: string | null;
   /** 作成日時 (ISO 8601) */
   createdAt: string;
 }
@@ -857,7 +859,10 @@ export interface AutomationLog {
 // -----------------------------------------------------------------------------
 // スタッフ (StaffMember)
 // -----------------------------------------------------------------------------
+export type StaffApiScope = 'messages:read' | 'messages:send';
+
 export interface StaffMember {
+  apiScopes?: StaffApiScope[] | null;
   id: string;
   name: string;
   email: string | null;

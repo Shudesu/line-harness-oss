@@ -1,6 +1,18 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
+import { FloppyDiskIcon, PlusIcon, TrashIcon, XIcon } from '@phosphor-icons/react'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input, InputArea } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Table } from '@cloudflare/kumo/components/table'
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FlexPreviewComponent from '@/components/flex-preview'
@@ -41,11 +53,24 @@ const messageTypeLabels: Record<string, string> = {
   carousel: 'Carousel',
 }
 
-const typeBadgeColor: Record<string, string> = {
-  text: 'bg-gray-100 text-gray-700',
-  flex: 'bg-purple-100 text-purple-700',
-  image: 'bg-blue-100 text-blue-700',
-  carousel: 'bg-amber-100 text-amber-700',
+const filterOptions: Array<{ key: TypeFilter; label: string }> = [
+  { key: 'all', label: '全て' },
+  { key: 'text', label: 'テキスト' },
+  { key: 'flex', label: 'Flex' },
+  { key: 'image', label: '画像' },
+  { key: 'unused', label: '未使用' },
+]
+
+const messageTypeItems = [
+  { value: 'text', label: 'テキスト' },
+  { value: 'flex', label: 'Flex' },
+  { value: 'image', label: '画像' },
+]
+
+function messageTypeVariant(type: string): 'neutral' | 'info' | 'warning' {
+  if (type === 'image') return 'info'
+  if (type === 'carousel') return 'warning'
+  return 'neutral'
 }
 
 function formatDate(iso: string): string {
@@ -78,8 +103,9 @@ export default function TemplatesPage() {
   const [form, setForm] = useState({ name: '', category: 'general', messageType: 'text', messageContent: '' })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<Template | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  // Drawer
   const [drawerId, setDrawerId] = useState<string | null>(null)
   const [drawerData, setDrawerData] = useState<TemplateDetail | null>(null)
   const [scenarioStepUsages, setScenarioStepUsages] = useState<Array<{
@@ -92,18 +118,16 @@ export default function TemplatesPage() {
   const [drawerError, setDrawerError] = useState<string | null>(null)
   const [editContent, setEditContent] = useState<string | null>(null)
   const [editName, setEditName] = useState<string | null>(null)
+  const [editError, setEditError] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await api.templates.list()
-      if (res.success) {
-        setTemplates(res.data)
-      } else {
-        setError(res.error)
-      }
+      const response = await api.templates.list()
+      if (response.success) setTemplates(response.data)
+      else setError(response.error)
     } catch {
       setError('テンプレートの読み込みに失敗しました。')
     } finally {
@@ -111,11 +135,16 @@ export default function TemplatesPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { void load() }, [load])
 
-  // Drawer fetch
   useEffect(() => {
-    if (!drawerId) { setDrawerData(null); setDrawerError(null); setScenarioStepUsages([]); return }
+    if (!drawerId) {
+      setDrawerData(null)
+      setDrawerError(null)
+      setScenarioStepUsages([])
+      return
+    }
+
     let cancelled = false
     setDrawerLoading(true)
     setDrawerError(null)
@@ -124,48 +153,52 @@ export default function TemplatesPage() {
     Promise.all([
       api.templates.get(drawerId),
       api.templates.usages(drawerId).catch(() => null),
-    ]).then(([detailRes, usagesRes]) => {
+    ]).then(([detailResponse, usagesResponse]) => {
       if (cancelled) return
-      if (detailRes.success && detailRes.data) {
-        setDrawerData(detailRes.data)
-      } else {
-        setDrawerError((detailRes as { error?: string }).error ?? '読み込みに失敗しました')
-      }
-      if (usagesRes && usagesRes.success) {
-        setScenarioStepUsages(usagesRes.data.scenarioSteps)
-      }
-    }).catch((err) => {
-      if (cancelled) return
-      setDrawerError(err instanceof Error ? err.message : String(err))
+      if (detailResponse.success && detailResponse.data) setDrawerData(detailResponse.data)
+      else setDrawerError((detailResponse as { error?: string }).error ?? '読み込みに失敗しました')
+      if (usagesResponse?.success) setScenarioStepUsages(usagesResponse.data.scenarioSteps)
+    }).catch((reason) => {
+      if (!cancelled) setDrawerError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => {
       if (!cancelled) setDrawerLoading(false)
     })
     return () => { cancelled = true }
   }, [drawerId])
 
-  // reset edits when drawer changes
-  useEffect(() => { setEditContent(null); setEditName(null) }, [drawerId])
+  useEffect(() => {
+    setEditContent(null)
+    setEditName(null)
+    setEditError('')
+  }, [drawerId])
 
-  const filteredTemplates = templates.filter((t) => {
+  const filteredTemplates = templates.filter((template) => {
     if (typeFilter === 'all') return true
-    if (typeFilter === 'unused') return t.usageCount === 0
-    return t.messageType === typeFilter
+    if (typeFilter === 'unused') return template.usageCount === 0
+    return template.messageType === typeFilter
   })
 
-  const handleCreate = async () => {
-    if (!form.name.trim()) { setFormError('テンプレート名を入力してください'); return }
-    if (!form.messageContent.trim()) { setFormError('メッセージ内容を入力してください'); return }
+  const handleCreate = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!form.name.trim()) {
+      setFormError('テンプレート名を入力してください')
+      return
+    }
+    if (!form.messageContent.trim()) {
+      setFormError('メッセージ内容を入力してください')
+      return
+    }
     setSaving(true)
     setFormError('')
     try {
-      const res = await api.templates.create(form)
-      if (res.success) {
-        setShowCreate(false)
-        setForm({ name: '', category: 'general', messageType: 'text', messageContent: '' })
-        load()
-      } else {
-        setFormError(res.error)
+      const response = await api.templates.create(form)
+      if (!response.success) {
+        setFormError(response.error)
+        return
       }
+      setShowCreate(false)
+      setForm({ name: '', category: 'general', messageType: 'text', messageContent: '' })
+      await load()
     } catch {
       setFormError('作成に失敗しました')
     } finally {
@@ -175,12 +208,13 @@ export default function TemplatesPage() {
 
   const handleSaveEdit = async () => {
     if (!drawerData) return
+    setEditError('')
     if (editContent !== null && !editContent.trim()) {
-      setError('内容を空にはできません')
+      setEditError('内容を空にはできません')
       return
     }
     if (editName !== null && !editName.trim()) {
-      setError('名前を空にはできません')
+      setEditError('名前を空にはできません')
       return
     }
     setSavingEdit(true)
@@ -188,30 +222,40 @@ export default function TemplatesPage() {
       const updates: Record<string, string> = {}
       if (editContent !== null) updates.messageContent = editContent
       if (editName !== null) updates.name = editName
-      await api.templates.update(drawerData.id, updates)
-      const r = await api.templates.get(drawerData.id)
-      if (r.success && r.data) setDrawerData(r.data)
+      const updateResponse = await api.templates.update(drawerData.id, updates)
+      if (!updateResponse.success) {
+        setEditError(updateResponse.error)
+        return
+      }
+      const detailResponse = await api.templates.get(drawerData.id)
+      if (detailResponse.success && detailResponse.data) setDrawerData(detailResponse.data)
       setEditContent(null)
       setEditName(null)
-      load()
+      await load()
     } catch {
-      setError('更新に失敗しました')
+      setEditError('更新に失敗しました')
+    } finally {
+      setSavingEdit(false)
     }
-    setSavingEdit(false)
   }
 
-  const handleDelete = async (id: string, usageCount: number) => {
-    if (usageCount > 0) {
-      if (!confirm(`このテンプレートは ${usageCount} 箇所で使用されています。削除すると参照がクリアされます。続行しますか？`)) return
-    } else {
-      if (!confirm('このテンプレートを削除しますか？')) return
-    }
+  const handleDelete = async () => {
+    if (!pendingDelete || deleting) return
+    setDeleting(true)
+    setError('')
     try {
-      await api.templates.delete(id)
-      if (drawerId === id) setDrawerId(null)
-      load()
+      const response = await api.templates.delete(pendingDelete.id)
+      if (!response.success) {
+        setError(response.error)
+        return
+      }
+      if (drawerId === pendingDelete.id) setDrawerId(null)
+      setPendingDelete(null)
+      await load()
     } catch {
       setError('削除に失敗しました')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -219,382 +263,329 @@ export default function TemplatesPage() {
     <div>
       <Header
         title="テンプレート管理"
-        action={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規テンプレート
-          </button>
-        }
+        description="繰り返し使うLINEメッセージを一か所で管理します。"
+        action={(
+          <Button type="button" variant="primary" icon={PlusIcon} onClick={() => setShowCreate(true)}>
+            新規テンプレート
+          </Button>
+        )}
       />
 
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
+      {error ? <Banner className="mb-4" variant="error" title="操作を完了できませんでした" description={error} /> : null}
 
-      {/* Type filter */}
-      <div className="mb-4 flex flex-wrap gap-2">
-        {([
-          { key: 'all', label: '全て' },
-          { key: 'text', label: 'テキスト' },
-          { key: 'flex', label: 'Flex' },
-          { key: 'image', label: '画像' },
-          { key: 'unused', label: '未使用' },
-        ] as const).map(({ key, label }) => (
-          <button
+      <div className="mb-4 flex flex-wrap gap-2" aria-label="テンプレートの絞り込み">
+        {filterOptions.map(({ key, label }) => (
+          <Button
             key={key}
+            type="button"
+            size="sm"
+            variant={typeFilter === key ? 'primary' : 'secondary'}
+            aria-pressed={typeFilter === key}
             onClick={() => setTypeFilter(key)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
-              typeFilter === key ? 'text-white' : 'text-gray-600 bg-gray-100 hover:bg-gray-200'
-            }`}
-            style={typeFilter === key ? { backgroundColor: '#06C755' } : undefined}
           >
             {label}
-          </button>
+          </Button>
         ))}
       </div>
 
-      {/* Create form */}
-      {showCreate && (
-        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">新規テンプレートを作成</h2>
-          <div className="space-y-4 max-w-lg">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">名前 <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                placeholder="例: コスト比較 flex"
+      {showCreate ? (
+        <LayerCard className="mb-6 p-6">
+          <h2 className="mb-4 text-sm font-semibold text-kumo-strong">新規テンプレートを作成</h2>
+          <form onSubmit={handleCreate} className="max-w-2xl space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="名前"
+                required
+                placeholder="例: コスト比較 Flex"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onValueChange={(value) => setForm((current) => ({ ...current, name: value }))}
               />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">カテゴリ</label>
-              <input
-                type="text"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                placeholder="例: general, 挨拶, 返信"
+              <Input
+                label="カテゴリ"
+                placeholder="例: general、挨拶、返信"
                 value={form.category}
-                onChange={(e) => setForm({ ...form, category: e.target.value })}
+                onValueChange={(value) => setForm((current) => ({ ...current, category: value }))}
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">タイプ</label>
-              <select
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-                value={form.messageType}
-                onChange={(e) => setForm({ ...form, messageType: e.target.value })}
-              >
-                <option value="text">テキスト</option>
-                <option value="flex">Flex</option>
-                <option value="image">画像</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">内容 / JSON <span className="text-red-500">*</span></label>
-              {form.messageType === 'image' ? (
-                <ImageUploader
-                  mode="line-image"
-                  value={(() => {
-                    try {
-                      const parsed = JSON.parse(form.messageContent) as { originalContentUrl?: string; previewImageUrl?: string }
-                      if (parsed.originalContentUrl) {
-                        return {
-                          mode: 'line-image' as const,
-                          originalContentUrl: parsed.originalContentUrl,
-                          previewImageUrl: parsed.previewImageUrl ?? parsed.originalContentUrl,
-                        }
+            <Select
+              label="タイプ"
+              value={form.messageType}
+              onValueChange={(value) => setForm((current) => ({ ...current, messageType: value ?? 'text', messageContent: '' }))}
+              items={messageTypeItems}
+            />
+            {form.messageType === 'image' ? (
+              <ImageUploader
+                mode="line-image"
+                value={(() => {
+                  try {
+                    const parsed = JSON.parse(form.messageContent) as { originalContentUrl?: string; previewImageUrl?: string }
+                    if (parsed.originalContentUrl) {
+                      return {
+                        mode: 'line-image' as const,
+                        originalContentUrl: parsed.originalContentUrl,
+                        previewImageUrl: parsed.previewImageUrl ?? parsed.originalContentUrl,
                       }
-                    } catch { /* ignore */ }
-                    return null
-                  })()}
-                  onChange={(v) => {
-                    if (v?.mode === 'line-image') {
-                      setForm((prev) => ({ ...prev, messageContent: JSON.stringify({
-                        originalContentUrl: v.originalContentUrl,
-                        previewImageUrl: v.previewImageUrl,
-                      }) }))
-                    } else {
-                      setForm((prev) => ({ ...prev, messageContent: '' }))
                     }
-                  }}
-                  label="テンプレート画像"
-                />
-              ) : (
-                <textarea
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-                  rows={form.messageType === 'flex' ? 10 : 4}
-                  placeholder={form.messageType === 'flex' ? '{"type":"bubble","body":...}' : 'メッセージ内容'}
-                  value={form.messageContent}
-                  onChange={(e) => setForm({ ...form, messageContent: e.target.value })}
-                />
-              )}
-            </div>
-
-            {formError && <p className="text-xs text-red-600">{formError}</p>}
-
+                  } catch { /* Invalid image JSON is treated as no selected image. */ }
+                  return null
+                })()}
+                onChange={(value) => {
+                  if (value?.mode === 'line-image') {
+                    setForm((current) => ({
+                      ...current,
+                      messageContent: JSON.stringify({
+                        originalContentUrl: value.originalContentUrl,
+                        previewImageUrl: value.previewImageUrl,
+                      }),
+                    }))
+                  } else {
+                    setForm((current) => ({ ...current, messageContent: '' }))
+                  }
+                }}
+                label="テンプレート画像"
+              />
+            ) : (
+              <InputArea
+                label={form.messageType === 'flex' ? 'Flex JSON' : 'メッセージ内容'}
+                required
+                value={form.messageContent}
+                onValueChange={(value) => setForm((current) => ({ ...current, messageContent: value }))}
+                minRows={form.messageType === 'flex' ? 10 : 4}
+                maxRows={16}
+                autoResize
+                className="font-mono"
+                placeholder={form.messageType === 'flex' ? '{"type":"bubble","body":...}' : 'メッセージ内容'}
+              />
+            )}
+            {formError ? <Banner variant="error" title="作成できません" description={formError} /> : null}
             <div className="flex gap-2">
-              <button
-                onClick={handleCreate}
+              <Button type="submit" variant="primary" loading={saving}>作成</Button>
+              <Button
+                type="button"
+                variant="secondary"
                 disabled={saving}
-                className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
-                style={{ backgroundColor: '#06C755' }}
-              >
-                {saving ? '作成中...' : '作成'}
-              </button>
-              <button
-                onClick={() => { setShowCreate(false); setFormError('') }}
-                className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                onClick={() => {
+                  setShowCreate(false)
+                  setFormError('')
+                }}
               >
                 キャンセル
-              </button>
+              </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </form>
+        </LayerCard>
+      ) : null}
 
-      {/* Table */}
-      {loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="px-4 py-4 border-b border-gray-100 flex items-center gap-4 animate-pulse">
-              <div className="h-5 bg-gray-100 rounded w-12" />
-              <div className="flex-1 space-y-2">
-                <div className="h-3 bg-gray-200 rounded w-48" />
-                <div className="h-2 bg-gray-100 rounded w-32" />
-              </div>
-              <div className="h-3 bg-gray-100 rounded w-12" />
-              <div className="h-3 bg-gray-100 rounded w-24" />
-            </div>
-          ))}
-        </div>
-      ) : filteredTemplates.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">該当するテンプレートがありません</p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">タイプ</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">名前</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">カテゴリ</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">使用数</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">更新日</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filteredTemplates.map((t) => (
-                  <tr
-                    key={t.id}
-                    onClick={() => setDrawerId(t.id)}
-                    className={`hover:bg-gray-50 cursor-pointer transition-colors ${drawerId === t.id ? 'bg-green-50' : ''}`}
-                  >
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${typeBadgeColor[t.messageType] ?? 'bg-gray-100 text-gray-700'}`}>
-                        {messageTypeLabels[t.messageType] ?? t.messageType}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-gray-900">{t.name}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5 truncate max-w-md">
-                        {t.messageContent.slice(0, 60)}{t.messageContent.length > 60 ? '...' : ''}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700">
-                        {t.category}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className={`text-sm ${t.usageCount === 0 ? 'text-gray-400' : 'text-gray-900 font-medium'}`}>
-                        {t.usageCount}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-500">{formatDate(t.updatedAt)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDelete(t.id, t.usageCount) }}
-                        className="px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50 rounded-md"
-                      >
-                        削除
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Drawer */}
-      {drawerId && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/30 z-30 lg:hidden"
-            onClick={() => setDrawerId(null)}
+      <LayerCard className="overflow-x-auto">
+        {loading ? (
+          <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-kumo-subtle"><Loader size="sm" /> テンプレートを読み込み中</div>
+        ) : filteredTemplates.length === 0 ? (
+          <Empty
+            size="sm"
+            title="該当するテンプレートがありません"
+            description={typeFilter === 'all' ? '最初のテンプレートを作成してください。' : '絞り込み条件を変更してください。'}
+            contents={typeFilter === 'all' ? <Button type="button" variant="primary" icon={PlusIcon} onClick={() => setShowCreate(true)}>新規テンプレート</Button> : undefined}
           />
-          <div className="fixed inset-y-0 right-0 w-full lg:w-[480px] bg-white shadow-xl border-l border-gray-200 z-40 overflow-y-auto">
-            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
+        ) : (
+          <Table className="min-w-[720px]">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>タイプ</Table.Head>
+                <Table.Head>名前</Table.Head>
+                <Table.Head>カテゴリ</Table.Head>
+                <Table.Head className="text-right">使用数</Table.Head>
+                <Table.Head>更新日</Table.Head>
+                <Table.Head />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {filteredTemplates.map((template) => (
+                <Table.Row key={template.id} className={drawerId === template.id ? 'bg-kumo-tint' : undefined}>
+                  <Table.Cell><Badge variant={messageTypeVariant(template.messageType)}>{messageTypeLabels[template.messageType] ?? template.messageType}</Badge></Table.Cell>
+                  <Table.Cell>
+                    <Button type="button" size="xs" variant="ghost" className="-ml-2" onClick={() => setDrawerId(template.id)}>
+                      {template.name}
+                    </Button>
+                    <p className="max-w-md truncate text-xs text-kumo-subtle">
+                      {template.messageContent.slice(0, 60)}{template.messageContent.length > 60 ? '…' : ''}
+                    </p>
+                  </Table.Cell>
+                  <Table.Cell><Badge variant="info">{template.category}</Badge></Table.Cell>
+                  <Table.Cell className="text-right font-medium text-kumo-default">{template.usageCount}</Table.Cell>
+                  <Table.Cell className="text-xs text-kumo-subtle">{formatDate(template.updatedAt)}</Table.Cell>
+                  <Table.Cell className="text-right whitespace-nowrap">
+                    <Button type="button" size="xs" variant="secondary" onClick={() => setDrawerId(template.id)}>詳細</Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="secondary-destructive"
+                      icon={TrashIcon}
+                      className="ml-1"
+                      onClick={() => setPendingDelete(template)}
+                    >
+                      削除
+                    </Button>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
+        )}
+      </LayerCard>
+
+      {drawerId ? (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/30 lg:hidden" aria-hidden="true" onClick={() => setDrawerId(null)} />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="template-detail-title"
+            className="fixed inset-y-0 right-0 z-40 w-full overflow-y-auto border-l border-kumo-line bg-kumo-base shadow-xl lg:w-[480px]"
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-kumo-line bg-kumo-base px-4 py-3">
+              <div className="min-w-0 flex-1">
                 {editName !== null ? (
-                  <input
-                    type="text"
-                    autoFocus
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
+                  <Input aria-label="テンプレート名" autoFocus value={editName} onValueChange={setEditName} />
                 ) : (
-                  <h3
-                    className="text-sm font-semibold truncate cursor-text"
-                    onClick={() => setEditName(drawerData?.name ?? '')}
-                    title="クリックで編集"
-                  >
-                    {drawerData?.name ?? '読み込み中...'}
+                  <h3 id="template-detail-title" className="truncate text-sm font-semibold text-kumo-strong">
+                    {drawerData?.name ?? '読み込み中…'}
                   </h3>
                 )}
               </div>
-              <button
-                onClick={() => setDrawerId(null)}
-                className="ml-2 text-gray-400 hover:text-gray-600 text-2xl leading-none px-1"
-              >
-                ×
-              </button>
+              <Button type="button" size="xs" variant="ghost" icon={XIcon} aria-label="詳細を閉じる" onClick={() => setDrawerId(null)} />
             </div>
 
             {drawerLoading ? (
-              <div className="p-6 text-sm text-gray-400">読み込み中...</div>
+              <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-kumo-subtle"><Loader size="sm" /> 詳細を読み込み中</div>
             ) : drawerError ? (
-              <div className="p-6">
-                <p className="text-sm text-red-600 mb-2">読み込みに失敗しました</p>
-                <p className="text-xs text-gray-500">{drawerError}</p>
-              </div>
+              <div className="p-4"><Banner variant="error" title="詳細を読み込めませんでした" description={drawerError} /></div>
             ) : !drawerData ? null : (
-              <div className="p-4 space-y-5">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${typeBadgeColor[drawerData.messageType] ?? 'bg-gray-100 text-gray-700'}`}>
-                    {messageTypeLabels[drawerData.messageType] ?? drawerData.messageType}
-                  </span>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700">
-                    {drawerData.category}
-                  </span>
-                  <span className="text-[10px] text-gray-400">
-                    更新: {formatDate(drawerData.updatedAt)}
-                  </span>
+              <div className="space-y-5 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={messageTypeVariant(drawerData.messageType)}>{messageTypeLabels[drawerData.messageType] ?? drawerData.messageType}</Badge>
+                  <Badge variant="info">{drawerData.category}</Badge>
+                  <span className="text-xs text-kumo-subtle">更新: {formatDate(drawerData.updatedAt)}</span>
+                  {editName === null ? <Button type="button" size="xs" variant="ghost" onClick={() => setEditName(drawerData.name)}>名前を編集</Button> : null}
                 </div>
 
-                {/* Preview */}
-                <div>
-                  <h4 className="text-[11px] font-medium text-gray-500 mb-1.5 uppercase tracking-wide">プレビュー</h4>
-                  <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 overflow-x-auto">
+                <section>
+                  <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-kumo-subtle">プレビュー</h4>
+                  <div className="overflow-x-auto rounded-lg border border-kumo-line bg-kumo-tint p-3">
                     {drawerData.messageType === 'flex' ? (
                       (() => {
                         try {
                           return <FlexPreviewComponent content={drawerData.messageContent} maxWidth={420} />
                         } catch {
-                          return <p className="text-xs text-red-500">Flex JSON parse 失敗</p>
+                          return <p className="text-xs text-kumo-danger">Flex JSONを読み取れません</p>
                         }
                       })()
                     ) : drawerData.messageType === 'image' ? (
                       (() => {
                         try {
-                          const parsed = JSON.parse(drawerData.messageContent)
-                          return <img src={parsed.originalContentUrl || parsed.previewImageUrl} alt="" className="max-w-full rounded" />
+                          const parsed = JSON.parse(drawerData.messageContent) as { originalContentUrl?: string; previewImageUrl?: string }
+                          return <img src={parsed.originalContentUrl || parsed.previewImageUrl} alt="テンプレート画像のプレビュー" className="max-w-full rounded" />
                         } catch {
-                          return <pre className="text-xs whitespace-pre-wrap">{drawerData.messageContent}</pre>
+                          return <pre className="whitespace-pre-wrap text-xs">{drawerData.messageContent}</pre>
                         }
                       })()
                     ) : (
-                      <p className="text-sm whitespace-pre-wrap break-words">{drawerData.messageContent}</p>
+                      <p className="whitespace-pre-wrap break-words text-sm text-kumo-default">{drawerData.messageContent}</p>
                     )}
                   </div>
-                </div>
+                </section>
 
-                {/* Edit JSON / content */}
-                <div>
-                  <h4 className="text-[11px] font-medium text-gray-500 mb-1.5 uppercase tracking-wide">内容 / JSON 編集</h4>
-                  <textarea
-                    rows={drawerData.messageType === 'flex' ? 12 : 4}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
-                    value={editContent ?? drawerData.messageContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                  />
-                </div>
+                <InputArea
+                  label="内容 / JSON編集"
+                  value={editContent ?? drawerData.messageContent}
+                  onValueChange={setEditContent}
+                  minRows={drawerData.messageType === 'flex' ? 12 : 4}
+                  maxRows={18}
+                  autoResize
+                  className="font-mono"
+                />
 
-                {(editContent !== null || editName !== null) && (
+                {editError ? <Banner variant="error" title="保存できません" description={editError} /> : null}
+
+                {editContent !== null || editName !== null ? (
                   <div className="flex gap-2">
-                    <button
-                      onClick={handleSaveEdit}
+                    <Button type="button" size="sm" variant="primary" icon={FloppyDiskIcon} loading={savingEdit} onClick={() => void handleSaveEdit()}>保存</Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
                       disabled={savingEdit}
-                      className="px-3 py-1.5 text-xs font-medium text-white rounded-md disabled:opacity-50"
-                      style={{ backgroundColor: '#06C755' }}
-                    >
-                      {savingEdit ? '保存中...' : '保存'}
-                    </button>
-                    <button
-                      onClick={() => { setEditContent(null); setEditName(null) }}
-                      className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md"
+                      onClick={() => {
+                        setEditContent(null)
+                        setEditName(null)
+                        setEditError('')
+                      }}
                     >
                       キャンセル
-                    </button>
+                    </Button>
                   </div>
-                )}
+                ) : null}
 
-                {/* Used by */}
-                <div>
-                  <h4 className="text-[11px] font-medium text-gray-500 mb-1.5 uppercase tracking-wide">
+                <section>
+                  <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-kumo-subtle">
                     使用箇所 ({drawerData.usedBy.autoReplies.length + drawerData.usedBy.automations.length + scenarioStepUsages.length})
                   </h4>
-                  {(drawerData.usedBy.autoReplies.length === 0 && drawerData.usedBy.automations.length === 0 && scenarioStepUsages.length === 0) ? (
-                    <p className="text-[11px] text-gray-400 italic">どこからも使用されていません</p>
+                  {drawerData.usedBy.autoReplies.length === 0 && drawerData.usedBy.automations.length === 0 && scenarioStepUsages.length === 0 ? (
+                    <p className="text-xs italic text-kumo-subtle">どこからも使用されていません</p>
                   ) : (
                     <>
-                      <ul className="space-y-1.5 text-xs">
-                        {drawerData.usedBy.autoReplies.map((ar) => (
-                          <li key={`ar-${ar.id}`}>
-                            <a href="/auto-replies" className="text-blue-600 hover:underline">
-                              🔗 自動返信: {ar.keyword} <span className="text-gray-400">({ar.matchType})</span>
-                            </a>
+                      <ul className="space-y-2 text-xs">
+                        {drawerData.usedBy.autoReplies.map((autoReply) => (
+                          <li key={`ar-${autoReply.id}`}>
+                            <Link href="/auto-replies" className="text-kumo-link hover:underline">
+                              自動返信: {autoReply.keyword} <span className="text-kumo-subtle">({autoReply.matchType})</span>
+                            </Link>
                           </li>
                         ))}
-                        {drawerData.usedBy.automations.map((au) => (
-                          <li key={`au-${au.id}`}>
-                            <a href="/automations" className="text-blue-600 hover:underline">
-                              🔗 オートメーション: {au.name} <span className="text-gray-400">({au.eventType})</span>
-                            </a>
+                        {drawerData.usedBy.automations.map((automation) => (
+                          <li key={`au-${automation.id}`}>
+                            <Link href="/automations" className="text-kumo-link hover:underline">
+                              オートメーション: {automation.name} <span className="text-kumo-subtle">({automation.eventType})</span>
+                            </Link>
                           </li>
                         ))}
-                        {scenarioStepUsages.map((ss) => (
-                          <li key={`ss-${ss.stepId}`}>
-                            <a href={`/scenarios/detail?id=${ss.scenarioId}`} className="text-blue-600 hover:underline">
-                              🎬 シナリオ: {ss.scenarioName} <span className="text-gray-400">#{ss.stepOrder}</span>
-                            </a>
+                        {scenarioStepUsages.map((scenarioStep) => (
+                          <li key={`ss-${scenarioStep.stepId}`}>
+                            <Link href={`/scenarios/detail?id=${scenarioStep.scenarioId}`} className="text-kumo-link hover:underline">
+                              シナリオ: {scenarioStep.scenarioName} <span className="text-kumo-subtle">#{scenarioStep.stepOrder}</span>
+                            </Link>
                           </li>
                         ))}
                       </ul>
-                      {scenarioStepUsages.length > 0 && (
-                        <p className="mt-2 text-[10px] text-amber-700">
-                          ⚠ このテンプレートを修正すると、上記すべてに一斉反映されます
-                        </p>
-                      )}
+                      {scenarioStepUsages.length > 0 ? (
+                        <Banner className="mt-3" variant="alert" title="変更時の注意" description="このテンプレートを修正すると、上記すべてに一斉反映されます。" />
+                      ) : null}
                     </>
                   )}
-                </div>
+                </section>
               </div>
             )}
-          </div>
+          </aside>
         </>
-      )}
+      ) : null}
+
+      <Dialog.Root
+        role="alertdialog"
+        open={pendingDelete !== null}
+        onOpenChange={(open) => { if (!open && !deleting) setPendingDelete(null) }}
+      >
+        <Dialog size="base" className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">テンプレートを削除しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">
+            {pendingDelete?.usageCount
+              ? `「${pendingDelete.name}」は${pendingDelete.usageCount}箇所で使用中です。削除すると参照が解除されます。`
+              : `「${pendingDelete?.name ?? ''}」を削除します。この操作は取り消せません。`}
+          </Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
+            <Dialog.Close render={(props) => <Button {...props} type="button" variant="secondary" disabled={deleting}>キャンセル</Button>} />
+            <Button type="button" variant="destructive" loading={deleting} onClick={() => void handleDelete()}>削除する</Button>
+          </div>
+        </Dialog>
+      </Dialog.Root>
 
       <CcPromptButton prompts={ccPrompts} />
     </div>

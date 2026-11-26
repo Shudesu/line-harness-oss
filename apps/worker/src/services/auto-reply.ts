@@ -1,7 +1,8 @@
-import type { LineClient } from '@line-crm/line-sdk';
-import { getTemplateById } from '@line-crm/db';
+import type { LineClient, Message } from '@line-crm/line-sdk';
+import { getLineAccountById, getTemplateById } from '@line-crm/db';
 import type { AutoReply, Friend } from '@line-crm/db';
 import { logOutgoingMessage } from './event-bus.js';
+import { renderBroadcastMessageContent } from './render-message.js';
 import {
   buildMessage,
   expandVariables,
@@ -9,19 +10,8 @@ import {
   resolveMetadata,
 } from './step-delivery.js';
 
-/**
- * exact/contains のキーワードマッチ述語。webhook のテキスト/postback 経路と
- * unanswered-inbox の「構造化メッセ除外」判定が同じルール解釈を共有する。
- * 未知の match_type はマッチなし扱い (誤マッチで inbox から隠すより安全側)。
- */
-export function keywordMatches(
-  rule: { keyword: string; match_type: string },
-  text: string,
-): boolean {
-  if (rule.match_type === 'exact') return text === rule.keyword;
-  if (rule.match_type === 'contains') return text.includes(rule.keyword);
-  return false;
-}
+import { keywordMatches } from './keyword-match.js';
+export { keywordMatches } from './keyword-match.js';
 
 /**
  * auto_reply 行の content/type を resolve する。template_id が set なら templates
@@ -45,6 +35,31 @@ export interface MatchAndReplyResult {
   replyTokenConsumed: boolean;
 }
 
+export type AutoReplySender = (replyToken: string, messages: Message[]) => Promise<void>;
+
+function liffIdFromUrl(liffUrl?: string): string | null {
+  if (!liffUrl) return null;
+  try {
+    const url = new URL(liffUrl);
+    if (url.hostname !== 'liff.line.me') return null;
+    return url.pathname.split('/').filter(Boolean)[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAutoReplyLiffId(
+  db: D1Database,
+  lineAccountId: string | null,
+  fallbackLiffUrl?: string,
+): Promise<string | null> {
+  if (lineAccountId) {
+    const account = await getLineAccountById(db, lineAccountId);
+    return account?.is_active && account.liff_id ? account.liff_id : null;
+  }
+  return liffIdFromUrl(fallbackLiffUrl);
+}
+
 /**
  * incomingText を auto_replies (このアカウントのルール + グローバルルール) に
  * マッチさせ、最初にマッチしたルールで replyMessage を送って messages_log に
@@ -64,20 +79,33 @@ export async function matchAndReply(
   friend: Friend,
   incomingText: string,
   replyToken: string,
-  opts: { lineAccountId?: string | null; workerUrl?: string; logContext?: string } = {},
+  opts: {
+    lineAccountId?: string | null;
+    workerUrl?: string;
+    liffUrl?: string;
+    logContext?: string;
+    replyMessage?: AutoReplySender;
+    /** Human message text is normalized; machine-defined postback data is opaque. */
+    inputKind?: 'text' | 'postback';
+  } = {},
 ): Promise<MatchAndReplyResult> {
-  const { lineAccountId = null, workerUrl, logContext } = opts;
+  const { lineAccountId = null, workerUrl, liffUrl, logContext, replyMessage } = opts;
 
   // グローバルルール (line_account_id IS NULL) + このアカウントのルール。
   // lineAccountId が null のときは `= NULL` が偽になるのでグローバルのみ残る。
   const autoReplies = await db
     .prepare(
-      `SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?) ORDER BY created_at ASC`,
+      `SELECT * FROM auto_replies
+        WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?)
+        ORDER BY CASE WHEN id = 'builtin-mileage-wallet-keyword' THEN 0 ELSE 1 END,
+                 created_at ASC`,
     )
     .bind(lineAccountId)
     .all<AutoReply>();
 
-  const rule = autoReplies.results.find((r) => keywordMatches(r, incomingText));
+  const rule = autoReplies.results.find((r) => keywordMatches(r, incomingText, {
+    normalizeText: opts.inputKind !== 'postback',
+  }));
   if (!rule) return { matched: false, replyTokenConsumed: false };
   if (rule.response_type === 'silent') return { matched: true, replyTokenConsumed: false };
 
@@ -85,14 +113,29 @@ export async function matchAndReply(
   try {
     const resolvedMeta = await resolveMetadata(db, friend);
     const resolved = await resolveAutoReplyContent(db, rule);
-    const expandedContent = expandVariables(
+    let expandedContent = expandVariables(
       resolved.content,
       { ...friend, metadata: resolvedMeta },
       workerUrl,
       resolved.messageType,
     );
+    if (/\{\{\s*liff_id\s*\}\}/.test(expandedContent)) {
+      const liffId = await resolveAutoReplyLiffId(db, lineAccountId, liffUrl);
+      if (!liffId) {
+        throw new Error('LIFF ID is not configured for the matched LINE account');
+      }
+      expandedContent = renderBroadcastMessageContent(
+        resolved.messageType,
+        expandedContent,
+        { liffId },
+      );
+    }
     const replyMsg = buildMessage(resolved.messageType, expandedContent);
-    await lineClient.replyMessage(replyToken, [replyMsg]);
+    if (replyMessage) {
+      await replyMessage(replyToken, [replyMsg]);
+    } else {
+      await lineClient.replyMessage(replyToken, [replyMsg]);
+    }
     replyTokenConsumed = true;
 
     // 送信ログ（replyMessage = 無料）— derive content from the built reply

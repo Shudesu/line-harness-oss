@@ -27,7 +27,7 @@ export interface FetchedRelease {
  * install as vanilla. A source build would report 0.0.0-dev and lock the
  * install out of automatic updates permanently.
  *
- * `pinVersion` re-selects the release a previous (resumed) setup run chose.
+ * `pinVersion` selects --release's explicit target or the saved setup target.
  * A resume must NOT float to a newer `latest`: earlier completed steps
  * (schema/migrations, deployed artifacts) belong to the pinned release, and
  * mixing releases would leave the Worker running against a mismatched
@@ -68,31 +68,31 @@ export async function fetchLatestRelease(
     throw new Error(
       pinVersion
         ? [
-            `前回のセットアップで選択したリリース v${pinVersion} が manifest に見つかりません。`,
-            "最初からやり直すには、インストールディレクトリの .line-harness-setup.json を削除して再実行してください。",
+            `指定したリリース v${pinVersion} が公開済み manifest に見つかりません。`,
+            "公開済みの互換リリースを setup --release X.Y.Z で指定してください。既存DBやセットアップ状態を削除する必要はありません。",
           ].join("\n")
         : `manifest が壊れています (latest=${manifest.latest} が releases にありません)`,
     );
   }
   if (pinVersion && pinVersion !== manifest.latest) {
     p.log.info(
-      `再開のため前回選択したリリース v${pinVersion} を継続します（最新: v${manifest.latest}。セットアップ完了後に \`npx create-line-harness update\` で更新できます）`,
+      `選択したリリース v${pinVersion} を使用します（最新: v${manifest.latest}。対象を変更する場合は setup --release X.Y.Z で公開済みの版を指定してください）`,
     );
   }
   if (!release.worker_bundle_hash) {
     // Old-pipeline release: its bundle ships a broken worker stub. Deploying
     // it would produce a dead install, so fail before touching anything.
-    s.stop(pc.red(`最新リリース v${release.version} は新しいインストーラーに未対応`));
+    s.stop(pc.red(`対象リリース v${release.version} は新しいインストーラーに未対応`));
     throw new Error(
       [
-        `最新リリース v${release.version} の bundle にはデプロイ可能な Worker が含まれていません`,
+        `対象リリース v${release.version} の bundle にはデプロイ可能な Worker が含まれていません`,
         "（新リリースパイプライン対応前の形式です）。対応リリースの公開をお待ちください。",
         "（開発用途では --from-source でソースからデプロイできます。",
         "  その場合、自動アップデートは利用できません）",
       ].join("\n"),
     );
   }
-  s.stop(`最新リリース: v${release.version}`);
+  s.stop(`対象リリース: v${release.version}`);
 
   s.start(
     `Bundle ダウンロード中 (${(release.bundle_size_bytes / 1024 / 1024).toFixed(1)} MB)...`,

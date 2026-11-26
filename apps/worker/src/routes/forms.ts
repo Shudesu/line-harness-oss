@@ -12,6 +12,7 @@ import {
   getFriendById,
   getLineAccountById,
   jstNow,
+  resolveDefaultLineAccount,
 } from '@line-crm/db';
 import { enrollFriendInScenario } from '@line-crm/db';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
@@ -49,15 +50,34 @@ async function resolveFriendAccessToken(
   return account?.channel_access_token ?? defaultAccessToken;
 }
 
+/**
+ * フォームの公開 URL（LIFF URL）を組み立てる。
+ *
+ * ホスト直下（`https://<host>/?page=form&id=...`）では **liff.init が完了せず
+ * 永遠に読み込み中になる** — クライアントは `liffId` をクエリから読む設計で、
+ * その値は `line_accounts` にしか無いため。正しくは liff.line.me 経由で開く。
+ *
+ * これをレスポンスに含めていなかったせいで、AI エージェントが自力で URL を
+ * 組み立てて動かない画面を作る事故が起きた（2026-08-25 の実戦報告）。
+ * `liffId` 未設定（LIFF 未構成）のテナントでは null を返す。
+ */
+function formPublicUrl(liffId: string | null | undefined, formId: string): string | null {
+  if (!liffId) return null;
+  return `https://liff.line.me/${liffId}?page=form&id=${formId}`;
+}
+
 function serializeForm(
   row: DbForm,
-  extra?: { lastSubmittedAt?: string | null; usedByAccounts?: FormUsedByAccount[] },
+  extra?: { lastSubmittedAt?: string | null; usedByAccounts?: FormUsedByAccount[]; liffId?: string | null },
 ) {
   return {
     id: row.id,
+    /** 公開 URL（LIFF）。LIFF 未設定なら null。ホスト直下の URL では動かない。 */
+    formUrl: formPublicUrl(extra?.liffId, row.id),
     name: row.name,
     description: row.description,
-    fields: JSON.parse(row.fields || '[]') as unknown[],
+    fields: (JSON.parse(row.fields || '[]') as Array<{name?:string}>).filter(field=>field.name!=='x_username'),
+    xGateMigrationRequired: !!publicWebhookConfig(row).webhookGateId || (JSON.parse(row.fields || '[]') as Array<{name?:string}>).some(field=>field.name==='x_username'),
     onSubmitTagId: row.on_submit_tag_id,
     onSubmitScenarioId: row.on_submit_scenario_id,
     onSubmitMessageType: row.on_submit_message_type,
@@ -102,17 +122,50 @@ function publicWebhookConfig(row: DbForm): {
   }
 }
 
-function serializePublicForm(row: DbForm) {
+function serializePublicForm(
+  row: DbForm,
+  consultationWebinarSlug: string | null = null,
+) {
   return {
     id: row.id,
     name: row.name,
     description: row.description,
-    fields: JSON.parse(row.fields || '[]') as unknown[],
+    fields: (JSON.parse(row.fields || '[]') as Array<{name?:string}>).filter(field=>field.name!=='x_username'),
+    xGateMigrationRequired: !!publicWebhookConfig(row).webhookGateId || (JSON.parse(row.fields || '[]') as Array<{name?:string}>).some(field=>field.name==='x_username'),
     isActive: Boolean(row.is_active),
     onSubmitMessageContent: row.on_submit_message_content,
     onSubmitWebhookFailMessage: row.on_submit_webhook_fail_message,
+    // When this form belongs to an active webinar consultation funnel, the
+    // LIFF form can switch directly to the same slot picker used by the live
+    // CTA. The slug is public routing information; menu/staff IDs remain
+    // server-side authorities and are never accepted from the browser.
+    consultationWebinarSlug,
     ...publicWebhookConfig(row),
   };
+}
+
+async function consultationWebinarSlugForForm(
+  db: D1Database,
+  formId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT w.slug
+         FROM webinar_ctas wc
+         INNER JOIN webinars w
+           ON w.id = wc.webinar_id AND w.status = 'active'
+         INNER JOIN webinar_followup_configs cfg
+           ON cfg.webinar_id = w.id
+          AND cfg.is_active = 1
+          AND cfg.booking_menu_id IS NOT NULL
+        WHERE wc.form_id = ?
+        ORDER BY datetime(COALESCE(cfg.stage_enabled_at, cfg.enabled_at)) DESC,
+                 datetime(w.updated_at) DESC
+        LIMIT 1`,
+    )
+    .bind(formId)
+    .first<{ slug: string }>();
+  return row?.slug ?? null;
 }
 
 function serializeSubmission(row: DbFormSubmission & { friend_name?: string | null }) {
@@ -130,12 +183,14 @@ function serializeSubmission(row: DbFormSubmission & { friend_name?: string | nu
 forms.get('/api/forms', async (c) => {
   try {
     const items = await getFormsWithStats(c.env.DB);
+    const liffId = (await resolveDefaultLineAccount(c.env.DB))?.liff_id ?? null;
     return c.json({
       success: true,
       data: items.map((row) =>
         serializeForm(row, {
           lastSubmittedAt: row.last_submitted_at,
           usedByAccounts: row.used_by_accounts,
+          liffId,
         }),
       ),
     });
@@ -153,7 +208,12 @@ forms.get('/api/forms/:id', async (c) => {
     if (!form) {
       return c.json({ success: false, error: 'Form not found' }, 404);
     }
-    const data = c.get('staff') ? serializeForm(form) : serializePublicForm(form);
+    const data = c.get('staff')
+      ? serializeForm(form, { liffId: (await resolveDefaultLineAccount(c.env.DB))?.liff_id ?? null })
+      : serializePublicForm(
+          form,
+          await consultationWebinarSlugForForm(c.env.DB, id),
+        );
     return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/forms/:id error:', err);
@@ -202,7 +262,8 @@ forms.post('/api/forms', async (c) => {
       ogImageUrl: body.ogImageUrl ?? null,
     });
 
-    return c.json({ success: true, data: serializeForm(form) }, 201);
+    const liffId = (await resolveDefaultLineAccount(c.env.DB))?.liff_id ?? null;
+    return c.json({ success: true, data: serializeForm(form, { liffId }) }, 201);
   } catch (err) {
     console.error('POST /api/forms error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -255,7 +316,8 @@ forms.put('/api/forms/:id', async (c) => {
       return c.json({ success: false, error: 'Form not found' }, 404);
     }
 
-    return c.json({ success: true, data: serializeForm(updated) });
+    const liffId = (await resolveDefaultLineAccount(c.env.DB))?.liff_id ?? null;
+    return c.json({ success: true, data: serializeForm(updated, { liffId }) });
   } catch (err) {
     console.error('PUT /api/forms/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -381,6 +443,9 @@ forms.post('/api/forms/:id/submit', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
     const friendId = friend.id;
+    if(publicWebhookConfig(form).webhookGateId || (JSON.parse(form.fields || '[]') as Array<{name?:string}>).some(field=>field.name==='x_username'))return c.json({success:false,error:'この企画はLINE先行の参加方法に更新されています。参加リンクからお進みください。',code:'x_gate_migration_required'},409);
+
+
 
     // Validate required fields
     const fields = JSON.parse(form.fields || '[]') as Array<{
@@ -631,7 +696,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
               contents: [
                 ...answerRows,
                 { type: 'separator', margin: 'lg' },
-                { type: 'text', text: '他社サービスでは、フォームの回答内容に合わせたリアルタイム返信はできません。LINE Harnessだからこそ可能な体験です。', size: 'xs', color: '#06C755', weight: 'bold', wrap: true, margin: 'lg' },
+                { type: 'text', text: '他社サービスでは、フォームの回答内容に合わせたリアルタイム返信はできません。L Harnessだからこそ可能な体験です。', size: 'xs', color: '#06C755', weight: 'bold', wrap: true, margin: 'lg' },
               ],
               paddingAll: '20px',
             },

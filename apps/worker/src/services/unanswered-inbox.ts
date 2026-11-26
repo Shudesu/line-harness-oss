@@ -40,7 +40,7 @@ function matchesAnyKeyword(
   rules: ActiveRuleRow[],
 ): boolean {
   if (messageType !== 'text') return false;
-  return rules.some((ar) => keywordMatches(ar, content));
+  return rules.some((ar) => keywordMatches(ar, content, { normalizeText: true }));
 }
 
 // 同じ incoming に対して outgoing 'auto_reply' (delivery_type='reply') が

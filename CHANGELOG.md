@@ -1,0 +1,192 @@
+# Changelog
+
+## [0.26.2] - 2026-11-16
+
+### ウェビナー管理
+
+- ウェビナーの削除、コメント一括更新、CTA一括更新をowner/adminに統一。
+- staffと権限コンテキスト未設定の要求を403で拒否し、DB処理を行わない回帰テストを追加。
+
+### 管理画面
+
+- Admin dashboard keeps the shell (banner + sidebar) during the auth check and swaps only the content area to a partial skeleton; the check runs once on mount with a stale-while-revalidate optimistic display.
+- chats: lists and conversations keep the previous data while re-fetching; stale responses are discarded by generation counter, account switching shows a partial skeleton and same-chat refreshes only a thin progress bar; account resolution happens before the first list/friends fetch (no double mount fetch); scroll follows only right after switching or near the bottom (no runaway jumps while reading history); unread badge aggregation debounced to 5s.
+- worker: messages_log history fetch gets a rowid tie-break so same-second messages keep a stable order.
+- Copy "LINE CRM" replaced with "L Harness" in the UI.
+
+### API・接続診断
+
+- LINE user IDによるアカウント内の友だち検索と、API更新の任意のIdempotency-Key対応を追加。[API仕様・移行条件](docs/api-idempotency.md)。
+- LINE接続ヘルス診断、Webhook endpointの確認・明示的な修正操作を追加。
+
+### リリース時の注意
+
+- v0.26.1からの更新では、既存mainに取り込まれたmigration 074〜077が対象です。認証変更の移行条件と再ログインが必要なため、[v0.26.2リリースノート](docs/release-notes/v0.26.2.md)を先に確認してください。
+
+- Instagram連携リンクに署名付きトークン `igt` を追加。LINE Harnessを先に更新し、IG Harness側の対応後に `IG_LINK_TOKEN_POLICY=prefer` → `require` を推奨します。既定は `off` のままです。
+- migration `075_ig_link_token_uses.sql` を適用してください（spec 08原文の076ではなく、このブランチでは074に続く075）。`prefer` では未署名リンクのIG復帰マイルを付与せず、`require` では未署名リンクを紐付けません。[形式・環境変数・移行手順](docs/IG_LINK_TOKEN.md)。
+
+### Breaking changes
+
+- `ADMIN_API_KEY` / `NEXT_PUBLIC_ADMIN_API_KEY` と `x-admin-api-key` による更新認証を廃止。管理画面の更新にはオーナーのCookieセッションとCSRFを使用してください。通常のAPI連携はスタッフAPIキーまたはサーバー側 `API_KEY` を使用します。
+- セッションと保存済みスタッフキーをハッシュ形式へ移行するため、全ユーザーの再ログインが必要です。元のAPIキーは引き続き利用できますが、保存値から復元できません。
+- 受信画像（旧 `/images/incoming-*` を含む）の取得には認証が必要です。
+- 更新前に migration `074_security_hardening.sql` を適用し、Worker・管理画面を更新後、スタッフキーのバックフィルと再ログインを行ってください。[詳細手順](docs/SECURITY-UPGRADE.md)。
+
+## [0.26.1] - 2026-11-01
+
+- LIFF SDKを2.31.2へ更新し、依存関係の下限とlockfileを修正。
+- URL内の疑問符を保持する回帰テストを追加。
+- 個別のマイル残高取得時の全履歴走査を削減（#415）。
+
+詳細: [リリースノート](docs/release-notes/v0.26.1.md)。
+
+## [0.26.0] - 2026-10-27
+
+Xキャンペーンの運営者通知・残数・明示オプトイン・先行案内下書き。詳細はdocs/release-notes/v0.26.0.md。
+
+## v0.25.0 (2026-10-27)
+
+- LINE先行のXキャンペーン参加、合言葉表示、本人確認と結果表示を追加。
+- XとのHMAC連携、タグ・シナリオ、再送・二重通知防止、アカウント固定を追加。
+- X ID自己申告フォームを新参加フローへ移行し、旧送信を停止。
+- 対応するX側の更新と追加migration・連携キーが必要。
+
+詳細: [リリースノート](docs/release-notes/v0.25.0.md)。
+
+## v0.24.3 (2026-10-20)
+
+- Meet コールバックの署名検証を必須化し、結果通知を送信履歴が残るHarnessプロキシへ変更。
+- Stripe Webhookの署名キー未設定時は503で拒否。両連携で署名と時刻を検証し、不正入力による副作用を防止。
+- 管理画面とAPIのバージョンを0.24.3に更新。
+- 利用中の連携は更新前に署名キー・送信側の準備が必要です。[リリースノート](docs/release-notes/v0.24.3.md)を参照してください。
+
+## v0.24.1 (2026-09-11)
+
+### 更新・セットアップ
+
+- 旧環境のマイル履歴を、既存の付与を重複させずに引き継ぐ更新処理を追加。
+  SQLトリガーを含むマイグレーションを更新前に検証
+- セットアップの対象リリースを `--release X.Y.Z` で変更可能にし、
+  認証設定に失敗した場合も保存済み設定を保って再開できるよう修正
+- Git更新中のWorker設定の手編集を検出し、内容・権限を保護。
+  ソース版の依存関係準備とLINEアカウントへのLIFF ID保存を修正
+- 更新ダイアログの進捗表示と閉じる操作を、画面内で確認できるよう改善
+- 未対応一覧・サイドバーの定期取得を非表示時・5分間無操作時に停止し、
+  友だち一覧のタグ取得をページ単位で一括化
+
+### 配信・認証・運用
+
+- タグ・セグメント配信の対象を送信元LINEアカウント内に限定
+- タグ自動付与後のシナリオ・自動化とリッチメニュー切替へアカウント情報を引き継ぎ、循環実行を制限
+- チャット返信URLの計測と友だちへの紐付けを行い、実際の送信内容をログへ保存。
+  テスト送信のURL計測は `WORKER_URL` 未設定時にも対応
+- テキストのキーワード判定を全角・半角と前後空白に対応させ、LIFF経由のOAuthクエリ引き継ぎを修正
+- 顧客情報APIの認証、リンク表示・転送先、管理画面のCORSを修正。
+  予約の重なり、問い合わせ日時のJST表記、DB時刻の初期値も検証
+- プラグインマーケットのベータ版と、独立したプラグイン雛形を追加
+
+### 更新方法
+
+このリリースの更新manifestはschema 2です。旧管理画面・旧CLIで更新確認が
+失敗する場合は、`create-line-harness@0.2.12` から更新してください。
+セットアップ途中の場合の再開方法と注意点は
+[v0.24.1 リリースノート](docs/release-notes/v0.24.1.md) を参照してください。
+
+```bash
+npx create-line-harness@0.2.12 update
+```
+
+## v0.23.2 (2026-09-02)
+
+### D1ヘルスログのrows_read超過
+
+- v0.23.1で追加した最新ヘルス状態の参照が、履歴の多い環境で
+  `account_health_logs`を広く読み取る問題を修正
+- `(line_account_id, created_at DESC)`の複合インデックスと既存環境向け
+  migration 072を追加。古いヘルス履歴を削除せずに更新可能
+- sandbox D1の10,000件履歴で、最新1件クエリのrows_readが20,000から1へ
+  減ることを確認
+
+### その他の修正
+
+- リッチメニュー切替postbackをシステム通知としてチャット履歴へ表示
+- L Harnessのfaviconを追加
+
+## v0.23.1 (2026-08-27)
+
+### 管理画面ログイン 405（v0.23.0 回帰）
+
+- 公式bundleから更新した通常版の管理画面が、Worker APIではなくCloudflare Pages自身へ
+  `POST /api/auth/login`を送り、405でログインできなくなる問題を修正
+- 通常版の`worker-origin`とCloud共有ビルドの`same-origin`を明示的に分離し、
+  URLプレースホルダーの置換結果から構成を推測しないよう変更
+- v0.23.0の二重置換、通常版の未置換設定、Cloud版の同一オリジン設定に回帰テストを追加
+
+### その他の修正
+
+- 5分cronのみの環境でも5分ごとの定期処理が確実に動作するよう修正
+- ヘルスチェックの不要な毎分ログ書き込みを停止
+- 管理画面のチャット入力欄のはみ出しとFlexメッセージのプレビュー崩れを修正
+
+## Brand name update (2026-08-19)
+
+- Public product display name changed from the former name to **L Harness**.
+- Repository URLs, npm package names, CLI commands, and internal identifiers
+  remain unchanged for backward compatibility.
+- Added [BRAND.md](BRAND.md) with naming and third-party trademark policy.
+
+## v0.21.3 (2026-08-15)
+
+### Worker Assetsアップロードの修正（2026-08-16）
+
+- Cloudflare Workers Assets APIへ送るmanifestキーを必須の`/`始まりへ修正
+- migration完了後、Assets upload session作成時にHTTP 400（code 10304）で停止する問題を解消
+- 修正版CLI `create-line-harness@0.2.8` / update engine `0.0.10`を公開
+- Cloudflare Pagesのasset keyをWrangler互換BLAKE3へ修正し、deploy成功後に全パスHTTP 500となる問題を解消
+- Adminのみを安全に再同期する修正版CLI `create-line-harness@0.2.9` / update engine `0.0.11`を公開
+
+### 安全なアップデート経路
+
+- Worker本体と `apps/worker/dist/client` のWorker Assetsを同じリリースbundleに同梱し、一体で更新
+- v0.14.1〜v0.21.2のDBを、037以降の累積マイグレーションで直接最新版へ収束
+- マイグレーションをSQL文単位で適用し、途中適用されたファイルも未適用文だけ継続
+- 適用済みファイルのチェックサム台帳を追加し、再実行時のDML重複を防止
+- 破壊的DDLを更新開始前に拒否
+- Worker Versionを保存し、失敗時にコード・bindings・Assetsをまとめてロールバック
+- CLIの途中失敗後は、同じupdateコマンドの再実行でWorker・Admin・LIFFを再同期
+- 旧形式の `?page=webinar&slug=...` をLIFF Pagesのウェビナー画面へ転送
+
+### 更新方法
+
+Worker Assets対応前のバージョンでは、管理画面内の更新ボタンではなく次を実行してください。
+
+```bash
+npx create-line-harness@latest update
+```
+
+## v0.21.0 (2026-08-14)
+
+### ライブCTAから個別相談を即時確定
+
+- オートウェビナーのフォーム送信後、その画面のまま空き枠を選び、個別相談を即時確定
+- L Harnessの受付時間、日付別枠、既存予約、Google Calendarの予定、60分のリードタイムを反映し、確定直前にも二重予約を検査
+- Google Meet付き予定、`meet_consultations`、前日・1時間前のLINEリマインド、確定通知を一括作成
+- 管理画面からGoogleアカウント本人が許可するOAuth接続を追加。サービスアカウントキーとカレンダー共有は不要
+- OAuth権限は `calendar.events` と `calendar.events.freebusy` の2つだけに限定
+- 設定とエラー解決を `docs/wiki/28-Google-Calendar-and-Webinar-Booking.md` に追加
+
+### その他
+
+- シナリオ・自動応答の友だち別送信でも `{{liff_id}}` を配信アカウントへ追従
+- 「マイル」キーワードで、ユーザー本人のマイルページをreply messageで返信
+- メディア問い合わせをD1へ保存し、通知成否を記録
+- 即時ステップ配信がcronと同じ条件判定を行うよう修正
+- チャット一覧のプレビュー・並び順・ページングを、プロキシ送信を含む実際の最新メッセージへ統一
+
+### Database
+
+- migration 067: 「マイル」キーワード自動返信
+- migration 068: メディア問い合わせ保存
+
+過去の変更は [GitHub Releases](https://github.com/Shudesu/line-harness-oss/releases) を参照してください。

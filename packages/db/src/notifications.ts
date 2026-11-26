@@ -22,6 +22,7 @@ export interface NotificationRow {
   channel: string;
   status: string;
   metadata: string | null;
+  line_account_id: string | null;
   created_at: string;
 }
 
@@ -86,13 +87,34 @@ export async function getNotifications(db: D1Database, opts: { status?: string; 
 
 export async function createNotification(
   db: D1Database,
-  input: { ruleId?: string; eventType: string; title: string; body: string; channel: string; metadata?: string },
+  input: { ruleId?: string; eventType: string; title: string; body: string; channel: string; metadata?: string; status?: string; lineAccountId?: string | null },
 ): Promise<NotificationRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
-  await db.prepare(`INSERT INTO notifications (id, rule_id, event_type, title, body, channel, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.ruleId ?? null, input.eventType, input.title, input.body, input.channel, input.metadata ?? null, now).run();
+  await db.prepare(`INSERT INTO notifications (id, rule_id, event_type, title, body, channel, status, metadata, line_account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(id, input.ruleId ?? null, input.eventType, input.title, input.body, input.channel, input.status ?? 'pending', input.metadata ?? null, input.lineAccountId ?? null, now).run();
   return (await db.prepare(`SELECT * FROM notifications WHERE id = ?`).bind(id).first<NotificationRow>())!;
+}
+
+/**
+ * 指定イベント × アカウントの通知が since (created_at 比較) 以降に存在するか。
+ * クォータ通知の「同一アカウントにつき月1回」dedup 判定に使う。
+ * sourcePrefix を渡すと metadata JSON の source フィールドが prefix 一致する
+ * 通知だけを数える (別 source の通知に dedup を食われないための絞り込み)。
+ */
+export async function hasNotificationSince(
+  db: D1Database,
+  input: { eventType: string; lineAccountId: string; since: string; sourcePrefix?: string },
+): Promise<boolean> {
+  let sql = `SELECT 1 as one FROM notifications
+      WHERE event_type = ? AND line_account_id = ? AND created_at >= ?`;
+  const binds: unknown[] = [input.eventType, input.lineAccountId, input.since];
+  if (input.sourcePrefix) {
+    sql += ` AND json_extract(metadata, '$.source') LIKE ?`;
+    binds.push(`${input.sourcePrefix}%`);
+  }
+  const row = await db.prepare(`${sql} LIMIT 1`).bind(...binds).first<{ one: number }>();
+  return row !== null;
 }
 
 export async function updateNotificationStatus(db: D1Database, id: string, status: string): Promise<void> {

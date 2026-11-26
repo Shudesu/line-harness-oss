@@ -11,7 +11,7 @@ status: placeholder
 
 ## 章の目的
 
-- LINE Harness の MCP サーバーを Claude Code に接続し、ツール呼び出しから配信を組める
+- L Harness の MCP サーバーを Claude Code に接続し、ツール呼び出しから配信を組める
 - 「AI が暴走しないための確認フロー」を MCP ツール設計レベルで担保できる
 - 週次の集計・配信案生成・A/B テスト分析を Claude Code に委譲する型を持てる
 - MCP ツールの権限境界（読み取り専用 / 書き込み / 送信）を明確に分離して設計できる

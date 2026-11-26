@@ -1,0 +1,51 @@
+name: プラグイン掲載申請
+description: L Harness Plugin Marketへの掲載を申請します
+title: "[Plugin] "
+body:
+  - type: markdown
+    attributes:
+      value: "このIssueは公開されます。APIキーや顧客データを記載しないでください。掲載は内容確認後に行います。"
+  - type: input
+    id: plugin-name
+    attributes:
+      label: プラグイン名・バージョン
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 解決する課題・できること
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: ソースコードURL・ライセンス
+    validations:
+      required: true
+  - type: input
+    id: guide
+    attributes:
+      label: 導入・停止手順のURL
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: 動作確認した本体・SDK・実行環境のバージョン
+      description: 実行したテストと、既知の制限も記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: data-access
+    attributes:
+      label: 使用するAPI・データ・外部送信先
+      description: 必要なキー、読み書きする情報、通知の重複防止、停止後に残るデータを記載してください。キー自体は貼らないでください。
+    validations:
+      required: true
+  - type: input
+    id: maintainer
+    attributes:
+      label: 作者名・サポート窓口URL
+    validations:
+      required: true

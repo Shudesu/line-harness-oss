@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { api, type MileageHistoryItem, type MileageSummary } from '@/lib/api'
+import { Button } from '@cloudflare/kumo/components/button'
+import { InputArea } from '@cloudflare/kumo/components/input'
+import ScheduledMessagesPanel from '@/components/chats/scheduled-messages-panel'
 
 interface FriendDetail {
   id: string
@@ -33,6 +36,11 @@ interface Props {
   chatStatus?: ChatStatusInfo
   /** 担当者名 (ChatDetail で operatorId → name 変換済を渡す想定) */
   operatorName?: string | null
+  /** 編集可能メモ (OAMのノート相当)。onSaveNotes が渡された時のみ編集UIを出す */
+  notesValue?: string
+  onNotesChange?: (value: string) => void
+  onSaveNotes?: () => void
+  savingNotes?: boolean
 }
 
 function formatDate(iso: string | null): string {
@@ -59,7 +67,7 @@ function renderValue(value: unknown): string {
   }
 }
 
-export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }: Props) {
+export default function FriendInfoSidebar({ friendId, chatStatus, operatorName, notesValue, onNotesChange, onSaveNotes, savingNotes }: Props) {
   const [friend, setFriend] = useState<FriendDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -145,7 +153,7 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
   if (!friendId) return null
 
   return (
-    <div className="w-full lg:w-80 lg:flex-shrink-0 bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col overflow-hidden">
+    <div className="w-full lg:w-72 xl:w-80 2xl:w-96 lg:flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
         <h3 className="text-sm font-semibold text-gray-700">友だち詳細</h3>
       </div>
@@ -186,6 +194,9 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
                 )}
               </div>
             </div>
+
+            {/* 予約送信 (この友だち1人宛て) */}
+            <ScheduledMessagesPanel friendId={friend.id} isFollowing={friend.isFollowing} />
 
             {/* Harness Mileage — canonical user identity across LINE accounts */}
             <div className="p-4">
@@ -252,13 +263,35 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName }
               </div>
             )}
 
-            {/* Notes */}
-            {chatStatus?.notes && (
+            {/* Notes — OAMのノート相当。編集ハンドラが渡された時は編集UI、なければ従来の読み取り表示 */}
+            {onSaveNotes ? (
+              <div className="p-4">
+                <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">個別メモ</h4>
+                <InputArea
+                  minRows={3}
+                  value={notesValue ?? ''}
+                  onValueChange={(value) => onNotesChange?.(value)}
+                  placeholder="メモを入力..."
+                  aria-label="個別メモ"
+                />
+                <div className="mt-1.5 flex justify-end">
+                  <Button
+                    onClick={onSaveNotes}
+                    disabled={savingNotes}
+                    size="xs"
+                    variant="secondary"
+                    loading={savingNotes}
+                  >
+                    {savingNotes ? '保存中...' : 'メモ保存'}
+                  </Button>
+                </div>
+              </div>
+            ) : chatStatus?.notes ? (
               <div className="p-4">
                 <h4 className="text-[11px] font-medium text-gray-500 mb-1.5">個別メモ</h4>
                 <p className="text-xs text-gray-700 whitespace-pre-wrap break-words">{chatStatus.notes}</p>
               </div>
-            )}
+            ) : null}
 
             {/* Tags */}
             <div className="p-4">

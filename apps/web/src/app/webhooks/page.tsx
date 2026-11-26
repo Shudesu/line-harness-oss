@@ -1,12 +1,28 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { KeyIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { ClipboardText } from '@cloudflare/kumo/components/clipboard-text'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { SensitiveInput } from '@cloudflare/kumo/components/sensitive-input'
+import { Switch } from '@cloudflare/kumo/components/switch'
+import { Table } from '@cloudflare/kumo/components/table'
+import { Tabs } from '@cloudflare/kumo/components/tabs'
 import Header from '@/components/layout/header'
 import { api } from '@/lib/api'
 import CcPromptButton from '@/components/cc-prompt-button'
 import type { IncomingWebhook, OutgoingWebhook } from '@line-crm/shared'
 
 type Tab = 'incoming' | 'outgoing'
+type RotateTarget = { kind: Tab; id: string; name: string; activate: boolean }
+type DeleteTarget = { kind: Tab; id: string; name: string }
 
 const MIN_SECRET_LENGTH = 32
 
@@ -29,15 +45,12 @@ const ccPrompts = [
   },
 ]
 
-// Generate a 32-char URL-safe random secret in the browser. 24 random bytes
-// produce exactly 32 base64 characters; remap +/ to -/_ instead of stripping
-// so we always end up with 32 chars (stripping would drop the count).
 function generateSecret(): string {
-  const buf = new Uint8Array(24)
-  crypto.getRandomValues(buf)
-  let s = ''
-  for (let i = 0; i < buf.length; i++) s += String.fromCharCode(buf[i])
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+  const bytes = new Uint8Array(24)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
 }
 
 function isHttpsUrl(value: string): boolean {
@@ -55,35 +68,28 @@ export default function WebhooksPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
-
+  const [submitting, setSubmitting] = useState(false)
   const [inForm, setInForm] = useState({ name: '', sourceType: '', secret: '' })
   const [outForm, setOutForm] = useState({ name: '', url: '', eventTypes: '', secret: '' })
-
-  // After a successful create the API returns the secret exactly once.
-  // Show it to the operator with a copy affordance, then forget it.
   const [createdSecret, setCreatedSecret] = useState<{ name: string; secret: string } | null>(null)
-  const [secretCopied, setSecretCopied] = useState(false)
-
-  // Rotate-secret modal state. Used to recover legacy webhooks deactivated
-  // by migration 034, or to rotate a leaked secret in place.
-  const [rotateTarget, setRotateTarget] = useState<
-    | { kind: 'incoming' | 'outgoing'; id: string; name: string; activate: boolean }
-    | null
-  >(null)
+  const [rotateTarget, setRotateTarget] = useState<RotateTarget | null>(null)
   const [rotateSecretValue, setRotateSecretValue] = useState('')
+  const [rotating, setRotating] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [inRes, outRes] = await Promise.all([
+      const [incomingResponse, outgoingResponse] = await Promise.all([
         api.webhooks.incoming.list(),
         api.webhooks.outgoing.list(),
       ])
-      if (inRes.success) setIncoming(inRes.data)
-      else setError(inRes.error)
-      if (outRes.success) setOutgoing(outRes.data)
-      else setError(outRes.error)
+      if (incomingResponse.success) setIncoming(incomingResponse.data)
+      else setError(incomingResponse.error)
+      if (outgoingResponse.success) setOutgoing(outgoingResponse.data)
+      else setError(outgoingResponse.error)
     } catch {
       setError('データの読み込みに失敗しました。もう一度お試しください。')
     } finally {
@@ -91,12 +97,12 @@ export default function WebhooksPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { void load() }, [load])
 
   const handleToggleIncoming = async (id: string, currentActive: boolean) => {
     try {
       await api.webhooks.incoming.update(id, { isActive: !currentActive })
-      load()
+      await load()
     } catch {
       setError('更新に失敗しました')
     }
@@ -105,62 +111,61 @@ export default function WebhooksPage() {
   const handleToggleOutgoing = async (id: string, currentActive: boolean) => {
     try {
       await api.webhooks.outgoing.update(id, { isActive: !currentActive })
-      load()
+      await load()
     } catch {
       setError('更新に失敗しました')
     }
   }
 
-  const handleDeleteIncoming = async (id: string) => {
-    if (!confirm('この受信Webhookを削除しますか？')) return
+  const handleDelete = async () => {
+    if (!deleteTarget || deleting) return
+    setDeleting(true)
+    setError('')
     try {
-      await api.webhooks.incoming.delete(id)
-      load()
+      if (deleteTarget.kind === 'incoming') await api.webhooks.incoming.delete(deleteTarget.id)
+      else await api.webhooks.outgoing.delete(deleteTarget.id)
+      setDeleteTarget(null)
+      await load()
     } catch {
       setError('削除に失敗しました')
+      setDeleteTarget(null)
+    } finally {
+      setDeleting(false)
     }
   }
 
-  const handleDeleteOutgoing = async (id: string) => {
-    if (!confirm('この送信Webhookを削除しますか？')) return
-    try {
-      await api.webhooks.outgoing.delete(id)
-      load()
-    } catch {
-      setError('削除に失敗しました')
-    }
-  }
-
-  const handleCreateIncoming = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleCreateIncoming = async (event: React.FormEvent) => {
+    event.preventDefault()
     setError('')
     if (!inForm.name) return
     if (inForm.secret.length < MIN_SECRET_LENGTH) {
       setError(`シークレットは最低${MIN_SECRET_LENGTH}文字必要です`)
       return
     }
+    setSubmitting(true)
     try {
-      const res = await api.webhooks.incoming.create({
+      const response = await api.webhooks.incoming.create({
         name: inForm.name,
         sourceType: inForm.sourceType || undefined,
         secret: inForm.secret,
       })
-      if (!res.success) {
-        setError(res.error)
+      if (!response.success) {
+        setError(response.error)
         return
       }
-      setCreatedSecret({ name: res.data.name, secret: res.data.secret })
-      setSecretCopied(false)
+      setCreatedSecret({ name: response.data.name, secret: response.data.secret })
       setInForm({ name: '', sourceType: '', secret: '' })
       setShowCreate(false)
-      load()
+      await load()
     } catch {
       setError('作成に失敗しました')
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  const handleCreateOutgoing = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleCreateOutgoing = async (event: React.FormEvent) => {
+    event.preventDefault()
     setError('')
     if (!outForm.name || !outForm.url) return
     if (!isHttpsUrl(outForm.url)) {
@@ -171,554 +176,404 @@ export default function WebhooksPage() {
       setError(`シークレットは最低${MIN_SECRET_LENGTH}文字必要です`)
       return
     }
+    setSubmitting(true)
     try {
-      const eventTypes = outForm.eventTypes
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-      const res = await api.webhooks.outgoing.create({
+      const eventTypes = outForm.eventTypes.split(',').map((value) => value.trim()).filter(Boolean)
+      const response = await api.webhooks.outgoing.create({
         name: outForm.name,
         url: outForm.url,
         eventTypes,
         secret: outForm.secret,
       })
-      if (!res.success) {
-        setError(res.error)
+      if (!response.success) {
+        setError(response.error)
         return
       }
-      setCreatedSecret({ name: res.data.name, secret: res.data.secret })
-      setSecretCopied(false)
+      setCreatedSecret({ name: response.data.name, secret: response.data.secret })
       setOutForm({ name: '', url: '', eventTypes: '', secret: '' })
       setShowCreate(false)
-      load()
+      await load()
     } catch {
       setError('作成に失敗しました')
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  const copySecret = async (secret: string) => {
-    try {
-      await navigator.clipboard.writeText(secret)
-      setSecretCopied(true)
-    } catch {
-      // ignore — operator can still copy manually
-    }
-  }
-
-  const handleRotateSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleRotateSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
     setError('')
     if (!rotateTarget) return
     if (rotateSecretValue.length < MIN_SECRET_LENGTH) {
       setError(`シークレットは最低${MIN_SECRET_LENGTH}文字必要です`)
       return
     }
+    setRotating(true)
     try {
       const payload = { secret: rotateSecretValue, isActive: rotateTarget.activate || undefined }
-      const res =
-        rotateTarget.kind === 'incoming'
-          ? await api.webhooks.incoming.update(rotateTarget.id, payload)
-          : await api.webhooks.outgoing.update(rotateTarget.id, payload)
-      if (!res.success) {
-        setError(res.error)
+      const response = rotateTarget.kind === 'incoming'
+        ? await api.webhooks.incoming.update(rotateTarget.id, payload)
+        : await api.webhooks.outgoing.update(rotateTarget.id, payload)
+      if (!response.success) {
+        setError(response.error)
         return
       }
       setRotateTarget(null)
       setRotateSecretValue('')
-      load()
+      await load()
     } catch {
       setError('シークレットの更新に失敗しました')
+    } finally {
+      setRotating(false)
     }
   }
 
   const endpointUrl = (id: string) =>
     `${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/incoming/${id}/receive`
 
+  const openRotate = (target: RotateTarget) => {
+    setRotateTarget(target)
+    setRotateSecretValue('')
+    setError('')
+  }
+
+  const createButtonLabel = showCreate ? '作成を閉じる' : '新規Webhook'
+
   return (
     <div>
       <Header
         title="Webhook管理"
-        action={
-          <button
-            onClick={() => setShowCreate(!showCreate)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
+        description="外部サービスとの受信・送信Webhookを管理します。"
+        action={(
+          <Button
+            type="button"
+            variant={showCreate ? 'secondary' : 'primary'}
+            icon={showCreate ? undefined : PlusIcon}
+            onClick={() => setShowCreate((current) => !current)}
           >
-            {showCreate ? 'キャンセル' : '+ 新規Webhook'}
-          </button>
-        }
+            {createButtonLabel}
+          </Button>
+        )}
       />
 
-      {/* Rotate-secret modal — used to recover legacy webhooks or rotate. */}
-      {rotateTarget && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <form onSubmit={handleRotateSubmit} className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">
-              「{rotateTarget.name}」のシークレットを{rotateTarget.activate ? '設定して有効化' : '更新'}
-            </h2>
-            <p className="text-sm text-gray-600 mb-4">
-              新しいシークレットを設定します。
-              <strong className="text-red-600">設定後は今回限り画面に表示されません。</strong>
-              控えておいてから「保存」を押してください。
-            </p>
-            <div className="flex gap-2 mb-4">
-              <input
-                value={rotateSecretValue}
-                onChange={(e) => setRotateSecretValue(e.target.value)}
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
-                placeholder="ランダムな英数字32文字以上"
-                required
-                minLength={MIN_SECRET_LENGTH}
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={() => setRotateSecretValue(generateSecret())}
-                className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 whitespace-nowrap"
-              >
-                自動生成
-              </button>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setRotateTarget(null)
-                  setRotateSecretValue('')
-                }}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                キャンセル
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 text-sm rounded-lg text-white font-medium"
-                style={{ backgroundColor: '#06C755' }}
-              >
-                保存
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      {error ? <Banner className="mb-4" variant="error" title="操作を完了できませんでした" description={error} /> : null}
 
-      {/* Created-secret modal — shown ONCE after a successful create. */}
-      {createdSecret && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">
-              シークレットを保存してください
-            </h2>
-            <p className="text-sm text-gray-600 mb-4">
-              「{createdSecret.name}」を作成しました。
-              <strong className="text-red-600">このシークレットは今後二度と表示されません。</strong>
-              閉じる前に必ず安全な場所に保存してください。
-            </p>
-            <div className="bg-gray-50 border border-gray-200 rounded p-3 mb-4">
-              <code className="text-sm break-all">{createdSecret.secret}</code>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => copySecret(createdSecret.secret)}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                {secretCopied ? 'コピー済み' : 'クリップボードにコピー'}
-              </button>
-              <button
-                onClick={() => {
-                  setCreatedSecret(null)
-                  setSecretCopied(false)
-                }}
-                className="px-4 py-2 text-sm rounded-lg text-white font-medium"
-                style={{ backgroundColor: '#06C755' }}
-              >
-                保存しました
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Tabs
+        className="mb-6 w-fit"
+        value={tab}
+        onValueChange={(value) => {
+          setTab(value as Tab)
+          setShowCreate(false)
+          setError('')
+        }}
+        tabs={[
+          { value: 'incoming', label: `受信 (${incoming.length})` },
+          { value: 'outgoing', label: `送信 (${outgoing.length})` },
+        ]}
+      />
 
-      {/* Error */}
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-gray-100 rounded-lg p-1 w-fit">
-        <button
-          onClick={() => { setTab('incoming'); setShowCreate(false) }}
-          className={`px-4 py-2 min-h-[44px] text-sm font-medium rounded-md transition-colors ${
-            tab === 'incoming'
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          受信 (Incoming)
-        </button>
-        <button
-          onClick={() => { setTab('outgoing'); setShowCreate(false) }}
-          className={`px-4 py-2 min-h-[44px] text-sm font-medium rounded-md transition-colors ${
-            tab === 'outgoing'
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          送信 (Outgoing)
-        </button>
-      </div>
-
-      {/* Create forms */}
-      {showCreate && tab === 'incoming' && (
-        <form onSubmit={handleCreateIncoming} className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">受信Webhook作成</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">名前</label>
-              <input
+      {showCreate && tab === 'incoming' ? (
+        <LayerCard className="mb-6 p-6">
+          <h2 className="mb-4 text-sm font-semibold text-kumo-strong">受信Webhookを作成</h2>
+          <form onSubmit={handleCreateIncoming} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="名前"
                 value={inForm.name}
-                onChange={(e) => setInForm({ ...inForm, name: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setInForm({ ...inForm, name: event.target.value })}
                 placeholder="LINE公式アカウント"
                 required
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">ソースタイプ</label>
-              <input
+              <Input
+                label="ソースタイプ"
                 value={inForm.sourceType}
-                onChange={(e) => setInForm({ ...inForm, sourceType: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setInForm({ ...inForm, sourceType: event.target.value })}
                 placeholder="line"
+                required={false}
               />
             </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                シークレット (最低{MIN_SECRET_LENGTH}文字)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  value={inForm.secret}
-                  onChange={(e) => setInForm({ ...inForm, secret: e.target.value })}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
-                  placeholder="ランダムな英数字32文字以上"
-                  required
-                  minLength={MIN_SECRET_LENGTH}
-                />
-                <button
-                  type="button"
-                  onClick={() => setInForm({ ...inForm, secret: generateSecret() })}
-                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 whitespace-nowrap"
-                >
-                  自動生成
-                </button>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                外部システムが Webhook 受信時に X-Webhook-Signature ヘッダで HMAC-SHA256 署名する際に使用します。
-              </p>
+            <div className="flex items-end gap-2">
+              <SensitiveInput
+                className="min-w-0 flex-1"
+                label={`シークレット（最低${MIN_SECRET_LENGTH}文字）`}
+                value={inForm.secret}
+                onValueChange={(value) => setInForm({ ...inForm, secret: value })}
+                description="X-Webhook-SignatureのHMAC-SHA256署名に使用します。"
+                required
+              />
+              <Button type="button" variant="secondary" onClick={() => setInForm({ ...inForm, secret: generateSecret() })}>
+                自動生成
+              </Button>
             </div>
-          </div>
-          <button
-            type="submit"
-            className="mt-4 px-4 py-2 rounded-lg text-white text-sm font-medium"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            作成
-          </button>
-        </form>
-      )}
+            <Button type="submit" variant="primary" loading={submitting}>作成</Button>
+          </form>
+        </LayerCard>
+      ) : null}
 
-      {showCreate && tab === 'outgoing' && (
-        <form onSubmit={handleCreateOutgoing} className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-          <h3 className="text-sm font-semibold text-gray-900 mb-4">送信Webhook作成</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">名前</label>
-              <input
+      {showCreate && tab === 'outgoing' ? (
+        <LayerCard className="mb-6 p-6">
+          <h2 className="mb-4 text-sm font-semibold text-kumo-strong">送信Webhookを作成</h2>
+          <form onSubmit={handleCreateOutgoing} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="名前"
                 value={outForm.name}
-                onChange={(e) => setOutForm({ ...outForm, name: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setOutForm({ ...outForm, name: event.target.value })}
                 placeholder="外部CRM連携"
                 required
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">URL (https:// 必須)</label>
-              <input
+              <Input
+                label="URL"
                 type="url"
                 value={outForm.url}
-                onChange={(e) => setOutForm({ ...outForm, url: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setOutForm({ ...outForm, url: event.target.value })}
                 placeholder="https://example.com/webhook"
+                description="https://で始まるURLを指定してください。"
                 pattern="https://.*"
                 required
               />
             </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">イベントタイプ (カンマ区切り、* で全イベント)</label>
-              <input
-                value={outForm.eventTypes}
-                onChange={(e) => setOutForm({ ...outForm, eventTypes: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                placeholder="friend.added, message.received"
+            <Input
+              label="イベントタイプ"
+              value={outForm.eventTypes}
+              onChange={(event) => setOutForm({ ...outForm, eventTypes: event.target.value })}
+              placeholder="friend.added, message.received"
+              description="カンマ区切りで指定します。すべてのイベントは * を指定します。"
+              required={false}
+            />
+            <div className="flex items-end gap-2">
+              <SensitiveInput
+                className="min-w-0 flex-1"
+                label={`シークレット（最低${MIN_SECRET_LENGTH}文字）`}
+                value={outForm.secret}
+                onValueChange={(value) => setOutForm({ ...outForm, secret: value })}
+                description="送信時のX-Webhook-Signature署名に使用します。"
+                required
               />
+              <Button type="button" variant="secondary" onClick={() => setOutForm({ ...outForm, secret: generateSecret() })}>
+                自動生成
+              </Button>
             </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                シークレット (最低{MIN_SECRET_LENGTH}文字)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  value={outForm.secret}
-                  onChange={(e) => setOutForm({ ...outForm, secret: e.target.value })}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
-                  placeholder="ランダムな英数字32文字以上"
-                  required
-                  minLength={MIN_SECRET_LENGTH}
-                />
-                <button
-                  type="button"
-                  onClick={() => setOutForm({ ...outForm, secret: generateSecret() })}
-                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 whitespace-nowrap"
-                >
-                  自動生成
-                </button>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                送信時に X-Webhook-Signature ヘッダで HMAC-SHA256 署名するために使われます。受信側で同じシークレットで検証してください。
-              </p>
-            </div>
-          </div>
-          <button
-            type="submit"
-            className="mt-4 px-4 py-2 rounded-lg text-white text-sm font-medium"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            作成
-          </button>
-        </form>
-      )}
+            <Button type="submit" variant="primary" loading={submitting}>作成</Button>
+          </form>
+        </LayerCard>
+      ) : null}
 
-      {/* Loading */}
-      {loading ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="px-4 py-4 border-b border-gray-100 flex items-center gap-4 animate-pulse">
-              <div className="flex-1 space-y-2">
-                <div className="h-3 bg-gray-200 rounded w-48" />
-                <div className="h-2 bg-gray-100 rounded w-32" />
-              </div>
-              <div className="h-5 bg-gray-100 rounded-full w-16" />
-              <div className="h-3 bg-gray-100 rounded w-24" />
+      <LayerCard className="overflow-hidden p-0">
+        <div className="overflow-x-auto">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-kumo-subtle">
+              <Loader size="sm" /> 読み込み中
             </div>
-          ))}
-        </div>
-      ) : tab === 'incoming' ? (
-        /* Incoming table */
-        incoming.length === 0 && !showCreate ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-            <p className="text-gray-500">受信Webhookがありません。「新規Webhook」から作成してください。</p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">名前</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ソースタイプ</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">エンドポイントURL</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">シークレット</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ステータス</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">作成日</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {incoming.map((wh) => (
-                  <tr key={wh.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{wh.name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{wh.sourceType || '-'}</td>
-                    <td className="px-4 py-3">
-                      <code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-700 break-all">
-                        {endpointUrl(wh.id)}
-                      </code>
-                    </td>
-                    <td className="px-4 py-3">
-                      {wh.hasSecret ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                          設定済
-                        </span>
-                      ) : (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                          未設定
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleToggleIncoming(wh.id, wh.isActive)}
-                        disabled={!wh.hasSecret && !wh.isActive}
-                        className={`text-xs px-2 py-0.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed ${
-                          wh.isActive
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-gray-100 text-gray-500'
-                        }`}
-                        title={!wh.hasSecret && !wh.isActive ? 'シークレット未設定のため有効化できません' : ''}
-                      >
-                        {wh.isActive ? '有効' : '無効'}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
-                      {new Date(wh.createdAt).toLocaleDateString('ja-JP')}
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => {
-                          setRotateTarget({
-                            kind: 'incoming',
-                            id: wh.id,
-                            name: wh.name,
-                            activate: !wh.hasSecret,
-                          })
-                          setRotateSecretValue('')
-                        }}
-                        className="text-xs text-gray-600 hover:text-gray-900 mr-3"
-                      >
-                        {wh.hasSecret ? 'シークレット更新' : 'シークレット設定'}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteIncoming(wh.id)}
-                        className="text-red-500 hover:text-red-700 text-sm"
-                      >
-                        削除
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          </div>
-        )
-      ) : (
-        /* Outgoing table */
-        outgoing.length === 0 && !showCreate ? (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-            <p className="text-gray-500">送信Webhookがありません。「新規Webhook」から作成してください。</p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">名前</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">URL</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">イベントタイプ</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">シークレット</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ステータス</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">作成日</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {outgoing.map((wh) => {
-                  const hasValidUrl = isHttpsUrl(wh.url)
-                  const canActivate = wh.hasSecret && hasValidUrl
+          ) : tab === 'incoming' ? (
+            incoming.length === 0 ? (
+              <Empty
+                size="sm"
+                title="受信Webhookがありません"
+                description="受信エンドポイントを作成して、外部サービスからイベントを受け取ります。"
+                contents={<Button type="button" variant="primary" icon={PlusIcon} onClick={() => setShowCreate(true)}>新規Webhook</Button>}
+              />
+            ) : (
+              <Table className="min-w-[820px]">
+                <Table.Header>
+                  <Table.Row>
+                    <Table.Head>名前</Table.Head>
+                    <Table.Head>ソース</Table.Head>
+                    <Table.Head>エンドポイントURL</Table.Head>
+                    <Table.Head>シークレット</Table.Head>
+                    <Table.Head>状態</Table.Head>
+                    <Table.Head>作成日</Table.Head>
+                    <Table.Head />
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
+                  {incoming.map((webhook) => (
+                    <Table.Row key={webhook.id}>
+                      <Table.Cell className="font-medium text-kumo-strong">{webhook.name}</Table.Cell>
+                      <Table.Cell className="text-kumo-subtle">{webhook.sourceType || '—'}</Table.Cell>
+                      <Table.Cell className="min-w-[280px]"><ClipboardText size="sm" text={endpointUrl(webhook.id)} /></Table.Cell>
+                      <Table.Cell><Badge variant={webhook.hasSecret ? 'success' : 'warning'}>{webhook.hasSecret ? '設定済み' : '未設定'}</Badge></Table.Cell>
+                      <Table.Cell>
+                        <Switch
+                          size="sm"
+                          checked={webhook.isActive}
+                          disabled={!webhook.hasSecret && !webhook.isActive}
+                          onCheckedChange={() => void handleToggleIncoming(webhook.id, webhook.isActive)}
+                          aria-label={`${webhook.name}を${webhook.isActive ? '無効化' : '有効化'}`}
+                          title={!webhook.hasSecret && !webhook.isActive ? 'シークレット未設定のため有効化できません' : undefined}
+                        />
+                      </Table.Cell>
+                      <Table.Cell className="text-sm text-kumo-subtle">{new Date(webhook.createdAt).toLocaleDateString('ja-JP')}</Table.Cell>
+                      <Table.Cell className="text-right whitespace-nowrap">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="secondary"
+                          icon={KeyIcon}
+                          onClick={() => openRotate({ kind: 'incoming', id: webhook.id, name: webhook.name, activate: !webhook.hasSecret })}
+                        >
+                          {webhook.hasSecret ? '更新' : '設定'}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="secondary-destructive"
+                          icon={TrashIcon}
+                          className="ml-1"
+                          onClick={() => setDeleteTarget({ kind: 'incoming', id: webhook.id, name: webhook.name })}
+                        >
+                          削除
+                        </Button>
+                      </Table.Cell>
+                    </Table.Row>
+                  ))}
+                </Table.Body>
+              </Table>
+            )
+          ) : outgoing.length === 0 ? (
+            <Empty
+              size="sm"
+              title="送信Webhookがありません"
+              description="外部サービスへイベントを通知する送信先を作成します。"
+              contents={<Button type="button" variant="primary" icon={PlusIcon} onClick={() => setShowCreate(true)}>新規Webhook</Button>}
+            />
+          ) : (
+            <Table className="min-w-[920px]">
+              <Table.Header>
+                <Table.Row>
+                  <Table.Head>名前</Table.Head>
+                  <Table.Head>URL</Table.Head>
+                  <Table.Head>イベントタイプ</Table.Head>
+                  <Table.Head>シークレット</Table.Head>
+                  <Table.Head>状態</Table.Head>
+                  <Table.Head>作成日</Table.Head>
+                  <Table.Head />
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {outgoing.map((webhook) => {
+                  const hasValidUrl = isHttpsUrl(webhook.url)
+                  const canActivate = webhook.hasSecret && hasValidUrl
                   const blockedReason = !canActivate
-                    ? !wh.hasSecret && !hasValidUrl
-                      ? 'シークレット未設定 + URL が https:// ではないため有効化できません'
-                      : !wh.hasSecret
+                    ? !webhook.hasSecret && !hasValidUrl
+                      ? 'シークレット未設定かつURLがhttps://ではありません'
+                      : !webhook.hasSecret
                         ? 'シークレット未設定のため有効化できません'
-                        : 'URL が https:// ではないため有効化できません'
-                    : ''
+                        : 'URLがhttps://ではないため有効化できません'
+                    : undefined
                   return (
-                  <tr key={wh.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{wh.name}</td>
-                    <td className="px-4 py-3">
-                      <code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-700 break-all">
-                        {wh.url}
-                      </code>
-                      {!hasValidUrl && (
-                        <p className="text-xs text-amber-700 mt-1">
-                          ※ https:// で始まる完全な URL に作り直してください
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {wh.eventTypes.map((et) => (
-                          <span
-                            key={et}
-                            className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700"
-                          >
-                            {et}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {wh.hasSecret ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                          設定済
-                        </span>
-                      ) : (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                          未設定
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleToggleOutgoing(wh.id, wh.isActive)}
-                        disabled={!canActivate && !wh.isActive}
-                        className={`text-xs px-2 py-0.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed ${
-                          wh.isActive
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-gray-100 text-gray-500'
-                        }`}
-                        title={blockedReason}
-                      >
-                        {wh.isActive ? '有効' : '無効'}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-500">
-                      {new Date(wh.createdAt).toLocaleDateString('ja-JP')}
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => {
-                          setRotateTarget({
-                            kind: 'outgoing',
-                            id: wh.id,
-                            name: wh.name,
-                            activate: hasValidUrl && !wh.hasSecret,
-                          })
-                          setRotateSecretValue('')
-                        }}
-                        className="text-xs text-gray-600 hover:text-gray-900 mr-3"
-                      >
-                        {wh.hasSecret ? 'シークレット更新' : 'シークレット設定'}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteOutgoing(wh.id)}
-                        className="text-red-500 hover:text-red-700 text-sm"
-                      >
-                        削除
-                      </button>
-                    </td>
-                  </tr>
+                    <Table.Row key={webhook.id}>
+                      <Table.Cell className="font-medium text-kumo-strong">{webhook.name}</Table.Cell>
+                      <Table.Cell className="min-w-[240px]">
+                        <code className="break-all text-xs text-kumo-default">{webhook.url}</code>
+                        {!hasValidUrl ? <p className="mt-1 text-xs text-kumo-warning">https://の完全なURLに作り直してください</p> : null}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <div className="flex flex-wrap gap-1">
+                          {webhook.eventTypes.map((eventType) => <Badge key={eventType} variant="info">{eventType}</Badge>)}
+                        </div>
+                      </Table.Cell>
+                      <Table.Cell><Badge variant={webhook.hasSecret ? 'success' : 'warning'}>{webhook.hasSecret ? '設定済み' : '未設定'}</Badge></Table.Cell>
+                      <Table.Cell>
+                        <Switch
+                          size="sm"
+                          checked={webhook.isActive}
+                          disabled={!canActivate && !webhook.isActive}
+                          onCheckedChange={() => void handleToggleOutgoing(webhook.id, webhook.isActive)}
+                          aria-label={`${webhook.name}を${webhook.isActive ? '無効化' : '有効化'}`}
+                          title={blockedReason}
+                        />
+                      </Table.Cell>
+                      <Table.Cell className="text-sm text-kumo-subtle">{new Date(webhook.createdAt).toLocaleDateString('ja-JP')}</Table.Cell>
+                      <Table.Cell className="text-right whitespace-nowrap">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="secondary"
+                          icon={KeyIcon}
+                          onClick={() => openRotate({ kind: 'outgoing', id: webhook.id, name: webhook.name, activate: hasValidUrl && !webhook.hasSecret })}
+                        >
+                          {webhook.hasSecret ? '更新' : '設定'}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="secondary-destructive"
+                          icon={TrashIcon}
+                          className="ml-1"
+                          onClick={() => setDeleteTarget({ kind: 'outgoing', id: webhook.id, name: webhook.name })}
+                        >
+                          削除
+                        </Button>
+                      </Table.Cell>
+                    </Table.Row>
                   )
                 })}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table>
+          )}
+        </div>
+      </LayerCard>
+
+      <Dialog.Root open={rotateTarget !== null} onOpenChange={(open) => { if (!open && !rotating) setRotateTarget(null) }}>
+        <Dialog size="lg" className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">
+            シークレットを{rotateTarget?.activate ? '設定して有効化' : '更新'}
+          </Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">
+            「{rotateTarget?.name ?? ''}」へ新しいシークレットを設定します。保存後は再表示されません。
+          </Dialog.Description>
+          <form onSubmit={handleRotateSubmit} className="mt-5 space-y-4">
+            <div className="flex items-end gap-2">
+              <SensitiveInput
+                className="min-w-0 flex-1"
+                label="新しいシークレット"
+                value={rotateSecretValue}
+                onValueChange={setRotateSecretValue}
+                description={`最低${MIN_SECRET_LENGTH}文字必要です。`}
+                autoFocus
+                required
+              />
+              <Button type="button" variant="secondary" onClick={() => setRotateSecretValue(generateSecret())}>自動生成</Button>
             </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" disabled={rotating} onClick={() => setRotateTarget(null)}>キャンセル</Button>
+              <Button type="submit" variant="primary" loading={rotating}>保存</Button>
+            </div>
+          </form>
+        </Dialog>
+      </Dialog.Root>
+
+      <Dialog.Root role="alertdialog" open={createdSecret !== null}>
+        <Dialog size="lg" className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">シークレットを保存してください</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">
+            「{createdSecret?.name ?? ''}」を作成しました。このシークレットは今後二度と表示されません。
+          </Dialog.Description>
+          {createdSecret ? <ClipboardText className="mt-5" text={createdSecret.secret} /> : null}
+          <div className="mt-6 flex justify-end">
+            <Button type="button" variant="primary" onClick={() => setCreatedSecret(null)}>保存しました</Button>
           </div>
-        )
-      )}
+        </Dialog>
+      </Dialog.Root>
+
+      <Dialog.Root
+        role="alertdialog"
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null) }}
+      >
+        <Dialog size="base" className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">Webhookを削除しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">
+            「{deleteTarget?.name ?? ''}」を削除します。この操作は取り消せません。
+          </Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
+            <Dialog.Close render={(props) => <Button {...props} type="button" variant="secondary" disabled={deleting}>キャンセル</Button>} />
+            <Button type="button" variant="destructive" loading={deleting} onClick={handleDelete}>削除する</Button>
+          </div>
+        </Dialog>
+      </Dialog.Root>
+
       <CcPromptButton prompts={ccPrompts} />
     </div>
   )

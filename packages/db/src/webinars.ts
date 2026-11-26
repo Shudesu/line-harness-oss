@@ -61,7 +61,7 @@ export interface WebinarParticipantStat {
   sessions: number;
   first_joined_at: string;
   latest_joined_at: string;
-  max_watched_seconds: number;
+  latest_watched_seconds: number;
   cta_clicked_at: string | null;
   registered: number;
   form_submitted_at: string | null;
@@ -481,7 +481,11 @@ export async function getWebinarDropoff(
   return results ?? [];
 }
 
-/** 参加者を friend 単位にまとめる。再入場・複数セッションは1人として表示する。 */
+/**
+ * 参加者を friend 単位にまとめる。
+ * 参加回数は全セッション、視聴位置・CTA・フォームは最新セッションだけを返す。
+ * 過去回の完走やCTAを最新回の参加日時と混在させない。
+ */
 export async function getWebinarParticipantStats(
   db: D1Database,
   webinarId: string,
@@ -489,14 +493,29 @@ export async function getWebinarParticipantStats(
 ): Promise<WebinarParticipantStat[]> {
   const { results } = await db
     .prepare(
-      `SELECT v.friend_id,
+      `WITH ranked_viewers AS (
+         SELECT v.*,
+                COUNT(*) OVER (
+                  PARTITION BY v.webinar_id, v.friend_id
+                ) AS sessions,
+                MIN(v.joined_at) OVER (
+                  PARTITION BY v.webinar_id, v.friend_id
+                ) AS first_joined_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY v.webinar_id, v.friend_id
+                  ORDER BY datetime(v.joined_at) DESC, v.session_start_at DESC, v.id DESC
+                ) AS recency_rank
+         FROM webinar_viewers v
+         WHERE v.webinar_id = ?
+       )
+       SELECT v.friend_id,
               f.display_name AS friend_name,
               f.picture_url,
-              COUNT(*) AS sessions,
-              MIN(v.joined_at) AS first_joined_at,
-              MAX(v.joined_at) AS latest_joined_at,
-              MAX(v.last_position_seconds) AS max_watched_seconds,
-              MAX(v.cta_clicked_at) AS cta_clicked_at,
+              v.sessions,
+              v.first_joined_at,
+              v.joined_at AS latest_joined_at,
+              v.last_position_seconds AS latest_watched_seconds,
+              v.cta_clicked_at,
               CASE WHEN EXISTS (
                 SELECT 1 FROM webinar_registrations r
                 WHERE r.webinar_id = v.webinar_id AND r.friend_id = v.friend_id
@@ -508,13 +527,12 @@ export async function getWebinarParticipantStats(
                 JOIN webinars wf ON wf.id = wc.webinar_id
                 WHERE wc.webinar_id = v.webinar_id
                   AND fs.friend_id = v.friend_id
-                  AND fs.created_at >= wf.created_at
+                  AND datetime(fs.created_at) >= datetime(v.joined_at)
               ) AS form_submitted_at
-       FROM webinar_viewers v
+       FROM ranked_viewers v
        LEFT JOIN friends f ON f.id = v.friend_id
-       WHERE v.webinar_id = ?
-       GROUP BY v.webinar_id, v.friend_id, f.display_name, f.picture_url
-       ORDER BY latest_joined_at DESC
+       WHERE v.recency_rank = 1
+       ORDER BY datetime(v.joined_at) DESC
        LIMIT ?`,
     )
     .bind(webinarId, limit)
@@ -695,14 +713,18 @@ export interface WebinarRegistration {
   created_at: string;
 }
 
-/** 予約を upsert する (同一 friend×セッションは冪等) */
+/**
+ * 予約を upsert する (同一 friend×セッションは冪等)。
+ * 新規作成時だけ true。重複リクエストでは false を返し、呼び出し元が
+ * 受付確認を二重送信しないために使う。
+ */
 export async function upsertWebinarRegistration(
   db: D1Database,
   webinarId: string,
   friendId: string,
   sessionStartAt: number,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const result = await db
     .prepare(
       `INSERT OR IGNORE INTO webinar_registrations
          (id, webinar_id, friend_id, session_start_at, notified_at, created_at)
@@ -710,6 +732,7 @@ export async function upsertWebinarRegistration(
     )
     .bind(crypto.randomUUID(), webinarId, friendId, sessionStartAt, jstNow())
     .run();
+  return (result.meta?.changes ?? 0) > 0;
 }
 
 /** friend の未来セッション予約 (直近1件) */

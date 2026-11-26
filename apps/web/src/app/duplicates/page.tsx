@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import Header from '@/components/layout/header'
 import { api } from '@/lib/api'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 interface PerAccountStat {
   accountId: string
@@ -91,13 +97,9 @@ export default function DuplicatesPage() {
       />
 
       {loading && !data ? (
-        <div className="rounded-lg bg-white p-8 text-center text-gray-500 shadow-sm">
-          読み込み中…
-        </div>
+        <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>
       ) : !data ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error || '集計の取得に失敗しました'}
-        </div>
+        <Banner variant="error" title="集計を取得できませんでした" description={error || '時間をおいて再度お試しください。'} />
       ) : (
         <>
           {/* When a refresh fails but we still have a previous snapshot, show
@@ -105,9 +107,7 @@ export default function DuplicatesPage() {
               page — losing the dashboard for a transient 500 is worse than
               showing slightly stale numbers with a warning. */}
           {error && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              再計算に失敗しました: {error}
-            </div>
+            <Banner variant="alert" title="再計算に失敗しました" description={error} />
           )}
           <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard label="友だち総数" value={fmt.format(data.totalFollowing)} />
@@ -138,46 +138,48 @@ export default function DuplicatesPage() {
                   {formatRelative(data.computedAt)}に計算
                 </span>
               )}
-              <button
+              <Button
                 type="button"
+                size="xs"
+                variant="secondary"
+                loading={refreshing}
                 onClick={() => load({ forceRefresh: true })}
                 disabled={refreshing}
-                className="rounded-md border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
-                {refreshing ? '再計算中…' : '再計算'}
-              </button>
+                再計算
+              </Button>
             </div>
           </div>
 
           <section>
             <h2 className="text-lg font-semibold text-gray-900">アカウント別ブレイクダウン</h2>
             {data.perAccount.length === 0 ? (
-              <p className="mt-3 text-sm text-gray-500">アカウントが登録されていません。</p>
+              <Empty title="アカウントが登録されていません" description="アカウント追加後に重複状況を確認できます。" />
             ) : (
-              <div className="mt-3 overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
-                <table className="min-w-full divide-y divide-gray-200 text-sm">
-                  <thead className="bg-gray-50 text-left text-xs font-medium uppercase text-gray-500">
-                    <tr>
-                      <th className="px-4 py-3">アカウント</th>
-                      <th className="px-4 py-3 text-right">友だち数</th>
-                      <th className="px-4 py-3 text-right">うち重複</th>
-                      <th className="px-4 py-3 text-right">重複率</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
+              <LayerCard className="mt-3 overflow-hidden p-0">
+                <Table>
+                  <Table.Header>
+                    <Table.Row>
+                      <Table.Head>アカウント</Table.Head>
+                      <Table.Head className="text-right">友だち数</Table.Head>
+                      <Table.Head className="text-right">うち重複</Table.Head>
+                      <Table.Head className="text-right">重複率</Table.Head>
+                    </Table.Row>
+                  </Table.Header>
+                  <Table.Body>
                     {data.perAccount.map((row) => (
-                      <tr key={row.accountId}>
-                        <td className="px-4 py-3 font-medium text-gray-900">{row.accountName}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">{fmt.format(row.friends)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">{fmt.format(row.dups)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums">
+                      <Table.Row key={row.accountId}>
+                        <Table.Cell className="font-medium text-kumo-strong">{row.accountName}</Table.Cell>
+                        <Table.Cell className="text-right tabular-nums">{fmt.format(row.friends)}</Table.Cell>
+                        <Table.Cell className="text-right tabular-nums">{fmt.format(row.dups)}</Table.Cell>
+                        <Table.Cell className="text-right tabular-nums">
                           {(row.dupRate * 100).toFixed(0)}%
-                        </td>
-                      </tr>
+                        </Table.Cell>
+                      </Table.Row>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </Table.Body>
+                </Table>
+              </LayerCard>
             )}
           </section>
 
@@ -191,36 +193,36 @@ export default function DuplicatesPage() {
               <p className="mt-1 text-sm text-gray-500">
                 行アカウントの友だちのうち、列アカウントにも居る人数 (行アカに対する割合)。
               </p>
-              <div className="mt-3 overflow-x-auto rounded-lg bg-white shadow-sm ring-1 ring-gray-200">
-                <table className="min-w-full divide-y divide-gray-200 text-sm">
-                  <thead className="bg-gray-50 text-left text-xs font-medium uppercase text-gray-500">
-                    <tr>
-                      <th className="px-4 py-3">行 \ 列</th>
+              <LayerCard className="mt-3 overflow-x-auto p-0">
+                <Table>
+                  <Table.Header>
+                    <Table.Row>
+                      <Table.Head>行 \ 列</Table.Head>
                       {data.perAccount.map((col) => (
-                        <th
+                        <Table.Head
                           key={col.accountId}
                           className="px-4 py-3 text-right whitespace-nowrap"
                         >
                           {col.accountName}
-                        </th>
+                        </Table.Head>
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
+                    </Table.Row>
+                  </Table.Header>
+                  <Table.Body>
                     {data.perAccount.map((row) => (
-                      <tr key={row.accountId}>
-                        <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
+                      <Table.Row key={row.accountId}>
+                        <Table.Cell className="font-medium text-kumo-strong whitespace-nowrap">
                           {row.accountName}
-                        </td>
+                        </Table.Cell>
                         {data.perAccount.map((col) => {
                           if (row.accountId === col.accountId) {
                             return (
-                              <td
+                              <Table.Cell
                                 key={col.accountId}
                                 className="px-4 py-3 text-right text-gray-300"
                               >
                                 —
-                              </td>
+                              </Table.Cell>
                             )
                           }
                           const pair = pairwise.find(
@@ -231,7 +233,7 @@ export default function DuplicatesPage() {
                           const overlap = pair?.overlap ?? 0
                           const rate = row.friends > 0 ? overlap / row.friends : 0
                           return (
-                            <td
+                            <Table.Cell
                               key={col.accountId}
                               className="px-4 py-3 text-right tabular-nums whitespace-nowrap"
                             >
@@ -239,14 +241,14 @@ export default function DuplicatesPage() {
                               <span className="text-xs text-gray-400">
                                 ({(rate * 100).toFixed(0)}%)
                               </span>
-                            </td>
+                            </Table.Cell>
                           )
                         })}
-                      </tr>
+                      </Table.Row>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </Table.Body>
+                </Table>
+              </LayerCard>
             </section>
             )
           })()}
@@ -266,10 +268,10 @@ function StatCard({
   hint?: string
 }) {
   return (
-    <div className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
+    <LayerCard className="p-4">
       <div className="text-xs font-medium text-gray-500">{label}</div>
       <div className="mt-1 text-2xl font-bold tabular-nums text-gray-900">{value}</div>
       {hint ? <div className="mt-1 text-xs text-gray-400">{hint}</div> : null}
-    </div>
+    </LayerCard>
   )
 }

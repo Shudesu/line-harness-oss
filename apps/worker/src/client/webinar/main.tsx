@@ -75,6 +75,37 @@ interface FormDef {
   onSubmitMessageContent?: string | null;
 }
 
+interface ConsultationSlot {
+  date: string;
+  start: string;
+  end: string;
+  startsAt: string;
+}
+
+interface ConsultationAvailability {
+  calendarReady: boolean;
+  fallbackUrl: string | null;
+  menu: { id: string; name: string; durationMinutes: number };
+  staff: { id: string; name: string };
+  slots: ConsultationSlot[];
+  existingBooking: {
+    bookingId: string;
+    status: string;
+    startsAt: string;
+    meetUrl: string | null;
+  } | null;
+}
+
+interface BookedConsultation {
+  bookingId: string;
+  status: 'confirmed';
+  startsAt: string;
+  endsAt: string;
+  meetUrl: string;
+  externalEventId: string;
+  created: boolean;
+}
+
 interface WebinarSakuraComment {
   atSeconds: number;
   authorName: string;
@@ -952,6 +983,7 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
         <FormSheet
           sheet={formSheet}
           ctx={ctx}
+          slug={slug}
           onFunnelEvent={(eventType, fieldName) =>
             trackFunnelEvent(eventType, formSheet.cta, fieldName)}
           onClose={() => setFormSheet(null)}
@@ -971,6 +1003,7 @@ function WebinarApp({ ctx, slug }: { ctx: WebinarContext; slug: string }) {
 function FormSheet({
   sheet,
   ctx,
+  slug,
   onFunnelEvent,
   onClose,
   onSubmitted,
@@ -981,6 +1014,7 @@ function FormSheet({
     | { cta: WebinarCtaCard; phase: 'done'; def: FormDef }
     | { cta: WebinarCtaCard; phase: 'error'; message: string };
   ctx: WebinarContext;
+  slug: string;
   onFunnelEvent: (
     eventType: 'form_start' | 'field_complete' | 'submit_attempt' |
       'submit_success' | 'submit_error',
@@ -994,13 +1028,11 @@ function FormSheet({
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const completedFieldsRef = useRef(new Set<string>());
-  const bookingRedirectTimerRef = useRef<number | null>(null);
-
-  useEffect(() => () => {
-    if (bookingRedirectTimerRef.current !== null) {
-      window.clearTimeout(bookingRedirectTimerRef.current);
-    }
-  }, []);
+  const [consultation, setConsultation] = useState<ConsultationAvailability | null>(null);
+  const [consultationLoading, setConsultationLoading] = useState(false);
+  const [consultationError, setConsultationError] = useState<string | null>(null);
+  const [bookingStartsAt, setBookingStartsAt] = useState<string | null>(null);
+  const [booked, setBooked] = useState<BookedConsultation | null>(null);
 
   const hasValue = (value: string | string[] | undefined) =>
     Array.isArray(value) ? value.length > 0 : typeof value === 'string' && value.trim() !== '';
@@ -1055,16 +1087,6 @@ function FormSheet({
       }
       onFunnelEvent('submit_success');
       onSubmitted(def);
-      const bookingUrl = def.onSubmitMessageContent?.match(/https?:\/\/[^\s]+/)?.[0] ?? null;
-      if (bookingUrl) {
-        // フォーム送信後にもう一度ボタンを押させると、予約画面へ進む前に
-        // 離脱しやすい。同一の in-app browser で予約画面へ自動遷移し、
-        // 完了画面のボタンは自動遷移できなかった場合のフォールバックにする。
-        bookingRedirectTimerRef.current = window.setTimeout(
-          () => window.location.assign(bookingUrl),
-          900,
-        );
-      }
     } catch {
       onFunnelEvent('submit_error');
       setError('送信に失敗しました。通信環境をご確認ください。');
@@ -1081,14 +1103,98 @@ function FormSheet({
     ? sheet.def.onSubmitMessageContent?.match(/https?:\/\/[^\s]+/)?.[0] ?? null
     : null;
 
-  const openCompletionUrl = () => {
-    if (!completionUrl) return;
-    if (bookingRedirectTimerRef.current !== null) {
-      window.clearTimeout(bookingRedirectTimerRef.current);
-      bookingRedirectTimerRef.current = null;
+  useEffect(() => {
+    if (sheet.phase !== 'done') return;
+    let cancelled = false;
+    setConsultationLoading(true);
+    setConsultationError(null);
+    void apiGet<{ ok: true; data: ConsultationAvailability }>(
+      `/api/liff/webinars/${encodeURIComponent(slug)}/consultation-slots`,
+      ctx,
+    )
+      .then((response) => {
+        if (cancelled) return;
+        setConsultation(response.data);
+        const existing = response.data.existingBooking;
+        if (existing?.status === 'confirmed' && existing.meetUrl) {
+          setBooked({
+            bookingId: existing.bookingId,
+            status: 'confirmed',
+            startsAt: existing.startsAt,
+            endsAt: '',
+            meetUrl: existing.meetUrl,
+            externalEventId: '',
+            created: false,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setConsultationError('空き枠を読み込めませんでした。');
+      })
+      .finally(() => {
+        if (!cancelled) setConsultationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sheet.phase, sheet.cta.id, ctx, slug]);
+
+  const bookSlot = async (slot: ConsultationSlot) => {
+    if (bookingStartsAt) return;
+    setBookingStartsAt(slot.startsAt);
+    setConsultationError(null);
+    try {
+      const response = await apiPost<{ ok: true; data: BookedConsultation }>(
+        `/api/liff/webinars/${encodeURIComponent(slug)}/consultation-book`,
+        { startsAt: slot.startsAt },
+        ctx,
+      );
+      setBooked(response.data);
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      setConsultationError(
+        status === 409
+          ? 'この枠は先に予約されました。別の時間を選んでください。'
+          : '日程を確定できませんでした。もう一度お試しください。',
+      );
+      // 競合時は最新の空き枠を取り直す。
+      if (status === 409) {
+        try {
+          const fresh = await apiGet<{ ok: true; data: ConsultationAvailability }>(
+            `/api/liff/webinars/${encodeURIComponent(slug)}/consultation-slots`,
+            ctx,
+          );
+          setConsultation(fresh.data);
+        } catch {
+          // 元のエラーを維持する。
+        }
+      }
+    } finally {
+      setBookingStartsAt(null);
     }
-    window.location.assign(completionUrl);
   };
+
+  const groupedSlots = consultation?.slots.reduce<Record<string, ConsultationSlot[]>>(
+    (groups, slot) => {
+      (groups[slot.date] ??= []).push(slot);
+      return groups;
+    },
+    {},
+  ) ?? {};
+
+  const formatConsultationDate = (startsAt: string) => new Date(startsAt).toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  const formatSlotDate = (date: string) => new Date(`${date}T00:00:00+09:00`).toLocaleDateString(
+    'ja-JP',
+    { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', weekday: 'short' },
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end">
@@ -1111,26 +1217,106 @@ function FormSheet({
           </div>
         )}
         {sheet.phase === 'done' && (
-          <div className="py-6 text-center">
-            <p className="text-2xl">🎉</p>
-            <p className="mt-2 text-lg font-bold">回答を送信しました</p>
-            <p className="mt-1 text-sm text-gray-500">
-              予約画面へ移動しています。空いている15分枠を1つ選んでください。
-            </p>
-            {completionUrl && (
-              <button
-                onClick={openCompletionUrl}
-                className="mt-5 w-full rounded-full bg-[#06C755] px-6 py-3 font-bold text-white active:opacity-80"
-              >
-                予約画面をすぐ開く
-              </button>
+          <div className="flex min-h-0 flex-1 flex-col py-2">
+            {booked ? (
+              <div className="py-5 text-center">
+                <p className="text-3xl">✅</p>
+                <p className="mt-2 text-xl font-bold">個別相談が確定しました</p>
+                <p className="mt-3 rounded-xl bg-green-50 px-4 py-3 text-lg font-bold text-green-800">
+                  {formatConsultationDate(booked.startsAt)}
+                </p>
+                <a
+                  href={booked.meetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-4 block w-full rounded-full bg-[#06C755] px-6 py-3 font-bold text-white"
+                >
+                  Google Meetを確認する
+                </a>
+                <p className="mt-3 text-xs leading-relaxed text-gray-500">
+                  LINEにも参加リンクを送りました。前日と開始1時間前にもお知らせします。
+                </p>
+                <button
+                  onClick={onClose}
+                  className="mt-5 rounded-full border border-gray-300 px-8 py-2.5 font-bold text-gray-600 active:opacity-80"
+                >
+                  ライブに戻る
+                </button>
+              </div>
+            ) : consultationLoading ? (
+              <div className="py-10 text-center">
+                <p className="text-lg font-bold">回答を受け付けました</p>
+                <p className="mt-2 text-sm text-gray-500">実際の空き枠を確認しています...</p>
+              </div>
+            ) : consultation?.calendarReady ? (
+              <>
+                <div className="shrink-0 text-center">
+                  <p className="text-2xl">📅</p>
+                  <p className="mt-1 text-lg font-bold">このまま相談日時を確定</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    空いている枠だけを表示しています。選ぶとMeetまで自動発行されます。
+                  </p>
+                </div>
+                <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto pb-3">
+                  {Object.keys(groupedSlots).length === 0 ? (
+                    <p className="rounded-xl bg-gray-50 p-4 text-center text-sm text-gray-500">
+                      現在、選べる枠がありません。
+                    </p>
+                  ) : Object.entries(groupedSlots).map(([date, slots]) => (
+                    <section key={date}>
+                      <h3 className="mb-2 text-left text-sm font-bold text-gray-700">
+                        {formatSlotDate(date)}
+                      </h3>
+                      <div className="grid grid-cols-3 gap-2">
+                        {slots.map((slot) => (
+                          <button
+                            key={slot.startsAt}
+                            onClick={() => void bookSlot(slot)}
+                            disabled={bookingStartsAt !== null}
+                            className="rounded-lg border border-[#06C755] bg-white py-2.5 text-sm font-bold text-[#049f45] active:bg-green-50 disabled:opacity-50"
+                          >
+                            {bookingStartsAt === slot.startsAt ? '確定中...' : slot.start}
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+                {consultationError && (
+                  <p className="mt-2 shrink-0 text-center text-sm font-bold text-red-600">
+                    {consultationError}
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="py-6 text-center">
+                <p className="text-2xl">🎉</p>
+                <p className="mt-2 text-lg font-bold">回答を送信しました</p>
+                <p className="mt-1 text-sm text-gray-500">
+                  空いている15分枠を1つ選んでください。
+                </p>
+                {(consultation?.fallbackUrl || completionUrl) && (
+                  <button
+                    onClick={() => {
+                      const url = consultation?.fallbackUrl || completionUrl;
+                      if (url) window.location.assign(url);
+                    }}
+                    className="mt-5 w-full rounded-full bg-[#06C755] px-6 py-3 font-bold text-white active:opacity-80"
+                  >
+                    予約カレンダーを開く
+                  </button>
+                )}
+                {consultationError && (
+                  <p className="mt-3 text-sm text-red-600">{consultationError}</p>
+                )}
+                <button
+                  onClick={onClose}
+                  className="mt-4 rounded-full border border-gray-300 px-8 py-2.5 font-bold text-gray-600 active:opacity-80"
+                >
+                  あとで予約する
+                </button>
+              </div>
             )}
-            <button
-              onClick={onClose}
-              className="mt-4 rounded-full border border-gray-300 px-8 py-2.5 font-bold text-gray-600 active:opacity-80"
-            >
-              あとで予約する
-            </button>
           </div>
         )}
         {sheet.phase === 'form' && (

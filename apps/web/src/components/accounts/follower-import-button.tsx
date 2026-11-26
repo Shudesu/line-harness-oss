@@ -1,6 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Loader } from '@cloudflare/kumo/components/loader'
 import { api, type FollowerImportState } from '@/lib/api'
 
 interface Props {
@@ -67,61 +70,61 @@ export default function FollowerImportButton({ accountId, onImported }: Props) {
     }
   }
 
-  if (!state) return <p className="mt-3 text-[11px] text-gray-400">既存友だち移行を確認中…</p>
+  if (!state) return <span className="mt-3 inline-flex items-center gap-2 text-xs text-kumo-subtle"><Loader size="sm" /> 既存友だち移行を確認中</span>
 
   const reflected = state.imported + state.reactivated + state.claimedUnassigned
   const inProgress = state.phase === 'importing_ids' || state.phase === 'hydrating_profiles'
 
   return (
-    <div className="mt-3 pt-3 border-t border-gray-100">
-      <p className="text-xs font-medium text-gray-600">既存友だちのワンタイム移行</p>
+    <div className="mt-3 border-t border-kumo-line pt-3">
+      <p className="text-xs font-medium text-kumo-default">既存友だちのワンタイム移行</p>
 
-      {state.capability === 'unavailable' && (
+      {state.capability === 'unavailable' ? (
         <div className="mt-1">
-          <p className="text-[11px] text-gray-400">
+          <p className="text-xs text-kumo-subtle">
             現在のLINEアカウントでは利用できません。通常運用への負荷や定期処理はありません。
           </p>
-          <button type="button" onClick={() => detect().catch((e) => setError(String(e)))}
-            className="mt-1 text-[11px] text-blue-600 hover:underline">
+          <Button type="button" size="xs" variant="ghost" className="mt-1" onClick={() => detect().catch((reason) => setError(String(reason)))}>
             認証後に利用可否を再確認
-          </button>
+          </Button>
         </div>
-      )}
+      ) : null}
 
-      {state.capability === 'unknown' && (
-        <button type="button" onClick={() => detect().catch((e) => setError(String(e)))}
-          className="mt-1 text-[11px] text-blue-600 hover:underline">
+      {state.capability === 'unknown' ? (
+        <Button type="button" size="xs" variant="ghost" className="mt-1" onClick={() => detect().catch((reason) => setError(String(reason)))}>
           利用可否を確認
-        </button>
-      )}
+        </Button>
+      ) : null}
 
-      {state.capability === 'available' && state.phase !== 'completed' && (
-        <button
+      {state.capability === 'available' && state.phase !== 'completed' ? (
+        <Button
           type="button"
-          onClick={startOrResume}
-          disabled={running}
-          className="mt-2 px-3 py-1.5 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 text-xs font-medium disabled:opacity-50"
+          size="sm"
+          variant="secondary"
+          className="mt-2"
+          loading={running}
+          onClick={() => void startOrResume()}
         >
-          {running ? '移行中…' : inProgress ? '移行を再開' : '一度だけ移行を開始'}
-        </button>
-      )}
+          {inProgress ? '移行を再開' : '一度だけ移行を開始'}
+        </Button>
+      ) : null}
 
-      {inProgress && (
-        <p className="mt-1 text-xs text-green-700">
+      {inProgress ? (
+        <p className="mt-1 text-xs text-kumo-success">
           {state.phase === 'importing_ids'
             ? `友だちID ${state.received.toLocaleString()}件を確認済み`
             : `プロフィール ${state.profilesProcessed.toLocaleString()}件を処理済み`}
         </p>
-      )}
+      ) : null}
 
-      {state.phase === 'completed' && (
-        <p className="mt-1 text-xs text-green-700">
+      {state.phase === 'completed' ? (
+        <p className="mt-1 text-xs text-kumo-success">
           完了: {state.received.toLocaleString()}件確認、{reflected.toLocaleString()}件反映
           {state.conflicts > 0 ? `、${state.conflicts.toLocaleString()}件保留` : ''}
         </p>
-      )}
+      ) : null}
 
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {error ? <Banner className="mt-2" variant="error" title="移行できません" description={error} /> : null}
     </div>
   )
 }
