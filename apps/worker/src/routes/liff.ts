@@ -1201,8 +1201,12 @@ liffRoutes.post('/api/liff/profile', async (c) => {
 /**
  * Which LINE account a friend row created by /api/liff/link belongs to.
  *
- * - The id_token's Login channel is registered on one active account → it.
+ * - The id_token's Login channel is registered on exactly one active account
+ *   → it.
  * - It is registered on several active accounts → ambiguous, do not create.
+ * - It is registered only on disabled accounts → do not create: the webhook
+ *   drops disabled accounts from signature auth, so no follow would ever
+ *   create a friend there, and neither does this endpoint.
  * - It is the env default Login channel and no account registers it → the
  *   account of the env default Messaging channel, matched by channel secret
  *   exactly as the webhook attributes follows for that channel. An env-only
@@ -1212,14 +1216,14 @@ liffRoutes.post('/api/liff/profile', async (c) => {
 function resolveLinkCreationAccount(
   accounts: LineAccount[],
   matchedLoginChannelId: string | null,
-  matchedAccount: LineAccount | null,
   envChannelSecret: string | undefined,
 ): { ok: true; account: LineAccount | null } | { ok: false } {
-  if (matchedAccount) {
-    const sharing = accounts.filter(
-      (a) => a.is_active && a.login_channel_id === matchedLoginChannelId,
-    );
-    return sharing.length > 1 ? { ok: false } : { ok: true, account: matchedAccount };
+  const registered = matchedLoginChannelId
+    ? accounts.filter((a) => a.login_channel_id === matchedLoginChannelId)
+    : [];
+  if (registered.length > 0) {
+    const active = registered.filter((a) => a.is_active);
+    return active.length === 1 ? { ok: true, account: active[0] } : { ok: false };
   }
   const envDefault = envChannelSecret
     ? accounts.find((a) => a.is_active && a.channel_secret === envChannelSecret)
@@ -1227,20 +1231,75 @@ function resolveLinkCreationAccount(
   return { ok: true, account: envDefault ?? null };
 }
 
+const LINE_CONFIRM_TIMEOUT_MS = 10000;
+
 /**
- * The bot profile endpoint answers only for users who currently have the
- * official account as a friend, so a 200 is the server-side proof of
- * friendship that a missing friends row cannot give. Any other outcome
- * (404 = not a friend, or a transient failure) means "not confirmed".
+ * Server-side proof that the caller currently has the official account as a
+ * friend, the same way x-gates.ts proves it: LINE's friendship status for the
+ * caller's own LIFF access token.
+ *
+ * The bot profile endpoint is NOT such a proof — it also answers for users who
+ * only messaged the account without adding it — so it must never gate the
+ * creation of an is_following row.
+ *
+ * The access token is caller-supplied, so before trusting its friendship
+ * status it is bound to this request: issued for the Login channel that
+ * verified the id_token (friendship status is relative to the bot linked to
+ * the token's channel), unexpired, and belonging to the same LINE user.
+ * Anything short of an explicit friendFlag === true — including a missing
+ * token or a LINE outage — is "not confirmed".
  */
-async function fetchFollowerProfile(
+async function confirmFriendship(
+  accessToken: unknown,
+  loginChannelId: string | null,
+  lineUserId: string,
+): Promise<boolean> {
+  if (typeof accessToken !== 'string' || !accessToken || accessToken.length > 10000) return false;
+  if (!loginChannelId) return false;
+  try {
+    const tokenCheck = await fetch(
+      'https://api.line.me/oauth2/v2.1/verify?' + new URLSearchParams({ access_token: accessToken }),
+      { signal: AbortSignal.timeout(LINE_CONFIRM_TIMEOUT_MS) },
+    );
+    if (!tokenCheck.ok) return false;
+    const tokenInfo = await tokenCheck.json<{ client_id?: string; expires_in?: number }>();
+    if (tokenInfo.client_id !== loginChannelId || !tokenInfo.expires_in || tokenInfo.expires_in <= 0) {
+      return false;
+    }
+    const auth = { Authorization: `Bearer ${accessToken}` };
+    const owner = await fetch('https://api.line.me/v2/profile', {
+      headers: auth,
+      signal: AbortSignal.timeout(LINE_CONFIRM_TIMEOUT_MS),
+    });
+    if (!owner.ok || (await owner.json<{ userId?: string }>()).userId !== lineUserId) return false;
+    const friendship = await fetch('https://api.line.me/friendship/v1/status', {
+      headers: auth,
+      signal: AbortSignal.timeout(LINE_CONFIRM_TIMEOUT_MS),
+    });
+    if (!friendship.ok) return false;
+    return (await friendship.json<{ friendFlag?: boolean }>()).friendFlag === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Profile of a confirmed friend, as the follow handler would store it. Only
+ * ever used for the name / picture of the new row: a 200 here says nothing
+ * about friendship (see confirmFriendship), and a failure only means the row
+ * starts with the name the client sent.
+ */
+async function fetchBotProfile(
   channelAccessToken: string,
   lineUserId: string,
 ): Promise<{ displayName?: string; pictureUrl?: string; statusMessage?: string } | null> {
   try {
     const res = await fetch(
       `https://api.line.me/v2/bot/profile/${encodeURIComponent(lineUserId)}`,
-      { headers: { Authorization: `Bearer ${channelAccessToken}` } },
+      {
+        headers: { Authorization: `Bearer ${channelAccessToken}` },
+        signal: AbortSignal.timeout(LINE_CONFIRM_TIMEOUT_MS),
+      },
     );
     if (!res.ok) return null;
     return await res.json();
@@ -1254,6 +1313,8 @@ liffRoutes.post('/api/liff/link', async (c) => {
   try {
     const body = await c.req.json<{
       idToken: string;
+      /** LIFF access token — only used to confirm friendship before creating a missing friend row. */
+      accessToken?: string;
       displayName?: string | null;
       ref?: string;
       existingUuid?: string;
@@ -1325,35 +1386,39 @@ liffRoutes.post('/api/liff/link', async (c) => {
       // falls out of per-account broadcasts and automations if the follow
       // handler never gets to attribute it.
       const creation = resolveLinkCreationAccount(
-        dbAccounts, matchedLoginChannelId, matchedAccount, c.env.LINE_CHANNEL_SECRET,
+        dbAccounts, matchedLoginChannelId, c.env.LINE_CHANNEL_SECRET,
       );
       if (!creation.ok) {
-        // Several accounts share this Login channel, so the id_token cannot
-        // say which one the user is adding. Do not guess and do not create an
-        // unattributed row: the follow webhook knows the account and creates
-        // the friend (same outcome as before this endpoint created rows).
-        console.warn(`[liff/link] friend not created: login channel ${matchedLoginChannelId} maps to several accounts`);
+        // The id_token cannot name one live account: either several active
+        // accounts share this Login channel, or only disabled ones carry it.
+        // Do not guess, do not create an unattributed row and do not create
+        // one under a disabled account: the follow webhook knows the account
+        // and creates the friend (same outcome as before this endpoint
+        // created rows).
+        console.warn(`[liff/link] friend not created: login channel ${matchedLoginChannelId} does not map to exactly one active account`);
         return c.json({ success: false, error: 'Friend not found' }, 404);
       }
       // The LIFF client posts here on every open, before the friend-add gate,
       // so "no row" is also what a visitor who never adds the account looks
-      // like. Only create the row once LINE confirms the friendship.
-      const profile = await fetchFollowerProfile(
+      // like. Only create the row once LINE confirms the friendship; when it
+      // cannot be confirmed, answer 404 as before — the client re-posts after
+      // the friend add, and the follow webhook creates the row regardless.
+      if (!(await confirmFriendship(body.accessToken, matchedLoginChannelId, lineUserId))) {
+        return c.json({ success: false, error: 'Friend not found' }, 404);
+      }
+      const profile = await fetchBotProfile(
         creation.account?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN,
         lineUserId,
       );
-      if (!profile) {
-        return c.json({ success: false, error: 'Friend not found' }, 404);
-      }
       // 'fill': written atomically with the new row; if the follow webhook
       // won the race meanwhile, its attribution is kept, not overwritten.
       // The profile is the one the follow handler stores, so that case does
       // not degrade the row either.
       friend = await upsertFriend(db, {
         lineUserId,
-        displayName: profile.displayName ?? body.displayName ?? verified.name ?? null,
-        pictureUrl: profile.pictureUrl ?? null,
-        statusMessage: profile.statusMessage ?? null,
+        displayName: profile?.displayName ?? body.displayName ?? verified.name ?? null,
+        pictureUrl: profile?.pictureUrl ?? null,
+        statusMessage: profile?.statusMessage ?? null,
         lineAccountId: creation.account?.id ?? null,
         accountMode: 'fill',
       });

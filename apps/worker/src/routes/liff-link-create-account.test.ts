@@ -17,14 +17,25 @@ const app = new Hono<Env>().route('/', liffRoutes);
 const ENV_LOGIN = 'login-env';
 const ENV_SECRET = 'secret-env';
 const NEW_USER = 'U-first-visit';
+const ACCESS_TOKEN = 'liff-access-token';
 
 let store: ReturnType<typeof sqliteD1>;
 let env: Env['Bindings'];
 /** Login channel the mocked LINE verify endpoint accepts the id_token for. */
 let tokenChannel: string;
-/** Whether LINE reports the caller as a friend of the account behind `token`. */
-let isFriendOf: (token: string) => boolean;
+/**
+ * What LINE's friendship status answers for the caller's LIFF access token:
+ * a friendFlag, or an HTTP failure / network error.
+ */
+let friendship: () => Response;
+/** Login channel and LINE user the mocked LINE reports the access token as issued for. */
+let accessTokenChannel: () => string;
+let accessTokenUser: string;
+/** Whether the bot profile endpoint answers for the caller (it does for non-friends who messaged the account). */
+let botProfileAnswers: (token: string) => boolean;
 let profileTokens: string[];
+/** LINE endpoints called, in order (path only). */
+let lineCalls: string[];
 /** Every statement that wrote to `friends`, in order. */
 let friendWrites: string[];
 
@@ -46,6 +57,12 @@ function friendRow(lineUserId = NEW_USER) {
     | undefined;
 }
 
+function expectNothingCreated() {
+  for (const table of ['friends', 'users', 'ref_tracking']) {
+    expect(store.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+  }
+}
+
 async function link(input: Record<string, unknown> = {}) {
   const pending: Promise<unknown>[] = [];
   const ctx = { waitUntil(p: Promise<unknown>) { pending.push(p); }, passThroughOnException() {} } as ExecutionContext;
@@ -54,7 +71,7 @@ async function link(input: Record<string, unknown> = {}) {
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken: 'id-token', displayName: 'First Visit', ...input }),
+      body: JSON.stringify({ idToken: 'id-token', accessToken: ACCESS_TOKEN, displayName: 'First Visit', ...input }),
     },
     env,
     ctx,
@@ -91,11 +108,30 @@ beforeEach(() => {
     LIFF_URL: 'https://liff.line.me/123-Test',
   } as Env['Bindings'];
   tokenChannel = ENV_LOGIN;
-  isFriendOf = () => true;
+  friendship = () => Response.json({ friendFlag: true });
+  accessTokenChannel = () => tokenChannel;
+  accessTokenUser = NEW_USER;
+  botProfileAnswers = () => true;
   profileTokens = [];
+  lineCalls = [];
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input);
+    lineCalls.push(new NodeURL(url).pathname);
+    const bearer = String(new Headers(init?.headers).get('Authorization')).replace('Bearer ', '');
+    if (url.startsWith('https://api.line.me/oauth2/v2.1/verify?')) {
+      return new NodeURL(url).searchParams.get('access_token') === ACCESS_TOKEN
+        ? Response.json({ client_id: accessTokenChannel(), expires_in: 2591000, scope: 'profile openid' })
+        : Response.json({ error: 'invalid_request' }, { status: 400 });
+    }
+    if (url === 'https://api.line.me/v2/profile') {
+      return bearer === ACCESS_TOKEN
+        ? Response.json({ userId: accessTokenUser, displayName: 'Login Name' })
+        : Response.json({ message: 'invalid token' }, { status: 401 });
+    }
+    if (url === 'https://api.line.me/friendship/v1/status') {
+      return bearer === ACCESS_TOKEN ? friendship() : Response.json({ message: 'invalid token' }, { status: 401 });
+    }
     if (url.endsWith('/oauth2/v2.1/verify')) {
       const clientId = new URLSearchParams(String(init?.body)).get('client_id');
       return clientId === tokenChannel
@@ -103,9 +139,8 @@ beforeEach(() => {
         : Response.json({ error: 'invalid_request' }, { status: 400 });
     }
     if (url === `https://api.line.me/v2/bot/profile/${NEW_USER}`) {
-      const token = String(new Headers(init?.headers).get('Authorization')).replace('Bearer ', '');
-      profileTokens.push(token);
-      return isFriendOf(token)
+      profileTokens.push(bearer);
+      return botProfileAnswers(bearer)
         ? Response.json({ userId: NEW_USER, displayName: 'LINE Name', pictureUrl: 'https://example.com/p.jpg' })
         : Response.json({ message: 'Not found' }, { status: 404 });
     }
@@ -203,26 +238,103 @@ describe('/api/liff/link before the follow webhook', () => {
     // The LIFF client posts here on every open, before the friend-add gate.
     addAccount('acc-a', { login: 'login-a' });
     tokenChannel = 'login-a';
-    isFriendOf = () => false;
+    friendship = () => Response.json({ friendFlag: false });
+    botProfileAnswers = () => false;
 
     const res = await link({ ref: 'route-1' });
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ success: false, error: 'Friend not found' });
-    for (const table of ['friends', 'users', 'ref_tracking']) {
-      expect(store.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
-    }
+    expectNothingCreated();
   });
 
-  test('a failing profile lookup is not treated as friendship', async () => {
+  test('a non-friend whose bot profile is readable (messaged the account, never added it) is not created', async () => {
+    // LINE's bot profile endpoint answers for users who only sent a message,
+    // so a readable profile is not friendship: creating the row here would
+    // run the ref tag / scenario before the friend add.
     addAccount('acc-a', { login: 'login-a' });
     tokenChannel = 'login-a';
-    isFriendOf = () => { throw new Error('network down'); };
+    friendship = () => Response.json({ friendFlag: false });
+    botProfileAnswers = () => true;
 
-    const res = await link();
+    const res = await link({ ref: 'route-1' });
 
     expect(res.status).toBe(404);
-    expect(friendRow()).toBeUndefined();
+    expect(await res.json()).toEqual({ success: false, error: 'Friend not found' });
+    expectNothingCreated();
+    // Friendship is decided by the friendship status alone; the bot profile
+    // is not even consulted for someone who is not a friend.
+    expect(lineCalls).toContain('/friendship/v1/status');
+    expect(profileTokens).toEqual([]);
+  });
+
+  test.each<[string, () => void, Record<string, unknown>]>([
+    ['no access token sent (older cached client)', () => {}, { accessToken: undefined }],
+    ['an access token LINE does not recognise', () => {}, { accessToken: 'forged' }],
+    ['an access token issued for another Login channel', () => { accessTokenChannel = () => 'login-other'; }, {}],
+    ['an access token of a different LINE user', () => { accessTokenUser = 'U-somebody-else'; }, {}],
+    ['a failing friendship status call', () => { friendship = () => Response.json({ message: 'boom' }, { status: 500 }); }, {}],
+    ['a friendship status call that throws', () => { friendship = () => { throw new Error('network down'); }; }, {}],
+    ['a friendship status without a boolean true flag', () => { friendship = () => Response.json({ friendFlag: 'true' }); }, {}],
+  ])('friendship cannot be confirmed (%s) → 404, nothing created', async (_name, arrange, input) => {
+    addAccount('acc-a', { login: 'login-a' });
+    tokenChannel = 'login-a';
+    arrange();
+
+    const res = await link({ ref: 'route-1', ...input });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ success: false, error: 'Friend not found' });
+    expectNothingCreated();
+    expect(profileTokens).toEqual([]);
+  });
+
+  test('a confirmed friend is created even when the bot profile cannot be read', async () => {
+    addAccount('acc-a', { login: 'login-a' });
+    tokenChannel = 'login-a';
+    botProfileAnswers = () => { throw new Error('network down'); };
+
+    const res = await link({ ref: 'route-1' });
+
+    expect(res.status).toBe(200);
+    expect(friendRow()).toMatchObject({ line_account_id: 'acc-a', ref_code: 'route-1', display_name: 'First Visit' });
+  });
+
+  test('Login channel registered only on a disabled account → no friend row, no ref attribution (404)', async () => {
+    // webhook.ts drops disabled accounts from signature auth, so a follow can
+    // never create a friend there; this endpoint must not either.
+    addAccount('acc-off', { login: 'login-off', active: 0 });
+    addAccount('acc-live', { login: 'login-live' });
+    tokenChannel = 'login-off';
+
+    const res = await link({ ref: 'route-1' });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ success: false, error: 'Friend not found' });
+    expectNothingCreated();
+    // Refused before LINE is asked anything about the caller's friendship.
+    expect(lineCalls).toEqual(['/oauth2/v2.1/verify', '/oauth2/v2.1/verify']);
+    expect(profileTokens).toEqual([]);
+  });
+
+  test('Login channel registered only on several disabled accounts → 404, nothing created', async () => {
+    addAccount('acc-off-1', { login: 'login-off', active: 0, order: 1 });
+    addAccount('acc-off-2', { login: 'login-off', active: 0, order: 2 });
+    tokenChannel = 'login-off';
+
+    const res = await link({ ref: 'route-1' });
+
+    expect(res.status).toBe(404);
+    expectNothingCreated();
+  });
+
+  test('env default Login channel registered only on a disabled account → 404, not created under it or as NULL', async () => {
+    addAccount('acc-off', { login: ENV_LOGIN, secret: ENV_SECRET, active: 0 });
+
+    const res = await link({ ref: 'route-1' });
+
+    expect(res.status).toBe(404);
+    expectNothingCreated();
   });
 
   test('a shared Login channel with only one active account is not ambiguous', async () => {
@@ -234,7 +346,7 @@ describe('/api/liff/link before the follow webhook', () => {
 
     expect(res.status).toBe(200);
     expect(friendRow()?.line_account_id).toBe('acc-live');
-    // The same (active) account is used for the friendship check.
+    // The same (active) account is used for the profile of the new row.
     expect(profileTokens).toEqual(['token-acc-live']);
   });
 
