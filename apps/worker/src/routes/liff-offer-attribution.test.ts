@@ -16,6 +16,7 @@ const dbMocks = {
   recoverStuckDeliveries: vi.fn(),
   // /api/liff/link + applyRefAttribution helpers
   getFriendByLineUserId: vi.fn(),
+  getFriendByLineUserIdForAccount: vi.fn(),
   getEntryRouteByRefCode: vi.fn().mockResolvedValue(null),
   getTrackedLinkById: vi.fn().mockResolvedValue(null),
   getAffiliateLinkByRefCode: vi.fn().mockResolvedValue(null),
@@ -32,6 +33,11 @@ vi.mock('@line-crm/db', () => dbMocks);
 // existing-friend re-touch path (/api/liff/link never sets isNewFriend).
 const notifyAffiliateFriendAdd = vi.fn().mockResolvedValue(undefined);
 vi.mock('../services/affiliate-notifier.js', () => ({ notifyAffiliateFriendAdd }));
+
+// Ref-attribution tag attach now goes through the guarded helper (fires
+// tag_added side effects only on first-time attach) — assert on this mock.
+const attachTagAndFireSideEffects = vi.fn().mockResolvedValue({ added: true });
+vi.mock('../services/friend-tag-attach.js', () => ({ attachTagAndFireSideEffects }));
 
 // Import after the mock so index.ts binds the mocked helpers.
 const worker = (await import('../index.js')).default;
@@ -88,6 +94,9 @@ function link(ref: string) {
 
 describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend add', () => {
   beforeEach(() => {
+  dbMocks.getFriendByLineUserIdForAccount.mockImplementation(
+    (...args: unknown[]) => dbMocks.getFriendByLineUserId(...(args as [unknown, unknown])),
+  );
     vi.clearAllMocks();
     installVerifyMock();
     // Already-linked friend: user_id set so applyRefAttribution runs without
@@ -123,10 +132,11 @@ describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend ad
       expect.anything(),
       'OFF-1',
     );
-    expect(dbMocks.addTagToFriend).toHaveBeenCalledWith(
+    expect(attachTagAndFireSideEffects).toHaveBeenCalledWith(
       expect.anything(),
       'F-1',
       'TAG-offer',
+      expect.anything(),
     );
   });
 
@@ -142,7 +152,7 @@ describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend ad
 
     // No offer lookup, no tag application — current behavior unchanged.
     expect(dbMocks.getAffiliateOfferById).not.toHaveBeenCalled();
-    expect(dbMocks.addTagToFriend).not.toHaveBeenCalled();
+    expect(attachTagAndFireSideEffects).not.toHaveBeenCalled();
   });
 
   it('skips tag application when the offer is inactive (is_active = 0)', async () => {
@@ -166,7 +176,7 @@ describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend ad
       expect.anything(),
       'OFF-2',
     );
-    expect(dbMocks.addTagToFriend).not.toHaveBeenCalled();
+    expect(attachTagAndFireSideEffects).not.toHaveBeenCalled();
   });
 
   it('does NOT fire the friend-add notification on an existing-friend re-touch', async () => {
@@ -206,10 +216,11 @@ describe('POST /api/liff/link — offer tag/scenario on affiliate-link friend ad
     // entry_route wins: affiliate link / offer resolution is skipped entirely.
     expect(dbMocks.getAffiliateLinkByRefCode).not.toHaveBeenCalled();
     expect(dbMocks.getAffiliateOfferById).not.toHaveBeenCalled();
-    expect(dbMocks.addTagToFriend).toHaveBeenCalledWith(
+    expect(attachTagAndFireSideEffects).toHaveBeenCalledWith(
       expect.anything(),
       'F-1',
       'TAG-route',
+      expect.anything(),
     );
   });
 });

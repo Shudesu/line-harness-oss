@@ -1,13 +1,16 @@
 import { describe, expect, test, beforeEach, vi } from 'vitest';
 
 const dbMocks = {
-  createTrackedLink: vi.fn(),
+  getOrCreateAutoTrackedLink: vi.fn(),
   getTrackedLinkBaseUrl: vi.fn(),
   getLinkBaseUrl: vi.fn(),
+  getLineAccountById: vi.fn(),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
-const { appendFriendToTrackedLinks, autoTrackContent } = await import('./auto-track.js');
+const { appendFriendToTrackedLinks, autoTrackContent, decorateForFriendPush } = await import(
+  './auto-track.js'
+);
 
 const DB = {} as D1Database;
 const WORKER = 'https://worker.example.com';
@@ -58,6 +61,12 @@ describe('appendFriendToTrackedLinks', () => {
     expect(dbMocks.getTrackedLinkBaseUrl).not.toHaveBeenCalled();
   });
 
+  test("skips the settings read when content contains no '/t/' (URL-free welcome fast path)", async () => {
+    const content = 'こんにちは！ようこそ。https://example.com/lp もどうぞ';
+    expect(await appendFriendToTrackedLinks(DB, content, WORKER, FRIEND)).toBe(content);
+    expect(dbMocks.getTrackedLinkBaseUrl).not.toHaveBeenCalled();
+  });
+
   test('falls back to worker base when no short domain is configured', async () => {
     dbMocks.getTrackedLinkBaseUrl.mockResolvedValue(null);
     const content = `${WORKER}/t/Ab3xY9k`;
@@ -69,7 +78,7 @@ describe('appendFriendToTrackedLinks', () => {
 describe('autoTrackContent (flex)', () => {
   beforeEach(() => {
     let n = 0;
-    dbMocks.createTrackedLink.mockImplementation(async () => {
+    dbMocks.getOrCreateAutoTrackedLink.mockImplementation(async () => {
       n += 1;
       return { id: `id-${n}`, short_code: `Code${n}` };
     });
@@ -128,7 +137,7 @@ describe('autoTrackContent (flex)', () => {
     });
     const out = await autoTrackContent(DB, 'flex', content, WORKER);
     expect(out.content).toBe(content);
-    expect(dbMocks.createTrackedLink).not.toHaveBeenCalled();
+    expect(dbMocks.getOrCreateAutoTrackedLink).not.toHaveBeenCalled();
   });
 
   test('malformed action uris are skipped instead of crashing the delivery', async () => {
@@ -145,14 +154,14 @@ describe('autoTrackContent (flex)', () => {
     expect(tree.contents[0].action.uri).toBe('https://');
     expect(tree.contents[1].action.uri).toBe('https://exa mple.com/lp');
     expect(tree.contents[2].action.uri).toBe(`${SHORT}/t/Code1`);
-    expect(dbMocks.createTrackedLink).toHaveBeenCalledTimes(1);
+    expect(dbMocks.getOrCreateAutoTrackedLink).toHaveBeenCalledTimes(1);
   });
 
   test('leaves invalid flex JSON untouched instead of corrupting it', async () => {
     const content = 'not-json https://example.com/lp';
     const out = await autoTrackContent(DB, 'flex', content, WORKER);
     expect(out.content).toBe(content);
-    expect(dbMocks.createTrackedLink).not.toHaveBeenCalled();
+    expect(dbMocks.getOrCreateAutoTrackedLink).not.toHaveBeenCalled();
   });
 
   test('passes lineAccountId through to created links', async () => {
@@ -161,9 +170,69 @@ describe('autoTrackContent (flex)', () => {
       action: { type: 'uri', uri: 'https://example.com/lp' },
     });
     await autoTrackContent(DB, 'flex', content, WORKER, { lineAccountId: 'acc-1' });
-    expect(dbMocks.createTrackedLink).toHaveBeenCalledWith(
+    expect(dbMocks.getOrCreateAutoTrackedLink).toHaveBeenCalledWith(
       DB,
       expect.objectContaining({ lineAccountId: 'acc-1' }),
     );
+  });
+});
+
+describe('decorateForFriendPush — shared cron/instant pipeline', () => {
+  test('returns input unchanged and touches no DB when workerUrl is not configured', async () => {
+    const content = '詳細は https://example.com/lp へ';
+    const out = await decorateForFriendPush(DB, 'text', content, undefined, {
+      lineAccountId: 'acc-1',
+      friendId: FRIEND,
+    });
+    expect(out).toEqual({ messageType: 'text', content });
+    expect(dbMocks.getOrCreateAutoTrackedLink).not.toHaveBeenCalled();
+    expect(dbMocks.getTrackedLinkBaseUrl).not.toHaveBeenCalled();
+  });
+
+  test('wraps raw URLs into tracked links owned by lineAccountId, then bakes f=<friendId>', async () => {
+    dbMocks.getOrCreateAutoTrackedLink.mockResolvedValue({ id: 'tl-1', short_code: 'Ab3xY9k' });
+    const out = await decorateForFriendPush(DB, 'text', '詳細は https://example.com/lp へ', WORKER, {
+      lineAccountId: 'acc-1',
+      friendId: FRIEND,
+    });
+    expect(dbMocks.getOrCreateAutoTrackedLink).toHaveBeenCalledWith(
+      DB,
+      expect.objectContaining({ originalUrl: 'https://example.com/lp', lineAccountId: 'acc-1' }),
+    );
+    expect(out.messageType).toBe('text');
+    expect(out.content).toBe(`詳細は ${SHORT}/t/Ab3xY9k?f=${FRIEND} へ`);
+  });
+
+  test('appends f= to pre-existing /t links even when nothing needs auto-tracking', async () => {
+    const content = `${SHORT}/t/xYz9876`;
+    const out = await decorateForFriendPush(DB, 'text', content, WORKER, {
+      lineAccountId: null,
+      friendId: FRIEND,
+    });
+    expect(dbMocks.getOrCreateAutoTrackedLink).not.toHaveBeenCalled();
+    expect(out.content).toBe(`${SHORT}/t/xYz9876?f=${FRIEND}`);
+  });
+
+  test("substitutes {{liff_id}} with the delivering account's LIFF (multi-account form URLs)", async () => {
+    dbMocks.getLineAccountById.mockResolvedValue({ id: 'acc-1b', liff_id: '2009668520-YghzbHx9' });
+    const content = 'フォーム: https://liff.line.me/{{liff_id}}?page=form&id=f-1&liffId={{liff_id}}';
+    const out = await decorateForFriendPush(DB, 'text', content, WORKER, {
+      lineAccountId: 'acc-1b',
+      friendId: FRIEND,
+    });
+    expect(dbMocks.getLineAccountById).toHaveBeenCalledWith(DB, 'acc-1b');
+    expect(out.content).toBe(
+      'フォーム: https://liff.line.me/2009668520-YghzbHx9?page=form&id=f-1&liffId=2009668520-YghzbHx9',
+    );
+  });
+
+  test('{{liff_id}} with no resolvable account is left unresolved (logged), content otherwise intact', async () => {
+    const content = 'https://liff.line.me/{{liff_id}}?page=form';
+    const out = await decorateForFriendPush(DB, 'text', content, WORKER, {
+      lineAccountId: null,
+      friendId: FRIEND,
+    });
+    expect(dbMocks.getLineAccountById).not.toHaveBeenCalled();
+    expect(out.content).toContain('{{liff_id}}');
   });
 });

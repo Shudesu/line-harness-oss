@@ -82,4 +82,33 @@ describe('bootstrap.sql', () => {
 
     expect(readSchemaObjects(bootstrapDb)).toEqual(readSchemaObjects(replayDb));
   });
+
+  it('includes built-in auto-reply seed data for clean installs', () => {
+    const db = new Database(':memory:');
+    db.exec(readFileSync(BOOTSTRAP_PATH, 'utf8'));
+
+    const rule = db
+      .prepare(
+        `SELECT keyword, match_type, response_type, line_account_id, is_active, response_content
+           FROM auto_replies
+          WHERE id = 'builtin-mileage-wallet-keyword'`,
+      )
+      .get() as {
+        keyword: string;
+        match_type: string;
+        response_type: string;
+        line_account_id: string | null;
+        is_active: number;
+        response_content: string;
+      } | undefined;
+
+    expect(rule).toMatchObject({
+      keyword: 'マイル',
+      match_type: 'exact',
+      response_type: 'flex',
+      line_account_id: null,
+      is_active: 1,
+    });
+    expect(rule?.response_content).toContain('?page=affiliate&liffId={{liff_id}}');
+  });
 });

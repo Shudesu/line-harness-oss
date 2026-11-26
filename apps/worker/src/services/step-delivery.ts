@@ -1,3 +1,5 @@
+import { parseMessageGroup, packMessageItems } from '@line-crm/shared';
+import { buildMessages, messagesToLogPayload } from './message-group.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getFriendScenariosDueForDelivery,
@@ -5,16 +7,22 @@ import {
   advanceFriendScenario,
   completeFriendScenario,
   claimFriendScenarioForDelivery,
+  recoverStuckDeliveries,
+  pauseFriendScenarioDelivery,
   getFriendById,
+  getLineAccountById,
+  resolveDefaultLineAccount,
   jstNow,
   computeNextDeliveryAt,
   resolveStepContent,
   addTagToFriend,
   type DeliveryMode,
+  type Friend,
 } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
+import { getQuotaUsage, quotaEnabled, type QuotaEnv } from './quota.js';
 import { fireEvent } from './event-bus.js';
 
 /**
@@ -25,6 +33,7 @@ import { fireEvent } from './event-bus.js';
  * - {{uid}}                 → friend's user UUID
  * - {{friend_id}}           → friend's internal ID
  * - {{auth_url:CHANNEL_ID}} → full /auth/line URL with uid for cross-account linking
+ * - {{form_url:FORM_ID}}   → フォームの公開 URL（LIFF）。`liffId` を渡したときだけ展開する
  * - {{metadata.KEY}}       → friend's metadata value (from form responses etc.)
  */
 export function expandVariables(
@@ -32,12 +41,17 @@ export function expandVariables(
   friend: { id: string; display_name: string | null; user_id: string | null; ref_code?: string | null; metadata?: Record<string, unknown> | string | null },
   apiOrigin?: string,
   messageType?: string,
+  liffId?: string | null,
 ): string {
+  const group = parseMessageGroup(content);
+  if (group) return packMessageItems(group.map(item => ({ ...item, messageContent: expandVariables(item.messageContent, friend, apiOrigin, item.messageType, liffId) }))).messageContent;
+  // Substitutions inside JSON strings must keep quotes, slashes and newlines escaped.
+  const encode = (value: string) => messageType === 'flex' || messageType === 'image' ? JSON.stringify(value).slice(1, -1) : value;
   let result = content;
-  result = result.replace(/\{\{name\}\}/g, friend.display_name || '');
-  result = result.replace(/\{\{uid\}\}/g, friend.user_id || '');
-  result = result.replace(/\{\{friend_id\}\}/g, friend.id);
-  result = result.replace(/\{\{ref\}\}/g, friend.ref_code || '');
+  result = result.replace(/\{\{name\}\}/g, () => encode(friend.display_name || ''));
+  result = result.replace(/\{\{uid\}\}/g, () => encode(friend.user_id || ''));
+  result = result.replace(/\{\{friend_id\}\}/g, () => encode(friend.id));
+  result = result.replace(/\{\{ref\}\}/g, () => encode(friend.ref_code || ''));
   // Conditional block: {{#if_ref}}...{{/if_ref}} — only shown if ref_code exists
   if (friend.ref_code) {
     result = result.replace(/\{\{#if_ref\}\}([\s\S]*?)\{\{\/if_ref\}\}/g, '$1');
@@ -66,13 +80,25 @@ export function expandVariables(
   result = result.replace(/\{\{metadata\.([^}]+)\}\}/g, (_match, key) => {
     const val = meta[key];
     if (val == null) return '';
-    return Array.isArray(val) ? val.join(', ') : String(val);
+    return encode(Array.isArray(val) ? val.join(', ') : String(val));
   });
+  // {{form_url:FORM_ID}} → フォームの公開 URL。
+  //
+  // ホスト直下（`<worker>/?page=form&id=...`）では liff.init が完了せず
+  // 「永遠に読み込み中」になるので、必ず liff.line.me 経由にする。
+  // liffId が無い（LIFF 未設定）ときは **置換しない** — {{auth_url:}} が
+  // apiOrigin 無しのとき置換しないのと同じ規約。空文字にすると
+  // 「リンクが消えたメッセージ」が本人に届いてしまい、気づけない。
+  if (liffId) {
+    result = result.replace(/\{\{form_url:([^}]+)\}\}/g, (_match, formId) => {
+      return encode(`https://liff.line.me/${liffId}?page=form&id=${String(formId).trim()}`);
+    });
+  }
   if (apiOrigin) {
     result = result.replace(/\{\{auth_url:([^}]+)\}\}/g, (_match, channelId) => {
       const params = new URLSearchParams({ account: channelId, ref: 'cross-link' });
       if (friend.user_id) params.set('uid', friend.user_id);
-      return `${apiOrigin}/auth/line?${params.toString()}`;
+      return encode(`${apiOrigin}/auth/line?${params.toString()}`);
     });
   }
   return result;
@@ -99,19 +125,60 @@ export async function resolveMetadata(
 }
 
 const MAX_SENDS_PER_CRON = 40; // CF Free plan: 50 subrequests limit (margin for other jobs)
+const MAX_ATTEMPTS_PER_CRON = 40; // condition skips/errors also consume CPU and D1 work
+
+export function getLineApiErrorStatus(err: unknown): number | null {
+  if (!(err instanceof Error)) return null;
+  const match = err.message.match(/^LINE API error:\s+(\d{3})\b/);
+  return match ? Number(match[1]) : null;
+}
+
+export function isPermanentLineDeliveryError(err: unknown): boolean {
+  const status = getLineApiErrorStatus(err);
+  return status !== null && status >= 400 && status < 500 && ![408, 409, 429].includes(status);
+}
 
 export async function processStepDeliveries(
   db: D1Database,
   lineClient: LineClient,
   workerUrl?: string,
+  quotaEnv?: QuotaEnv,
 ): Promise<void> {
+  // Crash recovery: a claim (active→delivering) that never got released means
+  // the worker died mid-delivery — without this, the enrollment is stranded
+  // forever because the due query only picks up 'active' rows. Reclaim after
+  // 5 minutes (at-least-once: a crash after the LINE push but before advance
+  // re-sends that step once).
+  const recovered = await recoverStuckDeliveries(db);
+  if (recovered > 0) {
+    console.warn(`[step-delivery] recovered ${recovered} stuck 'delivering' enrollment(s)`);
+  }
+
+  // Enrollments stay untouched; the next tick re-evaluates once under quota.
+  // While a monthly limit is configured, this tick's sends are additionally
+  // capped to the remaining budget (max - used), computed once up front — no
+  // per-send re-query. Without that cap a tick could overshoot the limit by
+  // up to MAX_SENDS_PER_CRON deliveries. A friends-only limit keeps the
+  // previous behavior (block when exceeded, otherwise the full batch size).
+  let sendBudget = MAX_SENDS_PER_CRON;
+  if (quotaEnv && quotaEnabled(quotaEnv)) {
+    const usage = await getQuotaUsage(db, quotaEnv);
+    if (usage.exceeded) return;
+    if (usage.monthlyMessages.max > 0) {
+      sendBudget = Math.min(sendBudget, usage.monthlyMessages.max - usage.monthlyMessages.used);
+      if (sendBudget <= 0) return;
+    }
+  }
+
   const now = jstNow();
   const dueFriendScenarios = await getFriendScenariosDueForDelivery(db, now);
 
   let sendCount = 0;
+  let attemptCount = 0;
   for (let i = 0; i < dueFriendScenarios.length; i++) {
-    if (sendCount >= MAX_SENDS_PER_CRON) break;
+    if (sendCount >= sendBudget || attemptCount >= MAX_ATTEMPTS_PER_CRON) break;
     const fs = dueFriendScenarios[i];
+    attemptCount++;
     try {
       // Stealth: add small random delay between deliveries to avoid burst patterns
       if (i > 0) {
@@ -121,9 +188,56 @@ export async function processStepDeliveries(
       if (sent) sendCount++;
     } catch (err) {
       console.error(`Error processing friend_scenario ${fs.id}:`, err);
-      // Continue with next one
+      // A permanent LINE 4xx (invalid/unreachable recipient, invalid payload,
+      // unauthorized channel, etc.) must not be recovered and retried forever.
+      // 408/409/429 are transient and retain the existing 5-minute recovery.
+      if (isPermanentLineDeliveryError(err)) {
+        await pauseFriendScenarioDelivery(db, fs.id);
+        console.warn(
+          `[step-delivery] paused enrollment=${fs.id} after permanent LINE ${getLineApiErrorStatus(err)}`,
+        );
+      }
+      // Continue with next one.
     }
   }
+}
+
+/**
+ * Resolve the account-specific friend that an account-bound scenario may
+ * safely message.
+ *
+ * - Same-account enrollment: use it directly.
+ * - UUID-linked cross-account enrollment: use the friend row belonging to the
+ *   scenario account.
+ * - OAuth-before-webhook legacy row (line_account_id NULL): the row's LINE user
+ *   id was issued in the scenario account context, so allow one attempt with
+ *   the scenario token. A permanent 4xx pauses it.
+ * - A friend explicitly belonging to another account is never sent through a
+ *   fallback/default token when no linked destination exists.
+ */
+export async function resolveScenarioDeliveryFriend(
+  db: D1Database,
+  enrolledFriend: Friend,
+  scenarioAccountId: string | null,
+): Promise<Friend | null> {
+  if (!scenarioAccountId || enrolledFriend.line_account_id === scenarioAccountId) {
+    return enrolledFriend;
+  }
+
+  if (enrolledFriend.user_id) {
+    const linked = await db
+      .prepare(
+        `SELECT * FROM friends
+         WHERE user_id = ? AND line_account_id = ?
+         ORDER BY is_following DESC, updated_at DESC
+         LIMIT 1`,
+      )
+      .bind(enrolledFriend.user_id, scenarioAccountId)
+      .first<Friend>();
+    if (linked) return linked.is_following ? linked : null;
+  }
+
+  return enrolledFriend.line_account_id === null ? enrolledFriend : null;
 }
 
 async function processSingleDelivery(
@@ -144,18 +258,36 @@ async function processSingleDelivery(
   const claimed = await claimFriendScenarioForDelivery(db, fs.id, fs.current_step_order);
   if (!claimed) return false;
 
-  const friend = await getFriendById(db, fs.friend_id);
-  if (!friend || !friend.is_following) {
+  const enrolledFriend = await getFriendById(db, fs.friend_id);
+  if (!enrolledFriend) {
     await completeFriendScenario(db, fs.id);
     return false;
   }
 
-  // Fetch scenario row for delivery_mode (needed by computeNextDeliveryAt below)
+  // Fetch scenario account together with delivery_mode. Account-bound
+  // scenarios must use that account's friend identity and token.
   const scenarioRow = await db
-    .prepare(`SELECT delivery_mode FROM scenarios WHERE id = ?`)
+    .prepare(`SELECT delivery_mode, line_account_id FROM scenarios WHERE id = ?`)
     .bind(fs.scenario_id)
-    .first<{ delivery_mode: DeliveryMode }>();
+    .first<{ delivery_mode: DeliveryMode; line_account_id: string | null }>();
   if (!scenarioRow) {
+    await completeFriendScenario(db, fs.id);
+    return false;
+  }
+
+  const friend = await resolveScenarioDeliveryFriend(
+    db,
+    enrolledFriend,
+    scenarioRow.line_account_id,
+  );
+  if (!friend) {
+    await pauseFriendScenarioDelivery(db, fs.id);
+    console.warn(
+      `[step-delivery] paused enrollment=${fs.id}: no following friend for scenario account=${scenarioRow.line_account_id}`,
+    );
+    return false;
+  }
+  if (!friend.is_following) {
     await completeFriendScenario(db, fs.id);
     return false;
   }
@@ -223,46 +355,68 @@ async function processSingleDelivery(
   // Expand template variables ({{name}}, {{uid}}, {{auth_url:CHANNEL_ID}}, {{metadata.KEY}}, etc.)
   const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
   const friendWithMeta = { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1];
-  const expandedContent = expandVariables(resolved.messageContent, friendWithMeta, workerUrl, resolved.messageType);
-  // Auto-wrap URLs with tracking links (text with URLs → Flex with button)
-  // リンクの所有アカウントは実際に配信するアカウント (= friend の account) に合わせる
-  const friendAccountId = (friend as unknown as Record<string, string | null>).line_account_id;
-  let trackedType: string = resolved.messageType;
-  let trackedContent = expandedContent;
-  if (workerUrl) {
-    const { autoTrackContent, appendFriendToTrackedLinks } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl, {
-      lineAccountId: friendAccountId ?? null,
-    });
-    trackedType = tracked.messageType;
-    // Per-friend push → bake f=<friendId> into /t links so clicks attribute
-    // without the LIFF identification hop (no consent screen on first tap).
-    trackedContent = await appendFriendToTrackedLinks(db, tracked.content, workerUrl, friend.id);
-  }
-  const message = buildMessage(trackedType, trackedContent);
-  // Resolve the correct LINE client for this friend's account
-  let deliveryClient = lineClient;
-  if (friendAccountId) {
-    const { getLineAccountById } = await import('@line-crm/db');
-    const account = await getLineAccountById(db, friendAccountId);
-    if (account) {
-      const { LineClient: LC } = await import('@line-crm/line-sdk');
-      deliveryClient = new LC(account.channel_access_token);
+  // {{form_url:ID}} の展開には liffId が要る。実際に配信するアカウントのものを使う
+  // （別アカウントの liffId で組み立てると、その友だちが開けない URL になる）。
+  //
+  // 本文に含まれていないときは引かない — 全配信に DB 参照を1回足さないため。
+  // 失敗しても配信は止めない（liffId 無しなら {{form_url:}} を置換しないだけ）。
+  let liffIdForExpand: string | null = null;
+  if (resolved.messageContent.includes('{{form_url:')) {
+    try {
+      const acctId = scenarioRow.line_account_id ?? friend.line_account_id ?? null;
+      liffIdForExpand = acctId
+        ? (await getLineAccountById(db, acctId))?.liff_id ?? null
+        : (await resolveDefaultLineAccount(db))?.liff_id ?? null;
+    } catch {
+      liffIdForExpand = null;
     }
   }
-  await deliveryClient.pushMessage(friend.line_user_id, [message]);
+  const expandedContent = expandVariables(
+    resolved.messageContent,
+    friendWithMeta,
+    workerUrl,
+    resolved.messageType,
+    liffIdForExpand,
+  );
+  // Auto-wrap URLs with tracking links + bake f=<friendId> into /t links —
+  // shared pipeline with the instant first-step push (immediate-first-step.ts).
+  // リンクの所有アカウントは実際に配信するアカウント (= friend の account) に合わせる
+  const friendAccountId = friend.line_account_id;
+  const deliveryAccountId = scenarioRow.line_account_id ?? friendAccountId;
+  const { decorateForFriendPush } = await import('./auto-track.js');
+  const tracked = await decorateForFriendPush(db, resolved.messageType, expandedContent, workerUrl, {
+    lineAccountId: deliveryAccountId ?? null,
+    friendId: friend.id,
+  });
+  const messages = buildMessages(tracked.messageType, tracked.content, buildMessage);
+  // Resolve the correct LINE client for this friend's account
+  let deliveryClient = lineClient;
+  if (deliveryAccountId) {
+    const { getLineAccountById } = await import('@line-crm/db');
+    const account = await getLineAccountById(db, deliveryAccountId);
+    if (!account) {
+      await pauseFriendScenarioDelivery(db, fs.id);
+      console.warn(
+        `[step-delivery] paused enrollment=${fs.id}: missing LINE account=${deliveryAccountId}`,
+      );
+      return false;
+    }
+    const { LineClient: LC } = await import('@line-crm/line-sdk');
+    deliveryClient = new LC(account.channel_access_token);
+  }
+  await deliveryClient.pushMessage(friend.line_user_id, messages);
 
   // Log what we actually pushed: variables expanded, URLs auto-tracked, AND
   // any cleanEmptyNodes() mutation or parse-failure text fallback applied by
   // buildMessage(). Use scenario_step_id to recover the original template.
   const logId = crypto.randomUUID();
-  const logPayload = messageToLogPayload(message);
+  const logPayload = messagesToLogPayload(messages, messageToLogPayload);
   await db
     .prepare(
-      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, template_id_at_send, created_at)
-       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?, ?)`,
+      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, template_id_at_send, line_account_id, created_at)
+       VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'scenario', ?, ?, ?)`,
     )
-    .bind(logId, friend.id, logPayload.messageType, logPayload.content, currentStep.id, resolved.templateIdAtSend, jstNow())
+    .bind(logId, friend.id, logPayload.messageType, logPayload.content, currentStep.id, resolved.templateIdAtSend, deliveryAccountId, jstNow())
     .run();
 
   // Determine next step (find the step after currentStep in the sorted list)
@@ -346,15 +500,37 @@ export async function evaluateCondition(
   switch (step.condition_type) {
     case 'tag_exists': {
       const tag = await db
-        .prepare('SELECT 1 FROM friend_tags WHERE friend_id = ? AND tag_id = ?')
-        .bind(friendId, step.condition_value)
+        .prepare(
+          `SELECT 1 FROM friend_tags ft
+           INNER JOIN friends tagged_friend ON tagged_friend.id = ft.friend_id
+           WHERE ft.tag_id = ?
+             AND (
+               tagged_friend.id = ?
+               OR tagged_friend.user_id = (
+                 SELECT user_id FROM friends WHERE id = ? AND user_id IS NOT NULL
+               )
+             )
+           LIMIT 1`,
+        )
+        .bind(step.condition_value, friendId, friendId)
         .first();
       return !!tag;
     }
     case 'tag_not_exists': {
       const tag = await db
-        .prepare('SELECT 1 FROM friend_tags WHERE friend_id = ? AND tag_id = ?')
-        .bind(friendId, step.condition_value)
+        .prepare(
+          `SELECT 1 FROM friend_tags ft
+           INNER JOIN friends tagged_friend ON tagged_friend.id = ft.friend_id
+           WHERE ft.tag_id = ?
+             AND (
+               tagged_friend.id = ?
+               OR tagged_friend.user_id = (
+                 SELECT user_id FROM friends WHERE id = ? AND user_id IS NOT NULL
+               )
+             )
+           LIMIT 1`,
+        )
+        .bind(step.condition_value, friendId, friendId)
         .first();
       return !tag;
     }
@@ -386,16 +562,13 @@ export async function evaluateCondition(
       }
       const parsed = raw as { key: string; value: unknown };
       const friend = await db
-        .prepare('SELECT metadata FROM friends WHERE id = ?')
+        .prepare('SELECT user_id, metadata FROM friends WHERE id = ?')
         .bind(friendId)
-        .first<{ metadata: string }>();
-      let metadata: Record<string, unknown> = {};
-      try {
-        metadata = JSON.parse(friend?.metadata || '{}') as Record<string, unknown>;
-      } catch {
-        // Friend metadata corruption shouldn't propagate; treat as empty map.
-        metadata = {};
-      }
+        .first<{ user_id: string | null; metadata: string | null }>();
+      const metadata = await resolveMetadata(db, {
+        user_id: friend?.user_id ?? null,
+        metadata: friend?.metadata ?? null,
+      });
       const actual = metadata[parsed.key];
       return step.condition_type === 'metadata_equals'
         ? actual === parsed.value

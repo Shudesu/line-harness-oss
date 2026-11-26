@@ -1,6 +1,8 @@
 # @line-harness/sdk
 
-AI-native SDK for LINE Harness — programmatic LINE official account automation.
+AI-native SDK for L Harness — programmatic LINE official account automation.
+
+独自の配信・自動処理・外部連携を作るなら、[プラグイン開発ガイド](../../docs/plugins/README.md)から始められます。本体とは別のリポジトリ・WorkerでSDKを使うことで、本体更新による独自ソースの上書きを避けられます。
 
 Replaces L社/U社 with a fully API-driven approach designed for AI agents (Claude Code).
 
@@ -43,9 +45,17 @@ await client.broadcastToTag(tagId, 'text', 'VIP exclusive coupon: CODE123')
 ```ts
 const { items, total, hasNextPage } = await client.friends.list({ limit: 50, offset: 0 })
 const friend = await client.friends.get(friendId)
+// Safe to retry: the same key never delivers or logs the message twice
+await client.friends.sendMessage(friendId, 'Thanks!', 'text', undefined, { idempotencyKey: 'order-123:thanks' })
+// Record a conversion once per key and fire cv_fire for automations
+await client.conversions.track({ conversionPointId, friendId, fireEvent: true, idempotencyKey: 'payment-123' })
+// Exact LINE user ID lookup scoped to one account (null when not found)
+const linked = await client.friends.findByLineUserId('Uxxxxxxxx', lineAccountId)
 const count = await client.friends.count()
 await client.friends.addTag(friendId, tagId)
 await client.friends.removeTag(friendId, tagId)
+// Safe to retry: the same key replays the result without firing tag_change again
+await client.friends.addTag(friendId, tagId, { idempotencyKey: 'order-123:tag' })
 ```
 
 #### Tags
@@ -120,7 +130,7 @@ try {
 ## Requirements
 
 - Node.js 18+ (uses native `fetch`)
-- A deployed LINE Harness Worker API
+- A deployed L Harness Worker API
 
 ## License
 

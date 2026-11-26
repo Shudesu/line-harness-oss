@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
+import { Collapsible } from '@cloudflare/kumo/components/collapsible'
+import { Input } from '@cloudflare/kumo/components/input'
+import { SensitiveInput } from '@cloudflare/kumo/components/sensitive-input'
 import OgEditor from '@/components/shared/og-editor'
 
 // Shared form field building blocks for the LINE account create / edit flows.
@@ -51,20 +54,15 @@ export function FormSection({
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 text-left"
-      >
+    <Collapsible.Root open={open} onOpenChange={setOpen} className="overflow-hidden rounded-lg border border-kumo-line">
+      <Collapsible.DefaultTrigger className="w-full px-4 py-3 text-left">
         <div>
-          <p className="text-sm font-semibold text-gray-800">{title}</p>
-          {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
+          <p className="text-sm font-semibold text-kumo-strong">{title}</p>
+          {description ? <p className="mt-0.5 text-xs text-kumo-subtle">{description}</p> : null}
         </div>
-        <span className="text-gray-400 text-xs">{open ? '▼' : '▶'}</span>
-      </button>
-      {open && <div className="p-4 space-y-3 bg-white">{children}</div>}
-    </div>
+      </Collapsible.DefaultTrigger>
+      <Collapsible.DefaultPanel className="space-y-3 p-4">{children}</Collapsible.DefaultPanel>
+    </Collapsible.Root>
   )
 }
 
@@ -85,22 +83,24 @@ export function TextField({
   type?: 'text' | 'password'
   hint?: string
 }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-700 mb-1">
-        {label}
-        {required && <span className="text-red-500 ml-1">*</span>}
-      </label>
-      <input
-        type={type}
+  return type === 'password' ? (
+    <SensitiveInput
+      label={label}
+      value={value}
+      onValueChange={onChange}
+      placeholder={placeholder}
+      required={required}
+      description={hint}
+    />
+  ) : (
+      <Input
+        label={label}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onValueChange={onChange}
         placeholder={placeholder}
         required={required}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+        description={hint}
       />
-      {hint && <p className="text-[11px] text-gray-400 mt-1">{hint}</p>}
-    </div>
   )
 }
 
@@ -143,18 +143,14 @@ export function AccountFormSections({
             required={showMessagingRequired}
           />
         ) : (
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Channel ID</label>
-            <input
-              value={state.channelId}
-              readOnly
-              disabled
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono bg-gray-50 text-gray-500 cursor-not-allowed"
-            />
-            <p className="text-[11px] text-gray-400 mt-1">
-              Channel ID は変更できません（LINE 側で固定の識別子）
-            </p>
-          </div>
+          <Input
+            label="Channel ID"
+            value={state.channelId}
+            disabled
+            readOnly
+            className="font-mono"
+            description="Channel IDは変更できません（LINE側で固定の識別子）"
+          />
         )}
         <TextField
           label="Channel Access Token"
@@ -217,21 +213,13 @@ export function AccountFormSections({
         description="LINE / X / Facebook のリンクプレビューに使うブランド情報"
         defaultOpen={defaultOpen?.ogp ?? false}
       >
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
-            サイト名（og:site_name）
-          </label>
-          <input
-            type="text"
-            value={state.ogSiteName ?? ''}
-            placeholder={`空欄なら「${state.name || 'アカウント名'}」がフォールバック`}
-            onChange={(e) => update({ ogSiteName: e.target.value || null })}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-          />
-          <p className="text-[11px] text-gray-400 mt-1">
-            リンクプレビューでブランド名として表示されます。
-          </p>
-        </div>
+        <Input
+          label="サイト名（og:site_name）"
+          value={state.ogSiteName ?? ''}
+          placeholder={`空欄なら「${state.name || 'アカウント名'}」を使用`}
+          onValueChange={(value) => update({ ogSiteName: value || null })}
+          description="リンクプレビューでブランド名として表示されます。"
+        />
         <OgEditor
           hideTitle
           value={{

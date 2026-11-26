@@ -103,7 +103,7 @@ describe('GET /api/rich-menu-groups', () => {
     dbMocks.getRichMenuGroups.mockResolvedValue([
       {
         id: 'g1', account_id: 'acc-1', name: 'メイン', chat_bar_text: 'メニュー',
-        size: 'large', default_page_id: 'p1', is_default_for_all: 1,
+        size: 'large', default_page_id: 'p1', is_default_for_all: 1, selected: 1,
         status: 'published', publishing_at: null,
         created_at: '2026-05-08T00:00:00.000', updated_at: '2026-05-08T01:00:00.000',
       },
@@ -113,7 +113,7 @@ describe('GET /api/rich-menu-groups', () => {
     const body = (await res.json()) as { data: any[] };
     expect(body.data[0]).toMatchObject({
       id: 'g1', accountId: 'acc-1', chatBarText: 'メニュー',
-      isDefaultForAll: true, status: 'published',
+      isDefaultForAll: true, selected: true, status: 'published',
     });
   });
 });
@@ -269,7 +269,7 @@ describe('POST /api/rich-menu-groups', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large',
+        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large', selected: true,
         pages: [{ name: 'p1', orderIndex: 0, areas: [] }],
       }),
     });
@@ -277,7 +277,7 @@ describe('POST /api/rich-menu-groups', () => {
     expect(dbMocks.createRichMenuGroup).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large',
+        accountId: 'a', name: 'x', chatBarText: 'バー', size: 'large', selected: true,
         pages: [expect.objectContaining({ name: 'p1', orderIndex: 0 })],
       }),
     );
@@ -309,11 +309,11 @@ describe('PATCH /api/rich-menu-groups/:groupId', () => {
     const res = await app.request('/api/rich-menu-groups/g1', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'new', isDefaultForAll: true }),
+      body: JSON.stringify({ name: 'new', isDefaultForAll: true, selected: true }),
     });
     expect(res.status).toBe(200);
     expect(dbMocks.updateRichMenuGroupMeta).toHaveBeenCalledWith(expect.anything(), 'g1', {
-      name: 'new', isDefaultForAll: true,
+      name: 'new', isDefaultForAll: true, selected: true,
     });
     expect(dbMocks.replaceRichMenuPages).not.toHaveBeenCalled();
   });
@@ -500,5 +500,30 @@ describe('POST /api/rich-menu-groups/:groupId/publish', () => {
     const res = await app.request('/api/rich-menu-groups/gid12345-aaaa/publish', { method: 'POST' });
     expect(res.status).toBe(500);
     expect(dbMocks.releasePublishLock).toHaveBeenCalledWith(expect.anything(), 'gid12345-aaaa');
+  });
+});
+
+// ----- GET /api/rich-menu-images/:key (auth-exempt public route) -----
+
+describe('GET /api/rich-menu-images/:key', () => {
+  test('serves objects under rich-menus/', async () => {
+    const r2 = makeR2Stub();
+    await r2.put('rich-menus/acc1/g1/p1/1.png', new Uint8Array([1, 2, 3]), {
+      httpMetadata: { contentType: 'image/png' },
+    });
+    const app = setupApp({ r2 });
+    const res = await app.request('/api/rich-menu-images/rich-menus/acc1/g1/p1/1.png');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('image/png');
+  });
+
+  test('never serves objects outside rich-menus/ (e.g. messages_log archives)', async () => {
+    const r2 = makeR2Stub();
+    await r2.put('archive/messages_log/2026-01-01/m1.ndjson', new TextEncoder().encode('secret'), {
+      httpMetadata: { contentType: 'application/x-ndjson' },
+    });
+    const app = setupApp({ r2 });
+    const res = await app.request('/api/rich-menu-images/archive/messages_log/2026-01-01/m1.ndjson');
+    expect(res.status).toBe(404);
   });
 });

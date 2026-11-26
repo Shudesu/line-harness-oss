@@ -13,6 +13,7 @@ export interface TrackedLink {
   reward_template_id: string | null;
   line_account_id: string | null;
   short_code: string | null;
+  dedup_key: string | null;
   is_active: number;
   click_count: number;
   og_title: string | null;
@@ -98,6 +99,8 @@ export interface CreateTrackedLinkInput {
   introTemplateId?: string | null;
   rewardTemplateId?: string | null;
   lineAccountId?: string | null;
+  /** Auto-generated links only — see getOrCreateAutoTrackedLink. */
+  dedupKey?: string | null;
   ogTitle?: string | null;
   ogDescription?: string | null;
   ogImageUrl?: string | null;
@@ -117,8 +120,8 @@ export async function createTrackedLink(
     try {
       await db
         .prepare(
-          `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, line_account_id, short_code, is_active, click_count, og_title, og_description, og_image_url, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, line_account_id, short_code, dedup_key, is_active, click_count, og_title, og_description, og_image_url, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id,
@@ -130,6 +133,7 @@ export async function createTrackedLink(
           input.rewardTemplateId ?? null,
           input.lineAccountId ?? null,
           shortCode,
+          input.dedupKey ?? null,
           input.ogTitle ?? null,
           input.ogDescription ?? null,
           input.ogImageUrl ?? null,
@@ -146,6 +150,81 @@ export async function createTrackedLink(
   }
 
   return (await getTrackedLinkById(db, id))!;
+}
+
+// ── Auto-generated links (auto-track) ────────────────────────────────────────
+
+export interface AutoTrackedLinkInput {
+  originalUrl: string;
+  lineAccountId?: string | null;
+}
+
+function autoTrackedLinkDedupKey(input: AutoTrackedLinkInput): string {
+  // Must match the backfill expression in migration 050.
+  return `${input.lineAccountId ?? ''}|${input.originalUrl}`;
+}
+
+async function getTrackedLinkByDedupKey(
+  db: D1Database,
+  dedupKey: string,
+): Promise<TrackedLink | null> {
+  return db
+    .prepare(`SELECT * FROM tracked_links WHERE dedup_key = ?`)
+    .bind(dedupKey)
+    .first<TrackedLink>();
+}
+
+/**
+ * Reuse (or create) the single auto-generated tracked link for an
+ * (original_url, line_account_id) pair. auto-track runs inside per-friend
+ * delivery loops, so minting a fresh row per send would pile up thousands of
+ * one-shot links and scatter click analytics — instead each pair owns exactly
+ * one row, enforced by the UNIQUE index on dedup_key. Manually created links
+ * have no dedup_key and are never touched.
+ */
+export async function getOrCreateAutoTrackedLink(
+  db: D1Database,
+  input: AutoTrackedLinkInput,
+): Promise<TrackedLink> {
+  const dedupKey = autoTrackedLinkDedupKey(input);
+  const existing = await getTrackedLinkByDedupKey(db, dedupKey);
+  if (existing) return reactivateIfNeeded(db, existing);
+  try {
+    return await createTrackedLink(db, {
+      name: `auto: ${input.originalUrl.slice(0, 60)}`,
+      originalUrl: input.originalUrl,
+      lineAccountId: input.lineAccountId ?? null,
+      dedupKey,
+    });
+  } catch (err) {
+    // Concurrent deliveries can race past the SELECT; the UNIQUE index makes
+    // exactly one INSERT win — losers fall back to the winner's row.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE.*dedup_key/i.test(msg)) {
+      const winner = await getTrackedLinkByDedupKey(db, dedupKey);
+      if (winner) return reactivateIfNeeded(db, winner);
+    }
+    throw err;
+  }
+}
+
+/**
+ * The returned link is about to be embedded in an outgoing message, so it must
+ * resolve — /t rejects inactive links. Pre-dedup behavior minted a fresh active
+ * link on every send, so reviving a deactivated auto link matches what
+ * recipients always got.
+ */
+async function reactivateIfNeeded(
+  db: D1Database,
+  link: TrackedLink,
+): Promise<TrackedLink> {
+  if (link.is_active) return link;
+  const now = jstNow();
+  await db
+    .prepare(`UPDATE tracked_links SET is_active = 1, updated_at = ? WHERE id = ?`)
+    .bind(now, link.id)
+    .run();
+  return { ...link, is_active: 1, updated_at: now };
 }
 
 export interface UpdateTrackedLinkInput {

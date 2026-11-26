@@ -132,6 +132,23 @@ profileRefresh.post('/api/admin/broadcasts/:id/reset-to-draft', async (c) => {
   const id = c.req.param('id');
   const db = c.env.DB;
 
+  // messages_log rows may have been pruned by log retention, so the count
+  // alone is not sufficient evidence of "never sent". Check the broadcast
+  // row's own send markers first — they survive retention.
+  const bc = await db
+    .prepare('SELECT status, success_count, sent_at, line_request_id, aggregation_unit FROM broadcasts WHERE id = ?')
+    .bind(id)
+    .first<{ status: string; success_count: number; sent_at: string | null; line_request_id: string | null; aggregation_unit: string | null }>();
+  if (!bc) {
+    return c.json({ success: false, error: 'broadcast not found' }, 404);
+  }
+  if (bc.success_count > 0 || bc.sent_at !== null || bc.line_request_id !== null || bc.aggregation_unit !== null) {
+    return c.json({
+      success: false,
+      error: 'broadcast has send markers (success_count/sent_at/line_request_id/aggregation_unit) — refusing to reset',
+    }, 409);
+  }
+
   const logged = await db
     .prepare('SELECT COUNT(*) AS cnt FROM messages_log WHERE broadcast_id = ?')
     .bind(id)
@@ -516,6 +533,7 @@ profileRefresh.get('/api/admin/recent-messages', async (c) => {
   const res = await db
     .prepare(`
       SELECT ml.id, ml.direction, ml.message_type, ml.source, ml.line_account_id,
+             ml.broadcast_id, ml.scenario_step_id,
              SUBSTR(ml.content, 1, 80) AS preview, ml.created_at,
              f.display_name, f.id AS friend_id
       FROM messages_log ml
@@ -539,6 +557,9 @@ profileRefresh.get('/api/admin/recent-messages', async (c) => {
         direction: row.direction,
         messageType: row.message_type,
         source: row.source,
+        // source tells you a broadcast/scenario sent it; these tell you which one.
+        broadcastId: (row.broadcast_id as string | null) ?? null,
+        scenarioStepId: (row.scenario_step_id as string | null) ?? null,
         accountId: accId,
         accountName: accId ? accNameById.get(accId) ?? null : '(null)',
         friendName: row.display_name,

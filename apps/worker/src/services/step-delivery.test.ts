@@ -1,7 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { evaluateCondition, isSupportedConditionType, SUPPORTED_CONDITION_TYPES, processStepDeliveries, expandVariables } from './step-delivery.js';
+import {
+  evaluateCondition,
+  isPermanentLineDeliveryError,
+  isSupportedConditionType,
+  SUPPORTED_CONDITION_TYPES,
+  processStepDeliveries,
+  expandVariables,
+  resolveScenarioDeliveryFriend,
+} from './step-delivery.js';
 import { fireEvent } from './event-bus.js';
 import type { LineClient } from '@line-crm/line-sdk';
+import type { Friend } from '@line-crm/db';
 
 vi.mock('./event-bus.js', () => ({
   fireEvent: vi.fn().mockResolvedValue(undefined),
@@ -17,6 +26,7 @@ vi.mock('./event-bus.js', () => ({
 interface FakeTables {
   friendTags?: Set<string>; // "friendId|tagId" entries
   friendMetadata?: Record<string, Record<string, unknown>>; // friendId → metadata
+  friendUserIds?: Record<string, string | null>; // friendId → shared UUID
 }
 
 function mockDb(tables: FakeTables): D1Database {
@@ -24,19 +34,40 @@ function mockDb(tables: FakeTables): D1Database {
     prepare: (sql: string) => ({
       bind: (...args: unknown[]) => ({
         first: async <T = unknown>(): Promise<T | null> => {
-          if (sql.includes('FROM friend_tags')) {
-            const [friendId, tagId] = args as [string, string];
-            return (tables.friendTags?.has(`${friendId}|${tagId}`) ? ({ 1: 1 } as unknown as T) : null);
+          if (sql.includes('FROM friend_tags ft')) {
+            const [tagId, friendId] = args as [string, string, string];
+            const userId = tables.friendUserIds?.[friendId] ?? null;
+            const hasTag = [...(tables.friendTags ?? [])].some((entry) => {
+              const [taggedFriendId, taggedTagId] = entry.split('|');
+              return taggedTagId === tagId && (
+                taggedFriendId === friendId ||
+                (userId !== null && tables.friendUserIds?.[taggedFriendId] === userId)
+              );
+            });
+            return hasTag ? ({ 1: 1 } as unknown as T) : null;
           }
           if (sql.includes('FROM friends')) {
             const [friendId] = args as [string];
             const meta = tables.friendMetadata?.[friendId];
             if (meta === undefined) return null;
-            return { metadata: JSON.stringify(meta) } as unknown as T;
+            return {
+              user_id: tables.friendUserIds?.[friendId] ?? null,
+              metadata: JSON.stringify(meta),
+            } as unknown as T;
           }
           return null;
         },
-        all: async () => ({ results: [] }),
+        all: async () => {
+          if (sql.includes('SELECT metadata FROM friends') && sql.includes('WHERE user_id')) {
+            const [userId] = args as [string];
+            return {
+              results: Object.entries(tables.friendMetadata ?? {})
+                .filter(([friendId]) => tables.friendUserIds?.[friendId] === userId)
+                .map(([, meta]) => ({ metadata: JSON.stringify(meta) })),
+            };
+          }
+          return { results: [] };
+        },
         run: async () => ({ meta: { changes: 0 } }),
       }),
     }),
@@ -96,6 +127,13 @@ describe('evaluateCondition', () => {
       const db = mockDb({ friendTags: new Set() });
       expect(await evaluateCondition(db, 'f1', { condition_type: 'tag_exists', condition_value: 'tag-A' })).toBe(false);
     });
+    it('returns true when a UUID-linked friend on another account has the tag', async () => {
+      const db = mockDb({
+        friendTags: new Set(['f2|tag-A']),
+        friendUserIds: { f1: 'user-1', f2: 'user-1' },
+      });
+      expect(await evaluateCondition(db, 'f1', { condition_type: 'tag_exists', condition_value: 'tag-A' })).toBe(true);
+    });
   });
 
   describe('tag_not_exists', () => {
@@ -127,6 +165,18 @@ describe('evaluateCondition', () => {
           condition_value: JSON.stringify({ key: 'purchased', value: 'true' }),
         }),
       ).toBe(false);
+    });
+    it('returns true when UUID-linked metadata on another account matches', async () => {
+      const db = mockDb({
+        friendMetadata: { f1: {}, f2: { purchased: 'true' } },
+        friendUserIds: { f1: 'user-1', f2: 'user-1' },
+      });
+      expect(
+        await evaluateCondition(db, 'f1', {
+          condition_type: 'metadata_equals',
+          condition_value: JSON.stringify({ key: 'purchased', value: 'true' }),
+        }),
+      ).toBe(true);
     });
   });
 
@@ -216,6 +266,77 @@ describe('evaluateCondition', () => {
   });
 });
 
+describe('resolveScenarioDeliveryFriend', () => {
+  const friend = (overrides: Partial<Friend>): Friend => ({
+    id: 'f-source',
+    line_user_id: 'U-source',
+    display_name: 'Source',
+    picture_url: null,
+    status_message: null,
+    is_following: 1,
+    user_id: 'user-1',
+    line_account_id: 'account-1',
+    metadata: '{}',
+    first_tracked_link_id: null,
+    created_at: '2026-01-01T00:00:00+09:00',
+    updated_at: '2026-01-01T00:00:00+09:00',
+    ...overrides,
+  });
+
+  it('uses the following UUID-linked friend belonging to the scenario account', async () => {
+    const linked = friend({
+      id: 'f-target',
+      line_user_id: 'U-target',
+      line_account_id: 'account-2',
+    });
+    const db = {
+      prepare: () => ({
+        bind: () => ({ first: async () => linked }),
+      }),
+    } as unknown as D1Database;
+
+    await expect(resolveScenarioDeliveryFriend(db, friend({}), 'account-2')).resolves.toEqual(linked);
+  });
+
+  it('does not fall back to a friend explicitly belonging to another account', async () => {
+    const db = {
+      prepare: () => ({
+        bind: () => ({ first: async () => null }),
+      }),
+    } as unknown as D1Database;
+
+    await expect(resolveScenarioDeliveryFriend(db, friend({}), 'account-2')).resolves.toBeNull();
+  });
+
+  it('allows an OAuth-before-webhook row with no account to use the scenario account once', async () => {
+    const oauthFriend = friend({ line_account_id: null });
+    const db = {
+      prepare: () => ({
+        bind: () => ({ first: async () => null }),
+      }),
+    } as unknown as D1Database;
+
+    await expect(resolveScenarioDeliveryFriend(db, oauthFriend, 'account-2')).resolves.toEqual(oauthFriend);
+  });
+});
+
+describe('isPermanentLineDeliveryError', () => {
+  const lineError = (status: number): Error =>
+    new Error(`LINE API error: ${status} Test — {}`);
+
+  it.each([400, 401, 403, 404, 422])('treats LINE %i as permanent', (status) => {
+    expect(isPermanentLineDeliveryError(lineError(status))).toBe(true);
+  });
+
+  it.each([408, 409, 429, 500, 503])('keeps LINE %i retryable', (status) => {
+    expect(isPermanentLineDeliveryError(lineError(status))).toBe(false);
+  });
+
+  it('does not classify unrelated errors as permanent LINE failures', () => {
+    expect(isPermanentLineDeliveryError(new Error('network failure'))).toBe(false);
+  });
+});
+
 /**
  * Regression coverage for the condition-false jump path.
  *
@@ -267,6 +388,9 @@ describe('condition-false jump (next_step_on_false)', () => {
       prepare: (sql: string) => {
         const stmt = (args: unknown[]) => ({
           first: async () => {
+            if (sql.includes('FROM friend_tags')) {
+              return null; // friend does NOT have tag-X → condition fails
+            }
             if (sql.includes('FROM friends')) {
               return {
                 id: 'f1',
@@ -278,11 +402,8 @@ describe('condition-false jump (next_step_on_false)', () => {
                 line_account_id: null,
               };
             }
-            if (sql.includes('delivery_mode FROM scenarios')) {
-              return { delivery_mode: 'relative' };
-            }
-            if (sql.includes('FROM friend_tags')) {
-              return null; // friend does NOT have tag-X → condition fails
+            if (sql.includes('FROM scenarios')) {
+              return { delivery_mode: 'relative', line_account_id: null };
             }
             return null;
           },
@@ -571,5 +692,47 @@ describe('expandVariables comma cleanup scope', () => {
       expect(out).toBe('{"contents":[{"type":"text","text":"hello"}]}');
       expect(() => JSON.parse(out)).not.toThrow();
     });
+  });
+});
+
+/**
+ * Crash recovery wiring — a claim (active→delivering) whose worker died
+ * mid-delivery must be reset back to 'active' at the start of every cron
+ * run, BEFORE the due query (which only sees 'active' rows). Regression:
+ * recoverStuckDeliveries existed but was never called, stranding
+ * enrollments in 'delivering' forever.
+ */
+describe('processStepDeliveries crash recovery', () => {
+  it("resets stuck 'delivering' enrollments before querying due rows", async () => {
+    const executed: string[] = [];
+    const db = {
+      prepare: (sql: string) => {
+        const stmt = {
+          bind: () => stmt,
+          first: async () => null,
+          all: async () => {
+            executed.push(sql);
+            return { results: [] };
+          },
+          run: async () => {
+            executed.push(sql);
+            return { meta: { changes: 1 } };
+          },
+        };
+        return stmt;
+      },
+    } as unknown as D1Database;
+    const push = vi.fn(async () => ({}));
+    const client = { pushMessage: push } as unknown as LineClient;
+
+    await processStepDeliveries(db, client);
+
+    const recoveryIdx = executed.findIndex(
+      (sql) => sql.includes("SET status = 'active'") && sql.includes("status = 'delivering'"),
+    );
+    const dueQueryIdx = executed.findIndex((sql) => sql.includes('FROM friend_scenarios'));
+    expect(recoveryIdx).toBeGreaterThanOrEqual(0); // recovery ran
+    expect(dueQueryIdx).toBeGreaterThanOrEqual(0);
+    expect(recoveryIdx).toBeLessThan(dueQueryIdx); // and ran first
   });
 });

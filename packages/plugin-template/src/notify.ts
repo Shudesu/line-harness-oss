@@ -1,5 +1,5 @@
 /**
- * Notify: check external conditions and send LINE messages via LINE Harness SDK.
+ * Notify: check external conditions and send LINE messages via L Harness SDK.
  *
  * Common patterns:
  * - Appointment reminder (24h before)

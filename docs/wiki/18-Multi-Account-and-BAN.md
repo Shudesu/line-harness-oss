@@ -124,7 +124,7 @@ curl -X DELETE "https://your-worker.your-subdomain.workers.dev/api/line-accounts
 
 LINE の `line_user_id` はアカウントごとに異なるため、同一ユーザーが複数の公式アカウントを友だち追加しても、デフォルトでは紐付けができない。
 
-LINE Harness では `users` テーブルを中間テーブルとして使用し、`friends.user_id` カラムで友だちをUUIDにリンクする。
+L Harness では `users` テーブルを中間テーブルとして使用し、`friends.user_id` カラムで友だちをUUIDにリンクする。
 
 ### データモデル
 

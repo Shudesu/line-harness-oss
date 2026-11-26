@@ -5,6 +5,15 @@ import { api } from '@/lib/api'
 import type { ConversionPoint } from '@line-crm/shared'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Input } from '@cloudflare/kumo/components/input'
+import { LayerCard } from '@cloudflare/kumo/components/layer-card'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Select } from '@cloudflare/kumo/components/select'
+import { Table } from '@cloudflare/kumo/components/table'
 
 interface ConversionReportItem {
   conversionPointId: string
@@ -38,6 +47,7 @@ export default function ConversionsPage() {
   const [report, setReport] = useState<ConversionReportItem[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ConversionPoint | null>(null)
   const [form, setForm] = useState({ name: '', eventType: '', value: '' })
 
   const load = async () => {
@@ -70,9 +80,10 @@ export default function ConversionsPage() {
     } catch {}
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('このCVポイントを削除しますか？')) return
-    await api.conversions.deletePoint(id)
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    await api.conversions.deletePoint(deleteTarget.id)
+    setDeleteTarget(null)
     load()
   }
 
@@ -94,13 +105,13 @@ export default function ConversionsPage() {
         title="コンバージョン計測"
         description="CVポイント定義 & レポート"
         action={
-          <button
+          <Button
+            type="button"
+            variant="primary"
             onClick={() => setShowCreate(!showCreate)}
-            className="px-4 py-2 min-h-[44px] rounded-lg text-white text-sm font-medium"
-            style={{ backgroundColor: '#06C755' }}
           >
             {showCreate ? 'キャンセル' : '+ CVポイント作成'}
-          </button>
+          </Button>
         }
       />
 
@@ -109,46 +120,42 @@ export default function ConversionsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">CV名</label>
-              <input
+              <Input
+                label="CV名"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                 placeholder="購入完了"
                 required
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">イベントタイプ</label>
-              <select
+              <Select
+                label="イベントタイプ"
                 value={form.eventType}
-                onChange={(e) => setForm({ ...form, eventType: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                required
-              >
-                <option value="">選択...</option>
-                {eventTypes.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
+                onValueChange={(value) => setForm({ ...form, eventType: value ?? '' })}
+                placeholder="選択..."
+                items={Object.fromEntries(eventTypes.map((type) => [type.value, type.label]))}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">金額 (任意)</label>
-              <input
+              <Input
+                label="金額 (任意)"
                 type="number"
                 value={form.value}
                 onChange={(e) => setForm({ ...form, value: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                 placeholder="0"
               />
             </div>
           </div>
-          <button
+          <Button
             type="submit"
-            className="mt-4 px-4 py-2 min-h-[44px] rounded-lg text-white text-sm font-medium"
-            style={{ backgroundColor: '#06C755' }}
+            variant="primary"
+            className="mt-4"
           >
             作成
-          </button>
+          </Button>
         </form>
       )}
 
@@ -156,10 +163,10 @@ export default function ConversionsPage() {
       {report.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
           {report.map((r) => (
-            <div key={r.conversionPointId} className="bg-white rounded-lg border border-gray-200 p-4">
+            <LayerCard key={r.conversionPointId} className="p-4">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-medium text-gray-700">{r.conversionPointName}</p>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{r.eventType}</span>
+                <Badge variant="info">{r.eventType}</Badge>
               </div>
               <div className="flex items-end gap-4">
                 <div>
@@ -173,53 +180,54 @@ export default function ConversionsPage() {
                   </div>
                 )}
               </div>
-            </div>
+            </LayerCard>
           ))}
         </div>
       )}
 
       {/* Points Table */}
       {loading ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">読み込み中...</div>
+        <LayerCard className="p-8"><Loader className="mx-auto" /></LayerCard>
       ) : points.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400">CVポイントがまだありません</div>
+        <Empty title="CVポイントがまだありません" description="作成するとイベント別の成果を計測できます。" />
       ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[640px]">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">CV名</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">イベントタイプ</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">金額</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">作成日</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
+        <LayerCard className="overflow-x-auto p-0">
+          <Table className="min-w-[640px]">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>CV名</Table.Head>
+                <Table.Head>イベントタイプ</Table.Head>
+                <Table.Head>金額</Table.Head>
+                <Table.Head>作成日</Table.Head>
+                <Table.Head className="text-right">操作</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
               {points.map((point) => (
-                <tr key={point.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{point.name}</td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{point.eventType}</span>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
+                <Table.Row key={point.id}>
+                  <Table.Cell className="font-medium text-kumo-strong">{point.name}</Table.Cell>
+                  <Table.Cell><Badge variant="info">{point.eventType}</Badge></Table.Cell>
+                  <Table.Cell className="text-kumo-subtle">
                     {point.value !== null ? `¥${point.value.toLocaleString()}` : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">{new Date(point.createdAt).toLocaleDateString('ja-JP')}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => handleDelete(point.id)}
-                      className="text-red-500 hover:text-red-700 text-sm"
-                    >
-                      削除
-                    </button>
-                  </td>
-                </tr>
+                  </Table.Cell>
+                  <Table.Cell className="text-kumo-subtle">{new Date(point.createdAt).toLocaleDateString('ja-JP')}</Table.Cell>
+                  <Table.Cell className="text-right"><Button type="button" size="xs" variant="destructive" onClick={() => setDeleteTarget(point)}>削除</Button></Table.Cell>
+                </Table.Row>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Body>
+          </Table>
+        </LayerCard>
       )}
+      <Dialog.Root role="alertdialog" open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <Dialog>
+          <Dialog.Title>CVポイントを削除しますか？</Dialog.Title>
+          <Dialog.Description className="mt-2">「{deleteTarget?.name}」を削除します。この操作は取り消せません。</Dialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => setDeleteTarget(null)}>キャンセル</Button>
+            <Button type="button" variant="destructive" onClick={handleDelete}>削除</Button>
+          </div>
+        </Dialog>
+      </Dialog.Root>
       <CcPromptButton prompts={ccPrompts} />
     </div>
   )

@@ -1,11 +1,11 @@
 ---
-title: LINE Harness 運用マニュアル
+title: L Harness 運用マニュアル
 status: placeholder
 ---
 
-# LINE Harness 運用マニュアル
+# L Harness 運用マニュアル
 
-LINE Harness は、L社（Lstep）/ U社（Utage）の代替を狙う OSS の LINE 公式アカウント運用基盤です。Cloudflare Workers + D1 上で稼働し、AI（Claude Code / MCP）から安全に LINE を操作できる設計を中核に据えています。
+L Harness は、L社（Lstep）/ U社（Utage）の代替を狙う OSS の LINE 公式アカウント運用基盤です。Cloudflare Workers + D1 上で稼働し、AI（Claude Code / MCP）から安全に LINE を操作できる設計を中核に据えています。
 
 このマニュアルは、**OSS 本体は無料・運用ノウハウは有料** という方針のもとで構成されています。「ボタンを押すと何が起きるか（What）」までは無料章で完結し、「どう設計すれば獲得につながるか（How / Why）」は有料章で扱います。
 
@@ -19,7 +19,7 @@ LINE Harness は、L社（Lstep）/ U社（Utage）の代替を狙う OSS の LI
 
 | # | タイトル | tier | 概要 |
 |---|---|---|---|
-| 1 | [イントロ](./01-intro.md) | 無料 | LINE Harness とは / Lstep・Utage との比較 |
+| 1 | [イントロ](./01-intro.md) | 無料 | L Harness とは / Lstep・Utage との比較 |
 | 2 | [セットアップ](./02-setup.md) | 無料 | `npx create-line-harness` / LIFF / Mac Mini 複アカ運用 |
 | 3 | [基本機能](./03-basics.md) | 無料 | 友だち管理・配信・自動応答・リッチメニュー |
 | 4 | [キャンペーン設計](./04-campaign-design.md) | 🔒 有料 | トラッキング前提の獲得設計、診断 → セグメント |
@@ -36,7 +36,7 @@ LINE Harness は、L社（Lstep）/ U社（Utage）の代替を狙う OSS の LI
 
 ## 統合プレイブック ¥98,000
 
-第 4・5・6 章をまとめた **「LINE Harness 統合プレイブック」¥98,000（買い切り）** を別途販売します。
+第 4・5・6 章をまとめた **「L Harness 統合プレイブック」¥98,000（買い切り）** を別途販売します。
 
 - LP テンプレ・診断シナリオ・配信スケジュール表・MCP 設定 JSON など、本マニュアルに加えて **再利用可能な実物テンプレ一式** を含みます
 - 単章購入よりも割安で、Harness コミュニティ会員には特典価格を用意します

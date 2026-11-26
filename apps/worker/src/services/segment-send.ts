@@ -1,3 +1,4 @@
+import { buildMessages } from './message-group.js';
 import {
   getBroadcastById,
   updateBroadcastStatus,
@@ -33,7 +34,7 @@ export async function processSegmentSend(
     throw new Error(`Broadcast ${broadcastId} not found`);
   }
 
-  const message = buildMessage(broadcast.message_type, broadcast.message_content);
+  const message = buildMessages(broadcast.message_type, broadcast.message_content, buildMessage);
 
   let totalCount = 0;
   let successCount = 0;
@@ -73,12 +74,12 @@ export async function processSegmentSend(
 
       // Stealth: add slight variation to text messages
       let batchMessage = message;
-      if (message.type === 'text' && totalBatches > 1) {
-        batchMessage = { ...message, text: addMessageVariation(message.text, batchIndex) };
+      if (totalBatches > 1) {
+        batchMessage = message.map(item => item.type === 'text' ? { ...item, text: addMessageVariation(item.text, batchIndex) } : item);
       }
 
       try {
-        await lineClient.multicast(lineUserIds, [batchMessage], [unit]);
+        await lineClient.multicast(lineUserIds, batchMessage, [unit]);
         successCount += batch.length;
 
         // Log successfully sent messages (batch insert for performance)

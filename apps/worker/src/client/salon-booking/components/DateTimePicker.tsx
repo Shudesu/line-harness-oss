@@ -27,6 +27,7 @@ export default function DateTimePicker({
   const to = addDays(today, RANGE_DAYS - 1);
   const maxOffset = Math.floor((RANGE_DAYS - 1) / 7);
   const [byDate, setByDate] = useState<Record<string, string[]> | null>(null);
+  const [emptyReason, setEmptyReason] = useState<'no_working_hours' | 'calendar_unavailable' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0); // 0 = 今日始まり, 1 = +7 日
 
@@ -35,7 +36,16 @@ export default function DateTimePicker({
     createApi(ctx)
       .availability(menuId, staffId, from, to)
       .then((r) => {
-        const slots = r.by_staff[0]?.slots ?? [];
+        const staff = r.by_staff[0];
+        const slots = staff?.slots ?? [];
+        if (slots.length === 0) {
+          const sync = r.calendar_sync?.find((s) => s.staff_id === staff?.staff_id);
+          if (sync?.configured && !sync.ok) setEmptyReason('calendar_unavailable');
+          else if (staff?.has_working_hours === false) setEmptyReason('no_working_hours');
+          else setEmptyReason(null);
+        } else {
+          setEmptyReason(null);
+        }
         const grouped: Record<string, string[]> = {};
         for (const s of slots) (grouped[s.date] ??= []).push(s.start);
         setByDate(grouped);
@@ -92,6 +102,38 @@ export default function DateTimePicker({
         <div className="flex flex-col items-center py-12">
           <div className="sb-spinner" />
           <p className="text-sm text-gray-500 mt-3">空き枠を取得中…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 全期間で枠ゼロかつ原因が特定できる場合は、カレンダーの代わりに理由を表示。
+  // 「連携したのに枠が出ない」で原因が分からないまま詰まるのを防ぐ。
+  if (emptyReason && Object.keys(byDate).length === 0) {
+    return (
+      <div className="space-y-5 sb-fade-in">
+        <BackButton onBack={onBack} />
+        <div className="sb-card text-center">
+          {emptyReason === 'no_working_hours' ? (
+            <>
+              <p className="text-sm font-bold text-gray-900 mb-2">
+                予約受付時間が未設定のため、予約枠を表示できません
+              </p>
+              <p className="text-xs text-gray-500">
+                店舗管理者の方へ: 管理画面の「予約スタッフ →
+                シフト」で受付時間を保存すると、予約枠が表示されるようになります。
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-bold text-gray-900 mb-2">
+                現在、予約枠を表示できません
+              </p>
+              <p className="text-xs text-gray-500">
+                カレンダーとの同期に失敗しました。時間をおいて再度お試しください。
+              </p>
+            </>
+          )}
         </div>
       </div>
     );

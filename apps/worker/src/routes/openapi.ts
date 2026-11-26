@@ -3,6 +3,24 @@ import type { Env } from '../index.js';
 
 const openapi = new Hono<Env>();
 
+const gateHeaders = ['X-Harness-Connection-Id','X-Harness-Event','X-Harness-Delivery-Id','X-Harness-Timestamp','X-Harness-Signature'].map(name=>({name,in:'header',required:true,schema:{type:'string'}}));
+const gateIdentityBody = {required:true,content:{'application/json':{schema:{type:'object',required:['idToken','accessToken'],properties:{idToken:{type:'string'},accessToken:{type:'string'},turnstileToken:{type:'string',description:'Required for initial strict participation'}}}}}};
+
+const friendIdempotencyHeader = {
+  name: 'Idempotency-Key', in: 'header', schema: { type: 'string', minLength: 1, maxLength: 255 },
+  description: 'Optional, per friend (tag add/remove share a scope). Retained indefinitely. Completed calls replay the original response; changed input returns 422. Keyed LINE sends freeze the first payload and never reclaim an in-flight send. An unresolved send at/after 24h requires manual review; do not replace its key. Without this header, existing behavior is unchanged.',
+};
+const lineIdempotencyConflict = {
+  description: 'API request or LINE send in progress; or unknown LINE delivery at/after 24h from its first start (code=line_delivery_requires_review, requiresReview=true). No automatic resend beyond 24h. Verify delivery manually; do not substitute a new key. LINE acceptance does not guarantee end-user receipt.',
+  content: { 'application/json': { schema: {
+    type: 'object', properties: {
+      success: { type: 'boolean', const: false }, error: { type: 'string' },
+      code: { type: 'string', enum: ['line_send_in_progress', 'line_delivery_requires_review'] },
+      requiresReview: { type: 'boolean' },
+    },
+  } } },
+};
+
 const spec = {
   openapi: '3.1.0',
   info: {
@@ -95,6 +113,11 @@ const spec = {
           sentAt: { type: 'string', nullable: true },
           totalCount: { type: 'integer' },
           successCount: { type: 'integer' },
+          lastError: {
+            type: 'string',
+            nullable: true,
+            description: '直近の送信失敗理由 (LINE プランクォータ不足ガード等)。送信成功で null に戻る。',
+          },
           createdAt: { type: 'string', format: 'date-time' },
         },
       },
@@ -172,6 +195,99 @@ const spec = {
     },
   },
   paths: {
+    '/api/auth/migrate-keys': {
+      post: {
+        summary: 'Owner: hash up to 25 existing staff keys',
+        responses: { '200': { description: 'migrated count; repeat until zero. Existing raw keys remain valid as Bearer credentials.' } },
+      },
+    },
+    '/api/auth/sessions/revoke': {
+      post: {
+        summary: 'Revoke all sessions for the authenticated staff member',
+        responses: { '200': { description: 'Sessions revoked' } },
+      },
+    },
+    '/api/auth/maintenance': {
+      post: {
+        summary: 'Owner: purge up to 100 expired rows per auth table (audit retention 90 days)',
+        responses: { '200': { description: 'Bounded maintenance complete' } },
+      },
+    },
+    '/api/incoming-images/{key}': {
+      get: {
+        summary: 'Read an incoming image with a session or messages:read key',
+        parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Private image; no-store' }, '401': { description: 'Authentication required' } },
+      },
+    },
+    '/api/integrations/x-harness/capabilities': {
+      get: {
+        tags: ['X gate integration'], summary: 'Discover supported campaign events before sending. Requires signed x.campaign.capabilities headers.',
+        security: [], parameters: gateHeaders,
+        responses: { '200': { description: 'Supported schema, events, followup and display capabilities' }, '401': { description: 'Invalid signature or connection' } },
+      },
+    },
+    '/api/x-campaign-notifications/{accountId}': {
+      get: {
+        tags:['X gate integration'],summary:'Read the locally configured operator digest recipients. Owner/admin only.',
+        parameters:[{name:'accountId',in:'path',required:true,schema:{type:'string'}}],responses:{'200':{description:'Configured friend IDs and display names within this account'},'403':{description:'Admin required'},'404':{description:'Account not found'}},
+      },
+      put: {
+        tags: ['X gate integration'], summary: 'Configure operator digest recipients on the LINE side. Owner/admin only; maximum five friend IDs belonging to this LINE account. An empty array disables recipients.',
+        parameters: [{ name: 'accountId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['friendIds'], properties: { friendIds: { type: 'array', maxItems: 5, uniqueItems: true, items: { type: 'string' } } } } } } },
+        responses: { '200': { description: 'Configuration saved; no messages sent' }, '400': { description: 'Invalid recipients or account mismatch' }, '403': { description: 'Admin required' }, '404': { description: 'Account not found' } },
+      },
+    },
+    '/api/liff/x-gates/{gateId}/followup': {
+      post: {
+        tags: ['X gate integration'], summary: 'Explicitly opt in after a lost result using verified LINE tokens. Allocates an optional coupon once and records only the selected consent. Does not send a push message.',
+        security: [], parameters: [{ name: 'gateId', in: 'path', required: true, schema: { type: 'string' } }], requestBody: gateIdentityBody,
+        responses: { '200': { description: 'Consent recorded; coupon or null returned for display' }, '401': { description: 'Invalid LINE identity' }, '404': { description: 'Campaign not found' }, '503': { description: 'Follow-up temporarily unavailable' } },
+      },
+    },
+    '/api/integrations/x-harness/campaigns': {
+      post: {
+        tags: ['X gate integration'], summary: 'Create LINE campaign assets atomically. Admin authentication plus xh.gate.v1 HMAC required.',
+        security: [{ bearerAuth: [] }], parameters: gateHeaders,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/integrations/x-harness/campaigns/{id}/cancel': {
+      post: {
+        tags: ['X gate integration'], summary: 'Deactivate a campaign without deleting delivery history. Admin authentication plus HMAC required.',
+        security: [{ bearerAuth: [] }], parameters: [...gateHeaders,{name:'id',in:'path',required:true,schema:{type:'string'}}],
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/integrations/x-harness/events': {
+      post: {
+        tags: ['X gate integration'], summary: 'Apply signed gate events and x.campaign.digest / x.campaign.early_notice idempotently. Digests use locally configured administrators; early notices create approval-required broadcast drafts only. Delivery ID, timestamp, connection ID and HMAC are mandatory.',
+        security: [], parameters: gateHeaders,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/integrations/x-harness/engagement': {
+      get: {
+        tags: ['X gate integration'], summary: 'Return observed incoming-message engagement for a signed gate request.',
+        security: [], parameters: [...gateHeaders,{name:'gateId',in:'query',required:true,schema:{type:'string'}}],
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/liff/x-gates/{gateId}/join': {
+      post: {
+        tags: ['X gate integration'], summary: 'Join with verified LINE ID/access tokens for the campaign channel; no X ID input.',
+        security: [], parameters: [{name:'gateId',in:'path',required:true,schema:{type:'string'}}], requestBody: gateIdentityBody,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
+    '/api/liff/x-gates/{gateId}/check': {
+      post: {
+        tags: ['X gate integration'], summary: 'Check participation using verified LINE tokens. Returns actual state and retryAfterSec.',
+        security: [], parameters: [{name:'gateId',in:'path',required:true,schema:{type:'string'}}], requestBody: gateIdentityBody,
+        responses: { '200': {description:'Success'}, '401': {description:'Invalid identity or signature'}, '409': {description:'Idempotency conflict'}, '503': {description:'Retryable dependency failure'} },
+      },
+    },
     // ── Friends ─────────────────────────────────────────────────────────────
     '/api/friends': {
       get: {
@@ -181,8 +297,18 @@ const spec = {
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
           { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
           { name: 'tagId', in: 'query', schema: { type: 'string' } },
+          { name: 'lineAccountId', in: 'query', schema: { type: 'string' } },
+          {
+            name: 'lineUserId',
+            in: 'query',
+            schema: { type: 'string' },
+            description: 'Exact LINE user ID match. Requires lineAccountId; never falls back to another account.',
+          },
         ],
-        responses: { '200': { description: 'Paginated friends list' } },
+        responses: {
+          '200': { description: 'Paginated friends list' },
+          '400': { description: 'lineUserId given without a value or without lineAccountId' },
+        },
       },
     },
     '/api/friends/count': {
@@ -196,13 +322,33 @@ const spec = {
         responses: { '200': { description: 'Friend with tags' }, '404': { description: 'Not found' } },
       },
     },
+    '/api/friends/{id}/messages': {
+      post: {
+        tags: ['Friends'], summary: '友だちへ個別送信',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          friendIdempotencyHeader,
+        ],
+        requestBody: { content: { 'application/json': { schema: {
+          type: 'object', required: ['content'], properties: {
+            content: { type: 'string' }, messageType: { type: 'string', default: 'text' },
+            altText: { type: 'string' }, trackLinks: { type: 'boolean', default: true },
+          },
+        } } } },
+        responses: {
+          '200': { description: 'Sent or replayed original messageId' },
+          '409': lineIdempotencyConflict,
+          '422': { description: 'Idempotency-Key reused for different input' },
+        },
+      },
+    },
     '/api/friends/{id}/tags': {
       post: {
         tags: ['Friends'],
         summary: '友だちにタグ追加',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, friendIdempotencyHeader],
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { tagId: { type: 'string' } }, required: ['tagId'] } } } },
-        responses: { '201': { description: 'Tag added' } },
+        responses: { '201': { description: 'Tag added' }, '409': lineIdempotencyConflict, '422': { description: 'Idempotency-Key reused for different input' } },
       },
     },
     '/api/friends/{id}/tags/{tagId}': {
@@ -212,8 +358,77 @@ const spec = {
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'tagId', in: 'path', required: true, schema: { type: 'string' } },
+          friendIdempotencyHeader,
         ],
-        responses: { '200': { description: 'Tag removed' } },
+        responses: { '200': { description: 'Tag removed' }, '409': lineIdempotencyConflict, '422': { description: 'Idempotency-Key reused for different input' } },
+      },
+    },
+    '/api/friends/{id}/scheduled-messages': {
+      get: {
+        tags: ['Friends'],
+        summary: '友だち1人宛ての予約送信一覧',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['pending', 'sending', 'sent', 'cancelled', 'failed'] } },
+        ],
+        responses: { '200': { description: 'Scheduled messages (pending: send_at asc, otherwise desc)' } },
+      },
+      post: {
+        tags: ['Friends'],
+        summary: '友だち1人宛てにメッセージを予約送信（cron が送信時刻以降に1回だけ push）',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  content: { type: 'string', description: 'text 本文 (5000字まで) / image・flex は JSON 文字列' },
+                  sendAt: { type: 'string', format: 'date-time', description: 'タイムゾーン必須 (例 2026-11-20T19:00:00+09:00)。1分後〜366日以内' },
+                  messageType: { type: 'string', enum: ['text', 'image', 'flex'], default: 'text' },
+                  altText: { type: 'string' },
+                  trackLinks: { type: 'boolean', default: true },
+                },
+                required: ['content', 'sendAt'],
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Scheduled (status=pending)' }, '400': { description: 'Invalid input' }, '404': { description: 'Friend not found' } },
+      },
+    },
+    '/api/friends/{id}/scheduled-messages/{msgId}': {
+      delete: {
+        tags: ['Friends'],
+        summary: '予約送信を取り消す（pending のみ。行は残り status=cancelled）',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'msgId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Cancelled' }, '404': { description: 'Not found' }, '409': { description: 'Not pending' } },
+      },
+    },
+    '/api/friends/{id}/scheduled-messages/{msgId}/cancel': {
+      post: {
+        tags: ['Friends'],
+        summary: '予約送信を取り消す（DELETE と同じ）',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'msgId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Cancelled' }, '404': { description: 'Not found' }, '409': { description: 'Not pending' } },
+      },
+    },
+    '/api/scheduled-messages': {
+      get: {
+        tags: ['Friends'],
+        summary: '全友だちの予約送信一覧',
+        parameters: [
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['pending', 'sending', 'sent', 'cancelled', 'failed'] } },
+          { name: 'lineAccountId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 100, maximum: 500 } },
+        ],
+        responses: { '200': { description: 'Scheduled messages with friendDisplayName' } },
       },
     },
     // ── Tags ────────────────────────────────────────────────────────────────
@@ -262,6 +477,24 @@ const spec = {
         summary: 'シナリオ削除',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'Deleted' } },
+      },
+    },
+    '/api/scenarios/{id}/enrollments': {
+      get: {
+        tags: ['Scenarios'],
+        summary: 'エンロール個票（今どこで、なぜ止まっているか）',
+        description:
+          '`stats` は「何人が進行中か」しか返さないため、配信が進まないときに原因を特定できない。\n' +
+          'こちらは1人ずつ **現在ステップ / 次の配信予定 / 次ステップの条件** まで返す。\n\n' +
+          '`nextStep.nextStepOnFalse` が `null` のとき、条件が false でも**順次次のステップへ進む**\n' +
+          '（待機はしない）。分岐させたい場合だけ step_order を指定する。\n\n' +
+          'クエリ: `status`（active/paused/completed 等で絞り込み）、`limit`（既定100・最大500）。',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 100, maximum: 500 } },
+        ],
+        responses: { '200': { description: 'Enrollments' }, '404': { description: 'Scenario not found' } },
       },
     },
     '/api/scenarios/{id}/steps': {
@@ -402,6 +635,15 @@ const spec = {
         responses: { '201': { description: 'Account created' } },
       },
     },
+    '/api/line-accounts/delivery-health': {
+      get: {
+        tags: ['LINE Accounts'],
+        summary: 'アカウント別 配信健全性 (クォータ残・友だち/ブロック前日比・今月配信数)',
+        description:
+          'アクティブな全アカウントについて、LINE 月間クォータ (上限/消費/残り) と前日時点の友だち数・ブロック数 (前日比つき)、当月の push 配信数を一括で返す。残クォータが配信可能友だち数を下回ると quotaAlert=true (全員配信が完走できない状態)。',
+        responses: { '200': { description: 'Per-account delivery health snapshot' } },
+      },
+    },
     '/api/line-accounts/order': {
       patch: {
         tags: ['LINE Accounts'],
@@ -458,6 +700,54 @@ const spec = {
       put: { tags: ['LINE Accounts'], summary: 'LINEアカウント更新', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' } } },
       delete: { tags: ['LINE Accounts'], summary: 'LINEアカウント削除', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' } } },
     },
+    '/api/line-accounts/{id}/connection-health': {
+      get: {
+        tags: ['LINE Accounts'],
+        summary: '接続ヘルス (PLAN.md 1-1契約: checks[] with id/status/summary/evidence/nextAction)',
+        description:
+          '署名検証失敗 (line.webhook.signature)・トークン再発行失敗 (line.token.refresh)・401 失効 (line.bot_info)・Webhook URL の一致/active (line.webhook.endpoint)・LINE 疎通テスト (line.webhook.test) を返す。?refresh=true で Webhook endpoint と疎通テストをその場で再実行する。署名失敗の記録は webhook 側が 200 応答のまま書き込む (B-05)。複数アカウントでどの secret にも一致しない署名失敗がある場合は line.webhook.signature.unattributed (warn) が追加される。probe 実行失敗 (unknown) を含むチェックが1つでもあると overall は warn になる。',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'refresh', in: 'query', schema: { type: 'boolean' }, description: 'Webhook endpoint/疎通テストを再実行' },
+        ],
+        responses: { '200': { description: 'Connection health snapshot' } },
+      },
+    },
+    '/api/line-accounts/{id}/webhook-endpoint': {
+      get: {
+        tags: ['LINE Accounts'],
+        summary: 'チャネルに登録された Webhook URL の確認 + LINE 疎通テスト',
+        description:
+          'GET /v2/bot/channel/webhook/endpoint と POST /v2/bot/channel/webhook/test を実行し、この Worker の期待 URL との一致・active 状態を返す (B-10)。結果は接続ヘルスにも記録される。LINE API 側の読み取りのみで書き換えない。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Probe result (expectedUrl / endpoint / matches / active / test)' } },
+      },
+      put: {
+        tags: ['LINE Accounts'],
+        summary: 'Webhook URL をこの Worker に設定・修正 (confirm 必須)',
+        description:
+          'PUT /v2/bot/channel/webhook/endpoint を呼ぶ。既存の URL が別の宛先のときは勝手に上書きせず requiresConfirm=true を返す (409)。実行には confirm=true が必要 (B-10)。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  confirm: { type: 'boolean' },
+                  endpoint: { type: 'string', description: '省略時はこの Worker の期待 URL (${WORKER_URL}/webhook)' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Set (probe result after the change)' },
+          '409': { description: 'requiresConfirm=true — existing foreign endpoint must be confirmed' },
+          '502': { description: 'LINE API error while setting the endpoint' },
+        },
+      },
+    },
     // ── Conversions ─────────────────────────────────────────────────────────
     '/api/conversions/points': {
       get: { tags: ['Conversions'], summary: 'CV ポイント一覧', responses: { '200': { description: 'All conversion points' } } },
@@ -480,8 +770,20 @@ const spec = {
       post: {
         tags: ['Conversions'],
         summary: 'コンバージョン記録',
-        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { conversionPointId: { type: 'string' }, friendId: { type: 'string' }, userId: { type: 'string' }, affiliateCode: { type: 'string' }, metadata: { type: 'object' } }, required: ['conversionPointId', 'friendId'] } } } },
-        responses: { '201': { description: 'Tracked' } },
+        parameters: [
+          {
+            name: 'Idempotency-Key',
+            in: 'header',
+            schema: { type: 'string', maxLength: 255 },
+            description: 'DB-wide conversion scope, not per account/caller. Retained indefinitely; namespace with integration/account/event IDs. The same key records one conversion; a completed response is replayed. Keyed automation pushes have persistent action keys; unresolved sends at/after 24h require manual review. Webhooks and non-send effects are not exactly-once.',
+          },
+        ],
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { conversionPointId: { type: 'string' }, friendId: { type: 'string' }, userId: { type: 'string' }, affiliateCode: { type: 'string' }, metadata: { type: 'object' }, fireEvent: { type: 'boolean', description: 'Also fire cv_fire. Requires Idempotency-Key.' } }, required: ['conversionPointId', 'friendId'] } } } },
+        responses: {
+          '201': { description: 'Tracked (or replayed for a completed Idempotency-Key)' },
+          '409': lineIdempotencyConflict,
+          '422': { description: 'Idempotency-Key reused for a different request, or fireEvent for a friend whose LINE account cannot be determined' },
+        },
       },
     },
     '/api/conversions/events': {
@@ -545,6 +847,401 @@ const spec = {
       },
     },
     // ── Webhook ─────────────────────────────────────────────────────────────
+    // ── Forms ───────────────────────────────────────────────────────────
+    // 2026-08-25 追記。構築記録 §6-2「フォーム URL がどこにも出てこない」—
+    // 作成レスポンスに URL フィールドが無く、`/f/{id}` 等の推測は全部 404。
+    // 正解は「LIFF を `?form={formId}` 付きで開く」で、これはクライアント JS を
+    // 解析しないと分からない状態だった。ここに書いておけば読むだけで済む。
+    '/api/forms': {
+      get: { tags: ['Forms'], summary: 'フォーム一覧', responses: { '200': { description: 'Forms' } } },
+      post: {
+        tags: ['Forms'],
+        summary: 'フォーム作成',
+        description:
+          '`name` のみ必須。`fields` は `[{name,label,type,required,options}]`（type: text/email/tel/number/textarea/select/radio 等）。\n\n' +
+          '**レスポンスに公開 URL は含まれない。** 回答画面は LIFF を `?form={id}` 付きで開いて表示する ' +
+          '（`/r/{slug}?form={id}` でも可 — クエリは LIFF へパススルーされる）。友だちには ' +
+          '`POST /api/liff/send-form-link` 経由でリンクが自動プッシュされる。\n\n' +
+          '`onSubmitTagId` / `onSubmitScenarioId` で送信時のタグ付け・シナリオ登録、' +
+          '`saveToMetadata` で回答を友だちのメタデータへ保存できる。',
+        responses: { '201': { description: 'Created' }, '400': { description: 'name is required' } },
+      },
+    },
+    '/api/forms/{id}': {
+      get: { tags: ['Forms'], summary: 'フォーム取得', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Form' } } },
+      put: { tags: ['Forms'], summary: 'フォーム更新', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' } } },
+      delete: { tags: ['Forms'], summary: 'フォーム削除', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' } } },
+    },
+    '/api/forms/{id}/submissions': {
+      get: { tags: ['Forms'], summary: '回答一覧', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Submissions' } } },
+    },
+    '/api/forms/{id}/submit': {
+      post: { tags: ['Forms'], summary: '回答送信（公開）', description: 'LIFF の回答画面から呼ばれる。', security: [], parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Submitted' } } },
+    },
+
+    // ── Entry Routes（流入リンク）─────────────────────────────────────
+    // 2026-08-25 追記。MCP にも OpenAPI にも無かったため、AI エージェントが
+    // Traffic Pool だけ作って「タグもシナリオも発火しない /r/」を量産する事故が起きた。
+    // entry_routes が ref 名前空間を所有し、tagId / scenarioId / poolId を持つ。
+    '/api/entry-routes': {
+      get: { tags: ['Links'], summary: '流入リンク一覧', responses: { '200': { description: 'Entry routes' } } },
+      post: {
+        tags: ['Links'],
+        summary: '流入リンク作成（/r/{refCode} に「何をするか」を紐付ける）',
+        description:
+          '**Traffic Pool だけでは不十分。** Pool は「どの LINE アカウントへ振り分けるか」しか決めず、\n' +
+          'タグ自動付与・起動シナリオは entry_route が持つ。Pool だけ作るとコンソールの流入リンク画面に\n' +
+          '**（未登録）** と表示され、タグもシナリオも発火しない。\n\n' +
+          '`refCode` を Traffic Pool の `slug` と同じ値にすると両者が紐づく。`poolId` に pool の id を渡すこと。',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['refCode', 'name'],
+                properties: {
+                  refCode: { type: 'string', description: 'URL に入る識別子。`/r/{refCode}` になる' },
+                  name: { type: 'string', description: 'コンソールの一覧に出る表示名' },
+                  tagId: { type: 'string', nullable: true, description: '友だち追加時に自動付与するタグ' },
+                  scenarioId: { type: 'string', nullable: true, description: '友だち追加時に自動開始するシナリオ' },
+                  poolId: { type: 'string', nullable: true, description: '振り分け先 Traffic Pool の id' },
+                  introTemplateId: { type: 'string', nullable: true, description: '追加直後に push するテンプレート' },
+                  redirectUrl: { type: 'string', nullable: true },
+                  runAccountFriendAddScenarios: { type: 'boolean' },
+                  isActive: { type: 'boolean' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Created' }, '400': { description: 'refCode and name are required / 予約語' } },
+      },
+    },
+    '/api/entry-routes/{id}': {
+      get: { tags: ['Links'], summary: '流入リンク取得', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Entry route' } } },
+      patch: { tags: ['Links'], summary: '流入リンク更新', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' } } },
+      delete: { tags: ['Links'], summary: '流入リンク削除', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' } } },
+    },
+    '/api/entry-routes/{id}/funnel': {
+      get: {
+        tags: ['Links'],
+        summary: '流入ファネル分析',
+        description: 'クリック → 友だち追加 → タグ付与 の到達数。ランディング離脱は仕様上見えない（重複計上を避けるため landing で ref_tracking を書かない）。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Funnel' } },
+      },
+    },
+    // ── Links（流入経路とクリック計測は別物）────────────────────────────
+    // 構築記録 §6-4「/t と /r の取り違え」— 役割の違いがどこにも書かれておらず、
+    // SNS 用に `/t`（チャット内用）を納品してしまった。ここで明示する。
+    '/r/{ref}': {
+      get: {
+        tags: ['Links'],
+        summary: '【流入経路】友だち追加リファラルリンク（SNS・外部向け）',
+        description:
+          '**外部（SNS投稿・広告・名刺など）に貼るのはこちら。** LINE の友だち追加へ誘導し、' +
+          '追加した友だちの `refCode` に流入元が記録される。トラフィックプール ' +
+          '(`POST /api/traffic-pools`) の `slug` がそのまま `{ref}` になる。\n\n' +
+          '**クエリは LIFF へパススルーされる**ので、追加直後の着地先を指定できる:\n' +
+          '- `?page=webinar&slug={webinarSlug}` — 追加後そのままウェビナー視聴画面へ\n' +
+          '- `?form={formId}` — 追加後にフォーム回答画面へ（友だちにはリンクも自動プッシュ）\n\n' +
+          '`page` に渡せるのは `salon-book` / `event` / `event-me` / `webinar` のみ。' +
+          '`form` / `book` は友だち追加ゲートを迂回してしまうため意図的に除外されている。',
+        security: [],
+        parameters: [
+          { name: 'ref', in: 'path', required: true, schema: { type: 'string' }, description: 'トラフィックプールの slug' },
+          { name: 'page', in: 'query', required: false, schema: { type: 'string', enum: ['salon-book', 'event', 'event-me', 'webinar'] } },
+          { name: 'slug', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'form', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'LIFF への誘導ページ' } },
+      },
+    },
+    '/t/{linkId}': {
+      get: {
+        tags: ['Links'],
+        summary: '【クリック計測】トラッキングリンク（チャット内向け）',
+        description:
+          '**LINE のトーク内に貼るのはこちら。** クリック数を計測し、設定に応じてタグ付け・' +
+          'シナリオ登録・イントロメッセージのプッシュを行ってから `destinationUrl` へリダイレクトする。\n\n' +
+          '**SNS には貼らないこと。** 流入経路の記録は `/r/{ref}` の役割で、こちらは' +
+          '「既に友だちである人がトーク内で押した」ことの計測に特化している。' +
+          '取り違えると流入元が記録されない（構築記録 §6-4）。',
+        security: [],
+        parameters: [{ name: 'linkId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '302': { description: 'destinationUrl へリダイレクト' } },
+      },
+    },
+    '/api/tracked-links': {
+      get: { tags: ['Links'], summary: 'トラッキングリンク一覧', responses: { '200': { description: 'Links' } } },
+      post: {
+        tags: ['Links'],
+        summary: 'トラッキングリンク作成（チャット内用）',
+        description:
+          '`destinationUrl` が必須。`tagId` / `scenarioId` でクリック時の自動アクション、' +
+          '`introMessageTemplateId` で友だち追加直後のプッシュを指定できる。\n\n' +
+          'テンプレート本文の `{formUrl}` プレースホルダは**このイントロ／リワード配信でのみ展開される**。' +
+          'シナリオのステップ本文では展開されないので注意（構築記録 §6-3）。',
+        responses: { '201': { description: 'Created' } },
+      },
+    },
+    '/api/traffic-pools': {
+      get: { tags: ['Links'], summary: 'トラフィックプール一覧', responses: { '200': { description: 'Pools' } } },
+      post: {
+        tags: ['Links'],
+        summary: 'トラフィックプール作成（= /r/{slug} の発行）',
+        description:
+          '`slug` / `name` / `activeAccountId` が必須。作成すると `/r/{slug}` が使えるようになり、' +
+          'そこから追加した友だちの `refCode` に `{slug}` が記録される。\n\n' +
+          '**これだけではタグ自動付与・起動シナリオは動かない。** Pool が決めるのは振り分け先アカウントだけで、' +
+          '流入時の挙動は `POST /api/entry-routes`（同じ `refCode`・`poolId` にこの pool の id）が持つ。' +
+          '作らないとコンソールの流入リンク画面に（未登録）と出る。',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['slug', 'name', 'activeAccountId'],
+                properties: {
+                  slug: { type: 'string', description: 'URL に入る。例 `sns-main` → `/r/sns-main`' },
+                  name: { type: 'string' },
+                  activeAccountId: { type: 'string', description: '流入を受けるLINEアカウントのID' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Created' }, '400': { description: 'slug, name, and activeAccountId are required' } },
+      },
+    },
+    '/api/traffic-pools/{id}': {
+      put: { tags: ['Links'], summary: 'プール更新（配信先アカウントの切替）', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' } } },
+      delete: { tags: ['Links'], summary: 'プール削除', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' } } },
+    },
+    // ── Webinars ────────────────────────────────────────────────────────
+    // 2026-08-25 追記。オートウェビナー一式は OpenAPI に1本も載っておらず、
+    // 構築を試みた利用者が「動画アップロードの口が見つからない」まま20以上の
+    // エンドポイントを推測で叩き、最終的に OSS のソースを読んで発見する、という
+    // 事故が起きた（構築記録 §6-5「最長の詰まり」）。MCP にも webinar 系ツールが
+    // 無いため、ここが唯一の発見経路になる。
+    '/api/webinars': {
+      get: { tags: ['Webinars'], summary: 'ウェビナー一覧', responses: { '200': { description: 'Webinars' } } },
+      post: {
+        tags: ['Webinars'],
+        summary: 'ウェビナー作成',
+        description: 'title と slug が必須。slug は視聴 URL `/webinar/{slug}` に入る。',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['title', 'slug'],
+                properties: {
+                  title: { type: 'string' },
+                  slug: { type: 'string', description: '英数字とハイフン。視聴 URL に入る' },
+                  status: { type: 'string', enum: ['draft', 'active', 'archived'] },
+                  durationSeconds: { type: 'number', description: '動画の長さ（秒）' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'Created' }, '409': { description: 'slug_taken' } },
+      },
+    },
+    '/api/webinars/{id}': {
+      get: { tags: ['Webinars'], summary: 'ウェビナー取得', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Webinar' } } },
+      put: {
+        tags: ['Webinars'],
+        summary: 'ウェビナー更新（公開状態・スケジュール・従来CTA）',
+        description:
+          'schedule は `{type:"daily",time:"HH:MM"}` / `{type:"weekly",time,days:[0-6]}` / ' +
+          '`{type:"once",at:ISO8601}` の配列。時刻は JST 固定。\n\n' +
+          '従来 CTA（`cta`）は label・url・showAtSeconds が**3つとも必須**で、' +
+          'showAtSeconds は**数値**（文字列は 400 invalid_cta）。新しい複数 CTA は ' +
+          '`PUT /api/webinars/{id}/ctas` を使う。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  slug: { type: 'string' },
+                  status: { type: 'string', enum: ['draft', 'active', 'archived'] },
+                  durationSeconds: { type: 'number' },
+                  schedule: { type: 'array', items: { type: 'object' } },
+                  cta: {
+                    type: 'object',
+                    nullable: true,
+                    required: ['label', 'url', 'showAtSeconds'],
+                    properties: {
+                      label: { type: 'string' },
+                      url: { type: 'string', description: 'http(s) 必須' },
+                      showAtSeconds: { type: 'number', description: '数値のみ。文字列だと invalid_cta' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'Updated' }, '400': { description: 'invalid_cta / invalid_schedule など' } },
+      },
+      delete: { tags: ['Webinars'], summary: 'ウェビナー削除', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' } } },
+    },
+    '/api/webinars/{id}/assets/{revision}/{path}': {
+      put: {
+        tags: ['Webinars'],
+        summary: '動画アセット（HLS）アップロード',
+        description:
+          'ffmpeg の HLS 出力を1ファイルずつ送る。`revision` は**数字のみ**（`master.m3u8` を直に置こうとすると ' +
+          '400 `revision must be digits` が返る — これがルート発見の決め手になる）。\n\n' +
+          '拡張子は `.m3u8` と `.ts` のみ。1ファイル 20MB 以内。R2 の ' +
+          '`webinars/{slug}/{revision}/{path}` に格納される。\n\n' +
+          '`master.m3u8` は**最後に**送ること。途中で中断しても、セグメント欠けの master が残らない。\n\n' +
+          '生成例:\n' +
+          '```\n' +
+          'ffmpeg -i INPUT.mp4 -map 0:v:0 -map 0:a:0 -c copy \\\n' +
+          '  -var_stream_map "v:0,a:0" -master_pl_name master.m3u8 \\\n' +
+          '  -f hls -hls_time 6 -hls_playlist_type vod -hls_list_size 0 \\\n' +
+          '  -hls_segment_filename "OUT/%v/seg_%05d.ts" "OUT/%v/index.m3u8"\n' +
+          '```',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'revision', in: 'path', required: true, schema: { type: 'string', pattern: '^\\d+$' } },
+          { name: 'path', in: 'path', required: true, schema: { type: 'string' }, description: '例 `master.m3u8` / `0/index.m3u8` / `0/seg_00001.ts`' },
+        ],
+        requestBody: { required: true, content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } },
+        responses: {
+          '200': { description: 'Stored' },
+          '400': { description: 'revision must be digits / only .m3u8 and .ts may be uploaded / too large' },
+        },
+      },
+    },
+    '/api/webinars/{id}/video': {
+      post: {
+        tags: ['Webinars'],
+        summary: '動画リビジョンの確定（アップロード完了）',
+        description:
+          'master.m3u8 を読み、variant を解析し、参照されている**全セグメントが R2 に実在するか**を ' +
+          'サーバー側で検証してから `video_prefix` を切り替える。欠けがあれば 400 で、視聴者は ' +
+          '古いリビジョンのまま影響を受けない。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['revision', 'durationSeconds'],
+                properties: {
+                  revision: { type: 'string', pattern: '^\\d+$' },
+                  durationSeconds: { type: 'number', description: '正の数' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'videoPrefix を返す' }, '400': { description: 'upload is incomplete' } },
+      },
+    },
+    '/api/webinars/{id}/ctas': {
+      get: { tags: ['Webinars'], summary: 'CTA一覧', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'CTAs' } } },
+      put: {
+        tags: ['Webinars'],
+        summary: 'CTA一括置換（最大20件）',
+        description:
+          '全置換。`kind:"form"` なら `formId` 必須（存在と有効性をサーバーが検証）、' +
+          '`kind:"url"` なら `url` 必須（http(s)）。`autoOpen` で自動表示。all-or-nothing 検証。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['ctas'],
+                properties: {
+                  ctas: {
+                    type: 'array',
+                    maxItems: 20,
+                    items: {
+                      type: 'object',
+                      required: ['atSeconds', 'kind', 'title', 'buttonLabel'],
+                      properties: {
+                        atSeconds: { type: 'number', minimum: 0 },
+                        kind: { type: 'string', enum: ['form', 'url'] },
+                        title: { type: 'string', maxLength: 100 },
+                        body: { type: 'string', maxLength: 300, nullable: true },
+                        buttonLabel: { type: 'string', maxLength: 50 },
+                        autoOpen: { type: 'boolean' },
+                        formId: { type: 'string', nullable: true },
+                        url: { type: 'string', nullable: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'count を返す' }, '400': { description: 'invalid_cta / form_not_found / form_inactive' } },
+      },
+    },
+    '/api/webinars/{id}/comments': {
+      get: { tags: ['Webinars'], summary: 'コメント一覧', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Comments' } } },
+      put: {
+        tags: ['Webinars'],
+        summary: 'コメント一括置換（仕込みコメント）',
+        description:
+          '全置換。`atSeconds` が**負の値は開始前の待機ルーム**コメント（-3600 まで）。' +
+          '`authorName` は50文字以内。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['comments'],
+                properties: {
+                  comments: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['atSeconds', 'authorName', 'body'],
+                      properties: {
+                        atSeconds: { type: 'number', minimum: -3600 },
+                        authorName: { type: 'string', maxLength: 50 },
+                        body: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'count を返す' }, '400': { description: 'invalid_comment' } },
+      },
+    },
+    '/api/webinars/{id}/analytics': {
+      get: {
+        tags: ['Webinars'],
+        summary: '視聴分析',
+        description: '視聴・離脱位置・CTAクリック・フォーム到達をセッション単位で集計。管理画面と同一データ。',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Analytics' } },
+      },
+    },
+    '/api/webinars/{id}/user-comments': {
+      get: { tags: ['Webinars'], summary: '視聴者の生コメント一覧', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Comments' } } },
+    },
     '/webhook': {
       post: {
         tags: ['Webhook'],
@@ -564,6 +1261,9 @@ const spec = {
     { name: 'LINE Accounts', description: 'マルチLINEアカウント管理' },
     { name: 'Conversions', description: 'コンバージョン計測' },
     { name: 'Affiliates', description: 'アフィリエイト管理' },
+    { name: 'Forms', description: 'フォーム（LIFF 内で回答）' },
+    { name: 'Links', description: '流入経路(/r) とクリック計測(/t) — 役割が違うので取り違えないこと' },
+    { name: 'Webinars', description: 'オートウェビナー（動画・CTA・コメント・分析）' },
     { name: 'Webhook', description: 'LINE Webhook' },
   ],
 };

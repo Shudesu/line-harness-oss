@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Loader } from '@cloudflare/kumo/components/loader'
 
 interface PerAccountBreakdown {
   accountId: string
@@ -31,63 +34,53 @@ export default function SendConfirmDialog({ title, targetCount, accountName, isM
   const showBreakdown = isMultiAccount === true
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-sm w-full p-6">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">配信を送信しますか？</h3>
-        <dl className="space-y-2 text-sm mb-4">
+    <Dialog.Root role="alertdialog" open onOpenChange={(open) => { if (!open) onCancel() }}>
+      <Dialog size="base" className="p-6">
+        <Dialog.Title className="text-lg font-semibold text-kumo-strong">配信を送信しますか？</Dialog.Title>
+        <Dialog.Description className="mt-1 text-sm text-kumo-subtle">送信後は取り消せません。対象とアカウントを確認してください。</Dialog.Description>
+        <dl className="my-4 space-y-2 text-sm">
           <div className="flex justify-between">
-            <dt className="text-gray-500">タイトル</dt>
-            <dd className="text-gray-900 font-medium">{title}</dd>
+            <dt className="text-kumo-subtle">タイトル</dt>
+            <dd className="font-medium text-kumo-strong">{title}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-gray-500">対象</dt>
-            <dd className="text-gray-900 font-medium">{targetCount.toLocaleString('ja-JP')}人</dd>
+            <dt className="text-kumo-subtle">対象</dt>
+            <dd className="font-medium text-kumo-strong">{targetCount.toLocaleString('ja-JP')}人</dd>
           </div>
           {showBreakdown ? (
             <div>
-              <dt className="text-gray-500 mb-1">配信先</dt>
-              <dd className="space-y-1 mt-1 border-t border-gray-100 pt-2">
+              <dt className="mb-1 text-kumo-subtle">配信先</dt>
+              <dd className="mt-1 space-y-1 border-t border-kumo-line pt-2">
                 {perAccount === undefined ? (
                   // データ未取得 (preview-count 読み込み中 or 失敗)。"全アカウント無効" と
                   // 誤表示しないように loading 表示にする。
-                  <p className="text-xs text-gray-400">読み込み中...</p>
+                  <p className="flex items-center gap-2 text-xs text-kumo-subtle"><Loader size="sm" />読み込み中</p>
                 ) : perAccount.length > 0 ? (
                   perAccount.map((p) => (
                     <div key={p.accountId} className="flex justify-between text-xs">
-                      <span className="text-gray-700">{p.accountName}</span>
-                      <span className="text-gray-900 font-medium">{p.sendCount.toLocaleString('ja-JP')}通</span>
+                      <span className="text-kumo-default">{p.accountName}</span>
+                      <span className="font-medium text-kumo-strong">{p.sendCount.toLocaleString('ja-JP')}通</span>
                     </div>
                   ))
                 ) : (
-                  <p className="text-xs text-amber-600">送信可能なアカウントがありません（全アカウント無効）</p>
+                  <p className="text-xs text-kumo-warning">送信可能なアカウントがありません（全アカウント無効）</p>
                 )}
               </dd>
             </div>
           ) : (
             <div className="flex justify-between">
-              <dt className="text-gray-500">アカウント</dt>
-              <dd className="text-gray-900 font-medium">{accountName}</dd>
+              <dt className="text-kumo-subtle">アカウント</dt>
+              <dd className="font-medium text-kumo-strong">{accountName}</dd>
             </div>
           )}
         </dl>
-        <p className="text-xs text-amber-600 mb-4">送信後は取り消せません</p>
-        <div className="flex gap-2">
-          <button
-            onClick={onConfirm}
-            disabled={countdown > 0}
-            className="flex-1 px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg disabled:opacity-50 transition-opacity"
-            style={{ backgroundColor: '#06C755' }}
-          >
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onCancel}>キャンセル</Button>
+          <Button type="button" variant="primary" onClick={onConfirm} disabled={countdown > 0}>
             {countdown > 0 ? `送信する (${countdown})` : '送信する'}
-          </button>
-          <button
-            onClick={onCancel}
-            className="flex-1 px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-          >
-            キャンセル
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   )
 }

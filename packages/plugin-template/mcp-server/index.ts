@@ -2,7 +2,7 @@
  * MCP Server for MyService plugin.
  *
  * Registers custom tools that let AI agents interact with
- * both MyService and LINE Harness in a unified interface.
+ * both MyService and L Harness in a unified interface.
  *
  * Usage:
  *   node dist-mcp/index.js

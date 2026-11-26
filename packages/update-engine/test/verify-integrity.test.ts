@@ -7,6 +7,7 @@ import {
 
 const computed: BundleHashes = {
   worker: 'sha256:workerbytes',
+  workerAssets: 'sha256:workerassets',
   admin: 'sha256:adminbytes',
   liff: 'sha256:liffbytes',
 };
@@ -15,6 +16,7 @@ const entry = {
   version: '0.17.0',
   admin_hash: 'sha256:adminbytes',
   liff_hash: 'sha256:liffbytes',
+  worker_assets_hash: 'sha256:workerassets',
   worker_bundle_hash: 'sha256:workerbytes',
 };
 
@@ -53,5 +55,14 @@ describe('verifyBundleIntegrity', () => {
         entry,
       ),
     ).toThrow(/liff hash mismatch/);
+  });
+
+  it('rejects tampered Worker Assets', () => {
+    expect(() =>
+      verifyBundleIntegrity(
+        { ...computed, workerAssets: 'sha256:evil' },
+        entry,
+      ),
+    ).toThrow(/worker assets hash mismatch/);
   });
 });

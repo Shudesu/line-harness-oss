@@ -1,6 +1,6 @@
 # Fork + Cloudflare 運用ガイド
 
-LINE Harness は、fork した repo を自分の本番環境として育てる運用を推奨します。
+L Harness は、fork した repo を自分の本番環境として育てる運用を推奨します。
 
 ## 目指す形
 

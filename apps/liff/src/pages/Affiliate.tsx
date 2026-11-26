@@ -30,9 +30,61 @@ interface OfferData {
   name: string;
   description: string | null;
   rewardAmount: number;
+  rewardMiles: number;
   enrolled: boolean;
   refCode: string | null;
   url: string | null;
+}
+
+interface MileageData {
+  programId: string;
+  programName: string;
+  available: number;
+  pending: number;
+  lifetimeEarned: number;
+  spent: number;
+}
+
+interface MileageHistoryItem {
+  id: string;
+  entryType: 'grant' | 'reversal' | 'spend' | 'expiration' | 'adjustment';
+  status: 'pending' | 'available' | 'void';
+  amount: number;
+  reason: string;
+  source: string;
+  sourceEventId: string | null;
+  occurredAt: string;
+}
+
+interface MileageInsights {
+  accountCount: number;
+  rewardedActions: number;
+  referralMiles: number;
+  qualityReferralCount: number;
+  lastEarnedAt: string | null;
+}
+
+interface MileageWalletData {
+  mileage: MileageData;
+  history: MileageHistoryItem[];
+  insights: MileageInsights;
+  opportunities: MileageOpportunity[];
+}
+
+interface MileageOpportunity {
+  id: string;
+  type: 'webinar' | 'friend_add';
+  title: string;
+  description: string;
+  rewardMiles: number;
+  nextRewardMiles: number;
+  progressPercent: number;
+  ctaLabel: string;
+  url: string;
+  targetAccountId?: string;
+  completed?: boolean;
+  mileageStatus?: 'credited' | 'pending' | 'waiting';
+  creditedMiles?: number;
 }
 
 type State =
@@ -99,6 +151,17 @@ async function fetchOffers(): Promise<OfferData[]> {
   if (!res.ok) return [];
   const data = (await res.json()) as { offers: OfferData[] };
   return data.offers;
+}
+
+async function fetchMileage(): Promise<MileageWalletData> {
+  const token = await getAccessToken();
+  const url = `${BASE}/api/liff/mileage/me?lineAccessToken=${encodeURIComponent(token)}&limit=20`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `API ${res.status}`);
+  }
+  return (await res.json()) as MileageWalletData;
 }
 
 async function postEnrollOffer(offerId: string): Promise<AffiliateLinkData> {
@@ -202,6 +265,233 @@ function CopyButton({ url, urlRef }: { url: string; urlRef: React.RefObject<HTML
 
 const rewardText = (amount: number) =>
   amount > 0 ? `1件 ¥${amount.toLocaleString()}` : '報酬未設定';
+
+function formatMileageDate(value: string): string {
+  const parsed = new Date(value.includes('T') ? value : value.replace(' ', 'T'));
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 10).replaceAll('-', '/');
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
+function mileageSourceLabel(source: string): string {
+  const labels: Record<string, string> = {
+    webinar: 'ウェビナー',
+    instagram: 'Instagram',
+    line: 'LINE',
+    line_relationship: 'LINE継続',
+    booking: '予約',
+    form: 'フォーム',
+    stripe: '購入',
+    tag: 'タグ',
+    tag_referral: '紹介',
+    affiliate: '紹介',
+    admin: '運営',
+  };
+  return labels[source] ?? source;
+}
+
+function MileageSummaryCard({ wallet }: { wallet: MileageWalletData }) {
+  const { mileage, insights } = wallet;
+  return (
+    <section className="af-mileage-card space-y-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold opacity-80">{mileage.programName}</p>
+          <p className="mt-1 text-4xl font-bold tracking-tight">
+            {mileage.available.toLocaleString()}
+            <span className="ml-1 text-sm font-semibold opacity-80">mile</span>
+          </p>
+          <p className="mt-1 text-xs opacity-75">現在利用できるマイル</p>
+        </div>
+        {mileage.pending > 0 && (
+          <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-semibold">
+            確定待ち {mileage.pending.toLocaleString()}
+          </span>
+        )}
+      </div>
+
+      <div className="af-mileage-grid">
+        <div><span>累計獲得</span><strong>{mileage.lifetimeEarned.toLocaleString()}</strong></div>
+        <div><span>紹介で獲得</span><strong>{insights.referralMiles.toLocaleString()}</strong></div>
+        <div><span>利用済み</span><strong>{mileage.spent.toLocaleString()}</strong></div>
+        <div><span>良質な紹介</span><strong>{insights.qualityReferralCount.toLocaleString()}人</strong></div>
+      </div>
+
+      {insights.accountCount > 1 && (
+        <p className="af-wallet-scope-note">
+          {insights.accountCount}個のLINE公式アカウントで貯めたマイルを合算しています
+        </p>
+      )}
+    </section>
+  );
+}
+
+function MileageHistoryAccordion({ wallet }: { wallet: MileageWalletData }) {
+  const { history, insights } = wallet;
+  return (
+    <details className="af-card af-history-accordion">
+      <summary className="af-history-summary">
+        <div className="min-w-0">
+          <h2 className="text-sm font-bold text-gray-900">マイル履歴</h2>
+          <p className="text-[11px] text-gray-400 mt-0.5">行動後、定期集計で反映されます</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="af-badge" style={{ background: '#fff7ed', color: '#b45309' }}>
+            {insights.rewardedActions.toLocaleString()}回獲得
+          </span>
+          <span className="af-history-chevron" aria-hidden="true" />
+        </div>
+      </summary>
+
+      <div className="af-history-content">
+        {history.length === 0 ? (
+          <div className="af-mileage-empty">
+            LINEやウェビナーで行動すると、ここにマイル履歴が表示されます
+          </div>
+        ) : (
+          <div className="af-history-list">
+            {history.map((item) => (
+              <div key={item.id} className={`af-history-row ${item.status === 'void' ? 'is-void' : ''}`}>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-gray-800 truncate">{item.reason}</div>
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-400">
+                    <span>{mileageSourceLabel(item.source)}</span>
+                    <span>{formatMileageDate(item.occurredAt)}</span>
+                    {item.status === 'pending' && <span className="af-history-pending">確定待ち</span>}
+                    {item.status === 'void' && <span>取消</span>}
+                  </div>
+                </div>
+                <strong className={`af-history-amount ${item.amount < 0 ? 'is-minus' : ''}`}>
+                  {item.amount > 0 ? '+' : ''}{item.amount.toLocaleString()}
+                  <small> mile</small>
+                </strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function MileageOpportunities({ items }: { items: MileageOpportunity[] }) {
+  if (items.length === 0) return null;
+
+  const accountItems = items.filter((item) => item.type === 'friend_add');
+  const webinarItems = items.filter((item) => item.type === 'webinar');
+  const registeredCount = accountItems.filter((item) => item.completed).length;
+
+  return (
+    <div className="space-y-5">
+      {accountItems.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-end justify-between gap-3 px-1">
+            <div>
+              <h2 className="text-sm font-bold text-gray-900">LINEアカウント登録マイル</h2>
+              <p className="text-[11px] text-gray-400 mt-0.5">4アカウントの登録状況とマイル反映状況</p>
+            </div>
+            <span className="af-opportunity-live">{registeredCount}/{accountItems.length} 登録済み</span>
+          </div>
+          {accountItems.map((item) => (
+            <article key={item.id} className={`af-opportunity-card ${item.completed ? 'is-completed' : ''}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="af-opportunity-kind">LINE ACCOUNT</span>
+                  <h3 className="mt-2 text-sm font-bold leading-relaxed text-gray-900">{item.title}</h3>
+                </div>
+                <span className="af-opportunity-reward">
+                  {item.completed
+                    ? item.mileageStatus === 'credited'
+                      ? `加算済み +${(item.creditedMiles ?? item.rewardMiles).toLocaleString()}`
+                      : item.mileageStatus === 'pending'
+                        ? '確定待ち'
+                        : '登録済み'
+                    : `+${item.rewardMiles.toLocaleString()}`}
+                </span>
+              </div>
+              <p className="mt-2 text-xs font-semibold text-amber-800">{item.description}</p>
+              {item.completed ? (
+                <div className="af-opportunity-completed"><span aria-hidden="true">✓</span> 登録済み</div>
+              ) : (
+                <a href={item.url} className="af-opportunity-btn">
+                  {item.ctaLabel}<span aria-hidden="true"> →</span>
+                </a>
+              )}
+            </article>
+          ))}
+        </section>
+      )}
+
+      {webinarItems.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-end justify-between gap-3 px-1">
+            <div>
+              <h2 className="text-sm font-bold text-gray-900">今、マイルを増やせます</h2>
+              <p className="text-[11px] text-gray-400 mt-0.5">あなたの未達成アクション</p>
+            </div>
+            <span className="af-opportunity-live">獲得チャンス</span>
+          </div>
+          {webinarItems.map((item) => (
+            <article key={item.id} className="af-opportunity-card">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="af-opportunity-kind">WEBINAR MISSION</span>
+                  <h3 className="mt-2 text-sm font-bold leading-relaxed text-gray-900">{item.title}</h3>
+                </div>
+                <span className="af-opportunity-reward">最大 +{item.rewardMiles.toLocaleString()}</span>
+              </div>
+              <p className="mt-2 text-xs font-semibold text-amber-800">{item.description}</p>
+              {item.progressPercent > 0 && (
+                <div className="mt-3">
+                  <div className="mb-1 flex justify-between text-[10px] text-gray-400">
+                    <span>現在の視聴進捗</span><span>{item.progressPercent}%</span>
+                  </div>
+                  <div className="af-opportunity-progress">
+                    <span style={{ width: `${item.progressPercent}%` }} />
+                  </div>
+                </div>
+              )}
+              <a href={item.url} className="af-opportunity-btn">
+                {item.ctaLabel}<span aria-hidden="true"> →</span>
+              </a>
+            </article>
+          ))}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function ReferralSummary({ links }: { links: AffiliateLinkData[] }) {
+  const totals = links.reduce(
+    (sum, link) => ({
+      clicks: sum.clicks + link.clickCount,
+      friendAdds: sum.friendAdds + link.friendAdds,
+      approved: sum.approved + link.conversionsApproved,
+    }),
+    { clicks: 0, friendAdds: 0, approved: 0 },
+  );
+
+  return (
+    <section className="af-card">
+      <div className="mb-3">
+        <h2 className="text-sm font-bold text-gray-900">紹介の成果</h2>
+        <p className="text-[11px] text-gray-400 mt-0.5">
+          紹介した友だちが予約・視聴・購入へ進むと、追加マイルの対象になります
+        </p>
+      </div>
+      <div className="af-referral-grid">
+        <div><strong>{totals.clicks.toLocaleString()}</strong><span>クリック</span></div>
+        <div><strong>{totals.friendAdds.toLocaleString()}</strong><span>友だち追加</span></div>
+        <div><strong>{totals.approved.toLocaleString()}</strong><span>承認成果</span></div>
+      </div>
+    </section>
+  );
+}
 
 /**
  * One issued link inside an offer card (or the "その他のリンク" section).
@@ -355,9 +645,16 @@ function OfferCard({
             <p className="text-xs text-gray-500 mt-1 leading-relaxed">{offer.description}</p>
           )}
         </div>
-        <span className="af-badge shrink-0" style={{ background: '#ecfdf5', color: '#06c755' }}>
-          {rewardText(offer.rewardAmount)}
-        </span>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className="af-badge" style={{ background: '#ecfdf5', color: '#06c755' }}>
+            {rewardText(offer.rewardAmount)}
+          </span>
+          {offer.rewardMiles > 0 && (
+            <span className="af-badge" style={{ background: '#fff7ed', color: '#d97706' }}>
+              +{offer.rewardMiles.toLocaleString()} mile
+            </span>
+          )}
+        </div>
       </div>
 
       {offer.enrolled ? (
@@ -385,6 +682,7 @@ function OfferCard({
 
 export default function Affiliate() {
   const [state, setState] = useState<State>({ phase: 'loading' });
+  const [wallet, setWallet] = useState<MileageWalletData | null>(null);
   const [registerBusy, setRegisterBusy] = useState(false);
   // registerCalledRef guards against a double-tap firing two POSTs while the
   // first is in flight. It is released in `finally` so that a *failed* register
@@ -394,7 +692,8 @@ export default function Affiliate() {
   const loadMe = useCallback(async () => {
     setState({ phase: 'loading' });
     try {
-      const result = await fetchMe();
+      const [result, mileageResult] = await Promise.all([fetchMe(), fetchMileage()]);
+      setWallet(mileageResult);
       if (result.registered) {
         const offers = await fetchOffers().catch(() => []);
         setState({ phase: 'registered', affiliate: result.affiliate, links: result.links, offers });
@@ -453,14 +752,25 @@ export default function Affiliate() {
     return (
       <div className="af-fade-in max-w-md mx-auto p-4 space-y-4">
         <div>
-          <h1 className="text-lg font-bold text-gray-900">アフィリエイト</h1>
+          <h1 className="text-lg font-bold text-gray-900">マイル・紹介</h1>
           <p className="text-sm text-gray-500 mt-1 leading-relaxed">
-            案件に参加して、SNSごとに紹介リンクを作成できます。
+            貯まったマイルを確認し、紹介リンクからさらにマイルを増やせます。
           </p>
         </div>
-        <button onClick={handleRegister} disabled={registerBusy} className="af-primary-btn">
-          {registerBusy ? '登録中…' : 'はじめる'}
-        </button>
+        {wallet && <MileageSummaryCard wallet={wallet} />}
+        {wallet && <MileageOpportunities items={wallet.opportunities} />}
+        <div className="af-card space-y-3">
+          <div>
+            <h2 className="text-sm font-bold text-gray-900">紹介リンクを使う</h2>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+              無料登録すると、案件ごと・SNSごとの紹介リンクを発行できます。
+            </p>
+          </div>
+          <button onClick={handleRegister} disabled={registerBusy} className="af-primary-btn">
+            {registerBusy ? '登録中…' : 'はじめる'}
+          </button>
+        </div>
+        {wallet && <MileageHistoryAccordion wallet={wallet} />}
       </div>
     );
   }
@@ -508,7 +818,16 @@ export default function Affiliate() {
 
   return (
     <div className="af-fade-in max-w-md mx-auto p-4 pb-12 space-y-5" style={{ background: '#f7f8fa', minHeight: '100vh' }}>
-      <h1 className="text-lg font-bold text-gray-900">アフィリエイト</h1>
+      <div>
+        <h1 className="text-lg font-bold text-gray-900">マイル・紹介</h1>
+        <p className="text-xs text-gray-500 mt-1">あなたの活動と紹介成果をまとめて確認できます</p>
+      </div>
+
+      {wallet && <MileageSummaryCard wallet={wallet} />}
+
+      {wallet && <MileageOpportunities items={wallet.opportunities} />}
+
+      <ReferralSummary links={links} />
 
       {/* 参加中の案件 — 案件ごとにリンクをまとめる */}
       {enrolledOffers.length > 0 && (
@@ -567,6 +886,8 @@ export default function Affiliate() {
           現在参加できる案件はありません
         </div>
       )}
+
+      {wallet && <MileageHistoryAccordion wallet={wallet} />}
     </div>
   );
 }

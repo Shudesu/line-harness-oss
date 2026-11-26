@@ -1,0 +1,17 @@
+{
+  "name": "line-harness-plugin-tag-rules",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "types": "wrangler types",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "build": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": { "@line-harness/sdk": "0.24.0" },
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.9.3", "wrangler": "^4.0.0" },
+  "engines": { "node": ">=22" }
+}

@@ -1,3 +1,4 @@
+import { validateMessageContent } from '@line-crm/shared';
 import { Hono } from 'hono';
 import {
   getScenarios,
@@ -355,6 +356,11 @@ scenarios.post('/api/scenarios/:id/steps', async (c) => {
       );
     }
 
+    if (!body.templateId) {
+      const contentError = validateMessageContent(body.messageType, body.messageContent);
+      if (contentError) return c.json({ success: false, error: contentError }, 400);
+    }
+
     const scenarioRow = await c.env.DB
       .prepare(`SELECT delivery_mode FROM scenarios WHERE id = ?`)
       .bind(scenarioId)
@@ -546,6 +552,13 @@ scenarios.put('/api/scenarios/:id/steps/:stepId', async (c) => {
     const effectiveMessageContent = templateSnapshot
       ? templateSnapshot.message_content
       : body.messageContent;
+
+    if (effectiveMessageType !== undefined || effectiveMessageContent !== undefined) {
+      const previous = await c.env.DB.prepare('SELECT message_type, message_content FROM scenario_steps WHERE id = ? AND scenario_id = ?').bind(stepId, scenarioId).first<{ message_type: string; message_content: string }>();
+      if (!previous) return c.json({ success: false, error: 'Step not found' }, 404);
+      const contentError = validateMessageContent(effectiveMessageType ?? previous.message_type, effectiveMessageContent ?? previous.message_content);
+      if (contentError) return c.json({ success: false, error: contentError }, 400);
+    }
 
     const updated = await updateScenarioStep(c.env.DB, stepId, {
       step_order: body.stepOrder,
@@ -768,6 +781,105 @@ scenarios.get('/api/scenarios/:id/stats', async (c) => {
     return c.json({ success: true, data: stats });
   } catch (err) {
     console.error('GET /api/scenarios/:id/stats error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/scenarios/:id/enrollments — 個票（今どこで、なぜ止まっているか）
+//
+// 「進行中1・到達0」のような状態のとき、**先が見えないと原因を特定できない**。
+// 実際に、条件付きステップで配信が進まない事象の切り分けに人間のフィードバック
+// 3往復とクライアント JS のリバースエンジニアリングが必要になった（2026-08-25 の実戦報告）。
+//
+// 書いた結果を読み取れる API を対で用意する、という方針の1本目。
+// stats（集計）では「何人が進行中か」しか分からないが、ここでは1人ずつ
+// 「現在ステップ・次の配信予定・今のステップに条件が付いているか」まで返す。
+scenarios.get('/api/scenarios/:id/enrollments', async (c) => {
+  try {
+    const scenarioId = c.req.param('id');
+    const scenario = await c.env.DB
+      .prepare(`SELECT id FROM scenarios WHERE id = ?`)
+      .bind(scenarioId)
+      .first<{ id: string }>();
+    if (!scenario) {
+      return c.json({ success: false, error: 'Scenario not found' }, 404);
+    }
+
+    const status = (c.req.query('status') ?? '').trim();
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 100) || 100, 1), 500);
+
+    // current_step_order は「最後に配信した step_order」で、次に配信するのは
+    // それより大きい最小の step_order（step-delivery.ts の find と同じ基準）。
+    // ここで LEFT JOIN しておくと「次に何が起きるはずか」がそのまま読める。
+    const rows = await c.env.DB
+      .prepare(
+        `SELECT fs.id, fs.friend_id, fs.status, fs.current_step_order,
+                fs.started_at, fs.next_delivery_at, fs.updated_at,
+                f.display_name, f.line_user_id,
+                ns.id AS next_step_id, ns.step_order AS next_step_order,
+                ns.condition_type AS next_condition_type,
+                ns.condition_value AS next_condition_value,
+                ns.next_step_on_false AS next_step_on_false,
+                ns.delay_minutes AS next_delay_minutes
+           FROM friend_scenarios fs
+           JOIN friends f ON f.id = fs.friend_id
+           LEFT JOIN scenario_steps ns
+                  ON ns.scenario_id = fs.scenario_id
+                 AND ns.step_order = (
+                       SELECT MIN(step_order) FROM scenario_steps
+                        WHERE scenario_id = fs.scenario_id
+                          AND step_order > fs.current_step_order)
+          WHERE fs.scenario_id = ?
+            AND (? = '' OR fs.status = ?)
+          ORDER BY fs.updated_at DESC
+          LIMIT ?`,
+      )
+      .bind(scenarioId, status, status, limit)
+      .all<Record<string, unknown>>();
+
+    const data = (rows.results ?? []).map((r) => {
+      const nextStepOrder = r.next_step_order as number | null;
+      const conditionType = r.next_condition_type as string | null;
+      // なぜ今止まって見えるのかを、判定ではなく**事実**として返す。
+      // 「条件が false だから待っている」と書くと、実際は順次進む実装
+      // （step-delivery.ts の nextStepOnFalse null 分岐）と食い違って
+      // 誤診を誘発するので、条件の有無と次回予定だけを素直に出す。
+      const waiting =
+        r.status === 'active' && nextStepOrder !== null
+          ? conditionType
+            ? `次のステップ(order=${nextStepOrder})に条件 ${conditionType} が設定されています`
+            : `次のステップ(order=${nextStepOrder})の配信待ちです`
+          : r.status === 'active' && nextStepOrder === null
+            ? '次のステップがありません（このtickで完了扱いになります）'
+            : null;
+      return {
+        id: r.id,
+        friendId: r.friend_id,
+        friendName: r.display_name,
+        lineUserId: r.line_user_id,
+        status: r.status,
+        currentStepOrder: r.current_step_order,
+        startedAt: r.started_at,
+        nextDeliveryAt: r.next_delivery_at,
+        updatedAt: r.updated_at,
+        nextStep: nextStepOrder === null
+          ? null
+          : {
+              id: r.next_step_id,
+              stepOrder: nextStepOrder,
+              delayMinutes: r.next_delay_minutes,
+              conditionType,
+              conditionValue: r.next_condition_value,
+              // null = 条件 false のとき順次次のステップへ進む（分岐しない）
+              nextStepOnFalse: r.next_step_on_false,
+            },
+        note: waiting,
+      };
+    });
+
+    return c.json({ success: true, data });
+  } catch (err) {
+    console.error('GET /api/scenarios/:id/enrollments error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

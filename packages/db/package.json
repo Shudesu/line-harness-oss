@@ -15,7 +15,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "generate:bootstrap": "node ./scripts/generate-bootstrap.mjs"
+    "generate:bootstrap": "node ./scripts/generate-bootstrap.mjs",
+    "test:cost": "vitest run test/mileage-cost.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",

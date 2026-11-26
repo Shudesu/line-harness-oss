@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 
 const lineClientMocks = vi.hoisted(() => ({
@@ -26,6 +26,9 @@ vi.mock('@line-crm/db', () => ({
   addTagToFriend: vi.fn(),
   getEntryRouteByRefCode: vi.fn(),
   getMessageTemplateById: vi.fn(),
+  getTemplateById: vi.fn(),
+  recordSignatureFailure: vi.fn().mockResolvedValue(undefined),
+  recordSignatureSuccess: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@line-crm/line-sdk', async () => {
@@ -39,11 +42,18 @@ vi.mock('@line-crm/line-sdk', async () => {
 
 vi.mock('../services/event-bus.js', () => ({
   fireEvent: vi.fn().mockResolvedValue(undefined),
+  logOutgoingMessage: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../services/local-line-proxy.js', () => ({
+  dispatchLineProxyLocally: vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
 }));
 
 vi.mock('../services/step-delivery.js', () => ({
   buildMessage: vi.fn(),
   expandVariables: vi.fn(),
+  resolveMetadata: vi.fn(),
+  messageToLogPayload: vi.fn(),
 }));
 
 import { verifySignature } from '@line-crm/line-sdk';
@@ -60,6 +70,8 @@ import {
   getScenarioSteps,
   getScenarios,
   jstNow,
+  recordSignatureFailure,
+  recordSignatureSuccess,
   resolveStepContent,
   updateFriendFollowStatus,
   upsertChatOnMessage,
@@ -180,6 +192,358 @@ describe('POST /webhook — DoS defenses (#104)', () => {
     expect(res.status).toBe(200);
     // Fast-rejected before any crypto / DB work.
     expect(verifySignature).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — signature failure recording (B-05)', () => {
+  // The in-isolate throttle keys off Date.now(); earlier tests in this file
+  // already recorded failures, so pin a clock that clears every window. Each
+  // test gets its own minute slot so the per-isolate 10s throttle does not
+  // leak between tests.
+  let clockSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let clockSlotMs = Date.now();
+  beforeEach(() => {
+    clockSlotMs += 60_000;
+    clockSpy = vi.spyOn(Date, 'now').mockReturnValue(clockSlotMs);
+  });
+  afterEach(() => {
+    clockSpy?.mockRestore();
+    clockSpy = null;
+  });
+
+  test('records an invalid signature against the single active account while still answering 200', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-1', channel_secret: 'account-secret', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    const body = JSON.stringify({ destination: 'bot', events: [{ type: 'follow' }] });
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': 'A'.repeat(43) + '=',
+        },
+        body,
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    // The 200 contract with LINE is unchanged — failures are recorded, not surfaced.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok' });
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
+    });
+    // Single active account → the failure is attributed to it.
+    expect(recordSignatureFailure).toHaveBeenCalledWith(baseEnv.DB, 'account-1', 'unverified');
+  });
+
+  test('records an invalid signature as unattributed on multi-account installs', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-1', channel_secret: 'secret-1', is_active: 1 },
+      { id: 'account-2', channel_secret: 'secret-2', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+        body: JSON.stringify({ events: [] }),
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledWith(baseEnv.DB, null, 'unverified');
+    });
+  });
+
+  test('records a missing signature in the background without touching verifySignature', async () => {
+    const app = setupApp();
+    const body = JSON.stringify({ destination: 'bot', events: [{ type: 'follow', source: { type: 'user', userId: 'U1' } }] });
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(verifySignature).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
+    });
+    expect(recordSignatureFailure).toHaveBeenCalledWith(baseEnv.DB, null, 'missing_signature');
+  });
+
+  test('throttles unverified-signature recording so 44-char junk cannot amplify D1 writes', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-1', channel_secret: 'account-secret', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    for (let i = 0; i < 5; i++) {
+      const res = await app.request(
+        '/webhook',
+        {
+          method: 'POST',
+          headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+          body: JSON.stringify({ events: [] }),
+        },
+        baseEnv,
+        baseExecutionCtx,
+      );
+      expect(res.status).toBe(200);
+    }
+
+    // The first request records; the rest within the per-isolate window are
+    // suppressed, so the recording read+write happens once, not per request.
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test('never logs the request body when a signature fails', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const app = setupApp();
+    const body = JSON.stringify({
+      destination: 'bot',
+      events: [{ type: 'message', message: { type: 'text', text: '機密本文' } }],
+    });
+    await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+        body,
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalled();
+    });
+    for (const call of errorSpy.mock.calls) {
+      expect(String(call.join(' '))).not.toContain('機密本文');
+    }
+    errorSpy.mockRestore();
+  });
+
+  test('records the last verified receive time on the success path', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-ok', channel_secret: 's', channel_access_token: 't', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+        body: JSON.stringify({ events: [] }),
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    expect(recordSignatureSuccess).toHaveBeenCalledWith(baseEnv.DB, 'account-ok');
+    expect(recordSignatureFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — postback events', () => {
+  test('fires postback_received with postback.data so IF-THEN automations run on rich menu taps', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(jstNow).mockReturnValue('2026-07-19T12:00:00.000+09:00');
+    vi.mocked(getFriendByLineUserId).mockResolvedValue({
+      id: 'friend-1',
+      line_user_id: 'U-existing',
+      display_name: 'Existing Friend',
+      picture_url: null,
+      status_message: null,
+      is_following: 1,
+      user_id: null,
+      line_account_id: null,
+      metadata: '{}',
+      first_tracked_link_id: null,
+      created_at: '2026-07-19T12:00:00.000+09:00',
+      updated_at: '2026-07-19T12:00:00.000+09:00',
+    });
+
+    const stmt = {
+      bind: vi.fn(),
+      run: vi.fn().mockResolvedValue({}),
+      all: vi.fn().mockResolvedValue({ results: [] }), // no auto_reply match
+    };
+    stmt.bind.mockReturnValue(stmt);
+    const db = { prepare: vi.fn().mockReturnValue(stmt) } as unknown as D1Database;
+
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+
+    const app = setupApp();
+    const validShapedSignature = 'A'.repeat(43) + '=';
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': validShapedSignature,
+        },
+        body: JSON.stringify({
+          destination: 'bot',
+          events: [
+            {
+              type: 'postback',
+              replyToken: 'reply-token-postback',
+              postback: { data: 'tag:premium' },
+              timestamp: Date.now(),
+              source: { type: 'user', userId: 'U-existing' },
+              webhookEventId: 'event-postback-1',
+              deliveryContext: { isRedelivery: false },
+              mode: 'active',
+            },
+          ],
+        }),
+      },
+      { ...baseEnv, DB: db },
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const processing = vi.mocked(executionCtx.waitUntil).mock.calls[0]?.[0] as Promise<unknown>;
+    await processing;
+
+    // No auto-reply matched — the reply token must be handed to the event bus
+    // so automations can still use it for free reply delivery.
+    expect(fireEvent).toHaveBeenCalledWith(
+      db,
+      'postback_received',
+      {
+        friendId: 'friend-1',
+        eventData: { text: 'tag:premium', matched: false },
+        replyToken: 'reply-token-postback',
+      },
+      'env-default-token',
+      null,
+    );
+    expect(lineClientMocks.replyMessage).not.toHaveBeenCalled();
+  });
+
+  test('silent auto-reply rule suppresses the reply but still fires postback_received as matched', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(jstNow).mockReturnValue('2026-07-19T12:00:00.000+09:00');
+    vi.mocked(getFriendByLineUserId).mockResolvedValue({
+      id: 'friend-1',
+      line_user_id: 'U-existing',
+      display_name: 'Existing Friend',
+      picture_url: null,
+      status_message: null,
+      is_following: 1,
+      user_id: null,
+      line_account_id: null,
+      metadata: '{}',
+      first_tracked_link_id: null,
+      created_at: '2026-07-19T12:00:00.000+09:00',
+      updated_at: '2026-07-19T12:00:00.000+09:00',
+    });
+
+    const stmt = {
+      bind: vi.fn(),
+      run: vi.fn().mockResolvedValue({}),
+      all: vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: 'rule-1',
+            keyword: 'tag:premium',
+            match_type: 'exact',
+            response_type: 'silent',
+            response_content: '',
+            template_id: null,
+          },
+        ],
+      }),
+    };
+    stmt.bind.mockReturnValue(stmt);
+    const db = { prepare: vi.fn().mockReturnValue(stmt) } as unknown as D1Database;
+
+    const executionCtx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext;
+
+    const app = setupApp();
+    const validShapedSignature = 'A'.repeat(43) + '=';
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': validShapedSignature,
+        },
+        body: JSON.stringify({
+          destination: 'bot',
+          events: [
+            {
+              type: 'postback',
+              replyToken: 'reply-token-postback',
+              postback: { data: 'tag:premium' },
+              timestamp: Date.now(),
+              source: { type: 'user', userId: 'U-existing' },
+              webhookEventId: 'event-postback-2',
+              deliveryContext: { isRedelivery: false },
+              mode: 'active',
+            },
+          ],
+        }),
+      },
+      { ...baseEnv, DB: db },
+      executionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    const processing = vi.mocked(executionCtx.waitUntil).mock.calls[0]?.[0] as Promise<unknown>;
+    await processing;
+
+    // Silent rule: no reply sent, but matched=true and the unconsumed reply
+    // token still reaches the event bus (rich menu tap → silent + add_tag flow).
+    expect(lineClientMocks.replyMessage).not.toHaveBeenCalled();
+    expect(fireEvent).toHaveBeenCalledWith(
+      db,
+      'postback_received',
+      {
+        friendId: 'friend-1',
+        eventData: { text: 'tag:premium', matched: true },
+        replyToken: 'reply-token-postback',
+      },
+      'env-default-token',
+      null,
+    );
   });
 });
 

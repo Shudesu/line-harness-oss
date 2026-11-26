@@ -1,6 +1,10 @@
 import type { UpdateContext } from '../types.js';
 import type { EventEmitter } from '../events.js';
-import { listWorkerBindings, putWorkerScript } from '../cf-api/workers.js';
+import {
+  deployWorkerVersion,
+  listWorkerBindings,
+  putWorkerScript,
+} from '../cf-api/workers.js';
 import { rollbackPagesDeployment } from '../cf-api/pages.js';
 
 /**
@@ -10,12 +14,41 @@ import { rollbackPagesDeployment } from '../cf-api/pages.js';
  * are the "known-good" coordinates we revert to if Apply or Verify fails.
  */
 export interface RollbackSnapshot {
-  /** Fully-qualified URL where the previous Worker bundle bytes can be fetched (e.g. R2 signed URL). */
+  /** Encoded version snapshot, or a legacy Worker bundle URL. */
   snapshotWorkerBundleUrl: string;
   /** CF Pages deployment id to revert the admin project to. */
   snapshotAdminDeployment: string;
   /** CF Pages deployment id to revert the liff project to. */
   snapshotLiffDeployment: string;
+}
+
+const WORKER_SNAPSHOT_PREFIX = 'line-harness-worker-snapshot:v1:';
+
+export function encodeWorkerSnapshot(opts: {
+  bundleUrl: string;
+  versionId: string;
+}): string {
+  return WORKER_SNAPSHOT_PREFIX + encodeURIComponent(JSON.stringify(opts));
+}
+
+export function decodeWorkerSnapshot(value: string): {
+  bundleUrl: string;
+  versionId?: string;
+} {
+  if (!value.startsWith(WORKER_SNAPSHOT_PREFIX)) return { bundleUrl: value };
+  try {
+    const parsed = JSON.parse(
+      decodeURIComponent(value.slice(WORKER_SNAPSHOT_PREFIX.length)),
+    ) as { bundleUrl?: unknown; versionId?: unknown };
+    if (typeof parsed.bundleUrl !== 'string' || typeof parsed.versionId !== 'string') {
+      throw new Error('missing fields');
+    }
+    return { bundleUrl: parsed.bundleUrl, versionId: parsed.versionId };
+  } catch (error) {
+    throw new Error(
+      `rollback: invalid Worker snapshot coordinate: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 async function readBodyExcerpt(res: Response): Promise<string> {
@@ -61,33 +94,38 @@ export async function runRollback(
 ): Promise<void> {
   await ev.emit({ step: 'rollback', status: 'running' });
 
-  // Step 1: fetch the previous Worker bundle. A non-200 means the snapshot
-  // URL is gone (R2 lifecycle? signed URL expired?) and we cannot proceed
-  // — rolling back to nothing would brick the Worker.
-  const res = await fetch(snap.snapshotWorkerBundleUrl);
-  if (!res.ok) {
-    const excerpt = await readBodyExcerpt(res);
-    throw new Error(
-      `rollback: failed to fetch snapshot worker bundle from ${snap.snapshotWorkerBundleUrl}: HTTP ${res.status} ${excerpt}`,
-    );
+  const workerSnapshot = decodeWorkerSnapshot(snap.snapshotWorkerBundleUrl);
+  if (workerSnapshot.versionId) {
+    // Versions retain the exact code, bindings and Workers Assets that were
+    // live together. This is the only complete rollback for asset updates.
+    await deployWorkerVersion({
+      creds: ctx.creds,
+      scriptName: ctx.workerName,
+      versionId: workerSnapshot.versionId,
+    });
+  } else {
+    // Backward-compatible fallback for snapshots created by older engines.
+    const res = await fetch(workerSnapshot.bundleUrl);
+    if (!res.ok) {
+      const excerpt = await readBodyExcerpt(res);
+      throw new Error(
+        `rollback: failed to fetch snapshot worker bundle from ${workerSnapshot.bundleUrl}: HTTP ${res.status} ${excerpt}`,
+      );
+    }
+    const bytes = Buffer.from(await res.arrayBuffer());
+    const bindings = await listWorkerBindings({
+      creds: ctx.creds,
+      scriptName: ctx.workerName,
+    });
+    await putWorkerScript({
+      creds: ctx.creds,
+      scriptName: ctx.workerName,
+      scriptContent: bytes,
+      bindings,
+      compatibilityFlags: ['nodejs_compat'],
+      keepAssets: true,
+    });
   }
-  const bytes = Buffer.from(await res.arrayBuffer());
-
-  // Step 2 + 3: re-PUT the old worker with current bindings preserved.
-  // listWorkerBindings reads the live state — even mid-rollback this is
-  // what the customer expects to keep (D1/R2/KV ids, secrets, env vars).
-  const bindings = await listWorkerBindings({
-    creds: ctx.creds,
-    scriptName: ctx.workerName,
-  });
-  await putWorkerScript({
-    creds: ctx.creds,
-    scriptName: ctx.workerName,
-    scriptContent: bytes,
-    bindings,
-    compatibilityFlags: ['nodejs_compat'],
-    keepAssets: true,
-  });
 
   // Step 4: admin Pages rollback. Done before liff so a failure here
   // surfaces before we touch the customer-facing UI, leaving liff still

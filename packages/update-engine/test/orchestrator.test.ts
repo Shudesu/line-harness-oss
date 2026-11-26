@@ -20,6 +20,7 @@ import {
   verifyBundleHashes,
 } from '../src/bundle.js';
 import { getSnapshot, type D1Like, type SnapshotRow } from '../src/snapshot.js';
+import { decodeWorkerSnapshot } from '../src/phases/rollback.js';
 import type { UpdateContext, ReleaseEntry, CurrentVersion, CfApiCreds } from '../src/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -206,6 +207,8 @@ interface RouteOverrides {
   workerGet?: { ok: boolean; status: number; body?: unknown };
   /** Apply + Rollback: worker PUT. */
   workerPut?: { ok: boolean; status: number; body?: unknown };
+  /** Version-based Worker rollback deployment. */
+  workerRollback?: { ok: boolean; status: number; body?: unknown };
   /** Preflight: admin project check, Apply: deploy & rollback. */
   adminCheck?: { ok: boolean; status: number; body?: unknown };
   /** Preflight: liff project check, Apply: deploy & rollback. */
@@ -320,7 +323,33 @@ function makeFetch(
       return makeResponse(o);
     }
 
-    // Worker bindings GET (apply + rollback).
+    if (url.endsWith(`/workers/scripts/${WORKER_NAME}/deployments`)) {
+      if (method === 'POST') {
+        const o = overrides.workerRollback ?? {
+          ok: true,
+          status: 200,
+          body: { success: true },
+        };
+        return makeResponse(o);
+      }
+      return makeResponse({
+        ok: true,
+        status: 200,
+        body: {
+          result: {
+            deployments: [
+              {
+                id: 'OLD_WORKER_DEPLOYMENT',
+                created_on: '2026-08-01T00:00:00Z',
+                versions: [{ version_id: 'OLD_WORKER_VERSION', percentage: 100 }],
+              },
+            ],
+          },
+        },
+      });
+    }
+
+    // Worker bindings GET (apply + legacy rollback).
     if (url.endsWith(`/workers/scripts/${WORKER_NAME}/bindings`)) {
       const o = overrides.workerGet ?? {
         ok: true,
@@ -328,6 +357,21 @@ function makeFetch(
         body: { success: true, result: [] },
       };
       return makeResponse(o);
+    }
+
+    if (url.endsWith(`/workers/scripts/${WORKER_NAME}/assets-upload-session`)) {
+      return makeResponse({
+        ok: true,
+        status: 200,
+        body: { result: { buckets: [], jwt: 'ASSETS_JWT' } },
+      });
+    }
+    if (url.includes(`/accounts/${ACCOUNT_ID}/workers/assets/upload`)) {
+      return makeResponse({
+        ok: true,
+        status: 200,
+        body: { result: { jwt: 'ASSETS_COMPLETION_JWT' } },
+      });
     }
 
     // Worker script PUT (apply + rollback) and GET (preflight existence).
@@ -485,7 +529,10 @@ describe('runUpdate orchestrator', () => {
     expect(row.to_version).toBe('0.8.0');
     expect(row.snapshot_admin_deployment).toBe(OLD_ADMIN_DEPLOY);
     expect(row.snapshot_liff_deployment).toBe(OLD_LIFF_DEPLOY);
-    expect(row.snapshot_worker_url).toBe(SNAPSHOT_WORKER_URL);
+    expect(decodeWorkerSnapshot(row.snapshot_worker_url)).toEqual({
+      bundleUrl: SNAPSHOT_WORKER_URL,
+      versionId: 'OLD_WORKER_VERSION',
+    });
     expect(row.completed_at).not.toBeNull();
     expect(row.error).toBeNull();
 
@@ -621,11 +668,10 @@ describe('runUpdate orchestrator', () => {
   }, 30000);
 
   it('rollback fails after primary failure → status = failed, error captures both', async () => {
-    // Apply: token verify ok, but make worker PUT fail. Then make rollback
-    // bundle fetch return 404 so rollback ALSO fails.
+    // Apply Worker PUT fails, then the version-based rollback also fails.
     globalThis.fetch = makeFetch(fixture, {
       workerPut: { ok: false, status: 500, body: { error: 'put failed' } },
-      snapshotBundleGet: { ok: false, status: 404 },
+      workerRollback: { ok: false, status: 500, body: { error: 'rollback failed' } },
     }) as unknown as typeof fetch;
 
     const events: any[] = [];

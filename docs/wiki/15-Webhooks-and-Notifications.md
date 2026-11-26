@@ -2,11 +2,11 @@
 
 ## 概要
 
-LINE Harnessは3種類のWebhookメカニズムと通知システムを提供する:
+L Harnessは3種類のWebhookメカニズムと通知システムを提供する:
 
-1. **LINE Webhook（受信）** - LINE PlatformからLINE Harnessへのイベント通知
-2. **受信Webhook (Incoming)** - 外部システムからLINE Harnessへのデータ受信
-3. **送信Webhook (Outgoing)** - LINE Harnessから外部システムへのイベント通知
+1. **LINE Webhook（受信）** - LINE PlatformからL Harnessへのイベント通知
+2. **受信Webhook (Incoming)** - 外部システムからL Harnessへのデータ受信
+3. **送信Webhook (Outgoing)** - L Harnessから外部システムへのイベント通知
 4. **通知ルール** - イベント発生時の管理者向け通知
 
 ## 1. LINE Webhookイベント処理
@@ -51,7 +51,7 @@ const valid = await verifySignature(channelSecret, rawBody, signature);
 
 ## 2. 受信Webhook (Incoming Webhooks)
 
-外部システム（Stripe、Google Calendar、カスタムシステム等）からLINE Harnessにデータを送信するための仕組み。
+外部システム（Stripe、Google Calendar、カスタムシステム等）からL Harnessにデータを送信するための仕組み。
 
 ### データモデル
 
@@ -181,7 +181,7 @@ curl -X POST "https://your-worker.your-subdomain.workers.dev/api/webhooks/incomi
 
 ## 3. 送信Webhook (Outgoing Webhooks)
 
-LINE Harness内部でイベントが発生した時に、外部URLにPOSTリクエストを送信する仕組み。Slack通知、外部CRM連携、カスタム処理などに使用。
+L Harness内部でイベントが発生した時に、外部URLにPOSTリクエストを送信する仕組み。Slack通知、外部CRM連携、カスタム処理などに使用。
 
 ### データモデル
 
@@ -483,7 +483,7 @@ curl -X GET "https://your-worker.your-subdomain.workers.dev/api/notifications?st
 
 ## 活用パターン
 
-### パターン: Stripe → LINE Harness → Slack通知 + 顧客タグ付け
+### パターン: Stripe → L Harness → Slack通知 + 顧客タグ付け
 
 ```bash
 # 1. 受信Webhook作成（Stripe用）

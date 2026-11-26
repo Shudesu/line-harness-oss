@@ -23,6 +23,8 @@ function serializeOffer(row: AffiliateOffer) {
     name: row.name,
     description: row.description,
     rewardAmount: row.reward_amount,
+    rewardMiles: row.reward_miles ?? 0,
+    mileageProgramId: row.mileage_program_id ?? 'default',
     lineAccountId: row.line_account_id,
     tagId: row.tag_id,
     scenarioId: row.scenario_id,
@@ -70,6 +72,7 @@ affiliateOffers.post('/api/affiliate-offers', async (c) => {
         name?: string;
         description?: string | null;
         rewardAmount?: number;
+        rewardMiles?: number;
         lineAccountId?: string | null;
         tagId?: string | null;
         scenarioId?: string | null;
@@ -86,11 +89,18 @@ affiliateOffers.post('/api/affiliate-offers', async (c) => {
         400,
       );
     }
+    if (body.rewardMiles !== undefined && !isValidReward(body.rewardMiles)) {
+      return c.json(
+        { success: false, error: 'rewardMiles must be a non-negative integer' },
+        400,
+      );
+    }
 
     const offer = await createAffiliateOffer(c.env.DB, {
       name,
       description: body.description ?? null,
       rewardAmount: body.rewardAmount,
+      rewardMiles: body.rewardMiles,
       lineAccountId: body.lineAccountId ?? null,
       tagId: body.tagId ?? null,
       scenarioId: body.scenarioId ?? null,
@@ -111,6 +121,7 @@ affiliateOffers.put('/api/affiliate-offers/:id', async (c) => {
         name?: string;
         description?: string | null;
         rewardAmount?: number;
+        rewardMiles?: number;
         lineAccountId?: string | null;
         tagId?: string | null;
         scenarioId?: string | null;
@@ -127,6 +138,12 @@ affiliateOffers.put('/api/affiliate-offers/:id', async (c) => {
         400,
       );
     }
+    if (body.rewardMiles !== undefined && !isValidReward(body.rewardMiles)) {
+      return c.json(
+        { success: false, error: 'rewardMiles must be a non-negative integer' },
+        400,
+      );
+    }
 
     const existing = await getAffiliateOfferById(c.env.DB, id);
     if (!existing) {
@@ -137,6 +154,7 @@ affiliateOffers.put('/api/affiliate-offers/:id', async (c) => {
       name: body.name !== undefined ? body.name.trim() : undefined,
       description: body.description,
       reward_amount: body.rewardAmount,
+      reward_miles: body.rewardMiles,
       line_account_id: body.lineAccountId,
       tag_id: body.tagId,
       scenario_id: body.scenarioId,

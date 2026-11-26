@@ -1,3 +1,5 @@
+import { timingSafeEqualString } from '@line-crm/shared';
+import { handleXGateWebhook } from '../services/x-gate-webhook.js';
 import { Hono } from 'hono';
 import { verifySignature, LineClient } from '@line-crm/line-sdk';
 import type { WebhookRequestBody, WebhookEvent, TextEventMessage } from '@line-crm/line-sdk';
@@ -8,22 +10,26 @@ import {
   getFriendByLineUserId,
   getScenarios,
   enrollFriendInScenario,
-  getScenarioSteps,
-  advanceFriendScenario,
-  completeFriendScenario,
   upsertChatOnMessage,
   getLineAccounts,
   jstNow,
-  computeNextDeliveryAt,
-  resolveStepContent,
-  addTagToFriend,
   getEntryRouteByRefCode,
   getMessageTemplateById,
+  recordSignatureFailure,
+  recordSignatureSuccess,
+  UNATTRIBUTED_ACCOUNT_ID,
 } from '@line-crm/db';
-import type { EntryRoute, Friend } from '@line-crm/db';
+import type { EntryRoute, Friend, LineAccount } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
-import { buildMessage, expandVariables } from '../services/step-delivery.js';
+import { matchAndReply } from '../services/auto-reply.js';
+import { buildMessage } from '../services/step-delivery.js';
+import { pushImmediateFirstStep } from '../services/immediate-first-step.js';
 import type { Env } from '../index.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
+import { replyViaHarnessProxy } from '../services/line-proxy-send.js';
+import type { HarnessProxyDispatch } from '../services/line-proxy-send.js';
+import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
+import { ensureSchedulerArmed } from '../durable-objects/tenant-scheduler.js';
 
 const webhook = new Hono<Env>();
 
@@ -32,6 +38,48 @@ const webhook = new Hono<Env>();
 // bursty batched deliveries (~100 events × ~5 KB) while still well below the
 // 128 MB Cloudflare Workers memory ceiling.
 const MAX_WEBHOOK_BODY_SIZE = 1024 * 1024; // 1 MiB
+
+// ── Signature-verification failure/success recording (B-05) ─────────────────
+//
+// The endpoint must keep answering 200 (LINE retries / treats non-2xx as
+// delivery failure), but a wrong or missing Channel secret silently discards
+// every event — previously only console.error. We now persist counts and
+// timestamps in the account_settings KVS (`health:sig_fail` / `health:sig_ok`)
+// for the connection-health endpoint. Logged text never contains the request
+// body or any secret.
+
+// In-isolate throttles. Every failure path (missing/malformed signature and
+// well-formed-but-wrong signature alike) records at most once per 10s per
+// isolate, so an unauthenticated flood cannot turn the pre-reject into a D1
+// read+write amplifier — real LINE redeliveries / misconfigurations still
+// surface in connection health (count becomes approximate, presence and
+// lastAt stay exact). The unsigned-junk fast path additionally avoids all D1
+// work; the verified path records successes at most once per 5 minutes.
+const FAILURE_RECORD_MIN_INTERVAL_MS = 10_000;
+const SUCCESS_RECORD_MIN_INTERVAL_MS = 5 * 60_000;
+const lastRecordedMs = new Map<string, number>();
+
+function shouldRecord(key: string, minIntervalMs: number): boolean {
+  const now = Date.now();
+  if (now - (lastRecordedMs.get(key) ?? 0) < minIntervalMs) return false;
+  lastRecordedMs.set(key, now);
+  return true;
+}
+
+/**
+ * Best-effort account attribution. When exactly one active account is
+ * registered, LINE can only be delivering events for that channel, so
+ * signature failures (wrong secret) belong to it. Multi-account installs with
+ * no match record under the unattributed sentinel.
+ */
+function resolveHealthAccountId(
+  matchedAccountId: string | null,
+  accounts: LineAccount[],
+): string | null {
+  if (matchedAccountId) return matchedAccountId;
+  const active = accounts.filter((a) => a.is_active);
+  return active.length === 1 ? active[0].id : null;
+}
 
 async function ensureFriendFromWebhookUser(
   db: D1Database,
@@ -102,6 +150,25 @@ webhook.post('/webhook', async (c) => {
   const LINE_SIGNATURE_LENGTH = 44;
   if (signature.length !== LINE_SIGNATURE_LENGTH) {
     console.error('Missing or malformed LINE signature');
+    // B-05: keep the fast pre-reject free of awaited D1 work, but still record
+    // the condition (throttled per isolate) so a stripped/missing signature is
+    // visible in connection health instead of vanishing into the console.
+    if (shouldRecord(`missing:${signature.length}`, FAILURE_RECORD_MIN_INTERVAL_MS)) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const accounts = await getLineAccounts(db);
+            await recordSignatureFailure(
+              db,
+              resolveHealthAccountId(null, accounts),
+              'missing_signature',
+            );
+          } catch (err) {
+            console.error('Failed to record missing-signature webhook:', err);
+          }
+        })(),
+      );
+    }
     return c.json({ status: 'ok' }, 200);
   }
 
@@ -120,9 +187,8 @@ webhook.post('/webhook', async (c) => {
     valid = await verifySignature(envSecret, rawBody, signature);
     if (valid) {
       const accounts = await getLineAccounts(db);
-      const main = accounts.find(
-        (a) => a.is_active && a.channel_secret === envSecret,
-      );
+      const matches = await Promise.all(accounts.map(a => timingSafeEqualString(a.channel_secret, envSecret)));
+      const main = accounts.find((a, i) => a.is_active && matches[i]);
       if (main) {
         channelAccessToken = main.channel_access_token;
         matchedAccountId = main.id;
@@ -134,7 +200,7 @@ webhook.post('/webhook', async (c) => {
     const accounts = await getLineAccounts(db);
     for (const account of accounts) {
       if (!account.is_active) continue;
-      if (envSecret && account.channel_secret === envSecret) continue; // already tried via fast path
+      if (envSecret && await timingSafeEqualString(account.channel_secret, envSecret)) continue; // already tried via fast path
       const isValid = await verifySignature(account.channel_secret, rawBody, signature);
       if (isValid) {
         channelAccessToken = account.channel_access_token;
@@ -147,7 +213,44 @@ webhook.post('/webhook', async (c) => {
 
   if (!valid) {
     console.error('Invalid LINE signature');
+    // B-05: the request carried a well-formed signature that matched no
+    // registered secret — every event in it is silently discarded. Record the
+    // count + time (attributed to the single active account when there is one)
+    // so connection health can say "rejecting everything" instead of nothing.
+    // Throttled per isolate like the missing-signature fast path: an
+    // unauthenticated attacker sending well-formed 44-char junk must not turn
+    // the failure recording (read + write per request) into a D1 amplifier.
+    // The failure count is advisory; presence is what connection health needs.
+    if (shouldRecord('unverified', FAILURE_RECORD_MIN_INTERVAL_MS)) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const accounts = await getLineAccounts(db);
+            await recordSignatureFailure(
+              db,
+              resolveHealthAccountId(matchedAccountId, accounts),
+              'unverified',
+            );
+          } catch (err) {
+            console.error('Failed to record invalid-signature webhook:', err);
+          }
+        })(),
+      );
+    }
     return c.json({ status: 'ok' }, 200);
+  }
+
+  // B-05: record last verified-receive time (throttled — at most one KVS write
+  // per 5 minutes per account per isolate) so the signature check can tell
+  // "rejecting everything" apart from "also seeing some bad traffic".
+  try {
+    const accounts = await getLineAccounts(db);
+    const healthAccountId = resolveHealthAccountId(matchedAccountId, accounts);
+    if (healthAccountId && shouldRecord(`ok:${healthAccountId}`, SUCCESS_RECORD_MIN_INTERVAL_MS)) {
+      await recordSignatureSuccess(db, healthAccountId);
+    }
+  } catch (err) {
+    console.error('Failed to record verified webhook:', err);
   }
 
   let body: WebhookRequestBody;
@@ -162,9 +265,22 @@ webhook.post('/webhook', async (c) => {
 
   // 非同期処理 — LINE は ~1s 以内のレスポンスを要求
   const processingPromise = (async () => {
+    const proxyDispatch: HarnessProxyDispatch = (request) =>
+      dispatchLineProxyLocally(request, c.env, c.executionCtx);
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.IMAGES);
+        await handleEvent(
+          db,
+          lineClient,
+          event,
+          channelAccessToken,
+          matchedAccountId,
+          c.env.WORKER_URL || new URL(c.req.url).origin,
+          c.env.LIFF_URL,
+          c.env.IMAGES,
+          proxyDispatch,
+          c.env,
+        );
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -172,6 +288,12 @@ webhook.post('/webhook', async (c) => {
   })();
 
   c.executionCtx.waitUntil(processingPromise);
+
+  // 定期ジョブ用 DO の自己修復チェック。何らかの理由で alarm チェーンが
+  // 切れていても、次に届いた webhook がここで直す。getAlarm() 1回で済む
+  // 軽さなので毎リクエストで呼んでよい。応答を遅らせないよう waitUntil に
+  // 逃がし、失敗しても webhook 応答（LINE 側の ~1s タイムアウト）には影響しない。
+  c.executionCtx.waitUntil(ensureSchedulerArmed(c.env));
 
   return c.json({ status: 'ok' }, 200);
 });
@@ -185,6 +307,8 @@ async function handleEvent(
   workerUrl?: string,
   liffUrl?: string,
   r2?: R2Bucket,
+  proxyDispatch?: HarnessProxyDispatch,
+  gateEnv?: Env['Bindings'],
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -218,6 +342,21 @@ async function handleEvent(
         .bind(lineAccountId, jstNow(), friend.id).run();
       console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
     }
+
+    // 新規・再フォローのどちらでも、最初の友だち登録マイルを同じキーで非同期投入する。
+    // first_followed_at を使うため再フォローやWebhook再送では二重加算されない。
+    const firstFollowedAt = friend.first_followed_at ?? friend.created_at;
+    await awardActivityMileage(db, {
+      eventType: 'friend_registered',
+      source: 'line_relationship',
+      sourceEventId: `${friend.id}:friend_registered:${firstFollowedAt}`,
+      friendId: friend.id,
+      subjectKey: friend.id,
+      metadata: { lineAccountId },
+      occurredAt: firstFollowedAt,
+    });
+
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'follow',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:(event as any).webhookEventId ?? 'follow:'+userId+':'+event.timestamp}))return;
 
     // Resolve referral link (entry_route) for this friend.
     // /auth/callback (OAuth path) writes friends.ref_code in parallel with
@@ -256,82 +395,27 @@ async function handleEvent(
           const friendScenario = await enrollFriendInScenario(db, friend.id, scenario.id);
           if (!friendScenario) continue; // already enrolled
 
-            // Immediate delivery: scenario.delivery_mode を踏まえて step1 が「now 以前」に
-            // スケジュールされる場合のみ replyMessage で即時送信する。
-            // - relative + delay_minutes=0 → 即時
-            // - elapsed + offset_days=0 + offset_minutes=0 → 即時
-            // - absolute_time で過去時刻 → computeNextDeliveryAt が now に clamp するので即時
-            const steps = await getScenarioSteps(db, scenario.id);
-            const firstStep = steps[0];
-            const deliveryMode = scenario.delivery_mode ?? 'relative';
-            const enrolledAtJst = new Date(Date.now() + 9 * 60 * 60_000);
-            const firstScheduledAt = firstStep
-              ? computeNextDeliveryAt(
-                  { delivery_mode: deliveryMode },
-                  firstStep,
-                  { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
-                )
-              : null;
-            const shouldSendImmediately =
-              firstStep &&
-              firstScheduledAt !== null &&
-              firstScheduledAt.getTime() <= enrolledAtJst.getTime() &&
-              friendScenario.status === 'active';
-            if (firstStep && shouldSendImmediately) {
-              try {
-                // Resolve template_id → templates table (参照型)
-                const resolved = await resolveStepContent(db, firstStep);
-                const { resolveMetadata } = await import('../services/step-delivery.js');
-                const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-                const expandedContent = expandVariables(resolved.messageContent, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], undefined, resolved.messageType);
-                const message = buildMessage(resolved.messageType, expandedContent);
-                await lineClient.replyMessage(event.replyToken, [message]);
-                console.log(`Immediate delivery: sent step ${firstStep.id} to ${userId}`);
-
-                // Log what was actually delivered (post buildMessage normalization)
-                // so the dashboard chat view mirrors LINE 1:1.
-                const logId = crypto.randomUUID();
-                const { messageToLogPayload: logPayload1 } = await import('../services/step-delivery.js');
-                const wbScenarioPayload = logPayload1(message);
-                await db
-                  .prepare(
-                    `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, template_id_at_send, created_at)
-                     VALUES (?, ?, 'outgoing', ?, ?, NULL, ?, 'reply', 'scenario', ?, ?)`,
-                  )
-                  .bind(logId, friend.id, wbScenarioPayload.messageType, wbScenarioPayload.content, firstStep.id, resolved.templateIdAtSend, jstNow())
-                  .run();
-
-                // Advance or complete the friend_scenario — step 2 のスケジュールも
-                // computeNextDeliveryAt で計算する（elapsed/absolute_time で正しく動かすため）
-                const secondStep = steps[1] ?? null;
-                if (secondStep) {
-                  const nextDeliveryDate = computeNextDeliveryAt(
-                    { delivery_mode: deliveryMode },
-                    secondStep,
-                    { enrolledAt: enrolledAtJst, previousDeliveredAt: enrolledAtJst, now: enrolledAtJst },
-                  );
-                  await advanceFriendScenario(db, friendScenario.id, firstStep.step_order, nextDeliveryDate.toISOString().slice(0, -1) + '+09:00');
-                } else {
-                  await completeFriendScenario(db, friendScenario.id);
-                }
-
-                // 到達タグ付与 (advance / complete の後)
-                // tag_change をイベントバスへ発火し、手動タグ付与と同じく automation を動かす。
-                if (firstStep.on_reach_tag_id) {
-                  try {
-                    await addTagToFriend(db, friend.id, firstStep.on_reach_tag_id);
-                    await fireEvent(db, 'tag_change', {
-                      friendId: friend.id,
-                      eventData: { tagId: firstStep.on_reach_tag_id, action: 'add' },
-                    });
-                  } catch (err) {
-                    console.error(`[scenario] tag attach failed step=${firstStep.id}:`, err);
-                  }
-                }
-              } catch (err) {
-                console.error('Failed immediate delivery for scenario', scenario.id, err);
-              }
-            }
+          // Immediate delivery: step1 が「now 以前」にスケジュールされる場合のみ
+          // replyMessage で即時送信する (reply token は無料・push 枠を消費しない)。
+          // - relative + delay_minutes=0 → 即時
+          // - elapsed + offset_days=0 + offset_minutes=0 → 即時
+          // - absolute_time で過去時刻 → computeNextDeliveryAt が now に clamp するので即時
+          // reply 失敗時 (2つ目のシナリオで token 消費済み等) は claim が解放され
+          // cron が push で配信する。
+          // skipCooldown: 60秒以内の再フォロー (前の enrollment が completed 済み)
+          // でも必ず welcome を返す — 旧 webhook 実装のセマンティクスを維持。
+          const sent = await pushImmediateFirstStep(
+            db,
+            friend.id,
+            scenario.id,
+            { defaultAccessToken: lineAccessToken, workerUrl },
+            {
+              enrollment: friendScenario,
+              reply: { client: lineClient, replyToken: event.replyToken },
+              skipCooldown: true,
+            },
+          );
+          if (sent) console.log(`Immediate delivery: sent scenario ${scenario.id} step 1 to ${userId}`);
         } catch (err) {
           console.error('Failed to enroll friend in scenario', scenario.id, err);
         }
@@ -354,11 +438,25 @@ async function handleEvent(
         }
       }
 
-      // Dedicated scenario enrollment from referral link
+      // Dedicated scenario enrollment from referral link. A delay-0 first
+      // step is pushed immediately (same instant-welcome semantics as
+      // friend_add / tag_added enrollments — previously this path always
+      // waited for the next cron tick). pushMessage, not reply: the reply
+      // token may already be consumed by an account friend_add scenario
+      // above, and the intro push on this path uses pushMessage too.
       if (referralRoute.scenario_id) {
         try {
-          await enrollFriendInScenario(db, friend.id, referralRoute.scenario_id);
+          const enrollment = await enrollFriendInScenario(db, friend.id, referralRoute.scenario_id);
           console.log(`[follow] referral scenario enrolled scenario=${referralRoute.scenario_id}`);
+          if (enrollment) {
+            await pushImmediateFirstStep(
+              db,
+              friend.id,
+              referralRoute.scenario_id,
+              { defaultAccessToken: lineAccessToken, workerUrl },
+              { enrollment },
+            );
+          }
         } catch (err) {
           console.error('[follow] referral scenario enrollment failed', err);
         }
@@ -375,6 +473,7 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
+    if(gateEnv?.X_HARNESS_GATE_SECRET&&lineAccountId)await db.prepare('UPDATE x_gate_entries SET following=0 WHERE line_user_id=? AND line_account_id=?').bind(userId,lineAccountId).run();
     await updateFriendFollowStatus(db, userId, false);
     return;
   }
@@ -390,25 +489,10 @@ async function handleEvent(
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
 
-    // Match postback data against auto_replies (exact match on keyword)
-    const autoReplyQuery = lineAccountId
-      ? `SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?) ORDER BY created_at ASC`
-      : `SELECT * FROM auto_replies WHERE is_active = 1 AND line_account_id IS NULL ORDER BY created_at ASC`;
-    const autoReplyStmt = db.prepare(autoReplyQuery);
-    const autoReplies = await (lineAccountId ? autoReplyStmt.bind(lineAccountId) : autoReplyStmt)
-      .all<{
-        id: string;
-        keyword: string;
-        match_type: 'exact' | 'contains';
-        response_type: string;
-        response_content: string;
-        template_id: string | null;
-      }>();
-
     // postback の incoming 自体を messages_log に記録する。Rich Menu のタップで
-     // 利用者が "コスト比較" などのアクションを起こした事実を chat 履歴で可視化する。
-     // delivery_type='push' は厳密には push ではないが、incoming/non-test として
-     // 既存 chat list / 詳細 SQL のフィルタを通すための妥当な値 (auto_reply text 同様)。
+    // 利用者が "コスト比較" などのアクションを起こした事実を chat 履歴で可視化する。
+    // delivery_type='push' は厳密には push ではないが、incoming/non-test として
+    // 既存 chat list / 詳細 SQL のフィルタを通すための妥当な値 (auto_reply text 同様)。
     try {
       await db
         .prepare(
@@ -421,41 +505,42 @@ async function handleEvent(
       console.error('Failed to log incoming postback', err);
     }
 
-    for (const rule of autoReplies.results) {
-      const isMatch = rule.match_type === 'exact'
-        ? postbackData === rule.keyword
-        : postbackData.includes(rule.keyword);
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'postback',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:(event as any).webhookEventId ?? 'postback:'+event.replyToken,data:postbackData}))return;
 
-      if (isMatch) {
-        try {
-          const { resolveMetadata } = await import('../services/step-delivery.js');
-          const resolvedMeta = await resolveMetadata(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-          const resolved = await resolveAutoReplyContent(db, {
-            template_id: rule.template_id,
-            response_type: rule.response_type,
-            response_content: rule.response_content,
-          });
-          const expandedContent = expandVariables(resolved.content, { ...friend, metadata: resolvedMeta } as Parameters<typeof expandVariables>[1], workerUrl, resolved.messageType);
-          const replyMsg = buildMessage(resolved.messageType, expandedContent);
-          await lineClient.replyMessage(event.replyToken, [replyMsg]);
-
-          // 送信ログ — Rich Menu 経由の Flex 応答もチャット詳細に残るようにする。
-          // テキスト auto_reply (line ~390) と同じパターン。
-          const { messageToLogPayload: logPayload } = await import('../services/step-delivery.js');
-          const replyPayload = logPayload(replyMsg);
-          await db
-            .prepare(
-              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
-               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'auto_reply', ?, ?)`,
+    // postback data を auto_replies にマッチさせて返信 (テキスト経路と共通)。
+    // silent + automation で「返信なしでタグだけ付ける」構成もここで成立する。
+    const { matched: postbackMatched, replyTokenConsumed: postbackReplyTokenConsumed } =
+      await matchAndReply(db, lineClient, friend, postbackData, event.replyToken, {
+        inputKind: 'postback',
+        lineAccountId,
+        workerUrl,
+        liffUrl,
+        logContext: 'postback',
+        replyMessage: workerUrl
+          ? (token, messages) => replyViaHarnessProxy(
+              workerUrl,
+              lineAccessToken,
+              token,
+              messages,
+              proxyDispatch,
             )
-            .bind(crypto.randomUUID(), friend.id, replyPayload.messageType, replyPayload.content, lineAccountId ?? null, jstNow())
-            .run();
-        } catch (err) {
-          console.error('Failed to send postback reply', err);
-        }
-        break;
-      }
-    }
+          : undefined,
+      });
+
+    // イベントバス発火: 専用イベント postback_received。
+    // postback.data を text に載せることで、IF-THEN 自動化の keyword /
+    // keyword_exact 条件がリッチメニューのタップ（タグ付与等）に効く。
+    // message_received を流用しないのは意図的 — 流用すると既存インストールの
+    // message_received スコアリング・catch-all 自動化・送信 Webhook 購読者が
+    // メニュータップで誤発火し、条件側に source を見る術がないため。
+    // なお upsertChatOnMessage は呼ばない: メニュータップは自発メッセージでは
+    // ないので、未対応 inbox を汚さないのが正しい (テキスト経路との意図的な差分)。
+    await fireEvent(db, 'postback_received', {
+      friendId: friend.id,
+      eventData: { text: postbackData, matched: postbackMatched },
+      replyToken: postbackReplyTokenConsumed ? undefined : event.replyToken,
+    }, lineAccessToken, lineAccountId);
+
     return;
   }
 
@@ -514,13 +599,21 @@ async function handleEvent(
       }
     }
 
+    const logId = crypto.randomUUID();
     await db
       .prepare(
         `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
          VALUES (?, ?, 'incoming', ?, ?, NULL, NULL, 'user', ?)`,
       )
-      .bind(crypto.randomUUID(), friend.id, msg.type, finalContent, jstNow())
+      .bind(logId, friend.id, msg.type, finalContent, jstNow())
       .run();
+    await awardActivityMileage(db, {
+      eventType: 'message_received',
+      source: 'line',
+      sourceEventId: logId,
+      friendId: friend.id,
+      metadata: { messageType: msg.type },
+    });
     // text と同様、非 text の自発メッセージ (画像/スタンプ等) でも chat を unread に戻す。
     // これが無いと resolved 除外 (unanswered-inbox CANDIDATES_SQL) が「解決済み後に
     // 画像だけ送ってきた友だち」をバッジ・未対応一覧から永久に落としてしまう。
@@ -545,11 +638,22 @@ async function handleEvent(
     // 受信メッセージをログに記録
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?)`,
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, line_account_id, created_at)
+         VALUES (?, ?, 'incoming', 'text', ?, NULL, NULL, 'user', ?, ?)`,
       )
-      .bind(logId, friend.id, incomingText, now)
+      .bind(logId, friend.id, incomingText, lineAccountId, now)
       .run();
+
+    await awardActivityMileage(db, {
+      eventType: 'message_received',
+      source: 'line',
+      sourceEventId: logId,
+      friendId: friend.id,
+      metadata: { messageType: 'text' },
+      occurredAt: now,
+    });
+
+    if(gateEnv && await handleXGateWebhook(gateEnv,{proxyDispatch,type:'message',friendId:friend.id,lineAccountId,lineUserId:userId,replyToken:event.replyToken,sourceId:textMessage.id,data:incomingText}))return;
 
     // Cross-account trigger: send message from another account via UUID
     if (incomingText === '体験を完了する' && lineAccountId) {
@@ -563,8 +667,7 @@ async function handleEvent(
 
           for (const other of otherFriends.results) {
             const otherClient = new LineClient(other.channel_access_token);
-            const { buildMessage: bm } = await import('../services/step-delivery.js');
-            await otherClient.pushMessage(other.line_user_id, [bm('flex', JSON.stringify({
+            await otherClient.pushMessage(other.line_user_id, [buildMessage('flex', JSON.stringify({
               type: 'bubble', size: 'giga',
               header: { type: 'box', layout: 'vertical', paddingAll: '20px', backgroundColor: '#fffbeb',
                 contents: [{ type: 'text', text: `${friend.display_name || ''}さんへ`, size: 'lg', weight: 'bold', color: '#1e293b' }],
@@ -603,74 +706,30 @@ async function handleEvent(
       }
     }
 
-    // 自動返信チェック（このアカウントのルール + グローバルルールのみ）
-    // NOTE: Auto-replies use replyMessage (free, no quota) instead of pushMessage
-    // The replyToken is only valid for ~1 minute after the message event
-    const autoReplyQuery = lineAccountId
-      ? `SELECT * FROM auto_replies WHERE is_active = 1 AND (line_account_id IS NULL OR line_account_id = ?) ORDER BY created_at ASC`
-      : `SELECT * FROM auto_replies WHERE is_active = 1 AND line_account_id IS NULL ORDER BY created_at ASC`;
-    const autoReplyStmt = db.prepare(autoReplyQuery);
-    const autoReplies = await (lineAccountId ? autoReplyStmt.bind(lineAccountId) : autoReplyStmt)
-      .all<{
-        id: string;
-        keyword: string;
-        match_type: 'exact' | 'contains';
-        response_type: string;
-        response_content: string;
-        template_id: string | null;
-        is_active: number;
-        created_at: string;
-      }>();
-
-    let matched = false;
-    let replyTokenConsumed = false;
-    for (const rule of autoReplies.results) {
-      const isMatch =
-        rule.match_type === 'exact'
-          ? incomingText === rule.keyword
-          : incomingText.includes(rule.keyword);
-
-      if (isMatch) {
-        // silent タイプ: 返信しないが matched=true にして unread / push を抑止する
-        if (rule.response_type === 'silent') {
-          matched = true;
-          break;
-        }
-
-        try {
-          const { resolveMetadata: resolveMeta2 } = await import('../services/step-delivery.js');
-          const resolvedMeta2 = await resolveMeta2(db, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-          const resolved = await resolveAutoReplyContent(db, {
-            template_id: rule.template_id,
-            response_type: rule.response_type,
-            response_content: rule.response_content,
-          });
-          const expandedContent = expandVariables(resolved.content, { ...friend, metadata: resolvedMeta2 } as Parameters<typeof expandVariables>[1], workerUrl, resolved.messageType);
-          const replyMsg = buildMessage(resolved.messageType, expandedContent);
-          await lineClient.replyMessage(event.replyToken, [replyMsg]);
-          replyTokenConsumed = true;
-
-          // 送信ログ（replyMessage = 無料）— derive content from the built
-          // reply message so any cleanEmptyNodes / parse-failure fallback is
-          // reflected in the dashboard.
-          const outLogId = crypto.randomUUID();
-          const { messageToLogPayload: logPayload2 } = await import('../services/step-delivery.js');
-          const wbAutoReplyPayload = logPayload2(replyMsg);
-          await db
-            .prepare(
-              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
-               VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'reply', 'auto_reply', ?)`,
+    // 自動返信チェック（このアカウントのルール + グローバルルールのみ）。
+    // silent タイプは返信しないが matched=true になり unread / push を抑止する。
+    const { matched, replyTokenConsumed } = await matchAndReply(
+      db,
+      lineClient,
+      friend,
+      incomingText,
+      event.replyToken,
+      {
+        inputKind: 'text',
+        lineAccountId,
+        workerUrl,
+        liffUrl,
+        replyMessage: workerUrl
+          ? (token, messages) => replyViaHarnessProxy(
+              workerUrl,
+              lineAccessToken,
+              token,
+              messages,
+              proxyDispatch,
             )
-            .bind(outLogId, friend.id, wbAutoReplyPayload.messageType, wbAutoReplyPayload.content, jstNow())
-            .run();
-        } catch (err) {
-          console.error('Failed to send auto-reply', err);
-        }
-
-        matched = true;
-        break;
-      }
-    }
+          : undefined,
+      },
+    );
 
     // auto_replies にマッチしなかった = 自発メッセージ → unread にする
     if (!matched) {
@@ -687,24 +746,6 @@ async function handleEvent(
 
     return;
   }
-}
-
-/**
- * auto_reply 行の content/type を resolve する。template_id が set なら templates
- * から取得、参照切れや NULL のときは inline response_content/response_type を使う。
- */
-async function resolveAutoReplyContent(
-  db: D1Database,
-  rule: { template_id: string | null; response_type: string; response_content: string },
-): Promise<{ messageType: string; content: string }> {
-  if (rule.template_id) {
-    const { getTemplateById } = await import('@line-crm/db');
-    const tpl = await getTemplateById(db, rule.template_id);
-    if (tpl) {
-      return { messageType: tpl.message_type, content: tpl.message_content };
-    }
-  }
-  return { messageType: rule.response_type, content: rule.response_content };
 }
 
 export { webhook };

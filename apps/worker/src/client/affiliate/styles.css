@@ -134,6 +134,217 @@ body.af-active #app {
   box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
 }
 
+.af-mileage-card {
+  color: #fff;
+  background: linear-gradient(135deg, #111827 0%, #374151 55%, #92400e 140%);
+  border-radius: 16px;
+  padding: 20px 18px;
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.18);
+}
+
+.af-mileage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.16);
+}
+.af-mileage-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 12px;
+  background: rgba(17,24,39,0.35);
+}
+.af-mileage-grid span { font-size: 10px; opacity: 0.7; }
+.af-mileage-grid strong { font-size: 16px; line-height: 1.2; }
+
+.af-wallet-scope-note {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.12);
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.82);
+}
+
+.af-mileage-empty {
+  padding: 18px 10px 6px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.af-history-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.af-history-summary::-webkit-details-marker { display: none; }
+.af-history-summary::marker { display: none; content: ''; }
+.af-history-chevron {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-right: 2px solid #9ca3af;
+  border-bottom: 2px solid #9ca3af;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.18s ease;
+}
+.af-history-accordion[open] .af-history-chevron {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+.af-history-content { margin-top: 14px; }
+
+.af-history-list { border-top: 1px solid #f3f4f6; }
+.af-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+.af-history-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.af-history-row.is-void { opacity: 0.48; }
+.af-history-amount {
+  flex-shrink: 0;
+  color: #06C755;
+  font-size: 14px;
+}
+.af-history-amount.is-minus { color: #dc2626; }
+.af-history-amount small { font-size: 9px; font-weight: 600; }
+.af-history-pending {
+  padding: 1px 5px;
+  border-radius: 9999px;
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.af-referral-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.af-referral-grid > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 11px 4px;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+.af-referral-grid strong { color: #111827; font-size: 18px; }
+.af-referral-grid span { color: #6b7280; font-size: 10px; }
+
+.af-opportunity-live {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 10px;
+  font-weight: 700;
+}
+.af-opportunity-card {
+  position: relative;
+  overflow: hidden;
+  padding: 17px 16px;
+  border: 1px solid #fde68a;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fffbeb 0%, #fff 72%);
+  box-shadow: 0 2px 8px rgba(180, 83, 9, 0.08);
+}
+.af-opportunity-card::after {
+  position: absolute;
+  top: -34px;
+  right: -28px;
+  width: 92px;
+  height: 92px;
+  border-radius: 9999px;
+  background: rgba(251, 191, 36, 0.12);
+  content: '';
+  pointer-events: none;
+}
+.af-opportunity-card.is-completed {
+  border-color: #bbf7d0;
+  background: linear-gradient(145deg, #f0fdf4 0%, #fff 72%);
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.08);
+}
+.af-opportunity-card.is-completed::after { background: rgba(34, 197, 94, 0.1); }
+.af-opportunity-card.is-completed .af-opportunity-kind { color: #16a34a; }
+.af-opportunity-card.is-completed .af-opportunity-reward {
+  background: #16a34a;
+  box-shadow: 0 2px 5px rgba(22, 163, 74, 0.22);
+}
+.af-opportunity-card.is-completed p { color: #15803d; }
+.af-opportunity-kind {
+  color: #d97706;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+.af-opportunity-reward {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border-radius: 9999px;
+  background: #f59e0b;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 2px 5px rgba(217, 119, 6, 0.24);
+}
+.af-opportunity-progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: #fef3c7;
+}
+.af-opportunity-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+.af-opportunity-btn {
+  display: block;
+  width: 100%;
+  margin-top: 13px;
+  padding: 11px 12px;
+  border-radius: 11px;
+  background: #f59e0b;
+  color: #fff;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.24);
+  transition: transform 0.1s, opacity 0.15s;
+}
+.af-opportunity-btn:active { transform: scale(0.98); opacity: 0.9; }
+.af-opportunity-completed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 13px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 /* ステータスバッジ (sb-badge と同一) */
 .af-badge {
   display: inline-block;

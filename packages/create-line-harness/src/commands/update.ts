@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import {
@@ -11,13 +11,14 @@ import {
   parseBundleStream,
   verifyBundleHashes,
   verifyBundleIntegrity,
-  executeD1Query,
   putWorkerScript,
   listWorkerBindings,
   deployPagesProject,
+  verifyPagesDeploymentUrl,
   materializeAdminFiles,
   findResidualPlaceholders,
-  isBenignSchemaErrorText,
+  applyD1Migrations,
+  uploadWorkerAssets,
   type CfApiCreds,
   type CurrentVersion,
   type ParsedBundle,
@@ -451,8 +452,20 @@ async function promptForMissingFields(
   return updated;
 }
 
-export async function runUpdate(repoDir: string): Promise<void> {
-  p.intro(pc.bgCyan(pc.black(" LINE Harness アップデート ")));
+export interface RunUpdateOptions {
+  /**
+   * Re-deploy only the Admin Pages artifact that matches the currently
+   * deployed Worker. Used to recover from a partial update without touching
+   * D1, the Worker script, bindings, assets, or LIFF.
+   */
+  repairAdmin?: boolean;
+}
+
+export async function runUpdate(
+  repoDir: string,
+  options: RunUpdateOptions = {},
+): Promise<void> {
+  p.intro(pc.bgCyan(pc.black(" L Harness アップデート ")));
 
   const configPath = join(repoDir, ".line-harness-config.json");
   let state = loadState(repoDir);
@@ -484,17 +497,7 @@ export async function runUpdate(repoDir: string): Promise<void> {
   }
   const cfg = resolved.value;
 
-  // /admin/version is documented as public (intentionally un-authenticated
-  // so the dashboard can render the upgrade banner pre-login). The header
-  // is only sent in case a future Worker version starts requiring it.
-  const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
-  if (!ADMIN_API_KEY) {
-    p.log.warn(
-      "ADMIN_API_KEY 環境変数が未設定です。/admin/version は現在パブリックなので続行しますが、" +
-        "Worker が将来この認証を要求する場合は `export ADMIN_API_KEY=...` が必要になります。",
-    );
-  }
-
+  // Version discovery is public; never send an unrelated admin secret.
   p.log.success(`プロジェクト: ${state.projectName ?? cfg.workerName}`);
 
   // 0) workers.dev-hosted installs: if the account-level workers.dev
@@ -530,9 +533,7 @@ export async function runUpdate(repoDir: string): Promise<void> {
   const workerVersionUrl = `${cfg.workerPublicUrl.replace(/\/$/, "")}/admin/version`;
   let current: CurrentVersion;
   try {
-    const headers: Record<string, string> = {};
-    if (ADMIN_API_KEY) headers["x-admin-api-key"] = ADMIN_API_KEY;
-    const r = await fetch(workerVersionUrl, { headers });
+    const r = await fetch(workerVersionUrl);
     if (!r.ok) {
       throw new Error(`HTTP ${r.status}`);
     }
@@ -584,17 +585,61 @@ export async function runUpdate(repoDir: string): Promise<void> {
     process.exit(0);
   }
 
+  // Recovery mode intentionally runs before the "already latest" gate. A
+  // partial update has already stamped the Worker with the target version,
+  // so the ordinary upgrade lookup returns no work even though Admin Pages
+  // is still on the previous release.
+  if (options.repairAdmin) {
+    const release = findReleaseForAdminRepair(manifest.releases, current.version);
+    if (!release) {
+      p.cancel(
+        `現在の Worker v${current.version} に一致する公式リリースが manifest にありません。Admin のみの復旧は安全に実行できません。`,
+      );
+      process.exit(1);
+    }
+
+    p.log.info(
+      `復旧モード: Worker / D1 は変更せず、Admin UI v${release.version} のみ再デプロイします。`,
+    );
+    const creds: CfApiCreds = {
+      accountId: cfg.cfAccountId,
+      apiToken: cfg.cfApiToken,
+    };
+    const bundle = await downloadAndVerifyBundle(release, s);
+    await deployAdminFromBundle(creds, cfg, bundle, s);
+
+    // The normal update reaches this step only after Admin succeeds. A
+    // partial update that failed at Admin never configured the new origin,
+    // so complete it here as part of the repair.
+    await configureAdminAuth({
+      workerName: cfg.workerName,
+      workerUrl: cfg.workerPublicUrl,
+      adminUrl: cfg.adminPublicUrl,
+    });
+
+    p.outro(pc.green(`Admin UI v${release.version} の復旧が完了しました`));
+    return;
+  }
+
   // 4) Find upgrade target
   const upgrade = findLatestUpgrade(manifest, current.version);
   if (!upgrade) {
-    if (workerUrlRenamed) {
-      // The config now points at the new hostname, but the running
-      // Worker's WORKER_PUBLIC_URL binding and the Admin bundle's baked-in
-      // API origin still reference the dead one — redeploy the CURRENT
-      // release so everything points at the new URL.
+    const currentRelease = manifest.releases.find(
+      (release) => release.version === current.version,
+    );
+    if (workerUrlRenamed || currentRelease?.worker_assets_hash) {
+      // Reconcile the complete current release even when the Worker already
+      // carries the latest version stamp. A previous CLI run can fail after
+      // the atomic Worker+Assets deploy but before Admin/LIFF Pages finish;
+      // in that state a plain "already latest" return would make recovery
+      // impossible without a special flag. Re-deployment is idempotent.
       await redeployCurrentBundle({ repoDir, cfg, manifest, current });
       p.outro(
-        pc.green(`既に最新版です (v${current.version}) — 新しい Worker URL で再デプロイしました`),
+        pc.green(
+          workerUrlRenamed
+            ? `既に最新版です (v${current.version}) — 新しい Worker URL で再デプロイしました`
+            : `既に最新版です (v${current.version}) — 全構成を検証・再デプロイしました`,
+        ),
       );
       return;
     }
@@ -637,11 +682,12 @@ export async function runUpdate(repoDir: string): Promise<void> {
     creds,
     d1DatabaseId: cfg.d1DatabaseId,
     names: upgrade.migrations,
+    legacyMileageProjectionVersion: upgrade.legacy_mileage_projection_version,
     bundle,
     s,
   });
 
-  // 9) Worker — preserve existing bindings + assets
+  // 9) Worker — deploy the release script and its matching Worker Assets
   await deployWorkerFromBundle(creds, cfg, bundle, s);
 
   // 10) Admin Pages — materialize the placeholder API origin first
@@ -676,10 +722,22 @@ export async function runUpdate(repoDir: string): Promise<void> {
   // 14) Refresh the local release artifact + record bundle mode so a later
   // manual `wrangler deploy` from the clone re-deploys THIS version instead
   // of silently downgrading to whatever was on disk. Best-effort.
-  writeLocalWorkerArtifact(repoDir, bundle);
+  writeLocalWorkerArtifacts(repoDir, bundle);
   persistBundleMode(repoDir, upgrade.version);
 
   p.outro(pc.green(`🎉 v${upgrade.version} にアップデート完了`));
+}
+
+/**
+ * Pick the release artifact matching the Worker that is already live.
+ * Repair must never silently choose manifest.latest: doing so could deploy
+ * an Admin that expects APIs the current Worker does not have.
+ */
+export function findReleaseForAdminRepair(
+  releases: ReleaseEntry[],
+  currentVersion: string,
+): ReleaseEntry | undefined {
+  return releases.find((release) => release.version === currentVersion);
 }
 
 // ─── Shared deploy steps (normal update + adoption) ──────────────────────────
@@ -783,34 +841,45 @@ async function applyMigrations(opts: {
   names: string[];
   bundle: ParsedBundle;
   s: Spinner;
+  /** adoption 専用: 破壊的な旧世代 migration を probe + 記録のみで通す (エンジン側 doc 参照)。 */
+  adoptGrandfathered?: boolean;
+  legacyMileageProjectionVersion?: 1;
 }): Promise<void> {
   const { creds, d1DatabaseId, names, bundle, s } = opts;
-  for (const name of names) {
-    const sql = bundle.migrations.get(name);
-    if (!sql) {
-      p.cancel(`migration ${name} が bundle にありません`);
-      process.exit(1);
-    }
-    s.start(`Migration ${name} 実行中`);
-    try {
-      await executeD1Query({
-        creds,
-        databaseId: d1DatabaseId,
-        sql: sql.toString("utf-8"),
-      });
-      s.stop(`Migration ${name} 完了`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (isBenignSchemaErrorText(msg)) {
-        s.stop(pc.dim(`Migration ${name}: 適用済みのためスキップ`));
-        continue;
-      }
-      s.stop(pc.red(`Migration ${name} 失敗: ${msg}`));
-      p.cancel(
-        "先に手動で migration を確認してください。Worker/Pages はまだ更新されていません。",
-      );
-      process.exit(1);
-    }
+  try {
+    await applyD1Migrations({
+      creds,
+      adoptGrandfathered: opts.adoptGrandfathered,
+      legacyMileageProjectionVersion: opts.legacyMileageProjectionVersion,
+      databaseId: d1DatabaseId,
+      names,
+      migrations: bundle.migrations,
+      onMigrationStart(name) {
+        s.start(`Migration ${name} 確認中`);
+      },
+      onMigrationDone(result) {
+        if (result.alreadyApplied) {
+          s.stop(pc.dim(`Migration ${result.name}: 適用済み`));
+        } else if (result.adopted) {
+          // grandfathered 世代 (カットオフ 041 未満): 破壊的 SQL を含み得るため
+          // 実行せず、適用済みとして台帳へ記録のみ (既存 DB は適用後の構造が前提)。
+          s.stop(pc.dim(`Migration ${result.name}: 旧世代のため記録のみ (実行なし)`));
+        } else if (result.skippedStatements > 0) {
+          s.stop(
+            `Migration ${result.name} 完了 (${result.executedStatements}文実行・${result.skippedStatements}文適用済み)`,
+          );
+        } else {
+          s.stop(`Migration ${result.name} 完了`);
+        }
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    s.stop(pc.red(`Migration 失敗: ${msg}`));
+    p.cancel(
+      "Worker/Pages はまだ更新されていません。DBを確認してから同じコマンドを再実行できます。",
+    );
+    process.exit(1);
   }
 }
 
@@ -851,6 +920,18 @@ async function deployWorkerFromBundle(
       creds,
       scriptName: cfg.workerName,
     });
+    if (bundle.workerAssetFiles.size === 0 && !cfg.liffProject) {
+      throw new Error(
+        "release bundle に Worker Assets がないため、安全に更新できません",
+      );
+    }
+    const assetsJwt = bundle.workerAssetFiles.size > 0
+      ? await uploadWorkerAssets({
+          creds,
+          scriptName: cfg.workerName,
+          files: bundle.workerAssetFiles,
+        })
+      : null;
     await putWorkerScript({
       creds,
       scriptName: cfg.workerName,
@@ -860,9 +941,15 @@ async function deployWorkerFromBundle(
         workerPublicUrl: cfg.workerPublicUrl,
       }),
       compatibilityFlags: WORKER_COMPATIBILITY_FLAGS,
-      // Bundle carries no Worker assets — keep the ones deployed at setup
-      // (they serve the LIFF SPA on worker-assets installs).
-      keepAssets: true,
+      ...(assetsJwt
+        ? {
+            assets: {
+              jwt: assetsJwt,
+              binding: "ASSETS",
+              runWorkerFirst: true,
+            },
+          }
+        : { keepAssets: true }),
     });
     s.stop("Worker デプロイ完了");
   } catch (e) {
@@ -892,6 +979,7 @@ async function deployAdminFromBundle(
       projectName: cfg.adminProject,
       files,
     });
+    await verifyPagesDeploymentUrl(r.url);
     s.stop(`Admin デプロイ完了 (${r.deploymentId.slice(0, 8)})`);
     if (residual.length > 0) {
       p.log.warn(
@@ -921,6 +1009,7 @@ async function deployLiffFromBundle(
       projectName: cfg.liffProject,
       files: bundle.liffFiles,
     });
+    await verifyPagesDeploymentUrl(r.url);
     s.stop(`LIFF デプロイ完了 (${r.deploymentId.slice(0, 8)})`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -939,13 +1028,28 @@ async function deployLiffFromBundle(
  * downgrading/unstamping the install. Best-effort: `repoDir` may be a bare
  * config directory (no clone), in which case this is a silent no-op.
  */
-function writeLocalWorkerArtifact(repoDir: string, bundle: ParsedBundle): void {
+function writeLocalWorkerArtifacts(repoDir: string, bundle: ParsedBundle): void {
   const workerDir = join(repoDir, "apps/worker");
   if (!existsSync(workerDir)) return;
   try {
     const artifactPath = join(workerDir, "dist/release/index.js");
     mkdirSync(dirname(artifactPath), { recursive: true });
     writeFileSync(artifactPath, bundle.workerJs);
+    if (bundle.workerAssetFiles.size > 0) {
+      const clientDir = join(workerDir, "dist/client");
+      rmSync(clientDir, { recursive: true, force: true });
+      for (const [relativePath, content] of bundle.workerAssetFiles) {
+        if (
+          relativePath.startsWith("/") ||
+          relativePath.split(/[\\/]/).includes("..")
+        ) {
+          throw new Error(`unsafe Worker Asset path: ${relativePath}`);
+        }
+        const outputPath = join(clientDir, relativePath);
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, content);
+      }
+    }
   } catch {
     // Non-critical — the next update/setup run rewrites it.
   }
@@ -1041,7 +1145,7 @@ async function redeployCurrentBundle(opts: {
     "再デプロイ自体は完了しています。workers.dev サブドメイン登録直後は DNS 反映に数分かかるため、数分待ってから同じコマンドを再実行してください",
   );
 
-  writeLocalWorkerArtifact(repoDir, bundle);
+  writeLocalWorkerArtifacts(repoDir, bundle);
   persistBundleMode(repoDir, current.version);
 }
 
@@ -1112,10 +1216,13 @@ async function runAdoption(opts: {
   const bundle = await downloadAndVerifyBundle(target, s);
 
   // Replay every migration in the bundle, oldest first. Duplicates are
-  // skipped via the benign-error policy inside applyMigrations.
+  // skipped via the benign-error policy inside applyMigrations. 破壊的な
+  // 旧世代 migration (027/029) は再実行できないため、スキーマ実在を probe した
+  // 上で「適用済み記録のみ」で通す (adoptGrandfathered — エンジン側 doc 参照)。
   const allMigrations = Array.from(bundle.migrations.keys()).sort();
   p.log.info(
-    `全 ${allMigrations.length} migration を確認します（適用済みはスキップされます）`,
+    `全 ${allMigrations.length} migration を確認します（適用済みはスキップ、` +
+      `再実行不能な旧世代の再構築 migration は記録のみになります）`,
   );
   await applyMigrations({
     creds,
@@ -1123,6 +1230,8 @@ async function runAdoption(opts: {
     names: allMigrations,
     bundle,
     s,
+    adoptGrandfathered: true,
+    legacyMileageProjectionVersion: target.legacy_mileage_projection_version,
   });
 
   await deployWorkerFromBundle(creds, cfg, bundle, s);
@@ -1149,7 +1258,7 @@ async function runAdoption(opts: {
       : "導入自体は完了しています",
   );
 
-  writeLocalWorkerArtifact(repoDir, bundle);
+  writeLocalWorkerArtifacts(repoDir, bundle);
   persistBundleMode(repoDir, target.version);
 
   p.outro(

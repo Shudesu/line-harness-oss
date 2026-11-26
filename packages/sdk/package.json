@@ -1,7 +1,7 @@
 {
   "name": "@line-harness/sdk",
-  "version": "0.18.0",
-  "description": "AI-native SDK for LINE Harness — programmatic LINE official account automation",
+  "version": "0.24.3",
+  "description": "AI-native SDK for L Harness — programmatic LINE official account automation",
   "type": "module",
   "exports": {
     ".": {

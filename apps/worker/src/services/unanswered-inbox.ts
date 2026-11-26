@@ -1,3 +1,5 @@
+import { keywordMatches } from './auto-reply.js';
+
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 2000;
 
@@ -38,11 +40,7 @@ function matchesAnyKeyword(
   rules: ActiveRuleRow[],
 ): boolean {
   if (messageType !== 'text') return false;
-  for (const ar of rules) {
-    if (ar.match_type === 'exact' && ar.keyword === content) return true;
-    if (ar.match_type === 'contains' && content.includes(ar.keyword)) return true;
-  }
-  return false;
+  return rules.some((ar) => keywordMatches(ar, content, { normalizeText: true }));
 }
 
 // 同じ incoming に対して outgoing 'auto_reply' (delivery_type='reply') が

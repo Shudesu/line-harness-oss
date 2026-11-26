@@ -1,11 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Banner } from '@cloudflare/kumo/components/banner'
 import Header from '@/components/layout/header'
 import InboxFilters from '@/components/inbox/inbox-filters'
 import InboxList from '@/components/inbox/inbox-list'
 import InboxSummaryBar from '@/components/inbox/inbox-summary-bar'
 import { api } from '@/lib/api'
+import { useActivityPolling } from '@/hooks/use-activity-polling'
+import { PollingStatus } from '@/components/shared/polling-status'
 import type { InboxRowData } from '@/components/inbox/inbox-row'
 
 const PAGE_SIZE = 50
@@ -30,13 +33,8 @@ export default function InboxPage() {
   const [q, setQ] = useState('')
   const [account, setAccount] = useState('')
   const [overdueOnly, setOverdueOnly] = useState(false)
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [accountOptions, setAccountOptions] = useState<AccountOption[]>([])
-
-  // 重複 polling で古いレスポンスが新しいデータを上書きしないように世代管理
-  // (Codex Round 1 指摘: race condition)。
-  const requestSeqRef = useRef(0)
 
   // 検索/account/overdue を変えたらページを1に戻す
   useEffect(() => {
@@ -45,8 +43,9 @@ export default function InboxPage() {
 
   // Active なアカウントを候補に出す
   useEffect(() => {
+    let cancelled = false
     api.lineAccounts.list().then((res) => {
-      if (res.success) {
+      if (!cancelled && res.success) {
         setAccountOptions(
           res.data
             .filter((a) => a.isActive)
@@ -54,42 +53,23 @@ export default function InboxPage() {
             .sort((x, y) => x.name.localeCompare(y.name)),
         )
       }
-    })
+    }).catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
-  const loadAll = useCallback(async () => {
-    const seq = ++requestSeqRef.current
-    setLoading(true)
-    setError('')
-    try {
-      const res = await api.inbox.unanswered.list({
-        page: 1,
-        pageSize: FETCH_PAGE_SIZE,
-      })
-      // 古いリクエストが新しいリクエストの後に到着したら破棄
-      if (seq !== requestSeqRef.current) return
+  const polling = useActivityPolling({
+    intervalMs: POLL_INTERVAL_MS,
+    load: (signal) => api.inbox.unanswered.list({ page: 1, pageSize: FETCH_PAGE_SIZE }, { signal }),
+    onData: (res) => {
       if (res.success) {
+        setError('')
         setAllRows(res.data.rows)
         setServerTotal(res.data.total)
-        // rows.length < total なら上限ヒット (capped)。バナーで明示。
         setTruncated(res.data.total > res.data.rows.length)
-      } else {
-        setError('取得に失敗しました')
-        // allRows は前回値を保持して stale-while-error
-      }
-    } catch {
-      if (seq !== requestSeqRef.current) return
-      setError('取得に失敗しました')
-    } finally {
-      if (seq === requestSeqRef.current) setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadAll()
-    const id = setInterval(loadAll, POLL_INTERVAL_MS)
-    return () => clearInterval(id)
-  }, [loadAll])
+      } else setError('取得に失敗しました')
+    },
+    onError: () => setError('取得に失敗しました'),
+  })
 
   // ── client-side filter ──
   const filteredRows = useMemo(() => {
@@ -140,6 +120,8 @@ export default function InboxPage() {
         description="人間が返事してない LINE 会話の triage。auto_reply は人間の返事に数えない。"
       />
 
+      <PollingStatus reason={polling.reason} onResume={polling.resume} />
+
       <InboxSummaryBar
         total={summary.total}
         byAccount={summary.byAccount}
@@ -158,24 +140,22 @@ export default function InboxPage() {
         }}
       />
 
-      {error && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          {error}
-        </div>
-      )}
+      {error ? <Banner variant="alert" title="最新データを取得できませんでした" description={`${error}。前回取得した内容を表示しています。`} /> : null}
 
-      {truncated && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-          未対応が {FETCH_PAGE_SIZE} 件の表示上限に到達しました。古いデータが見えていない可能性があります。サーバ側ページネーション復帰を検討してください。
-        </div>
-      )}
+      {truncated ? (
+        <Banner
+          variant="error"
+          title="表示上限に到達しました"
+          description={`未対応が${FETCH_PAGE_SIZE}件を超えています。古いデータが見えていない可能性があります。`}
+        />
+      ) : null}
 
       <InboxList
         rows={pagedRows}
         total={total}
         page={page}
         pageSize={PAGE_SIZE}
-        loading={loading}
+        loading={polling.fetching}
         onPageChange={setPage}
       />
     </div>

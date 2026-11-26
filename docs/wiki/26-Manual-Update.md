@@ -1,6 +1,34 @@
 # 手動アップデートガイド
 
-LINE Harness を手動で最新版に更新する手順です。
+L Harness を手動で最新版に更新する手順です。
+
+## 先に結論: 旧バージョンは CLI から更新する
+
+Worker Assets 対応リリースより前の管理画面内アップデーターは、Worker のコードだけを更新し、視聴画面などの静的ファイルを旧版のまま残すことがあります。そのため、旧版からの最初の1回は管理画面の更新ボタンではなく、最新版CLIを使います。
+
+```bash
+npx create-line-harness@latest update
+```
+
+同じコマンドは再実行できます。DBマイグレーションはv0.14.1の基礎スキーマより後（037以降）を累積で同梱し、SQL文単位で既存状態を確認します。完了したファイルはチェックサム台帳でスキップし、破壊的なDDLは実行前に拒否します。Worker本体とWorker Assetsは同じデプロイとして切り替え、途中で管理画面やLIFFのデプロイに失敗した場合も、再実行すると現在版の全構成を再同期します。
+
+実行前には、Cloudflare D1のバックアップを取ることを推奨します。
+
+```bash
+npx wrangler d1 export <D1データベース名> --remote --output line-harness-before-update.sql
+```
+
+## バージョン別の安全な経路
+
+| 現在の表示 | 使う経路 | 注意点 |
+|---|---|---|
+| `0.0.0-dev`、またはバージョン不明 | 最新版CLIの「公式リリースへの引き上げ」を承認 | 旧CLIで作られた未刻印環境です。独自改造がある場合は承認せず、下記のフォーク手順を使います |
+| `0.14.1`〜`0.16.x` | 最新版CLIで直接最新版へ | v0.14.1の基礎スキーマから必要な037以降を累積適用するため、中間版を順番に入れる必要はありません |
+| `0.17.x`〜`0.18.1` | 最新版CLIで直接最新版へ | 過去リリース成果物が欠けている版でも、更新元としては利用できます。最新版bundleを取得して収束させます |
+| `0.19.x`〜`0.21.2` | 最新版CLIで直接最新版へ | Worker Assetsの残留と、途中まで適用されたSQLファイルの両方を修復します |
+| manifestに `worker_assets_hash` がある版以降 | 管理画面または最新版CLI | 管理画面更新はWorkerのコード・bindings・Assetsを一体で切り替え、失敗時は直前のWorker versionへ戻します |
+
+更新後は、管理画面のバージョン表示を確認し、実際に利用しているフォーム・予約・ウェビナーの入口を1件ずつ開いてください。ウェビナーは新しい経路と旧形式の `?page=webinar&slug=...` の両方を確認します。
 
 自動アップデート（管理画面のバナー / `create-line-harness update`）は、**公式リリースと構成が一致するインストール**（vanilla ビルド）でのみ利用できます。以下のような場合は自動更新の対象外になり、このガイドの手動手順で更新します:
 
@@ -35,26 +63,21 @@ git pull origin main
 # 2. 依存を更新
 pnpm install
 
-# 3. DB マイグレーションを適用
-#    packages/db/migrations/ の SQL を番号順に 1 ファイルずつ適用します。
-#    適用済みのファイルは "already exists" / "duplicate column" エラーに
-#    なりますが、これは「適用済み」の意味なので無視して次に進んで構いません。
-cd apps/worker
-for f in ../../packages/db/migrations/*.sql; do
-  npx wrangler d1 execute <your-database> --remote --file "$f" || true
-done
+# 3. DBをバックアップ
+npx wrangler d1 export <your-database> --remote --output line-harness-before-update.sql
 
-# 4. デプロイ
+# 4. 自分の変更と新しいマイグレーションをステージング環境で検証
+#    SQLファイル全体のエラーを `|| true` で無視しないでください。
+#    先頭の「列が既にある」で後続SQLまで未適用になる可能性があります。
+
+# 5. デプロイ
+cd apps/worker
 npx wrangler deploy                      # Worker
+cd ../..
 pnpm --filter web build                  # 管理画面（Pages にデプロイ）
 ```
 
-> **注意:** 以前このガイドに記載していた `wrangler d1 migrations apply` は、
-> `create-line-harness` でセットアップした環境では機能しません（wrangler の
-> マイグレーション管理テーブルを使わずにセットアップされるため、全マイグレー
-> ションが「未適用」扱いになります）。上記の `d1 execute --file` 方式を使って
-> ください。LINE Harness のマイグレーションは追加専用（additive-only）+
-> `INSERT OR IGNORE` 方針のため、適用済みファイルの再実行は安全です。
+> **注意:** 過去のこのガイドにあった `d1 execute --file "$f" || true` は使わないでください。ファイル中の1文が重複すると、同じファイルの未適用文までロールバックされるためです。公式版は最新版CLIのSQL文単位ランナーを使います。独自フォークは、取り込んだマイグレーションをステージングD1で検証し、エラーを文単位で確認してから本番へ適用してください。
 
 自前の CI/CD がある場合は main を pull / merge して push すれば通常のデプロイフローで反映されます。
 

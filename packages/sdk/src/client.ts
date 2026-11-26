@@ -5,6 +5,7 @@ import { ScenariosResource } from './resources/scenarios.js'
 import { BroadcastsResource } from './resources/broadcasts.js'
 import { RichMenusResource } from './resources/rich-menus.js'
 import { TrackedLinksResource } from './resources/tracked-links.js'
+import { ConversionsResource } from './resources/conversions.js'
 import { FormsResource } from './resources/forms.js'
 import { AdPlatformsResource } from './resources/ad-platforms.js'
 import { StaffResource } from './resources/staff.js'
@@ -21,6 +22,7 @@ export class LineHarness {
   readonly broadcasts: BroadcastsResource
   readonly richMenus: RichMenusResource
   readonly trackedLinks: TrackedLinksResource
+  readonly conversions: ConversionsResource
   readonly forms: FormsResource
   readonly adPlatforms: AdPlatformsResource
   readonly staff: StaffResource
@@ -55,6 +57,7 @@ export class LineHarness {
     this.broadcasts = new BroadcastsResource(http, this.defaultAccountId)
     this.richMenus = new RichMenusResource(http)
     this.trackedLinks = new TrackedLinksResource(http)
+    this.conversions = new ConversionsResource(http)
     this.forms = new FormsResource(http)
     this.adPlatforms = new AdPlatformsResource(http)
     this.staff = new StaffResource(http)

@@ -7,6 +7,7 @@
  */
 
 import { URL_TOKEN_SQL } from '../lib/url-token.js';
+import { addTagToFriend } from '@line-crm/db';
 
 interface DuplicateTagConfig {
   /** Map of line_account_id → duplicate tag ID. */
@@ -119,25 +120,18 @@ export async function processDuplicateDetection(db: D1Database): Promise<void> {
 
     if (!matches.results || matches.results.length === 0) continue;
 
-    // Tag both sides
-    const now = new Date(Date.now() + 9 * 60 * 60_000).toISOString().replace('Z', '+09:00');
-
     for (const match of matches.results) {
       const matchTagId = tagIds[match.line_account_id];
       const friendTagId = tagIds[friend.line_account_id];
 
       // Tag friend with the match's account tag (e.g., "重複:①")
       if (matchTagId) {
-        await db.prepare(
-          `INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`
-        ).bind(friend.id, matchTagId, now).run();
+        await addTagToFriend(db, friend.id, matchTagId);
       }
 
       // Tag match with the friend's account tag (e.g., "重複:XH1")
       if (friendTagId) {
-        await db.prepare(
-          `INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`
-        ).bind(match.id, friendTagId, now).run();
+        await addTagToFriend(db, match.id, friendTagId);
       }
 
       taggedCount++;

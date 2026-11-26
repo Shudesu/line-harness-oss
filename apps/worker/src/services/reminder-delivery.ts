@@ -1,3 +1,4 @@
+import { buildMessages } from './message-group.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
 
 /**
@@ -49,8 +50,8 @@ export async function processReminderDeliveries(
       }
 
       for (const step of fr.steps) {
-        const message = buildMessage(step.message_type, step.message_content);
-        await deliveryClient.pushMessage(friend.line_user_id, [message]);
+        const messages = buildMessages(step.message_type, step.message_content, buildMessage);
+        await deliveryClient.pushMessage(friend.line_user_id, messages);
 
         // Mark as delivered AFTER successful send.
         // INSERT OR IGNORE prevents duplicate records if parallel workers both sent.

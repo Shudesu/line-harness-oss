@@ -1,23 +1,13 @@
 import React from 'react'
+import { HarnessPageHeader } from '@/components/ui/harness-ui'
 
 interface HeaderProps {
   title: string
   description?: string
+  product?: string
   action?: React.ReactNode
 }
 
-export default function Header({ title, description, action }: HeaderProps) {
-  return (
-    <div className="mb-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{title}</h1>
-          {description && (
-            <p className="mt-1 text-sm text-gray-500">{description}</p>
-          )}
-        </div>
-        {action && <div className="shrink-0 ml-4">{action}</div>}
-      </div>
-    </div>
-  )
+export default function Header({ title, description, product = 'LINE', action }: HeaderProps) {
+  return <HarnessPageHeader title={title} description={description} product={product} action={action} />
 }

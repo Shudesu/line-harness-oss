@@ -33,6 +33,11 @@ export interface FormSubmission {
   created_at: string;
 }
 
+export interface FriendFormSubmission extends FormSubmission {
+  form_name: string;
+  form_fields: string;
+}
+
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function getForms(db: D1Database): Promise<Form[]> {
@@ -81,7 +86,10 @@ export async function getFormsWithStats(db: D1Database): Promise<FormWithStats[]
             ) sub
             JOIN line_accounts la ON la.id = sub.line_account_id) AS used_by_accounts_json
        FROM forms f
-       ORDER BY f.created_at DESC`,
+       ORDER BY
+         CASE WHEN last_submitted_at IS NULL THEN 1 ELSE 0 END,
+         last_submitted_at DESC,
+         f.created_at DESC`,
     )
     .all<Form & { last_submitted_at: string | null; used_by_accounts_json: string | null }>();
 
@@ -251,7 +259,13 @@ export async function updateForm(
 }
 
 export async function deleteForm(db: D1Database, id: string): Promise<void> {
-  await db.prepare(`DELETE FROM forms WHERE id = ?`).bind(id).run();
+  // フォームを参照しているウェビナー CTA カードも同時に削除する。宙吊りの
+  // form_id が残ると、放置運用中のオートウェビナーでカードだけ出続けて
+  // 全タップがエラーになる (D1 は FK 未強制)。
+  await db.batch([
+    db.prepare(`DELETE FROM webinar_ctas WHERE form_id = ?`).bind(id),
+    db.prepare(`DELETE FROM forms WHERE id = ?`).bind(id),
+  ]);
 }
 
 // ── Submissions ───────────────────────────────────────────────────────────────
@@ -268,6 +282,27 @@ export async function getFormSubmissions(
     )
     .bind(formId)
     .all<FormSubmission & { friend_name: string | null }>();
+  return result.results;
+}
+
+/** 友だち詳細欄で使う、フォーム名・質問定義つきの最新回答履歴。 */
+export async function getFormSubmissionsByFriend(
+  db: D1Database,
+  friendId: string,
+  limit = 10,
+): Promise<FriendFormSubmission[]> {
+  const safeLimit = Math.max(1, Math.min(Math.floor(limit), 50));
+  const result = await db
+    .prepare(
+      `SELECT fs.*, f.name AS form_name, f.fields AS form_fields
+       FROM form_submissions fs
+       JOIN forms f ON f.id = fs.form_id
+       WHERE fs.friend_id = ?
+       ORDER BY fs.created_at DESC
+       LIMIT ?`,
+    )
+    .bind(friendId, safeLimit)
+    .all<FriendFormSubmission>();
   return result.results;
 }
 

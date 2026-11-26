@@ -1,5 +1,80 @@
 # Release Notes
 
+## v0.21.2 (2026-08-14)
+
+### Added — Rich menu initial display
+
+- Rich menus can now choose whether LINE opens the menu automatically when a friend enters the chat.
+- The setting is available on both the new-menu and edit screens and is applied the next time the menu is registered with LINE.
+- Existing menus retain the previous OFF behavior; newly created menus default to ON in the Admin UI.
+
+### Fixed — Admin update uploads
+
+- Cloudflare Pages asset uploads now use the same top-level JSON array format as Wrangler, fixing opaque HTTP 500 failures when the Admin update contains uncached assets.
+- Upload batches are bounded by both file count and 40 MiB of source data, with up to five retries for HTTP 429 and 5xx responses.
+
+### Database
+
+- Additive migration `069_rich_menu_selected.sql` stores the LINE rich-menu `selected` setting.
+
+## v0.21.1 (2026-08-14)
+
+### Fixed — Webinar analytics and registration delivery
+
+- The recent-participants table now keeps the all-time session count while showing watch progress, CTA activity, and form completion from the participant's latest session only.
+- Worker and Admin remain compatible during rolling updates, preventing `NaN:NaN` and `NaN%` when either side still uses the previous analytics field name.
+- Repeated taps or retried requests for the same webinar session no longer send duplicate LINE registration confirmations.
+- Added regression coverage for latest-session analytics and idempotent registration delivery.
+
+### Database
+
+- No migration required.
+
+## v0.21.0 (2026-08-14)
+
+### Added — Live CTA consultation booking
+
+- After submitting a webinar CTA form, viewers can choose a real-time available consultation slot without leaving the live screen.
+- Availability starts from the staff member's recurring L Harness hours, then removes dated overrides, existing bookings, Google Calendar busy periods, and slots inside the lead-time window.
+- A confirmed booking creates a Google Calendar event and Google Meet link, registers the consultation, and schedules LINE reminders for the previous day and one hour before the meeting.
+- Staff can connect their own Google account through OAuth. Service-account keys and calendar sharing are no longer required for new installations.
+- OAuth requests only `calendar.events` and `calendar.events.freebusy`, avoiding unrelated Drive or YouTube grants.
+- Setup and troubleshooting are documented in [Google Calendar & Webinar Booking](28-Google-Calendar-and-Webinar-Booking.md).
+
+### Added — Messaging and inquiry improvements
+
+- Friend-specific scenario and auto-reply deliveries can replace `{{liff_id}}` with the sending account's LIFF ID.
+- Sending `マイル` to any connected LINE account returns the user's mileage wallet through a quota-saving reply message.
+- Media inquiries can be stored in D1 with notification delivery status for operational follow-up.
+
+### Fixed
+
+- Immediate first-step delivery now evaluates the same step conditions as scheduled delivery.
+- The chat list uses the true latest message for previews, ordering, and pagination, including messages sent through the L Harness proxy.
+
+### Database
+
+- Additive migrations `067_mileage_keyword_auto_reply.sql` and `068_media_inquiries.sql`.
+
+## v0.20.0 (2026-08-10)
+
+### Added — Mileage economy
+
+- A shared, cross-account mileage ledger with idempotent grants, reversals, spending, expiration, adjustments, configurable rules, daily caps, asynchronous processing, and admin reporting.
+- Mileage rewards for LINE activity, bookings, form submissions, tracked-link clicks, purchases, tags, webinar viewing/completion/CTA clicks, Instagram engagement, and long-term follow status.
+- Quality-based referral mileage that rewards downstream actions by referred friends instead of raw friend-add counts alone.
+- A self-service LIFF wallet showing cross-account balances, credited LINE accounts, earning opportunities, referral offers, and accordion-style mileage history.
+- HMAC-signed, short-lived cross-account linking so users can safely consolidate mileage across multiple LINE Official Accounts.
+
+### Added — Webinar and consultation automation
+
+- Webinar funnel events, journey follow-ups, mileage processing, and follow-up scheduling.
+- Google Calendar availability synchronization and Google Meet consultation reminders.
+
+### Database
+
+- Additive migrations `051_booking_recurring_availability_google_calendar.sql` and `057` through `066` for webinar journeys, reminders, mileage, loyalty, and quality referrals.
+
 ## v0.17.0 (2026-07-08)
 
 ### Added — Link-tracking controls

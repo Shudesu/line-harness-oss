@@ -6,6 +6,14 @@ import Link from 'next/link'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { eventsApi, type EventBookingItem, type EventDetail } from '@/lib/api'
+import { Badge } from '@cloudflare/kumo/components/badge'
+import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
+import { Banner } from '@cloudflare/kumo/components/banner'
+import { Button } from '@cloudflare/kumo/components/button'
+import { Dialog } from '@cloudflare/kumo/components/dialog'
+import { Empty } from '@cloudflare/kumo/components/empty'
+import { Loader } from '@cloudflare/kumo/components/loader'
+import { Table } from '@cloudflare/kumo/components/table'
 
 const STATUS_TABS: Array<{ key: string; label: string }> = [
   { key: 'requested', label: '承認待ち' },
@@ -48,6 +56,7 @@ function BookingsInner() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     if (!selectedAccountId || !eventId) return
@@ -98,10 +107,10 @@ function BookingsInner() {
 
   async function adminCancel(id: string) {
     if (!selectedAccountId || !eventId) return
-    if (!confirm('運営側でキャンセルしますか？友だちにLINE通知が送られます。')) return
     setBusy(true)
     try {
       await eventsApi.adminCancelBooking(selectedAccountId, eventId, id)
+      setCancelTarget(null)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -143,119 +152,94 @@ function BookingsInner() {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-            {error}
-          </div>
+          <Banner className="mb-4" variant="error" title="操作を完了できませんでした" description={error} />
         )}
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <div className="flex border-b border-gray-200 overflow-x-auto">
             {STATUS_TABS.map((t) => (
-              <button
+              <Button type="button" size="sm" variant={tab === t.key ? 'primary' : 'ghost'}
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
-                  tab === t.key
-                    ? 'border-blue-600 text-blue-600 bg-blue-50'
-                    : 'border-transparent text-gray-600 hover:bg-gray-50'
-                }`}
+                className="whitespace-nowrap"
               >
                 {t.label}
-              </button>
+              </Button>
             ))}
           </div>
 
           {loading ? (
-            <div className="p-12 text-center text-gray-500">読み込み中...</div>
+            <div className="p-12"><Loader className="mx-auto" /></div>
           ) : items.length === 0 ? (
-            <div className="p-12 text-center text-gray-500 text-sm">
-              該当する予約はありません
-            </div>
+            <Empty title="該当する予約はありません" description="別の状態を選択してください。" />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-gray-600">
-                  <tr>
-                    <th className="text-left px-4 py-2 font-medium">友だち</th>
-                    <th className="text-left px-4 py-2 font-medium">経由アカ</th>
-                    <th className="text-left px-4 py-2 font-medium">予約枠</th>
-                    <th className="text-left px-4 py-2 font-medium">状態</th>
-                    <th className="text-left px-4 py-2 font-medium">受付日時</th>
-                    <th className="text-right px-4 py-2 font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <Table.Header><Table.Row><Table.Head>友だち</Table.Head><Table.Head>経由アカ</Table.Head><Table.Head>予約枠</Table.Head><Table.Head>状態</Table.Head><Table.Head>受付日時</Table.Head><Table.Head className="text-right">操作</Table.Head></Table.Row></Table.Header>
+                <Table.Body>
                   {items.map((b) => {
                     const acct = accounts.find((a) => a.id === b.line_account_id)
                     const accountLabel = acct
                       ? `${acct.country ? acct.country + ' ' : ''}${acct.name}`
                       : (b.line_account_id ?? '').slice(0, 8)
                     return (
-                    <tr key={b.id} className="border-t border-gray-100 hover:bg-gray-50">
-                      <td className="px-4 py-3 text-gray-800">
+                    <Table.Row key={b.id}>
+                      <Table.Cell className="text-kumo-default">
                         {b.friend_display_name ?? b.friend_id.slice(0, 8)}
-                      </td>
-                      <td className="px-4 py-3 text-gray-700 text-xs">{accountLabel}</td>
-                      <td className="px-4 py-3 text-gray-700">{formatJp(b.slot_starts_at)}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge[b.status] ?? 'bg-gray-100'}`}>
-                          {STATUS_TABS.find((t) => t.key === b.status)?.label ?? b.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs">{formatJp(b.requested_at)}</td>
-                      <td className="px-4 py-3 text-right">
+                      </Table.Cell>
+                      <Table.Cell className="text-kumo-subtle text-xs">{accountLabel}</Table.Cell>
+                      <Table.Cell>{formatJp(b.slot_starts_at)}</Table.Cell>
+                      <Table.Cell><Badge variant={({ requested: 'warning', confirmed: 'success', attended: 'info', no_show: 'error' } as Record<string, BadgeVariant>)[b.status] ?? 'neutral'}>{STATUS_TABS.find((t) => t.key === b.status)?.label ?? b.status}</Badge></Table.Cell>
+                      <Table.Cell className="text-kumo-subtle text-xs">{formatJp(b.requested_at)}</Table.Cell>
+                      <Table.Cell className="text-right">
                         {b.status === 'requested' && (
                           <div className="inline-flex gap-1.5">
-                            <button
+                            <Button type="button" size="xs" variant="primary"
                               onClick={() => decide(b.id, 'confirm')}
                               disabled={busy}
-                              className="px-3 py-1 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-50"
                             >
                               承認
-                            </button>
-                            <button
+                            </Button>
+                            <Button type="button" size="xs" variant="destructive"
                               onClick={() => decide(b.id, 'reject')}
                               disabled={busy}
-                              className="px-3 py-1 bg-gray-500 text-white rounded-lg text-xs font-medium hover:bg-gray-600 disabled:opacity-50"
                             >
                               拒否
-                            </button>
+                            </Button>
                           </div>
                         )}
                         {b.status === 'confirmed' && (
                           <div className="inline-flex gap-1.5">
-                            <button
+                            <Button type="button" size="xs" variant="primary"
                               onClick={() => markStatus(b.id, 'attended')}
                               disabled={busy}
-                              className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
                             >
                               参加済
-                            </button>
-                            <button
+                            </Button>
+                            <Button type="button" size="xs" variant="destructive"
                               onClick={() => markStatus(b.id, 'no_show')}
                               disabled={busy}
-                              className="px-3 py-1 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 disabled:opacity-50"
                             >
                               無断
-                            </button>
-                            <button
-                              onClick={() => adminCancel(b.id)}
+                            </Button>
+                            <Button type="button" size="xs" variant="secondary"
+                              onClick={() => setCancelTarget(b.id)}
                               disabled={busy}
-                              className="px-3 py-1 border border-gray-300 rounded-lg text-xs font-medium hover:bg-white disabled:opacity-50"
                             >
                               キャンセル
-                            </button>
+                            </Button>
                           </div>
                         )}
-                      </td>
-                    </tr>
+                      </Table.Cell>
+                    </Table.Row>
                     )
                   })}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table>
             </div>
           )}
         </div>
+        <Dialog.Root role="alertdialog" open={cancelTarget !== null} onOpenChange={(open) => { if (!open && !busy) setCancelTarget(null) }}><Dialog><Dialog.Title>運営側でキャンセルしますか？</Dialog.Title><Dialog.Description className="mt-2">予約をキャンセルし、友だちへLINE通知を送ります。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setCancelTarget(null)}>戻る</Button><Button type="button" variant="destructive" loading={busy} onClick={() => { if (cancelTarget) void adminCancel(cancelTarget) }}>キャンセルする</Button></div></Dialog></Dialog.Root>
       </div>
     </>
   )

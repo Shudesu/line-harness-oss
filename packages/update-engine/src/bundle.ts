@@ -17,6 +17,8 @@ import { extract as tarExtract } from 'tar-stream';
 
 export interface ParsedBundle {
   workerJs: Buffer;
+  /** path relative to worker-assets/ → content */
+  workerAssetFiles: Map<string, Buffer>;
   /** path relative to admin/ → content */
   adminFiles: Map<string, Buffer>;
   /** path relative to liff/ → content */
@@ -27,6 +29,7 @@ export interface ParsedBundle {
 
 export interface BundleHashes {
   worker: string;
+  workerAssets: string;
   admin: string;
   liff: string;
 }
@@ -47,6 +50,7 @@ export function parseBundleStream(input: Readable): Promise<ParsedBundle> {
   return new Promise<ParsedBundle>((resolve, reject) => {
     const result: ParsedBundle = {
       workerJs: Buffer.alloc(0),
+      workerAssetFiles: new Map(),
       adminFiles: new Map(),
       liffFiles: new Map(),
       migrations: new Map(),
@@ -107,6 +111,15 @@ function routeEntry(result: ParsedBundle, name: string, buf: Buffer): void {
     return;
   }
 
+  const workerAssetsPrefix = 'worker-assets/';
+  if (cleaned.startsWith(workerAssetsPrefix)) {
+    const rest = cleaned.slice(workerAssetsPrefix.length);
+    if (rest.length > 0 && !rest.endsWith('/')) {
+      result.workerAssetFiles.set(rest, buf);
+    }
+    return;
+  }
+
   const adminPrefix = 'admin/';
   if (cleaned.startsWith(adminPrefix)) {
     const rest = cleaned.slice(adminPrefix.length);
@@ -152,6 +165,7 @@ function routeEntry(result: ParsedBundle, name: string, buf: Buffer): void {
 export function verifyBundleHashes(b: ParsedBundle): BundleHashes {
   return {
     worker: hashBuffer(b.workerJs),
+    workerAssets: hashContentMap(b.workerAssetFiles),
     admin: hashContentMap(b.adminFiles),
     liff: hashContentMap(b.liffFiles),
   };
@@ -188,7 +202,12 @@ function hashContentMap(map: Map<string, Buffer>): string {
  */
 export function assertHashesMatch(
   computed: BundleHashes,
-  expected: { worker_hash: string; admin_hash: string; liff_hash: string },
+  expected: {
+    worker_hash: string;
+    worker_assets_hash?: string;
+    admin_hash: string;
+    liff_hash: string;
+  },
 ): void {
   if (computed.worker !== expected.worker_hash) {
     throw new Error(
@@ -197,6 +216,12 @@ export function assertHashesMatch(
   }
   if (computed.admin !== expected.admin_hash) {
     throw new Error('bundle admin hash mismatch');
+  }
+  if (
+    expected.worker_assets_hash &&
+    computed.workerAssets !== expected.worker_assets_hash
+  ) {
+    throw new Error('bundle worker assets hash mismatch');
   }
   if (computed.liff !== expected.liff_hash) {
     throw new Error('bundle liff hash mismatch');
@@ -237,6 +262,7 @@ export function verifyBundleIntegrity(
     admin_hash: string;
     liff_hash: string;
     worker_bundle_hash?: string;
+    worker_assets_hash?: string;
   },
 ): void {
   if (!entry.worker_bundle_hash) {
@@ -249,6 +275,12 @@ export function verifyBundleIntegrity(
   }
   if (computed.admin !== entry.admin_hash) {
     throw new Error('bundle admin hash mismatch');
+  }
+  if (
+    entry.worker_assets_hash &&
+    computed.workerAssets !== entry.worker_assets_hash
+  ) {
+    throw new Error('bundle worker assets hash mismatch');
   }
   if (computed.liff !== entry.liff_hash) {
     throw new Error('bundle liff hash mismatch');

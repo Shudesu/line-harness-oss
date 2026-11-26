@@ -1,5 +1,5 @@
 /**
- * LINE Harness LIFF — The single entry point
+ * L Harness LIFF — The single entry point
  *
  * This URL IS the friend-add URL. Every user enters through here.
  *
@@ -14,9 +14,11 @@
  *   ?page=book        — booking page (calendar slot picker, Google Calendar)
  *   ?page=salon-book  — salon booking flow (React, dynamic-imported)
  *   ?page=affiliate   — affiliate self-serve page (React, dynamic-imported)
+ *   ?page=webinar     — auto-webinar pseudo-live viewer (React, dynamic-imported; &slug=)
  */
 
 import { initBooking } from './booking.js';
+import { initXGate } from './x-gate.js';
 import { initForm } from './form.js';
 import { safeRedirectTarget } from '../lib/safe-redirect.js';
 
@@ -31,6 +33,7 @@ declare const liff: {
   getFriendship(): Promise<{ friendFlag: boolean }>;
   isInClient(): boolean;
   closeWindow(): void;
+  logout(): void;
 };
 
 // Resolve LIFF ID: ?liffId= param (from endpoint URL) > env var (fallback to ①)
@@ -148,9 +151,11 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
               displayName: fp.displayName,
               existingUuid: getSavedUuid(),
               ref: getRef() || undefined,
+              igt: params.get('igt') ?? undefined,
               ig: params.get('ig') || undefined,
               iga: params.get('iga') || undefined,
               igan: params.get('igan') || undefined,
+              crossAccountToken: params.get('crossAccountToken') || undefined,
             }),
           });
           if (res.ok) {
@@ -177,6 +182,7 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
               ref: params.get('ref') || '',
               gate: params.get('gate') || '',
               xh: params.get('xh') || '',
+              igt: params.get('igt') ?? undefined,
               ig: params.get('ig') || '',
               iga: params.get('iga') || '',
               igan: params.get('igan') || '',
@@ -258,6 +264,7 @@ async function linkAndAddFlow() {
         displayName: profile.displayName,
         existingUuid: existingUuid,
         ref: ref,
+        igt: linkParams.get('igt') ?? undefined,
         ig: linkParams.get('ig') || '',
         iga: linkParams.get('iga') || '',
         igan: linkParams.get('igan') || '',
@@ -322,6 +329,7 @@ async function linkAndAddFlow() {
               ref: ref || '',
               gate: params.get('gate') || '',
               xh: params.get('xh') || '',
+              igt: params.get('igt') ?? undefined,
               ig: params.get('ig') || '',
               iga: params.get('iga') || '',
               igan: params.get('igan') || '',
@@ -367,6 +375,7 @@ async function initSalonBooking(): Promise<void> {
   const existingUuid = getSavedUuid();
   const ref = getRef();
   const bookingParams = new URLSearchParams(window.location.search);
+  const igt = bookingParams.get('igt');
   const ig = bookingParams.get('ig');
   const iga = bookingParams.get('iga');
   const igan = bookingParams.get('igan');
@@ -380,6 +389,7 @@ async function initSalonBooking(): Promise<void> {
       displayName: profile.displayName,
       existingUuid,
       ref: ref || undefined,
+      igt: igt ?? undefined,
       ig: ig || undefined,
       iga: iga || undefined,
       igan: igan || undefined,
@@ -454,6 +464,7 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
       displayName: profile.displayName,
       existingUuid,
       ref: ref || undefined,
+      igt: eventParams.get('igt') ?? undefined,
       ig: eventParams.get('ig') || undefined,
       iga: eventParams.get('iga') || undefined,
       igan: eventParams.get('igan') || undefined,
@@ -493,6 +504,65 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
   mountEventBooking(container, ctx, initial);
 }
 
+// ─── Auto-webinar (React, dynamic-imported) ──────────────
+
+async function initWebinar(): Promise<void> {
+  // event-booking と同じ初期化シーケンス: profile/idToken/friendship 取得、
+  // 未友達なら friend-add gate、友達なら React mount。
+  const [profile, idToken, friendship] = await Promise.all([
+    liff.getProfile(),
+    Promise.resolve(liff.getIDToken()),
+    liff.getFriendship(),
+  ]);
+  if (!idToken) {
+    showError('LINE 認証情報の取得に失敗しました。LINE アプリ内で再度開いてください。');
+    return;
+  }
+
+  const existingUuid = getSavedUuid();
+  const ref = getRef();
+  const wbParams = new URLSearchParams(window.location.search);
+
+  // UUID linking (best-effort) — 視聴 API は friends 行を要求するので、
+  // 初見ユーザーでも friend-add gate 通過後に行が存在するようにする。
+  apiCall('/api/liff/link', {
+    method: 'POST',
+    body: JSON.stringify({
+      idToken,
+      displayName: profile.displayName,
+      existingUuid,
+      ref: ref || undefined,
+    }),
+  })
+    .then(async (res) => {
+      if (res.ok) {
+        const data = (await res.json()) as { success: boolean; data?: { userId?: string } };
+        if (data?.data?.userId) saveUuid(data.data.userId);
+      }
+    })
+    .catch(() => {
+      /* silent */
+    });
+
+  if (!friendship.friendFlag) {
+    showFriendAdd(profile);
+    return;
+  }
+
+  const container = document.getElementById('app');
+  if (!container) {
+    showError('mount target #app が見つかりません');
+    return;
+  }
+  const slug = wbParams.get('slug') ?? '';
+  if (!slug) {
+    showError('slug クエリパラメータが必要です（?page=webinar&slug=<slug>）');
+    return;
+  }
+  const { mountWebinar } = await import('./webinar/main.js');
+  mountWebinar(container, { liffId: LIFF_ID, lineUserId: profile.userId, idToken }, slug);
+}
+
 // ─── Affiliate self-serve (React, dynamic-imported) ──────
 
 async function initAffiliate(): Promise<void> {
@@ -516,29 +586,30 @@ async function initAffiliate(): Promise<void> {
   const ref = getRef();
   const affParams = new URLSearchParams(window.location.search);
 
-  // UUID linking (best-effort) — affiliate API は friends 行を要求するので、
-  // 未 link の初回利用者でも friend-add gate 通過後に行が存在するようにする。
-  apiCall('/api/liff/link', {
-    method: 'POST',
-    body: JSON.stringify({
-      idToken: liff.getIDToken(),
-      displayName: profile.displayName,
-      existingUuid,
-      ref: ref || undefined,
-      ig: affParams.get('ig') || undefined,
-      iga: affParams.get('iga') || undefined,
-      igan: affParams.get('igan') || undefined,
-    }),
-  })
-    .then(async (res) => {
-      if (res.ok) {
-        const data = (await res.json()) as { success: boolean; data?: { userId?: string } };
-        if (data?.data?.userId) saveUuid(data.data.userId);
-      }
-    })
-    .catch(() => {
-      /* silent */
+  // Wallet取得より先にUUID連携を確定する。初回表示でここを待たないと、
+  // 未登録アカウント用の署名付きリンクを生成できず、別財布になる余地がある。
+  try {
+    const res = await apiCall('/api/liff/link', {
+      method: 'POST',
+      body: JSON.stringify({
+        idToken: liff.getIDToken(),
+        displayName: profile.displayName,
+        existingUuid,
+        ref: ref || undefined,
+        igt: affParams.get('igt') ?? undefined,
+        ig: affParams.get('ig') || undefined,
+        iga: affParams.get('iga') || undefined,
+        igan: affParams.get('igan') || undefined,
+        crossAccountToken: affParams.get('crossAccountToken') || undefined,
+      }),
     });
+    if (res.ok) {
+      const data = (await res.json()) as { success: boolean; data?: { userId?: string } };
+      if (data?.data?.userId) saveUuid(data.data.userId);
+    }
+  } catch {
+    // 友だち追加前はfriends行がまだ無い場合がある。追加後の復帰処理で再試行する。
+  }
 
   // 未友達なら friend-add UI に流す。affiliate API は friends 行 (=友だち) を
   // 要求するので、ここを skip すると /affiliate/me が friend_not_found で詰む。
@@ -562,6 +633,46 @@ async function initAffiliate(): Promise<void> {
 
 // ─── Entry Point ────────────────────────────────────────
 
+// External-browser LIFF sessions persist in localStorage, and the SDK keeps
+// returning the cached id_token without refreshing it. LINE id_tokens expire
+// after 1h, so a returning PC visitor gets 401 from every verify-backed API
+// (/api/liff/link, webinar load, forms). In-client (LINE app) sessions get a
+// fresh token on every launch and never hit this.
+function isIdTokenStale(idToken: string | null): boolean {
+  if (!idToken) return true;
+  try {
+    const payloadB64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(payloadB64)) as { exp?: number };
+    // 60s margin so a token about to expire mid-flow also counts as stale
+    return typeof payload.exp !== 'number' || payload.exp * 1000 < Date.now() + 60_000;
+  } catch {
+    return true;
+  }
+}
+
+const RELOGIN_GUARD_KEY = 'lh_relogin_at';
+
+function forceReloginForStaleToken(): boolean {
+  if (liff.isInClient()) return false;
+  if (!isIdTokenStale(liff.getIDToken())) return false;
+  // Loop guard: if we already round-tripped through LINE Login within the
+  // last minute and the token is still stale (clock skew, login cancelled),
+  // fall through instead of redirecting forever.
+  let lastAttempt = 0;
+  try {
+    lastAttempt = Number(sessionStorage.getItem(RELOGIN_GUARD_KEY) || 0);
+  } catch { /* sessionStorage unavailable — still attempt a single redirect */ }
+  if (Date.now() - lastAttempt < 60_000) return false;
+  try {
+    sessionStorage.setItem(RELOGIN_GUARD_KEY, String(Date.now()));
+  } catch { /* ignore */ }
+  try {
+    liff.logout();
+  } catch { /* ignore — login below still re-issues tokens */ }
+  liff.login({ redirectUri: window.location.href });
+  return true;
+}
+
 async function main() {
   try {
     await liff.init({ liffId: LIFF_ID });
@@ -570,6 +681,8 @@ async function main() {
       liff.login({ redirectUri: window.location.href });
       return;
     }
+
+    if (forceReloginForStaleToken()) return;
 
     // Resolve bot basic ID from API (multi-account support)
     try {
@@ -583,7 +696,9 @@ async function main() {
     }
 
     const page = getPage();
-    if (page === 'book') {
+    if (page === 'xgate') {
+      await initXGate(new URLSearchParams(window.location.search).get('gate'));
+    } else if (page === 'book') {
       await initBooking();
     } else if (page === 'salon-book') {
       await initSalonBooking();
@@ -591,6 +706,8 @@ async function main() {
       await initEventBooking('detail');
     } else if (page === 'event-me') {
       await initEventBooking('history');
+    } else if (page === 'webinar') {
+      await initWebinar();
     } else if (page === 'affiliate') {
       await initAffiliate();
     } else if (page === 'form') {

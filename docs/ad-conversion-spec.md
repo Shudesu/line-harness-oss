@@ -1,7 +1,7 @@
 # 広告CV連携 実装仕様書
 
 ## 概要
-LINE Harness に広告プラットフォームのオフラインCV送信機能を追加する。
+L Harness に広告プラットフォームのオフラインCV送信機能を追加する。
 ユーザーが広告クリック → LINE友だち追加 → LINE内でアクション（MCV） → 広告媒体にCV返送。
 これにより広告のROAS計測がLINE内行動まで一気通貫で取れる。
 
@@ -168,7 +168,7 @@ export async function getAdPlatformByName(
 }
 
 // CRUD: createAdPlatform, updateAdPlatform, deleteAdPlatform
-// ... 標準的なCRUD（LINE Harness の他テーブルと同じパターン）
+// ... 標準的なCRUD（L Harness の他テーブルと同じパターン）
 ```
 
 ---
@@ -535,7 +535,7 @@ export default app;
   │ ユーザーが広告クリック
   │ ?fbclid=abc123&ref=campaign_001
   ↓
-[LINE Harness Worker]
+[L Harness Worker]
   /auth/line?ref=campaign_001&fbclid=abc123
   │
   ├── ref_tracking に保存:
@@ -577,7 +577,7 @@ export default app;
 
 1. Meta Events Manager で Pixel を作成
 2. System User を作成し、Access Token を取得
-3. LINE Harness API で広告プラットフォーム登録:
+3. L Harness API で広告プラットフォーム登録:
 ```bash
 curl -X POST https://your-worker.example/api/ad-platforms \
   -H "Authorization: Bearer YOUR_API_KEY" \
@@ -605,7 +605,7 @@ curl -X POST https://your-worker.example/api/ad-platforms/test \
 
 1. X Ads Manager で Conversion Pixel 作成
 2. X Developer Portal で Ads API アクセス申請
-3. LINE Harness API で登録:
+3. L Harness API で登録:
 ```bash
 curl -X POST https://your-worker.example/api/ad-platforms \
   -H "Authorization: Bearer YOUR_API_KEY" \
@@ -623,21 +623,21 @@ curl -X POST https://your-worker.example/api/ad-platforms \
 
 1. Google Ads でオフラインコンバージョンアクションを作成
 2. Google Ads API の OAuth 認証設定
-3. LINE Harness API で登録（同様）
+3. L Harness API で登録（同様）
 
 ### TikTok 広告連携
 
 1. TikTok Business Center で Pixel 作成
 2. Events API の Access Token 取得
-3. LINE Harness API で登録（同様）
+3. L Harness API で登録（同様）
 
 ---
 
 ## 標準イベント名マッピング
 
-LINE Harness 内のイベントを各媒体の標準イベント名にマッピング:
+L Harness 内のイベントを各媒体の標準イベント名にマッピング:
 
-| LINE Harness イベント | Meta | X | Google | TikTok |
+| L Harness イベント | Meta | X | Google | TikTok |
 |---|---|---|---|---|
 | friend_add | Lead | SIGN_UP | Conversion | Registration |
 | form_submission | SubmitApplication | LEAD | Conversion | SubmitForm |
