@@ -660,9 +660,9 @@ function Editor({
         </div>
       </section>
       <Dialog.Root role="alertdialog" open={pendingConfirm !== null} onOpenChange={(open) => { if (!open) setPendingConfirm(null) }}>
-        <Dialog>
-          <Dialog.Title>{pendingConfirm?.kind === 'publish' ? 'LINEに登録しますか？' : pendingConfirm?.kind === 'unpublish' ? 'LINEから取り下げますか？' : 'このページを削除しますか？'}</Dialog.Title>
-          <Dialog.Description className="mt-2">{pendingConfirm?.kind === 'publish' ? '登録後、友だちに見せるには一覧画面の「友だちに表示」を実行します。' : pendingConfirm?.kind === 'unpublish' ? '現在表示中の友だちのトーク画面からもメニューが消えます。' : 'ページと設定したタップ領域を削除します。'}</Dialog.Description>
+        <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold text-kumo-strong">{pendingConfirm?.kind === 'publish' ? 'LINEに登録しますか？' : pendingConfirm?.kind === 'unpublish' ? 'LINEから取り下げますか？' : 'このページを削除しますか？'}</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">{pendingConfirm?.kind === 'publish' ? '登録後、友だちに見せるには一覧画面の「友だちに表示」を実行します。' : pendingConfirm?.kind === 'unpublish' ? '現在表示中の友だちのトーク画面からもメニューが消えます。' : 'ページと設定したタップ領域を削除します。'}</Dialog.Description>
           <div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setPendingConfirm(null)}>キャンセル</Button><Button type="button" variant={pendingConfirm?.kind === 'publish' ? 'primary' : 'destructive'} onClick={() => { if (pendingConfirm?.kind === 'publish') void handlePublish(true); else if (pendingConfirm?.kind === 'unpublish') void handleUnpublish(true); else if (pendingConfirm?.kind === 'remove-page') removePage(pendingConfirm.pageId, true) }}>実行する</Button></div>
         </Dialog>
       </Dialog.Root>

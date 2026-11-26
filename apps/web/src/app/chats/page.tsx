@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { parseStickerMessageContent, stickerFallback } from '@line-crm/shared'
 import { api, fetchApi } from '@/lib/api'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
+import { acknowledgeChatInList, shouldAcknowledgeOnOpen } from '@/lib/chat-status'
 import { useAccount } from '@/contexts/account-context'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
@@ -540,7 +541,9 @@ export default function ChatsPage() {
     try { localStorage.setItem('chat.sendMode', sendMode) } catch { /* ignore */ }
   }, [sendMode])
 
-  const loadChatDetail = useCallback(async (chatId: string) => {
+  // acknowledge=true は「一覧からチャットを開いた」ときだけ。送信後・ステータス手動変更後の
+  // 再取得で付ける (手動で「未読」に戻した直後に対応中へ戻ってしまう) のを避けるため。
+  const loadChatDetail = useCallback(async (chatId: string, options?: { acknowledge?: boolean }) => {
     // 古い詳細の応答が後から届いて別のチャットに描画されないよう、
     // 世代カウンタと選択中チャットIDで破棄を判断する
     const gen = ++detailGenRef.current
@@ -550,8 +553,19 @@ export default function ChatsPage() {
       const res = await api.chats.get(chatId)
       if (gen !== detailGenRef.current || selectedChatRef.current !== chatId) return
       if (res.success) {
-        setChatDetail(res.data as unknown as ChatDetail)
-        setNotes((res.data as unknown as ChatDetail).notes || '')
+        const detail = res.data as unknown as ChatDetail
+        setChatDetail(detail)
+        setNotes(detail.notes || '')
+        // 未読のチャットを開いたら「対応中」へ自動遷移する。詳細表示を待たせないよう await しない。
+        // 失敗しても未読のまま残るだけなのでエラーは出さず、次に開いたときに再試行される。
+        if (options?.acknowledge && shouldAcknowledgeOnOpen(detail.status)) {
+          void api.chats.update(chatId, { status: 'in_progress' }).then((updated) => {
+            if (!updated.success) return
+            setChats((prev) => acknowledgeChatInList(prev, chatId))
+            setChatDetail((prev) => (prev?.id === chatId && prev.status === 'unread' ? { ...prev, status: 'in_progress' } : prev))
+            window.dispatchEvent(new Event(UNANSWERED_REFRESH_EVENT))
+          }).catch(() => { /* silent */ })
+        }
       } else {
         // API は 200 で success:false を返す可能性 (例: 404 lookup)。詳細を画面に出す。
         const errMsg = (res as { error?: string }).error ?? '不明なエラー'
@@ -588,7 +602,7 @@ export default function ChatsPage() {
 
   useEffect(() => {
     if (selectedChatId) {
-      loadChatDetail(selectedChatId)
+      loadChatDetail(selectedChatId, { acknowledge: true })
     } else {
       setChatDetail(null)
     }
