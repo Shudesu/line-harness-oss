@@ -19,6 +19,7 @@ import { buildOgHtml } from '../lib/og-html.js';
 import { resolveOgForTrackedLink } from '../lib/og-resolver.js';
 import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
+import { timingSafeEqualString } from '@line-crm/shared';
 
 const trackedLinks = new Hono<Env>();
 
@@ -88,6 +89,50 @@ async function resolveLinkAccount(
     .prepare(`SELECT * FROM line_accounts WHERE id = ?`)
     .bind(accountId)
     .first<Record<string, unknown>>();
+}
+
+/**
+ * Whether the global env.LIFF_URL can be treated as this account's own LIFF.
+ *
+ * True only when the account is active and either
+ *   - it is the default account: its channel_secret equals env.LINE_CHANNEL_SECRET
+ *     (the same test the webhook uses to bind the env channel to a DB row), or
+ *   - it is the only active account, so there is no other business whose LIFF
+ *     env.LIFF_URL could belong to.
+ *
+ * Any failure answers false: sending the click straight to the destination
+ * (anonymous) is safe, another account's LINE Login screen is not.
+ *
+ * Cost: at most one extra read (LIMIT 2 on line_accounts), and only for a LINE
+ * in-app click without lu/f on a link whose owner has no liff_id and is not the
+ * default account.
+ */
+async function ownsGlobalLiff(
+  db: D1Database,
+  account: Record<string, unknown>,
+  envChannelSecret: string | undefined,
+): Promise<boolean> {
+  try {
+    if (!account.is_active) return false;
+    const secret = account.channel_secret;
+    if (
+      envChannelSecret &&
+      typeof secret === 'string' &&
+      secret &&
+      (await timingSafeEqualString(secret, envChannelSecret))
+    ) {
+      return true;
+    }
+    // LIMIT 2 is enough to tell "exactly one" from "more than one".
+    const active = await db
+      .prepare(`SELECT id FROM line_accounts WHERE is_active = 1 LIMIT 2`)
+      .all<{ id: string }>();
+    const rows = active?.results ?? [];
+    return rows.length === 1 && rows[0]?.id === account.id;
+  } catch (err) {
+    console.error('ownsGlobalLiff error:', err);
+    return false;
+  }
 }
 
 // GET /api/tracked-links — list all
@@ -352,11 +397,17 @@ trackedLinks.get('/t/:linkId', async (c) => {
     const liffId = (account?.liff_id as string | null | undefined) ?? null;
     if (liffId) {
       liffBase = `https://liff.line.me/${liffId}`;
-    } else if (!account && c.env.LIFF_URL) {
-      // 全体設定の LIFF を使うのは、リンクの持ち主が分からないときだけ。
-      // 持ち主が分かっていて liff_id が無いアカウントをここへ落とすと、
-      // よその事業の LINE ログイン画面がそのアカウントの友だちに出る。
-      // 2026-09-08 に実際に起きたので、liff_id が無いアカウントは LIFF を経由しない
+    } else if (c.env.LIFF_URL && (!account || await ownsGlobalLiff(c.env.DB, account, c.env.LINE_CHANNEL_SECRET))) {
+      // 全体設定の LIFF (env.LIFF_URL) を使ってよいのは次のどれかのときだけ:
+      //   1. リンクの持ち主が分からない（持ち主を持たない古いリンク）
+      //   2. 持ち主が既定アカウント（env.LINE_CHANNEL_SECRET と同じチャネル）
+      //   3. 有効なアカウントが持ち主の1つだけ
+      // 2 と 3 は、liff_id を DB に入れず LIFF_URL だけで運用している単一アカウントの
+      // 自前環境のため。ここを外すと本人識別が効かず、クリックが全部匿名になる。
+      //
+      // それ以外（複数アカウントのうち liff_id を持たない、既定でないアカウント）を
+      // ここへ落とすと、よその事業の LINE ログイン画面がそのアカウントの友だちに出る。
+      // 2026-09-08 に実際に起きたので、そのアカウントは LIFF を経由しない
       // （本人の識別ができないぶんクリックは匿名で記録されるが、飛び先は正しいままになる）。
       liffBase = c.env.LIFF_URL;
     }
