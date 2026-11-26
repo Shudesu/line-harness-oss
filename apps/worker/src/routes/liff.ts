@@ -1416,18 +1416,18 @@ liffRoutes.post('/api/liff/link', async (c) => {
         creation.account?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN,
         lineUserId,
       );
-      // 'fill' / 'keep': written atomically with the new row; if the follow
-      // webhook won the race meanwhile, its attribution and its profile are
-      // kept, not overwritten — ours may be only the fallback name with no
-      // picture when the bot profile could not be read.
+      // The account is written atomically with the new row. createOnly: if
+      // the follow webhook won the race meanwhile, its row is used exactly as
+      // it stands — attribution, profile (ours may be only the fallback name
+      // with no picture) and follow status (an unfollow may already have
+      // followed) — the same as when the row existed before this request.
       friend = await upsertFriend(db, {
         lineUserId,
         displayName: profile?.displayName ?? body.displayName ?? verified.name ?? null,
         pictureUrl: profile?.pictureUrl ?? null,
         statusMessage: profile?.statusMessage ?? null,
         lineAccountId: creation.account?.id ?? null,
-        accountMode: 'fill',
-        profileMode: 'keep',
+        createOnly: true,
       });
     }
 

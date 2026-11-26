@@ -127,24 +127,51 @@ describe('upsertFriend line_account_id attribution', () => {
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM friends').get()).toEqual({ n: 1 });
   });
 
-  test("profileMode 'keep' fills only the profile fields an existing row lacks", async () => {
-    const { db } = asD1(sqlite);
+  test('createOnly leaves an existing row untouched — profile, account and a newer unfollow', async () => {
+    const { db, writes } = asD1(sqlite);
     sqlite
-      .prepare("INSERT INTO friends(id,line_user_id,display_name,picture_url) VALUES('follow-row','U1','From follow','https://example.com/follow.jpg')")
-      .run();
+      .prepare(
+        `INSERT INTO friends(id,line_user_id,display_name,picture_url,is_following,line_account_id,updated_at)
+         VALUES('follow-row','U1','From follow','https://example.com/follow.jpg',0,?, '2026-01-01T00:00:00.000+09:00')`,
+      )
+      .run(ACC_A);
+    const before = sqlite.prepare('SELECT * FROM friends WHERE line_user_id = ?').get('U1');
 
-    await upsertFriend(db, {
-      lineUserId: 'U1', displayName: 'Fallback', pictureUrl: null, statusMessage: 'hello', profileMode: 'keep',
+    const friend = await upsertFriend(db, {
+      lineUserId: 'U1', displayName: 'Fallback', pictureUrl: null, lineAccountId: ACC_B, createOnly: true,
     });
 
-    expect(
-      sqlite.prepare('SELECT display_name, picture_url, status_message FROM friends WHERE line_user_id = ?').get('U1'),
-    ).toEqual({ display_name: 'From follow', picture_url: 'https://example.com/follow.jpg', status_message: 'hello' });
+    expect(friend.id).toBe('follow-row');
+    expect(sqlite.prepare('SELECT * FROM friends WHERE line_user_id = ?').get('U1')).toEqual(before);
+    expect(writes).toEqual([]);
+  });
 
-    // The default still treats the caller's profile as the fresh one.
-    await upsertFriend(db, { lineUserId: 'U1', displayName: 'Renamed', pictureUrl: null, statusMessage: null });
+  test('createOnly losing the insert race keeps the winner as written (unfollowed stays unfollowed)', async () => {
+    // The follow webhook creates the row and an unfollow marks it inactive
+    // between our existence check and our INSERT.
+    let raced = false;
+    const { db } = asD1(sqlite, (sql) => {
+      if (!raced && /INSERT INTO friends/.test(sql)) {
+        raced = true;
+        sqlite
+          .prepare("INSERT INTO friends(id,line_user_id,display_name,is_following,line_account_id) VALUES('follow-row','U1','From follow',0,?)")
+          .run(ACC_A);
+      }
+    });
+
+    const friend = await upsertFriend(db, { lineUserId: 'U1', displayName: 'Fallback', lineAccountId: ACC_B, createOnly: true });
+
+    expect(friend.id).toBe('follow-row');
     expect(
-      sqlite.prepare('SELECT display_name, picture_url, status_message FROM friends WHERE line_user_id = ?').get('U1'),
-    ).toEqual({ display_name: 'Renamed', picture_url: null, status_message: null });
+      sqlite.prepare('SELECT display_name, is_following, line_account_id FROM friends WHERE line_user_id = ?').get('U1'),
+    ).toEqual({ display_name: 'From follow', is_following: 0, line_account_id: ACC_A });
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM friends').get()).toEqual({ n: 1 });
+  });
+
+  test('createOnly still creates a missing friend with its account in one write', async () => {
+    const { db, writes } = asD1(sqlite);
+    const friend = await upsertFriend(db, { lineUserId: 'U1', displayName: 'A', lineAccountId: ACC_A, createOnly: true });
+    expect(friend).toMatchObject({ line_account_id: ACC_A, display_name: 'A', is_following: 1 });
+    expect(writes).toHaveLength(1);
   });
 });

@@ -409,3 +409,37 @@ test.each([
   expect(row).toEqual({ id: 'f-follow', line_account_id: 'acc-a', display_name: 'Webhook Name', picture_url: 'https://example.com/webhook.jpg', ref_code: 'route-1' });
   expect(store.sqlite.prepare('SELECT COUNT(*) AS n FROM friends').get()).toEqual({ n: 1 });
 });
+
+test('losing the insert race to a follow that was already undone does not mark the friend as following again', async () => {
+  addAccount('acc-a', { login: 'login-a' });
+  tokenChannel = 'login-a';
+  // Between our lookup and our INSERT: the follow webhook creates the row and
+  // an unfollow (block) marks it inactive.
+  const inner = env.DB;
+  let raced = false;
+  env.DB = {
+    ...inner,
+    prepare(sql: string) {
+      const wrap = (stmt: D1PreparedStatement): D1PreparedStatement => ({
+        ...stmt,
+        bind: (...values: unknown[]) => wrap(stmt.bind(...values)),
+        async run<T>() {
+          if (!raced && /INSERT INTO friends/.test(sql)) {
+            raced = true;
+            store.sqlite
+              .prepare("INSERT INTO friends (id, line_user_id, display_name, is_following, line_account_id) VALUES ('f-follow', ?, 'Webhook Name', 0, 'acc-a')")
+              .run(NEW_USER);
+          }
+          return stmt.run<T>();
+        },
+      } as D1PreparedStatement);
+      return wrap(inner.prepare(sql));
+    },
+  } as D1Database;
+
+  await link();
+
+  expect(
+    store.sqlite.prepare('SELECT id, is_following, display_name FROM friends WHERE line_user_id = ?').get(NEW_USER),
+  ).toEqual({ id: 'f-follow', is_following: 0, display_name: 'Webhook Name' });
+});

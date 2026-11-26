@@ -179,14 +179,13 @@ export interface UpsertFriendInput {
    */
   accountMode?: 'fill' | 'rebind';
   /**
-   * How the profile fields apply to an EXISTING row (new rows always get them):
-   * - 'overwrite' (default): the caller's profile is the fresh one.
-   * - 'keep': only fill fields the row does not have yet — for a caller that
-   *   means to CREATE the friend and may hold a worse profile than the writer
-   *   that got there first (e.g. /api/liff/link losing the race to the follow
-   *   webhook with a fallback name and no picture).
+   * Create the friend, but leave a row that already exists exactly as it is
+   * (profile, account, follow status and timestamps) and return it. For a
+   * caller that is not a follow event and may race one — /api/liff/link
+   * creating the row ahead of the follow webhook: whoever wrote the row first
+   * (a follow, or a follow and a later unfollow) holds the newer truth.
    */
-  profileMode?: 'overwrite' | 'keep';
+  createOnly?: boolean;
 }
 
 export async function upsertFriend(
@@ -194,7 +193,7 @@ export async function upsertFriend(
   input: UpsertFriendInput,
 ): Promise<Friend> {
   const existing = await getFriendByLineUserId(db, input.lineUserId);
-  if (existing) return updateFriendOnUpsert(db, input, existing);
+  if (existing) return input.createOnly ? existing : updateFriendOnUpsert(db, input, existing);
 
   const now = jstNow();
   const id = crypto.randomUUID();
@@ -227,7 +226,7 @@ export async function upsertFriend(
 
   if (inserted.meta?.changes === 0) {
     const winner = await getFriendByLineUserId(db, input.lineUserId);
-    if (winner) return updateFriendOnUpsert(db, input, winner);
+    if (winner) return input.createOnly ? winner : updateFriendOnUpsert(db, input, winner);
   }
 
   return (await getFriendById(db, id))!;
@@ -243,14 +242,12 @@ async function updateFriendOnUpsert(
     input.accountMode === 'rebind'
       ? 'COALESCE(?, line_account_id)'
       : 'COALESCE(line_account_id, ?)';
-  const profileSql = (column: string) =>
-    input.profileMode === 'keep' ? `COALESCE(${column}, ?)` : '?';
   await db
     .prepare(
       `UPDATE friends
-       SET display_name = ${profileSql('display_name')},
-           picture_url = ${profileSql('picture_url')},
-           status_message = ${profileSql('status_message')},
+       SET display_name = ?,
+           picture_url = ?,
+           status_message = ?,
            line_account_id = ${accountSql},
            first_followed_at = COALESCE(first_followed_at, created_at),
            current_follow_started_at = CASE
