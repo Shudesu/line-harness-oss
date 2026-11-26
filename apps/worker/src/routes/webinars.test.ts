@@ -856,10 +856,10 @@ describe('admin CRUD', () => {
     expect(dbMocks.createWebinar).not.toHaveBeenCalled();
   });
 
-  test('PUT /api/webinars/:id/comments — 一括置換', async () => {
+  test.each(['owner', 'admin'] as const)('PUT /api/webinars/:id/comments — %s は一括置換できる', async (role) => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
     dbMocks.replaceWebinarComments.mockResolvedValue(2);
-    const res = await req('/api/webinars/w1/comments', {
+    const res = await reqAsStaff('/api/webinars/w1/comments', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         comments: [
@@ -867,7 +867,7 @@ describe('admin CRUD', () => {
           { atSeconds: 30, authorName: '鈴木', body: '楽しみです' },
         ],
       }),
-    });
+    }, role);
     expect(res.status).toBe(200);
     expect(dbMocks.replaceWebinarComments).toHaveBeenCalledWith(expect.anything(), 'w1', [
       { atSeconds: 10, authorName: '田中', body: 'こんばんは!' },
@@ -878,7 +878,7 @@ describe('admin CRUD', () => {
   test('PUT comments — 負の atSeconds (待機ルーム) は -3600 まで許容', async () => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
     dbMocks.replaceWebinarComments.mockResolvedValue(1);
-    const ok = await req('/api/webinars/w1/comments', {
+    const ok = await reqAsStaff('/api/webinars/w1/comments', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         comments: [{ atSeconds: -300, authorName: 'みお', body: '楽しみです' }],
@@ -888,7 +888,7 @@ describe('admin CRUD', () => {
     expect(dbMocks.replaceWebinarComments).toHaveBeenCalledWith(expect.anything(), 'w1', [
       { atSeconds: -300, authorName: 'みお', body: '楽しみです' },
     ]);
-    const tooEarly = await req('/api/webinars/w1/comments', {
+    const tooEarly = await reqAsStaff('/api/webinars/w1/comments', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         comments: [{ atSeconds: -4000, authorName: 'みお', body: 'x' }],
@@ -899,7 +899,7 @@ describe('admin CRUD', () => {
 
   test('PUT comments — 不正要素があれば 400 で何も書かない', async () => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
-    const res = await req('/api/webinars/w1/comments', {
+    const res = await reqAsStaff('/api/webinars/w1/comments', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ comments: [{ atSeconds: -1, authorName: '', body: '' }] }),
     });
@@ -999,11 +999,28 @@ describe('admin CRUD', () => {
     });
   });
 
-  test('DELETE /api/webinars/:id', async () => {
+  test.each(['owner', 'admin'] as const)('DELETE /api/webinars/:id — %s は削除できる', async (role) => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
-    const res = await req('/api/webinars/w1', { method: 'DELETE' });
+    const res = await reqAsStaff('/api/webinars/w1', { method: 'DELETE' }, role);
     expect(res.status).toBe(200);
     expect(dbMocks.deleteWebinar).toHaveBeenCalledWith(expect.anything(), 'w1');
+  });
+
+  describe.each([
+    { method: 'DELETE', path: '/api/webinars/w1', body: undefined, write: dbMocks.deleteWebinar },
+    { method: 'PUT', path: '/api/webinars/w1/comments', body: { comments: [] }, write: dbMocks.replaceWebinarComments },
+    { method: 'PUT', path: '/api/webinars/w1/ctas', body: { ctas: [] }, write: dbMocks.replaceWebinarCtas },
+  ])('$method $path の権限', ({ method, path, body, write }) => {
+    test.each(['staff', 'missing'] as const)('%s は 403 で読み書きしない', async (role) => {
+      dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
+      const init = {
+        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      };
+      const res = role === 'missing' ? await req(path, init) : await reqAsStaff(path, init, role);
+      expect(res.status).toBe(403);
+      expect(dbMocks.getWebinarById).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    });
   });
 
   test('PUT /api/webinars/:id — 空 title は 400 で updateWebinar が呼ばれない', async () => {
@@ -1051,17 +1068,17 @@ describe('webinar CTA cards', () => {
     }]);
   });
 
-  test('PUT /api/webinars/:id/ctas — form kind は forms 実在チェック後に置換', async () => {
+  test.each(['owner', 'admin'] as const)('PUT /api/webinars/:id/ctas — %s は forms 実在チェック後に置換できる', async (role) => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
     dbMocks.getFormById.mockResolvedValue({ id: 'form-1', is_active: 1 });
     dbMocks.replaceWebinarCtas.mockResolvedValue(1);
-    const res = await req('/api/webinars/w1/ctas', {
+    const res = await reqAsStaff('/api/webinars/w1/ctas', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ctas: [{
         atSeconds: 300, kind: 'form', title: '個別導入診断',
         body: '限定枠です', buttonLabel: '診断を受ける', autoOpen: true, formId: 'form-1',
       }] }),
-    });
+    }, role);
     expect(res.status).toBe(200);
     expect(dbMocks.replaceWebinarCtas).toHaveBeenCalledWith(expect.anything(), 'w1', [{
       atSeconds: 300, kind: 'form', title: '個別導入診断', body: '限定枠です',
@@ -1072,7 +1089,7 @@ describe('webinar CTA cards', () => {
   test('PUT ctas — 存在しない form は 400 で何も書かない', async () => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
     dbMocks.getFormById.mockResolvedValue(null);
-    const res = await req('/api/webinars/w1/ctas', {
+    const res = await reqAsStaff('/api/webinars/w1/ctas', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ctas: [{
         atSeconds: 0, kind: 'form', title: 't', buttonLabel: 'b', formId: 'nope',
@@ -1084,7 +1101,7 @@ describe('webinar CTA cards', () => {
 
   test('PUT ctas — url kind は https 必須', async () => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
-    const bad = await req('/api/webinars/w1/ctas', {
+    const bad = await reqAsStaff('/api/webinars/w1/ctas', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ctas: [{
         atSeconds: 0, kind: 'url', title: 't', buttonLabel: 'b', url: 'javascript:alert(1)',
@@ -1092,7 +1109,7 @@ describe('webinar CTA cards', () => {
     });
     expect(bad.status).toBe(400);
     dbMocks.replaceWebinarCtas.mockResolvedValue(1);
-    const ok = await req('/api/webinars/w1/ctas', {
+    const ok = await reqAsStaff('/api/webinars/w1/ctas', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ctas: [{
         atSeconds: 0, kind: 'url', title: 't', buttonLabel: 'b', url: 'https://example.com/pay',
@@ -1104,7 +1121,7 @@ describe('webinar CTA cards', () => {
   test('PUT ctas — 無効化されたフォームは 400', async () => {
     dbMocks.getWebinarById.mockResolvedValue(makeWebinar());
     dbMocks.getFormById.mockResolvedValue({ id: 'form-1', is_active: 0 });
-    const res = await req('/api/webinars/w1/ctas', {
+    const res = await reqAsStaff('/api/webinars/w1/ctas', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ctas: [{
         atSeconds: 0, kind: 'form', title: 't', buttonLabel: 'b', formId: 'form-1',

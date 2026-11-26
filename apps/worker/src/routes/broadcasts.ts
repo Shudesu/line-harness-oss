@@ -26,6 +26,7 @@ import {
 import { computeDedupBroadcastPreview } from '../services/dedup-broadcast.js';
 import { processSegmentSend } from '../services/segment-send.js';
 import type { SegmentCondition } from '../services/segment-query.js';
+import { countSegmentAudience, parseSavedSegmentConditions, savedSegmentAudience } from '../services/saved-segment.js';
 import { getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
 import {
@@ -188,7 +189,10 @@ broadcasts.get('/api/broadcasts/:id/preview-count', async (c) => {
     let count = 0;
     let perAccount: Array<{ accountId: string; sendCount: number }> | undefined;
 
-    if (broadcast.target_type === 'multi-account-dedup') {
+    const segmentAudience = savedSegmentAudience(broadcast);
+    if (segmentAudience) {
+      count = (await countSegmentAudience(c.env.DB, broadcast, segmentAudience)).total;
+    } else if (broadcast.target_type === 'multi-account-dedup') {
       const accountIds = parseJsonArray(raw.account_ids) ?? [];
       const dedupPriority = parseJsonArray(raw.dedup_priority) ?? [];
       const preview = await computeDedupBroadcastPreview(
@@ -460,7 +464,30 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       targetTagId?: string | null;
       scheduledAt?: string | null;
       trackLinks?: boolean;
+      segmentConditions?: unknown;
     }>();
+
+    // Saved segment conditions (include / exclude tags). These used to be
+    // silently dropped here, so the admin UI's segment editor had no effect on
+    // the actual send. Validate and persist them; every send/preview path reads
+    // them back via savedSegmentAudience().
+    const effectiveTarget = body.targetType ?? existing.target_type;
+    let segmentUpdate: string | null | undefined;
+    if (body.segmentConditions !== undefined) {
+      let parsed: SegmentCondition | null;
+      try {
+        parsed = parseSavedSegmentConditions(body.segmentConditions);
+      } catch (e) {
+        return c.json({ success: false, error: `Invalid segment conditions: ${(e as Error).message}` }, 400);
+      }
+      if (parsed && effectiveTarget !== 'all' && effectiveTarget !== 'tag') {
+        return c.json({ success: false, error: 'Segment conditions are only supported for all / tag targets' }, 400);
+      }
+      segmentUpdate = parsed ? JSON.stringify(parsed) : null;
+    } else if (effectiveTarget !== 'all' && effectiveTarget !== 'tag') {
+      // Switching to a target that cannot carry conditions clears them.
+      segmentUpdate = null;
+    }
 
     if (body.messageContent !== undefined || body.messageType !== undefined) {
       const contentError = validateMessageContent(body.messageType ?? existing.message_type, body.messageContent ?? existing.message_content);
@@ -513,6 +540,11 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
        WHERE id = ?`,
     ).bind(id).run();
 
+    if (segmentUpdate !== undefined) {
+      await c.env.DB.prepare(`UPDATE broadcasts SET segment_conditions = ? WHERE id = ?`)
+        .bind(segmentUpdate, id).run();
+    }
+
     // 過去 send の insight 行を削除する。createBroadcastInsight は idempotent で
     // 既存行があれば skip する設計のため、削除しないと再送時に新しい pending
     // insight が作られず getPendingInsights / GET /insight が古い metrics を返し続ける。
@@ -520,7 +552,8 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       `DELETE FROM broadcast_insights WHERE broadcast_id = ?`,
     ).bind(id).run();
 
-    return c.json({ success: true, data: updated ? serializeBroadcast(updated) : null });
+    const fresh = segmentUpdate !== undefined ? await getBroadcastById(c.env.DB, id) : updated;
+    return c.json({ success: true, data: fresh ? serializeBroadcast(fresh) : null });
   } catch (err) {
     console.error('PUT /api/broadcasts/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -604,6 +637,48 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     if (quota.exceeded) {
       return c.json({ success: false, error: 'quota_exceeded', quota }, 403);
     }
+    // Saved segment conditions (include / exclude tags) → always the segment
+    // queue, delivering only to the matching audience. Checked before every
+    // other branch so no path can fall back to the unfiltered target.
+    const segmentAudience = savedSegmentAudience(existing);
+    if (segmentAudience) {
+      const { total, missingName } = await countSegmentAudience(c.env.DB, existing, segmentAudience);
+      if (hasRecipientVariables(existing.message_content) && missingName > 0) {
+        return c.json({
+          success: false,
+          error: `Cannot personalize broadcast: ${missingName} recipient(s) have no display name`,
+        }, 400);
+      }
+      if (quota.monthlyMessages.max > 0 && wouldExceedMonthlyQuota(quota, total)) {
+        return c.json({ success: false, error: 'quota_exceeded', quota }, 403);
+      }
+      const lockResult = await c.env.DB.prepare(
+        `UPDATE broadcasts
+            SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
+          WHERE id = ? AND status IN ('draft','scheduled')`,
+      ).bind(total, JSON.stringify(segmentAudience), id).run();
+      if (!lockResult.meta.changes) {
+        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      }
+      try {
+        const ctx = c.executionCtx as ExecutionContext;
+        const defaultClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+        ctx.waitUntil(
+          processQueuedBroadcasts(c.env.DB, defaultClient, c.env.WORKER_URL, c.env).catch((err) => {
+            console.error('[segment-broadcast] background queue processing failed:', err);
+          }),
+        );
+      } catch (kickErr) {
+        console.warn('[segment-broadcast] waitUntil unavailable, falling back to cron:', kickErr);
+      }
+      return c.json({
+        success: true,
+        data: { id, status: 'sending', totalCount: total },
+        queued: true,
+        message: 'Segment broadcast queued for background processing',
+      }, 202);
+    }
+
     // Also refuse when the projected total would cross the monthly limit, so
     // one big send just under the limit cannot overshoot it wholesale.
     //

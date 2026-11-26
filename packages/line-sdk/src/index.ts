@@ -4,6 +4,8 @@ export type {
   FollowerIdsPage,
   MessageQuota,
   MessageQuotaConsumption,
+  WebhookEndpointSetting,
+  WebhookTestResult,
 } from './client.js';
 export { verifySignature } from './webhook.js';
 export {

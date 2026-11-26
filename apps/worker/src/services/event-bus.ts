@@ -18,7 +18,11 @@ import {
   enrollFriendInScenario,
   jstNow,
   getFriendScore,
+  getCompletedIdempotencyKeys,
+  recordIdempotencyKeyCompleted,
 } from '@line-crm/db';
+import { deriveIdempotentId } from './idempotency.js';
+import { runIdempotentLineSend } from './idempotent-line-send.js';
 import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { sendAdConversions } from './ad-conversion.js';
@@ -30,6 +34,30 @@ import {
   tagChangeKey,
   type TagAutomationDispatch,
 } from './tag-automation-context.js';
+
+/**
+ * Optional idempotent dispatch. `operationId` names one logical operation
+ * (derived from the caller's Idempotency-Key). When the same event is fired
+ * again for the same operation — a retry after a failed attempt — each
+ * effect that already finished is skipped:
+ *   - scoring:    the ledger row ID is derived per rule; a repeat adds nothing
+ *   - automation: the log row ID is derived per automation; a logged
+ *                 automation is not run again (one that died mid-way runs
+ *                 again as a whole). Each keyed send action additionally has
+ *                 its own persisted state/retry key and immutable payload;
+ *                 an in-flight send is never reclaimed, and an unresolved
+ *                 send at/after 24h requires manual review.
+ *   - webhook:    a delivery is recorded only after it got 2xx, and a
+ *                 recorded delivery is not sent again. There is no "sending"
+ *                 state: anything not recorded is sent, so a delivery is
+ *                 never lost, and may repeat when the record is lost or two
+ *                 attempts overlap. Every delivery carries X-Webhook-Event-Id
+ *                 so the receiver can drop repeats.
+ * Without it every call runs every effect, as before.
+ */
+export interface EventDispatchOptions {
+  operationId?: string;
+}
 
 export interface EventPayload {
   friendId?: string;
@@ -55,7 +83,9 @@ export async function fireEvent(
   lineAccessToken?: string,
   lineAccountId?: string | null,
   dispatch: TagAutomationDispatch = createTagAutomationDispatch(),
+  options?: EventDispatchOptions,
 ): Promise<void> {
+  const operationId = options?.operationId;
   if (eventType === 'tag_change' && payload.friendId) {
     const tagId = payload.eventData?.tagId;
     const action = payload.eventData?.action;
@@ -73,15 +103,21 @@ export async function fireEvent(
   }
   // Phase 1: fire webhooks, apply scoring rules, and ad conversion postback concurrently.
   const phase1: Promise<unknown>[] = [
-    fireOutgoingWebhooks(db, eventType, payload),
-    processScoring(db, eventType, payload),
+    operationId
+      ? fireOutgoingWebhooks(db, eventType, payload, undefined, operationId)
+      : fireOutgoingWebhooks(db, eventType, payload),
+    operationId ? processScoring(db, eventType, payload, operationId) : processScoring(db, eventType, payload),
   ];
   if (payload.friendId && payload.conversionEventName) {
     phase1.push(
       sendAdConversions(db, payload.friendId, payload.conversionEventName, payload.conversionValue),
     );
   }
-  await Promise.allSettled(phase1);
+  const phase1Results = await Promise.allSettled(phase1);
+  if (operationId) {
+    const failure = phase1Results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  }
 
   // Build an enriched payload with the freshly-updated score.
   const enrichedPayload: EventPayload = payload.friendId
@@ -95,7 +131,11 @@ export async function fireEvent(
     : payload;
 
   // Phase 2: evaluate automations.
-  await processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId, dispatch);
+  if (operationId) {
+    await processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId, dispatch, operationId);
+  } else {
+    await processAutomations(db, eventType, enrichedPayload, lineAccessToken, lineAccountId, dispatch);
+  }
 }
 
 /**
@@ -110,11 +150,22 @@ export async function fireOutgoingWebhooks(
   eventType: string,
   payload: EventPayload,
   prefetched?: Awaited<ReturnType<typeof getActiveOutgoingWebhooksByEvent>>,
+  operationId?: string,
 ): Promise<number> {
   let delivered = 0;
   try {
     const webhooks = prefetched ?? (await getActiveOutgoingWebhooksByEvent(db, eventType));
+    // Idempotent dispatch: skip deliveries already recorded as 2xx for this
+    // operation. If the records cannot be read, send (never lose a delivery).
+    const deliveryScope = operationId ? `event-webhook:${eventType}:${operationId}` : undefined;
+    const alreadyDelivered = deliveryScope && webhooks.length > 0
+      ? await getCompletedIdempotencyKeys(db, deliveryScope).catch((err) => {
+          console.error('送信Webhookの配信記録の確認に失敗:', err);
+          return new Set<string>();
+        })
+      : undefined;
     for (const wh of webhooks) {
+      if (alreadyDelivered?.has(wh.id)) continue;
       try {
         const body = JSON.stringify({
           event: eventType,
@@ -123,6 +174,9 @@ export async function fireOutgoingWebhooks(
         });
 
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (operationId) {
+          headers['X-Webhook-Event-Id'] = await deriveIdempotentId(operationId, 'event-webhook', eventType, wh.id);
+        }
 
         // HMAC署名（シークレットがある場合）
         if (wh.secret) {
@@ -144,6 +198,11 @@ export async function fireOutgoingWebhooks(
         const res = await fetch(wh.url, { method: 'POST', headers, body });
         if (res.ok) {
           delivered += 1;
+          if (deliveryScope) {
+            await recordIdempotencyKeyCompleted(db, deliveryScope, wh.id, Date.now()).catch((err) => {
+              console.error(`送信Webhook ${wh.id} の配信記録に失敗:`, err);
+            });
+          }
         } else {
           console.error(`送信Webhook ${wh.id} への通知失敗: HTTP ${res.status}`);
         }
@@ -162,12 +221,19 @@ async function processScoring(
   db: D1Database,
   eventType: string,
   payload: EventPayload,
+  operationId?: string,
 ): Promise<void> {
   if (!payload.friendId) return;
   try {
-    await applyScoring(db, payload.friendId, eventType);
+    if (operationId) {
+      await applyScoring(db, payload.friendId, eventType, (ruleId) =>
+        deriveIdempotentId(operationId, 'event-score', eventType, ruleId));
+    } else {
+      await applyScoring(db, payload.friendId, eventType);
+    }
   } catch (err) {
     console.error('processScoring error:', err);
+    if (operationId) throw err;
   }
 }
 
@@ -179,6 +245,7 @@ async function processAutomations(
   lineAccessToken?: string,
   lineAccountId?: string | null,
   dispatch: TagAutomationDispatch = createTagAutomationDispatch(),
+  operationId?: string,
 ): Promise<void> {
   try {
     const allAutomations = await getActiveAutomationsByEvent(db, eventType);
@@ -194,13 +261,28 @@ async function processAutomations(
       // 条件チェック（簡易版: 条件が空なら常にマッチ）
       if (!matchConditions(conditions, payload, eventType)) continue;
 
+      // Idempotent dispatch: an automation already logged for this operation
+      // has run to the end (its log row is written last) — do not run it again.
+      // Checked right before each run, so a log written meanwhile by an
+      // overlapping attempt of the same operation is seen.
+      const logId = operationId
+        ? await deriveIdempotentId(operationId, 'event-automation', eventType, automation.id)
+        : undefined;
+      if (logId && (await db.prepare(`SELECT id FROM automation_logs WHERE id = ?`).bind(logId).first())) continue;
+
       const results: Array<{ action: string; success: boolean; error?: string }> = [];
 
-      for (const action of actions) {
+      for (const [actionIndex, action] of actions.entries()) {
         try {
-          await executeAction(db, action, payload, lineAccessToken, lineAccountId, dispatch);
+          const sendId = operationId && action.type === 'send_message'
+            ? await deriveIdempotentId(operationId, 'event-send', eventType, automation.id, String(actionIndex))
+            : undefined;
+          await executeAction(db, action, payload, lineAccessToken, lineAccountId, dispatch, sendId);
           results.push({ action: action.type, success: true });
         } catch (err) {
+          // Do not write a terminal automation log over a pending/failed keyed
+          // send: the caller must see the conflict or retryable failure.
+          if (operationId && action.type === 'send_message') throw err;
           const errorMsg = err instanceof Error ? err.message : String(err);
           results.push({ action: action.type, success: false, error: errorMsg });
         }
@@ -215,10 +297,12 @@ async function processAutomations(
         eventData: JSON.stringify(payload.eventData ?? {}),
         actionsResult: JSON.stringify(results),
         status: allSuccess ? 'success' : anySuccess ? 'partial' : 'failed',
+        ...(logId ? { id: logId } : {}),
       });
     }
   } catch (err) {
     console.error('processAutomations error:', err);
+    if (operationId) throw err;
   }
 }
 
@@ -274,6 +358,7 @@ async function executeAction(
   lineAccessToken?: string,
   lineAccountId?: string | null,
   dispatch: TagAutomationDispatch = createTagAutomationDispatch(),
+  sendId?: string,
 ): Promise<void> {
   const friendId = payload.friendId;
   if (!friendId && action.type !== 'send_webhook') {
@@ -343,6 +428,23 @@ async function executeAction(
       } else {
         msg = { type: 'text', text: resolvedContent };
         logContent = resolvedContent;
+      }
+
+      if (sendId) {
+        // Keyed API events use push (reply has no retry-key guarantee). The
+        // request and stable log ID survive overlapping API lease owners.
+        await runIdempotentLineSend(db, {
+          id: sendId, retryKey: sendId, accessToken: lineAccessToken,
+          accountId: lineAccountId ?? null, to: friend.line_user_id, messages: [msg],
+        }, async ([sent]) => {
+          const content = sent.type === 'text' ? sent.text
+            : sent.type === 'flex' ? JSON.stringify(sent.contents) : JSON.stringify(sent);
+          await logOutgoingMessage(db, {
+            id: sendId, friendId, messageType: sent.type, content,
+            deliveryType: 'push', source: 'automation', lineAccountId,
+          });
+        });
+        break;
       }
 
       let deliveryType: 'reply' | 'push';
@@ -451,10 +553,12 @@ async function executeAction(
   }
 }
 
-/** 送信メッセージを messages_log に記録（失敗しても例外を上げない） */
+/** 送信ログ。キーなしは従来どおりbest-effort、キー付きは失敗を呼出元へ返す。 */
 export async function logOutgoingMessage(
   db: D1Database,
   params: {
+    /** Keyed send log: stable ID and strict failure propagation. */
+    id?: string;
     friendId: string;
     messageType: string;
     content: string;
@@ -466,11 +570,11 @@ export async function logOutgoingMessage(
   try {
     await db
       .prepare(
-        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
+        `INSERT ${params.id ? 'OR IGNORE ' : ''}INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
          VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, ?, ?, ?, ?)`,
       )
       .bind(
-        crypto.randomUUID(),
+        params.id ?? crypto.randomUUID(),
         params.friendId,
         params.messageType,
         params.content,
@@ -482,5 +586,6 @@ export async function logOutgoingMessage(
       .run();
   } catch (err) {
     console.error('logOutgoingMessage failed:', err);
+    if (params.id) throw err;
   }
 }

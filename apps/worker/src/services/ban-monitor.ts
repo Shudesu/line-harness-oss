@@ -14,9 +14,11 @@
  */
 
 import {
+  clearTokenUnauthorized,
   getLineAccounts,
   createAccountHealthLog,
   getAccountHealthLogs,
+  recordTokenUnauthorized,
 } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 import {
@@ -89,14 +91,36 @@ async function checkSingleAccount(
     errorCount = 1;
   }
 
-  // リスクレベル判定
+  // リスクレベル判定。401（トークン失効・無効化）は 403 と同様に danger 扱い。
+  // 以前は 403 だけを danger にしており、失効したトークンのアカウントが
+  // 「risk normal のまま全送信が失敗する」状態になった (SCREENING L-5)。
   let riskLevel = 'normal';
   if (errorCode === 403) {
     riskLevel = 'danger'; // BAN の可能性
+  } else if (errorCode === 401) {
+    riskLevel = 'danger'; // トークン失効・無効化
   } else if (errorCode === 429) {
     riskLevel = 'warning'; // レート制限
   } else if (totalSent > 5000) {
     riskLevel = 'warning'; // 大量送信の警告
+  }
+
+  // 401 の時刻を KVS に残す (B-05)。接続ヘルス (services/connection-health.ts)
+  // が「直近60分の 401」を line.bot_info チェックの fail として出す。
+  if (errorCode === 401) {
+    try {
+      await recordTokenUnauthorized(db, account.id);
+    } catch (err) {
+      console.error(`401 記録に失敗 (account ${account.id}):`, err);
+    }
+  } else if (errorCode === null) {
+    // bot/info が通った = トークンが復活しているので、前回までの 401 記録を
+    // 消して接続ヘルスを即座に ok に戻す（60分の窓を待らせない）。
+    try {
+      await clearTokenUnauthorized(db, account.id);
+    } catch {
+      // 初回はレコードが無くても無視してよい。
+    }
   }
 
   // LINE プラン月間クォータの残量チェック (2026-09-01 事故対応)。毎時 tick のみ。
@@ -172,7 +196,10 @@ async function checkSingleAccount(
 
   // danger はクォータ残0 でも立つようになったため、BAN 警告は 403 のときだけ出す
   // (クォータ側は上の quota チェック内で専用メッセージを出している)。
-  if (riskLevel === 'danger' && errorCode === 403) {
-    console.error(`⚠️ BAN検知: アカウント ${account.id} で403エラー発生。即座に確認が必要。`);
+  // 401 は「トークン失効」— 送信・受信が全滅する状態なので 403 と同じく即通知。
+  if (riskLevel === 'danger' && (errorCode === 403 || errorCode === 401)) {
+    console.error(
+      `⚠️ ${errorCode === 401 ? 'トークン失効検知' : 'BAN検知'}: アカウント ${account.id} で${errorCode}エラー発生。即座に確認が必要。`,
+    );
   }
 }

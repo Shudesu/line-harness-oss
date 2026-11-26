@@ -182,7 +182,7 @@ const KNOWN_GAPS: readonly string[] = [
   'POST /api/rich-menu-groups/{groupId}/pages/{pageId}/image',
   'POST /api/rich-menu-groups/{groupId}/publish',
   'POST /api/rich-menu-groups/{groupId}/unpublish',
-  // friends (12)
+  // friends (11)
   'DELETE /api/friends/{friendId}/rich-menu',
   'GET /api/friends/ref-stats',
   'GET /api/friends/{friendId}/reminders',
@@ -192,7 +192,6 @@ const KNOWN_GAPS: readonly string[] = [
   'GET /api/friends/{id}/mileage',
   'GET /api/friends/{id}/score',
   'POST /api/friends/{friendId}/rich-menu',
-  'POST /api/friends/{id}/messages',
   'POST /api/friends/{id}/score',
   'PUT /api/friends/{id}/metadata',
   // admin (10)

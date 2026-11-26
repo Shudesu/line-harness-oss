@@ -16,6 +16,7 @@ import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import CampaignNotifications from '@/components/accounts/campaign-notifications'
 import TestRecipientsSetting from '@/components/accounts/test-recipients-setting'
 import AccountSettingsSection from '@/components/accounts/account-settings-section'
 import {
@@ -360,6 +361,7 @@ export default function AccountsPage() {
                   onUpdated={reloadAccounts}
                 />
                 <TestRecipientsSetting accountId={account.id} />
+                <CampaignNotifications accountId={account.id} />
                 <FollowerImportButton accountId={account.id} onImported={reloadAccounts} />
 
                 <div className="mt-3 flex items-center justify-between border-t border-kumo-line pt-3">

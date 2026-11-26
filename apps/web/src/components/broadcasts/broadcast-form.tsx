@@ -176,6 +176,9 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
             onValueChange={(value) => setForm({ ...form, targetType: value as ApiBroadcast['targetType'], targetTagId: value === 'tag' ? form.targetTagId : '' })}
             tabs={[{ value: 'all', label: '全員' }, { value: 'tag', label: 'タグで絞り込み' }, { value: 'multi-account-dedup', label: '複数アカ重複除外' }]}
           />
+          {form.targetType !== 'multi-account-dedup' && (
+            <p className="mt-1 text-xs text-kumo-subtle">複数タグ・除外タグで絞り込みたいときは、保存後の配信詳細で「複数タグ・除外タグで絞り込む」から設定できます。</p>
+          )}
           {form.targetType === 'tag' && (
             <Select
               className="mt-2 w-full"
