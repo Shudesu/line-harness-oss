@@ -75,6 +75,11 @@ crons = ["* * * * *", "0 */6 * * *"]
 # IG_LINK_TOKEN_SECRET overrides the HKDF fallback from IG_HARNESS_LINK_SECRET.
 # See docs/IG_LINK_TOKEN.md for migration 075 and coordinated rollout.
 [vars]
+# 認証移行用。日時は承認後にUTC ISO形式で設定（例はdocs/SECURITY-UPGRADE.md）。
+# 空なら旧Cookie交換は無効。設定した開始日時から14日で自動終了。
+ADMIN_LEGACY_COOKIE_UPGRADE_STARTED_AT = ""
+# 'true' にすると既存平文キーを認証時に削除。ロールバック確認完了後だけ有効化。
+STAFF_API_KEY_LAZY_HASH_ENABLED = "false"
 WORKER_NAME = "line-harness"
 ADMIN_PAGES_PROJECT = "line-harness-admin"
 LIFF_PAGES_PROJECT = "line-harness-liff"
