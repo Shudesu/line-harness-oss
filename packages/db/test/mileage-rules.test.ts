@@ -412,6 +412,71 @@ describe('configurable mileage rules', () => {
     expect((await getMileageSummaryForFriend(db, 'friend-1')).available).toBe(0);
   });
 
+  describe('metadata.do_not_contact on follow milestones', () => {
+    const FOLLOWED_AT = '2026-05-01T10:00:00.000+09:00';
+    const follow = (id: string, metadata: string) => sqlite.prepare(
+      `UPDATE friends
+          SET is_following = 1, first_followed_at = ?, current_follow_started_at = ?,
+              last_followed_at = ?, metadata = ?
+        WHERE id = ?`,
+    ).run(FOLLOWED_AT, FOLLOWED_AT, FOLLOWED_AT, metadata, id);
+    const milestoneCount = (id: string) => (sqlite.prepare(
+      `SELECT COUNT(*) AS n FROM engagement_events
+        WHERE actor_friend_id = ? AND source = 'line_relationship'`,
+    ).get(id) as { n: number }).n;
+    const run = () => enqueueFollowingMileageMilestones(db, {
+      now: '2026-08-10T10:00:00.000+09:00',
+      limitPerMilestone: 100,
+    });
+
+    it.each([
+      ['JSON true', '{"do_not_contact": true}'],
+      ['number 1', '{"do_not_contact": 1}'],
+      ['string "true"', '{"do_not_contact": "true"}'],
+      ['string "TRUE" with whitespace', '{"do_not_contact": " TRUE "}'],
+      ['string "1"', '{"do_not_contact": "1"}'],
+    ])('suppresses milestones when the flag is %s', async (_label, metadata) => {
+      follow('friend-1', metadata);
+      expect(await run()).toMatchObject({ eventsCreated: 0, queued: 0 });
+      expect(milestoneCount('friend-1')).toBe(0);
+    });
+
+    it.each([
+      ['empty object', '{}'],
+      ['JSON false', '{"do_not_contact": false}'],
+      ['number 0', '{"do_not_contact": 0}'],
+      ['JSON null', '{"do_not_contact": null}'],
+      ['string "false"', '{"do_not_contact": "false"}'],
+      ['string "0"', '{"do_not_contact": "0"}'],
+      ['empty string', '{"do_not_contact": ""}'],
+      ['non-object JSON', '[1, 2]'],
+      ['empty text', ''],
+      ['malformed JSON', '{"do_not_contact": tru'],
+    ])('keeps milestones when metadata is %s', async (_label, metadata) => {
+      follow('friend-1', metadata);
+      const result = await run();
+      // registered + 7d + 30d + 90d are due 101 days after the follow.
+      expect(result).toMatchObject({ eventsCreated: 4, queued: 4 });
+      expect(milestoneCount('friend-1')).toBe(4);
+    });
+
+    it('does not let one friend with malformed metadata stop the job for others', async () => {
+      follow('friend-1', '{not json');
+      follow('friend-2', '{"do_not_contact": true}');
+      sqlite.prepare(
+        `INSERT INTO friends (id, line_user_id, display_name, line_account_id)
+         VALUES ('friend-3', 'U3', 'ユーザーC', 'account-1')`,
+      ).run();
+      follow('friend-3', '{"note": "ok"}');
+
+      const result = await run();
+      expect(result).toMatchObject({ eventsCreated: 8, queued: 8 });
+      expect(milestoneCount('friend-1')).toBe(4);
+      expect(milestoneCount('friend-2')).toBe(0);
+      expect(milestoneCount('friend-3')).toBe(4);
+    });
+  });
+
   it('resets the continuous-follow streak after a block and preserves earned miles', async () => {
     sqlite.prepare(
       `UPDATE friends

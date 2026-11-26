@@ -1530,6 +1530,23 @@ const FOLLOWING_MILESTONES = [
   { eventType: 'friend_following_365d', days: 365, name: '継続フォロー1年' },
 ] as const;
 
+/**
+ * True unless `friends.metadata.do_not_contact` is set (alias `f`).
+ *
+ * Suppressing values: JSON `true`, the number `1`, and the strings `"true"` /
+ * `"1"` (case-insensitive, surrounding whitespace ignored) — apps write this
+ * flag through different serializers. Everything else (`false`, `0`, `null`,
+ * other strings, a missing key, non-object metadata) leaves the friend eligible.
+ *
+ * `friends.metadata` has no json_valid CHECK, and json_extract raises on
+ * malformed JSON, which would abort the whole statement — one corrupt row
+ * would stop the 6-hour milestone job for every friend. The json_valid guard
+ * turns malformed metadata into NULL, i.e. "not suppressed".
+ */
+const FRIEND_CONTACTABLE_SQL = `COALESCE(lower(trim(CAST(json_extract(
+              CASE WHEN json_valid(f.metadata) THEN f.metadata END, '$.do_not_contact') AS TEXT))), '')
+              NOT IN ('1', 'true')`;
+
 export interface FollowingMileageReconcileResult {
   eventsCreated: number;
   queued: number;
@@ -1584,8 +1601,7 @@ export async function enqueueFollowingMileageMilestones(
            FROM friends f
           WHERE f.is_following = 1
             AND ${eligibilitySql}
-            AND (f.metadata IS NULL OR json_extract(f.metadata, '$.do_not_contact') IS NULL
-                 OR json_extract(f.metadata, '$.do_not_contact') != 1)
+            AND ${FRIEND_CONTACTABLE_SQL}
             AND NOT EXISTS (
               SELECT 1 FROM engagement_events ee WHERE ee.id = ${eventIdSql}
             )
