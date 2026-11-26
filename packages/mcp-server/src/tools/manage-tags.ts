@@ -27,6 +27,7 @@ export function registerManageTags(server: McpServer): void {
           "Friend IDs to add/remove the tag from (for 'add' or 'remove' actions)",
         ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, tagName, tagColor, tagId, friendIds }) => {
       try {
         const client = getClient();

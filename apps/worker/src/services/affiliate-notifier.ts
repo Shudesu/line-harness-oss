@@ -1,3 +1,4 @@
+import { resolveLineClient } from './line-client-resolver.js';
 import { LineClient } from '@line-crm/line-sdk';
 import {
   getAffiliateById,
@@ -55,16 +56,7 @@ export async function notifyAffiliate(
     const friend = await getFriendById(db, affiliate.friend_id);
     if (!friend?.line_user_id) return;
 
-    // Resolve the push token from the friend's LINE account, falling back to
-    // the env default when the account row / token is absent.
-    let accessToken = env.LINE_CHANNEL_ACCESS_TOKEN;
-    if (friend.line_account_id) {
-      const account = await getLineAccountById(db, friend.line_account_id);
-      if (account?.channel_access_token) accessToken = account.channel_access_token;
-    }
-    if (!accessToken) return;
-
-    const client = new LineClient(accessToken);
+    const client = await resolveLineClient(db, env, friend.line_account_id, 'affiliate-notification', { allowSoleAccount: true });
     await client.pushMessage(friend.line_user_id, [{ type: 'text', text }]);
   } catch (err) {
     console.error('notifyAffiliate failed (non-blocking):', err);

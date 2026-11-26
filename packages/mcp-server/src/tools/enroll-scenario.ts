@@ -12,6 +12,7 @@ export function registerEnrollScenario(server: McpServer): void {
         .describe("The scenario ID to enroll the friend in"),
       friendId: z.string().describe("The friend's ID to enroll"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ scenarioId, friendId }) => {
       try {
         const client = getClient();

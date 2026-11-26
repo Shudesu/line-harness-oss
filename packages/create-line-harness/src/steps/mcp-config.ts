@@ -1,8 +1,9 @@
 import * as p from "@clack/prompts";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 
 interface McpConfigOptions {
+  configDir?: string;
   workerUrl: string;
   apiKey: string;
   /**
@@ -57,7 +58,7 @@ async function resolveDefaultAccountId(
 }
 
 export async function generateMcpConfig(options: McpConfigOptions): Promise<void> {
-  const mcpJsonPath = join(process.cwd(), ".mcp.json");
+  const mcpJsonPath = join(options.configDir ?? process.cwd(), ".mcp.json");
 
   const env: Record<string, string> = {
     LINE_HARNESS_API_URL: options.workerUrl,
@@ -85,19 +86,23 @@ export async function generateMcpConfig(options: McpConfigOptions): Promise<void
     try {
       mcpConfig = JSON.parse(readFileSync(mcpJsonPath, "utf-8"));
     } catch {
-      // Invalid JSON, start fresh
+      throw new Error(`MCP設定が不正なJSONです。既存ファイルを保持しました: ${mcpJsonPath}`);
     }
   }
 
+  if (!mcpConfig || typeof mcpConfig !== "object" || Array.isArray(mcpConfig) ||
+      (mcpConfig.mcpServers !== undefined && (!mcpConfig.mcpServers || typeof mcpConfig.mcpServers !== "object" || Array.isArray(mcpConfig.mcpServers)))) {
+    throw new Error(`MCP設定の形式が不正です。既存ファイルを保持しました: ${mcpJsonPath}`);
+  }
   if (!mcpConfig.mcpServers) {
     mcpConfig.mcpServers = {};
   }
 
   // Don't overwrite existing line-harness config — use a unique name
   let serverName = "line-harness";
-  if (mcpConfig.mcpServers["line-harness"]) {
-    // Extract a short suffix from the API key
-    const suffix = options.apiKey.slice(0, 8);
+  if (Object.hasOwn(mcpConfig.mcpServers, "line-harness")) {
+    let suffix = 2;
+    while (Object.hasOwn(mcpConfig.mcpServers, `line-harness-${suffix}`)) suffix += 1;
     serverName = `line-harness-${suffix}`;
     p.log.info(
       `既存の line-harness 設定があるため、${serverName} として追加します`,
@@ -105,6 +110,7 @@ export async function generateMcpConfig(options: McpConfigOptions): Promise<void
   }
   mcpConfig.mcpServers[serverName] = newServerConfig;
 
-  writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, 2) + "\n");
-  p.log.success(`.mcp.json に MCP 設定を追加しました（${serverName}）`);
+  if (existsSync(mcpJsonPath)) chmodSync(mcpJsonPath, 0o600);
+  writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, 2) + "\n", { mode: 0o600 });
+  p.log.success(`${mcpJsonPath} に MCP 設定を追加しました（${serverName}）`);
 }

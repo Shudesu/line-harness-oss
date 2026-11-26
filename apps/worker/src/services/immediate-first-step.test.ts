@@ -30,7 +30,7 @@ const dbMocks = vi.hoisted(() => ({
   // 既定は env をそのまま返す（＝従来挙動）。テナントに有効なアカウントが1本
   // しか無いときだけ line_accounts を正とする実装の、単体テスト側のスタブ。
   // 既定は「1本に決まらない」= null（＝従来どおり env / 既存の解決に委ねる）。
-  resolveDefaultLineAccount: vi.fn(async () => null),
+  resolveDefaultLineAccount: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
   addTagToFriend: vi.fn(),
   jstNow: vi.fn(),
   toJstString: vi.fn(),
@@ -81,10 +81,11 @@ interface DbCall {
  * `cooldownHit` backs the messages_log probe; `enrollmentLookup` backs the
  * friend_scenarios fallback lookup.
  */
-function makeDb(opts: { cooldownHit?: boolean; enrollmentLookup?: { id: string; current_step_order: number } | null } = {}) {
+function makeDb(opts: { registered?: boolean; cooldownHit?: boolean; enrollmentLookup?: { id: string; current_step_order: number } | null } = {}) {
   const calls: DbCall[] = [];
   const db = {
     prepare: (sql: string) => ({
+      first: async () => { calls.push({ sql, args: [] }); return sql.includes('FROM line_accounts') && opts.registered ? { id: 'registered' } : null; },
       bind: (...args: unknown[]) => {
         calls.push({ sql, args });
         return {
@@ -113,6 +114,9 @@ function claimReleased(calls: DbCall[]): boolean {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dbMocks.getLineAccountById.mockResolvedValue(null);
+  dbMocks.getLineAccountByChannelId.mockResolvedValue(null);
+  dbMocks.resolveDefaultLineAccount.mockResolvedValue(null);
   dbMocks.jstNow.mockReturnValue('2026-07-19T12:00:00.000+09:00');
   dbMocks.toJstString.mockImplementation((d: Date) => d.toISOString());
   // delay-0 steps schedule at "now"; later steps at now + delay.
@@ -232,6 +236,7 @@ describe("mode 'once' (default) — claim protocol with the cron", () => {
     const calls: Array<{ sql: string }> = [];
     const db = {
       prepare: (sql: string) => ({
+        first: async () => null,
         bind: () => {
           calls.push({ sql });
           return {
@@ -366,7 +371,7 @@ describe("mode 'every-click' — click-campaign re-delivery", () => {
   });
 
   it('resolves the account token from accountChannelId before friend.line_account_id', async () => {
-    dbMocks.getLineAccountByChannelId.mockResolvedValue({ channel_access_token: 'acct-token' });
+    dbMocks.getLineAccountByChannelId.mockResolvedValue({ id: 'ctx-account', is_active: 1, channel_access_token: 'acct-token' });
     const { LineClient } = await import('@line-crm/line-sdk');
     const { db } = makeDb();
     await pushImmediateFirstStep(
@@ -453,6 +458,7 @@ describe('decoration — cron parity via the shared decorateForFriendPush pipeli
       user_id: null,
       metadata: '{}',
     });
+    dbMocks.getLineAccountById.mockResolvedValue({ id: 'acct-7', is_active: 1, channel_access_token: 'token-7' });
     const { db } = makeDb();
     await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
       enrollment: { id: 'fs-1', current_step_order: 0 },
@@ -469,6 +475,7 @@ describe('decoration — cron parity via the shared decorateForFriendPush pipeli
   it('falls back to the caller-resolved account as link owner when friend.line_account_id is not yet wired (LIFF-before-webhook)', async () => {
     dbMocks.getLineAccountByChannelId.mockResolvedValue({
       id: 'acct-9',
+      is_active: 1,
       channel_access_token: 'tok-9',
     });
     const { db } = makeDb();
@@ -630,5 +637,21 @@ describe('step conditions — cron parity on the instant path', () => {
     expect(sent).toBe(false);
     expect(lineClientMock.pushMessage).not.toHaveBeenCalled();
     expect(dbMocks.claimFriendScenarioForDelivery).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('immediate sender resolution fails closed', () => {
+  it('does not use env when the selected channel is missing from a populated registry', async () => {
+    const {db}=makeDb({registered:true});
+    dbMocks.resolveDefaultLineAccount.mockResolvedValue({id:'other',is_active:1,channel_access_token:'other-token'});
+    const sent=await pushImmediateFirstStep(db,'friend-1','scn-1',{...ctx,accountChannelId:'missing'}, {enrollment:{id:'fs-1',current_step_order:0}});
+    expect(sent).toBe(false);expect(lineClientMock.pushMessage).not.toHaveBeenCalled();expect(dbMocks.resolveDefaultLineAccount).not.toHaveBeenCalled();
+  });
+  it('does not fall back from a deleted friend account to another active account', async () => {
+    dbMocks.getFriendById.mockResolvedValue({id:'friend-1',line_user_id:'U-1',line_account_id:'deleted',metadata:'{}',user_id:null});
+    dbMocks.resolveDefaultLineAccount.mockResolvedValue({id:'other',is_active:1,channel_access_token:'other-token'});
+    const {db}=makeDb();const sent=await pushImmediateFirstStep(db,'friend-1','scn-1',ctx,{enrollment:{id:'fs-1',current_step_order:0}});
+    expect(sent).toBe(false);expect(lineClientMock.pushMessage).not.toHaveBeenCalled();
   });
 });

@@ -38,6 +38,7 @@ export function registerCreateScenario(server: McpServer): void {
         .optional()
         .describe("LINE account ID (uses default if omitted)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ name, triggerType, triggerTagId, steps, accountId }) => {
       try {
         if (triggerType === "tag_added" && !triggerTagId) {

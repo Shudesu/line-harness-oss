@@ -1,3 +1,4 @@
+import { getApiConfig } from "./config.js";
 /**
  * MCP ツールから直接 API を叩くときの共有クライアント。
  *
@@ -20,12 +21,6 @@ export interface ApiCallResult {
   hint?: string;
 }
 
-function getApiConfig() {
-  const apiUrl = process.env.LINE_HARNESS_API_URL;
-  const apiKey = process.env.LINE_HARNESS_API_KEY;
-  if (!apiUrl || !apiKey) throw new Error("LINE_HARNESS_API_URL and LINE_HARNESS_API_KEY required");
-  return { apiUrl, apiKey };
-}
 
 /**
  * ルート未存在（= この bundle には機能が無い）かどうかの判定。
@@ -66,6 +61,10 @@ export async function apiCall(path: string, method = "GET", body?: unknown): Pro
       `${method} ${path} はこの環境に存在しません。ID の問題ではなく、テナントの bundle が` +
       `この機能を含むバージョンより古い可能性が高いです。ID を変えて再試行しても解決しません。` +
       `GET /admin/version で稼働中のバージョンを確認できます。`;
+  } else if (res.status === 403 && (data as {error?:string})?.error === 'insufficient_scope') {
+    const required = (data as {required?:string}).required;
+    const label = ['read','write','send','admin'].includes(required ?? '') ? required : '人の管理者による操作';
+    result.hint = `このキーには ${label} 権限がありません。必要な用途の専用キーを管理者に設定してもらってください。権限を増やす目的で別のAPIを試さないでください。`;
   } else if (res.status === 401 || res.status === 403) {
     result.hint = `認証に失敗しました（${res.status}）。LINE_HARNESS_API_KEY を確認してください。`;
   }

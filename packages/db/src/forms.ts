@@ -319,19 +319,18 @@ export async function createFormSubmission(
   const id = crypto.randomUUID();
   const now = jstNow();
 
-  await db
+  await db.batch([db
     .prepare(
       `INSERT INTO form_submissions (id, form_id, friend_id, data, created_at)
        VALUES (?, ?, ?, ?, ?)`,
     )
-    .bind(id, input.formId, input.friendId ?? null, input.data, now)
-    .run();
+    .bind(id, input.formId, input.friendId ?? null, input.data, now),
 
   // Increment submit_count
-  await db
+  db
     .prepare(`UPDATE forms SET submit_count = submit_count + 1, updated_at = ? WHERE id = ?`)
-    .bind(now, input.formId)
-    .run();
+    .bind(now, input.formId),
+  ]);
 
   return (await db
     .prepare(`SELECT * FROM form_submissions WHERE id = ?`)

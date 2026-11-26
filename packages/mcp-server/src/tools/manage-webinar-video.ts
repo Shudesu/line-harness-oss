@@ -256,6 +256,7 @@ export function registerManageWebinarVideo(server: McpServer): void {
         ),
       durationSeconds: z.number().optional().describe("Video length in seconds from ffprobe (required for 'finish')"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, webinarId, revision, dir, offset, expectedTotal, durationSeconds }) => {
       const apiUrl = process.env.LINE_HARNESS_API_URL;
       const apiKey = process.env.LINE_HARNESS_API_KEY;

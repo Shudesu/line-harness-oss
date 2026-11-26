@@ -16,6 +16,7 @@ export function registerManageAutoReplies(server: McpServer): void {
       lineAccountId: z.string().nullable().optional().describe("LINE account ID filter (for list, create, update)"),
       isActive: z.boolean().optional().describe("Active status (for update)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, autoReplyId, keyword, matchType, responseType, responseContent, lineAccountId, isActive }) => {
       try {
         const client = getClient();

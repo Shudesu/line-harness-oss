@@ -17,6 +17,7 @@ export function registerGetFriendDetail(server: McpServer): void {
       friendId: z.string().describe("The friend's ID"),
       includeMessages: z.boolean().optional().describe("Include message history (default: false)"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ friendId, includeMessages }) => {
       try {
         const client = getClient();

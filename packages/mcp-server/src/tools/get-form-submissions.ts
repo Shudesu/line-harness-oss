@@ -9,6 +9,7 @@ export function registerGetFormSubmissions(server: McpServer): void {
     {
       formId: z.string().describe("The form ID to get submissions for"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ formId }) => {
       try {
         const client = getClient();

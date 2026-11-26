@@ -25,6 +25,7 @@ export function registerListConversations(server: McpServer): void {
         .describe("Number of conversations to return (max 200)"),
       offset: z.number().default(0).describe("Offset for pagination"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ lineAccountId, minHoursSince, maxHoursSince, limit, offset }) => {
       try {
         const client = getClient();

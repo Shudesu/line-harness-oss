@@ -22,6 +22,7 @@ export function registerManageForms(server: McpServer): void {
       ogDescription: z.string().nullable().optional().describe("OGP description override for the form's LIFF page preview, or null to clear (for update)"),
       ogImageUrl: z.string().nullable().optional().describe("OGP image URL override for the form's LIFF page preview, or null to clear (for update)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, formId, name, description, fields, onSubmitTagId, onSubmitScenarioId, onSubmitMessageType, onSubmitMessageContent, saveToMetadata, isActive, ogTitle, ogDescription, ogImageUrl }) => {
       try {
         const client = getClient();

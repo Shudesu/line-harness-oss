@@ -45,6 +45,7 @@ export function registerCreateForm(server: McpServer): void {
       ogDescription: z.string().nullable().optional().describe("OGP description override for the form's LIFF page preview"),
       ogImageUrl: z.string().nullable().optional().describe("OGP image URL override for the form's LIFF page preview"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({
       name,
       description,
