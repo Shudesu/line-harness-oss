@@ -66,7 +66,14 @@ const autoTrackMocks = vi.hoisted(() => ({
 }));
 vi.mock('./auto-track.js', () => autoTrackMocks);
 
+// tag_change の発火だけを見る。実物は Webhook / スコアリング / automation まで走る。
+const eventBusMocks = vi.hoisted(() => ({
+  fireEvent: vi.fn(async (..._args: unknown[]) => undefined),
+}));
+vi.mock('./event-bus.js', () => eventBusMocks);
+
 import { pushImmediateFirstStep } from './immediate-first-step.js';
+import { createTagAutomationDispatch } from './tag-automation-context.js';
 
 const STEP1 = { id: 'step-1', step_order: 1, delay_minutes: 0, on_reach_tag_id: null };
 const STEP2 = { id: 'step-2', step_order: 2, delay_minutes: 60 };
@@ -528,18 +535,154 @@ describe('decoration — cron parity via the shared decorateForFriendPush pipeli
 });
 
 describe('on_reach_tag', () => {
-  it('attaches the reach tag after advancing', async () => {
+  const TAGGED = { ...STEP1, on_reach_tag_id: 'tag-9' };
+  const TAG_EVENT = { friendId: 'friend-1', eventData: { tagId: 'tag-9', action: 'add' } };
+  const tagChangeCalls = () =>
+    eventBusMocks.fireEvent.mock.calls.filter((call) => call[1] === 'tag_change');
+
+  beforeEach(() => {
     dbMocks.getScenarioById.mockResolvedValue({
       id: 'scn-1',
       is_active: 1,
       delivery_mode: 'relative',
-      steps: [{ ...STEP1, on_reach_tag_id: 'tag-9' }, STEP2],
+      steps: [TAGGED, STEP2],
     });
+    // addTagToFriend reports whether the INSERT OR IGNORE added a row.
+    dbMocks.addTagToFriend.mockResolvedValue(true);
+  });
+
+  it('attaches the reach tag after advancing', async () => {
     const { db } = makeDb();
     await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
       enrollment: { id: 'fs-1', current_step_order: 0 },
     });
     expect(dbMocks.addTagToFriend).toHaveBeenCalledWith(db, 'friend-1', 'tag-9');
+    expect(dbMocks.advanceFriendScenario.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMocks.addTagToFriend.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('fires tag_change exactly once, in the manual-route shape, when the tag is newly attached', async () => {
+    const { db } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(true);
+    expect(tagChangeCalls()).toHaveLength(1);
+    const [calledDb, eventType, payload, token, accountId] = tagChangeCalls()[0];
+    expect(calledDb).toBe(db);
+    expect(eventType).toBe('tag_change');
+    expect(payload).toEqual(TAG_EVENT);
+    // No token / account forced: the event bus resolves both from the friend.
+    expect(token).toBeUndefined();
+    expect(accountId).toBeUndefined();
+  });
+
+  it('does NOT fire tag_change when the friend already had the tag (attach is a no-op)', async () => {
+    dbMocks.addTagToFriend.mockResolvedValue(false);
+    const { db } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(true);
+    expect(dbMocks.addTagToFriend).toHaveBeenCalledTimes(1);
+    expect(eventBusMocks.fireEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not fire tag_change when the step has no on_reach_tag_id', async () => {
+    dbMocks.getScenarioById.mockResolvedValue({
+      id: 'scn-1',
+      is_active: 1,
+      delivery_mode: 'relative',
+      steps: [STEP1, STEP2],
+    });
+    const { db } = makeDb();
+    await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(dbMocks.addTagToFriend).not.toHaveBeenCalled();
+    expect(eventBusMocks.fireEvent).not.toHaveBeenCalled();
+  });
+
+  it('cooldown hit (racer delivered the step): the event fires once across both callers', async () => {
+    // The racer that actually sent the step attaches first and sees `added`;
+    // this cooldown-branch caller then gets a no-op attach.
+    dbMocks.addTagToFriend.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const racer = makeDb();
+    await pushImmediateFirstStep(racer.db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    const late = makeDb({ cooldownHit: true });
+    const sent = await pushImmediateFirstStep(late.db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-2', current_step_order: 0 },
+    });
+    expect(sent).toBe(false);
+    expect(dbMocks.addTagToFriend).toHaveBeenCalledTimes(2);
+    expect(tagChangeCalls()).toHaveLength(1);
+  });
+
+  it('cooldown hit still fires when this caller is the one that newly attaches the tag', async () => {
+    const { db } = makeDb({ cooldownHit: true });
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(false);
+    expect(lineClientMock.pushMessage).not.toHaveBeenCalled();
+    expect(tagChangeCalls()).toHaveLength(1);
+    expect(tagChangeCalls()[0][2]).toEqual(TAG_EVENT);
+  });
+
+  it('every-click re-delivery on an already-advanced row neither re-attaches nor re-fires', async () => {
+    dbMocks.enrollFriendInScenario.mockResolvedValue(null);
+    const { db } = makeDb({ enrollmentLookup: { id: 'fs-1', current_step_order: 1 } });
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, { mode: 'every-click' });
+    expect(sent).toBe(true); // the click still gets the message
+    expect(dbMocks.addTagToFriend).not.toHaveBeenCalled();
+    expect(eventBusMocks.fireEvent).not.toHaveBeenCalled();
+  });
+
+  it('a tag_change failure is logged and never undoes the delivery', async () => {
+    eventBusMocks.fireEvent.mockRejectedValueOnce(new Error('automation exploded'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, calls } = makeDb();
+    const sent = await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+    });
+    expect(sent).toBe(true);
+    expect(dbMocks.advanceFriendScenario).toHaveBeenCalledTimes(1);
+    expect(claimReleased(calls)).toBe(false);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('uses the caller-verified channel as the event account while the friend is not yet assigned', async () => {
+    dbMocks.getLineAccountByChannelId.mockResolvedValue({
+      id: 'acct-7',
+      channel_id: 'chan-7',
+      channel_access_token: 'tok-7',
+      is_active: 1,
+    });
+    const { db } = makeDb();
+    await pushImmediateFirstStep(
+      db,
+      'friend-1',
+      'scn-1',
+      { ...ctx, accountChannelId: 'chan-7' },
+      { mode: 'every-click', targetLineUserId: 'U-1' },
+    );
+    expect(tagChangeCalls()).toHaveLength(1);
+    expect(tagChangeCalls()[0][4]).toBe('acct-7');
+  });
+
+  it("joins the caller's tag-automation dispatch so the cascade guard covers the reach tag", async () => {
+    const dispatch = createTagAutomationDispatch();
+    const { db } = makeDb();
+    await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
+      enrollment: { id: 'fs-1', current_step_order: 0 },
+      dispatch,
+    });
+    expect(tagChangeCalls()).toHaveLength(1);
+    expect(tagChangeCalls()[0][5]).toBe(dispatch);
   });
 });
 

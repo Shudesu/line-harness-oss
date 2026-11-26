@@ -109,7 +109,7 @@ export async function attachTagAndFireSideEffects(
                 ...push,
                 accountChannelId: account.channel_id,
                 defaultAccessToken: account.channel_access_token,
-              }, { enrollment });
+              }, { enrollment, dispatch });
             }
           }
         }

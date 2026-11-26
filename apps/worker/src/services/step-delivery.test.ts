@@ -530,10 +530,12 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
    * Fake D1 driving processStepDeliveries through the full success path for a
    * single-step scenario (no condition) whose only step has on_reach_tag_id set.
    */
-  function successDeliveryMockDb(opts: { onReachTagId: string | null }): {
+  function successDeliveryMockDb(opts: { onReachTagId: string | null; alreadyTagged?: boolean }): {
     db: D1Database;
     tagAttachCalls: Array<{ friendId: string; tagId: string }>;
+    writes: string[];
   } {
+    const writes: string[] = [];
     const tagAttachCalls: Array<{ friendId: string; tagId: string }> = [];
     const stepRow = {
       id: 'step-1',
@@ -567,8 +569,8 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
                 line_account_id: null,
               };
             }
-            if (sql.includes('delivery_mode FROM scenarios')) {
-              return { delivery_mode: 'relative' };
+            if (sql.includes('FROM scenarios')) {
+              return { delivery_mode: 'relative', line_account_id: null };
             }
             return null;
           },
@@ -594,9 +596,11 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
             return { results: [] };
           },
           run: async () => {
+            writes.push(sql);
             if (sql.includes('INSERT OR IGNORE INTO friend_tags')) {
               tagAttachCalls.push({ friendId: args[0] as string, tagId: args[1] as string });
-              return { meta: { changes: 1 } };
+              // INSERT OR IGNORE: 0 rows changed when the friend already has the tag.
+              return { meta: { changes: opts.alreadyTagged ? 0 : 1 } };
             }
             return { meta: { changes: 1 } }; // claim / advance / complete / messages_log — all succeed
           },
@@ -608,7 +612,7 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
       },
     } as unknown as D1Database;
 
-    return { db, tagAttachCalls };
+    return { db, tagAttachCalls, writes };
   }
 
   function mockLineClient(): { client: LineClient; push: ReturnType<typeof vi.fn> } {
@@ -640,6 +644,48 @@ describe('on_reach_tag_id fires tag_change on the event bus', () => {
     expect(push).toHaveBeenCalledTimes(1);
     expect(tagAttachCalls).toEqual([]);
     expect(fireEventMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fire tag_change again when the friend already had the tag', async () => {
+    // 手動で先に付けた / 別シナリオの到達タグと同じタグ、など。付与は no-op なので
+    // automation・スコアリング・外向き Webhook を重複して走らせない。
+    const { db, tagAttachCalls } = successDeliveryMockDb({ onReachTagId: 'tag-Z', alreadyTagged: true });
+    const { client, push } = mockLineClient();
+
+    await processStepDeliveries(db, client);
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(tagAttachCalls).toEqual([{ friendId: 'f1', tagId: 'tag-Z' }]); // attach attempted once
+    expect(fireEventMock).not.toHaveBeenCalled();
+  });
+
+  it('fires once per newly attached tag across repeated cron ticks', async () => {
+    const first = successDeliveryMockDb({ onReachTagId: 'tag-Z' });
+    await processStepDeliveries(first.db, mockLineClient().client);
+    // A later delivery reaching the same tag (re-enrollment, another scenario).
+    const second = successDeliveryMockDb({ onReachTagId: 'tag-Z', alreadyTagged: true });
+    await processStepDeliveries(second.db, mockLineClient().client);
+
+    expect(fireEventMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing tag_change handler does not undo the delivery (message stays sent, enrollment settled)', async () => {
+    fireEventMock.mockRejectedValueOnce(new Error('automation exploded'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, writes } = successDeliveryMockDb({ onReachTagId: 'tag-Z' });
+    const { client, push } = mockLineClient();
+
+    await expect(processStepDeliveries(db, client)).resolves.not.toThrow();
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(fireEventMock).toHaveBeenCalledTimes(1);
+    // The enrollment was settled (single step → completed) BEFORE the tag
+    // attach, so the failed event cannot cause a re-send.
+    const tagIdx = writes.findIndex((w) => w.includes('INSERT OR IGNORE INTO friend_tags'));
+    const settleIdx = writes.findIndex((w) => w.includes('UPDATE friend_scenarios') && w.includes('completed'));
+    expect(settleIdx).toBeGreaterThanOrEqual(0);
+    expect(settleIdx).toBeLessThan(tagIdx);
+    errorSpy.mockRestore();
   });
 });
 
