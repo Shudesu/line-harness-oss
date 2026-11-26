@@ -74,7 +74,7 @@ def run(db, queries, unlimited=False):
 
 
 report = {"unit": "sqlite_vm_instructions_not_d1_rows", "sqlite_version": sqlite3.sqlite_version,
-          "query_count": len(payload["queries"]), "caught_up": []}
+          "query_count": len(payload["queries"]), "caught_up": [], "recovery_backlog": []}
 for scale in [1, 100, 1000]:
     friends = 100 * scale
     db = fixture(friends)
@@ -89,13 +89,25 @@ for scale in [1, 100, 1000]:
     assert not any("TEMP B-TREE" in plan and "friends" in plan for plan in plans)
     report["caught_up"].append({"scale": scale, "friends": friends, "vm_instructions_approx": steps,
                                 "wall_ms_informational": round(seconds * 1000, 1)})
-    if scale == 1000:
-        # Negative control: an event left without a queue row must be found
-        # again, so the caught-up measurement is not a query that reads nothing.
-        db.execute("DELETE FROM mileage_event_queue WHERE engagement_event_id IN "
-                   "(SELECT id FROM engagement_events WHERE actor_friend_id = 'f-1')")
-        _, recovered, _, _ = run(db, payload["queries"])
-        assert recovered == MILESTONES, f"Recovery did not requeue the missing rows: {recovered}"
+    # Recovery backlog that grows with the scale: 10% of friends lose their
+    # queue rows and half of those opt out before the retry. This is the only
+    # path that probes friends from the queue statement, so it is measured and
+    # bounded separately. Unlimited binds: the per-run LIMIT would hide growth.
+    db.execute("""DELETE FROM mileage_event_queue WHERE engagement_event_id IN (
+                    SELECT ee.id FROM engagement_events ee JOIN friends f ON f.id = ee.actor_friend_id
+                     WHERE CAST(substr(f.id, 3) AS INTEGER) % 10 = 1)""")
+    db.execute("""UPDATE friends SET metadata = '{"do_not_contact": true}'
+                   WHERE CAST(substr(id, 3) AS INTEGER) % 20 = 1""")
+    db.commit()
+    backlog_steps, recovered, _, _ = run(db, payload["queries"], unlimited=True)
+    assert recovered == (friends // 20) * MILESTONES, f"Unexpected recovery writes: {recovered}"
+    # The opt-out probe must reach friends by primary key, never by a scan.
+    for query in payload["queries"][1::2]:
+        queue_plan = [row[3] for row in db.execute("EXPLAIN QUERY PLAN " + query["sql"], query["params"])]
+        assert any(plan.startswith("SEARCH f ") for plan in queue_plan), queue_plan
+        assert not any(plan.startswith("SCAN f") for plan in queue_plan), queue_plan
+    report["recovery_backlog"].append({"scale": scale, "unqueued_events": (friends // 10) * MILESTONES,
+                                       "requeued": recovered, "vm_instructions_approx": backlog_steps})
     db.close()
 
 # The job is linear in following friends by design. Allow 2x for planner/VM
@@ -103,4 +115,7 @@ for scale in [1, 100, 1000]:
 baseline = max(100, report["caught_up"][0]["vm_instructions_approx"])
 for item in report["caught_up"]:
     assert item["vm_instructions_approx"] <= baseline * item["scale"] * 2, "Superlinear milestone reconciliation"
+backlog_baseline = max(100, report["recovery_backlog"][0]["vm_instructions_approx"])
+for item in report["recovery_backlog"]:
+    assert item["vm_instructions_approx"] <= backlog_baseline * item["scale"] * 2, "Superlinear milestone recovery"
 print(json.dumps(report))
