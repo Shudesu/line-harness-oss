@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '@/lib/api'
+import { useAuthStatus } from '@/contexts/auth-context'
 
 const STORAGE_KEY = 'lh_selected_account'
 
@@ -38,6 +39,7 @@ const AccountContext = createContext<AccountContextValue | null>(null)
 
 export function AccountProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<AccountWithStats[]>([])
+  const authStatus = useAuthStatus()
   const [selectedAccountId, setSelectedAccountIdState] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -82,8 +84,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    // 認証が確定するまでアカウント一覧を取りに行かない（旧実装は
+    // 未認証のまま叩いて失敗し、確定後に再取得されないことがあった）
+    if (authStatus !== 'ok') return
     refreshAccounts()
-  }, [refreshAccounts])
+  }, [authStatus, refreshAccounts])
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId) ?? null
 

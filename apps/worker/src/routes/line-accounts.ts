@@ -8,6 +8,7 @@ import {
   updateLineAccountFields,
   updateLineAccountOrder,
   deleteLineAccount,
+  getLatestRiskLevel,
 } from '@line-crm/db';
 import type { LineAccount as DbLineAccount } from '@line-crm/db';
 import { requireRole } from '../middleware/role-guard.js';
@@ -21,8 +22,42 @@ import type { FollowerImportClient } from '../services/follower-import.js';
 import type { Env } from '../index.js';
 import { countAccountMonthlyMessages, jstYyyyMmDd } from '../services/quota.js';
 import { countDeliverableAudience } from '../services/quota-alert.js';
+import {
+  buildConnectionHealth,
+  type ConnectionHealth,
+} from '../services/connection-health.js';
+import {
+  expectedWebhookUrl,
+  probeWebhookEndpoint,
+  setWebhookEndpointWithConfirm,
+} from '../services/webhook-endpoint.js';
 
 const lineAccounts = new Hono<Env>();
+
+/** Origin used for webhook endpoint expectations (same rule as webhook.ts). */
+function workerOrigin(c: { env: Env['Bindings']; req: { url: string } }): string {
+  return c.env.WORKER_URL || new URL(c.req.url).origin;
+}
+
+/**
+ * B-10: after an account is added or its credentials rotated, read the
+ * webhook URL registered on the channel and run LINE's /webhook/test. The
+ * probe never throws and results land in the account_settings KVS for the
+ * connection-health endpoint — account registration must not fail because a
+ * probe (or its KVS write) did.
+ */
+async function recordWebhookHealthAfterChange(
+  db: D1Database,
+  env: Env['Bindings'],
+  account: DbLineAccount,
+): Promise<void> {
+  try {
+    const client = new LineClient(account.channel_access_token);
+    await probeWebhookEndpoint(db, client, account.id, expectedWebhookUrl(env.WORKER_URL));
+  } catch (err) {
+    console.error('[line-accounts] webhook endpoint probe failed (non-fatal)', err);
+  }
+}
 
 function serializeLineAccount(row: DbLineAccount) {
   return {
@@ -299,10 +334,101 @@ lineAccounts.get('/api/line-accounts/delivery-health', async (c) => {
   }
 });
 
+// GET /api/line-accounts/:id/webhook-endpoint — B-10 probe.
+// Reads the webhook URL registered on the LINE channel, compares it with this
+// Worker's expected URL, and runs LINE's /webhook/test. Results are persisted
+// for the connection-health check below. Read-only against LINE.
+lineAccounts.get('/api/line-accounts/:id/webhook-endpoint', async (c) => {
+  try {
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+    const expectedUrl = expectedWebhookUrl(workerOrigin(c));
+    const probe = await probeWebhookEndpoint(
+      c.env.DB,
+      new LineClient(account.channel_access_token),
+      account.id,
+      expectedUrl,
+    );
+    return c.json({ success: true, data: probe });
+  } catch (err) {
+    console.error('GET /api/line-accounts/:id/webhook-endpoint error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// PUT /api/line-accounts/:id/webhook-endpoint — B-10 fix (owner only).
+// Overwrites the channel's webhook URL with this Worker's expected URL.
+// Requires confirm=true: an existing URL that differs (someone else's receiver,
+// or another tool's endpoint) is never silently overwritten. A body `endpoint`
+// override is judged against the Worker's expected URL, never against itself —
+// pointing the channel elsewhere is recorded as a mismatch in health, not ok.
+lineAccounts.put('/api/line-accounts/:id/webhook-endpoint', requireRole('owner'), async (c) => {
+  try {
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+    const body = await c.req.json<{ confirm?: boolean; endpoint?: string }>().catch(() => ({}) as { confirm?: boolean; endpoint?: string });
+    const expectedUrl = expectedWebhookUrl(workerOrigin(c));
+    const target = typeof body.endpoint === 'string' && body.endpoint.trim() !== ''
+      ? body.endpoint.trim()
+      : expectedUrl;
+    const outcome = await setWebhookEndpointWithConfirm(
+      c.env.DB,
+      new LineClient(account.channel_access_token),
+      account.id,
+      target,
+      body.confirm === true,
+      expectedUrl,
+    );
+    if (!outcome.ok && outcome.requiresConfirm) {
+      return c.json({ success: false, requiresConfirm: true, error: outcome.error, data: { expectedUrl } }, 409);
+    }
+    if (!outcome.ok) {
+      return c.json({ success: false, error: outcome.error ?? 'Webhook endpoint update failed' }, 502);
+    }
+    return c.json({ success: true, data: outcome.probe });
+  } catch (err) {
+    console.error('PUT /api/line-accounts/:id/webhook-endpoint error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/line-accounts/:id/connection-health — PLAN.md 1-1 contract (B-05/B-10).
+// Same JSON as MCP account_summary surfaces: checkedAt / accountId / platform /
+// overall / checks[] with id・status・summary・evidence・nextAction.
+// ?refresh=true re-runs the live webhook endpoint + test probes on the spot.
+lineAccounts.get('/api/line-accounts/:id/connection-health', async (c) => {
+  try {
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
+    if (!account) {
+      return c.json({ success: false, error: 'LINE account not found' }, 404);
+    }
+    const refresh = c.req.query('refresh') === 'true';
+    const riskLevel = await getLatestRiskLevel(c.env.DB, account.id);
+    const data: ConnectionHealth = await buildConnectionHealth(c.env.DB, account, {
+      refresh,
+      riskLevel,
+      ...(refresh
+        ? {
+            client: new LineClient(account.channel_access_token),
+            expectedUrl: expectedWebhookUrl(workerOrigin(c)),
+          }
+        : {}),
+    });
+    return c.json({ success: true, data });
+  } catch (err) {
+    console.error('GET /api/line-accounts/:id/connection-health error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/line-accounts/:id - get single (secrets masked; staff sees none at all)
 lineAccounts.get('/api/line-accounts/:id', async (c) => {
   try {
-    const account = await getLineAccountById(c.env.DB, c.req.param('id'));
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
@@ -325,7 +451,7 @@ lineAccounts.get('/api/line-accounts/:id/follower-insight', async (c) => {
       return c.json({ success: false, error: 'date query is required in yyyyMMdd format' }, 400);
     }
 
-    const account = await getLineAccountById(c.env.DB, c.req.param('id'));
+    const account = await getLineAccountById(c.env.DB, c.req.param('id')!);
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
@@ -598,6 +724,11 @@ lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
     } catch (err) {
       console.error('[line-accounts] failed to auto-enroll into main pool', err);
     }
+
+    // B-10: probe the channel's webhook URL right after registration so a
+    // misconfigured URL / inactive toggle shows up in connection health
+    // immediately instead of surfacing as "no events arrive".
+    await recordWebhookHealthAfterChange(c.env.DB, c.env, account);
 
     return c.json({ success: true, data: serializeLineAccountFull(account) }, 201);
   } catch (err) {
@@ -878,6 +1009,12 @@ lineAccounts.put('/api/line-accounts/:id', requireRole('owner'), async (c) => {
       if (!updated) {
         return c.json({ success: false, error: 'LINE account not found' }, 404);
       }
+    }
+
+    // B-10: a credential rotation invalidates the previous webhook probe —
+    // re-probe (non-fatal) so connection health reflects the current token.
+    if (credentialsTouched) {
+      await recordWebhookHealthAfterChange(c.env.DB, c.env, updated);
     }
 
     // Masked, not full: an update may touch only non-secret fields (or send an

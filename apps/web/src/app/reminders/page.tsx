@@ -1,5 +1,8 @@
 'use client'
 
+import MessageComposer, { MessagePreview } from '@/components/messages/message-composer'
+import { validateMessageContent } from '@line-crm/shared'
+
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
@@ -218,10 +221,9 @@ export default function RemindersPage() {
 
   const handleAddStep = async () => {
     if (!expandedId) return
-    if (!stepForm.messageContent.trim()) {
-      setStepFormError('メッセージ内容を入力してください')
-      return
-    }
+    const contentError = validateMessageContent(stepForm.messageType, stepForm.messageContent)
+    if (contentError) { setStepFormError(contentError); return }
+
     setStepSaving(true)
     setStepFormError('')
     try {
@@ -443,9 +445,9 @@ export default function RemindersPage() {
                                         {messageTypeLabels[step.messageType] ?? step.messageType}
                                       </span>
                                     </div>
-                                    <p className="text-xs text-gray-600 whitespace-pre-wrap break-words line-clamp-3">
-                                      {step.messageContent}
-                                    </p>
+                                    <div className="text-xs text-gray-600 whitespace-pre-wrap break-words">
+                                      <MessagePreview messageType={step.messageType} messageContent={step.messageContent} />
+                                    </div>
                                   </div>
                                   <Button
                                     type="button"
@@ -479,25 +481,7 @@ export default function RemindersPage() {
                                   現在の値: {formatOffset(stepForm.offsetMinutes)}
                                 </p>
                               </div>
-                              <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">メッセージタイプ</label>
-                                <Select
-                                  label="メッセージタイプ"
-                                  value={stepForm.messageType}
-                                  onValueChange={(value) => setStepForm({ ...stepForm, messageType: value ?? 'text' })}
-                                  items={{ text: 'テキスト', image: '画像', flex: 'Flex' }}
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容 <span className="text-red-500">*</span></label>
-                                <InputArea
-                                  label="メッセージ内容"
-                                  minRows={3}
-                                  placeholder="メッセージ内容を入力"
-                                  value={stepForm.messageContent}
-                                  onValueChange={(value) => setStepForm({ ...stepForm, messageContent: value })}
-                                />
-                              </div>
+                              <MessageComposer messageType={stepForm.messageType} messageContent={stepForm.messageContent} onChange={message => setStepForm(previous => ({ ...previous, ...message }))} />
 
                               {stepFormError && <Banner size="sm" variant="error" title="追加できませんでした" description={stepFormError} />}
 

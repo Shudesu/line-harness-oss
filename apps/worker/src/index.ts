@@ -1,3 +1,4 @@
+import { xGates } from './routes/x-gates.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
@@ -17,6 +18,7 @@ import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { webhook } from './routes/webhook.js';
 import { friends } from './routes/friends.js';
+import { friendScheduledMessages } from './routes/friend-scheduled-messages.js';
 import { tags } from './routes/tags.js';
 import { scenarios } from './routes/scenarios.js';
 import { broadcasts } from './routes/broadcasts.js';
@@ -95,6 +97,11 @@ export type Env = {
     LINE_CHANNEL_SECRET: string;
     LINE_CHANNEL_ACCESS_TOKEN: string;
     API_KEY: string;
+    ACCESS_REQUIRED?: string;
+    ACCESS_TEAM_DOMAIN?: string;
+    ACCESS_AUD?: string;
+    MEET_CALLBACK_SECRET?: string;
+    STRIPE_WEBHOOK_SECRET?: string;
     LEGACY_API_KEY?: string;
     LIFF_URL: string;
     LINE_CHANNEL_ID: string;
@@ -110,15 +117,21 @@ export type Env = {
     // feature is entirely absent unless an operator opts in. ≥32 chars, shared
     // with the token issuer. See routes/admin-sso.ts and docs/ADMIN-AUTH.md.
     ADMIN_SSO_SECRET?: string;
+    X_GATE_TURNSTILE_SITE_KEY?: string;
+    X_GATE_TURNSTILE_SECRET_KEY?: string;
+    X_GATE_TURNSTILE_HOSTNAMES?: string;
+    X_HARNESS_GATE_SECRET?: string;
+    X_HARNESS_CONNECTION_ID?: string;
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
+    IG_LINK_TOKEN_SECRET?: string; // Optional dedicated spec 08 HMAC secret
+    IG_LINK_TOKEN_POLICY?: 'off' | 'prefer' | 'require';
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
     // Phase 5 self-update — consumed by /admin/update/*. Defaults live in
-    // wrangler.toml [vars]; secrets (CF_API_TOKEN, ADMIN_API_KEY) come from
+    // wrangler.toml [vars]; secret (CF_API_TOKEN) come from
     // `wrangler secret put`. All are optional at the type level so the rest
     // of the worker still type-checks in test environments that don't set
     // them; the /admin/update/* route guards on their presence at runtime.
-    ADMIN_API_KEY?: string;
     CF_API_TOKEN?: string;
     CF_ACCOUNT_ID?: string;
     WORKER_NAME?: string;
@@ -137,6 +150,9 @@ export type Env = {
     // the Worker keeps a refresh token and never needs a service-account key.
     GOOGLE_OAUTH_CLIENT_ID?: string;
     GOOGLE_OAUTH_CLIENT_SECRET?: string;
+    GOOGLE_CALENDAR_BROKER_URL?: string;
+    GOOGLE_CALENDAR_TENANT_ID?: string;
+    GOOGLE_CALENDAR_BROKER_SECRET?: string;
     /** Days to keep messages_log rows. Unset/invalid = keep forever. */
     LOG_RETENTION_DAYS?: string;
     /** Max friends (is_following=1). Unset/invalid = unlimited. */
@@ -153,7 +169,8 @@ export type Env = {
     TENANT_SCHEDULER: DurableObjectNamespace<TenantScheduler>;
   };
   Variables: {
-    staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    staff: import('./middleware/auth.js').AuthenticatedStaff;
+    authRateChecked: boolean;
   };
 };
 
@@ -187,7 +204,7 @@ app.use('*', cors({
   origin: (origin, c) => resolveCorsOrigin(c.env, origin, c.req.url),
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-admin-api-key', 'Idempotency-Key'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'Idempotency-Key'],
   maxAge: 600,
 }));
 
@@ -200,6 +217,7 @@ app.use('*', authMiddleware);
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
 app.route('/', friends);
+app.route('/', friendScheduledMessages);
 app.route('/', tags);
 app.route('/', scenarios);
 app.route('/', broadcasts);
@@ -229,6 +247,7 @@ app.route('/', notifications);
 app.route('/', conversations);
 app.route('/', stripe);
 app.route('/', health);
+app.route('/', xGates);
 app.route('/', automations);
 app.route('/', richMenus);
 app.route('/', trackedLinks);
@@ -259,10 +278,10 @@ app.route('/', lineProxy);
 // /admin/ but intentionally unauthenticated: the dashboard fetches /admin/version
 // before login to render the upgrade banner, and the returned hashes are
 // derivable from the deployed bundle. /admin/update/* (Task 18) layers
-// ADMIN_API_KEY middleware on subpaths.
+// owner-session middleware on subpaths.
 app.route('/admin', adminVersion);
-// Phase 5 Task 18 — self-update endpoints guarded by x-admin-api-key.
-// authMiddleware skips non-/api/ paths so this router owns its own auth gate.
+// Phase 5 Task 18 — self-update endpoints guarded by owner sessions.
+// Shared middleware validates the cookie and CSRF; the router requires owner.
 app.route('/admin/update', adminUpdate);
 // External SSO — establishes the admin session from a signed, single-use token.
 // Inert (404) unless ADMIN_SSO_SECRET is configured. authMiddleware skips
@@ -291,8 +310,11 @@ app.get('/api/qr', async (c) => {
 // Desktop: QR code encodes LIFF URL.
 // Stuck users opt into /r/:ref/help for Safari escape instructions.
 app.get('/r/:ref', async (c) => {
+  const xGateCampaign=c.env.X_HARNESS_GATE_SECRET&&c.env.X_HARNESS_CONNECTION_ID
+    ? await c.env.DB.prepare('SELECT gate_id,line_account_id FROM x_gate_campaigns WHERE tracked_link_id=? AND is_active=1').bind(c.req.param('ref')).first<{gate_id:string;line_account_id:string}>()
+    : null;
   const ref = c.req.param('ref');
-  const formId = c.req.query('form') || '';
+  const formId = xGateCampaign ? '' : c.req.query('form') || '';
 
   // Resolve LIFF URL — priority:
   //   0. URL query ?account= (explicit single-account pin — admin-issued
@@ -310,7 +332,8 @@ app.get('/r/:ref', async (c) => {
   // account without liff_id falls through to the normal resolution chain.
   const accountParam = c.req.query('account') || '';
   let accountResolved = false;
-  if (accountParam) {
+  if(xGateCampaign){const account=await getLineAccountById(c.env.DB,xGateCampaign.line_account_id);if(!account?.liff_id)return c.html(loginUnconfiguredPage(),503);liffUrl=`https://liff.line.me/${account.liff_id}`;accountResolved=true;}
+  if (accountParam && !xGateCampaign) {
     const account = await getLineAccountByChannelId(c.env.DB, accountParam);
     if (account?.liff_id) {
       liffUrl = `https://liff.line.me/${account.liff_id}`;
@@ -391,11 +414,13 @@ app.get('/r/:ref', async (c) => {
   if (ref) liffParams.set('ref', ref);
   if (formId) liffParams.set('form', formId);
   // Parity with /auth/line's qrParams — keeps the account hint on the LIFF URL.
-  if (accountParam) liffParams.set('account', accountParam);
-  const gate = c.req.query('gate');
+  if (accountParam && !xGateCampaign) liffParams.set('account', accountParam);
+  const gate = xGateCampaign?.gate_id ?? c.req.query('gate');
   if (gate) liffParams.set('gate', gate);
   const xh = c.req.query('xh');
   if (xh) liffParams.set('xh', xh);
+  const igt = c.req.query('igt');
+  if (igt !== undefined) liffParams.set('igt', igt);
   const ig = c.req.query('ig');
   if (ig) liffParams.set('ig', ig);
   const iga = c.req.query('iga');
@@ -408,8 +433,8 @@ app.get('/r/:ref', async (c) => {
   // friend-add gate (initSalonBooking, initEventBooking); page=book/form
   // would bypass that gate and bypass ref-based attribution, so they are
   // intentionally excluded until those initializers are unified.
-  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar']);
-  const page = c.req.query('page');
+  const PAGE_PASSTHROUGH_ALLOWED = new Set(['salon-book', 'event', 'event-me', 'webinar','xgate']);
+  const page = xGateCampaign ? 'xgate' : c.req.query('page');
   if (page && PAGE_PASSTHROUGH_ALLOWED.has(page)) liffParams.set('page', page);
   const id = c.req.query('id');
   if (id) liffParams.set('id', id);

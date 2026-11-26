@@ -1,6 +1,7 @@
+import { validateMessageContent, parseMessageGroup } from '@line-crm/shared';
+import { buildMessages, messagesToLogPayload } from '../services/message-group.js';
+import { buildMessage } from '../services/broadcast.js';
 import { Hono } from 'hono';
-import { extractFlexAltText } from '../utils/flex-alt-text.js';
-import type { Message } from '@line-crm/line-sdk';
 import { messageToLogPayload } from '../services/step-delivery.js';
 import {
   getOperators,
@@ -444,7 +445,7 @@ chats.get('/api/chats/:id', async (c) => {
         `SELECT id, friend_id, direction, message_type, content, created_at
          FROM messages_log
          WHERE friend_id = ? AND (delivery_type IS NULL OR delivery_type != 'test')
-         ORDER BY created_at DESC LIMIT 1000`,
+         ORDER BY created_at DESC, rowid DESC LIMIT 1000`,
       )
       .bind(resolvedFriendId)
       .all();
@@ -566,6 +567,9 @@ chats.post('/api/chats/:id/send', async (c) => {
       return c.json({ success: false, error: 'Unsupported message type' }, 400);
     }
 
+    const contentError = validateMessageContent(messageType, body.content);
+    if (contentError) return c.json({ success: false, error: contentError }, 400);
+
     const { friend, accessToken, lineAccountId } = await resolveFriendAndAccessToken(
       c.env.DB,
       chat.friend_id,
@@ -585,27 +589,15 @@ chats.post('/api/chats/:id/send', async (c) => {
     }
     // Opt-out disables raw URL wrapping, but existing tracked links still get
     // this 1:1 recipient. Image URLs are media and must remain untouched.
-    if (tracked.messageType !== 'image') {
+    if (tracked.messageType !== 'image' || parseMessageGroup(tracked.content)) {
       tracked.content = await appendFriendToTrackedLinks(c.env.DB, tracked.content, sendWorkerUrl, friend.id);
     }
 
-    let message: Message;
-    if (tracked.messageType === 'text') {
-      message = { type: 'text', text: tracked.content };
-    } else if (tracked.messageType === 'flex') {
-      const contents = JSON.parse(tracked.content);
-      message = { type: 'flex', altText: extractFlexAltText(contents), contents };
-    } else {
-      const parsed = JSON.parse(tracked.content) as {
-        originalContentUrl: string;
-        previewImageUrl: string;
-      };
-      message = { type: 'image', originalContentUrl: parsed.originalContentUrl, previewImageUrl: parsed.previewImageUrl };
-    }
-    await lineClient.pushMessage(friend.line_user_id, [message]);
+    const messages = buildMessages(tracked.messageType, tracked.content, buildMessage);
+    await lineClient.pushMessage(friend.line_user_id, messages);
 
-    // Store exactly the payload delivered to LINE, including tracking changes.
-    const log = messageToLogPayload(message);
+    // One row per request/recipient preserves quota accounting; the UI expands the group.
+    const log = messagesToLogPayload(messages, messageToLogPayload);
     const logId = crypto.randomUUID();
     await c.env.DB
       .prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, source, line_account_id, created_at) VALUES (?, ?, 'outgoing', ?, ?, 'manual', ?, ?)`)

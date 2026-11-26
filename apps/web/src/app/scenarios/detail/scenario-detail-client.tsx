@@ -1,12 +1,14 @@
 'use client'
 
+import MessageComposer, { MessagePreview } from '@/components/messages/message-composer'
+import { validateMessageContent } from '@line-crm/shared'
+
 import { useState, useEffect, useCallback } from 'react'
 
 import Link from 'next/link'
 import type { Scenario, ScenarioStep, ScenarioTriggerType, MessageType, DeliveryMode } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
-import FlexPreviewComponent from '@/components/flex-preview'
 import ScheduleInput, {
   emptySchedule,
   buildSchedulePayload,
@@ -119,28 +121,6 @@ interface ScenarioStats {
   steps: Array<{ stepOrder: number; reachedCount: number; reachRate: number }>
 }
 
-function FlexPreview({ content }: { content: string }) {
-  return <FlexPreviewComponent content={content} maxWidth={300} />
-}
-
-function ImagePreview({ content }: { content: string }) {
-  try {
-    const parsed = JSON.parse(content)
-    const url = parsed.previewImageUrl || parsed.originalContentUrl
-    return (
-      <div>
-        <span className="text-xs font-medium text-purple-600 bg-purple-50 px-2 py-0.5 rounded mb-2 inline-block">画像</span>
-        {url ? (
-          <img src={url} alt="preview" className="max-w-[200px] rounded-lg border border-gray-200 mt-1" />
-        ) : (
-          <p className="text-xs text-gray-400">プレビューなし</p>
-        )}
-      </div>
-    )
-  } catch {
-    return <p className="text-xs text-red-500">画像 JSON パースエラー</p>
-  }
-}
 
 export default function ScenarioDetailClient({ scenarioId }: { scenarioId: string }) {
   const id = scenarioId
@@ -289,22 +269,8 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
   const handleSaveStep = async () => {
     // 直接入力モード: messageContent 必須 + Flex/画像 は JSON parse 検証
     if (stepForm.inputMode === 'direct') {
-      if (!stepForm.messageContent.trim()) {
-        setStepError('メッセージ内容を入力してください')
-        return
-      }
-      if (stepForm.messageType === 'flex' || stepForm.messageType === 'image') {
-        try {
-          JSON.parse(stepForm.messageContent)
-        } catch {
-          setStepError(
-            stepForm.messageType === 'flex'
-              ? 'Flex メッセージの JSON が不正です'
-              : '画像メッセージの JSON が不正です',
-          )
-          return
-        }
-      }
+      const contentError = validateMessageContent(stepForm.messageType, stepForm.messageContent)
+      if (contentError) { setStepError(contentError); return }
     } else {
       if (!stepForm.templateId) {
         setStepError('テンプレートを選択してください')
@@ -445,27 +411,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
         )}
 
         {stepForm.inputMode === 'direct' && (
-          <>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">メッセージタイプ</label>
-              <Select
-                label="メッセージタイプ"
-                value={stepForm.messageType}
-                onValueChange={(value) => setStepForm({ ...stepForm, messageType: (value ?? 'text') as MessageType })}
-                items={Object.fromEntries(messageTypeOptions.map((option) => [option.value, option.label]))}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容 <span className="text-red-500">*</span></label>
-              <InputArea
-                label="メッセージ内容"
-                minRows={4}
-                placeholder="メッセージ内容を入力..."
-                value={stepForm.messageContent}
-                onValueChange={(value) => setStepForm({ ...stepForm, messageContent: value })}
-              />
-            </div>
-          </>
+          <MessageComposer key={editingStepId ?? "new"} messageType={stepForm.messageType} messageContent={stepForm.messageContent} onChange={message => setStepForm(previous => ({ ...previous, ...message }))} />
         )}
 
         {/* 到達時のアクション */}
@@ -734,15 +680,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                       const displayContent = tpl ? tpl.messageContent : step.messageContent
                       return (
                         <div className="text-sm text-gray-700 bg-gray-50 rounded-md px-3 py-2">
-                          {displayType === 'text' ? (
-                            <p className="whitespace-pre-wrap break-words">{displayContent}</p>
-                          ) : displayType === 'flex' ? (
-                            <FlexPreview content={displayContent} />
-                          ) : displayType === 'image' ? (
-                            <ImagePreview content={displayContent} />
-                          ) : (
-                            <p className="whitespace-pre-wrap break-words">{displayContent}</p>
-                          )}
+                          <MessagePreview messageType={displayType} messageContent={displayContent} />
                         </div>
                       )
                     })()}

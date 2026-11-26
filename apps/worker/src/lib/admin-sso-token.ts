@@ -1,3 +1,4 @@
+import { timingSafeEqualString } from '@line-crm/shared';
 /**
  * Signed, single-use tokens for external admin SSO (`GET /admin/sso?token=…`).
  *
@@ -112,14 +113,6 @@ async function hmac(secret: string, message: string): Promise<string> {
   return base64UrlEncode(await crypto.subtle.sign('HMAC', key, encoder.encode(message)));
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let index = 0; index < a.length; index += 1) {
-    difference |= a.charCodeAt(index) ^ b.charCodeAt(index);
-  }
-  return difference === 0;
-}
 
 /**
  * Reference issuer implementation. Exported so self-hosted issuers written in
@@ -161,7 +154,7 @@ export async function verifyAdminSsoToken(
 
   // Authenticate before parsing: never hand unverified bytes to JSON.parse.
   const expected = await hmac(secret, encodedPayload);
-  if (!timingSafeEqual(expected, signature)) {
+  if (!await timingSafeEqualString(expected, signature)) {
     return { ok: false, reason: 'bad_signature' };
   }
 

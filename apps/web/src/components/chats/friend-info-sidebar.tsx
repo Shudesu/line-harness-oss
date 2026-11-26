@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { api, type MileageHistoryItem, type MileageSummary } from '@/lib/api'
 import { Button } from '@cloudflare/kumo/components/button'
 import { InputArea } from '@cloudflare/kumo/components/input'
+import ScheduledMessagesPanel from '@/components/chats/scheduled-messages-panel'
 
 interface FriendDetail {
   id: string
@@ -193,6 +194,9 @@ export default function FriendInfoSidebar({ friendId, chatStatus, operatorName, 
                 )}
               </div>
             </div>
+
+            {/* 予約送信 (この友だち1人宛て) */}
+            <ScheduledMessagesPanel friendId={friend.id} isFollowing={friend.isFollowing} />
 
             {/* Harness Mileage — canonical user identity across LINE accounts */}
             <div className="p-4">
