@@ -1,3 +1,5 @@
+import { parseMessageGroup, packMessageItems } from '@line-crm/shared';
+import { buildMessages, messagesToLogPayload } from './message-group.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getFriendScenariosDueForDelivery,
@@ -40,11 +42,15 @@ export function expandVariables(
   messageType?: string,
   liffId?: string | null,
 ): string {
+  const group = parseMessageGroup(content);
+  if (group) return packMessageItems(group.map(item => ({ ...item, messageContent: expandVariables(item.messageContent, friend, apiOrigin, item.messageType, liffId) }))).messageContent;
+  // Substitutions inside JSON strings must keep quotes, slashes and newlines escaped.
+  const encode = (value: string) => messageType === 'flex' || messageType === 'image' ? JSON.stringify(value).slice(1, -1) : value;
   let result = content;
-  result = result.replace(/\{\{name\}\}/g, friend.display_name || '');
-  result = result.replace(/\{\{uid\}\}/g, friend.user_id || '');
-  result = result.replace(/\{\{friend_id\}\}/g, friend.id);
-  result = result.replace(/\{\{ref\}\}/g, friend.ref_code || '');
+  result = result.replace(/\{\{name\}\}/g, () => encode(friend.display_name || ''));
+  result = result.replace(/\{\{uid\}\}/g, () => encode(friend.user_id || ''));
+  result = result.replace(/\{\{friend_id\}\}/g, () => encode(friend.id));
+  result = result.replace(/\{\{ref\}\}/g, () => encode(friend.ref_code || ''));
   // Conditional block: {{#if_ref}}...{{/if_ref}} — only shown if ref_code exists
   if (friend.ref_code) {
     result = result.replace(/\{\{#if_ref\}\}([\s\S]*?)\{\{\/if_ref\}\}/g, '$1');
@@ -73,7 +79,7 @@ export function expandVariables(
   result = result.replace(/\{\{metadata\.([^}]+)\}\}/g, (_match, key) => {
     const val = meta[key];
     if (val == null) return '';
-    return Array.isArray(val) ? val.join(', ') : String(val);
+    return encode(Array.isArray(val) ? val.join(', ') : String(val));
   });
   // {{form_url:FORM_ID}} → フォームの公開 URL。
   //
@@ -84,14 +90,14 @@ export function expandVariables(
   // 「リンクが消えたメッセージ」が本人に届いてしまい、気づけない。
   if (liffId) {
     result = result.replace(/\{\{form_url:([^}]+)\}\}/g, (_match, formId) => {
-      return `https://liff.line.me/${liffId}?page=form&id=${String(formId).trim()}`;
+      return encode(`https://liff.line.me/${liffId}?page=form&id=${String(formId).trim()}`);
     });
   }
   if (apiOrigin) {
     result = result.replace(/\{\{auth_url:([^}]+)\}\}/g, (_match, channelId) => {
       const params = new URLSearchParams({ account: channelId, ref: 'cross-link' });
       if (friend.user_id) params.set('uid', friend.user_id);
-      return `${apiOrigin}/auth/line?${params.toString()}`;
+      return encode(`${apiOrigin}/auth/line?${params.toString()}`);
     });
   }
   return result;
@@ -381,7 +387,7 @@ async function processSingleDelivery(
     lineAccountId: deliveryAccountId ?? null,
     friendId: friend.id,
   });
-  const message = buildMessage(tracked.messageType, tracked.content);
+  const messages = buildMessages(tracked.messageType, tracked.content, buildMessage);
   // Resolve the correct LINE client for this friend's account
   let deliveryClient = lineClient;
   if (deliveryAccountId) {
@@ -397,13 +403,13 @@ async function processSingleDelivery(
     const { LineClient: LC } = await import('@line-crm/line-sdk');
     deliveryClient = new LC(account.channel_access_token);
   }
-  await deliveryClient.pushMessage(friend.line_user_id, [message]);
+  await deliveryClient.pushMessage(friend.line_user_id, messages);
 
   // Log what we actually pushed: variables expanded, URLs auto-tracked, AND
   // any cleanEmptyNodes() mutation or parse-failure text fallback applied by
   // buildMessage(). Use scenario_step_id to recover the original template.
   const logId = crypto.randomUUID();
-  const logPayload = messageToLogPayload(message);
+  const logPayload = messagesToLogPayload(messages, messageToLogPayload);
   await db
     .prepare(
       `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, template_id_at_send, line_account_id, created_at)

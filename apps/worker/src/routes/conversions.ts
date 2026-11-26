@@ -11,7 +11,11 @@ import {
   setConversionApproval,
   getConversionApprovalNotifyInfo,
   syncAffiliateConversionMileage,
+  getFriendById,
 } from '@line-crm/db';
+import { fireEvent } from '../services/event-bus.js';
+import { runIdempotent } from '../services/idempotency.js';
+import { resolveTagEventAccount } from '../services/tag-automation-context.js';
 import { IDENTITY_KEY_SQL } from '../lib/identity-key.js';
 import { notifyAffiliateApproval } from '../services/affiliate-notifier.js';
 import type { Env } from '../index.js';
@@ -92,6 +96,7 @@ conversions.post('/api/conversions/track', async (c) => {
       userId?: string | null;
       affiliateCode?: string | null;
       metadata?: Record<string, unknown> | null;
+      fireEvent?: boolean;
     }>();
 
     if (!body.conversionPointId || !body.friendId) {
@@ -100,27 +105,83 @@ conversions.post('/api/conversions/track', async (c) => {
         400,
       );
     }
+    // fireEvent=true also raises cv_fire (automations, scoring, outgoing
+    // webhooks). It is only offered together with an Idempotency-Key: without
+    // one, a retried request would run those side effects again.
+    const fire = body.fireEvent === true;
 
-    const event = await trackConversion(c.env.DB, {
+    const db = c.env.DB;
+    const metadata = body.metadata ? JSON.stringify(body.metadata) : null;
+    const conversionRequest = {
       conversionPointId: body.conversionPointId,
       friendId: body.friendId,
-      userId: body.userId,
-      affiliateCode: body.affiliateCode,
-      metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-    });
+      userId: body.userId ?? null,
+      affiliateCode: body.affiliateCode ?? null,
+      metadata,
+      fireEvent: fire,
+    };
+    // Optional Idempotency-Key: a redelivered payment webhook records the
+    // conversion once. Without the header every call records a new event and
+    // fires nothing, exactly as before.
+    return await runIdempotent(c, 'conversion', conversionRequest, async (operation) => {
+      // cv_fire belongs to the friend's own LINE account. Resolve it before
+      // writing anything so an unknown friend is rejected without side effects.
+      let eventAccount: Awaited<ReturnType<typeof resolveTagEventAccount>> | undefined;
+      if (fire) {
+        if (!(await getFriendById(db, body.friendId))) {
+          return c.json({ success: false, error: 'Friend not found' }, 404);
+        }
+        eventAccount = await resolveTagEventAccount(db, body.friendId);
+        // Without an account the event bus would match every account's
+        // automations. Refuse instead of widening the target.
+        if (!eventAccount.accountId) {
+          return c.json(
+            { success: false, error: 'The LINE account of this friend could not be determined; fireEvent is not available' },
+            422,
+          );
+        }
+      }
 
-    return c.json({
-      success: true,
-      data: {
-        id: event.id,
-        conversionPointId: event.conversion_point_id,
-        friendId: event.friend_id,
-        userId: event.user_id,
-        affiliateCode: event.affiliate_code,
-        metadata: event.metadata,
-        createdAt: event.created_at,
-      },
-    }, 201);
+      // With a key the event ID is derived from it, so a re-run after a failed
+      // attempt cannot insert a second row.
+      const event = await trackConversion(db, {
+        conversionPointId: body.conversionPointId,
+        friendId: body.friendId,
+        userId: body.userId,
+        affiliateCode: body.affiliateCode,
+        metadata,
+        ...(operation ? { id: await operation.deriveId('conversion-event') } : {}),
+      });
+
+      if (eventAccount && operation) {
+        await fireEvent(
+          db,
+          'cv_fire',
+          {
+            friendId: body.friendId,
+            eventData: { ...(body.metadata ?? {}), conversionPointId: body.conversionPointId, conversionEventId: event.id },
+          },
+          eventAccount.accessToken,
+          eventAccount.accountId,
+          undefined,
+          // A retry after a failed attempt skips the effects that already ran.
+          { operationId: operation.operationId },
+        );
+      }
+
+      return c.json({
+        success: true,
+        data: {
+          id: event.id,
+          conversionPointId: event.conversion_point_id,
+          friendId: event.friend_id,
+          userId: event.user_id,
+          affiliateCode: event.affiliate_code,
+          metadata: event.metadata,
+          createdAt: event.created_at,
+        },
+      }, 201);
+    }, fire ? { keyRequired: 'fireEvent requires an Idempotency-Key header' } : undefined);
   } catch (err) {
     console.error('POST /api/conversions/track error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);

@@ -3,8 +3,44 @@ import { usePathname } from 'next/navigation'
 import Sidebar from './layout/sidebar'
 import { UpdateBanner } from './update/update-banner'
 import { QuotaBanner } from './quota-banner'
-import AuthGuard from './auth-guard'
+import { AuthProvider, useAuthStatus } from '@/contexts/auth-context'
 import { AccountProvider } from '@/contexts/account-context'
+
+// 認証チェック中もシェル（バナー・サイドバー）を保持し、コンテンツ領域だけを
+// 部分スケルトンへ差し替える。旧実装は全画面スピナーでレイアウトごと消していた。
+function ContentGate({ children, fullBleed }: { children: React.ReactNode; fullBleed: boolean }) {
+  const status = useAuthStatus()
+  if (status === 'ok') return <>{children}</>
+  if (fullBleed) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0" aria-hidden="true">
+        <div className="flex-1 p-4 space-y-2">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className={`flex ${i % 2 ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className="h-8 rounded-2xl bg-gray-100 animate-pulse"
+                style={{ width: `${38 + ((i * 13) % 28)}%` }}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="p-3 border-t border-gray-200">
+          <div className="h-14 rounded-2xl bg-gray-100 animate-pulse" />
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="px-4 pb-6 sm:px-6 lg:pt-8 lg:px-8 lg:pb-8">
+      <div className="animate-pulse space-y-4 max-w-2xl" aria-hidden="true">
+        <div className="h-8 w-1/3 rounded bg-gray-200" />
+        <div className="h-28 rounded-xl bg-gray-100" />
+        <div className="h-28 rounded-xl bg-gray-100" />
+        <div className="h-28 rounded-xl bg-gray-100" />
+      </div>
+    </div>
+  )
+}
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -25,7 +61,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isFullBleed = normalizedPath === '/chats' || normalizedPath.startsWith('/chats/')
 
   return (
-    <AuthGuard>
+    <AuthProvider>
       <AccountProvider>
         <div className={`flex flex-col ${isFullBleed ? 'h-dvh' : 'min-h-screen'}`}>
           {/* Phase 6: banner above sidebar+header so it pins to the top of the
@@ -41,16 +77,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               }`}
             >
               {isFullBleed ? (
-                children
+                <ContentGate fullBleed>{children}</ContentGate>
               ) : (
-                <div className="px-4 pb-6 sm:px-6 lg:pt-8 lg:px-8 lg:pb-8">
-                  {children}
-                </div>
+                <ContentGate fullBleed={false}>{children}</ContentGate>
               )}
             </main>
           </div>
         </div>
       </AccountProvider>
-    </AuthGuard>
+    </AuthProvider>
   )
 }

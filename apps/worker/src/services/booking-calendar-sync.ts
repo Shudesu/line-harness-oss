@@ -1,3 +1,4 @@
+import { calendarBrokerRequest, isBrokerRefreshToken } from './google-calendar-broker.js';
 import { GoogleCalendarClient, type BusyInterval } from './google-calendar.js';
 import { getGoogleServiceAccountToken } from './google-service-account.js';
 import {
@@ -36,6 +37,11 @@ async function clientForConnection(
   let accessToken: string | null | undefined;
   if (connection.auth_type === 'service_account') {
     accessToken = await getGoogleServiceAccountToken(credentials);
+  } else if (connection.auth_type === 'oauth' && connection.refresh_token && isBrokerRefreshToken(connection.refresh_token)) {
+    const token = await calendarBrokerRequest<{ accessToken: string }>(credentials, 'token', {
+      action: 'refresh', refreshToken: connection.refresh_token,
+    });
+    accessToken = token.accessToken;
   } else if (connection.auth_type === 'oauth' && connection.refresh_token) {
     const clientId = credentials.oauthClientId?.trim();
     const clientSecret = credentials.oauthClientSecret?.trim();

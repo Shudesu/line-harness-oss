@@ -1,3 +1,4 @@
+import { buildMessages, messagesToLogPayload } from './message-group.js';
 import {
   getScenarioById,
   getFriendById,
@@ -350,11 +351,11 @@ export async function pushImmediateFirstStep(
       ctx.workerUrl,
       { lineAccountId: friend.line_account_id ?? sendAccount?.id ?? null, friendId },
     );
-    const sentMessage = buildMessage(decorated.messageType, decorated.content);
+    const sentMessages = buildMessages(decorated.messageType, decorated.content, buildMessage);
 
     try {
       if (options?.reply) {
-        await options.reply.client.replyMessage(options.reply.replyToken, [sentMessage]);
+        await options.reply.client.replyMessage(options.reply.replyToken, sentMessages);
       } else {
         const pushTarget = options?.targetLineUserId ?? friend.line_user_id;
         if (!pushTarget) {
@@ -366,7 +367,7 @@ export async function pushImmediateFirstStep(
         // どのアカウントにも解決できなければ env が最後の砦。
         const accessToken = sendAccount?.channel_access_token || ctx.defaultAccessToken;
         const lineClient = new LineClient(accessToken);
-        await lineClient.pushMessage(pushTarget, [sentMessage]);
+        await lineClient.pushMessage(pushTarget, sentMessages);
       }
     } catch (err) {
       // The message never left LINE's API — release so the cron retries on
@@ -387,7 +388,7 @@ export async function pushImmediateFirstStep(
     // Log what was actually delivered (post buildMessage normalization) so
     // the cooldown above sees it on subsequent calls and the dashboard chat
     // view mirrors LINE 1:1. delivery_type mirrors the send channel.
-    const logPayload = messageToLogPayload(sentMessage);
+    const logPayload = messagesToLogPayload(sentMessages, messageToLogPayload);
     await db
       .prepare(
         `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, template_id_at_send, created_at)
