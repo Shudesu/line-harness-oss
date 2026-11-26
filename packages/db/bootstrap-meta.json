@@ -83,7 +83,8 @@
     "075_ig_link_token_uses.sql",
     "076_api_idempotency_keys.sql",
     "077_api_line_sends.sql",
-    "078_friend_scheduled_messages.sql"
+    "078_friend_scheduled_messages.sql",
+    "079_scheduler_due_indexes.sql"
   ],
-  "migrationCount": 84
+  "migrationCount": 85
 }

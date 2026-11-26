@@ -1378,6 +1378,9 @@ CREATE INDEX IF NOT EXISTS idx_friend_reminders_friend ON friend_reminders (frie
 
 CREATE INDEX IF NOT EXISTS idx_friend_reminders_status ON friend_reminders (status);
 
+CREATE INDEX IF NOT EXISTS idx_friend_scenarios_due_epoch
+  ON friend_scenarios (status, julianday(next_delivery_at));
+
 CREATE INDEX IF NOT EXISTS idx_friend_scenarios_friend_id ON friend_scenarios (friend_id);
 
 CREATE INDEX IF NOT EXISTS idx_friend_scenarios_next_delivery_at ON friend_scenarios (next_delivery_at);
