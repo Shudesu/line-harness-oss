@@ -875,9 +875,6 @@ webinarRoutes.put('/api/webinars/:id', requireRole('owner', 'admin'), async (c) 
   }
 });
 
-// requireRole('owner', 'admin') matches POST/PUT /api/webinars above: deleting
-// a webinar is at least as destructive as editing it, so a staff key must not
-// be able to do it either.
 webinarRoutes.delete('/api/webinars/:id', requireRole('owner', 'admin'), async (c) => {
   try {
     const id = c.req.param('id')!;
@@ -909,9 +906,9 @@ webinarRoutes.get('/api/webinars/:id/comments', async (c) => {
   }
 });
 
-webinarRoutes.put('/api/webinars/:id/comments', async (c) => {
+webinarRoutes.put('/api/webinars/:id/comments', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     const body = await c.req.json<{ comments?: unknown }>();
@@ -969,9 +966,9 @@ webinarRoutes.get('/api/webinars/:id/ctas', async (c) => {
 
 // CTA カード一括置換。kind='form' は forms 実在チェック、kind='url' は https? 必須。
 // 全要素検証 → 不正が1件でもあれば何も書かない (comments と同じ all-or-nothing)。
-webinarRoutes.put('/api/webinars/:id/ctas', async (c) => {
+webinarRoutes.put('/api/webinars/:id/ctas', requireRole('owner', 'admin'), async (c) => {
   try {
-    const id = c.req.param('id');
+    const id = c.req.param('id')!;
     const row = await getWebinarById(c.env.DB, id);
     if (!row) return c.json({ success: false, error: 'Not found' }, 404);
     const body = await c.req.json<{ ctas?: unknown }>();

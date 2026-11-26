@@ -97,6 +97,8 @@ export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
   dedupPriority: string[] | null;
   failedAccountIds: string[] | null;
   trackLinks: boolean;
+  /** Saved include/exclude conditions; honoured by send, scheduler and preview-count. */
+  segmentConditions?: import('@/components/broadcasts/segment-conditions').SegmentCondition | null;
 };
 
 export type BroadcastInsight = {
@@ -513,6 +515,7 @@ export const api = {
         targetTagId?: string | null
         scheduledAt?: string | null
         trackLinks?: boolean
+        segmentConditions?: import('@/components/broadcasts/segment-conditions').SegmentCondition | null
       }
     ) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}`, {

@@ -42,9 +42,7 @@ function healthyState() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // buildConnectionHealth reads Date.now() for its 1h/24h windows. Pin the
-  // clock to the mocked jstNow() so the fixed fixture timestamps above do not
-  // age out of those windows as wall-clock time passes.
+  // Keep Date.now() aligned with jstNow() and the fixed health-window fixtures.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-16T12:00:00.000+09:00'));
   healthyState();

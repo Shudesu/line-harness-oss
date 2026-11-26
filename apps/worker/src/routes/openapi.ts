@@ -363,6 +363,74 @@ const spec = {
         responses: { '200': { description: 'Tag removed' }, '409': lineIdempotencyConflict, '422': { description: 'Idempotency-Key reused for different input' } },
       },
     },
+    '/api/friends/{id}/scheduled-messages': {
+      get: {
+        tags: ['Friends'],
+        summary: '友だち1人宛ての予約送信一覧',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['pending', 'sending', 'sent', 'cancelled', 'failed'] } },
+        ],
+        responses: { '200': { description: 'Scheduled messages (pending: send_at asc, otherwise desc)' } },
+      },
+      post: {
+        tags: ['Friends'],
+        summary: '友だち1人宛てにメッセージを予約送信（cron が送信時刻以降に1回だけ push）',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  content: { type: 'string', description: 'text 本文 (5000字まで) / image・flex は JSON 文字列' },
+                  sendAt: { type: 'string', format: 'date-time', description: 'タイムゾーン必須 (例 2026-11-20T19:00:00+09:00)。1分後〜366日以内' },
+                  messageType: { type: 'string', enum: ['text', 'image', 'flex'], default: 'text' },
+                  altText: { type: 'string' },
+                  trackLinks: { type: 'boolean', default: true },
+                },
+                required: ['content', 'sendAt'],
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Scheduled (status=pending)' }, '400': { description: 'Invalid input' }, '404': { description: 'Friend not found' } },
+      },
+    },
+    '/api/friends/{id}/scheduled-messages/{msgId}': {
+      delete: {
+        tags: ['Friends'],
+        summary: '予約送信を取り消す（pending のみ。行は残り status=cancelled）',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'msgId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Cancelled' }, '404': { description: 'Not found' }, '409': { description: 'Not pending' } },
+      },
+    },
+    '/api/friends/{id}/scheduled-messages/{msgId}/cancel': {
+      post: {
+        tags: ['Friends'],
+        summary: '予約送信を取り消す（DELETE と同じ）',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'msgId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Cancelled' }, '404': { description: 'Not found' }, '409': { description: 'Not pending' } },
+      },
+    },
+    '/api/scheduled-messages': {
+      get: {
+        tags: ['Friends'],
+        summary: '全友だちの予約送信一覧',
+        parameters: [
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['pending', 'sending', 'sent', 'cancelled', 'failed'] } },
+          { name: 'lineAccountId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 100, maximum: 500 } },
+        ],
+        responses: { '200': { description: 'Scheduled messages with friendDisplayName' } },
+      },
+    },
     // ── Tags ────────────────────────────────────────────────────────────────
     '/api/tags': {
       get: { tags: ['Tags'], summary: 'タグ一覧取得', responses: { '200': { description: 'All tags' } } },
