@@ -7,6 +7,17 @@ export default function NewsPage() {
     <div className="mx-auto max-w-4xl p-4 sm:p-6 lg:p-8">
       <Header title="アップデートニュース" description="L Harnessで、新しくできること。" />
       <article className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+        <div className="bg-slate-900 p-6 text-white sm:p-10">
+          <p className="text-xs font-semibold tracking-widest text-sky-300">2026-11-16 / calm UX</p>
+          <h2 className="mt-4 text-2xl font-bold leading-snug sm:text-3xl">管理画面の表示を、落ち着かせました。</h2>
+          <p className="mt-4 text-sm leading-7 text-slate-300">読み込み中も画面の枠を消さない。チャットが「毎回バグるように見える」見え方を直す更新です。</p>
+        </div>
+        <div className="space-y-8 p-6 text-sm leading-7 text-gray-600 sm:p-10">
+          <section><h3 className="mb-3 text-lg font-bold text-gray-900">今回直したこと</h3><ul className="list-disc space-y-2 pl-5"><li>認証チェック中もシェル（バナー・サイドバー）を保持し、コンテンツ領域だけを部分スケルトンに。ページ移動のたびに画面が全部白くなっていたのをやめました。</li><li>チャットの一覧・会話は、取得中も前のデータを見せたまま差し替えます。古い応答は破棄し、切替時の上書きレースを解消しました。</li><li>スクロールは切替直後と最下部付近のときだけ追従。読み返し中に最下部へ飛ぶ暴走スクロールを止めました。</li><li>未対応バッジの重い集計は5秒デバウンス。メッセージ履歴は同秒の並び替えを防ぐrowid順に。</li></ul></section>
+          <section><h3 className="mb-3 text-lg font-bold text-gray-900">動かし方を変えるかたへ</h3><p>表示の更新のみで、設定・データ・APIの仕様は変わっていません。環境の更新は管理画面の「更新」から通常どおり。変更の詳細はリリースノート（v0.23.2以降）に載ります。</p></section>
+        </div>
+      </article>
+      <article className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
         <div className="bg-slate-950 p-6 text-white sm:p-10">
           <p className="text-xs font-semibold tracking-widest text-emerald-300">PLUGIN MARKET / BETA</p>
           <h2 className="mt-4 text-2xl font-bold leading-snug sm:text-3xl">「数行だけ変えたい」を、<br />アップデートのたびに諦めない。</h2>

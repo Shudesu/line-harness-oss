@@ -25,4 +25,15 @@ describe('legacyQueryTarget', () => {
       '/booking?liffId=123',
     );
   });
+
+  it.each([
+    '?page=salon-book&redirect=https://example.com/path?key=foo?bar',
+    '?page=salon-book&redirect=https%3A%2F%2Fexample.com%2Fpath%3Fkey%3Dfoo%3Fbar',
+  ])('preserves question marks inside a redirect URL after LIFF 2.31.2: %s', (search) => {
+    const result = new URL(legacyQueryTarget(search), 'https://liff.example');
+    expect(result.pathname).toBe('/booking');
+    expect(result.searchParams.get('redirect')).toBe('https://example.com/path?key=foo?bar');
+    expect([...result.searchParams.keys()]).toEqual(['redirect']);
+  });
+
 });

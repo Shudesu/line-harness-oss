@@ -1,3 +1,4 @@
+import { countSegmentAudience, savedSegmentAudience } from './saved-segment.js';
 /**
  * Generic usage quotas for a deployment. All limits are opt-in via env vars;
  * unset/invalid = unlimited, which keeps existing deployments unchanged.
@@ -174,6 +175,9 @@ export async function estimateSendAudience(
   db: D1Database,
   broadcast: { target_type: string; target_tag_id?: string | null },
 ): Promise<number | null> {
+  // Saved segment conditions define the real audience (see saved-segment.ts).
+  const segment = savedSegmentAudience(broadcast);
+  if (segment) return (await countSegmentAudience(db, broadcast, segment)).total;
   if (broadcast.target_type === 'tag') {
     if (!broadcast.target_tag_id) return null;
     // Same account + following + tag conditions as inline and queued delivery.
@@ -237,6 +241,8 @@ export async function personalizedAudienceCount(
   db: D1Database,
   broadcast: { target_type: string; target_tag_id?: string | null },
 ): Promise<number | null> {
+  const segment = savedSegmentAudience(broadcast);
+  if (segment) return (await countSegmentAudience(db, broadcast, segment)).total;
   const filter = personalizedAudienceFilter(broadcast);
   if (!filter) return null;
   const row = await db

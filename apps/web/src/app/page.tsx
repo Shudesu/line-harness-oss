@@ -19,7 +19,7 @@ import { LayerCard } from '@cloudflare/kumo/components/layer-card'
 const ccPrompts = [
   {
     title: 'ダッシュボードのKPI分析',
-    prompt: `LINE CRM ダッシュボードのデータを分析してください。
+    prompt: `L Harness ダッシュボードのデータを分析してください。
 1. 友だち数の推移を確認
 2. アクティブシナリオの効果を評価
 3. 配信の開封率・クリック率を分析

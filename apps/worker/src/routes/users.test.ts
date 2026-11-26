@@ -1,3 +1,7 @@
+import { authDb, seedAuthStaff } from '../test-support/auth-db.js';
+let authDatabase: ReturnType<typeof authDb>;
+// Auth storage is integration-tested in security-hardening.test.ts.
+vi.mock('../middleware/auth-security.js', () => ({ limitAuth: async () => null, audit: async () => {} }));
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
@@ -18,7 +22,7 @@ const dbMocks = vi.hoisted(() => ({
   getUserByPhone: vi.fn(),
 }));
 const groupedMocks = vi.hoisted(() => ({ computeUsersGrouped: vi.fn() }));
-vi.mock('@line-crm/db', () => dbMocks);
+vi.mock('@line-crm/db', async (importOriginal) => ({...await importOriginal<typeof import('@line-crm/db')>(), ...dbMocks}));
 vi.mock('../services/users-grouped.js', () => groupedMocks);
 
 const userRow = {
@@ -111,6 +115,9 @@ function expectNoUserDataAccess() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  authDatabase = authDb();
+  for (const role of ['admin','staff']) seedAuthStaff(authDatabase.sqlite,{id:role+'-1',name:role,role,key:role+'-key'},'lhs_'+(role === 'admin' ? 'A' : 'B').repeat(43));
+  env.DB = authDatabase.db;
   dbMocks.getStaffByApiKey.mockImplementation(async (_db, token) => {
     for (const role of ['owner', 'admin', 'staff'] as const) {
       if (token === `${role}-key`) return { id: `${role}-1`, name: role, role };
@@ -132,15 +139,16 @@ const allowedCredentials: Array<[string, Record<string, string>]> = [
   ['owner API key', { Authorization: 'Bearer owner-key' }],
   ['admin API key', { Authorization: 'Bearer admin-key' }],
   ['environment owner API key', { Authorization: 'Bearer env-owner-key' }],
-  ['admin session cookie', { Cookie: 'lh_admin_session=admin-key; lh_csrf=csrf-1', 'X-CSRF-Token': 'csrf-1' }],
+  ['admin session cookie', { Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA; lh_csrf=csrf-1', 'X-CSRF-Token': 'csrf-1' }],
 ];
 const deniedCredentials: Array<[string, Record<string, string>, number]> = [
   ['staff API key', { Authorization: 'Bearer staff-key' }, 403],
-  ['staff session cookie', { Cookie: 'lh_admin_session=staff-key; lh_csrf=csrf-1', 'X-CSRF-Token': 'csrf-1' }, 403],
+  ['staff session cookie', { Cookie: 'lh_admin_session=lhs_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB; lh_csrf=csrf-1', 'X-CSRF-Token': 'csrf-1' }, 403],
   ['no credentials', {}, 401],
 ];
 
 afterEach(() => {
+  authDatabase.sqlite.close();
   vi.restoreAllMocks();
 });
 
@@ -190,7 +198,7 @@ describe.each(routes)('$method $path permissions', (route) => {
 test.each(routes.filter((route) => route.method !== 'GET'))(
   '$method $path rejects cookie authentication without CSRF before accessing user data',
   async (route) => {
-    const response = await request(route, { Cookie: 'lh_admin_session=admin-key' });
+    const response = await request(route, { Cookie: 'lh_admin_session=lhs_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ success: false, error: 'CSRF token mismatch' });

@@ -12,31 +12,12 @@ export async function verifySignature(
   body: string,
   signature: string,
 ): Promise<boolean> {
-  const encoder = new TextEncoder();
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(channelSecret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-
-  const signatureBytes = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    encoder.encode(body),
-  );
-
-  // Convert computed HMAC to base64 (safe for all buffer sizes)
-  const bytes = new Uint8Array(signatureBytes);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  const computedBase64 = btoa(binary);
-
-  // Constant-time comparison is not strictly needed here because both strings
-  // are base64 of the same length, but we avoid early-exit for safety.
-  return computedBase64 === signature;
+  if (!channelSecret || !/^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(signature)) return false;
+  try {
+    const bytes = Uint8Array.from(atob(signature), ch => ch.charCodeAt(0));
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', encoder.encode(channelSecret),
+      {name:'HMAC',hash:'SHA-256'}, false, ['verify']);
+    return crypto.subtle.verify('HMAC',key,bytes,encoder.encode(body));
+  } catch { return false; }
 }

@@ -33,6 +33,25 @@ export interface MessageQuotaConsumption {
   totalUsage: number;
 }
 
+/** Response of GET/PUT /v2/bot/channel/webhook/endpoint. */
+export interface WebhookEndpointSetting {
+  endpoint: string;
+  active: boolean;
+}
+
+/**
+ * Response of POST /v2/bot/channel/webhook/test.
+ * LINE POSTs a test event to the configured webhook URL and reports whether
+ * the receiving side answered correctly (signature verification etc.).
+ */
+export interface WebhookTestResult {
+  success: boolean;
+  message?: string;
+  timestamp?: string;
+  detail?: string;
+  [key: string]: unknown;
+}
+
 /**
  * LINE API が非 2xx を返したときの typed error。status とレスポンス本文を
  * 機械可読に保持する — 呼び出し元が「429 かつ月間上限超過」のような判別を
@@ -242,6 +261,37 @@ export class LineClient {
     }
     const data = (await res.json()) as { richMenuId: string };
     return data.richMenuId;
+  }
+
+  // ─── Webhook endpoint settings (Messaging API channel config) ─────────────
+
+  /**
+   * Read the webhook URL registered on this channel and whether the
+   * subscription is active. GET only — never mutates the channel.
+   */
+  async getWebhookEndpoint(): Promise<WebhookEndpointSetting> {
+    const { data } = await this.request('GET', '/v2/bot/channel/webhook/endpoint');
+    return data as WebhookEndpointSetting;
+  }
+
+  /**
+   * Overwrite the webhook URL registered on this channel (PUT).
+   * Callers must never silently replace an endpoint they did not configure —
+   * read getWebhookEndpoint() and confirm with the operator first.
+   */
+  async setWebhookEndpoint(endpoint: string): Promise<void> {
+    await this.request('PUT', '/v2/bot/channel/webhook/endpoint', { endpoint });
+  }
+
+  /**
+   * Ask LINE to send a test webhook to the currently registered URL and
+   * report whether the receiving side responded correctly. GET-like in
+   * effect (no message is delivered to users), but LINE does hit the
+   * registered endpoint URL.
+   */
+  async testWebhookEndpoint(): Promise<WebhookTestResult> {
+    const { data } = await this.request('POST', '/v2/bot/channel/webhook/test', {});
+    return data as WebhookTestResult;
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

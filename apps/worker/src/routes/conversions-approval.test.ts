@@ -1,3 +1,5 @@
+// Auth storage is integration-tested in security-hardening.test.ts.
+vi.mock('../middleware/auth-security.js', () => ({ limitAuth: async () => null, audit: async () => {} }));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Route-level test for the approval queue endpoints:

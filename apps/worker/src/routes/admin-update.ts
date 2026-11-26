@@ -2,7 +2,7 @@
  * Self-update HTTP API — Phase 5 Task 18.
  *
  * Mounted at `/admin/update` from `index.ts`. Every endpoint is guarded by an
- * `x-admin-api-key` header check that must equal `c.env.ADMIN_API_KEY`. The
+ * opaque owner cookie session, with CSRF required for mutations. The
  * sibling `/admin/version` route is intentionally UN-authenticated (the
  * upgrade banner reads it pre-login) — that route lives in `admin-version.ts`
  * and is mounted at `/admin` directly. The per-router middleware here only
@@ -58,9 +58,9 @@ import {
  * onto the global Bindings type.
  */
 type UpdateEnv = {
+  Variables: { staff: import('../middleware/auth.js').AuthenticatedStaff };
   Bindings: {
     DB: D1Database;
-    ADMIN_API_KEY: string;
     CF_API_TOKEN: string;
     CF_ACCOUNT_ID: string;
     WORKER_NAME: string;
@@ -106,9 +106,10 @@ function adaptD1(db: D1Database): D1Like {
 
 /** Auth gate — single source of truth for every endpoint in this router. */
 app.use('/*', async (c, next) => {
-  const key = c.req.header('x-admin-api-key');
-  if (!key || key !== c.env.ADMIN_API_KEY) {
-    return c.text('unauthorized', 401);
+  const staff = c.get('staff');
+  if (!staff) return c.json({error:'Unauthorized'},401);
+  if (!staff.sessionId || staff.apiScopes != null || staff.role !== 'owner') {
+    return c.json({error:'Owner cookie session required'},403);
   }
   await next();
 });
