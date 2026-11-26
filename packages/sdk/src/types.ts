@@ -48,8 +48,33 @@ export interface FriendListParams {
   offset?: number
   tagId?: string
   search?: string
+  /** Exact LINE user ID match. Requires an account (accountId or the client default). */
+  lineUserId?: string
   metadata?: Record<string, string>
   accountId?: string
+}
+
+// ─── Conversion ─────────────────────────────────────────
+export interface ConversionEvent {
+  id: string
+  conversionPointId: string
+  friendId: string
+  userId: string | null
+  affiliateCode: string | null
+  metadata: string | null
+  createdAt: string
+}
+
+export interface TrackConversionInput {
+  conversionPointId: string
+  friendId: string
+  userId?: string | null
+  affiliateCode?: string | null
+  metadata?: Record<string, unknown> | null
+  /** Also fire `cv_fire`. Requires `idempotencyKey`. */
+  fireEvent?: boolean
+  /** DB-wide key retained indefinitely; namespace by integration/account. A retry returns the same event. */
+  idempotencyKey?: string
 }
 
 // ─── Tag ────────────────────────────────────────────────
@@ -507,7 +532,10 @@ export interface CalendarBooking {
 // ─── Staff ──────────────────────────────────────────────
 export type StaffRole = 'owner' | 'admin' | 'staff'
 
+export type StaffApiScope = 'messages:read' | 'messages:send'
+
 export interface StaffMember {
+  apiScopes?: StaffApiScope[] | null
   id: string
   name: string
   email: string | null
@@ -530,12 +558,14 @@ export interface StaffProfile {
 }
 
 export interface CreateStaffInput {
+  apiScopes?: StaffApiScope[] | null
   name: string
   email?: string
   role: 'admin' | 'staff'
 }
 
 export interface UpdateStaffInput {
+  apiScopes?: StaffApiScope[] | null
   name?: string
   email?: string | null
   role?: StaffRole

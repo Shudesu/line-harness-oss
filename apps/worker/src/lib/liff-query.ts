@@ -5,7 +5,7 @@ type DirectQueryReader = (key: string) => string | undefined;
  * query part as fallback; never rewrite liff.state or the request URL.
  * Hono has decoded the outer value already, so do not decode it again.
  */
-export function createLiffQueryReader(readDirect: DirectQueryReader): (key: string) => string {
+export function createLiffQueryReader(readDirect: DirectQueryReader): ((key: string) => string) & { optional: DirectQueryReader } {
   const state = (readDirect('liff.state') ?? '').split('#', 1)[0];
   const queryStart = state.indexOf('?');
   // Additional LIFF information is a path, not an absolute/protocol-relative URL.
@@ -16,5 +16,6 @@ export function createLiffQueryReader(readDirect: DirectQueryReader): (key: stri
 
   // A present empty direct value deliberately overrides a value hidden in state.
   // Both Hono.query and URLSearchParams.get retain first-value duplicate semantics.
-  return (key) => readDirect(key) ?? stateParams.get(key) ?? '';
+  const optional: DirectQueryReader = (key) => readDirect(key) ?? stateParams.get(key) ?? undefined;
+  return Object.assign((key: string) => optional(key) ?? '', { optional });
 }

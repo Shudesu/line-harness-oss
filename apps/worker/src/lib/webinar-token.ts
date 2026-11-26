@@ -1,3 +1,4 @@
+import { timingSafeEqualString } from '@line-crm/shared';
 // HLS アセット配信用の短命 HMAC トークン。URL パスに埋め込むので base64url。
 // 完全な DRM ではなく「友だち以外の直リンク視聴の抑止」が目的 (spec 参照)。
 
@@ -39,10 +40,5 @@ export async function verifyWebinarToken(
   if (!Number.isFinite(exp) || exp < nowEpochSeconds) return false;
   const expected = await hmac(secret, `${slug}:${exp}`);
   const actual = token.slice(dot + 1);
-  if (expected.length !== actual.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) {
-    diff |= expected.charCodeAt(i) ^ actual.charCodeAt(i);
-  }
-  return diff === 0;
+  return timingSafeEqualString(expected, actual);
 }

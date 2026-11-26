@@ -497,17 +497,7 @@ export async function runUpdate(
   }
   const cfg = resolved.value;
 
-  // /admin/version is documented as public (intentionally un-authenticated
-  // so the dashboard can render the upgrade banner pre-login). The header
-  // is only sent in case a future Worker version starts requiring it.
-  const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
-  if (!ADMIN_API_KEY) {
-    p.log.warn(
-      "ADMIN_API_KEY 環境変数が未設定です。/admin/version は現在パブリックなので続行しますが、" +
-        "Worker が将来この認証を要求する場合は `export ADMIN_API_KEY=...` が必要になります。",
-    );
-  }
-
+  // Version discovery is public; never send an unrelated admin secret.
   p.log.success(`プロジェクト: ${state.projectName ?? cfg.workerName}`);
 
   // 0) workers.dev-hosted installs: if the account-level workers.dev
@@ -543,9 +533,7 @@ export async function runUpdate(
   const workerVersionUrl = `${cfg.workerPublicUrl.replace(/\/$/, "")}/admin/version`;
   let current: CurrentVersion;
   try {
-    const headers: Record<string, string> = {};
-    if (ADMIN_API_KEY) headers["x-admin-api-key"] = ADMIN_API_KEY;
-    const r = await fetch(workerVersionUrl, { headers });
+    const r = await fetch(workerVersionUrl);
     if (!r.ok) {
       throw new Error(`HTTP ${r.status}`);
     }

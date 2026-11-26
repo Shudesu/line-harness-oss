@@ -15,7 +15,7 @@ import { Select } from '@cloudflare/kumo/components/select'
 import { Table } from '@cloudflare/kumo/components/table'
 import Header from '@/components/layout/header'
 import { fetchApi } from '@/lib/api'
-import type { ApiResponse, StaffMember } from '@line-crm/shared'
+import type { ApiResponse, StaffMember, StaffApiScope } from '@line-crm/shared'
 
 type NewApiKey = { apiKey: string; staffId: string }
 type PendingAction = { kind: 'regenerate' | 'delete'; member: StaffMember }
@@ -40,6 +40,7 @@ export default function StaffPage() {
   const [formName, setFormName] = useState('')
   const [formEmail, setFormEmail] = useState('')
   const [formRole, setFormRole] = useState<'admin' | 'staff'>('staff')
+  const [keyUsage, setKeyUsage] = useState('staff')
   const [formLoading, setFormLoading] = useState(false)
   const [formError, setFormError] = useState('')
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
@@ -66,9 +67,10 @@ export default function StaffPage() {
     setFormLoading(true)
     setFormError('')
     try {
-      const body: { name: string; role: 'admin' | 'staff'; email?: string } = {
+      const body: { name: string; role: 'admin' | 'staff'; email?: string; apiScopes: StaffApiScope[] | null } = {
         name: formName,
-        role: formRole,
+        role: keyUsage === 'staff' ? formRole : 'staff',
+        apiScopes: keyUsage === 'staff' ? null : keyUsage === 'read' ? ['messages:read'] : ['messages:read', 'messages:send'],
       }
       if (formEmail) body.email = formEmail
 
@@ -81,6 +83,7 @@ export default function StaffPage() {
         setFormName('')
         setFormEmail('')
         setFormRole('staff')
+        setKeyUsage('staff')
         setShowForm(false)
         await loadMembers()
       } else {
@@ -186,6 +189,10 @@ export default function StaffPage() {
                 items={{ staff: 'スタッフ', admin: '管理者' }}
               />
             </div>
+            <Select label="キーの用途" value={keyUsage}
+              onValueChange={(value) => setKeyUsage(value ?? 'staff')}
+              items={{ staff: 'スタッフ業務用（ロールの権限）', read: '外部連携：会話の閲覧のみ', messaging: '外部連携：会話の閲覧＋個別送信' }} />
+            {keyUsage !== 'staff' ? <p className="text-sm text-kumo-subtle">連携用キーはスタッフ権限で発行されます。友だち・会話・受信画像が閲覧対象です。設定変更、一斉配信、管理画面へのログインはできません。個別送信には送信用画像のアップロードを含みます。</p> : null}
             {formError ? <Banner size="sm" variant="error" title="作成できませんでした" description={formError} /> : null}
             <div className="flex gap-2">
               <Button type="submit" variant="primary" loading={formLoading} disabled={!formName}>作成</Button>
@@ -248,7 +255,9 @@ export default function StaffPage() {
                 <Table.Row key={member.id}>
                   <Table.Cell className="font-medium text-kumo-strong">{member.name}</Table.Cell>
                   <Table.Cell className="hidden text-kumo-subtle sm:table-cell">{member.email ?? '—'}</Table.Cell>
-                  <Table.Cell><RoleBadge role={member.role} /></Table.Cell>
+                  <Table.Cell><RoleBadge role={member.role} />
+                    {member.apiScopes != null ? <span className="block text-xs text-kumo-subtle">{member.apiScopes.length === 0 ? 'APIアクセス不可' : member.apiScopes.includes('messages:send') ? '連携用・個別送信可' : '連携用・閲覧のみ'}</span> : null}
+                  </Table.Cell>
                   <Table.Cell className="hidden font-mono text-xs text-kumo-subtle md:table-cell">{maskKey(member.apiKey ?? '')}</Table.Cell>
                   <Table.Cell>
                     <Badge variant={member.isActive ? 'success' : 'neutral'} appearance="dot">

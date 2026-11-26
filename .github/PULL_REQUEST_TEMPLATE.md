@@ -69,3 +69,15 @@ If any answer is `Yes`, explain the risk and mitigation:
 ## Rollback / Recovery
 
 <!-- How should maintainers recover if this change causes a problem? Write N/A for docs-only PRs. -->
+
+## Cloudflareの処理量
+
+DB/定期処理/ポーリング/再試行を変更する場合は [設計・リリースチェック](../docs/engineering/cloudflare-cost-review.md) に従う。該当なしの場合も理由を書く。
+
+- 入口・頻度・対象人数・同時実行・再試行上限：
+- 1回のSQL数、D1 read/write行数、Workers request/CPUの根拠：
+- 無関係なデータ／本人履歴／対象数が100倍・1000倍になったとき：
+- 実行計画・`pnpm check:cost` 結果・月次予算とアカウント共有枠：
+- 監視担当・通知・利用者影響・復旧手順：
+
+SQLite VM命令数をD1課金rowsとしない。未測定の値は未測定と書く。

@@ -1,3 +1,4 @@
+import { timingSafeEqualString } from '@line-crm/shared';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { calendarCredentialsFromEnv, calendarBrokerAvailable, calendarBrokerRequest, isBrokerRefreshToken } from '../services/google-calendar-broker.js';
 // Booking feature HTTP routes.
@@ -1251,7 +1252,7 @@ booking.get(GOOGLE_OAUTH_CALLBACK_PATH, async (c) => {
     if (!state) throw new Error('google_oauth_state_missing');
     const payload = await verifyGoogleOAuthState(state, c.env.API_KEY);
     if (payload.broker) {
-      if (!payload.browserNonce || getCookie(c, GOOGLE_BROKER_COOKIE) !== payload.browserNonce) {
+      if (!payload.browserNonce || !await timingSafeEqualString(getCookie(c, GOOGLE_BROKER_COOKIE), payload.browserNonce)) {
         throw new Error('google_oauth_browser_mismatch');
       }
       deleteCookie(c, GOOGLE_BROKER_COOKIE, { path: '/', secure: true });
@@ -1279,7 +1280,7 @@ booking.get(GOOGLE_OAUTH_CALLBACK_PATH, async (c) => {
       redirectUri: googleOAuthRedirectUri(c.req.url),
     });
 
-    if (payload.broker && (!('state' in token) || token.state !== state || !isBrokerRefreshToken(token.refreshToken))) {
+    if (payload.broker && (!('state' in token) || typeof token.state !== 'string' || !await timingSafeEqualString(token.state, state) || !isBrokerRefreshToken(token.refreshToken))) {
       throw new Error('google_oauth_handoff_mismatch');
     }
 

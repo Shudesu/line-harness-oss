@@ -5,11 +5,13 @@ session cookie** instead of an API key stored in `localStorage`. This removes
 the XSS-exposed credential (OSS security issue #102) while keeping SDK/MCP
 Bearer-token access unchanged.
 
+> Existing installations must apply the SQL migration and finish key backfill: [English](SECURITY-UPGRADE.en.md) / [日本語](SECURITY-UPGRADE.md). Raw-key cookies are no longer accepted. See those guides for scopes, D1 rate limiting/audit retention and optional Access JWT verification.
+
 ## How it works
 
 1. **Login** — `POST /api/auth/login { apiKey }`. The Worker validates the key
    (staff table, `API_KEY`, or `LEGACY_API_KEY`) and sets two cookies:
-   - `lh_admin_session` — the credential. **HttpOnly**, `Secure`, `Path=/`,
+   - `lh_admin_session` — an opaque, revocable ID (only its digest is stored in D1). **HttpOnly**, `Secure`, `Path=/`,
      `Max-Age=604800`. JavaScript can never read it.
    - `lh_csrf` — a random CSRF token. Readable, `Secure`. Also returned in the
      response body.
@@ -21,7 +23,7 @@ Bearer-token access unchanged.
 3. **Session check** — `GET /api/auth/session` returns the staff identity and
    the current CSRF token (minting one if missing), letting the SPA recover the
    token after a reload without re-login.
-4. **Logout** — `POST /api/auth/logout` expires both cookies.
+4. **Logout** — `POST /api/auth/logout` revokes the server-side session and expires both cookies.
 
 ### Why the CSRF token is also returned in the body
 

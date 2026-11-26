@@ -84,7 +84,11 @@ const baseCtx = {
 } as unknown as ExecutionContext;
 
 async function request(path: string, init?: RequestInit) {
-  const app = new Hono();
+  const app = new Hono<{Variables:{staff: import('../middleware/auth.js').AuthenticatedStaff}}>();
+  app.use('*', async (c, next) => {
+    if (c.req.header('Cookie') === 'unit-owner-session') c.set('staff',{id:'owner',name:'Owner',role:'owner',sessionId:'unit-session'});
+    await next();
+  });
   const adminUpdate = await loadRoute();
   app.route('/admin/update', adminUpdate);
   return app.request(path, init, baseEnv, baseCtx);
@@ -109,7 +113,7 @@ beforeEach(() => {
 });
 
 describe('POST /admin/update/start', () => {
-  it('rejects requests without ADMIN_API_KEY header → 401', async () => {
+  it('rejects requests without owner session → 401', async () => {
     const res = await request('/admin/update/start', { method: 'POST' });
     expect(res.status).toBe(401);
   });
@@ -125,7 +129,7 @@ describe('POST /admin/update/start', () => {
   it('starts an update and returns 202 with updateId', async () => {
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(202);
     const body = (await res.json()) as { updateId: string };
@@ -148,7 +152,7 @@ describe('POST /admin/update/start', () => {
     });
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { error: string };
@@ -163,7 +167,7 @@ describe('POST /admin/update/start', () => {
     });
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string; reason: string };
@@ -180,7 +184,7 @@ describe('POST /admin/update/start', () => {
     runUpdate.mockRejectedValueOnce(new Error('cf pages api down'));
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error: string; message: string };
@@ -198,7 +202,7 @@ describe('GET /admin/update/status/:id', () => {
   it('returns 404 when no snapshot row exists', async () => {
     getSnapshot.mockResolvedValue(null);
     const res = await request('/admin/update/status/nope', {
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(404);
   });
@@ -214,7 +218,7 @@ describe('GET /admin/update/status/:id', () => {
       to_version: '0.8.0',
     });
     const res = await request('/admin/update/status/abc', {
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -242,7 +246,7 @@ describe('GET /admin/update/history', () => {
       { id: 'b', status: 'failed', from_version: '0.6.0', to_version: '0.7.0' },
     ]);
     const res = await request('/admin/update/history', {
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { history: Array<{ id: string }> };
@@ -272,7 +276,7 @@ describe('GET /admin/update/stream/:id', () => {
       to_version: '0.8.0',
     });
     const res = await request('/admin/update/stream/abc', {
-      headers: { 'x-admin-api-key': 'test-admin-key' },
+      headers: { Cookie: 'unit-owner-session' },
     });
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('text/event-stream');

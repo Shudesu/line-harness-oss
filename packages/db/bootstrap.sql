@@ -56,6 +56,19 @@ CREATE TABLE IF NOT EXISTS ad_platforms (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  id_hash TEXT PRIMARY KEY,
+  staff_id TEXT NOT NULL,
+  credential_fp TEXT NOT NULL,
+  role_at_issue TEXT NOT NULL,
+  auth_method TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  user_agent TEXT
+, auth_subject TEXT);
+
 CREATE TABLE IF NOT EXISTS admin_users (
   id            TEXT PRIMARY KEY,
   email         TEXT NOT NULL UNIQUE,
@@ -105,6 +118,43 @@ CREATE TABLE IF NOT EXISTS affiliates (
   is_active       INTEGER NOT NULL DEFAULT 1,
   friend_id       TEXT REFERENCES friends (id),
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+  scope           TEXT NOT NULL,
+  key             TEXT NOT NULL,
+  request_hash    TEXT NOT NULL,
+  claim_token     TEXT NOT NULL,
+  status          TEXT NOT NULL CHECK (status IN ('processing', 'completed')),
+  response_status INTEGER,
+  response_body   TEXT,
+  locked_until    INTEGER NOT NULL,
+  created_at      INTEGER NOT NULL,
+  PRIMARY KEY (scope, key)
+);
+
+CREATE TABLE IF NOT EXISTS api_line_sends (
+  id TEXT PRIMARY KEY,
+  request_body TEXT NOT NULL,
+  claim_token TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('sending', 'retryable', 'completed')),
+  first_started_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_audit_log (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  ip TEXT NOT NULL,
+  outcome TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_rate_limits (
+  bucket_hash TEXT PRIMARY KEY,
+  window_start INTEGER NOT NULL,
+  attempts INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS auto_replies (
@@ -423,6 +473,12 @@ CREATE TABLE IF NOT EXISTS forms (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 , on_submit_message_type TEXT CHECK (on_submit_message_type IN ('text', 'flex')) DEFAULT NULL, on_submit_message_content TEXT DEFAULT NULL, on_submit_webhook_url TEXT, on_submit_webhook_headers TEXT, on_submit_webhook_fail_message TEXT, og_title TEXT, og_description TEXT, og_image_url TEXT);
 
+CREATE TABLE IF NOT EXISTS friend_external_ids (
+ id TEXT PRIMARY KEY,friend_id TEXT NOT NULL,line_account_id TEXT NOT NULL,provider TEXT NOT NULL,
+ external_id TEXT NOT NULL,username TEXT,linked_at INTEGER NOT NULL,source_gate_id TEXT NOT NULL,method TEXT NOT NULL,
+ UNIQUE(friend_id,provider,source_gate_id),UNIQUE(line_account_id,provider,external_id,source_gate_id)
+);
+
 CREATE TABLE IF NOT EXISTS friend_reminder_deliveries (
   id                TEXT PRIMARY KEY,
   friend_reminder_id TEXT NOT NULL REFERENCES friend_reminders (id) ON DELETE CASCADE,
@@ -450,6 +506,29 @@ CREATE TABLE IF NOT EXISTS "friend_scenarios" (
   started_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   next_delivery_at   TEXT,
   updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS friend_scheduled_messages (
+  id               TEXT PRIMARY KEY,
+  friend_id        TEXT NOT NULL REFERENCES friends (id) ON DELETE CASCADE,
+  line_account_id  TEXT,
+  message_type     TEXT NOT NULL DEFAULT 'text',
+  content          TEXT NOT NULL,
+  alt_text         TEXT,
+  track_links      INTEGER NOT NULL DEFAULT 1,
+  send_at          INTEGER NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending', 'sending', 'sent', 'cancelled', 'failed')),
+  created_by       TEXT,
+  claim_token      TEXT,
+  claimed_at       INTEGER,
+  sent_at          TEXT,
+  cancelled_at     TEXT,
+  cancelled_by     TEXT,
+  error            TEXT,
+  message_id       TEXT,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE TABLE IF NOT EXISTS friend_scores (
@@ -503,6 +582,13 @@ CREATE TABLE IF NOT EXISTS google_calendar_connections (
   last_error    TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS ig_link_token_uses (
+  nonce TEXT PRIMARY KEY,
+  friend_id TEXT NOT NULL,
+  used_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS incoming_webhooks (
@@ -912,7 +998,7 @@ CREATE TABLE IF NOT EXISTS staff_members (
   is_active  INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
-);
+, api_scopes TEXT, api_key_hash TEXT, api_key_last4 TEXT, api_key_created_at TEXT);
 
 CREATE TABLE IF NOT EXISTS staff_menus (
   staff_id                  TEXT NOT NULL,
@@ -1159,11 +1245,50 @@ CREATE TABLE IF NOT EXISTS webinars (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS x_gate_campaigns (
+ gate_id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,line_account_id TEXT NOT NULL,
+ slug TEXT NOT NULL,title TEXT NOT NULL,tier TEXT NOT NULL,tracked_link_id TEXT NOT NULL UNIQUE,
+ tags TEXT NOT NULL,scenarios TEXT NOT NULL DEFAULT '{}',request_hash TEXT NOT NULL,
+ is_active INTEGER NOT NULL DEFAULT 1,created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS x_gate_entries (
+ gate_id TEXT NOT NULL,friend_id TEXT NOT NULL,line_account_id TEXT NOT NULL,line_user_id TEXT NOT NULL,following INTEGER NOT NULL DEFAULT 0,participant_id TEXT,
+ state TEXT NOT NULL DEFAULT 'entered',result TEXT,challenge_at INTEGER,reward_reply_at INTEGER,last_seen_at INTEGER NOT NULL,created_at INTEGER NOT NULL,
+ PRIMARY KEY(gate_id,friend_id)
+);
+
+CREATE TABLE IF NOT EXISTS x_gate_inbox (
+ delivery_id TEXT PRIMARY KEY,body_hash TEXT NOT NULL,event TEXT NOT NULL,payload TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending',lease_until INTEGER,owner TEXT,created_at INTEGER NOT NULL,
+ last_error TEXT,completed_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS x_gate_notifications (
+ gate_id TEXT NOT NULL,friend_id TEXT NOT NULL,method TEXT NOT NULL CHECK(method IN ('reply','push')),
+ delivery_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,
+ PRIMARY KEY(gate_id,friend_id)
+);
+
+CREATE TABLE IF NOT EXISTS x_gate_outbox (
+ id TEXT PRIMARY KEY,gate_id TEXT NOT NULL,friend_id TEXT NOT NULL,type TEXT NOT NULL,source_id TEXT NOT NULL,
+ payload TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',
+ last_error TEXT,lease_until INTEGER,owner TEXT,UNIQUE(gate_id,friend_id,type,source_id)
+);
+
+CREATE TABLE IF NOT EXISTS x_gate_reply_receipts (
+ source_id TEXT PRIMARY KEY,friend_id TEXT NOT NULL,gate_id TEXT NOT NULL,status TEXT NOT NULL,reward_response INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_friend ON ad_conversion_logs (friend_id);
 
 CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_platform ON ad_conversion_logs (ad_platform_id);
 
 CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_status ON ad_conversion_logs (status);
+
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at, id_hash);
+
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_staff ON admin_sessions(staff_id, revoked_at, expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_affiliate ON affiliate_clicks (affiliate_id);
 
@@ -1172,6 +1297,10 @@ CREATE INDEX IF NOT EXISTS idx_affiliate_links_affiliate ON affiliate_links (aff
 CREATE INDEX IF NOT EXISTS idx_affiliate_links_offer ON affiliate_links (offer_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_affiliates_friend ON affiliates (friend_id) WHERE friend_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_auth_audit_log_time ON auth_audit_log(occurred_at, id);
+
+CREATE INDEX IF NOT EXISTS idx_auth_rate_limits_expires ON auth_rate_limits(expires_at, bucket_hash);
 
 CREATE INDEX IF NOT EXISTS idx_auto_replies_template_id ON auto_replies(template_id);
 
@@ -1257,6 +1386,12 @@ CREATE INDEX IF NOT EXISTS idx_friend_scenarios_status ON friend_scenarios (stat
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_friend_scenarios_unique ON friend_scenarios (friend_id, scenario_id) WHERE status != 'completed';
 
+CREATE INDEX IF NOT EXISTS idx_friend_scheduled_messages_due
+  ON friend_scheduled_messages (status, send_at);
+
+CREATE INDEX IF NOT EXISTS idx_friend_scheduled_messages_friend
+  ON friend_scheduled_messages (friend_id, send_at);
+
 CREATE INDEX IF NOT EXISTS idx_friend_scores_created ON friend_scores (created_at);
 
 CREATE INDEX IF NOT EXISTS idx_friend_scores_friend ON friend_scores (friend_id);
@@ -1278,6 +1413,8 @@ CREATE INDEX IF NOT EXISTS idx_health_logs_account_created_at
   ON account_health_logs (line_account_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON booking_idempotency_keys (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_ig_link_token_uses_expires ON ig_link_token_uses(expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_line_accounts_display_order
   ON line_accounts (display_order, created_at);
@@ -1370,6 +1507,10 @@ CREATE INDEX IF NOT EXISTS idx_staff_availability_rules_staff
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key_hash ON staff_members(api_key_hash);
+
+CREATE INDEX IF NOT EXISTS idx_staff_members_plaintext ON staff_members(id) WHERE api_key NOT GLOB 'hashed:*';
+
 CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
 
 CREATE INDEX IF NOT EXISTS idx_stripe_events_friend ON stripe_events (friend_id);
@@ -1430,6 +1571,8 @@ CREATE INDEX IF NOT EXISTS idx_webinar_viewers_webinar
 CREATE UNIQUE INDEX IF NOT EXISTS uq_google_calendar_connections_active_staff
   ON google_calendar_connections (staff_id)
   WHERE staff_id IS NOT NULL AND is_active = 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS x_gate_entry_line_identity ON x_gate_entries(gate_id,line_user_id);
 
 INSERT OR IGNORE INTO auto_replies (id, keyword, match_type, response_type, response_content, template_id, line_account_id, is_active, created_at)
 VALUES ('builtin-mileage-wallet-keyword', 'マイル', 'exact', 'flex', '{"type":"bubble","size":"kilo","body":{"type":"box","layout":"vertical","paddingAll":"20px","contents":[{"type":"text","text":"あなたのHarnessマイル","weight":"bold","size":"lg","color":"#1e293b"},{"type":"text","text":"現在のマイル、獲得履歴、登録済みアカウント、次にマイルを獲得できる行動を確認できます。","wrap":true,"size":"sm","color":"#64748b","margin":"md"}]},"footer":{"type":"box","layout":"vertical","paddingAll":"16px","contents":[{"type":"button","style":"primary","color":"#06C755","height":"sm","action":{"type":"uri","label":"マイルを確認する","uri":"https://liff.line.me/{{liff_id}}/?page=affiliate&liffId={{liff_id}}"}}]}}', NULL, NULL, 1, '2026-08-11T00:00:00.000+09:00');

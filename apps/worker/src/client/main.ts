@@ -18,6 +18,7 @@
  */
 
 import { initBooking } from './booking.js';
+import { initXGate } from './x-gate.js';
 import { initForm } from './form.js';
 import { safeRedirectTarget } from '../lib/safe-redirect.js';
 
@@ -150,6 +151,7 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
               displayName: fp.displayName,
               existingUuid: getSavedUuid(),
               ref: getRef() || undefined,
+              igt: params.get('igt') ?? undefined,
               ig: params.get('ig') || undefined,
               iga: params.get('iga') || undefined,
               igan: params.get('igan') || undefined,
@@ -180,6 +182,7 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
               ref: params.get('ref') || '',
               gate: params.get('gate') || '',
               xh: params.get('xh') || '',
+              igt: params.get('igt') ?? undefined,
               ig: params.get('ig') || '',
               iga: params.get('iga') || '',
               igan: params.get('igan') || '',
@@ -261,6 +264,7 @@ async function linkAndAddFlow() {
         displayName: profile.displayName,
         existingUuid: existingUuid,
         ref: ref,
+        igt: linkParams.get('igt') ?? undefined,
         ig: linkParams.get('ig') || '',
         iga: linkParams.get('iga') || '',
         igan: linkParams.get('igan') || '',
@@ -325,6 +329,7 @@ async function linkAndAddFlow() {
               ref: ref || '',
               gate: params.get('gate') || '',
               xh: params.get('xh') || '',
+              igt: params.get('igt') ?? undefined,
               ig: params.get('ig') || '',
               iga: params.get('iga') || '',
               igan: params.get('igan') || '',
@@ -370,6 +375,7 @@ async function initSalonBooking(): Promise<void> {
   const existingUuid = getSavedUuid();
   const ref = getRef();
   const bookingParams = new URLSearchParams(window.location.search);
+  const igt = bookingParams.get('igt');
   const ig = bookingParams.get('ig');
   const iga = bookingParams.get('iga');
   const igan = bookingParams.get('igan');
@@ -383,6 +389,7 @@ async function initSalonBooking(): Promise<void> {
       displayName: profile.displayName,
       existingUuid,
       ref: ref || undefined,
+      igt: igt ?? undefined,
       ig: ig || undefined,
       iga: iga || undefined,
       igan: igan || undefined,
@@ -457,6 +464,7 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
       displayName: profile.displayName,
       existingUuid,
       ref: ref || undefined,
+      igt: eventParams.get('igt') ?? undefined,
       ig: eventParams.get('ig') || undefined,
       iga: eventParams.get('iga') || undefined,
       igan: eventParams.get('igan') || undefined,
@@ -588,6 +596,7 @@ async function initAffiliate(): Promise<void> {
         displayName: profile.displayName,
         existingUuid,
         ref: ref || undefined,
+        igt: affParams.get('igt') ?? undefined,
         ig: affParams.get('ig') || undefined,
         iga: affParams.get('iga') || undefined,
         igan: affParams.get('igan') || undefined,
@@ -687,7 +696,9 @@ async function main() {
     }
 
     const page = getPage();
-    if (page === 'book') {
+    if (page === 'xgate') {
+      await initXGate(new URLSearchParams(window.location.search).get('gate'));
+    } else if (page === 'book') {
       await initBooking();
     } else if (page === 'salon-book') {
       await initSalonBooking();

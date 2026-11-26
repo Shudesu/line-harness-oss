@@ -1,6 +1,8 @@
+import { flushXGateEvents } from './services/x-gate-client.js';
 import { LineClient } from '@line-crm/line-sdk';
 import {
   getLineAccounts,
+  purgeIgLinkTokenUses,
   enqueueFollowingMileageMilestones,
   processPendingMileageEvents,
 } from '@line-crm/db';
@@ -66,6 +68,12 @@ export async function scheduled(
   env: Env['Bindings'],
   ctx: ExecutionContext,
 ): Promise<void> {
+  // Reuse the existing hourly tick; bounded cleanup also runs after policy rollback.
+  if (isHourlyTick(event)) {
+    try { await purgeIgLinkTokenUses(env.DB, Math.floor(event.scheduledTime / 1000)); }
+    catch { console.warn('[ig-link] cleanup_failed'); }
+  }
+  await flushXGateEvents(env);
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);
 
@@ -102,6 +110,24 @@ export async function scheduled(
     await refreshLineAccessTokens(env.DB);
   } catch (e) {
     console.error('token refresh error:', e);
+  }
+
+  // 友だち1人宛ての予約送信 (1:1)。時刻厳守・軽量なので重いジョブより先に実行。
+  // 行を pending→sending で確保してから送るため、cron と DO alarm が重なっても二重送信しない。
+  try {
+    const { processDueFriendScheduledMessages } = await import('./services/friend-scheduled-messages.js');
+    const result = await processDueFriendScheduledMessages(env.DB, {
+      now: new Date(),
+      defaultAccessToken: env.LINE_CHANNEL_ACCESS_TOKEN,
+      workerUrl: env.WORKER_URL || env.WORKER_PUBLIC_URL || '',
+    });
+    if (result.sent + result.failed + result.expired + result.stuck > 0) {
+      console.log(
+        `[friend-scheduled-messages] sent=${result.sent} failed=${result.failed} expired=${result.expired} stuck=${result.stuck}`,
+      );
+    }
+  } catch (e) {
+    console.error('friend-scheduled-messages error:', e instanceof Error ? e.message : e);
   }
 
   try {

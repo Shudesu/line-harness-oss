@@ -23,7 +23,7 @@ export function registerManageAdPlatforms(server: McpServer): void {
         .optional()
         .describe("Display name for the platform (e.g. 'Meta広告')"),
       config: z
-        .record(z.unknown())
+        .record(z.string(), z.unknown())
         .optional()
         .describe(
           "Platform config JSON. Meta: {pixel_id, access_token, test_event_code?}. X: {pixel_id, api_key, api_secret}. Google: {customer_id, conversion_action_id, oauth_token}. TikTok: {pixel_code, access_token}",

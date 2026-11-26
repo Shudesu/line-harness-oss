@@ -17,7 +17,7 @@ import { ProgressModalView, type UpdateFinalState } from './progress-modal-view'
  * Fallback to polling
  * -------------------
  * EventSource cannot send custom headers, but the Worker SSE route currently
- * gates on `x-admin-api-key` (see Phase 6 KNOWN LIMITATION in update-client).
+ * uses the owner session cookie.
  * To keep the modal usable until Phase 9 fixes the auth, we wire `es.onerror`
  * to fall back to a 1500ms polling loop against `getUpdateStatus` which DOES
  * send the admin key. The visual difference is a small `(polling)` badge in

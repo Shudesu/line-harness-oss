@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 
 const lineClientMocks = vi.hoisted(() => ({
@@ -27,6 +27,8 @@ vi.mock('@line-crm/db', () => ({
   getEntryRouteByRefCode: vi.fn(),
   getMessageTemplateById: vi.fn(),
   getTemplateById: vi.fn(),
+  recordSignatureFailure: vi.fn().mockResolvedValue(undefined),
+  recordSignatureSuccess: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@line-crm/line-sdk', async () => {
@@ -68,6 +70,8 @@ import {
   getScenarioSteps,
   getScenarios,
   jstNow,
+  recordSignatureFailure,
+  recordSignatureSuccess,
   resolveStepContent,
   updateFriendFollowStatus,
   upsertChatOnMessage,
@@ -188,6 +192,181 @@ describe('POST /webhook — DoS defenses (#104)', () => {
     expect(res.status).toBe(200);
     // Fast-rejected before any crypto / DB work.
     expect(verifySignature).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /webhook — signature failure recording (B-05)', () => {
+  // The in-isolate throttle keys off Date.now(); earlier tests in this file
+  // already recorded failures, so pin a clock that clears every window. Each
+  // test gets its own minute slot so the per-isolate 10s throttle does not
+  // leak between tests.
+  let clockSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let clockSlotMs = Date.now();
+  beforeEach(() => {
+    clockSlotMs += 60_000;
+    clockSpy = vi.spyOn(Date, 'now').mockReturnValue(clockSlotMs);
+  });
+  afterEach(() => {
+    clockSpy?.mockRestore();
+    clockSpy = null;
+  });
+
+  test('records an invalid signature against the single active account while still answering 200', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-1', channel_secret: 'account-secret', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    const body = JSON.stringify({ destination: 'bot', events: [{ type: 'follow' }] });
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Line-Signature': 'A'.repeat(43) + '=',
+        },
+        body,
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    // The 200 contract with LINE is unchanged — failures are recorded, not surfaced.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok' });
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
+    });
+    // Single active account → the failure is attributed to it.
+    expect(recordSignatureFailure).toHaveBeenCalledWith(baseEnv.DB, 'account-1', 'unverified');
+  });
+
+  test('records an invalid signature as unattributed on multi-account installs', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-1', channel_secret: 'secret-1', is_active: 1 },
+      { id: 'account-2', channel_secret: 'secret-2', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+        body: JSON.stringify({ events: [] }),
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledWith(baseEnv.DB, null, 'unverified');
+    });
+  });
+
+  test('records a missing signature in the background without touching verifySignature', async () => {
+    const app = setupApp();
+    const body = JSON.stringify({ destination: 'bot', events: [{ type: 'follow', source: { type: 'user', userId: 'U1' } }] });
+    const res = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(verifySignature).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
+    });
+    expect(recordSignatureFailure).toHaveBeenCalledWith(baseEnv.DB, null, 'missing_signature');
+  });
+
+  test('throttles unverified-signature recording so 44-char junk cannot amplify D1 writes', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-1', channel_secret: 'account-secret', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    for (let i = 0; i < 5; i++) {
+      const res = await app.request(
+        '/webhook',
+        {
+          method: 'POST',
+          headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+          body: JSON.stringify({ events: [] }),
+        },
+        baseEnv,
+        baseExecutionCtx,
+      );
+      expect(res.status).toBe(200);
+    }
+
+    // The first request records; the rest within the per-isolate window are
+    // suppressed, so the recording read+write happens once, not per request.
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test('never logs the request body when a signature fails', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(false);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const app = setupApp();
+    const body = JSON.stringify({
+      destination: 'bot',
+      events: [{ type: 'message', message: { type: 'text', text: '機密本文' } }],
+    });
+    await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+        body,
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    await vi.waitFor(() => {
+      expect(recordSignatureFailure).toHaveBeenCalled();
+    });
+    for (const call of errorSpy.mock.calls) {
+      expect(String(call.join(' '))).not.toContain('機密本文');
+    }
+    errorSpy.mockRestore();
+  });
+
+  test('records the last verified receive time on the success path', async () => {
+    vi.mocked(verifySignature).mockResolvedValue(true);
+    vi.mocked(getLineAccounts).mockResolvedValue([
+      { id: 'account-ok', channel_secret: 's', channel_access_token: 't', is_active: 1 },
+    ] as never);
+
+    const app = setupApp();
+    await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: { 'X-Line-Signature': 'A'.repeat(43) + '=' },
+        body: JSON.stringify({ events: [] }),
+      },
+      baseEnv,
+      baseExecutionCtx,
+    );
+
+    expect(recordSignatureSuccess).toHaveBeenCalledWith(baseEnv.DB, 'account-ok');
+    expect(recordSignatureFailure).not.toHaveBeenCalled();
   });
 });
 
