@@ -2,7 +2,7 @@ import { audit, limitAuth } from '../middleware/auth-security.js';
 import { Hono } from 'hono';
 import { consumeAdminSsoJti } from '@line-crm/db';
 import type { Env } from '../index.js';
-import { issueAdminSession, csrfCookie, requireAccess } from '../middleware/auth.js';
+import { issueAdminSession, csrfCookie, requireAccess, adminSessionMaxAge } from '../middleware/auth.js';
 import {
   parseAllowedOrigins,
   resolveAdminAuthConfig,
@@ -210,6 +210,6 @@ adminSso.get('/admin/sso', async (c) => {
   const csrfToken = crypto.randomUUID();
   await audit(c, 'sso', 'attempted', 'env-owner');
   await issueAdminSession(c, {id:'env-owner',name:'Owner',role:'owner'}, c.env.API_KEY, 'sso');
-  c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
+  c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite, adminSessionMaxAge(c.env)), { append: true });
   return noStore(c.redirect(adminHomeUrl(c.env), 302));
 });

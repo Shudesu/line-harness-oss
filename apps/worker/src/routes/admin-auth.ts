@@ -15,6 +15,7 @@ import {
   csrfCookie,
   csrfTokenFromCookie,
   expiredCookie,
+  adminSessionMaxAge,
 } from '../middleware/auth.js';
 import { resolveAdminAuthConfig } from '../middleware/admin-auth-config.js';
 
@@ -62,7 +63,7 @@ adminAuth.post('/api/auth/login', async (c) => {
   await audit(c, 'login', 'attempted', staff.id);
   const csrfToken = crypto.randomUUID();
   await issueAdminSession(c, staff, apiKey);
-  c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
+  c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite, adminSessionMaxAge(c.env)), { append: true });
   return c.json({ success: true, data: publicStaffProfile(staff), csrfToken });
 });
 
@@ -94,7 +95,7 @@ adminAuth.get('/api/auth/session', async (c) => {
   let csrfToken = csrfTokenFromCookie(c);
   if (!csrfToken) {
     csrfToken = crypto.randomUUID();
-    c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
+    c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite, adminSessionMaxAge(c.env)), { append: true });
   }
   return c.json({ success: true, data: publicStaffProfile(c.get('staff')), csrfToken });
 });

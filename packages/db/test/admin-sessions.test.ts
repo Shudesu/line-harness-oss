@@ -32,6 +32,21 @@ describe('admin session store',()=>{
   expect(s.queries.filter(q=>q.startsWith('UPDATE'))).toHaveLength(1);
   expect(s.sql.prepare('SELECT last_seen_at FROM admin_sessions').get()).toEqual({last_seen_at:300});
  });
+ it('slides expires_at on the activity write only when opted in',async()=>{
+  const s=setup();const fixed=await s.issue('staff-1',0,1000);const sliding=await s.issue('staff-1',0,1000);
+  expect(await getAdminSession(s.db,fixed.token,600)).not.toHaveProperty('renewed');
+  const renewed=await getAdminSession(s.db,sliding.token,600,{slideTtlSeconds:1000});
+  expect(renewed).toMatchObject({renewed:true,expires_at:1600,last_seen_at:600});
+  expect(await getAdminSession(s.db,fixed.token,1000)).toBeNull();
+  expect(await getAdminSession(s.db,sliding.token,800,{slideTtlSeconds:1000})).not.toHaveProperty('renewed'); // within 5 min: no write
+  expect(await getAdminSession(s.db,sliding.token,1600,{slideTtlSeconds:1000})).toBeNull(); // idle past TTL still expires
+ });
+ it('never shortens a session and bounds the sliding TTL',async()=>{
+  const s=setup();const issued=await s.issue('staff-1',0,1000);
+  expect(await getAdminSession(s.db,issued.token,400,{slideTtlSeconds:100})).not.toHaveProperty('renewed');
+  expect(s.sql.prepare('SELECT expires_at FROM admin_sessions').get()).toEqual({expires_at:1000});
+  expect(await getAdminSession(s.db,issued.token,800,{slideTtlSeconds:1e12})).toMatchObject({expires_at:800+2592000});
+ });
  it('revokes one token or all tokens for one staff identity',async()=>{
   const s=setup();const a=await s.issue();const b=await s.issue();const other=await s.issue('staff-2');
   await revokeAdminSession(s.db,a.token,1001);expect(await getAdminSession(s.db,a.token,1001)).toBeNull();
