@@ -43,13 +43,11 @@ function ContentGate({ children, fullBleed }: { children: React.ReactNode; fullB
     )
   }
   return (
-    <div className="px-4 pb-6 sm:px-6 lg:pt-8 lg:px-8 lg:pb-8">
-      <div className="animate-pulse space-y-4 max-w-2xl" aria-hidden="true">
-        <div className="h-8 w-1/3 rounded bg-gray-200" />
-        <div className="h-28 rounded-xl bg-gray-100" />
-        <div className="h-28 rounded-xl bg-gray-100" />
-        <div className="h-28 rounded-xl bg-gray-100" />
-      </div>
+    <div className="animate-pulse space-y-4 max-w-2xl" aria-hidden="true">
+      <div className="h-8 w-1/3 rounded bg-gray-200" />
+      <div className="h-28 rounded-xl bg-gray-100" />
+      <div className="h-28 rounded-xl bg-gray-100" />
+      <div className="h-28 rounded-xl bg-gray-100" />
     </div>
   )
 }
@@ -92,7 +90,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               {isFullBleed ? (
                 <ContentGate fullBleed>{children}</ContentGate>
               ) : (
-                <ContentGate fullBleed={false}>{children}</ContentGate>
+                <div className="px-4 pb-6 sm:px-6 lg:pt-8 lg:px-8 lg:pb-8">
+                  <ContentGate fullBleed={false}>{children}</ContentGate>
+                </div>
               )}
             </main>
           </div>
