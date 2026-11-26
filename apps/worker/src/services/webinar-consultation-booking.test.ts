@@ -103,6 +103,41 @@ beforeEach(() => {
 });
 
 describe('getWebinarConsultationAvailability', () => {
+  test('Cloud broker接続はGoogle client secretをテナントへ複製せずに利用できる', async () => {
+    mocks.getStaffCalendarConnection.mockResolvedValue({
+      id: 'connection-1', calendar_id: 'primary', auth_type: 'oauth',
+      access_token: null, refresh_token: 'lhc1.test-only',
+    });
+    const credentials = {
+      calendarBrokerUrl: 'https://theharness.cloud', calendarTenantId: 'tenant-1',
+      calendarBrokerSecret: 'test-only',
+    };
+    const result = await getWebinarConsultationAvailability(fakeDb(), { ...base, credentials });
+    expect(result.calendarReady).toBe(true);
+    await expect(bookWebinarConsultation(fakeDb(), {
+      ...base, credentials, startsAt: '2026-08-20T01:00:00.000Z',
+      proxyBaseUrl: 'https://worker.example.com',
+    })).resolves.toMatchObject({ status: 'confirmed', created: true });
+    expect(mocks.syncConfirmedBookingToGoogle).toHaveBeenCalledWith(
+      expect.anything(), credentials, expect.any(String), { addGoogleMeet: true },
+    );
+  });
+
+  test('broker設定不足は直接OAuth資格情報があっても接続済みと扱わない', async () => {
+    mocks.getStaffCalendarConnection.mockResolvedValue({
+      id: 'connection-1', calendar_id: 'primary', auth_type: 'oauth',
+      access_token: null, refresh_token: 'lhc1.test-only',
+    });
+    const credentials = { oauthClientId: 'client', oauthClientSecret: 'secret' };
+    const result = await getWebinarConsultationAvailability(fakeDb(), { ...base, credentials });
+    expect(result.calendarReady).toBe(false);
+    await expect(bookWebinarConsultation(fakeDb(), {
+      ...base, credentials, startsAt: '2026-08-20T01:00:00.000Z',
+      proxyBaseUrl: 'https://worker.example.com',
+    })).rejects.toMatchObject({ code: 'calendar_not_configured' });
+    expect(mocks.syncConfirmedBookingToGoogle).not.toHaveBeenCalled();
+  });
+
   test('実際の空き枠をUTC日時付きで返す', async () => {
     const result = await getWebinarConsultationAvailability(fakeDb(), base);
     expect(result).toMatchObject({

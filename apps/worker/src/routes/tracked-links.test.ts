@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, vi } from 'vitest';
+import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
 
 // Mock the DB package — /t/:linkId route reads the link via getTrackedLinkById
@@ -20,7 +20,7 @@ const dbMocks = {
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
-const { trackedLinks } = await import('./tracked-links.js');
+const { trackedLinks, ACTIVE_ACCOUNT_CACHE_TTL_MS } = await import('./tracked-links.js');
 
 const LINE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Line/14.0.0';
@@ -28,6 +28,9 @@ const LINE_UA =
 interface AccountRow {
   id: string;
   liff_id: string | null;
+  /** Defaults to 1 (active) when omitted. */
+  is_active?: number;
+  channel_secret?: string;
 }
 
 interface ScenarioRow {
@@ -36,7 +39,11 @@ interface ScenarioRow {
 }
 
 /** Minimal D1 mock covering the raw queries in resolveLinkAccount(). */
-function makeDb(state: { accounts?: AccountRow[]; scenarios?: ScenarioRow[] }): D1Database {
+function makeDb(state: {
+  accounts?: AccountRow[];
+  scenarios?: ScenarioRow[];
+  failActiveLookup?: boolean;
+}): D1Database {
   return {
     prepare(sql: string) {
       let bound: unknown[] = [];
@@ -53,7 +60,8 @@ function makeDb(state: { accounts?: AccountRow[]; scenarios?: ScenarioRow[] }): 
           }
           if (sql.includes('FROM line_accounts')) {
             const [id] = bound as [string];
-            return ((state.accounts ?? []).find((a) => a.id === id) ?? null) as T | null;
+            const acc = (state.accounts ?? []).find((a) => a.id === id);
+            return (acc ? { is_active: 1, channel_secret: `secret-of-${acc.id}`, ...acc } : null) as T | null;
           }
           return null as T | null;
         },
@@ -61,6 +69,15 @@ function makeDb(state: { accounts?: AccountRow[]; scenarios?: ScenarioRow[] }): 
           return { meta: { changes: 0 } };
         },
         async all<T>() {
+          if (sql.includes('FROM line_accounts') && sql.includes('is_active = 1')) {
+            if (state.failActiveLookup) throw new Error('D1 unavailable');
+            const limit = Number(/LIMIT (\d+)/.exec(sql)?.[1] ?? Infinity);
+            const rows = (state.accounts ?? [])
+              .filter((a) => (a.is_active ?? 1) === 1)
+              .slice(0, limit)
+              .map((a) => ({ id: a.id }));
+            return { results: rows as T[] };
+          }
           return { results: [] as T[] };
         },
       };
@@ -234,16 +251,391 @@ describe('GET /t/:linkId — per-account LIFF resolution', () => {
     expect(res.headers.get('location')!.startsWith('https://liff.line.me/2009554425-4IMBmLQ9?redirect=')).toBe(true);
   });
 
-  test('account without liff_id falls back to env.LIFF_URL', async () => {
+  test('account without liff_id goes straight to the link, never to another account LIFF', async () => {
+    // 2026-09-08 の事故の再発防止。liff_id を持たないアカウントのリンクを
+    // env.LIFF_URL へ落とすと、よその事業の LINE ログイン画面がその友だちに出る。
     dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-x' }));
     const env = {
-      DB: makeDb({ accounts: [{ id: 'acc-x', liff_id: null }] }),
+      DB: makeDb({
+        accounts: [
+          { id: 'acc-main', liff_id: '2009554425-4IMBmLQ9' },
+          { id: 'acc-x', liff_id: null },
+        ],
+      }),
       LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
       WORKER_URL: 'https://worker.example.com',
     };
     const res = await request(env, LINE_UA);
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')!.startsWith('https://liff.line.me/2009554425-4IMBmLQ9?redirect=')).toBe(true);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+  });
+
+  test('scenario account without liff_id also skips the global LIFF', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ scenario_id: 'scn-x' }));
+    const env = {
+      DB: makeDb({
+        scenarios: [{ id: 'scn-x', line_account_id: 'acc-y' }],
+        accounts: [
+          { id: 'acc-main', liff_id: '2009554425-4IMBmLQ9' },
+          { id: 'acc-y', liff_id: null },
+        ],
+      }),
+      LIFF_URL: 'https://liff.line.me/2009554425-4IMBmLQ9',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+  });
+
+  // ── 単一アカウント / 既定アカウントは env.LIFF_URL を使い続ける ──
+  // liff_id を DB に入れず LIFF_URL だけで運用している自前環境で、本人識別が
+  // 効かなくなる（クリックが全部匿名になる）退行を防ぐ。
+  const GLOBAL_LIFF = 'https://liff.line.me/2009554425-4IMBmLQ9';
+
+  test('the only active account without liff_id keeps using env.LIFF_URL', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-solo', liff_id: null }] }),
+      LIFF_URL: GLOBAL_LIFF,
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    const location = res.headers.get('location')!;
+    expect(location.startsWith(`${GLOBAL_LIFF}?redirect=`)).toBe(true);
+    expect(location).toContain(encodeURIComponent('https://worker.example.com/t/link-1'));
+  });
+
+  test('the only active account is resolved through the scenario too', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ scenario_id: 'scn-solo' }));
+    const env = {
+      DB: makeDb({
+        scenarios: [{ id: 'scn-solo', line_account_id: 'acc-solo' }],
+        accounts: [{ id: 'acc-solo', liff_id: null }],
+      }),
+      LIFF_URL: GLOBAL_LIFF,
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')!.startsWith(`${GLOBAL_LIFF}?redirect=`)).toBe(true);
+  });
+
+  test('inactive accounts do not count: one active account still uses env.LIFF_URL', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+    const env = {
+      DB: makeDb({
+        accounts: [
+          { id: 'acc-retired', liff_id: null, is_active: 0 },
+          { id: 'acc-solo', liff_id: null },
+        ],
+      }),
+      LIFF_URL: GLOBAL_LIFF,
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')!.startsWith(`${GLOBAL_LIFF}?redirect=`)).toBe(true);
+  });
+
+  test('default account (channel_secret = env.LINE_CHANNEL_SECRET) uses env.LIFF_URL among several accounts', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-main' }));
+    const env = {
+      DB: makeDb({
+        accounts: [
+          { id: 'acc-main', liff_id: null, channel_secret: 'env-secret' },
+          { id: 'acc-other', liff_id: '2009668520-YghzbHx9', channel_secret: 'other-secret' },
+        ],
+      }),
+      LIFF_URL: GLOBAL_LIFF,
+      LINE_CHANNEL_SECRET: 'env-secret',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')!.startsWith(`${GLOBAL_LIFF}?redirect=`)).toBe(true);
+  });
+
+  test('non-default account without liff_id still skips env.LIFF_URL when a default account exists', async () => {
+    // 元の不具合そのもの: 既定アカウントAの LIFF が LIFF_URL に入っていて、
+    // liff_id の無いアカウントBのリンクを B の友だちが踏む。
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-b' }));
+    const env = {
+      DB: makeDb({
+        accounts: [
+          { id: 'acc-a', liff_id: null, channel_secret: 'env-secret' },
+          { id: 'acc-b', liff_id: null, channel_secret: 'b-secret' },
+        ],
+      }),
+      LIFF_URL: GLOBAL_LIFF,
+      LINE_CHANNEL_SECRET: 'env-secret',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+  });
+
+  test('sole active account whose secret differs from a configured env.LINE_CHANNEL_SECRET skips env.LIFF_URL', async () => {
+    // 主チャネルは env だけに設定され、DB には追加アカウント1件だけ、という構成。
+    // LIFF_URL は主チャネルのものなので、「有効なのは1つだけ」を理由に使わない。
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-sub' }));
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-sub', liff_id: null, channel_secret: 'sub-secret' }] }),
+      LIFF_URL: GLOBAL_LIFF,
+      LINE_CHANNEL_SECRET: 'env-secret',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes('is_active = 1')).length).toBe(0);
+  });
+
+  test('sole active account matching env.LINE_CHANNEL_SECRET uses env.LIFF_URL without the active-account read', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-solo', liff_id: null, channel_secret: 'env-secret' }] }),
+      LIFF_URL: GLOBAL_LIFF,
+      LINE_CHANNEL_SECRET: 'env-secret',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    const res = await request(env, LINE_UA);
+    expect(res.headers.get('location')!.startsWith(`${GLOBAL_LIFF}?redirect=`)).toBe(true);
+    expect(prepare.mock.calls.filter(([sql]) => sql.includes('is_active = 1')).length).toBe(0);
+  });
+
+  test('inactive owner never borrows env.LIFF_URL, even when one other account is active', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-retired' }));
+    const env = {
+      DB: makeDb({
+        accounts: [
+          { id: 'acc-retired', liff_id: null, is_active: 0, channel_secret: 'env-secret' },
+          { id: 'acc-live', liff_id: null },
+        ],
+      }),
+      LIFF_URL: GLOBAL_LIFF,
+      LINE_CHANNEL_SECRET: 'env-secret',
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+  });
+
+  test('a failed account-count lookup fails closed (straight to the link)', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-solo', liff_id: null }], failActiveLookup: true }),
+      LIFF_URL: GLOBAL_LIFF,
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    errorSpy.mockRestore();
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
+  });
+
+  // ── 費用: 「有効なアカウントは1つだけか」をクリックごとに読まない ──
+  // /t/ は公開の転送経路。line_accounts の is_active には索引が無く、LIMIT 2 を
+  // 付けても読む行数は減らないので、isolate 内で DB ごとに短時間だけ覚えておく。
+  describe('active-account lookup is cached per isolate, per database', () => {
+    /** Counts the `is_active = 1` reads issued against this database. */
+    function countActiveLookups(db: D1Database) {
+      const spy = vi.spyOn(db, 'prepare');
+      return () => spy.mock.calls.filter(([sql]) => sql.includes('is_active = 1')).length;
+    }
+
+    function soloEnv(state: Parameters<typeof makeDb>[0]) {
+      return { DB: makeDb(state), LIFF_URL: GLOBAL_LIFF, WORKER_URL: 'https://worker.example.com' };
+    }
+
+    const toLiff = (res: Response) => res.headers.get('location')!.startsWith(`${GLOBAL_LIFF}?redirect=`);
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-26T00:00:00Z'));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    test('repeated clicks while the cache is warm add zero active-account reads', async () => {
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      const env = soloEnv({ accounts: [{ id: 'acc-solo', liff_id: null }] });
+      const lookups = countActiveLookups(env.DB);
+
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+      expect(lookups()).toBe(1); // cold isolate: one read
+
+      for (let i = 0; i < 100; i++) {
+        vi.advanceTimersByTime(500); // 50s in total, still inside the TTL
+        expect(toLiff(await request(env, LINE_UA))).toBe(true);
+      }
+      expect(lookups()).toBe(1); // 100 more clicks, 0 more reads
+    });
+
+    test('the "more than one active account" answer is cached too', async () => {
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-x' }));
+      const env = soloEnv({
+        accounts: [
+          { id: 'acc-main', liff_id: '2009554425-4IMBmLQ9' },
+          { id: 'acc-x', liff_id: null },
+        ],
+      });
+      const lookups = countActiveLookups(env.DB);
+      for (let i = 0; i < 50; i++) {
+        const res = await request(env, LINE_UA);
+        expect(res.headers.get('location')).toBe('https://example.com/lp');
+      }
+      expect(lookups()).toBe(1);
+    });
+
+    test('concurrent clicks on a cold isolate each read for themselves, then the answer is cached', async () => {
+      // 未完了の D1 読み取りは始めたリクエストのもの。別のクリックに待たせると、
+      // 最初のリクエストが切れたときに転送が返らなくなるので共有しない。
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      const env = soloEnv({ accounts: [{ id: 'acc-solo', liff_id: null }] });
+      const lookups = countActiveLookups(env.DB);
+      const responses = await Promise.all(Array.from({ length: 20 }, () => request(env, LINE_UA)));
+      expect(responses.every(toLiff)).toBe(true);
+      const cold = lookups();
+      expect(cold).toBeGreaterThanOrEqual(1);
+      expect(cold).toBeLessThanOrEqual(20);
+
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+      expect(lookups()).toBe(cold); // warm now: no further reads
+    });
+
+    test('a click does not wait on another click\'s pending read', async () => {
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      const env = soloEnv({ accounts: [{ id: 'acc-solo', liff_id: null }] });
+      // The first click's active-account read never settles (its request was cancelled).
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      let stalled = false;
+      vi.spyOn(env.DB, 'prepare').mockImplementation((sql: string) => {
+        const stmt = realPrepare(sql);
+        if (!stalled && sql.includes('is_active = 1')) {
+          stalled = true;
+          (stmt as unknown as { all: () => Promise<unknown> }).all = () => new Promise(() => {});
+        }
+        return stmt;
+      });
+      void request(env, LINE_UA); // hangs forever
+      await Promise.resolve();
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+    });
+
+    test('the cache expires: after the TTL the table is read again and a change is picked up', async () => {
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      const state: Parameters<typeof makeDb>[0] = { accounts: [{ id: 'acc-solo', liff_id: null }] };
+      const env = soloEnv(state);
+      const lookups = countActiveLookups(env.DB);
+
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+      state.accounts!.push({ id: 'acc-new', liff_id: null });
+
+      vi.advanceTimersByTime(ACTIVE_ACCOUNT_CACHE_TTL_MS - 1);
+      expect(toLiff(await request(env, LINE_UA))).toBe(true); // still the cached answer
+      expect(lookups()).toBe(1);
+
+      vi.advanceTimersByTime(1);
+      const res = await request(env, LINE_UA);
+      expect(res.headers.get('location')).toBe('https://example.com/lp'); // two active accounts now
+      expect(lookups()).toBe(2);
+    });
+
+    test('a newly activated account is never mistaken for the only one while the cache is stale', async () => {
+      // 事故の向き（よその事業の LINE ログイン画面が出る）へは古いキャッシュでも倒れない。
+      const state: Parameters<typeof makeDb>[0] = { accounts: [{ id: 'acc-solo', liff_id: null }] };
+      const env = soloEnv(state);
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+
+      state.accounts!.push({ id: 'acc-new', liff_id: null });
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-new' }));
+      const res = await request(env, LINE_UA);
+      expect(res.headers.get('location')).toBe('https://example.com/lp');
+    });
+
+    test('an owner deactivated while the cache is warm stops using env.LIFF_URL at once', async () => {
+      const state: Parameters<typeof makeDb>[0] = { accounts: [{ id: 'acc-solo', liff_id: null }] };
+      const env = soloEnv(state);
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+
+      state.accounts![0].is_active = 0;
+      const res = await request(env, LINE_UA);
+      expect(res.headers.get('location')).toBe('https://example.com/lp');
+    });
+
+    test('the cache is keyed by database: another DB with the same account id gets its own answer', async () => {
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      const single = soloEnv({ accounts: [{ id: 'acc-solo', liff_id: null }] });
+      const multi = soloEnv({
+        accounts: [
+          { id: 'acc-solo', liff_id: null },
+          { id: 'acc-other', liff_id: null },
+        ],
+      });
+      const singleLookups = countActiveLookups(single.DB);
+      const multiLookups = countActiveLookups(multi.DB);
+
+      expect(toLiff(await request(single, LINE_UA))).toBe(true);
+      expect((await request(multi, LINE_UA)).headers.get('location')).toBe('https://example.com/lp');
+      expect(toLiff(await request(single, LINE_UA))).toBe(true);
+      expect(singleLookups()).toBe(1);
+      expect(multiLookups()).toBe(1);
+    });
+
+    test('a failed lookup is not cached: the next click reads again', async () => {
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const state: Parameters<typeof makeDb>[0] = {
+        accounts: [{ id: 'acc-solo', liff_id: null }],
+        failActiveLookup: true,
+      };
+      const env = soloEnv(state);
+      const lookups = countActiveLookups(env.DB);
+
+      const failed = await request(env, LINE_UA);
+      expect(failed.headers.get('location')).toBe('https://example.com/lp');
+
+      state.failActiveLookup = false;
+      expect(toLiff(await request(env, LINE_UA))).toBe(true);
+      errorSpy.mockRestore();
+      expect(lookups()).toBe(2);
+    });
+
+    test('clicks that never needed the lookup still issue none', async () => {
+      const env = soloEnv({
+        accounts: [
+          { id: 'acc-liff', liff_id: '2009668520-YghzbHx9' },
+          { id: 'acc-other', liff_id: null },
+        ],
+      });
+      const lookups = countActiveLookups(env.DB);
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-liff' }));
+      await request(env, LINE_UA); // owner has its own liff_id
+      dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-other' }));
+      await request(env, 'Mozilla/5.0 (Macintosh) Chrome/120'); // not the LINE in-app browser
+      expect(lookups()).toBe(0);
+    });
+  });
+
+  test('single account without liff_id and without env.LIFF_URL goes straight to the link', async () => {
+    dbMocks.getTrackedLinkByIdOrShortCode.mockResolvedValue(makeLink({ line_account_id: 'acc-solo' }));
+    const env = {
+      DB: makeDb({ accounts: [{ id: 'acc-solo', liff_id: null }] }),
+      WORKER_URL: 'https://worker.example.com',
+    };
+    const res = await request(env, LINE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://example.com/lp');
   });
 
   test('non-LINE browsers redirect straight to the original URL', async () => {

@@ -17,6 +17,7 @@ export function registerGetConversation(server: McpServer): void {
         .optional()
         .describe("Return messages before this timestamp (ISO8601, for pagination)"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ friendId, limit, before }) => {
       try {
         const client = getClient();

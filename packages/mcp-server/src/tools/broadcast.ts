@@ -53,6 +53,7 @@ export function registerBroadcast(server: McpServer): void {
           "Set false to disable automatic URL shortening (/t/ tracking links). URLs are sent as-is. Default true.",
         ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({
       title,
       messageType,

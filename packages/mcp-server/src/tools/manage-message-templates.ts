@@ -13,6 +13,7 @@ export function registerManageMessageTemplates(server: McpServer): void {
       messageType: z.enum(["text", "flex"]).optional().describe("Message type: text or flex (for create, update)"),
       messageContent: z.string().optional().describe("Message content — plain text or Flex JSON string (for create, update)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, templateId, name, messageType, messageContent }) => {
       try {
         if (action === "list") {

@@ -67,3 +67,9 @@ describe('apiCall: 404 の判別', () => {
     expect(out.isError).toBeUndefined();
   });
 });
+
+it('explains missing machine scopes without suggesting endpoint probing',async()=>{
+ process.env.LINE_HARNESS_API_URL='https://test.invalid';process.env.LINE_HARNESS_API_KEY='lhk_test';
+ stubFetch(403,{success:false,error:'insufficient_scope',required:'send'});
+ try{const result=await apiCall('/api/friends/one/messages','POST',{});expect(result.hint).toContain('send 権限');expect(toToolResult(result).isError).toBe(true);}finally{vi.unstubAllGlobals();}
+});

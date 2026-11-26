@@ -1,3 +1,4 @@
+import { getApiConfig } from "./config.js";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +26,7 @@ registerAllTools(server);
 registerAllResources(server);
 
 async function main() {
+  getApiConfig();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("L Harness MCP Server running on stdio");

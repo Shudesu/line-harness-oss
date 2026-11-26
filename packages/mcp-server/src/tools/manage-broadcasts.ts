@@ -20,6 +20,7 @@ export function registerManageBroadcasts(server: McpServer): void {
       segmentConditions: z.string().optional().describe("JSON string of segment conditions: {operator: 'AND'|'OR', rules: [{type, value}]} (for send_to_segment)"),
       accountId: z.string().optional().describe("LINE account ID (uses default if omitted)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, broadcastId, title, messageType, messageContent, targetType, targetTagId, scheduledAt, segmentConditions, accountId }) => {
       try {
         const client = getClient();

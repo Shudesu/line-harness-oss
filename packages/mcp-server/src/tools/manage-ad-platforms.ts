@@ -41,6 +41,7 @@ export function registerManageAdPlatforms(server: McpServer): void {
         .optional()
         .describe("Friend ID for test conversion (for 'test')"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, platformId, name, displayName, config, isActive, eventName, friendId }) => {
       try {
         const client = getClient();

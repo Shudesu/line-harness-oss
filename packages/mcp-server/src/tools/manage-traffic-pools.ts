@@ -16,6 +16,7 @@ export function registerManageTrafficPools(server: McpServer): void {
       lineAccountId: z.string().optional().describe("LINE account ID (for add_account)"),
       poolAccountId: z.string().optional().describe("Pool account ID (for remove_account, toggle_account)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, poolId, slug, name, activeAccountId, isActive, lineAccountId, poolAccountId }) => {
       try {
         if (action === "list") {

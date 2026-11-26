@@ -1,5 +1,5 @@
 import { jstNow } from './utils.js';
-export type BroadcastTargetType = 'all' | 'tag' | 'multi-account-dedup';
+export type BroadcastTargetType = 'all' | 'tag' | 'segment' | 'multi-account-dedup';
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent';
 export type BroadcastMessageType = 'text' | 'image' | 'flex';
 
@@ -21,6 +21,8 @@ export interface Broadcast {
   failed_account_ids: string | null;
   dedup_progress: string | null;
   batch_lock_at: string | null;
+  segment_conditions?: string | null;
+  batch_offset?: number;
   track_links: number;
   line_account_id?: string | null;
   alt_text?: string | null;
