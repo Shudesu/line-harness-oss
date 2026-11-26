@@ -54,7 +54,8 @@ export default function BulkPreviewModal({ open, scenarioId, onClose }: Props) {
 
   return (
     <Dialog.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
-      <Dialog className="max-h-[80vh] w-full max-w-2xl overflow-y-auto p-6">
+      {/* 幅は Kumo の size で変える（PC は既定で 384px）。max-w-* はスマホで左右の余白を消す */}
+      <Dialog className="max-h-[80vh] overflow-y-auto p-6">
         <div className="flex items-center justify-between mb-4">
           <Dialog.Title className="text-lg font-semibold text-kumo-strong">一括プレビュー</Dialog.Title>
           <Button

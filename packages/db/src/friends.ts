@@ -165,57 +165,41 @@ export interface UpsertFriendInput {
   displayName?: string | null;
   pictureUrl?: string | null;
   statusMessage?: string | null;
+  /**
+   * LINE account the friend belongs to. Written by the same statement that
+   * creates/updates the row, so a friend is never committed without its
+   * account even if the caller is cut off right after (e.g. an isolate killed
+   * mid-burst, 2026-11-23). Omit/null to leave attribution untouched.
+   */
+  lineAccountId?: string | null;
+  /**
+   * How `lineAccountId` applies to an EXISTING row (new rows always get it):
+   * - 'fill' (default): set only while the row has no account yet.
+   * - 'rebind': overwrite — a follow event proves the user now follows it.
+   */
+  accountMode?: 'fill' | 'rebind';
 }
 
 export async function upsertFriend(
   db: D1Database,
   input: UpsertFriendInput,
 ): Promise<Friend> {
-  const now = jstNow();
   const existing = await getFriendByLineUserId(db, input.lineUserId);
+  if (existing) return updateFriendOnUpsert(db, input, existing);
 
-  if (existing) {
-    await db
-      .prepare(
-        `UPDATE friends
-         SET display_name = ?,
-             picture_url = ?,
-             status_message = ?,
-             first_followed_at = COALESCE(first_followed_at, created_at),
-             current_follow_started_at = CASE
-               WHEN is_following = 0 OR current_follow_started_at IS NULL THEN ?
-               ELSE current_follow_started_at
-             END,
-             last_followed_at = CASE
-               WHEN is_following = 0 THEN ?
-               ELSE COALESCE(last_followed_at, created_at)
-             END,
-             is_following = 1,
-             updated_at = ?
-         WHERE line_user_id = ?`,
-      )
-      .bind(
-        'displayName' in input ? (input.displayName ?? null) : existing.display_name,
-        'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
-        'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
-        now,
-        now,
-        now,
-        input.lineUserId,
-      )
-      .run();
-
-    return (await getFriendByLineUserId(db, input.lineUserId))!;
-  }
-
+  const now = jstNow();
   const id = crypto.randomUUID();
-  await db
+  // /auth/callback and the follow webhook routinely create the same friend at
+  // the same moment. A plain INSERT made the loser throw a UNIQUE violation
+  // and abort before attributing the account; fall back to the update path.
+  const inserted = await db
     .prepare(
       `INSERT INTO friends
          (id, line_user_id, display_name, picture_url, status_message, is_following,
-          first_followed_at, current_follow_started_at, last_followed_at,
+          line_account_id, first_followed_at, current_follow_started_at, last_followed_at,
           created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(line_user_id) DO NOTHING`,
     )
     .bind(
       id,
@@ -223,6 +207,7 @@ export async function upsertFriend(
       input.displayName ?? null,
       input.pictureUrl ?? null,
       input.statusMessage ?? null,
+      input.lineAccountId ?? null,
       now,
       now,
       now,
@@ -231,7 +216,57 @@ export async function upsertFriend(
     )
     .run();
 
+  if (inserted.meta?.changes === 0) {
+    const winner = await getFriendByLineUserId(db, input.lineUserId);
+    if (winner) return updateFriendOnUpsert(db, input, winner);
+  }
+
   return (await getFriendById(db, id))!;
+}
+
+async function updateFriendOnUpsert(
+  db: D1Database,
+  input: UpsertFriendInput,
+  existing: Friend,
+): Promise<Friend> {
+  const now = jstNow();
+  const accountSql =
+    input.accountMode === 'rebind'
+      ? 'COALESCE(?, line_account_id)'
+      : 'COALESCE(line_account_id, ?)';
+  await db
+    .prepare(
+      `UPDATE friends
+       SET display_name = ?,
+           picture_url = ?,
+           status_message = ?,
+           line_account_id = ${accountSql},
+           first_followed_at = COALESCE(first_followed_at, created_at),
+           current_follow_started_at = CASE
+             WHEN is_following = 0 OR current_follow_started_at IS NULL THEN ?
+             ELSE current_follow_started_at
+           END,
+           last_followed_at = CASE
+             WHEN is_following = 0 THEN ?
+             ELSE COALESCE(last_followed_at, created_at)
+           END,
+           is_following = 1,
+           updated_at = ?
+       WHERE line_user_id = ?`,
+    )
+    .bind(
+      'displayName' in input ? (input.displayName ?? null) : existing.display_name,
+      'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
+      'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
+      input.lineAccountId ?? null,
+      now,
+      now,
+      now,
+      input.lineUserId,
+    )
+    .run();
+
+  return (await getFriendByLineUserId(db, input.lineUserId))!;
 }
 
 export async function updateFriendFollowStatus(
