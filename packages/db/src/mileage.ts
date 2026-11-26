@@ -1533,19 +1533,32 @@ const FOLLOWING_MILESTONES = [
 /**
  * True unless `friends.metadata.do_not_contact` is set (alias `f`).
  *
- * Suppressing values: JSON `true`, the number `1`, and the strings `"true"` /
- * `"1"` (case-insensitive, surrounding whitespace ignored) — apps write this
- * flag through different serializers. Everything else (`false`, `0`, `null`,
- * other strings, a missing key, non-object metadata) leaves the friend eligible.
+ * Suppressing values, decided per JSON type because apps write this flag
+ * through different serializers:
+ * - JSON `true`
+ * - a number equal to 1, compared numerically — `1`, `1.0` and `1e0` all
+ *   count (a text comparison would see '1.0' and miss it)
+ * - the strings `"true"` / `"1"`, case-insensitive, after stripping
+ *   surrounding tab / LF / VT / FF / CR / space. SQLite's one-argument trim()
+ *   only removes spaces, so the character set is passed explicitly.
  *
- * `friends.metadata` has no json_valid CHECK, and json_extract raises on
- * malformed JSON, which would abort the whole statement — one corrupt row
+ * Everything else (`false`, `0`, `null`, other strings, arrays/objects, a
+ * missing key, non-object metadata) leaves the friend eligible.
+ *
+ * `friends.metadata` has no json_valid CHECK, and json_type/json_extract raise
+ * on malformed JSON, which would abort the whole statement — one corrupt row
  * would stop the 6-hour milestone job for every friend. The json_valid guard
  * turns malformed metadata into NULL, i.e. "not suppressed".
  */
-const FRIEND_CONTACTABLE_SQL = `COALESCE(lower(trim(CAST(json_extract(
-              CASE WHEN json_valid(f.metadata) THEN f.metadata END, '$.do_not_contact') AS TEXT))), '')
-              NOT IN ('1', 'true')`;
+const FRIEND_METADATA_JSON_SQL = `CASE WHEN json_valid(f.metadata) THEN f.metadata END`;
+const FRIEND_DO_NOT_CONTACT_VALUE_SQL = `json_extract(${FRIEND_METADATA_JSON_SQL}, '$.do_not_contact')`;
+const FRIEND_CONTACTABLE_SQL = `(CASE json_type(${FRIEND_METADATA_JSON_SQL}, '$.do_not_contact')
+              WHEN 'true' THEN 1
+              WHEN 'integer' THEN ${FRIEND_DO_NOT_CONTACT_VALUE_SQL} = 1
+              WHEN 'real' THEN ${FRIEND_DO_NOT_CONTACT_VALUE_SQL} = 1
+              WHEN 'text' THEN lower(trim(${FRIEND_DO_NOT_CONTACT_VALUE_SQL}, char(9, 10, 11, 12, 13, 32))) IN ('1', 'true')
+              ELSE 0
+            END) = 0`;
 
 export interface FollowingMileageReconcileResult {
   eventsCreated: number;

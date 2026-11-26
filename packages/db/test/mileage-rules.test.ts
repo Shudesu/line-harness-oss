@@ -435,6 +435,10 @@ describe('configurable mileage rules', () => {
       ['string "true"', '{"do_not_contact": "true"}'],
       ['string "TRUE" with whitespace', '{"do_not_contact": " TRUE "}'],
       ['string "1"', '{"do_not_contact": "1"}'],
+      ['number 1.0', '{"do_not_contact": 1.0}'],
+      ['number 1e0', '{"do_not_contact": 1e0}'],
+      ['string "TRUE" wrapped in tab/newline', '{"do_not_contact": "\\tTRUE\\n"}'],
+      ['string "1" wrapped in CR/LF/tab/space', '{"do_not_contact": "\\r\\n\\t 1 \\t\\r\\n"}'],
     ])('suppresses milestones when the flag is %s', async (_label, metadata) => {
       follow('friend-1', metadata);
       expect(await run()).toMatchObject({ eventsCreated: 0, queued: 0 });
@@ -449,6 +453,13 @@ describe('configurable mileage rules', () => {
       ['string "false"', '{"do_not_contact": "false"}'],
       ['string "0"', '{"do_not_contact": "0"}'],
       ['empty string', '{"do_not_contact": ""}'],
+      ['whitespace-only string', '{"do_not_contact": "\\t\\n "}'],
+      ['number 0.0', '{"do_not_contact": 0.0}'],
+      ['number 2', '{"do_not_contact": 2}'],
+      ['number 1.5', '{"do_not_contact": 1.5}'],
+      ['string "true" with inner whitespace', '{"do_not_contact": "tr\\tue"}'],
+      ['array value', '{"do_not_contact": [1]}'],
+      ['object value', '{"do_not_contact": {"a": true}}'],
       ['non-object JSON', '[1, 2]'],
       ['empty text', ''],
       ['malformed JSON', '{"do_not_contact": tru'],
