@@ -27,6 +27,7 @@ import {
   getScenarios,
   enrollFriendInScenario,
   jstNow,
+  type LineAccount,
 } from '@line-crm/db';
 import { buildIntroMessage } from '../services/intro-message.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
@@ -1197,6 +1198,36 @@ liffRoutes.post('/api/liff/profile', async (c) => {
   }
 });
 
+/**
+ * Which LINE account a friend row created by /api/liff/link belongs to.
+ *
+ * - The id_token's Login channel is registered on exactly one account → it.
+ * - It is registered on several accounts → ambiguous, do not create.
+ * - It is the env default Login channel and no account registers it → the
+ *   account of the env default Messaging channel, matched by channel secret
+ *   exactly as the webhook attributes follows for that channel. An env-only
+ *   install has no such row; its friends carry NULL by design (the follow
+ *   webhook stores NULL there too), so NULL is the correct value, not a gap.
+ */
+function resolveLinkCreationAccount(
+  accounts: LineAccount[],
+  matchedLoginChannelId: string | null,
+  matchedAccount: LineAccount | null,
+  envChannelSecret: string | undefined,
+): { ok: true; lineAccountId: string | null } | { ok: false } {
+  if (matchedAccount) {
+    const sharing = accounts.filter(
+      (a) => a.is_active && a.login_channel_id === matchedLoginChannelId,
+    );
+    if (sharing.length > 1) return { ok: false };
+    return { ok: true, lineAccountId: sharing[0]?.id ?? matchedAccount.id };
+  }
+  const envDefault = envChannelSecret
+    ? accounts.find((a) => a.is_active && a.channel_secret === envChannelSecret)
+    : undefined;
+  return { ok: true, lineAccountId: envDefault?.id ?? null };
+}
+
 // POST /api/liff/link - link friend to user UUID (public, verified via LINE ID token)
 liffRoutes.post('/api/liff/link', async (c) => {
   try {
@@ -1264,14 +1295,30 @@ liffRoutes.post('/api/liff/link', async (c) => {
       // 404 here silently dropped the ref attribution — the entry-route tag /
       // scenario push for that visit never fired, and the follow handler's
       // ~1s ref_code retry window had nothing to read because this endpoint
-      // is the one that writes it. Create the row ourselves — exactly what
-      // /auth/callback already does via upsertFriend — and let the follow
-      // webhook wire line_account_id when it arrives.
+      // is the one that writes it. Create the row ourselves, with its LINE
+      // account in the same write: a friend committed without line_account_id
+      // falls out of per-account broadcasts and automations if the follow
+      // handler never gets to attribute it.
+      const creation = resolveLinkCreationAccount(
+        dbAccounts, matchedLoginChannelId, matchedAccount, c.env.LINE_CHANNEL_SECRET,
+      );
+      if (!creation.ok) {
+        // Several accounts share this Login channel, so the id_token cannot
+        // say which one the user is adding. Do not guess and do not create an
+        // unattributed row: the follow webhook knows the account and creates
+        // the friend; the LIFF client re-posts once friendship is confirmed.
+        console.warn(`[liff/link] friend not created: login channel ${matchedLoginChannelId} maps to several accounts`);
+        return c.json({ success: false, error: 'Friend not found' }, 404);
+      }
+      // 'fill': written atomically with the new row; if the follow webhook
+      // won the race meanwhile, its attribution is kept, not overwritten.
+      // pictureUrl / statusMessage are left out (not null) for the same
+      // reason: the profile the follow handler just stored must survive.
       friend = await upsertFriend(db, {
         lineUserId,
         displayName: body.displayName ?? verified.name ?? 'Unknown',
-        pictureUrl: null,
-        statusMessage: null,
+        lineAccountId: creation.lineAccountId,
+        accountMode: 'fill',
       });
     }
 
