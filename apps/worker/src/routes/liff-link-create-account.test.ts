@@ -337,17 +337,19 @@ describe('/api/liff/link before the follow webhook', () => {
     expectNothingCreated();
   });
 
-  test('a shared Login channel with only one active account is not ambiguous', async () => {
+  test('a Login channel shared by an active and a disabled account → 404, the active one is not guessed', async () => {
+    // LINE's friendship status is about the one official account linked to
+    // the Login channel, which may be the disabled row: a follower of that
+    // account must not be booked as a friend of the active one.
     addAccount('acc-old', { login: 'login-shared', active: 0, order: 1 });
     addAccount('acc-live', { login: 'login-shared', order: 2 });
     tokenChannel = 'login-shared';
 
-    const res = await link();
+    const res = await link({ ref: 'route-1' });
 
-    expect(res.status).toBe(200);
-    expect(friendRow()?.line_account_id).toBe('acc-live');
-    // The same (active) account is used for the profile of the new row.
-    expect(profileTokens).toEqual(['token-acc-live']);
+    expect(res.status).toBe(404);
+    expectNothingCreated();
+    expect(profileTokens).toEqual([]);
   });
 
   test('a friend the follow webhook already created keeps its account and is not re-created', async () => {
@@ -367,7 +369,11 @@ describe('/api/liff/link before the follow webhook', () => {
   });
 });
 
-test('losing the insert race to the follow webhook keeps its account and profile', async () => {
+test.each([
+  ['the same profile is read', true],
+  ['the bot profile cannot be read', false],
+])('losing the insert race to the follow webhook keeps its account and profile (%s)', async (_name, profileReadable) => {
+  botProfileAnswers = () => profileReadable;
   addAccount('acc-a', { login: 'login-a' });
   addAccount('acc-b', { login: 'login-b' });
   tokenChannel = 'login-b';
@@ -384,7 +390,7 @@ test('losing the insert race to the follow webhook keeps its account and profile
           if (!raced && /INSERT INTO friends/.test(sql)) {
             raced = true;
             store.sqlite
-              .prepare("INSERT INTO friends (id, line_user_id, display_name, picture_url, line_account_id) VALUES ('f-follow', ?, 'LINE Name', 'https://example.com/p.jpg', 'acc-a')")
+              .prepare("INSERT INTO friends (id, line_user_id, display_name, picture_url, line_account_id) VALUES ('f-follow', ?, 'Webhook Name', 'https://example.com/webhook.jpg', 'acc-a')")
               .run(NEW_USER);
           }
           return stmt.run<T>();
@@ -400,6 +406,6 @@ test('losing the insert race to the follow webhook keeps its account and profile
   const row = store.sqlite
     .prepare('SELECT id, line_account_id, display_name, picture_url, ref_code FROM friends WHERE line_user_id = ?')
     .get(NEW_USER);
-  expect(row).toEqual({ id: 'f-follow', line_account_id: 'acc-a', display_name: 'LINE Name', picture_url: 'https://example.com/p.jpg', ref_code: 'route-1' });
+  expect(row).toEqual({ id: 'f-follow', line_account_id: 'acc-a', display_name: 'Webhook Name', picture_url: 'https://example.com/webhook.jpg', ref_code: 'route-1' });
   expect(store.sqlite.prepare('SELECT COUNT(*) AS n FROM friends').get()).toEqual({ n: 1 });
 });

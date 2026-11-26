@@ -178,6 +178,15 @@ export interface UpsertFriendInput {
    * - 'rebind': overwrite — a follow event proves the user now follows it.
    */
   accountMode?: 'fill' | 'rebind';
+  /**
+   * How the profile fields apply to an EXISTING row (new rows always get them):
+   * - 'overwrite' (default): the caller's profile is the fresh one.
+   * - 'keep': only fill fields the row does not have yet — for a caller that
+   *   means to CREATE the friend and may hold a worse profile than the writer
+   *   that got there first (e.g. /api/liff/link losing the race to the follow
+   *   webhook with a fallback name and no picture).
+   */
+  profileMode?: 'overwrite' | 'keep';
 }
 
 export async function upsertFriend(
@@ -234,12 +243,14 @@ async function updateFriendOnUpsert(
     input.accountMode === 'rebind'
       ? 'COALESCE(?, line_account_id)'
       : 'COALESCE(line_account_id, ?)';
+  const profileSql = (column: string) =>
+    input.profileMode === 'keep' ? `COALESCE(${column}, ?)` : '?';
   await db
     .prepare(
       `UPDATE friends
-       SET display_name = ?,
-           picture_url = ?,
-           status_message = ?,
+       SET display_name = ${profileSql('display_name')},
+           picture_url = ${profileSql('picture_url')},
+           status_message = ${profileSql('status_message')},
            line_account_id = ${accountSql},
            first_followed_at = COALESCE(first_followed_at, created_at),
            current_follow_started_at = CASE

@@ -126,4 +126,25 @@ describe('upsertFriend line_account_id attribution', () => {
     expect(stored.display_name).toBe('From callback');
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM friends').get()).toEqual({ n: 1 });
   });
+
+  test("profileMode 'keep' fills only the profile fields an existing row lacks", async () => {
+    const { db } = asD1(sqlite);
+    sqlite
+      .prepare("INSERT INTO friends(id,line_user_id,display_name,picture_url) VALUES('follow-row','U1','From follow','https://example.com/follow.jpg')")
+      .run();
+
+    await upsertFriend(db, {
+      lineUserId: 'U1', displayName: 'Fallback', pictureUrl: null, statusMessage: 'hello', profileMode: 'keep',
+    });
+
+    expect(
+      sqlite.prepare('SELECT display_name, picture_url, status_message FROM friends WHERE line_user_id = ?').get('U1'),
+    ).toEqual({ display_name: 'From follow', picture_url: 'https://example.com/follow.jpg', status_message: 'hello' });
+
+    // The default still treats the caller's profile as the fresh one.
+    await upsertFriend(db, { lineUserId: 'U1', displayName: 'Renamed', pictureUrl: null, statusMessage: null });
+    expect(
+      sqlite.prepare('SELECT display_name, picture_url, status_message FROM friends WHERE line_user_id = ?').get('U1'),
+    ).toEqual({ display_name: 'Renamed', picture_url: null, status_message: null });
+  });
 });

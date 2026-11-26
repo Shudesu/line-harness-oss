@@ -1201,10 +1201,15 @@ liffRoutes.post('/api/liff/profile', async (c) => {
 /**
  * Which LINE account a friend row created by /api/liff/link belongs to.
  *
- * - The id_token's Login channel is registered on exactly one active account
- *   → it.
- * - It is registered on several active accounts → ambiguous, do not create.
- * - It is registered only on disabled accounts → do not create: the webhook
+ * - The id_token's Login channel is registered on exactly one account and
+ *   that account is active → it.
+ * - It is registered on several accounts, active or not → ambiguous, do not
+ *   create. A Login channel is linked to one official account, and the
+ *   friendship LINE reports for it is the friendship with THAT account; the
+ *   rows cannot say which of them it is, and a disabled row may well be the
+ *   linked one. Guessing the active row could book a follower of the disabled
+ *   account as a friend of the active one.
+ * - It is registered only on a disabled account → do not create: the webhook
  *   drops disabled accounts from signature auth, so no follow would ever
  *   create a friend there, and neither does this endpoint.
  * - It is the env default Login channel and no account registers it → the
@@ -1222,8 +1227,9 @@ function resolveLinkCreationAccount(
     ? accounts.filter((a) => a.login_channel_id === matchedLoginChannelId)
     : [];
   if (registered.length > 0) {
-    const active = registered.filter((a) => a.is_active);
-    return active.length === 1 ? { ok: true, account: active[0] } : { ok: false };
+    return registered.length === 1 && registered[0].is_active
+      ? { ok: true, account: registered[0] }
+      : { ok: false };
   }
   const envDefault = envChannelSecret
     ? accounts.find((a) => a.is_active && a.channel_secret === envChannelSecret)
@@ -1389,13 +1395,13 @@ liffRoutes.post('/api/liff/link', async (c) => {
         dbAccounts, matchedLoginChannelId, c.env.LINE_CHANNEL_SECRET,
       );
       if (!creation.ok) {
-        // The id_token cannot name one live account: either several active
-        // accounts share this Login channel, or only disabled ones carry it.
-        // Do not guess, do not create an unattributed row and do not create
-        // one under a disabled account: the follow webhook knows the account
-        // and creates the friend (same outcome as before this endpoint
-        // created rows).
-        console.warn(`[liff/link] friend not created: login channel ${matchedLoginChannelId} does not map to exactly one active account`);
+        // The id_token cannot name one live account: several accounts carry
+        // this Login channel, or the only one that does is disabled. Do not
+        // guess, do not create an unattributed row and do not create one
+        // under a disabled account: the follow webhook knows the account and
+        // creates the friend (same outcome as before this endpoint created
+        // rows).
+        console.warn(`[liff/link] friend not created: login channel ${matchedLoginChannelId} does not map to exactly one account that is active`);
         return c.json({ success: false, error: 'Friend not found' }, 404);
       }
       // The LIFF client posts here on every open, before the friend-add gate,
@@ -1410,10 +1416,10 @@ liffRoutes.post('/api/liff/link', async (c) => {
         creation.account?.channel_access_token || c.env.LINE_CHANNEL_ACCESS_TOKEN,
         lineUserId,
       );
-      // 'fill': written atomically with the new row; if the follow webhook
-      // won the race meanwhile, its attribution is kept, not overwritten.
-      // The profile is the one the follow handler stores, so that case does
-      // not degrade the row either.
+      // 'fill' / 'keep': written atomically with the new row; if the follow
+      // webhook won the race meanwhile, its attribution and its profile are
+      // kept, not overwritten — ours may be only the fallback name with no
+      // picture when the bot profile could not be read.
       friend = await upsertFriend(db, {
         lineUserId,
         displayName: profile?.displayName ?? body.displayName ?? verified.name ?? null,
@@ -1421,6 +1427,7 @@ liffRoutes.post('/api/liff/link', async (c) => {
         statusMessage: profile?.statusMessage ?? null,
         lineAccountId: creation.account?.id ?? null,
         accountMode: 'fill',
+        profileMode: 'keep',
       });
     }
 
