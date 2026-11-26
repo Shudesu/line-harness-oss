@@ -444,11 +444,15 @@ describe('push', () => {
     expect(lineClientMocks.getProfile).toHaveBeenCalledWith(newUser);
     expect(upsertFriend).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ lineUserId: newUser, displayName: 'New User' }),
+      expect.objectContaining({
+        lineUserId: newUser,
+        displayName: 'New User',
+        lineAccountId: 'acc-1',
+        accountMode: 'fill',
+      }),
     );
-    const accountPin = executed.find((e) => e.sql.includes('UPDATE friends SET line_account_id'));
-    expect(accountPin).toBeDefined();
-    expect(accountPin!.params).toEqual(['acc-1', 'friend-new']);
+    // Account is attributed inside upsertFriend's own write, not a follow-up UPDATE.
+    expect(executed.find((e) => e.sql.includes('UPDATE friends SET line_account_id'))).toBeUndefined();
     expect(createChat).toHaveBeenCalled();
   });
 
