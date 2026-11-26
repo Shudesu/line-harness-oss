@@ -1,8 +1,9 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 /**
  * Self-update HTTP API — Phase 5 Task 18.
  *
  * Mounted at `/admin/update` from `index.ts`. Every endpoint is guarded by an
- * opaque owner cookie session, with CSRF required for mutations. The
+ * authenticated human owner; cookie mutations also require CSRF. The
  * sibling `/admin/version` route is intentionally UN-authenticated (the
  * upgrade banner reads it pre-login) — that route lives in `admin-version.ts`
  * and is mounted at `/admin` directly. The per-router middleware here only
@@ -36,6 +37,8 @@ import { Hono } from 'hono';
 import {
   runUpdate,
   fetchManifest,
+  ManifestSignatureError,
+  type Manifest,
   detectFork,
   findRelease,
   getSnapshot,
@@ -58,9 +61,10 @@ import {
  * onto the global Bindings type.
  */
 type UpdateEnv = {
-  Variables: { staff: import('../middleware/auth.js').AuthenticatedStaff };
+  Variables: {staff: import('../middleware/auth.js').AuthenticatedStaff};
   Bindings: {
     DB: D1Database;
+    ADMIN_API_KEY: string;
     CF_API_TOKEN: string;
     CF_ACCOUNT_ID: string;
     WORKER_NAME: string;
@@ -68,13 +72,15 @@ type UpdateEnv = {
     LIFF_PAGES_PROJECT: string;
     D1_DATABASE_ID: string;
     MANIFEST_URL: string;
+    UPDATE_SIGNATURE_POLICY?: string;
+    UPDATE_TRUSTED_KEYS?: string;
     WORKER_PUBLIC_URL: string;
     ADMIN_PUBLIC_URL: string;
     LIFF_PUBLIC_URL: string;
   };
 };
 
-const app = new Hono<UpdateEnv>();
+const app = createAuthorizedRouter<UpdateEnv>();
 
 /**
  * Adapter from Cloudflare's `D1Database` to the engine's local `D1Like`
@@ -106,10 +112,12 @@ function adaptD1(db: D1Database): D1Like {
 
 /** Auth gate — single source of truth for every endpoint in this router. */
 app.use('/*', async (c, next) => {
+  // Build-time NEXT_PUBLIC_* values are public, never an authorization secret.
+  // The shared auth/CSRF middleware resolves a real human owner before this gate.
   const staff = c.get('staff');
   if (!staff) return c.json({error:'Unauthorized'},401);
-  if (!staff.sessionId || staff.apiScopes != null || staff.role !== 'owner') {
-    return c.json({error:'Owner cookie session required'},403);
+  if (staff.machine || staff.apiScopes != null || staff.role !== 'owner') {
+    return c.json({error:'この操作にはオーナー権限が必要です'},403);
   }
   await next();
 });
@@ -130,7 +138,13 @@ app.use('/*', async (c, next) => {
  *     snapshot row and are visible via `/status/:id`.
  */
 app.post('/start', async (c) => {
-  const manifest = await fetchManifest(c.env.MANIFEST_URL);
+  let manifest: Manifest;
+  try {
+    manifest = await fetchManifest(c.env.MANIFEST_URL, { policy: c.env.UPDATE_SIGNATURE_POLICY, trustedKeys: c.env.UPDATE_TRUSTED_KEYS });
+  } catch (error) {
+    if (error instanceof ManifestSignatureError) return c.json({error: 'manifest_signature_invalid'}, 409);
+    throw error;
+  }
   // The manifest always pins one "latest" version; locate that entry. If the
   // manifest is malformed (latest doesn't appear in releases[]) we fail
   // closed rather than guess.

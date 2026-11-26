@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getStripeEvents,
@@ -9,7 +10,7 @@ import type { Env } from '../index.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
 import { verifyWebhookSignature } from '../services/webhook-signature.js';
 
-const stripe = new Hono<Env>();
+const stripe = createAuthorizedRouter<Env>();
 
 interface StripeWebhookBody {
   id: string;

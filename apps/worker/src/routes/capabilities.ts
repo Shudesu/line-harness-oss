@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 
@@ -32,7 +33,7 @@ export const FEATURES = [
   'ig-cross-link',
 ] as const;
 
-export const capabilities = new Hono<Env>();
+export const capabilities = createAuthorizedRouter<Env>();
 
 capabilities.get('/api/capabilities', async (c) => {
   return c.json({

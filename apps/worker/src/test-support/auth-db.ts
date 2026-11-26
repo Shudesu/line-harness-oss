@@ -1,21 +1,25 @@
-import { URL } from 'node:url';
+import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { sqliteD1 } from './sqlite-d1.js';
+import { URL as NodeURL } from 'node:url';
 
-export const TEST_SESSION = 'lhs_' + 'A'.repeat(43);
-/** Synthetic SQLite-backed D1 fixture; no network or credentials. */
-export function authDb() {
-  const result = sqliteD1();
-  result.sqlite.exec(readFileSync(new URL('../../../../packages/db/migrations/011_staff_members.sql', import.meta.url), 'utf8'));
-  result.sqlite.exec(readFileSync(new URL('../../../../packages/db/migrations/074_security_hardening.sql', import.meta.url), 'utf8'));
-  return result;
-}
-export function seedAuthStaff(sql: ReturnType<typeof authDb>['sqlite'], input = {id:'staff-1',name:'Staff One',role:'admin',key:'staff-key'}, token = TEST_SESSION) {
-  const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-  sql.prepare('INSERT INTO staff_members (id,name,role,api_key,api_key_hash) VALUES (?,?,?,?,?)')
-    .run(input.id,input.name,input.role,`hashed:${input.id}`,hash(input.key));
-  const now = Math.floor(Date.now()/1000);
-  sql.prepare(`INSERT INTO admin_sessions (id_hash,staff_id,credential_fp,role_at_issue,auth_method,created_at,last_seen_at,expires_at)
-    VALUES (?,?,?,?,?,?,?,?)`).run(hash(token),input.id,hash(input.key),input.role,'api_key',now,now,now+604800);
+/** Real local SQLite for session/auth regressions; no production credentials. */
+export function createAuthTestDb(): { sql: Database.Database; db: D1Database; reset: () => void; close: () => void } {
+  const sql = new Database(':memory:');
+  sql.exec(readFileSync(new NodeURL('../../../../packages/db/bootstrap.sql', import.meta.url), 'utf8'));
+  const db = { prepare(query: string) {
+    let values: unknown[] = [];
+    return {
+      bind(...args: unknown[]) { values=args;return this; },
+      async first() { return sql.prepare(query).get(...values) ?? null; },
+      async all() { return { results: sql.prepare(query).all(...values) }; },
+      async run() { return { meta: { changes: sql.prepare(query).run(...values).changes } }; },
+    };
+  } } as unknown as D1Database;
+  function reset() {
+    sql.exec('DELETE FROM admin_sessions; DELETE FROM staff_members;');
+    sql.prepare('INSERT INTO staff_members(id,name,role,api_key,is_active) VALUES(?,?,?,?,1)')
+      .run('staff-1','Staff One','admin','staff-key');
+  }
+  reset();
+  return { sql, db, reset, close: () => sql.close() };
 }

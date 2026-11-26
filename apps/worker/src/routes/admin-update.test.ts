@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {authMiddleware} from '../middleware/auth.js';
+import {createAuthTestDb} from '../test-support/auth-db.js';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { Hono } from 'hono';
 
 // Mock the engine before importing the route. Tests exercise HTTP behavior
@@ -13,7 +15,8 @@ const findRelease = vi.fn();
 const getSnapshot = vi.fn();
 const listRecent = vi.fn();
 
-vi.mock('@line-harness/update-engine', () => ({
+vi.mock('@line-harness/update-engine', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@line-harness/update-engine')>(),
   runUpdate: (...args: any[]) => runUpdate(...args),
   fetchManifest: (...args: any[]) => fetchManifest(...args),
   detectFork: (...args: any[]) => detectFork(...args),
@@ -50,18 +53,11 @@ async function loadRoute() {
   return mod.default;
 }
 
+const authDb=createAuthTestDb();
+afterAll(()=>authDb.close());
 const baseEnv = {
-  DB: {
-    // The route never executes real SQL because every engine helper is mocked.
-    // prepare() is here so any incidental call doesn't crash the test runner.
-    prepare: vi.fn(() => ({
-      bind: vi.fn(() => ({
-        run: vi.fn().mockResolvedValue(undefined),
-        first: vi.fn().mockResolvedValue(null),
-        all: vi.fn().mockResolvedValue({ results: [] }),
-      })),
-    })),
-  } as unknown as D1Database,
+  DB: authDb.db,
+  API_KEY: 'test-admin-key',
   ADMIN_API_KEY: 'test-admin-key',
   CF_API_TOKEN: 'cf-token',
   CF_ACCOUNT_ID: 'cf-acct',
@@ -84,17 +80,15 @@ const baseCtx = {
 } as unknown as ExecutionContext;
 
 async function request(path: string, init?: RequestInit) {
-  const app = new Hono<{Variables:{staff: import('../middleware/auth.js').AuthenticatedStaff}}>();
-  app.use('*', async (c, next) => {
-    if (c.req.header('Cookie') === 'unit-owner-session') c.set('staff',{id:'owner',name:'Owner',role:'owner',sessionId:'unit-session'});
-    await next();
-  });
+  const app = new Hono();
+  app.use('*',authMiddleware);
   const adminUpdate = await loadRoute();
   app.route('/admin/update', adminUpdate);
   return app.request(path, init, baseEnv, baseCtx);
 }
 
 beforeEach(() => {
+  authDb.reset();
   vi.clearAllMocks();
   // Default happy-path setups; individual tests override as needed.
   fetchManifest.mockResolvedValue(baseManifest);
@@ -113,7 +107,7 @@ beforeEach(() => {
 });
 
 describe('POST /admin/update/start', () => {
-  it('rejects requests without owner session → 401', async () => {
+  it('rejects requests without owner authentication → 401', async () => {
     const res = await request('/admin/update/start', { method: 'POST' });
     expect(res.status).toBe(401);
   });
@@ -121,7 +115,7 @@ describe('POST /admin/update/start', () => {
   it('rejects requests with wrong key → 401', async () => {
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { 'x-admin-api-key': 'wrong' },
+      headers: { Authorization: 'Bearer wrong' },
     });
     expect(res.status).toBe(401);
   });
@@ -129,7 +123,7 @@ describe('POST /admin/update/start', () => {
   it('starts an update and returns 202 with updateId', async () => {
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(202);
     const body = (await res.json()) as { updateId: string };
@@ -152,7 +146,7 @@ describe('POST /admin/update/start', () => {
     });
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { error: string };
@@ -167,7 +161,7 @@ describe('POST /admin/update/start', () => {
     });
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string; reason: string };
@@ -184,7 +178,7 @@ describe('POST /admin/update/start', () => {
     runUpdate.mockRejectedValueOnce(new Error('cf pages api down'));
     const res = await request('/admin/update/start', {
       method: 'POST',
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error: string; message: string };
@@ -202,7 +196,7 @@ describe('GET /admin/update/status/:id', () => {
   it('returns 404 when no snapshot row exists', async () => {
     getSnapshot.mockResolvedValue(null);
     const res = await request('/admin/update/status/nope', {
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(404);
   });
@@ -218,7 +212,7 @@ describe('GET /admin/update/status/:id', () => {
       to_version: '0.8.0',
     });
     const res = await request('/admin/update/status/abc', {
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -246,7 +240,7 @@ describe('GET /admin/update/history', () => {
       { id: 'b', status: 'failed', from_version: '0.6.0', to_version: '0.7.0' },
     ]);
     const res = await request('/admin/update/history', {
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { history: Array<{ id: string }> };
@@ -276,10 +270,28 @@ describe('GET /admin/update/stream/:id', () => {
       to_version: '0.8.0',
     });
     const res = await request('/admin/update/stream/abc', {
-      headers: { Cookie: 'unit-owner-session' },
+      headers: { Authorization: 'Bearer test-admin-key' },
     });
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('text/event-stream');
     expect(res.headers.get('Cache-Control')).toBe('no-cache');
   });
+});
+
+ it('refuses an invalid required manifest before any update mutation', async () => {
+  const { ManifestSignatureError } = await import('@line-harness/update-engine');
+  fetchManifest.mockRejectedValueOnce(new ManifestSignatureError('signature_missing'));
+  const app = new Hono();
+  app.use('*',authMiddleware); app.route('/admin/update', await loadRoute());
+  const response = await app.request('/admin/update/start',{method:'POST',headers:{Authorization:'Bearer '+String(baseEnv.API_KEY)}}, {...baseEnv,UPDATE_SIGNATURE_POLICY:'require'});
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({error:'manifest_signature_invalid'});
+  expect(runUpdate).not.toHaveBeenCalled();
+ });
+
+it('does not accept a browser-embedded legacy update key, admin staff or cookie writes without CSRF',async()=>{
+ expect((await request('/admin/update/start',{method:'POST',headers:{'x-admin-api-key':'test-admin-key'}})).status).toBe(401);
+ expect((await request('/admin/update/start',{method:'POST',headers:{Authorization:'Bearer staff-key'}})).status).toBe(403);
+ expect((await request('/admin/update/start',{method:'POST',headers:{Cookie:'lh_admin_session=test-admin-key'}})).status).toBe(403);
+ expect(runUpdate).not.toHaveBeenCalled();
 });

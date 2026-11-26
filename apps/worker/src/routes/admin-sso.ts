@@ -1,8 +1,8 @@
-import { audit, limitAuth } from '../middleware/auth-security.js';
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { consumeAdminSsoJti } from '@line-crm/db';
 import type { Env } from '../index.js';
-import { issueAdminSession, csrfCookie, requireAccess } from '../middleware/auth.js';
+import { issueAdminSession, csrfCookie } from '../middleware/auth.js';
 import {
   parseAllowedOrigins,
   resolveAdminAuthConfig,
@@ -31,7 +31,7 @@ import {
 // docs/ADMIN-AUTH.md.
 // ---------------------------------------------------------------------------
 
-export const adminSso = new Hono<Env>();
+export const adminSso = createAuthorizedRouter<Env>();
 
 const LOG = '[admin-sso]';
 
@@ -124,8 +124,6 @@ adminSso.get('/admin/sso', async (c) => {
 
   // Feature disabled → indistinguishable from a route that does not exist.
   if (!secret) return c.notFound();
-  const limited = await limitAuth(c, 'login'); if (limited) return limited;
-  const denied = await requireAccess(c); if (denied) return denied;
 
   const noStore = (response: Response): Response => {
     response.headers.set('Cache-Control', 'no-store');
@@ -208,8 +206,11 @@ adminSso.get('/admin/sso', async (c) => {
   console.log(`${LOG} accepted jti=${jti} sub=${subject} exp=${exp} purged=${ledger.purged}`);
 
   const csrfToken = crypto.randomUUID();
-  await audit(c, 'sso', 'attempted', 'env-owner');
-  await issueAdminSession(c, {id:'env-owner',name:'Owner',role:'owner'}, c.env.API_KEY, 'sso');
+  try {
+    await issueAdminSession(c, { id: 'env-owner', name: 'Owner', role: 'owner' }, c.env.API_KEY, 'sso');
+  } catch {
+    return noStore(c.html(page('設定エラー', 'ログインセッションを保存できません。DBマイグレーションを確認してください。'), 503));
+  }
   c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
   return noStore(c.redirect(adminHomeUrl(c.env), 302));
 });

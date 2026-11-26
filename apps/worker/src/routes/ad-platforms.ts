@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getAdPlatforms,
@@ -23,7 +24,7 @@ function maskConfig(config: Record<string, unknown>): Record<string, unknown> {
   return masked;
 }
 
-const adPlatforms = new Hono<Env>();
+const adPlatforms = createAuthorizedRouter<Env>();
 
 // GET /api/ad-platforms - list all
 adPlatforms.get('/api/ad-platforms', async (c) => {

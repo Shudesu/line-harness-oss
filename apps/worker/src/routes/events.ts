@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 // Event booking feature HTTP routes.
 //
 // LIFF endpoints:    /api/liff/events/*           (account resolved from liffId)
@@ -41,7 +42,7 @@ import {
 } from '../services/event-booking-state.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
 
-const events = new Hono<Env>();
+const events = createAuthorizedRouter<Env>();
 
 // ----------------------------------------------------------------
 // Helpers

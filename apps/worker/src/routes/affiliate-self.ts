@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono, type Context } from 'hono';
 import {
   getFriendByLineUserId,
@@ -35,7 +36,7 @@ import type { Env } from '../index.js';
  *
  * authMiddleware skips `/api/liff/*` (staff auth), so verification lives here.
  */
-const affiliateSelfRoutes = new Hono<Env>();
+const affiliateSelfRoutes = createAuthorizedRouter<Env>();
 
 /** Max self-issued links per affiliate. The 21st issuance is a 400. */
 const MAX_SELF_LINKS = 20;

@@ -1,3 +1,4 @@
+import { sendOutboundWebhook } from '../lib/outbound-url.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
 
 /**
@@ -195,7 +196,7 @@ export async function fireOutgoingWebhooks(
           headers['X-Webhook-Signature'] = hexSignature;
         }
 
-        const res = await fetch(wh.url, { method: 'POST', headers, body });
+        const res = await sendOutboundWebhook(wh.url, { method: 'POST', headers, body });
         if (res.ok) {
           delivered += 1;
           if (deliveryScope) {
@@ -351,7 +352,7 @@ function matchConditions(
 }
 
 /** アクション実行 */
-async function executeAction(
+export async function executeAction(
   db: D1Database,
   action: { type: string; params: Record<string, string> },
   payload: EventPayload,
@@ -486,7 +487,7 @@ async function executeAction(
     case 'send_webhook': {
       const url = action.params.url;
       if (url) {
-        await fetch(url, {
+        await sendOutboundWebhook(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ friendId, ...payload.eventData }),

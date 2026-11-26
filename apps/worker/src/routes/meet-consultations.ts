@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import {
@@ -6,7 +7,7 @@ import {
   type RegisterMeetConsultationInput,
 } from '../services/meet-consultation-reminders.js';
 
-const meetConsultations = new Hono<Env>();
+const meetConsultations = createAuthorizedRouter<Env>();
 
 meetConsultations.get('/api/meet-consultations', async (c) => {
   const status = c.req.query('status') ?? 'confirmed';

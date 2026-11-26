@@ -1,7 +1,8 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 
-const openapi = new Hono<Env>();
+const openapi = createAuthorizedRouter<Env>();
 
 const gateHeaders = ['X-Harness-Connection-Id','X-Harness-Event','X-Harness-Delivery-Id','X-Harness-Timestamp','X-Harness-Signature'].map(name=>({name,in:'header',required:true,schema:{type:'string'}}));
 const gateIdentityBody = {required:true,content:{'application/json':{schema:{type:'object',required:['idToken','accessToken'],properties:{idToken:{type:'string'},accessToken:{type:'string'},turnstileToken:{type:'string',description:'Required for initial strict participation'}}}}}};

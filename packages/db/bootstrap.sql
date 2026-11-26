@@ -56,6 +56,18 @@ CREATE TABLE IF NOT EXISTS ad_platforms (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
+CREATE TABLE IF NOT EXISTS admin_magic_links (
+ token_hash TEXT PRIMARY KEY NOT NULL,staff_id TEXT NOT NULL,email TEXT NOT NULL,
+ credential_fp TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,used_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS admin_passkeys (
+ id TEXT PRIMARY KEY NOT NULL, staff_id TEXT NOT NULL, credential_id TEXT NOT NULL UNIQUE,
+ public_key TEXT NOT NULL, sign_count INTEGER NOT NULL DEFAULT 0, transports TEXT NOT NULL,
+ aaguid TEXT NOT NULL, name TEXT NOT NULL, user_handle TEXT NOT NULL, context_hash TEXT NOT NULL,
+ created_at INTEGER NOT NULL, last_used_at INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS admin_sessions (
   id_hash TEXT PRIMARY KEY,
   staff_id TEXT NOT NULL,
@@ -74,6 +86,11 @@ CREATE TABLE IF NOT EXISTS admin_users (
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+
+CREATE TABLE IF NOT EXISTS admin_webauthn_challenges (
+ id TEXT PRIMARY KEY NOT NULL, challenge_hash TEXT NOT NULL, purpose TEXT NOT NULL,
+ staff_id TEXT, context_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS affiliate_clicks (
@@ -623,6 +640,19 @@ CREATE TABLE IF NOT EXISTS link_clicks (
   tracked_link_id TEXT NOT NULL REFERENCES tracked_links (id) ON DELETE CASCADE,
   friend_id TEXT REFERENCES friends (id) ON DELETE SET NULL,
   clicked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS machine_keys (
+ id TEXT PRIMARY KEY NOT NULL,
+ name TEXT NOT NULL,
+ key_hash TEXT NOT NULL UNIQUE,
+ key_last4 TEXT NOT NULL,
+ scopes TEXT NOT NULL,
+ created_by_staff_id TEXT,
+ created_at INTEGER NOT NULL,
+ last_used_at INTEGER,
+ expires_at INTEGER,
+ revoked_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS media_inquiries (
@@ -1286,6 +1316,8 @@ CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_platform ON ad_conversion_logs
 
 CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_status ON ad_conversion_logs (status);
 
+CREATE INDEX IF NOT EXISTS idx_admin_passkeys_staff ON admin_passkeys(staff_id,id);
+
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at, id_hash);
 
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_staff ON admin_sessions(staff_id, revoked_at, expires_at);
@@ -1423,6 +1455,10 @@ CREATE INDEX IF NOT EXISTS idx_link_clicks_friend ON link_clicks (friend_id);
 
 CREATE INDEX IF NOT EXISTS idx_link_clicks_link ON link_clicks (tracked_link_id);
 
+CREATE INDEX IF NOT EXISTS idx_machine_keys_created ON machine_keys(created_at DESC,id);
+
+CREATE INDEX IF NOT EXISTS idx_magic_link_expiry ON admin_magic_links(expires_at,token_hash);
+
 CREATE INDEX IF NOT EXISTS idx_media_inquiries_created
   ON media_inquiries (created_at DESC);
 
@@ -1505,6 +1541,8 @@ CREATE INDEX IF NOT EXISTS idx_staff_account_sort ON staff (line_account_id, sor
 CREATE INDEX IF NOT EXISTS idx_staff_availability_rules_staff
   ON staff_availability_rules (staff_id, weekday, is_active);
 
+CREATE INDEX IF NOT EXISTS idx_staff_email_normalized ON staff_members(lower(trim(email)));
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key_hash ON staff_members(api_key_hash);
@@ -1532,6 +1570,8 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 CREATE INDEX IF NOT EXISTS idx_users_external_id ON users (external_id);
 
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_challenge_expiry ON admin_webauthn_challenges(expires_at,id);
 
 CREATE INDEX IF NOT EXISTS idx_webinar_comments_webinar
   ON webinar_comments (webinar_id, at_seconds);
@@ -1573,6 +1613,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_google_calendar_connections_active_staff
   WHERE staff_id IS NOT NULL AND is_active = 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS x_gate_entry_line_identity ON x_gate_entries(gate_id,line_user_id);
+
+CREATE TRIGGER IF NOT EXISTS staff_delete_passkeys AFTER DELETE ON staff_members
+BEGIN DELETE FROM admin_passkeys WHERE staff_id=OLD.id; END;
+
+CREATE TRIGGER IF NOT EXISTS staff_disable_passkeys AFTER UPDATE OF is_active ON staff_members WHEN NEW.is_active=0
+BEGIN DELETE FROM admin_passkeys WHERE staff_id=NEW.id; END;
 
 INSERT OR IGNORE INTO auto_replies (id, keyword, match_type, response_type, response_content, template_id, line_account_id, is_active, created_at)
 VALUES ('builtin-mileage-wallet-keyword', 'マイル', 'exact', 'flex', '{"type":"bubble","size":"kilo","body":{"type":"box","layout":"vertical","paddingAll":"20px","contents":[{"type":"text","text":"あなたのHarnessマイル","weight":"bold","size":"lg","color":"#1e293b"},{"type":"text","text":"現在のマイル、獲得履歴、登録済みアカウント、次にマイルを獲得できる行動を確認できます。","wrap":true,"size":"sm","color":"#64748b","margin":"md"}]},"footer":{"type":"box","layout":"vertical","paddingAll":"16px","contents":[{"type":"button","style":"primary","color":"#06C755","height":"sm","action":{"type":"uri","label":"マイルを確認する","uri":"https://liff.line.me/{{liff_id}}/?page=affiliate&liffId={{liff_id}}"}}]}}', NULL, NULL, 1, '2026-08-11T00:00:00.000+09:00');

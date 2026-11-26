@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent } from './event-bus.js';
+import { runWithOutboundConfig } from '../lib/outbound-url.js';
+import { fireEvent, fireOutgoingWebhooks } from './event-bus.js';
 
 interface CapturedInsert {
   sql: string;
@@ -223,5 +224,36 @@ describe('fireEvent — send_message action logging', () => {
     // log には template から取得した messageType / content が記録される
     expect(captured[0].binds[2]).toBe('flex');
     expect(String(captured[0].binds[3])).toContain('from-template');
+  });
+});
+
+
+describe('outbound webhook policy reaches event dispatch', () => {
+  beforeEach(async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
+    const db = await import('@line-crm/db');
+    vi.mocked(db.getActiveOutgoingWebhooksByEvent).mockResolvedValue([]);
+    vi.mocked(db.getActiveAutomationsByEvent).mockResolvedValue([{
+      id: 'outbound', name: 'Outbound', event_type: 'message_received', conditions: '{}',
+      actions: JSON.stringify([{ type: 'send_webhook', params: { url: 'https://127.0.0.1/path' } }]),
+      line_account_id: null, is_active: 1,
+    } as never]);
+    vi.mocked(db.createAutomationLog).mockClear();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  it('enforce refuses automation sends despite untrusted payload policy fields', async () => {
+    const db = await import('@line-crm/db');
+    await runWithOutboundConfig({ OUTBOUND_URL_POLICY: 'enforce' }, () => fireEvent(fakeDb({capturedInserts:[]}), 'message_received', { eventData: { OUTBOUND_URL_POLICY: 'off' } }));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(db.createAutomationLog).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ status: 'failed', actionsResult: expect.stringContaining('webhook_url_invalid') }));
+  });
+  it('warn retains existing delivery and uses a bounded, non-redirecting fetch', async () => {
+    await runWithOutboundConfig({ OUTBOUND_URL_POLICY: 'warn' }, () => fireEvent(fakeDb({capturedInserts:[]}), 'message_received', {}));
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledWith('https://127.0.0.1/path', expect.objectContaining({ redirect: 'manual', signal: expect.any(AbortSignal) }));
+  });
+  it('applies the same policy to ordinary outgoing webhooks', async () => {
+    const delivered = await runWithOutboundConfig({ OUTBOUND_URL_POLICY: 'enforce' }, () => fireOutgoingWebhooks(fakeDb({capturedInserts:[]}), 'event', {}, [{ id:'wh', url:'https://127.0.0.1/path', secret:'s'.repeat(32) } as never]));
+    expect(delivered).toBe(0); expect(fetch).not.toHaveBeenCalled();
   });
 });

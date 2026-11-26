@@ -1,4 +1,5 @@
 import type { Manifest, ReleaseEntry } from './types.js';
+import { checkManifestSignature, readBounded, type SignatureOptions } from './signature.js';
 
 /**
  * Fetch the release manifest from the given URL.
@@ -7,15 +8,18 @@ import type { Manifest, ReleaseEntry } from './types.js';
  * manifest from a CDN/edge cache. Throws if the response is non-2xx or if the
  * manifest's `schema_version` is not supported by this engine.
  */
-export async function fetchManifest(url: string): Promise<Manifest> {
-  const res = await fetch(url, { cache: 'no-store' });
+export async function fetchManifest(url: string, options: SignatureOptions = {}): Promise<Manifest> {
+  const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
   if (!res.ok) {
     throw new Error(
       `failed to fetch manifest from ${url}: HTTP ${res.status}`,
     );
   }
 
-  const body = (await res.json()) as Manifest;
+  const bytes = await readBounded(res, 8 * 1024 * 1024);
+  await checkManifestSignature(url, bytes, options);
+  const body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as Manifest;
+  if (!body || !Array.isArray(body.releases)) throw new Error('invalid manifest');
   if (body.schema_version !== 1 && body.schema_version !== 2) {
     throw new Error(
       `unsupported manifest schema_version ${body.schema_version}`,

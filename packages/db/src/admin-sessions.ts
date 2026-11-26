@@ -1,6 +1,6 @@
 import { hashApiKey } from './staff.js';
 
-export type AdminSessionAuthMethod = 'api_key' | 'sso';
+export type AdminSessionAuthMethod = 'api_key' | 'sso' | 'legacy_cookie' | 'access' | 'passkey' | 'magic_link' | 'extension' | 'break_glass';
 export interface AdminSession {
   id_hash: string;
   staff_id: string;

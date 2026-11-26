@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getTags,
@@ -10,7 +11,7 @@ import {
 import type { Tag as DbTag } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const tags = new Hono<Env>();
+const tags = createAuthorizedRouter<Env>();
 
 function serializeTag(row: DbTag & { friend_count?: number }) {
   return {

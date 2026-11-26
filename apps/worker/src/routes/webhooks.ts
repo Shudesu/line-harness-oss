@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getIncomingWebhooks,
@@ -11,9 +12,10 @@ import {
   updateOutgoingWebhook,
   deleteOutgoingWebhook,
 } from '@line-crm/db';
+import { checkOutboundUrl } from '../lib/outbound-url.js';
 import type { Env } from '../index.js';
 
-const webhooks = new Hono<Env>();
+const webhooks = createAuthorizedRouter<Env>();
 
 const MIN_SECRET_LENGTH = 32;
 
@@ -223,6 +225,8 @@ webhooks.post('/api/webhooks/outgoing', async (c) => {
     if (urlError) {
       return c.json({ success: false, error: urlError }, 400);
     }
+    const urlCheck = checkOutboundUrl(body.url, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
+    if (!urlCheck.allowed) return c.json({ success: false, error: 'webhook_url_invalid', reason: urlCheck.warnings[0] }, 400);
     const secretError = validateSecret(body.secret);
     if (secretError) {
       return c.json({ success: false, error: secretError }, 400);
@@ -236,6 +240,7 @@ webhooks.post('/api/webhooks/outgoing', async (c) => {
     return c.json(
       {
         success: true,
+        ...(urlCheck.warnings.length ? { warnings: urlCheck.warnings } : {}),
         data: {
           id: item.id,
           name: item.name,
@@ -268,11 +273,16 @@ webhooks.put('/api/webhooks/outgoing/:id', async (c) => {
     if (body.isActive !== undefined && typeof body.isActive !== 'boolean') {
       return c.json({ success: false, error: 'isActive must be a boolean' }, 400);
     }
+    let urlCheck = { allowed: true, warnings: [] as string[] };
     if (body.url !== undefined) {
       const urlError = validateHttpsUrl(body.url);
       if (urlError) {
         return c.json({ success: false, error: urlError }, 400);
       }
+    }
+    if (body.url !== undefined) {
+      urlCheck = checkOutboundUrl(body.url, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
+      if (!urlCheck.allowed) return c.json({ success: false, error: 'webhook_url_invalid', reason: urlCheck.warnings[0] }, 400);
     }
     if (body.secret !== undefined) {
       const secretError = validateSecret(body.secret);
@@ -298,6 +308,8 @@ webhooks.put('/api/webhooks/outgoing/:id', async (c) => {
           400,
         );
       }
+      urlCheck = checkOutboundUrl(effectiveUrl, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
+      if (!urlCheck.allowed) return c.json({ success: false, error: 'webhook_url_invalid', reason: urlCheck.warnings[0] }, 400);
       const urlError = validateHttpsUrl(effectiveUrl);
       if (urlError) {
         return c.json(
@@ -311,6 +323,7 @@ webhooks.put('/api/webhooks/outgoing/:id', async (c) => {
     if (!updated) return c.json({ success: false, error: 'Not found' }, 404);
     return c.json({
       success: true,
+      ...(urlCheck.warnings.length ? { warnings: urlCheck.warnings } : {}),
       data: {
         id: updated.id,
         name: updated.name,
@@ -335,6 +348,7 @@ webhooks.delete('/api/webhooks/outgoing/:id', async (c) => {
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
+
 
 // ========== 受信Webhookエンドポイント (外部システムからの受信) ==========
 

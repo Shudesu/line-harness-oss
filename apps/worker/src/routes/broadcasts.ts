@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { validateMessageContent, parseMessageGroup, packMessageItems } from '@line-crm/shared';
 import { buildMessages } from '../services/message-group.js';
 import { BroadcastDeliveryError } from '../services/broadcast-delivery-error.js';
@@ -36,7 +37,7 @@ import {
   renderBroadcastMessageContent,
 } from '../services/render-message.js';
 
-const broadcasts = new Hono<Env>();
+const broadcasts = createAuthorizedRouter<Env>();
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

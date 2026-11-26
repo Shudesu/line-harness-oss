@@ -1,4 +1,4 @@
-import { getCsrfToken } from './api'
+import {getCsrfToken} from './api'
 import type {
   Manifest,
   CurrentVersion,
@@ -47,6 +47,7 @@ export function getManifestUrl(): string {
   return `${apiUrl()}/admin/manifest`
 }
 
+
 export async function getCurrentVersion(): Promise<CurrentVersion> {
   const r = await fetch(`${apiUrl()}/admin/version`)
   if (!r.ok) throw new Error(`version fetch failed ${r.status}`)
@@ -64,7 +65,7 @@ export async function getCurrentVersion(): Promise<CurrentVersion> {
   }
 }
 
-export async function getManifest(): Promise<Manifest> {
+export async function getManifest(): Promise<Manifest & {signature?: {verified:boolean;kid?:string}}> {
   const r = await fetch(getManifestUrl(), { cache: 'no-store' })
   if (!r.ok) throw new Error(`manifest fetch failed ${r.status}`)
   return r.json() as Promise<Manifest>
@@ -106,7 +107,8 @@ export function openUpdateStream(
   onEvent: (e: unknown) => void,
   onComplete: (final: unknown) => void,
 ): EventSource {
-  const es = new EventSource(`${apiUrl()}/admin/update/stream/${id}`, { withCredentials: true })
+  // Opaque owner cookie authenticates SSE; EventSource sends no bearer secret.
+  const es = new EventSource(`${apiUrl()}/admin/update/stream/${id}`, {withCredentials:true})
   es.addEventListener('progress', (m) =>
     onEvent(JSON.parse((m as MessageEvent).data)),
   )

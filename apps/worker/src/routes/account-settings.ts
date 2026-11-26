@@ -1,3 +1,5 @@
+import { requireRole } from '../middleware/role-guard.js';
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getLinkBaseUrl,
@@ -7,7 +9,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const accountSettings = new Hono<Env>();
+const accountSettings = createAuthorizedRouter<Env>();
 
 // GET /api/account-settings/test-recipients?accountId=xxx
 accountSettings.get('/api/account-settings/test-recipients', async (c) => {
@@ -39,7 +41,7 @@ accountSettings.get('/api/account-settings/test-recipients', async (c) => {
 });
 
 // PUT /api/account-settings/test-recipients
-accountSettings.put('/api/account-settings/test-recipients', async (c) => {
+accountSettings.put('/api/account-settings/test-recipients', requireRole('owner', 'admin'), async (c) => {
   const body = await c.req.json<{ accountId: string; friendIds: string[] }>();
   if (!body.accountId) return c.json({ success: false, error: 'accountId required' }, 400);
 
@@ -76,7 +78,7 @@ accountSettings.get('/api/account-settings/link-base-url', async (c) => {
  * - Must start with https:// (if non-empty).
  * - Trailing slash is stripped before saving.
  */
-accountSettings.put('/api/account-settings/link-base-url', async (c) => {
+accountSettings.put('/api/account-settings/link-base-url', requireRole('owner', 'admin'), async (c) => {
   const body = await c.req
     .json<{ value?: string }>()
     .catch((): { value?: string } => ({}));
@@ -100,7 +102,7 @@ accountSettings.get('/api/account-settings/tracked-link-base-url', async (c) => 
   return c.json({ success: true, data: value });
 });
 
-accountSettings.put('/api/account-settings/tracked-link-base-url', async (c) => {
+accountSettings.put('/api/account-settings/tracked-link-base-url', requireRole('owner', 'admin'), async (c) => {
   const body = await c.req
     .json<{ value?: string }>()
     .catch((): { value?: string } => ({}));

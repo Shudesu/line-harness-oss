@@ -6,7 +6,13 @@ export function sqliteD1(path = ':memory:'): { db: D1Database; sqlite: Database.
   const syncRuns = new WeakMap<D1PreparedStatement, () => D1Result>();
   function prepare(sql: string, values: SQLInputValue[] = []): D1PreparedStatement {
     const run = (): D1Result => {
-      const info = sqlite.prepare(sql).run(...values);
+      const query = sqlite.prepare(sql);
+      // 非公開版の既存テストは SELECT も batch に混ぜるので、読み取り文はそのまま返す。
+      if (query.reader) {
+        const results = query.all(...values);
+        return { success: true, results, meta: { changes: 0, duration: 0, last_row_id: 0, changed_db: false, size_after: 0, rows_read: results.length, rows_written: 0 } };
+      }
+      const info = query.run(...values);
       return { success: true, results: [], meta: { changes: Number(info.changes), duration: 0, last_row_id: Number(info.lastInsertRowid), changed_db: !!info.changes, size_after: 0, rows_read: 0, rows_written: Number(info.changes) } };
     };
     const statement = {

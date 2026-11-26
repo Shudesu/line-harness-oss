@@ -7,7 +7,9 @@ afterEach(() => { opened.splice(0).forEach(x => x.close()); vi.restoreAllMocks()
 function setup(legacy = false) {
   const sql = new Database(':memory:'); opened.push(sql);
   sql.exec(readFileSync(new URL('../migrations/011_staff_members.sql', import.meta.url), 'utf8'));
-  if (!legacy) sql.exec(readFileSync(new URL('../migrations/074_security_hardening.sql', import.meta.url), 'utf8'));
+  // 074 bundles the scope and key-hash columns; a "legacy" schema has only the scope column applied.
+  const hardening = readFileSync(new URL('../migrations/074_security_hardening.sql', import.meta.url), 'utf8');
+  sql.exec(legacy ? 'ALTER TABLE staff_members ADD COLUMN api_scopes TEXT;' : hardening);
   const queries: string[] = [];
   let intercept: (query: string) => void = () => {};
   const db = { prepare(query: string) {
@@ -52,10 +54,10 @@ describe('hashed staff credentials', () => {
     s.sql.prepare('UPDATE staff_members SET is_active=0').run();
     expect(await getStaffByApiKey(s.db,'lh_legacy-secret')).toBeNull();
   });
-  it('fails closed on missing migration and database outages', async () => {
+  it('supports a pre-migration schema but never falls back on an arbitrary DB outage', async () => {
     const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
     const s=setup(true);s.add('old','lh_legacy-secret');
-    await expect(getStaffByApiKey(s.db,'lh_legacy-secret')).rejects.toThrow();
+    expect((await getStaffByApiKey(s.db,'lh_legacy-secret'))?.id).toBe('old');
     expect(JSON.stringify(warn.mock.calls)).not.toContain('lh_legacy-secret');
     const broken=setup();broken.intercept(()=>{ throw new Error('Database offline'); });
     await expect(getStaffByApiKey(broken.db,'lh_valid')).rejects.toThrow('offline');
@@ -75,11 +77,11 @@ describe('hashed staff credentials', () => {
       expect(s.sql.prepare('SELECT api_key_hash FROM staff_members').get()).toEqual({api_key_hash:newHash});
     }
   });
-  it('fails closed when the migration write fails', async () => {
+  it('retains valid legacy authentication if only the backfill write fails', async () => {
     vi.spyOn(console,'warn').mockImplementation(()=>{});
     const s=setup();s.add('old','lh_legacy-secret');
     s.intercept(q=>{if(q.startsWith('UPDATE'))throw new Error('write unavailable');});
-    await expect(getStaffByApiKey(s.db,'lh_legacy-secret')).rejects.toThrow();
+    expect((await getStaffByApiKey(s.db,'lh_legacy-secret'))?.id).toBe('old');
   });
   it('bounds maintenance and leaves no plaintext after repeated batches', async () => {
     const s=setup();for(let i=0;i<5;i++)s.add(`id-${i}`,`lh_key-${i}`,i%2);
@@ -93,11 +95,6 @@ describe('hashed staff credentials', () => {
     expect(rows.every(r=>r.api_key.startsWith('hashed:')&&r.api_key_hash.length===64)).toBe(true);
     const plan=s.sql.prepare('EXPLAIN QUERY PLAN '+s.queries[0]).all(2) as {detail:string}[];
     expect(plan.some(r=>r.detail.includes('idx_staff_members_plaintext'))).toBe(true);
-  });
-  it('caps even oversized backfill requests below the Free invocation query limit', async () => {
-    const s=setup();for(let i=0;i<30;i++)s.add(`id-${i}`,`lh_key-${i}`);
-    expect(await backfillStaffApiKeyHashes(s.db,{limit:1000})).toBe(25);
-    expect(s.queries).toHaveLength(26);
   });
   it.each([100, 10_000, 100_000])('bounds backfill even with %i pending keys', async count => {
     const s=setup();

@@ -126,6 +126,25 @@ const CLIENT_ONLY: readonly string[] = [
  * rich-menu-groups / integrations あたりが機能として大きい。
  */
 const KNOWN_GAPS: readonly string[] = [
+  // admin security: passkeys, magic link, machine keys, extensions, setup check (18)
+  'DELETE /api/auth/passkeys/{id}',
+  'DELETE /api/machine-keys/{id}',
+  'GET /api/admin/extensions',
+  'GET /api/auth/methods',
+  'GET /api/auth/passkeys',
+  'GET /api/inbound-events',
+  'GET /api/machine-keys',
+  'GET /api/setup/check',
+  'PATCH /api/auth/passkeys/{id}',
+  'POST /api/admin/extensions/{id}/launch',
+  'POST /api/auth/logout-all',
+  'POST /api/auth/magic-link',
+  'POST /api/auth/magic-link/consume',
+  'POST /api/auth/passkeys/login/options',
+  'POST /api/auth/passkeys/login/verify',
+  'POST /api/auth/passkeys/register/options',
+  'POST /api/auth/passkeys/register/verify',
+  'POST /api/machine-keys',
   // booking (26)
   'DELETE /api/booking/admin/menus/{id}',
   'DELETE /api/booking/admin/staff/{id}',

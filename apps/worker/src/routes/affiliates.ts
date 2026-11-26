@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getAffiliates,
@@ -22,7 +23,7 @@ import { IDENTITY_KEY_SQL } from '../lib/identity-key.js';
 import { resolveLinkBaseUrl } from '../lib/link-base-url.js';
 import type { Env } from '../index.js';
 
-const affiliates = new Hono<Env>();
+const affiliates = createAuthorizedRouter<Env>();
 
 function serializeAffiliate(row: { id: string; name: string; code: string; commission_rate: number; is_active: number; created_at: string; friend_id?: string | null }) {
   return {

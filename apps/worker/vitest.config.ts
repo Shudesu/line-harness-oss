@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@line-crm/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
+      '@line-crm/db': path.resolve(__dirname, '../../packages/db/src/index.ts'),
       // @line-crm/line-sdk has main=dist/index.js but dist may not exist in
       // the worktree; point Vitest directly at the TS sources so tests resolve
       // without a build step.
@@ -14,6 +15,7 @@ export default defineConfig({
       // files transitively import index.ts (which re-exports the
       // TenantScheduler Durable Object), so a global stub is needed rather
       // than mocking it per test file. See test-support/cloudflare-workers-stub.ts.
+      'cloudflare:email': path.resolve(__dirname, 'src/test-support/cloudflare-email-stub.ts'),
       'cloudflare:workers': path.resolve(__dirname, 'src/test-support/cloudflare-workers-stub.ts'),
     },
   },

@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { validateMessageContent } from '@line-crm/shared';
 import { Hono } from 'hono';
 import {
@@ -15,7 +16,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const reminders = new Hono<Env>();
+const reminders = createAuthorizedRouter<Env>();
 
 // ========== リマインダCRUD ==========
 

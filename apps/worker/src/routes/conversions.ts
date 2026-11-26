@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getConversionPoints,
@@ -20,7 +21,7 @@ import { IDENTITY_KEY_SQL } from '../lib/identity-key.js';
 import { notifyAffiliateApproval } from '../services/affiliate-notifier.js';
 import type { Env } from '../index.js';
 
-const conversions = new Hono<Env>();
+const conversions = createAuthorizedRouter<Env>();
 
 // ── Conversion Points ───────────────────────────────────────────────────────
 

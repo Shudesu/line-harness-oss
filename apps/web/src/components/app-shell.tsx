@@ -3,14 +3,26 @@ import { usePathname } from 'next/navigation'
 import Sidebar from './layout/sidebar'
 import { UpdateBanner } from './update/update-banner'
 import { QuotaBanner } from './quota-banner'
-import { AuthProvider, useAuthStatus } from '@/contexts/auth-context'
+import { AuthProvider, useAuthState } from '@/contexts/auth-context'
 import { AccountProvider } from '@/contexts/account-context'
 
 // 認証チェック中もシェル（バナー・サイドバー）を保持し、コンテンツ領域だけを
 // 部分スケルトンへ差し替える。旧実装は全画面スピナーでレイアウトごと消していた。
 function ContentGate({ children, fullBleed }: { children: React.ReactNode; fullBleed: boolean }) {
-  const status = useAuthStatus()
-  if (status === 'ok') return <>{children}</>
+  const { status, error, retry } = useAuthState()
+  if (status === 'ok') {
+    if (fullBleed) return <>{children}</>
+    return <div className="px-4 pb-6 sm:px-6 lg:pt-8 lg:px-8 lg:pb-8">{children}</div>
+  }
+  if (status === 'error') {
+    // 一時的な失敗ではログアウトさせず、シェルを保ったまま再試行を出す。
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 p-8" role="alert">
+        <p>{error ?? 'セッション確認に失敗しました'}。時間をおいて再試行してください。</p>
+        <button type="button" className="rounded border px-4 py-2" onClick={retry}>再試行</button>
+      </div>
+    )
+  }
   if (fullBleed) {
     return (
       <div className="flex-1 flex flex-col min-h-0" aria-hidden="true">
@@ -45,7 +57,8 @@ function ContentGate({ children, fullBleed }: { children: React.ReactNode; fullB
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
-  if (pathname === '/login' || pathname === '/ui-preview') {
+  const bypassPath = (pathname ?? '').replace(/\/+$/, '')
+  if (bypassPath === '/login' || bypassPath === '/login/magic' || bypassPath === '/ui-preview') {
     return <>{children}</>
   }
 

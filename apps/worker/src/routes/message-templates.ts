@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   listMessageTemplates,
@@ -9,7 +10,7 @@ import {
 import type { MessageTemplate } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const messageTemplates = new Hono<Env>();
+const messageTemplates = createAuthorizedRouter<Env>();
 
 function serialize(t: MessageTemplate) {
   return {

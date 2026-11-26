@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { handleCampaignEvent } from "../services/x-campaign-events.js";
 import { acceptXGateFollowup } from "../services/x-gate-followup.js";
 import { verifyGateChallenge } from "../services/x-gate-challenge.js";
@@ -27,7 +28,7 @@ import {
   sendGateLineMessage,
   gateFlex,
 } from "../services/x-gate-line-message.js";
-const xGates = new Hono<Env>();
+const xGates = createAuthorizedRouter<Env>();
 xGates.use(
   "/api/integrations/x-harness/*",
   bodyLimit({

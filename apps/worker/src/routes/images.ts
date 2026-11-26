@@ -1,7 +1,8 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono, type Context } from 'hono';
 import type { Env } from '../index.js';
 
-const images = new Hono<Env>();
+const images = createAuthorizedRouter<Env>();
 
 // POST /api/images — upload image (base64 or binary)
 images.post('/api/images', async (c) => {

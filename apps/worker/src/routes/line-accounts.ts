@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
 import {
@@ -32,7 +33,7 @@ import {
   setWebhookEndpointWithConfirm,
 } from '../services/webhook-endpoint.js';
 
-const lineAccounts = new Hono<Env>();
+const lineAccounts = createAuthorizedRouter<Env>();
 
 /** Origin used for webhook endpoint expectations (same rule as webhook.ts). */
 function workerOrigin(c: { env: Env['Bindings']; req: { url: string } }): string {

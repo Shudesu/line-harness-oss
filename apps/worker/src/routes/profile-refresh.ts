@@ -1,8 +1,9 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
 import type { Env } from '../index.js';
 
-const profileRefresh = new Hono<Env>();
+const profileRefresh = createAuthorizedRouter<Env>();
 
 /**
  * 友だち全員のプロフィール (display_name / picture_url / status_message) を

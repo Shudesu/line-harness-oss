@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getEntryRoutes,
@@ -11,7 +12,7 @@ import type { EntryRoute } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { isReservedRef } from '../lib/reserved-refs.js';
 
-const entryRoutes = new Hono<Env>();
+const entryRoutes = createAuthorizedRouter<Env>();
 
 function serialize(row: EntryRoute) {
   return {

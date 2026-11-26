@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono, type Context } from 'hono';
 import { resolveIgLink, type ResolvedIgLink } from '../lib/ig-link.js';
 import { createLiffQueryReader } from '../lib/liff-query.js';
@@ -53,7 +54,7 @@ function decodeState(encoded: string): string {
   return new TextDecoder().decode(Uint8Array.from(atob(encoded), (ch) => ch.charCodeAt(0)));
 }
 
-const liffRoutes = new Hono<Env>();
+const liffRoutes = createAuthorizedRouter<Env>();
 
 // Persist ig_igsid on the LINE friend and notify IG Harness.
 // Used anywhere a LIFF/OAuth flow resolves with a known IGSID so existing

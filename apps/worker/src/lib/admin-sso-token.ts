@@ -154,7 +154,7 @@ export async function verifyAdminSsoToken(
 
   // Authenticate before parsing: never hand unverified bytes to JSON.parse.
   const expected = await hmac(secret, encodedPayload);
-  if (!await timingSafeEqualString(expected, signature)) {
+  if (!(await timingSafeEqualString(expected, signature))) {
     return { ok: false, reason: 'bad_signature' };
   }
 

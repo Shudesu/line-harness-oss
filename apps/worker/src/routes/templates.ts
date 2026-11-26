@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getTemplatesWithUsageCount,
@@ -9,7 +10,7 @@ import {
 } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const templates = new Hono<Env>();
+const templates = createAuthorizedRouter<Env>();
 
 templates.get('/api/templates', async (c) => {
   try {

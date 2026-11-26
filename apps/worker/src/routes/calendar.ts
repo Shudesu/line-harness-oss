@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getCalendarConnections,
@@ -15,7 +16,7 @@ import {
 import { GoogleCalendarClient } from '../services/google-calendar.js';
 import type { Env } from '../index.js';
 
-const calendar = new Hono<Env>();
+const calendar = createAuthorizedRouter<Env>();
 
 // ========== 接続管理 ==========
 

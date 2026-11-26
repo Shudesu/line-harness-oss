@@ -270,3 +270,5 @@ export async function runUpdate(opts: RunUpdateOpts): Promise<UpdateHandle> {
 
   return { updateId, done };
 }
+
+export * from './signature.js';

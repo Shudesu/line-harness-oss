@@ -1,8 +1,9 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { jstNow } from '@line-crm/db';
 import type { Env } from '../index.js';
 
-const mediaInquiries = new Hono<Env>();
+const mediaInquiries = createAuthorizedRouter<Env>();
 
 const ALLOWED_ORIGINS = new Set([
   'https://the-harness.com',

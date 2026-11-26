@@ -1,9 +1,10 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { requireRole } from '../middleware/role-guard.js';
 import { computeUsersGrouped, type UsersGroupedOptions } from '../services/users-grouped.js';
 
-export const usersGrouped = new Hono<Env>();
+export const usersGrouped = createAuthorizedRouter<Env>();
 
 usersGrouped.get('/api/users-grouped', requireRole('owner', 'admin'), async (c) => {
   try {

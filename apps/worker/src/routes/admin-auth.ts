@@ -1,16 +1,17 @@
-import { revokeAdminSession, revokeAdminSessionsForStaff, backfillStaffApiKeyHashes, purgeAuthSecurityData, purgeExpiredAdminSessions } from '@line-crm/db';
-import { audit, limitAuth } from '../middleware/auth-security.js';
-import { requireRole } from '../middleware/role-guard.js';
+import {apiKeyLoginMode} from '../middleware/login-policy.js';
+import {timingSafeEqualString} from '@line-crm/shared';
+import {hashApiKey} from '@line-crm/db';
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
+import { revokeAdminSession, revokeAdminSessionsForStaff } from '@line-crm/db';
 import type { Env } from '../index.js';
 import {
   ADMIN_AUTH_COOKIE,
   CSRF_COOKIE,
   issueAdminSession,
-  cookieToken,
-  authenticateCookieSession,
+  issueVerifiedAdminSession,
   publicStaffProfile,
-  requireAccess,
+  cookieToken,
   authenticateApiToken,
   csrfCookie,
   csrfTokenFromCookie,
@@ -18,14 +19,13 @@ import {
 } from '../middleware/auth.js';
 import { resolveAdminAuthConfig } from '../middleware/admin-auth-config.js';
 
-export const adminAuth = new Hono<Env>();
-adminAuth.onError((_error, c) => c.json({success:false,error:'Authentication storage unavailable; check migrations'},503));
+export const adminAuth = createAuthorizedRouter<Env>();
 
 /**
  * POST /api/auth/login
  *
  * Validates the API key, then issues:
- *   - lh_admin_session (HttpOnly) — an opaque revocable session ID.
+ *   - lh_admin_session (HttpOnly) — the credential, never exposed to JS.
  *   - lh_csrf (readable) — the double-submit CSRF token, also returned in the
  *     body so a cross-site SPA (which cannot read the API's cookie) can echo it
  *     back via the X-CSRF-Token header.
@@ -35,9 +35,6 @@ adminAuth.onError((_error, c) => c.json({success:false,error:'Authentication sto
  * configuration error.
  */
 adminAuth.post('/api/auth/login', async (c) => {
-  c.header('Cache-Control', 'no-store');
-  const limited = await limitAuth(c, 'login'); if (limited) return limited;
-  const denied = await requireAccess(c); if (denied) return denied;
   const config = resolveAdminAuthConfig(c.env, { requestOrigin: new URL(c.req.url).origin });
   if (config.misconfigured) {
     console.error('[admin-auth] refused login — misconfigured topology:', config.misconfigured);
@@ -48,22 +45,31 @@ adminAuth.post('/api/auth/login', async (c) => {
     .json<{ apiKey?: string }>()
     .catch(() => ({}) as { apiKey?: string });
   const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
-  const staff = await authenticateApiToken(c, apiKey || null);
+  const mode=apiKeyLoginMode(c.env);
+  if(mode==='disabled')return c.json({success:false,error:'API key login is disabled; use an enabled identity login'},403);
+  const staff = mode==='break-glass'
+    ? await timingSafeEqualString(apiKey,c.env.API_KEY) ? {id:'env-owner',name:'Owner',role:'owner' as const} : null
+    : await authenticateApiToken(c, apiKey || null);
 
   if (!staff) {
-    await audit(c, 'login', 'denied');
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
 
   if (staff.apiScopes != null) {
-    await audit(c, 'login', 'denied', staff.id);
-    return c.json({success:false,error:'Scoped keys cannot create admin sessions'},403);
+    return c.json({ success: false, error: 'Integration keys cannot sign in to the admin console' }, 403);
   }
-  await audit(c, 'login', 'attempted', staff.id);
+
   const csrfToken = crypto.randomUUID();
-  await issueAdminSession(c, staff, apiKey);
+  let sessionStaff;
+  try {
+    sessionStaff = mode==='break-glass'
+      ? await issueVerifiedAdminSession(c,staff,await hashApiKey(apiKey),'break_glass',{maxTtl:3600})
+      : await issueAdminSession(c, staff, apiKey);
+  } catch {
+    return c.json({ success: false, error: 'Admin session storage unavailable; apply migration 074_security_hardening.sql' }, 503);
+  }
   c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
-  return c.json({ success: true, data: publicStaffProfile(staff), csrfToken });
+  return c.json({ success: true, data: publicStaffProfile(sessionStaff, c.env), csrfToken });
 });
 
 /**
@@ -72,14 +78,12 @@ adminAuth.post('/api/auth/login', async (c) => {
  * even if the CSRF token was lost client-side.
  */
 adminAuth.post('/api/auth/logout', async (c) => {
-  c.header('Cache-Control', 'no-store');
-  const token = cookieToken(c);
-  const staff = await authenticateCookieSession(c, token);
-  if (token) await revokeAdminSession(c.env.DB, token);
-  if (staff) await audit(c, 'logout', 'success', staff.id);
   const { sameSite } = resolveAdminAuthConfig(c.env, { requestOrigin: new URL(c.req.url).origin });
+  let storageFailed = false;
+  try { await revokeAdminSession(c.env.DB, cookieToken(c) ?? ''); } catch { storageFailed = true; }
   c.header('Set-Cookie', expiredCookie(ADMIN_AUTH_COOKIE, sameSite), { append: true });
   c.header('Set-Cookie', expiredCookie(CSRF_COOKIE, sameSite), { append: true });
+  if (storageFailed) return c.json({ success: false, error: 'Session revocation unavailable; browser cookies cleared' }, 503);
   return c.json({ success: true, data: null });
 });
 
@@ -96,23 +100,17 @@ adminAuth.get('/api/auth/session', async (c) => {
     csrfToken = crypto.randomUUID();
     c.header('Set-Cookie', csrfCookie(csrfToken, config.sameSite), { append: true });
   }
-  return c.json({ success: true, data: publicStaffProfile(c.get('staff')), csrfToken });
+  return c.json({ success: true, data: publicStaffProfile(c.get('staff'), c.env), csrfToken });
 });
 
-// Owner-driven, bounded Web Crypto backfill (25 rows leaves room for auth on Free); repeat until migrated === 0.
-adminAuth.post('/api/auth/migrate-keys', requireRole('owner'), async (c) => {
-  await audit(c, 'key_migration', 'attempted', c.get('staff').id);
-  const migrated = await backfillStaffApiKeyHashes(c.env.DB);
-  return c.json({success:true,data:{migrated}});
-});
-adminAuth.post('/api/auth/sessions/revoke', async (c) => {
-  const staff = c.get('staff');
-  await audit(c, 'sessions_revoke', 'attempted', staff.id);
-  const revoked = await revokeAdminSessionsForStaff(c.env.DB, staff.id);
-  return c.json({success:true,data:{revoked}});
-});
-adminAuth.post('/api/auth/maintenance', requireRole('owner'), async (c) => {
-  await purgeAuthSecurityData(c.env.DB);
-  await purgeExpiredAdminSessions(c.env.DB);
-  return c.json({success:true});
+
+// The common auth/CSRF gate protects this endpoint; it only affects the caller.
+adminAuth.post('/api/auth/logout-all', async (c) => {
+  try {
+    const revoked = await revokeAdminSessionsForStaff(c.env.DB, c.get('staff').id);
+    const { sameSite } = resolveAdminAuthConfig(c.env);
+    c.header('Set-Cookie', expiredCookie(ADMIN_AUTH_COOKIE, sameSite), { append: true });
+    c.header('Set-Cookie', expiredCookie(CSRF_COOKIE, sameSite), { append: true });
+    return c.json({ success: true, data: { revoked } });
+  } catch { return c.json({ success: false, error: 'Session revocation unavailable' }, 503); }
 });

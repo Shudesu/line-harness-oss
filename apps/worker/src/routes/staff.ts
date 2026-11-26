@@ -1,6 +1,8 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import {
   getStaffMembers,
+  revokeAdminSessionsForStaff,
   isStaffApiScopes,
   parseStaffApiScopes,
   getStaffById,
@@ -14,20 +16,29 @@ import type { StaffMember, StaffApiScope } from '@line-crm/db';
 import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
-const staff = new Hono<Env>();
+const staff = createAuthorizedRouter<Env>();
 
-function serializeStaff(row: StaffMember) {
+function maskApiKey(key: string): string {
+  return `lh_****${key.slice(-4)}`;
+}
+
+function serializeStaff(row: StaffMember, masked = true, issuedKey?: string) {
   return {
     id: row.id,
     name: row.name,
     email: row.email,
     role: row.role,
     apiScopes: parseStaffApiScopes(row.api_scopes),
-    apiKey: `lh_****${row.api_key_last4 ?? ""}`,
+    apiKey: masked ? maskApiKey(row.api_key_last4 ?? row.api_key) : issuedKey,
     isActive: Boolean(row.is_active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function revokeSessions(db: D1Database, id: string): Promise<void> {
+  try { await revokeAdminSessionsForStaff(db, id); }
+  catch { console.warn('[auth] session cleanup deferred'); }
 }
 
 // GET /api/staff/me — any authenticated user (MUST be before /:id)
@@ -72,7 +83,7 @@ staff.get('/api/staff/me', async (c) => {
 staff.get('/api/staff', requireRole('owner'), async (c) => {
   try {
     const members = await getStaffMembers(c.env.DB);
-    return c.json({ success: true, data: members.map((m) => serializeStaff(m)) });
+    return c.json({ success: true, data: members.map((m) => serializeStaff(m, true)) });
   } catch (err) {
     console.error('GET /api/staff error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -87,7 +98,7 @@ staff.get('/api/staff/:id', requireRole('owner'), async (c) => {
     if (!member) {
       return c.json({ success: false, error: 'Staff member not found' }, 404);
     }
-    return c.json({ success: true, data: serializeStaff(member) });
+    return c.json({ success: true, data: serializeStaff(member, true) });
   } catch (err) {
     console.error('GET /api/staff/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -112,15 +123,15 @@ staff.post('/api/staff', requireRole('owner'), async (c) => {
       return c.json({ success: false, error: 'apiScopes must be null or a list of messages:read/messages:send for role staff' }, 400);
     }
 
-    const { member, apiKey } = await createStaffMember(c.env.DB, {
+    const member = await createStaffMember(c.env.DB, {
       name: body.name,
       apiScopes: body.apiScopes as StaffApiScope[] | null | undefined,
       email: body.email ?? null,
       role: body.role as 'owner' | 'admin' | 'staff',
-    });
+    }, {erasePlaintext:c.env.SECURITY_MIGRATION_STAGE!=='compat'});
 
     // Return full (unmasked) API key one-time
-    return c.json({ success: true, data: { ...serializeStaff(member), apiKey } }, 201);
+    return c.json({ success: true, data: serializeStaff(member.member, false, member.apiKey) }, 201);
   } catch (err) {
     console.error('POST /api/staff error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -180,7 +191,10 @@ staff.patch('/api/staff/:id', requireRole('owner'), async (c) => {
       return c.json({ success: false, error: 'Staff member not found' }, 404);
     }
 
-    return c.json({ success: true, data: serializeStaff(updated) });
+    if ((body.role !== undefined && body.role !== target.role) || body.isActive === false || body.apiScopes !== undefined) {
+      await revokeSessions(c.env.DB, id);
+    }
+    return c.json({ success: true, data: serializeStaff(updated, true) });
   } catch (err) {
     console.error('PATCH /api/staff/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -210,6 +224,7 @@ staff.delete('/api/staff/:id', requireRole('owner'), async (c) => {
     }
 
     await deleteStaffMember(c.env.DB, id);
+    await revokeSessions(c.env.DB, id);
     return c.json({ success: true, data: null });
   } catch (err) {
     console.error('DELETE /api/staff/:id error:', err);
@@ -225,7 +240,8 @@ staff.post('/api/staff/:id/regenerate-key', requireRole('owner'), async (c) => {
     if (!exists) {
       return c.json({ success: false, error: 'Staff member not found' }, 404);
     }
-    const newKey = await regenerateStaffApiKey(c.env.DB, id);
+    const newKey = await regenerateStaffApiKey(c.env.DB, id, {erasePlaintext:c.env.SECURITY_MIGRATION_STAGE!=='compat'});
+    await revokeSessions(c.env.DB, id);
     return c.json({ success: true, data: { apiKey: newKey } });
   } catch (err) {
     console.error('POST /api/staff/:id/regenerate-key error:', err);

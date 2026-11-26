@@ -1,9 +1,10 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { computeDedupBroadcastPreview } from '../services/dedup-broadcast.js';
 import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
-const dedupPreview = new Hono<Env>();
+const dedupPreview = createAuthorizedRouter<Env>();
 
 dedupPreview.post(
   '/api/broadcasts/dedup-preview',

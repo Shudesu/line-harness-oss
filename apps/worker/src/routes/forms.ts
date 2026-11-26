@@ -1,3 +1,4 @@
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono, type Context } from 'hono';
 import {
   getForms,
@@ -28,7 +29,7 @@ import type {
 import type { Env } from '../index.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
 
-const forms = new Hono<Env>();
+const forms = createAuthorizedRouter<Env>();
 
 function optionalExecutionCtx(c: Context<Env>): ExecutionContext | undefined {
   try {

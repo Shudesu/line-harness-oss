@@ -1,5 +1,7 @@
 # 認証強化のアップグレード手順
 
+> **追記（セキュリティ強化一式の移植）:** 下記の D1 ログイン回数制限と `auth_audit_log` への記録は、`docs/ADMIN-AUTH.md`・`docs/RBAC.md`・`docs/MACHINE-KEYS.md`・`docs/PASSKEYS-MAGIC-LINK.md` の実装に置き換わりました。新しい Worker を配備する前に `packages/db/migrations/079_admin_security_keys_passkeys.sql`（追加のみ・再実行可）を適用してください。`auth_rate_limits` / `auth_audit_log` テーブルは残りますが書き込まれません。`ACCESS_REQUIRED=true` は引き続き有効です。
+
 Workers＋D1で動作します。有料サービス追加、`workers_dev`の無効化、公開パス全体へのAccess設定は行いません。[English / 詳細仕様](SECURITY-UPGRADE.en.md)も参照してください。
 
 ## 既存セルフホスト環境の移行

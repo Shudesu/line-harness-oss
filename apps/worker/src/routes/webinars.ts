@@ -1,3 +1,5 @@
+import { calendarCredentialsFromEnv } from '../services/google-calendar-broker.js';
+import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 // オートウェビナー (疑似ライブ) HTTP routes.
 //
 // LIFF:   /api/liff/webinars/:slug          (id_token verify で friend 特定)
@@ -65,7 +67,7 @@ import { requireRole } from '../middleware/role-guard.js';
 import { safeDecode } from '../utils/safe-decode.js';
 import type { Env } from '../index.js';
 
-const webinarRoutes = new Hono<Env>();
+const webinarRoutes = createAuthorizedRouter<Env>();
 
 const COMMENT_MAX = 500;
 const SESSION_COMMENT_LIMIT = 60;
@@ -585,12 +587,7 @@ webinarRoutes.get('/api/liff/webinars/:slug/consultation-slots', async (c) => {
       accountId: auth.webinar.account_id,
       friendId: auth.friendId,
       now: new Date(),
-      credentials: {
-        email: c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        privateKey: c.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
-        oauthClientId: c.env.GOOGLE_OAUTH_CLIENT_ID,
-        oauthClientSecret: c.env.GOOGLE_OAUTH_CLIENT_SECRET,
-      },
+      credentials: calendarCredentialsFromEnv(c.env),
     });
     return c.json({ ok: true, data });
   } catch (error) {
@@ -620,12 +617,7 @@ webinarRoutes.post('/api/liff/webinars/:slug/consultation-book', async (c) => {
       friendId: auth.friendId,
       startsAt: body.startsAt,
       now: new Date(),
-      credentials: {
-        email: c.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        privateKey: c.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
-        oauthClientId: c.env.GOOGLE_OAUTH_CLIENT_ID,
-        oauthClientSecret: c.env.GOOGLE_OAUTH_CLIENT_SECRET,
-      },
+      credentials: calendarCredentialsFromEnv(c.env),
       proxyBaseUrl: new URL(c.req.url).origin,
       proxyDispatch: (request) => dispatchLineProxyLocally(request, c.env, c.executionCtx),
     });
