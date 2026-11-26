@@ -7,12 +7,16 @@ Design memo (docs/engineering/cloudflare-cost-review.md):
   the number of friends. Writes are capped by LIMIT (<= 2000 per statement).
 - Read range: each event statement walks the following friends that are old
   enough for the milestone and probes engagement_events by primary key; each
-  queue statement walks that milestone's events and probes the queue by
-  primary key. This is linear in following friends and was already so before
-  metadata.do_not_contact was read. The flag is read from the friends row the
-  statement already visits (no extra table or index), and the queue statement
-  only probes friends for events that have no queue row yet, so a caught-up
-  database adds no probes there.
+  queue statement walks the whole `line_relationship` source range of
+  engagement_events (idx_engagement_events_source; event_type is filtered
+  afterwards, so all 6 statements visit every milestone event) and probes the
+  queue by primary key. Both are linear in following friends and were already
+  so before metadata.do_not_contact was read. The flag is read from the
+  friends row the statement already visits (no extra table or index) and only
+  for friends whose milestone event does not exist yet; the queue statement
+  only probes friends for events that have no queue row yet. A caught-up
+  database therefore parses metadata only for flagged friends and adds no
+  friends probes from the queue statement.
 - Unmeasured: D1 billed rows and Workers CPU ms. SQLite VM instructions do not
   include the time spent inside json_valid/json_type/json_extract, so the
   per-row JSON parse is reported as wall-clock time for information only and
@@ -87,7 +91,29 @@ for scale in [1, 100, 1000]:
     steps, changed, seconds, plans = run(db, payload["queries"])
     assert changed == 0, "A caught-up run wrote rows"
     assert not any("TEMP B-TREE" in plan and "friends" in plan for plan in plans)
+    # VM instructions cannot see JSON work, so count the parses directly: every
+    # metadata read goes through json_valid. Caught up, only flagged friends
+    # (no event, by design) may be parsed, not the whole following population.
+    parse_calls = []
+    def counting_json_valid(value):
+        parse_calls.append(1)
+        try:
+            json.loads(value)
+            return 1
+        except (TypeError, ValueError):
+            return 0
+    # Counted on a copy: the override cannot be removed from a connection.
+    copy = sqlite3.connect(":memory:", cached_statements=0)
+    db.backup(copy)
+    copy.create_function("json_valid", 1, counting_json_valid)
+    _, changed, _, _ = run(copy, payload["queries"])
+    copy.close()
+    assert changed == 0, "A caught-up run wrote rows"
+    flagged_friends = friends // 100
+    parses = len(parse_calls)
+    assert 0 < parses <= flagged_friends * MILESTONES * 3, f"Caught-up run parsed metadata {parses} times"
     report["caught_up"].append({"scale": scale, "friends": friends, "vm_instructions_approx": steps,
+                                "metadata_parses": parses,
                                 "wall_ms_informational": round(seconds * 1000, 1)})
     # Recovery backlog that grows with the scale: 10% of friends lose their
     # queue rows and half of those opt out before the retry. This is the only

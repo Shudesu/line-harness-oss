@@ -1599,6 +1599,10 @@ export async function enqueueFollowingMileageMilestones(
          AND julianday(?) - julianday(f.current_follow_started_at) >= ${milestone.days}`;
     const insertBinds = milestone.days === 0 ? [now, limit] : [now, now, limit];
 
+    // The CASE fixes the evaluation order: the primary-key probe for an
+    // existing event runs first, so a caught-up run does not parse metadata
+    // for friends whose milestone is already recorded. As plain AND terms
+    // SQLite evaluates the JSON predicate before the correlated subquery.
     const inserted = await db
       .prepare(
         `INSERT OR IGNORE INTO engagement_events
@@ -1614,10 +1618,10 @@ export async function enqueueFollowingMileageMilestones(
            FROM friends f
           WHERE f.is_following = 1
             AND ${eligibilitySql}
-            AND ${FRIEND_CONTACTABLE_SQL}
-            AND NOT EXISTS (
-              SELECT 1 FROM engagement_events ee WHERE ee.id = ${eventIdSql}
-            )
+            AND CASE
+                  WHEN EXISTS (SELECT 1 FROM engagement_events ee WHERE ee.id = ${eventIdSql}) THEN 0
+                  ELSE ${FRIEND_CONTACTABLE_SQL}
+                END
           ORDER BY ${anchorSql} ASC, f.id ASC
           LIMIT ?`,
       )
