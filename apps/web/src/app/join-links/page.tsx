@@ -57,6 +57,8 @@ interface TagRow {
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+// 軌道の LP。?r=経路コード で開くと、LP の LINE 登録ボタンがその経路の友だち追加になる
+const LP_LINK_BASE = 'https://asakatsu.kidou.co/?r='
 // 経路リンクで付けられるタグ（流入の印）の名前の頭
 function inflowTagPrefix(intern: boolean) {
   return intern ? 'ズ_流入_' : '軌_流入_'
@@ -303,6 +305,8 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
   const [saving, setSaving] = useState(false)
   const [qrFor, setQrFor] = useState<string | null>(null)
   const [reordering, setReordering] = useState(false)
+  // 軌道だけ「LPリンク」タブを出す（インターンには LP がない）
+  const [tab, setTab] = useState<'routes' | 'lp'>('routes')
 
   const inflowTags = (rows: TagRow[]) => rows.filter((t) => t.name.startsWith(INFLOW_TAG_PREFIX))
 
@@ -473,7 +477,31 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
       {loading && <p className="text-sm text-gray-500">読み込んでいます…</p>}
       {error && <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
-      {data && (
+      {data && !intern && (
+        <div className="mb-6 flex gap-1 border-b border-gray-200">
+          {(
+            [
+              ['routes', '経路リンク'],
+              ['lp', 'LPリンク'],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                tab === key ? 'border-green-600 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {data && !intern && tab === 'lp' && <LpLinks links={data.links} />}
+
+      {data && (intern || tab === 'routes') && (
         <div className="space-y-6">
           {/* 大本のリンク */}
           <section className="rounded-lg border border-gray-200 bg-white p-6">
@@ -721,5 +749,72 @@ function JoinLinksPageBody({ accountId, accountName, intern }: { accountId: stri
 
       {reordering && data && <ReorderLinks links={data.links} query={query} onClose={() => setReordering(false)} onSaved={load} />}
     </div>
+  )
+}
+
+// 軌道の LP を経由する経路リンク。経路リンクを作ると、ここにも同じ経路の LP リンクが並ぶ
+function LpLinks({ links }: { links: JoinLink[] }) {
+  const [qrFor, setQrFor] = useState<string | null>(null)
+  const active = links.filter((l) => l.isActive)
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-6">
+      <h2 className="mb-1 text-base font-bold text-gray-900">LPリンク</h2>
+      <p className="mb-4 text-sm text-gray-500">
+        SNS に LP（軌道のページ）を貼るときのリンクです。LP の LINE 登録ボタンを押して友だちになった人は、その経路の人数に入ります。新しい経路は「経路リンク」のタブで作ってください。
+      </p>
+      {active.length === 0 ? (
+        <p className="text-sm text-gray-500">まだ経路リンクがありません。</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                <th className="py-2 pr-4 font-medium">名前</th>
+                <th className="py-2 pr-4 font-medium">LPリンク</th>
+                <th className="py-2 pr-4 text-right font-medium">友だちになった人</th>
+                <th className="py-2 text-right font-medium">いまも友だち</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map((link) => {
+                const url = LP_LINK_BASE + encodeURIComponent(link.refCode)
+                return (
+                  <tr key={link.id} className="border-b border-gray-100 align-top">
+                    <td className="py-3 pr-4 font-medium text-gray-900">{link.name}</td>
+                    <td className="py-3 pr-4">
+                      <div className="flex items-center gap-2">
+                        <code className="max-w-[18rem] truncate text-xs text-gray-700">{url}</code>
+                        <CopyButton text={url} />
+                        <button
+                          type="button"
+                          onClick={() => setQrFor(qrFor === link.id ? null : link.id)}
+                          className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          QR
+                        </button>
+                      </div>
+                      {qrFor === link.id && (
+                        <div className="mt-3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={qrSrc(url, 240)} alt={`${link.name} の LP の QR コード`} width={140} height={140} className="rounded border border-gray-100" />
+                          <a href={qrSrc(url, 600)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-green-700 underline">
+                            大きい QR を開く
+                          </a>
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3 pr-4 text-right font-bold tabular-nums text-gray-900">{link.friendCount}</td>
+                    <td className="py-3 text-right tabular-nums">{link.followingCount}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="mt-4 text-xs text-gray-500">
+        人数は、同じ経路の「経路リンク」から直接友だちになった人と合わせた数です。止めている経路は出していません。
+      </p>
+    </section>
   )
 }
