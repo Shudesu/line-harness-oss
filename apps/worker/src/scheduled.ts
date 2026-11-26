@@ -112,6 +112,24 @@ export async function scheduled(
     console.error('token refresh error:', e);
   }
 
+  // 友だち1人宛ての予約送信 (1:1)。時刻厳守・軽量なので重いジョブより先に実行。
+  // 行を pending→sending で確保してから送るため、cron と DO alarm が重なっても二重送信しない。
+  try {
+    const { processDueFriendScheduledMessages } = await import('./services/friend-scheduled-messages.js');
+    const result = await processDueFriendScheduledMessages(env.DB, {
+      now: new Date(),
+      defaultAccessToken: env.LINE_CHANNEL_ACCESS_TOKEN,
+      workerUrl: env.WORKER_URL || env.WORKER_PUBLIC_URL || '',
+    });
+    if (result.sent + result.failed + result.expired + result.stuck > 0) {
+      console.log(
+        `[friend-scheduled-messages] sent=${result.sent} failed=${result.failed} expired=${result.expired} stuck=${result.stuck}`,
+      );
+    }
+  } catch (e) {
+    console.error('friend-scheduled-messages error:', e instanceof Error ? e.message : e);
+  }
+
   try {
     const result = await processDueReminders(env.DB, {
       now: new Date(),

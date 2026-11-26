@@ -1,4 +1,5 @@
 import { buildMessages } from './message-group.js';
+import { countSegmentAudience, savedSegmentAudience } from './saved-segment.js';
 import { BroadcastDeliveryError, BROADCAST_RECORDING_ERROR, broadcastDeliveryFailure, isDefiniteLineRejection } from './broadcast-delivery-error.js';
 import { BroadcastSenderError, resolveBroadcastSender } from './broadcast-sender.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
@@ -194,6 +195,24 @@ export async function processBroadcastSend(
     throw new Error(
       `Unsupported broadcast variables: ${unsupportedVariables.map((v) => `{{${v}}}`).join(', ')}`,
     );
+  }
+
+  // Saved segment conditions (include/exclude tags etc.) always go through the
+  // resumable segment queue so the executor delivers only to the matching
+  // audience. Must run before the personalized/target branches, which would
+  // otherwise overwrite segment_conditions with the plain target marker.
+  const segmentAudience = savedSegmentAudience(broadcast);
+  if (segmentAudience) {
+    const { total, missingName } = await countSegmentAudience(db, broadcast, segmentAudience);
+    if (hasRecipientVariables(broadcast.message_content) && missingName > 0) {
+      throw new Error(`Cannot personalize broadcast: ${missingName} recipient(s) have no display name`);
+    }
+    await db.prepare(
+      `UPDATE broadcasts
+          SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
+        WHERE id = ?`,
+    ).bind(total, JSON.stringify(segmentAudience), broadcast.id).run();
+    return (await getBroadcastById(db, broadcastId))!;
   }
 
   // A recipient variable cannot be delivered through LINE broadcast or

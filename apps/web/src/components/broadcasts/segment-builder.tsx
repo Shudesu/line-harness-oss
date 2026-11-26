@@ -4,163 +4,136 @@ import { useState, useEffect, useCallback } from 'react'
 import type { Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import { Button } from '@cloudflare/kumo/components/button'
+import { Checkbox } from '@cloudflare/kumo/components/checkbox'
 import { Input } from '@cloudflare/kumo/components/input'
-import { Select } from '@cloudflare/kumo/components/select'
-
-interface SegmentRule {
-  type: 'tag_exists' | 'tag_not_exists' | 'metadata_equals' | 'metadata_not_equals' | 'is_following'
-  value: string | boolean | { key: string; value: string }
-}
-
-interface SegmentCondition {
-  operator: 'AND' | 'OR'
-  rules: SegmentRule[]
-}
+import { Radio } from '@cloudflare/kumo/components/radio'
+import {
+  audienceCondition,
+  conditionToTagFilter,
+  emptyTagFilter,
+  tagFilterToCondition,
+  type SegmentCondition,
+  type TagFilter,
+} from './segment-conditions'
 
 interface SegmentBuilderProps {
   tags: Tag[]
   accountId: string | null
+  /** Target tag of the broadcast (when 対象 = タグで絞り込み); the conditions narrow it further. */
+  targetTagId?: string | null
   initialConditions?: SegmentCondition | null
-  onApply: (conditions: SegmentCondition) => void
+  /** null = clear the conditions (send to the plain target again). */
+  onApply: (conditions: SegmentCondition | null) => void | Promise<void>
   onCancel: () => void
 }
 
-const ruleTypeLabels: Record<SegmentRule['type'], string> = {
-  tag_exists: 'タグあり',
-  tag_not_exists: 'タグなし',
-  metadata_equals: 'メタデータ一致',
-  metadata_not_equals: 'メタデータ不一致',
-  is_following: 'フォロー中のみ',
+function TagChecklist({ tags, selected, onChange, query, label }: {
+  tags: Tag[]
+  selected: string[]
+  onChange: (ids: string[]) => void
+  query: string
+  label: string
+}) {
+  const visible = tags.filter((t) => !query || t.name.includes(query) || selected.includes(t.id))
+  return (
+    <div className="max-h-48 overflow-y-auto rounded border border-gray-200 bg-white p-2 space-y-1" aria-label={label}>
+      {visible.length === 0 && <p className="text-xs text-gray-400">該当するタグがありません</p>}
+      {visible.map((tag) => (
+        <Checkbox
+          key={tag.id}
+          label={tag.name}
+          checked={selected.includes(tag.id)}
+          onCheckedChange={(checked) => onChange(checked ? [...selected, tag.id] : selected.filter((id) => id !== tag.id))}
+        />
+      ))}
+    </div>
+  )
 }
 
-export default function SegmentBuilder({ tags, accountId, initialConditions, onApply, onCancel }: SegmentBuilderProps) {
-  const [operator, setOperator] = useState<'AND' | 'OR'>(initialConditions?.operator ?? 'AND')
-  const [rules, setRules] = useState<SegmentRule[]>(initialConditions?.rules ?? [{ type: 'tag_exists', value: '' }])
+export default function SegmentBuilder({ tags, accountId, targetTagId, initialConditions, onApply, onCancel }: SegmentBuilderProps) {
+  const parsed = conditionToTagFilter(initialConditions ?? null)
+  const [filter, setFilter] = useState<TagFilter>(parsed ?? { ...emptyTagFilter })
+  const [query, setQuery] = useState('')
   const [count, setCount] = useState<number | null>(null)
   const [counting, setCounting] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const condition = tagFilterToCondition(filter)
 
   const fetchCount = useCallback(async () => {
-    const validRules = rules.filter(r => {
-      if (r.type === 'is_following') return true
-      if (typeof r.value === 'string') return r.value !== ''
-      if (typeof r.value === 'object' && r.value !== null) return (r.value as { key: string }).key !== ''
-      return false
-    })
-    if (validRules.length === 0) { setCount(null); return }
-
+    const saved = tagFilterToCondition(filter)
+    // With nothing selected the broadcast goes to its plain target; the detail
+    // screen shows that number, so no segment count is needed here.
+    if (!saved) { setCount(null); return }
     setCounting(true)
     try {
-      const res = await api.segments.count({ operator, rules: validRules }, accountId ?? undefined)
+      const res = await api.segments.count(audienceCondition(saved, targetTagId), accountId ?? undefined)
       if (res.success) setCount(res.count ?? 0)
     } catch { /* ignore */ }
     finally { setCounting(false) }
-  }, [operator, rules, accountId])
+  }, [filter, targetTagId, accountId])
 
   useEffect(() => {
-    const timer = setTimeout(fetchCount, 500)
+    const timer = setTimeout(fetchCount, 400)
     return () => clearTimeout(timer)
   }, [fetchCount])
 
-  const updateRule = (index: number, updates: Partial<SegmentRule>) => {
-    setRules(prev => prev.map((r, i) => i === index ? { ...r, ...updates } as SegmentRule : r))
-  }
-
-  const removeRule = (index: number) => {
-    setRules(prev => prev.filter((_, i) => i !== index))
-  }
-
-  const addRule = () => {
-    setRules(prev => [...prev, { type: 'tag_exists', value: '' }])
+  const apply = async (value: SegmentCondition | null) => {
+    setSaving(true)
+    try { await onApply(value) } finally { setSaving(false) }
   }
 
   return (
-    <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-700">配信対象を絞り込む</h3>
-        <Select
-          size="sm"
-          value={operator}
-          onValueChange={(value) => setOperator((value ?? 'AND') as 'AND' | 'OR')}
-          aria-label="条件の組み合わせ"
-          items={{ AND: 'すべて満たす (AND)', OR: 'いずれか満たす (OR)' }}
-        />
+    <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 space-y-3">
+      <h3 className="text-sm font-semibold text-gray-700">配信対象をタグで絞り込む（複数タグ・除外）</h3>
+      {parsed === null && (
+        <p className="text-xs text-amber-700">
+          API などで設定された詳細条件が保存されています。ここで「適用」すると、下の内容で上書きされます。
+        </p>
+      )}
+      <Input
+        type="text"
+        placeholder="タグ名で絞り込み"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        aria-label="タグ名で絞り込み"
+      />
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-gray-600">含めるタグ（未選択なら全員が対象）</p>
+          <Radio.Group
+            legend="含めるタグの条件"
+            value={filter.includeMode}
+            onValueChange={(value) => setFilter({ ...filter, includeMode: value === 'all' ? 'all' : 'any' })}
+            className="flex gap-4"
+          >
+            <Radio.Item value="any" label="いずれかが付いている" />
+            <Radio.Item value="all" label="すべて付いている" />
+          </Radio.Group>
+          <TagChecklist tags={tags} selected={filter.includeTagIds} onChange={(ids) => setFilter({ ...filter, includeTagIds: ids })} query={query} label="含めるタグ" />
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-gray-600">除外するタグ（どれか1つでも付いていたら送らない）</p>
+          <TagChecklist tags={tags} selected={filter.excludeTagIds} onChange={(ids) => setFilter({ ...filter, excludeTagIds: ids })} query={query} label="除外するタグ" />
+        </div>
       </div>
 
-      <div className="space-y-2 mb-3">
-        {rules.map((rule, i) => (
-          <div key={i} className="flex items-center gap-2 bg-white rounded border border-gray-200 p-2">
-            <Select
-              size="sm"
-              value={rule.type}
-              onValueChange={(value) => {
-                const type = (value ?? 'tag_exists') as SegmentRule['type']
-                const defaultValue = type === 'is_following' ? true
-                  : (type === 'metadata_equals' || type === 'metadata_not_equals') ? { key: '', value: '' }
-                  : ''
-                updateRule(i, { type, value: defaultValue })
-              }}
-              className="min-w-[120px]"
-              aria-label={`ルール${i + 1}の種類`}
-              items={ruleTypeLabels}
-            />
-
-            {(rule.type === 'tag_exists' || rule.type === 'tag_not_exists') && (
-              <Select
-                size="sm"
-                value={typeof rule.value === 'string' ? rule.value : ''}
-                onValueChange={(value) => updateRule(i, { value: value ?? '' })}
-                className="flex-1"
-                aria-label={`ルール${i + 1}のタグ`}
-                items={[{ value: '', label: 'タグを選択...' }, ...tags.map((tag) => ({ value: tag.id, label: tag.name }))]}
-              />
-            )}
-
-            {(rule.type === 'metadata_equals' || rule.type === 'metadata_not_equals') && (
-              <>
-                <Input
-                  type="text"
-                  placeholder="key"
-                  value={typeof rule.value === 'object' && rule.value !== null ? (rule.value as { key: string }).key : ''}
-                  onChange={(e) => updateRule(i, { value: { key: e.target.value, value: typeof rule.value === 'object' && rule.value !== null ? (rule.value as { value: string }).value : '' } })}
-                  className="w-24"
-                  aria-label={`ルール${i + 1}のメタデータキー`}
-                />
-                <Input
-                  type="text"
-                  placeholder="value"
-                  value={typeof rule.value === 'object' && rule.value !== null ? (rule.value as { value: string }).value : ''}
-                  onChange={(e) => updateRule(i, { value: { key: typeof rule.value === 'object' && rule.value !== null ? (rule.value as { key: string }).key : '', value: e.target.value } })}
-                  className="w-24"
-                  aria-label={`ルール${i + 1}のメタデータ値`}
-                />
-              </>
-            )}
-
-            {rule.type !== 'is_following' && (
-              <Button type="button" size="xs" shape="square" variant="ghost" onClick={() => removeRule(i)} aria-label={`ルール${i + 1}を削除`}>×</Button>
-            )}
-          </div>
-        ))}
-      </div>
+      <p className="text-xs text-gray-500">
+        条件を付けると、LINE公式アカウントの全フォロワー宛て（一斉送信）ではなく、LINE Harness に登録されている友だちのうち条件に合うフォロー中の人だけに送ります。
+      </p>
 
       <div className="flex items-center justify-between">
-        <Button type="button" size="xs" variant="ghost" onClick={addRule}>+ ルール追加</Button>
-        <span className="text-xs text-gray-500">
-          {counting ? '計算中...' : count != null ? `該当: ${count.toLocaleString('ja-JP')}人` : ''}
+        <span className="text-sm text-gray-700">
+          {condition == null ? '条件なし' : counting ? '計算中...' : count != null ? `該当: ${count.toLocaleString('ja-JP')}人` : ''}
         </span>
-      </div>
-
-      <div className="flex gap-2 mt-3 pt-3 border-t border-gray-200">
-        <Button
-          type="button"
-          onClick={() => onApply({ operator, rules })}
-          variant="primary"
-        >
-          適用
-        </Button>
-        <Button type="button" variant="secondary" onClick={onCancel}>
-          キャンセル
-        </Button>
+        <div className="flex gap-2">
+          {initialConditions && (
+            <Button type="button" variant="ghost" disabled={saving} onClick={() => apply(null)}>条件をクリア</Button>
+          )}
+          <Button type="button" variant="secondary" disabled={saving} onClick={onCancel}>キャンセル</Button>
+          <Button type="button" variant="primary" disabled={saving || condition == null} onClick={() => apply(condition)}>適用</Button>
+        </div>
       </div>
     </div>
   )
