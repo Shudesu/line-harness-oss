@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.26.2] - 2026-11-16
+
+### ウェビナー管理
+
+- ウェビナーの削除、コメント一括更新、CTA一括更新をowner/adminに統一。
+- staffと権限コンテキスト未設定の要求を403で拒否し、DB処理を行わない回帰テストを追加。
+
+### 管理画面
+
+- Admin dashboard keeps the shell (banner + sidebar) during the auth check and swaps only the content area to a partial skeleton; the check runs once on mount with a stale-while-revalidate optimistic display.
+- chats: lists and conversations keep the previous data while re-fetching; stale responses are discarded by generation counter, account switching shows a partial skeleton and same-chat refreshes only a thin progress bar; account resolution happens before the first list/friends fetch (no double mount fetch); scroll follows only right after switching or near the bottom (no runaway jumps while reading history); unread badge aggregation debounced to 5s.
+- worker: messages_log history fetch gets a rowid tie-break so same-second messages keep a stable order.
+- Copy "LINE CRM" replaced with "L Harness" in the UI.
+
+### API・接続診断
+
+- LINE user IDによるアカウント内の友だち検索と、API更新の任意のIdempotency-Key対応を追加。[API仕様・移行条件](docs/api-idempotency.md)。
+- LINE接続ヘルス診断、Webhook endpointの確認・明示的な修正操作を追加。
+
+### リリース時の注意
+
+- v0.26.1からの更新では、既存mainに取り込まれたmigration 074〜077が対象です。認証変更の移行条件と再ログインが必要なため、[v0.26.2リリースノート](docs/release-notes/v0.26.2.md)を先に確認してください。
+
+- Instagram連携リンクに署名付きトークン `igt` を追加。LINE Harnessを先に更新し、IG Harness側の対応後に `IG_LINK_TOKEN_POLICY=prefer` → `require` を推奨します。既定は `off` のままです。
+- migration `075_ig_link_token_uses.sql` を適用してください（spec 08原文の076ではなく、このブランチでは074に続く075）。`prefer` では未署名リンクのIG復帰マイルを付与せず、`require` では未署名リンクを紐付けません。[形式・環境変数・移行手順](docs/IG_LINK_TOKEN.md)。
+
+### Breaking changes
+
+- `ADMIN_API_KEY` / `NEXT_PUBLIC_ADMIN_API_KEY` と `x-admin-api-key` による更新認証を廃止。管理画面の更新にはオーナーのCookieセッションとCSRFを使用してください。通常のAPI連携はスタッフAPIキーまたはサーバー側 `API_KEY` を使用します。
+- セッションと保存済みスタッフキーをハッシュ形式へ移行するため、全ユーザーの再ログインが必要です。元のAPIキーは引き続き利用できますが、保存値から復元できません。
+- 受信画像（旧 `/images/incoming-*` を含む）の取得には認証が必要です。
+- 更新前に migration `074_security_hardening.sql` を適用し、Worker・管理画面を更新後、スタッフキーのバックフィルと再ログインを行ってください。[詳細手順](docs/SECURITY-UPGRADE.md)。
+
+## [0.26.1] - 2026-11-01
+
+- LIFF SDKを2.31.2へ更新し、依存関係の下限とlockfileを修正。
+- URL内の疑問符を保持する回帰テストを追加。
+- 個別のマイル残高取得時の全履歴走査を削減（#415）。
+
+詳細: [リリースノート](docs/release-notes/v0.26.1.md)。
+
+## [0.26.0] - 2026-10-27
+
+Xキャンペーンの運営者通知・残数・明示オプトイン・先行案内下書き。詳細はdocs/release-notes/v0.26.0.md。
+
+## v0.25.0 (2026-10-27)
+
+- LINE先行のXキャンペーン参加、合言葉表示、本人確認と結果表示を追加。
+- XとのHMAC連携、タグ・シナリオ、再送・二重通知防止、アカウント固定を追加。
+- X ID自己申告フォームを新参加フローへ移行し、旧送信を停止。
+- 対応するX側の更新と追加migration・連携キーが必要。
+
+詳細: [リリースノート](docs/release-notes/v0.25.0.md)。
+
+## v0.24.3 (2026-10-20)
+
+- Meet コールバックの署名検証を必須化し、結果通知を送信履歴が残るHarnessプロキシへ変更。
+- Stripe Webhookの署名キー未設定時は503で拒否。両連携で署名と時刻を検証し、不正入力による副作用を防止。
+- 管理画面とAPIのバージョンを0.24.3に更新。
+- 利用中の連携は更新前に署名キー・送信側の準備が必要です。[リリースノート](docs/release-notes/v0.24.3.md)を参照してください。
+
 ## v0.24.1 (2026-09-11)
 
 ### 更新・セットアップ

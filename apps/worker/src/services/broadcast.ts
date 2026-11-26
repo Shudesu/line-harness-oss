@@ -1,3 +1,7 @@
+import { buildMessages } from './message-group.js';
+import { countSegmentAudience, savedSegmentAudience } from './saved-segment.js';
+import { BroadcastDeliveryError, BROADCAST_RECORDING_ERROR, broadcastDeliveryFailure, isDefiniteLineRejection } from './broadcast-delivery-error.js';
+import { BroadcastSenderError, resolveBroadcastSender } from './broadcast-sender.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
 import {
   getBroadcastById,
@@ -178,19 +182,37 @@ export async function processBroadcastSend(
   broadcastId: string,
   workerUrl?: string,
 ): Promise<Broadcast> {
-  // Mark as sending
-  await updateBroadcastStatus(db, broadcastId, 'sending');
-
   const broadcast = await getBroadcastById(db, broadcastId);
   if (!broadcast) {
     throw new Error(`Broadcast ${broadcastId} not found`);
   }
+
+  lineClient = await resolveBroadcastSender(db, broadcast, lineClient);
+  await updateBroadcastStatus(db, broadcastId, 'sending');
 
   const unsupportedVariables = getUnsupportedBroadcastVariables(broadcast.message_content);
   if (unsupportedVariables.length > 0) {
     throw new Error(
       `Unsupported broadcast variables: ${unsupportedVariables.map((v) => `{{${v}}}`).join(', ')}`,
     );
+  }
+
+  // Saved segment conditions (include/exclude tags etc.) always go through the
+  // resumable segment queue so the executor delivers only to the matching
+  // audience. Must run before the personalized/target branches, which would
+  // otherwise overwrite segment_conditions with the plain target marker.
+  const segmentAudience = savedSegmentAudience(broadcast);
+  if (segmentAudience) {
+    const { total, missingName } = await countSegmentAudience(db, broadcast, segmentAudience);
+    if (hasRecipientVariables(broadcast.message_content) && missingName > 0) {
+      throw new Error(`Cannot personalize broadcast: ${missingName} recipient(s) have no display name`);
+    }
+    await db.prepare(
+      `UPDATE broadcasts
+          SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
+        WHERE id = ?`,
+    ).bind(total, JSON.stringify(segmentAudience), broadcast.id).run();
+    return (await getBroadcastById(db, broadcastId))!;
   }
 
   // A recipient variable cannot be delivered through LINE broadcast or
@@ -205,6 +227,8 @@ export async function processBroadcastSend(
     if (accountId) {
       where.push('f.line_account_id = ?');
       binds.push(accountId);
+    } else {
+      where.push('f.line_account_id IS NULL');
     }
     if (broadcast.target_type === 'tag') {
       if (!broadcast.target_tag_id) throw new Error('target_tag_id is required for personalized tag broadcast');
@@ -283,9 +307,12 @@ export async function processBroadcastSend(
   }
   assertNoUnresolvedBroadcastVariables(finalContent);
   const altText = (broadcast as unknown as Record<string, unknown>).alt_text as string | undefined;
-  const message = buildMessage(finalType, finalContent, altText || undefined);
+  const message = buildMessages(finalType, finalContent, buildMessage, altText || undefined);
   let totalCount = 0;
   let successCount = 0;
+  let attempted = false;
+  let accepted = false;
+  let lastError: string | null = null;
   // tag 経路のバッチ送信中に LINE の月間クォータ超過 429 に当たった印。
   // partial 確定 (status='sent') 後に理由の記録と通知を行う。
   let hitUpstreamQuota429 = false;
@@ -323,17 +350,19 @@ export async function processBroadcastSend(
         finalType,
         finalContent,
       );
-      const { requestId } = await lineClient.broadcast([message], retryKey);
-      await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
       totalCount = followerRow?.count ?? 0;
+      attempted = true;
+      const { requestId } = await lineClient.broadcast(message, retryKey);
+      accepted = true;
       successCount = totalCount;
+      await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
     } else if (broadcast.target_type === 'tag') {
       if (!broadcast.target_tag_id) {
         throw new Error('target_tag_id is required for tag-targeted broadcasts');
       }
 
       const friends = await getFriendsByTag(db, broadcast.target_tag_id, broadcast.line_account_id);
-      const followingFriends = friends.filter((f) => f.is_following);
+      const followingFriends = friends.filter((f) => f.is_following && (broadcast.line_account_id != null || f.line_account_id == null));
       totalCount = followingFriends.length;
 
       // 送信前クォータガード (all と同じ)。バッチ途中でのクォータ切れによる
@@ -358,10 +387,11 @@ export async function processBroadcastSend(
 
         // Stealth: add slight variation to text messages
         let batchMessage = message;
-        if (message.type === 'text' && totalBatches > 1) {
-          batchMessage = { ...message, text: addMessageVariation(message.text, batchIndex) };
+        if (totalBatches > 1) {
+          batchMessage = message.map(item => item.type === 'text' ? { ...item, text: addMessageVariation(item.text, batchIndex) } : item);
         }
 
+        let batchAccepted = false;
         try {
           const retryKey = await createBroadcastRetryKey(
             broadcast.id,
@@ -369,7 +399,10 @@ export async function processBroadcastSend(
             ...batch.map((f) => f.id),
             JSON.stringify(batchMessage),
           );
-          await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
+          attempted = true;
+          await lineClient.multicast(lineUserIds, batchMessage, [unit], retryKey);
+          batchAccepted = true;
+          accepted = true;
           successCount += batch.length;
 
           // Log only successfully sent messages (batch insert for performance)
@@ -394,10 +427,12 @@ export async function processBroadcastSend(
               `Multicast aborted at batch ${i / MULTICAST_BATCH_SIZE}: LINE monthly quota exceeded`,
             );
             hitUpstreamQuota429 = true;
+            lastError = 'LINEの月間配信上限に達したため、残りの配信を停止しました。';
             break;
           }
-          console.error(`Multicast batch ${i / MULTICAST_BATCH_SIZE} failed:`, err);
-          // Continue with next batch; failed batch is not logged
+          console.error(`Multicast batch ${i / MULTICAST_BATCH_SIZE} failed:`, broadcastDeliveryFailure(err));
+          lastError = batchAccepted ? BROADCAST_RECORDING_ERROR : broadcastDeliveryFailure(err);
+          break; // Do not hide a failed batch behind later successful batches.
         }
       }
       await updateBroadcastLineRequestId(db, broadcast.id, null, unit);
@@ -405,7 +440,7 @@ export async function processBroadcastSend(
     // multi-account-dedup はこの関数の冒頭で queue に委譲済み (ここには到達しない)。
 
     await createBroadcastInsight(db, broadcast.id);
-    await updateBroadcastStatus(db, broadcastId, 'sent', { totalCount, successCount });
+    await updateBroadcastStatus(db, broadcastId, 'sent', { totalCount, successCount, lastError });
     // 'sent' 遷移が last_error を clear するので、クォータ 429 の記録はその後に書く。
     if (hitUpstreamQuota429) {
       await recordInternalUpstreamQuota429(db, lineClient, broadcast, {
@@ -421,11 +456,25 @@ export async function processBroadcastSend(
     if (isLineMonthlyLimit429(err)) {
       await recordInternalUpstreamQuota429(db, lineClient, broadcast, { kind: 'reverted' });
     }
-    // On failure, reset to draft so it can be retried
+    if (attempted) {
+      // A provider acceptance followed by a D1/insight failure must never put
+      // this campaign back into the sendable draft/scheduled state. A timeout
+      // is also not evidence that LINE rejected the request.
+      const needsReview = accepted || !isDefiniteLineRejection(err);
+      const reason = accepted ? BROADCAST_RECORDING_ERROR : broadcastDeliveryFailure(err);
+      try {
+        await updateBroadcastStatus(db, broadcastId, needsReview ? 'sent' : 'draft', {
+          totalCount, successCount,
+          ...(isLineMonthlyLimit429(err) ? {} : { lastError: reason }),
+        });
+      } catch { /* Caller must not undo the send claim even if D1 is unavailable. */ }
+      throw new BroadcastDeliveryError(reason);
+    }
     await updateBroadcastStatus(db, broadcastId, 'draft');
     throw err;
   }
 
+  if (lastError) throw new BroadcastDeliveryError(lastError);
   return (await getBroadcastById(db, broadcastId))!;
 }
 
@@ -480,6 +529,7 @@ export async function processScheduledBroadcasts(
       }
     }
     try {
+      await resolveBroadcastSender(db, broadcast, lineClient);
       // Optimistic lock: claim this broadcast (scheduled → sending)
       const lockResult = await db
         .prepare(`UPDATE broadcasts SET status = 'sending' WHERE id = ? AND status = 'scheduled'`)
@@ -487,21 +537,10 @@ export async function processScheduledBroadcasts(
         .run();
       if (!lockResult.meta.changes || lockResult.meta.changes === 0) continue;
 
-      // Resolve correct lineClient for this broadcast's account
-      let deliveryClient = lineClient;
-      const accountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
-      if (accountId) {
-        const { getLineAccountById } = await import('@line-crm/db');
-        const account = await getLineAccountById(db, accountId);
-        if (account) {
-          const { LineClient: LC } = await import('@line-crm/line-sdk');
-          deliveryClient = new LC(account.channel_access_token);
-        }
-      }
-
-      await processBroadcastSend(db, deliveryClient, broadcast.id, workerUrl);
+      await processBroadcastSend(db, lineClient, broadcast.id, workerUrl);
     } catch (err) {
       console.error(`Failed to send scheduled broadcast ${broadcast.id}:`, err);
+      if (err instanceof BroadcastDeliveryError) continue;
       // Reset to scheduled so it can be retried next cron
       try {
         await db.prepare(`UPDATE broadcasts SET status = 'scheduled' WHERE id = ? AND status = 'sending'`)
@@ -529,19 +568,14 @@ export async function processQueuedBroadcasts(
   // stopped per batch inside the executor.
   const queued = await getQueuedBroadcasts(db);
   for (const broadcast of queued) {
-    // アカウント別のlineClientを解決
-    const accountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
-    let client = lineClient;
-    if (accountId) {
-      const { getLineAccountById } = await import('@line-crm/db');
-      const account = await getLineAccountById(db, accountId);
-      if (account) client = new (await import('@line-crm/line-sdk')).LineClient(account.channel_access_token);
-    }
-
     try {
+      const client = await resolveBroadcastSender(db, broadcast, lineClient);
       await processQueuedBroadcastBatches(db, client, broadcast, workerUrl, quotaEnv);
     } catch (err) {
       console.error(`Failed to process queued broadcast ${broadcast.id}:`, err);
+      if (!(err instanceof BroadcastSenderError)) {
+        try { await setBroadcastLastError(db, broadcast.id, '配信処理を継続できませんでした。配信状況を確認してください。'); } catch { /* best effort */ }
+      }
     }
   }
 }
@@ -629,7 +663,7 @@ async function processQueuedBroadcastBatches(
     finalContent = renderBroadcastMessageContent(finalType, finalContent, { liffId });
   }
   const altText = raw.alt_text as string | undefined;
-  const message = buildMessage(finalType, finalContent, altText || undefined);
+  const message = buildMessages(finalType, finalContent, buildMessage, altText || undefined);
 
   // multi-account-dedup: delegate to processMultiAccountDedupBroadcast.
   // dedup ループは内部で per-account に {{liff_id}} 置換 + buildMessage する。
@@ -679,6 +713,8 @@ async function processQueuedBroadcastBatches(
     if (accountId) {
       accountSql = accountSql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
       accountBindings.unshift(accountId);
+    } else {
+      accountSql = accountSql.replace('WHERE', 'WHERE f.line_account_id IS NULL AND');
     }
     const result = await db.prepare(accountSql).bind(...accountBindings).all<{
       id: string;
@@ -689,7 +725,7 @@ async function processQueuedBroadcastBatches(
   } else if (broadcast.target_tag_id) {
     const { getFriendsByTag } = await import('@line-crm/db');
     const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id, broadcast.line_account_id);
-    friends = tagFriends.filter(f => f.is_following).map(f => ({
+    friends = tagFriends.filter(f => f.is_following && (broadcast.line_account_id != null || f.line_account_id == null)).map(f => ({
       id: f.id,
       line_user_id: f.line_user_id,
       display_name: f.display_name,
@@ -723,7 +759,7 @@ async function processQueuedBroadcastBatches(
       finalType,
       finalContent,
     );
-    const { requestId } = await lineClient.broadcast([message], retryKey);
+    const { requestId } = await lineClient.broadcast(message, retryKey);
     await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
     await createBroadcastInsight(db, broadcast.id);
     await updateBroadcastStatus(db, broadcast.id, 'sent', { totalCount: followerCount, successCount: followerCount });
@@ -742,6 +778,7 @@ async function processQueuedBroadcastBatches(
     }
   }
 
+  let recordingError = broadcast.last_error?.includes(BROADCAST_RECORDING_ERROR) ? BROADCAST_RECORDING_ERROR : null;
   const now = jstNow();
   const unit = `bcast_${broadcast.id.slice(0, 8).replace(/[^a-zA-Z0-9_]/g, '_')}`;
   let currentOffset = batchOffset;
@@ -791,12 +828,13 @@ async function processQueuedBroadcastBatches(
           continue;
         }
 
+        let recipientAccepted = false;
         try {
           const renderedContent = renderBroadcastMessageContent(finalType, finalContent, {
             displayName: friend.display_name,
           });
           assertNoUnresolvedBroadcastVariables(renderedContent);
-          const personalizedMessage = buildMessage(finalType, renderedContent, altText || undefined);
+          const personalizedMessage = buildMessages(finalType, renderedContent, buildMessage, altText || undefined);
           const retryKey = await createBroadcastRetryKey(
             broadcast.id,
             'personalized-push',
@@ -804,7 +842,8 @@ async function processQueuedBroadcastBatches(
             finalType,
             renderedContent,
           );
-          await lineClient.pushMessage(friend.line_user_id, [personalizedMessage], retryKey, [unit]);
+          await lineClient.pushMessage(friend.line_user_id, personalizedMessage, retryKey, [unit]);
+          recipientAccepted = true;
 
           await db.prepare(
             `INSERT INTO messages_log
@@ -821,7 +860,10 @@ async function processQueuedBroadcastBatches(
           ).run();
           currentOffset++;
         } catch (err) {
-          console.error(`Personalized broadcast recipient ${friend.id} failed:`, err);
+          if (recipientAccepted) recordingError = BROADCAST_RECORDING_ERROR;
+          const reason = recipientAccepted ? BROADCAST_RECORDING_ERROR : broadcastDeliveryFailure(err);
+          console.error(`Personalized broadcast recipient ${friend.id} failed:`, reason);
+          await setBroadcastLastError(db, broadcast.id, [recordingError, recipientAccepted ? null : reason].filter(Boolean).join('\n'));
           await db.prepare(
             `UPDATE broadcasts
                 SET batch_offset = ?, batch_lock_at = NULL,
@@ -858,8 +900,8 @@ async function processQueuedBroadcastBatches(
 
     // テキストメッセージのバリエーション
     let batchMessage = message;
-    if (message.type === 'text' && totalBatches > 1) {
-      batchMessage = { ...message, text: addMessageVariation((message as { text: string }).text, batchIndex) };
+    if (totalBatches > 1) {
+      batchMessage = message.map(item => item.type === 'text' ? { ...item, text: addMessageVariation(item.text, batchIndex) } : item);
     }
 
     try {
@@ -869,9 +911,10 @@ async function processQueuedBroadcastBatches(
         ...batch.map((f) => f.id),
         JSON.stringify(batchMessage),
       );
-      await lineClient.multicast(lineUserIds, [batchMessage], [unit], retryKey);
+      await lineClient.multicast(lineUserIds, batchMessage, [unit], retryKey);
     } catch (err) {
-      console.error(`Queued broadcast batch ${batchIndex} send failed:`, err);
+      console.error(`Queued broadcast batch ${batchIndex} send failed:`, broadcastDeliveryFailure(err));
+      await setBroadcastLastError(db, broadcast.id, [recordingError, broadcastDeliveryFailure(err)].filter(Boolean).join("\n"));
       // 送信失敗: ロック解除 + offsetを保存して次のCronで再開
       await updateBroadcastBatchProgress(db, broadcast.id, currentOffset, 0);
       return; // batch_offset が currentOffset に戻り、次の cron で再開可能
@@ -891,6 +934,8 @@ async function processQueuedBroadcastBatches(
       await db.batch(stmts);
     } catch (logErr) {
       console.error(`Queued broadcast batch ${batchIndex} log failed (messages already sent):`, logErr);
+      recordingError = BROADCAST_RECORDING_ERROR;
+      try { await setBroadcastLastError(db, broadcast.id, recordingError); } catch { /* Persist with final status below. */ }
     }
 
     currentOffset += batch.length;
@@ -903,7 +948,7 @@ async function processQueuedBroadcastBatches(
   // 全バッチ完了 — ロック解除 + 完了マーク
   await updateBroadcastLineRequestId(db, broadcast.id, null, unit);
   await createBroadcastInsight(db, broadcast.id);
-  await updateBroadcastStatus(db, broadcast.id, 'sent');
+  await updateBroadcastStatus(db, broadcast.id, 'sent', { lastError: recordingError });
 }
 
 export function buildMessage(messageType: string, messageContent: string, altText?: string): Message {

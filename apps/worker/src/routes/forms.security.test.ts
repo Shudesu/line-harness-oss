@@ -270,6 +270,7 @@ describe('LIFF identity enforcement', () => {
   });
 
   test('ignores _skipWebhook and checks the webhook for the authenticated friend', async () => {
+    mocks.getFormById.mockResolvedValue({...baseForm,fields:JSON.stringify([{name:'answer',label:'回答',type:'text'}]),on_submit_webhook_url:'https://verify.example.test/validate?answer={answer}'});
     mocks.verifyCallerLineUserId.mockResolvedValue('line-real');
     mocks.getFriendByLineUserId.mockResolvedValue({
       id: 'friend-real',
@@ -296,14 +297,14 @@ describe('LIFF identity enforcement', () => {
         friendId: 'victim-friend',
         lineUserId: 'victim-line-user',
         _skipWebhook: true,
-        data: { x_username: 'alice' },
+        data: { answer: 'alice' },
       }),
     }, bindings);
 
     expect(res.status).toBe(201);
     expect(webhookFetch).toHaveBeenCalledOnce();
     expect(webhookFetch.mock.calls[0][0]).toBe(
-      'https://verify.example.test/api/engagement-gates/gate-1/verify?username=alice',
+      'https://verify.example.test/validate?answer=alice',
     );
     expect(webhookFetch.mock.calls[0][1]).toMatchObject({
       method: 'GET',
@@ -324,6 +325,7 @@ describe('LIFF identity enforcement', () => {
   });
 
   test('webhook rejection reply goes through the Harness proxy', async () => {
+    mocks.getFormById.mockResolvedValue({...baseForm,fields:JSON.stringify([{name:'answer',label:'回答',type:'text'}]),on_submit_webhook_url:'https://verify.example.test/validate?answer={answer}'});
     mocks.verifyCallerLineUserId.mockResolvedValue('line-real');
     mocks.getFriendByLineUserId.mockResolvedValue({
       id: 'friend-real',
@@ -353,7 +355,7 @@ describe('LIFF identity enforcement', () => {
         Authorization: 'Bearer valid-line-id-token',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ data: { x_username: 'alice' } }),
+      body: JSON.stringify({ data: { answer: 'alice' } }),
     }, bindings);
 
     expect(res.status).toBe(201);
@@ -369,3 +371,6 @@ describe('LIFF identity enforcement', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('api.line.me'))).toBe(false);
   });
 });
+
+// Mileage behavior has its own tests; avoid unrelated lazy imports leaking across booking tests.
+vi.mock('../services/activity-mileage.js',()=>({awardActivityMileage:vi.fn().mockResolvedValue(undefined)}));

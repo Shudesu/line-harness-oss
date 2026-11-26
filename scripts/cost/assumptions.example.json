@@ -1,0 +1,9 @@
+{
+  "plan": "standard",
+  "evidence": "explicit_assumption",
+  "monthlyInvocations": 43200,
+  "readRowsGrowthFactor": 1,
+  "perInvocation": {"rowsRead": 1000, "rowsWritten": 1, "requests": 1, "cpuMs": 10},
+  "otherMonthlyAccountUsage": {"rowsRead": 0, "rowsWritten": 0, "requests": 0, "cpuMs": 0},
+  "note": "Synthetic example only. Replace all values with reviewed evidence. Account allowances are shared; this is not a quote or an approved budget. Model traffic growth and per-wallet-history growth separately."
+}

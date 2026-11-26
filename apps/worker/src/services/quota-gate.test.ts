@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Hono } from 'hono';
+import { LineClient as RealLineClient } from '@line-crm/line-sdk';
 import { monthStartJst } from './quota.js';
 
 const dbMocks = {
@@ -62,6 +63,7 @@ const lineClient = {} as LineClient;
 
 beforeEach(() => {
   for (const fn of Object.values(dbMocks)) fn.mockClear();
+  dbMocks.getLineAccountById.mockResolvedValue({ id: 'acc-1', channel_access_token: 'test-account-token', is_active: 1 });
   dbMocks.recoverStuckDeliveries.mockResolvedValue(0);
   dbMocks.getQueuedBroadcasts.mockResolvedValue([]);
   dbMocks.getBroadcasts.mockResolvedValue([]);
@@ -340,7 +342,7 @@ describe("processBroadcastSend 'all' recipient recording", () => {
     const fr = executed.find((e) => e.sql.includes('FROM friends'))!;
     expect(fr.sql).toContain('is_following = 1');
     expect(dbMocks.updateBroadcastStatus).toHaveBeenCalledWith(
-      db, allRow.id, 'sent', { totalCount: 7, successCount: 7 },
+      db, allRow.id, 'sent', { totalCount: 7, successCount: 7, lastError: null },
     );
   });
 
@@ -369,7 +371,8 @@ describe("processBroadcastSend 'all' recipient recording", () => {
 
   test('scopes the follower count to the broadcast account when one is set', async () => {
     dbMocks.getBroadcastById.mockResolvedValue({ ...allRow, line_account_id: 'acc-1' });
-    dbMocks.getLineAccountById.mockResolvedValue(null);
+    vi.spyOn(RealLineClient.prototype, 'getMessageQuota').mockResolvedValue({ type: 'none' });
+    vi.spyOn(RealLineClient.prototype, 'broadcast').mockResolvedValue({ data: {}, requestId: 'req-2' });
     const client = { broadcast: vi.fn(async () => ({ requestId: 'req-2' })) };
     const { db, executed } = makeCountingDb(3);
 
@@ -381,7 +384,7 @@ describe("processBroadcastSend 'all' recipient recording", () => {
     expect(fr.sql).toContain('(line_account_id = ? OR line_account_id IS NULL)');
     expect(fr.params).toContain('acc-1');
     expect(dbMocks.updateBroadcastStatus).toHaveBeenCalledWith(
-      db, allRow.id, 'sent', { totalCount: 3, successCount: 3 },
+      db, allRow.id, 'sent', { totalCount: 3, successCount: 3, lastError: null },
     );
   });
 });
@@ -1185,3 +1188,5 @@ describe('DELETE /api/broadcasts/:id usage-record guard', () => {
     expect(dbMocks.deleteBroadcast).toHaveBeenCalledTimes(1);
   });
 });
+
+afterEach(() => vi.restoreAllMocks());

@@ -1,3 +1,4 @@
+import { parseMessageGroup, packMessageItems } from '@line-crm/shared';
 import { getOrCreateAutoTrackedLink, getLineAccountById } from '@line-crm/db';
 import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
 import { renderBroadcastMessageContent } from './render-message.js';
@@ -192,6 +193,8 @@ export async function appendFriendToTrackedLinks(
   workerUrl: string,
   friendId: string | null | undefined,
 ): Promise<string> {
+  const group = parseMessageGroup(content);
+  if (group) return packMessageItems(await Promise.all(group.map(async item => ({ ...item, messageContent: item.messageType === 'image' ? item.messageContent : await appendFriendToTrackedLinks(db, item.messageContent, workerUrl, friendId) })))).messageContent;
   if (!friendId) return content;
   // Tracked links are always built as `${base}/t/${code}` (worker base, short
   // domain, and legacy UUID form alike), so content without the literal
@@ -232,6 +235,15 @@ export async function autoTrackContent(
   workerUrl: string,
   options?: AutoTrackOptions,
 ): Promise<AutoTrackResult> {
+  const group = parseMessageGroup(content);
+  if (group) {
+    const items = await Promise.all(group.map(async item => {
+      const result = await autoTrackContent(db, item.messageType, item.messageContent, workerUrl, options);
+      return { messageType: result.messageType as typeof item.messageType, messageContent: result.content };
+    }));
+    const packed = packMessageItems(items);
+    return { messageType: packed.messageType, content: packed.messageContent };
+  }
   if (messageType === 'image') return { messageType, content };
 
   // Extract first so URL-free messages (the common case in per-friend

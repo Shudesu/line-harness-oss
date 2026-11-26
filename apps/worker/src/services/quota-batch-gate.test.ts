@@ -123,7 +123,7 @@ describe('queued batch loop quota re-check', () => {
     expect(client.multicast).toHaveBeenCalledTimes(2);
     expect(state.logged).toBe(600);
     expect(dbMocks.updateBroadcastStatus).toHaveBeenCalledWith(
-      expect.anything(), queuedRow.id, 'sent',
+      expect.anything(), queuedRow.id, 'sent', { lastError: null },
     );
   });
 
@@ -143,7 +143,7 @@ describe('queued batch loop quota re-check', () => {
     expect(client.multicast).not.toHaveBeenCalled();
     expect(client.broadcast).not.toHaveBeenCalled();
     expect(dbMocks.updateBroadcastStatus).toHaveBeenCalledWith(
-      expect.anything(), queuedRow.id, 'sent',
+      expect.anything(), queuedRow.id, 'sent', { lastError: null },
     );
   });
 
@@ -189,7 +189,7 @@ describe('queued batch loop quota re-check', () => {
 
     expect(client.multicast).toHaveBeenCalledTimes(2);
     expect(dbMocks.updateBroadcastStatus).toHaveBeenCalledWith(
-      expect.anything(), queuedRow.id, 'sent',
+      expect.anything(), queuedRow.id, 'sent', { lastError: null },
     );
   });
 });

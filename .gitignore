@@ -29,3 +29,6 @@ apps/worker/dist/
 
 # Claude Code local dev-server config (machine-local paths)
 .claude/launch.json
+
+.pnpm-store/
+__pycache__/

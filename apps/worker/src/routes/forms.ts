@@ -76,7 +76,8 @@ function serializeForm(
     formUrl: formPublicUrl(extra?.liffId, row.id),
     name: row.name,
     description: row.description,
-    fields: JSON.parse(row.fields || '[]') as unknown[],
+    fields: (JSON.parse(row.fields || '[]') as Array<{name?:string}>).filter(field=>field.name!=='x_username'),
+    xGateMigrationRequired: !!publicWebhookConfig(row).webhookGateId || (JSON.parse(row.fields || '[]') as Array<{name?:string}>).some(field=>field.name==='x_username'),
     onSubmitTagId: row.on_submit_tag_id,
     onSubmitScenarioId: row.on_submit_scenario_id,
     onSubmitMessageType: row.on_submit_message_type,
@@ -129,7 +130,8 @@ function serializePublicForm(
     id: row.id,
     name: row.name,
     description: row.description,
-    fields: JSON.parse(row.fields || '[]') as unknown[],
+    fields: (JSON.parse(row.fields || '[]') as Array<{name?:string}>).filter(field=>field.name!=='x_username'),
+    xGateMigrationRequired: !!publicWebhookConfig(row).webhookGateId || (JSON.parse(row.fields || '[]') as Array<{name?:string}>).some(field=>field.name==='x_username'),
     isActive: Boolean(row.is_active),
     onSubmitMessageContent: row.on_submit_message_content,
     onSubmitWebhookFailMessage: row.on_submit_webhook_fail_message,
@@ -441,6 +443,9 @@ forms.post('/api/forms/:id/submit', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
     const friendId = friend.id;
+    if(publicWebhookConfig(form).webhookGateId || (JSON.parse(form.fields || '[]') as Array<{name?:string}>).some(field=>field.name==='x_username'))return c.json({success:false,error:'この企画はLINE先行の参加方法に更新されています。参加リンクからお進みください。',code:'x_gate_migration_required'},409);
+
+
 
     // Validate required fields
     const fields = JSON.parse(form.fields || '[]') as Array<{

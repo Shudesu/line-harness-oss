@@ -1,3 +1,6 @@
+import { timingSafeEqualString } from '@line-crm/shared';
+import { limitAuth, audit } from '../middleware/auth-security.js';
+import { requireAccess } from '../middleware/auth.js';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
@@ -151,10 +154,12 @@ function asMessages(value: unknown): Message[] {
  * or the env default token. Returns a Response on auth/validation failure.
  */
 async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCaller | Response> {
+  const denied = await requireAccess(c); if (denied) return denied;
   const accounts = await getLineAccounts(c.env.DB);
   const active = accounts.filter((a) => a.is_active);
 
-  const byChannelToken = active.find((a) => a.channel_access_token === token);
+  const matches = await Promise.all(active.map(a => timingSafeEqualString(a.channel_access_token, token)));
+  const byChannelToken = active.find((_, index) => matches[index]);
   if (byChannelToken) {
     return {
       upstreamToken: token,
@@ -163,7 +168,7 @@ async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCa
       accountCount: active.length,
     };
   }
-  if (token === c.env.LINE_CHANNEL_ACCESS_TOKEN) {
+  if (await timingSafeEqualString(token, c.env.LINE_CHANNEL_ACCESS_TOKEN)) {
     return {
       upstreamToken: token,
       lineAccountId: null,
@@ -174,7 +179,13 @@ async function resolveCaller(c: Context<Env>, token: string): Promise<ResolvedCa
 
   // harness API キー経路 — worker 側でチャネルトークンを解決する。
   const staff = await authenticateApiToken(c, token);
-  if (!staff) return c.json(AUTH_FAILED, 401);
+  if (!staff) {
+    const limited = await limitAuth(c, 'key', token); if (limited) return limited;
+    await audit(c, 'key_rejected', 'denied');
+    return c.json(AUTH_FAILED, 401);
+  }
+  // Raw LINE proxy exposes a wider API than the message-scope allowlist.
+  if (staff.apiScopes != null) return c.json({message:'Scoped keys cannot use the LINE proxy'},403);
 
   const requestedId = c.req.header('X-Line-Account-Id');
   let account: LineAccount | undefined;

@@ -1,6 +1,6 @@
 {
   "name": "line-oss-crm",
-  "version": "0.24.1",
+  "version": "0.26.2",
   "private": true,
   "description": "Open-source LINE Official Account CRM/marketing automation",
   "homepage": "https://the-harness.com/line-harness/",
@@ -29,16 +29,36 @@
     "sandbox:create-line-harness": "bash scripts/run-create-line-harness-sandbox.sh",
     "test:scripts": "vitest run --config vitest.config.ts",
     "build:bundle": "tsx scripts/release/build-bundle.ts",
-    "build:wfp-bundle": "tsx scripts/release/build-wfp-bundle.ts"
+    "build:wfp-bundle": "tsx scripts/release/build-wfp-bundle.ts",
+    "check:cost": "node packages/db/scripts/generate-bootstrap.mjs --check && pnpm --filter @line-crm/db exec vitest run --no-cache test/mileage-cost.test.ts test/mileage-rules.test.ts test/auth-security.test.ts test/staff-credentials.test.ts test/admin-sessions.test.ts test/ig-link-token-uses.test.ts && node --test scripts/cost/*.test.mjs && python3 -m unittest discover -s scripts/cost -p \"test_*.py\" && node scripts/cost/cost-model.mjs scripts/cost/assumptions.example.json"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.9.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
     "wrangler": "4",
     "tsx": "^4.21.0",
     "vitest": "^2.1.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@hono/node-server": "^1.19.13",
+      "axios": "^1.20.0",
+      "body-parser": "^2.4.0",
+      "fast-uri": "^3.1.9",
+      "follow-redirects": "^1.16.1",
+      "form-data": "^4.0.6",
+      "hono": "^4.13.14",
+      "ip-address": "^10.7.4",
+      "nanoid@>=3 <4": "^3.3.12",
+      "postcss": "^8.5.18",
+      "proxy-addr": "^2.0.8",
+      "sharp": "^0.35.5",
+      "source-map-js": "^1.2.2",
+      "qs": "^6.15.2",
+      "zod": "^4.6.6"
+    }
   }
 }

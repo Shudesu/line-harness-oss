@@ -9,6 +9,8 @@ export function useActivityPolling<T>(options: {
   onData: (value: T) => void
   onError: (error: unknown) => void
   refreshEvent?: string
+  /** Debounce refresh-event bursts (e.g. heavy aggregates fired per keystroke/send). */
+  eventDebounceMs?: number
   /** Change only when the request's resource/account changes, not on render. */
   requestKey?: string
 }) {
@@ -28,10 +30,18 @@ export function useActivityPolling<T>(options: {
       onError: (error) => { if (currentScope()) callbacks.current.onError(error) },
       onState: (state) => { if (currentScope()) setState(state) },
     })
-    const onRefresh = () => poller.refresh()
+    let timer: number | null = null
+    const onRefresh = () => {
+      const debounceMs = callbacks.current.eventDebounceMs ?? 0
+      if (!debounceMs) { poller.refresh(); return }
+      // 連発した refresh イベントは最後の1回だけ発火させる
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => { timer = null; poller.refresh() }, debounceMs)
+    }
     if (options.refreshEvent) window.addEventListener(options.refreshEvent, onRefresh)
     return () => {
       poller.dispose()
+      if (timer !== null) window.clearTimeout(timer)
       if (options.refreshEvent) window.removeEventListener(options.refreshEvent, onRefresh)
     }
   }, [options.intervalMs, options.refreshEvent, options.requestKey])

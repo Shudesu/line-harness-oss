@@ -397,7 +397,18 @@ export default function BookingsPage() {
         </div>
       )}
       <Dialog.Root role="alertdialog" open={pendingAction !== null} onOpenChange={(open) => { if (!open && !deciding) setPendingAction(null) }}>
-        <Dialog><Dialog.Title>予約を「{pendingAction ? actionLabel[pendingAction.action] : ''}」しますか？</Dialog.Title><Dialog.Description className="mt-2">予約の状態を変更します。内容を確認して実行してください。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" disabled={deciding} onClick={() => setPendingAction(null)}>キャンセル</Button><Button type="button" variant={pendingAction?.action === 'approve' || pendingAction?.action === 'complete' ? 'primary' : 'destructive'} loading={deciding} onClick={confirmDecision}>実行する</Button></div></Dialog>
+        <Dialog className="p-6">
+          <Dialog.Title className="text-lg font-semibold">
+            予約を「{pendingAction ? actionLabel[pendingAction.action] : ''}」しますか？
+          </Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-relaxed text-kumo-subtle">
+            予約の状態を変更します。内容を確認して実行してください。
+          </Dialog.Description>
+          <div className="mt-6 flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="secondary" disabled={deciding} onClick={() => setPendingAction(null)}>キャンセル</Button>
+            <Button type="button" variant={pendingAction?.action === 'approve' || pendingAction?.action === 'complete' ? 'primary' : 'destructive'} loading={deciding} onClick={confirmDecision}>実行する</Button>
+          </div>
+        </Dialog>
       </Dialog.Root>
     </div>
   )

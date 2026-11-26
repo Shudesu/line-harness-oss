@@ -1,15 +1,18 @@
 'use client'
 
+import { MessagePreview } from '@/components/messages/message-composer'
+
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { broadcastStatus } from '@/lib/broadcast-status'
 import { useRouter } from 'next/navigation'
 import { api, type ApiBroadcast, type BroadcastInsight } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
-import FlexPreviewComponent from '@/components/flex-preview'
 import TestSendSection from '@/components/broadcasts/test-send-section'
 import ProgressBar from '@/components/broadcasts/progress-bar'
 import SendConfirmDialog from '@/components/broadcasts/send-confirm-dialog'
 import SegmentBuilder from '@/components/broadcasts/segment-builder'
+import { describeCondition } from '@/components/broadcasts/segment-conditions'
 import type { Tag } from '@line-crm/shared'
 import { Banner } from '@cloudflare/kumo/components/banner'
 import { Button } from '@cloudflare/kumo/components/button'
@@ -159,10 +162,10 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     setSending(true)
     try {
       await api.broadcasts.send(id)
-      load()
     } catch {
-      setError('送信に失敗しました')
+      setError('送信結果を確認してください')
     } finally {
+      await load()
       setSending(false)
     }
   }
@@ -206,25 +209,13 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
       />
 
       {error && <Banner variant="error" title="配信操作に失敗しました" description={error} className="mb-4" />}
+      {broadcast.lastError && <Banner variant="error" title="配信状況の確認が必要です" description={broadcast.lastError} className="mb-4" />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         {/* Left: Preview */}
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">メッセージプレビュー</h3>
-          {broadcast.messageType === 'flex' ? (
-            <FlexPreviewComponent content={broadcast.messageContent} maxWidth={300} />
-          ) : broadcast.messageType === 'image' ? (
-            (() => {
-              try {
-                const img = JSON.parse(broadcast.messageContent)
-                return <img src={img.originalContentUrl} alt="" className="max-w-[300px] rounded-lg" />
-              } catch { return <p className="text-gray-400 text-sm">画像プレビュー不可</p> }
-            })()
-          ) : (
-            <div className="bg-green-500 text-white rounded-2xl rounded-tl-sm px-4 py-3 max-w-[300px] text-sm whitespace-pre-wrap">
-              {broadcast.messageContent}
-            </div>
-          )}
+          <MessagePreview messageType={broadcast.messageType} messageContent={broadcast.messageContent} />
         </div>
 
         {/* Right: Settings */}
@@ -238,20 +229,26 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
             <div className="flex justify-between">
               <dt className="text-gray-500">対象</dt>
               <dd className="text-gray-900">
-                {broadcast.targetType === 'all' ? '全員' : `タグ: ${broadcast.targetTagId ?? '-'}`}
+                {broadcast.targetType === 'all' ? '全員' : `タグ: ${tags.find((t) => t.id === broadcast.targetTagId)?.name ?? broadcast.targetTagId ?? '-'}`}
                 {targetCount != null && <span className="ml-1 text-gray-500">({targetCount.toLocaleString('ja-JP')}人)</span>}
+                {broadcast.segmentConditions && (
+                  <span className="block text-xs text-blue-700">
+                    条件: {describeCondition(broadcast.segmentConditions, (tagId) => tags.find((t) => t.id === tagId)?.name ?? tagId)}
+                  </span>
+                )}
               </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-gray-500">ステータス</dt>
               <dd>
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                  broadcastStatus(broadcast).variant === 'warning' ? 'bg-yellow-100 text-yellow-700' :
                   broadcast.status === 'draft' ? 'bg-gray-100 text-gray-600' :
                   broadcast.status === 'scheduled' ? 'bg-blue-100 text-blue-700' :
                   broadcast.status === 'sending' ? 'bg-yellow-100 text-yellow-700' :
                   'bg-green-100 text-green-700'
                 }`}>
-                  {broadcast.status === 'draft' ? '下書き' : broadcast.status === 'scheduled' ? '予約済み' : broadcast.status === 'sending' ? '送信中' : '送信完了'}
+                  {broadcastStatus(broadcast).label}
                 </span>
               </dd>
             </div>
@@ -265,8 +262,9 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         </div>
       </div>
 
-      {/* Segment Builder */}
-      {broadcast.status === 'draft' && (
+      {/* Segment Builder — 複数タグ・除外タグ。保存した条件は送信・予約配信・人数表示すべてに反映される */}
+      {(broadcast.status === 'draft' || broadcast.status === 'scheduled')
+        && (broadcast.targetType === 'all' || broadcast.targetType === 'tag') && (
         <div className="mb-4">
           {!showSegmentBuilder ? (
             <Button
@@ -274,14 +272,20 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
               variant="ghost"
               onClick={() => setShowSegmentBuilder(true)}
             >
-              セグメント条件を編集
+              {broadcast.segmentConditions ? '絞り込み条件（複数タグ・除外）を編集' : '複数タグ・除外タグで絞り込む'}
             </Button>
           ) : (
             <SegmentBuilder
               tags={tags}
               accountId={accountId}
+              targetTagId={broadcast.targetType === 'tag' ? broadcast.targetTagId : null}
+              initialConditions={broadcast.segmentConditions ?? null}
               onApply={async (conditions) => {
-                await api.broadcasts.update(id, { segmentConditions: JSON.stringify(conditions) } as unknown as Parameters<typeof api.broadcasts.update>[1])
+                const res = await api.broadcasts.update(id, { segmentConditions: conditions })
+                if (!res.success) {
+                  setError(res.error ?? '絞り込み条件を保存できませんでした')
+                  return
+                }
                 setShowSegmentBuilder(false)
                 load()
               }}

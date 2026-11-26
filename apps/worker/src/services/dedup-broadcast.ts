@@ -1,3 +1,4 @@
+import { buildMessages } from './message-group.js';
 import { URL_TOKEN_SQL } from '../lib/url-token.js';
 
 export interface DedupPreviewPerAccount {
@@ -477,7 +478,7 @@ export async function processMultiAccountDedupBroadcast(
     // 友だちの所属アカに対応した LIFF URL が届く (events の運用要件)。
     const message = personalized
       ? null
-      : buildMessage(broadcast.message_type, accountContent, broadcast.alt_text ?? undefined);
+      : buildMessages(broadcast.message_type, accountContent, buildMessage, broadcast.alt_text ?? undefined);
 
     try {
       for (let i = 0; i < remaining.length; i += deliveryBatchSize) {
@@ -518,9 +519,10 @@ export async function processMultiAccountDedupBroadcast(
                 displayName: recipient.displayName,
               });
               assertNoUnresolvedBroadcastVariables(content);
-              const recipientMessage = buildMessage(
+              const recipientMessage = buildMessages(
                 broadcast.message_type,
                 content,
+                buildMessage,
                 broadcast.alt_text ?? undefined,
               );
               const retryKey = await createBroadcastRetryKey(
@@ -530,7 +532,7 @@ export async function processMultiAccountDedupBroadcast(
                 broadcast.message_type,
                 content,
               );
-              await client.pushMessage(recipient.lineUserId, [recipientMessage], retryKey, [unit]);
+              await client.pushMessage(recipient.lineUserId, recipientMessage, retryKey, [unit]);
               delivered.push({ recipient, messageType: broadcast.message_type, content });
             } catch (err) {
               batchDeliveryError = err;
@@ -539,8 +541,8 @@ export async function processMultiAccountDedupBroadcast(
           }
         } else {
           let batchMessage = message!;
-          if (batchMessage.type === 'text' && totalBatches > 1) {
-            batchMessage = { ...batchMessage, text: addMessageVariation(batchMessage.text, batchIdx) } as Message;
+          if (totalBatches > 1) {
+            batchMessage = batchMessage.map(item => item.type === 'text' ? { ...item, text: addMessageVariation(item.text, batchIdx) } : item);
           }
           const retryKey = await createBroadcastRetryKey(
             broadcast.id,
@@ -549,7 +551,7 @@ export async function processMultiAccountDedupBroadcast(
             ...batch.map((r) => r.identKey),
             JSON.stringify(batchMessage),
           );
-          await client.multicast(batch.map((r) => r.lineUserId), [batchMessage], [unit], retryKey);
+          await client.multicast(batch.map((r) => r.lineUserId), batchMessage, [unit], retryKey);
           for (const recipient of batch) {
             delivered.push({
               recipient,
