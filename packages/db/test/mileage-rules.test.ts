@@ -486,6 +486,31 @@ describe('configurable mileage rules', () => {
       expect(milestoneCount('friend-2')).toBe(0);
       expect(milestoneCount('friend-3')).toBe(4);
     });
+
+    it('does not queue an existing, never-queued milestone once the friend opts out', async () => {
+      follow('friend-1', '{}');
+      follow('friend-2', '{}');
+      expect(await run()).toMatchObject({ eventsCreated: 8, queued: 8 });
+      // Simulate a run that wrote the events but died before queueing them.
+      sqlite.prepare(`DELETE FROM mileage_event_queue`).run();
+      follow('friend-1', '{"do_not_contact": true}');
+
+      expect(await run()).toMatchObject({ eventsCreated: 0, queued: 4 });
+      const queuedFor = (id: string) => (sqlite.prepare(
+        `SELECT COUNT(*) AS n FROM mileage_event_queue q
+           JOIN engagement_events ee ON ee.id = q.engagement_event_id
+          WHERE ee.actor_friend_id = ?`,
+      ).get(id) as { n: number }).n;
+      expect(queuedFor('friend-1')).toBe(0);
+      expect(queuedFor('friend-2')).toBe(4);
+      await processPendingMileageEvents(db);
+      expect((await getMileageSummaryForFriend(db, 'friend-1')).available).toBe(0);
+
+      // Clearing the flag lets the held milestones through on the next run.
+      follow('friend-1', '{"do_not_contact": false}');
+      expect(await run()).toMatchObject({ eventsCreated: 0, queued: 4 });
+      expect(queuedFor('friend-1')).toBe(4);
+    });
   });
 
   it('resets the continuous-follow streak after a block and preserves earned miles', async () => {

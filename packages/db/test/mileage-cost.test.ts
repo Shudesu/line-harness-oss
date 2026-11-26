@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { getMileageSummaryForFriend } from '../src/mileage.js';
+import { enqueueFollowingMileageMilestones, getMileageSummaryForFriend } from '../src/mileage.js';
 
 type Query = { sql: string; params: unknown[] };
 async function capture(friend: string): Promise<Query[]> {
@@ -41,4 +41,26 @@ it('keeps wallet cost independent of unrelated data at 1x, 100x and 1000x', asyn
     ownHistory: report.own_history_growth.map((r: any) => ({ scale: r.scale, vm: r.vm_instructions_approx })),
     missingIndexVm: report.missing_index_control.vm_instructions_approx,
   }));
+}, 130_000);
+
+it('keeps the caught-up follow-milestone job at a fixed SQL count and linear in friends', async () => {
+  const now = '2026-08-10T10:00:00.000+09:00';
+  const queries: Query[] = [];
+  const db = { prepare(sql: string) { return { bind(...params: unknown[]) {
+    return { async run() { queries.push({ sql, params }); return { success: true, meta: { changes: 0 } }; } };
+  } }; } } as unknown as D1Database;
+  await enqueueFollowingMileageMilestones(db, { now });
+  // Two statements per milestone (create events, queue them), whatever the
+  // number of friends. Reading metadata.do_not_contact must not add fan-out.
+  expect(queries).toHaveLength(12);
+  const result = spawnSync('python3', [fileURLToPath(new URL('./helpers/milestone-cost-probe.py', import.meta.url))], {
+    input: JSON.stringify({ schema: readFileSync(new URL('../bootstrap.sql', import.meta.url), 'utf8'), queries, now }),
+    encoding: 'utf8', timeout: 120_000, maxBuffer: 2_000_000,
+  });
+  expect(result.error, result.stderr).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  const report = JSON.parse(result.stdout);
+  expect(report.unit).toBe('sqlite_vm_instructions_not_d1_rows');
+  expect(report.caught_up.map((r: { scale: number }) => r.scale)).toEqual([1, 100, 1000]);
+  console.info('milestone-cost-report', JSON.stringify(report));
 }, 130_000);

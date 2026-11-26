@@ -1625,6 +1625,10 @@ export async function enqueueFollowingMileageMilestones(
       .run();
     totals.eventsCreated += inserted.meta?.changes ?? 0;
 
+    // Also recovers events whose queue row was never written (a run that died
+    // between the two statements). The flag is re-read here so a friend who
+    // opted out in the meantime is not queued — and so not awarded — on the
+    // retry. Events whose friend row is gone keep the previous behaviour.
     const queued = await db
       .prepare(
         `INSERT OR IGNORE INTO mileage_event_queue
@@ -1635,6 +1639,11 @@ export async function enqueueFollowingMileageMilestones(
             AND ee.source = 'line_relationship'
             AND NOT EXISTS (
               SELECT 1 FROM mileage_event_queue q WHERE q.engagement_event_id = ee.id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM friends f
+               WHERE f.id = ee.actor_friend_id
+                 AND NOT (${FRIEND_CONTACTABLE_SQL})
             )
           ORDER BY ee.occurred_at ASC, ee.id ASC
           LIMIT ?`,
