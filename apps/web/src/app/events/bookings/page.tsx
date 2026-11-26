@@ -239,7 +239,7 @@ function BookingsInner() {
             </div>
           )}
         </div>
-        <Dialog.Root role="alertdialog" open={cancelTarget !== null} onOpenChange={(open) => { if (!open && !busy) setCancelTarget(null) }}><Dialog><Dialog.Title>運営側でキャンセルしますか？</Dialog.Title><Dialog.Description className="mt-2">予約をキャンセルし、友だちへLINE通知を送ります。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setCancelTarget(null)}>戻る</Button><Button type="button" variant="destructive" loading={busy} onClick={() => { if (cancelTarget) void adminCancel(cancelTarget) }}>キャンセルする</Button></div></Dialog></Dialog.Root>
+        <Dialog.Root role="alertdialog" open={cancelTarget !== null} onOpenChange={(open) => { if (!open && !busy) setCancelTarget(null) }}><Dialog className="p-6"><Dialog.Title className="text-lg font-semibold text-kumo-strong">運営側でキャンセルしますか？</Dialog.Title><Dialog.Description className="mt-2 text-sm leading-6 text-kumo-subtle">予約をキャンセルし、友だちへLINE通知を送ります。</Dialog.Description><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setCancelTarget(null)}>戻る</Button><Button type="button" variant="destructive" loading={busy} onClick={() => { if (cancelTarget) void adminCancel(cancelTarget) }}>キャンセルする</Button></div></Dialog></Dialog.Root>
       </div>
     </>
   )
