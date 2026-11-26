@@ -92,6 +92,52 @@ async function resolveLinkAccount(
 }
 
 /**
+ * How long one isolate may reuse its answer to "which accounts are active?".
+ *
+ * /t/ is a public redirect, so anything read per click is multiplied by the
+ * click volume. Staleness is bounded by this TTL and fails towards the previous
+ * answer: an account activated a moment ago is never mistaken for the only one
+ * (its id is not the cached one), and an account that just became the only one
+ * stays anonymous until the entry expires.
+ */
+export const ACTIVE_ACCOUNT_CACHE_TTL_MS = 60_000;
+
+interface ActiveAccountCacheEntry {
+  expiresAt: number;
+  /** Ids of up to two active accounts — enough to tell "exactly one" from "more". */
+  ids: Promise<string[]>;
+}
+
+/**
+ * Per-isolate cache, keyed by the D1 binding object so that two databases
+ * served by the same isolate never share an answer. A WeakMap needs no
+ * eviction; if the runtime hands out a new binding object it is only a miss.
+ */
+const activeAccountCache = new WeakMap<D1Database, ActiveAccountCacheEntry>();
+
+function getActiveAccountIds(db: D1Database): Promise<string[]> {
+  const now = Date.now();
+  const cached = activeAccountCache.get(db);
+  if (cached && cached.expiresAt > now) return cached.ids;
+
+  // line_accounts has no index on is_active, so this reads the whole table
+  // (LIMIT 2 does not bound rows read). The table holds a handful of rows; the
+  // cache is what keeps it from being multiplied by clicks. The in-flight
+  // promise is cached so concurrent clicks on a cold isolate share one read.
+  const ids = db
+    .prepare(`SELECT id FROM line_accounts WHERE is_active = 1 LIMIT 2`)
+    .all<{ id: string }>()
+    .then((res) => (res?.results ?? []).map((row) => row.id));
+  const entry: ActiveAccountCacheEntry = { expiresAt: now + ACTIVE_ACCOUNT_CACHE_TTL_MS, ids };
+  activeAccountCache.set(db, entry);
+  // A failed read is not an answer: drop it so the next click retries.
+  ids.catch(() => {
+    if (activeAccountCache.get(db) === entry) activeAccountCache.delete(db);
+  });
+  return ids;
+}
+
+/**
  * Whether the global env.LIFF_URL can be treated as this account's own LIFF.
  *
  * True only when the account is active and either
@@ -103,9 +149,10 @@ async function resolveLinkAccount(
  * Any failure answers false: sending the click straight to the destination
  * (anonymous) is safe, another account's LINE Login screen is not.
  *
- * Cost: at most one extra read (LIMIT 2 on line_accounts), and only for a LINE
- * in-app click without lu/f on a link whose owner has no liff_id and is not the
- * default account.
+ * Cost: reached only for a LINE in-app click without lu/f on a link whose owner
+ * has no liff_id and is not the default account. Even then the active-account
+ * read happens at most once per isolate per database per
+ * ACTIVE_ACCOUNT_CACHE_TTL_MS, not once per click.
  */
 async function ownsGlobalLiff(
   db: D1Database,
@@ -123,12 +170,8 @@ async function ownsGlobalLiff(
     ) {
       return true;
     }
-    // LIMIT 2 is enough to tell "exactly one" from "more than one".
-    const active = await db
-      .prepare(`SELECT id FROM line_accounts WHERE is_active = 1 LIMIT 2`)
-      .all<{ id: string }>();
-    const rows = active?.results ?? [];
-    return rows.length === 1 && rows[0]?.id === account.id;
+    const activeIds = await getActiveAccountIds(db);
+    return activeIds.length === 1 && activeIds[0] === account.id;
   } catch (err) {
     console.error('ownsGlobalLiff error:', err);
     return false;
