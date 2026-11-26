@@ -194,7 +194,7 @@ export default function MachineKeysPage() {
           if (!open) setToken('');
         }}
       >
-        <Dialog>
+        <Dialog className="p-6">
           <Dialog.Title>キーを保存してください</Dialog.Title>
           <p className="my-3">
             この画面を閉じると再表示できません。連携先の秘密情報欄へ保存してください。
@@ -209,7 +209,7 @@ export default function MachineKeysPage() {
           if (!open) setRevoke(null);
         }}
       >
-        <Dialog>
+        <Dialog className="p-6">
           <Dialog.Title>「{revoke?.name}」を失効しますか？</Dialog.Title>
           <p className="my-3">
             このキーを使う連携は停止します。差し替え済みか確認してください。

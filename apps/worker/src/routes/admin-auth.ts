@@ -1,6 +1,8 @@
 import {apiKeyLoginMode} from '../middleware/login-policy.js';
 import {timingSafeEqualString} from '@line-crm/shared';
-import {hashApiKey} from '@line-crm/db';
+import {hashApiKey, backfillStaffApiKeyHashes, purgeExpiredAdminSessions, purgeMagicLinks, purgeWebauthnChallenges} from '@line-crm/db';
+import { requireRole } from '../middleware/role-guard.js';
+import { requireAccess } from '../middleware/auth.js';
 import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { Hono } from 'hono';
 import { revokeAdminSession, revokeAdminSessionsForStaff } from '@line-crm/db';
@@ -40,6 +42,9 @@ adminAuth.post('/api/auth/login', async (c) => {
     console.error('[admin-auth] refused login — misconfigured topology:', config.misconfigured);
     return c.json({ success: false, error: config.misconfigured }, 500);
   }
+
+  // Deployments that opted into ACCESS_REQUIRED keep the gate on session issuance.
+  const denied = await requireAccess(c); if (denied) return denied;
 
   const body = await c.req
     .json<{ apiKey?: string }>()
@@ -113,4 +118,28 @@ adminAuth.post('/api/auth/logout-all', async (c) => {
     c.header('Set-Cookie', expiredCookie(CSRF_COOKIE, sameSite), { append: true });
     return c.json({ success: true, data: { revoked } });
   } catch { return c.json({ success: false, error: 'Session revocation unavailable' }, 503); }
+});
+
+// Owner-driven, bounded Web Crypto backfill of plaintext staff keys (25 rows per
+// call leaves room for auth on the Free plan); repeat until migrated === 0.
+// Used by scripts/migrate-staff-keys.mjs — see docs/SECURITY-UPGRADE.en.md.
+adminAuth.post('/api/auth/migrate-keys', requireRole('owner'), async (c) => {
+  const migrated = await backfillStaffApiKeyHashes(c.env.DB, { limit: 25 });
+  return c.json({ success: true, data: { migrated } });
+});
+
+// Kept for clients written against the earlier hardening release; same effect
+// as logout-all for the caller's own sessions, without clearing cookies.
+adminAuth.post('/api/auth/sessions/revoke', async (c) => {
+  const revoked = await revokeAdminSessionsForStaff(c.env.DB, c.get('staff').id);
+  return c.json({ success: true, data: { revoked } });
+});
+
+// Owner-driven bounded cleanup of expired sessions, magic links and WebAuthn
+// challenges. No cron is added; call it from existing maintenance.
+adminAuth.post('/api/auth/maintenance', requireRole('owner'), async (c) => {
+  await purgeExpiredAdminSessions(c.env.DB);
+  await purgeMagicLinks(c.env.DB);
+  await purgeWebauthnChallenges(c.env.DB);
+  return c.json({ success: true });
 });

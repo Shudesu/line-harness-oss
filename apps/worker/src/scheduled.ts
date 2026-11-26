@@ -1,3 +1,4 @@
+import { runWithOutboundConfig } from './lib/outbound-url.js';
 import { flushXGateEvents } from './services/x-gate-client.js';
 import { LineClient } from '@line-crm/line-sdk';
 import {
@@ -63,7 +64,16 @@ export function isHourlyTick(event: { cron: string; scheduledTime: number }): bo
 // どの文字列を積むかだけで、ジョブ本体のロジックは一切変えていない。
 //
 // 全アカウント分をまとめて1回だけ実行する
-export async function scheduled(
+/** Cron entry point. Outgoing webhook deliveries made from scheduled work obey the same destination policy as requests. */
+export function scheduled(
+  event: ScheduledEvent,
+  env: Env['Bindings'],
+  ctx: ExecutionContext,
+): Promise<void> {
+  return runWithOutboundConfig(env, () => runScheduled(event, env, ctx));
+}
+
+async function runScheduled(
   event: ScheduledEvent,
   env: Env['Bindings'],
   ctx: ExecutionContext,
