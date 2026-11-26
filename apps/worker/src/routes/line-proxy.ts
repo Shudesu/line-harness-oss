@@ -283,22 +283,16 @@ async function createFriendForRecipient(
       console.error('[line-proxy] getProfile failed for', userId, err);
     }
 
-    const friend = await upsertFriend(db, {
+    // 'fill': written atomically with the new row, but never rebinds a row
+    // that already has an account (an outgoing push is not a follow).
+    return await upsertFriend(db, {
       lineUserId: userId,
       displayName: profile?.displayName ?? null,
       pictureUrl: profile?.pictureUrl ?? null,
       statusMessage: profile?.statusMessage ?? null,
+      lineAccountId,
+      accountMode: 'fill',
     });
-
-    if (lineAccountId) {
-      await db
-        .prepare(
-          'UPDATE friends SET line_account_id = ? WHERE id = ? AND line_account_id IS NULL',
-        )
-        .bind(lineAccountId, friend.id)
-        .run();
-    }
-    return friend;
   } catch (err) {
     console.error('[line-proxy] friend creation failed for', userId, err);
     return null;
