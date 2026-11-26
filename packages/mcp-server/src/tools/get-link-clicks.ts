@@ -9,6 +9,7 @@ export function registerGetLinkClicks(server: McpServer): void {
     {
       linkId: z.string().describe("The tracked link ID"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ linkId }) => {
       try {
         const client = getClient();

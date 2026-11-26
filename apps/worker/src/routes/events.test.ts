@@ -35,6 +35,10 @@ const notifierMocks = {
 };
 vi.mock('../services/event-booking-notifier.js', () => notifierMocks);
 
+// The successful booking path lazily loads the DB barrel for mileage. With
+// workspace-source aliases its first transform can exceed the per-test timer
+// on slower volumes; load it during suite setup, without mocking its behavior.
+await import('@line-crm/db');
 const { default: events } = await import('./events.js');
 
 type TestEnv = {

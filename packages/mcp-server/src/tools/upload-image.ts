@@ -14,6 +14,7 @@ export function registerUploadImage(server: McpServer): void {
         .describe("Image MIME type"),
       filename: z.string().optional().describe("Optional original filename for reference"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ data, mimeType, filename }) => {
       try {
         const client = getClient();

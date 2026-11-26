@@ -23,6 +23,7 @@ export function registerManageFriends(server: McpServer): void {
         .optional()
         .describe("Rich menu ID to assign (for 'set_rich_menu')"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, friendId, metadata, richMenuId }) => {
       try {
         const client = getClient();

@@ -18,6 +18,7 @@ export function registerGetConversionLogs(server: McpServer): void {
         .default(50)
         .describe("Maximum number of logs to return (default: 50)"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ platformId, limit }) => {
       try {
         const client = getClient();

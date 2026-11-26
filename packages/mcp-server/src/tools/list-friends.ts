@@ -23,6 +23,7 @@ export function registerListFriends(server: McpServer): void {
         .optional()
         .describe("LINE account ID (uses default if omitted)"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ search, tagId, metadataFilter, limit, offset, accountId }) => {
       try {
         const client = getClient();

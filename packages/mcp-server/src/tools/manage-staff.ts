@@ -16,6 +16,7 @@ export function registerManageStaff(server: McpServer): void {
       staffId: z.string().optional().describe("Staff ID (for 'get','update','delete','regenerate_key')"),
       isActive: z.boolean().optional().describe("Activate/deactivate (for 'update')"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, name, email, role, staffId, isActive }) => {
       try {
         const client = getClient();

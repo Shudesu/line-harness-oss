@@ -43,6 +43,7 @@ export function registerManageEntryRoutes(server: McpServer): void {
         .describe("アカウント既定の friend_add シナリオも併せて実行するか"),
       isActive: z.boolean().optional().describe("有効/無効の切り替え"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({
       action,
       id,

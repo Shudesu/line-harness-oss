@@ -42,6 +42,7 @@ export function registerCreateTrackedLink(server: McpServer): void {
       ogDescription: z.string().nullable().optional().describe("OGP description override for the tracking link preview"),
       ogImageUrl: z.string().nullable().optional().describe("OGP image URL override for the tracking link preview"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ name, originalUrl, tagId, scenarioId, introTemplateId, rewardTemplateId, accountId, ogTitle, ogDescription, ogImageUrl }) => {
       try {
         const client = getClient();

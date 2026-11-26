@@ -10,6 +10,7 @@ export function registerManageRichMenus(server: McpServer): void {
       action: z.enum(["list", "delete", "set_default"]).describe("Action to perform"),
       richMenuId: z.string().optional().describe("Rich menu ID (required for delete, set_default)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, richMenuId }) => {
       try {
         const client = getClient();

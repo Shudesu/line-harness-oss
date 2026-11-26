@@ -2,6 +2,9 @@
 
 const GCAL_BASE = 'https://www.googleapis.com/calendar/v3';
 const TIMEZONE = 'Asia/Tokyo';
+// Only request fields consumed by this client; never retrieve event titles or descriptions.
+const ALL_DAY_FIELDS = 'nextPageToken,items(status,eventType,start/date,end/date)';
+const CREATED_EVENT_FIELDS = 'id,hangoutLink,conferenceData(entryPoints(entryPointType,uri))';
 
 export interface GoogleCalendarConfig {
   calendarId: string;
@@ -16,8 +19,8 @@ export interface BusyInterval {
 interface CalendarEvent {
   status?: string;
   eventType?: string;
-  start?: { date?: string; dateTime?: string };
-  end?: { date?: string; dateTime?: string };
+  start?: { date?: string };
+  end?: { date?: string };
 }
 
 export interface CreateEventInput {
@@ -55,11 +58,11 @@ export class GoogleCalendarClient {
     });
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Google FreeBusy API error ${res.status}: ${text}`);
+      // Upstream errors can contain Google user data; retain only operation and status.
+      throw new Error(`Google FreeBusy API error ${res.status}`);
     }
 
-    const data = (await res.json()) as {
+    const data = (await readGoogleJson(res)) as {
       calendars?: Record<string, { busy?: { start: string; end: string }[] }>;
     };
 
@@ -88,17 +91,17 @@ export class GoogleCalendarClient {
       url.searchParams.set('singleEvents', 'true');
       url.searchParams.set('showDeleted', 'false');
       url.searchParams.set('maxResults', '2500');
+      url.searchParams.set('fields', ALL_DAY_FIELDS);
       if (pageToken) url.searchParams.set('pageToken', pageToken);
 
       const res = await fetch(url.toString(), {
         headers: { Authorization: `Bearer ${this.config.accessToken}` },
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Google Calendar events.list error ${res.status}: ${text}`);
+        throw new Error(`Google Calendar events.list error ${res.status}`);
       }
 
-      const data = (await res.json()) as {
+      const data = (await readGoogleJson(res)) as {
         items?: CalendarEvent[];
         nextPageToken?: string;
       };
@@ -128,6 +131,7 @@ export class GoogleCalendarClient {
       `${GCAL_BASE}/calendars/${encodeURIComponent(this.config.calendarId)}/events`,
     );
     if (event.addGoogleMeet) url.searchParams.set('conferenceDataVersion', '1');
+    url.searchParams.set('fields', CREATED_EVENT_FIELDS);
 
     const body = {
       ...(event.externalId ? { id: event.externalId } : {}),
@@ -162,11 +166,11 @@ export class GoogleCalendarClient {
       return this.getCreatedEvent(event.externalId, Boolean(event.addGoogleMeet));
     }
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Google Calendar createEvent error ${res.status}: ${text}`);
+      // Upstream errors can contain Google user data; retain only operation and status.
+      throw new Error(`Google Calendar createEvent error ${res.status}`);
     }
 
-    const data = (await res.json()) as {
+    const data = (await readGoogleJson(res)) as {
       id?: string;
       hangoutLink?: string;
       conferenceData?: {
@@ -204,16 +208,22 @@ export class GoogleCalendarClient {
     eventId: string,
     requireMeet: boolean,
   ): Promise<{ eventId: string; meetUrl?: string }> {
-    const url = `${GCAL_BASE}/calendars/${encodeURIComponent(this.config.calendarId)}` +
-      `/events/${encodeURIComponent(eventId)}?conferenceDataVersion=1`;
-    const res = await fetch(url, {
+    const url = new URL(`${GCAL_BASE}/calendars/${encodeURIComponent(this.config.calendarId)}` +
+      `/events/${encodeURIComponent(eventId)}`);
+    url.searchParams.set('conferenceDataVersion', '1');
+    url.searchParams.set('fields', CREATED_EVENT_FIELDS);
+    const res = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${this.config.accessToken}` },
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Google Calendar getEvent error ${res.status}: ${text}`);
+      // Upstream errors can contain Google user data; retain only operation and status.
+      throw new Error(`Google Calendar getEvent error ${res.status}`);
     }
-    return this.parseCreatedEvent(await res.json(), requireMeet);
+    return this.parseCreatedEvent(await readGoogleJson(res) as {
+      id?: string;
+      hangoutLink?: string;
+      conferenceData?: { entryPoints?: Array<{ entryPointType?: string; uri?: string }> };
+    }, requireMeet);
   }
 
   /**
@@ -231,8 +241,8 @@ export class GoogleCalendarClient {
 
     // 204 = success, 410 = already deleted — both are acceptable
     if (!res.ok && res.status !== 410) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Google Calendar deleteEvent error ${res.status}: ${text}`);
+      // Upstream errors can contain Google user data; retain only operation and status.
+      throw new Error(`Google Calendar deleteEvent error ${res.status}`);
     }
   }
 }
@@ -257,4 +267,13 @@ function mergeBusyIntervals(intervals: BusyInterval[]): BusyInterval[] {
     }
   }
   return merged;
+}
+
+async function readGoogleJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    // JSON parser errors may quote response contents. Do not propagate them.
+    throw new Error('Google Calendar API returned invalid JSON');
+  }
 }

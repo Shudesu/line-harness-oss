@@ -37,6 +37,7 @@ export function registerManageScenarios(server: McpServer): void {
       onReachTagId: z.string().nullable().optional().describe("Tag ID to attach on step reach (for add_step, update_step; null clears)"),
       accountId: z.string().optional().describe("LINE account ID for list (uses default if omitted)"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ action, scenarioId, stepId, name, description, triggerType, triggerTagId, isActive, stepOrder, delayMinutes, messageType, messageContent, conditionType, conditionValue, nextStepOnFalse, templateId, onReachTagId, accountId }) => {
       try {
         const client = getClient();

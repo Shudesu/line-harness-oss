@@ -14,6 +14,7 @@ const dbMocks = {
   getAffiliateById: vi.fn(),
   getFriendById: vi.fn(),
   getLineAccountById: vi.fn(),
+  resolveDefaultLineAccount: vi.fn(async () => null),
 };
 vi.mock('@line-crm/db', () => dbMocks);
 
@@ -23,7 +24,7 @@ const {
   notifyAffiliateApproval,
 } = await import('./affiliate-notifier.js');
 
-const DB = {} as D1Database;
+const DB = { prepare: () => ({ first: async () => null }) } as unknown as D1Database;
 const env = { LINE_CHANNEL_ACCESS_TOKEN: 'env-token' };
 
 beforeEach(() => {
@@ -39,7 +40,7 @@ describe('notifyAffiliate', () => {
       line_user_id: 'Uaaa',
       line_account_id: 'acct-1',
     });
-    dbMocks.getLineAccountById.mockResolvedValue({ channel_access_token: 'acct-token' });
+    dbMocks.getLineAccountById.mockResolvedValue({ id: 'acct-1', is_active: 1, channel_access_token: 'acct-token' });
 
     await notifyAffiliate(DB, env, 'aff-1', 'hello');
 
@@ -47,7 +48,7 @@ describe('notifyAffiliate', () => {
     expect(pushMessage).toHaveBeenCalledWith('Uaaa', [{ type: 'text', text: 'hello' }]);
   });
 
-  it('falls back to env token when the account has no token', async () => {
+  it('uses the env token only in the account-less legacy installation', async () => {
     dbMocks.getAffiliateById.mockResolvedValue({ id: 'aff-1', friend_id: 'fr-1' });
     dbMocks.getFriendById.mockResolvedValue({
       id: 'fr-1',

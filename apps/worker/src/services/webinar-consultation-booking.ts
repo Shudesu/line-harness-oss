@@ -5,6 +5,7 @@ import {
   syncConfirmedBookingToGoogle,
 } from './booking-calendar-sync.js';
 import type { GoogleCalendarCredentials } from './google-oauth.js';
+import { calendarBrokerConfigured, isBrokerRefreshToken } from './google-calendar-broker.js';
 import {
   cancelMeetConsultation,
   registerMeetConsultation,
@@ -81,6 +82,9 @@ function googleCredentialsConfigured(
     return Boolean(credentials.email && credentials.privateKey);
   }
   if (connection.auth_type === 'oauth') {
+    if (connection.refresh_token && isBrokerRefreshToken(connection.refresh_token)) {
+      return calendarBrokerConfigured(credentials);
+    }
     return Boolean(
       connection.refresh_token && credentials.oauthClientId && credentials.oauthClientSecret,
     );

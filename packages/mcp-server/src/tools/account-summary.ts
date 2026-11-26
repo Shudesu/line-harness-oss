@@ -101,6 +101,7 @@ export function registerAccountSummary(server: McpServer): void {
         .optional()
         .describe("LINE account ID (uses default if omitted)"),
     },
+    { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     async ({ accountId }) => {
       try {
         const client = getClient();

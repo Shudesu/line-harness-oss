@@ -47,6 +47,7 @@ export function registerCreateRichMenu(server: McpServer): void {
         .default(false)
         .describe("Set this as the default rich menu for all friends"),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     async ({ name, chatBarText, size, selected, areas, imageData, imageContentType, setAsDefault }) => {
       try {
         const client = getClient();
