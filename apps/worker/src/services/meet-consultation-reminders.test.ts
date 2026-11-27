@@ -38,8 +38,46 @@ describe('renderMeetReminderText', () => {
       'https://meet.google.com/abc-defg-hij',
     );
     expect(text).toContain('8月9日（日）10:00');
-    expect(text).toContain('開始約1時間前');
+    expect(text).toContain('まもなく開始');
     expect(text).toContain('https://meet.google.com/abc-defg-hij');
+  });
+});
+
+describe('immediate Meet reminder dates', () => {
+  it('does not call a same-day consultation tomorrow when its day-before reminder is sent immediately', () => {
+    const startsAt = '2026-08-08T12:00:00.000Z';
+    const now = new Date('2026-08-08T00:00:00.000Z');
+    expect(calculateMeetReminderSchedule(startsAt, now)[0]).toEqual({
+      kind: 'day_before', scheduledAt: now.toISOString(),
+    });
+    const text = renderMeetReminderText('day_before', startsAt, 'https://meet.google.com/abc-defg-hij');
+    expect(text).toContain('8月8日（土）21:00から');
+    expect(text).not.toContain('明日');
+  });
+
+  it('uses the actual date when a within-one-hour confirmation crosses JST midnight', () => {
+    const startsAt = '2026-08-08T15:30:00.000Z';
+    const now = new Date('2026-08-08T14:45:00.000Z');
+    expect(calculateMeetReminderSchedule(startsAt, now)).toEqual([
+      { kind: 'hour_before', scheduledAt: now.toISOString() },
+    ]);
+    const text = renderMeetReminderText('hour_before', startsAt, 'https://meet.google.com/abc-defg-hij');
+    expect(text).toContain('8月9日（日）00:30から');
+    expect(text).not.toContain('本日');
+    expect(text).not.toContain('開始約1時間前');
+  });
+
+  it('keeps the payload identical when the same retry crosses midnight', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime('2026-08-08T14:59:00.000Z');
+      const before = renderMeetReminderText('hour_before', '2026-08-08T15:30:00.000Z', 'https://meet.google.com/abc-defg-hij');
+      vi.setSystemTime('2026-08-08T15:01:00.000Z');
+      const after = renderMeetReminderText('hour_before', '2026-08-08T15:30:00.000Z', 'https://meet.google.com/abc-defg-hij');
+      expect(after).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -66,6 +104,10 @@ describe('processDueMeetConsultationReminders', () => {
                     channel_access_token: 'channel-token',
                   }],
                 };
+              },
+              async first() {
+                const result = await this.all();
+                return result.results[0] ?? null;
               },
               async run() {
                 updates.push(args);

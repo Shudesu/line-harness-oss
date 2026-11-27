@@ -36,9 +36,8 @@ export async function processDueReminders(
 ): Promise<{ sent: number; failed: number }> {
   // status は 'pending' に加え 'failed'（一時エラーで失敗、retry 残あり）も拾う。
   // 'failed_permanent' / 'sent' / 'cancelled' は再送対象外。
-  const due = await db
-    .prepare(
-      `SELECT r.id, r.booking_id, r.kind, r.retry_count,
+  // Reuse the same eligibility rules when refreshing each queued row.
+  const eligibleQuery = `SELECT r.id, r.booking_id, r.kind, r.retry_count,
               b.starts_at,
               m.name AS menu_name,
               s.display_name AS staff_name,
@@ -53,18 +52,26 @@ export async function processDueReminders(
         WHERE r.status IN ('pending','failed')
           AND r.scheduled_at <= ?
           AND b.status = 'confirmed'
-          AND b.starts_at > ?       -- 開始時刻を過ぎた予約のリマインダは送らない
-        LIMIT 100`,
-    )
+          AND b.starts_at > ?       -- 開始時刻を過ぎた予約のリマインダは送らない`;
+  const due = await db
+    .prepare(`${eligibleQuery}\n LIMIT 100`)
     .bind(params.now.toISOString(), params.now.toISOString())
     .all<DueRow>();
 
   let sent = 0;
   let failed = 0;
-  for (const row of due.results) {
-    const kind: NotificationKind = row.kind;
+  for (const candidate of due.results) {
+    let row = candidate;
     try {
+      const current = await db
+        .prepare(`${eligibleQuery}\n AND r.id = ?`)
+        .bind(params.now.toISOString(), params.now.toISOString(), candidate.id)
+        .first<DueRow>();
+      if (!current) continue;
+      row = current;
+      const kind: NotificationKind = row.kind;
       await params.sender({
+        retryKey: row.id,
         channelAccessToken: row.channel_access_token,
         toLineUserId: row.line_user_id,
         kind,
@@ -77,7 +84,7 @@ export async function processDueReminders(
       });
       await db
         .prepare(
-          `UPDATE booking_reminders SET status='sent', sent_at = ? WHERE id = ?`,
+          `UPDATE booking_reminders SET status='sent', sent_at = ? WHERE id = ? AND status IN ('pending','failed','failed_permanent')`,
         )
         .bind(params.now.toISOString(), row.id)
         .run();
@@ -87,7 +94,7 @@ export async function processDueReminders(
       const newStatus = newRetry >= REMINDER_MAX_RETRY ? 'failed_permanent' : 'failed';
       await db
         .prepare(
-          `UPDATE booking_reminders SET status = ?, retry_count = ?, last_error = ? WHERE id = ?`,
+          `UPDATE booking_reminders SET status = ?, retry_count = ?, last_error = ? WHERE id = ? AND status IN ('pending','failed')`,
         )
         .bind(newStatus, newRetry, e instanceof Error ? e.message : String(e), row.id)
         .run();
