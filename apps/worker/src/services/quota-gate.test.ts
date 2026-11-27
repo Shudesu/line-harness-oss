@@ -1036,11 +1036,15 @@ describe('PUT /api/broadcasts/:id usage-record guard', () => {
     line_request_id: 'req-1',
   };
 
+  const editBatch = vi.fn(async (statements: D1PreparedStatement[]) => Promise.all(statements.map(statement => statement.run())));
+  beforeEach(() => { editBatch.mockClear(); });
+
   function setupApp(quotaEnv: Record<string, string>) {
     const app = new Hono<{ Bindings: Record<string, unknown> }>();
     app.use('*', async (c, next) => {
       c.env = {
         DB: {
+          batch: editBatch,
           prepare() {
             const stmt = {
               bind() { return stmt; },
@@ -1071,7 +1075,7 @@ describe('PUT /api/broadcasts/:id usage-record guard', () => {
     expect(res.status).toBe(403);
     const body = await res.json() as { error: string };
     expect(body.error).toBe('usage_record_locked');
-    expect(dbMocks.updateBroadcast).not.toHaveBeenCalled();
+    expect(editBatch).not.toHaveBeenCalled();
   });
 
   test('no monthly limit: the same row stays editable as before', async () => {
@@ -1081,7 +1085,7 @@ describe('PUT /api/broadcasts/:id usage-record guard', () => {
       `/api/broadcasts/${lockedRow.id}`, putRequest(lockedRow.id),
     );
     expect(res.status).toBe(200);
-    expect(dbMocks.updateBroadcast).toHaveBeenCalledTimes(1);
+    expect(editBatch).toHaveBeenCalledTimes(1);
   });
 
   test("previous month's 'all' row is editable", async () => {
@@ -1093,7 +1097,7 @@ describe('PUT /api/broadcasts/:id usage-record guard', () => {
       `/api/broadcasts/${lockedRow.id}`, putRequest(lockedRow.id),
     );
     expect(res.status).toBe(200);
-    expect(dbMocks.updateBroadcast).toHaveBeenCalledTimes(1);
+    expect(editBatch).toHaveBeenCalledTimes(1);
   });
 
   test('multicast-path row (line_request_id NULL) is editable — its usage lives in messages_log', async () => {
@@ -1103,7 +1107,7 @@ describe('PUT /api/broadcasts/:id usage-record guard', () => {
       `/api/broadcasts/${lockedRow.id}`, putRequest(lockedRow.id),
     );
     expect(res.status).toBe(200);
-    expect(dbMocks.updateBroadcast).toHaveBeenCalledTimes(1);
+    expect(editBatch).toHaveBeenCalledTimes(1);
   });
 });
 

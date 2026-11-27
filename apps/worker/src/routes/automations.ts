@@ -2,6 +2,8 @@ import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { checkWebhookActions } from '../lib/outbound-url.js';
 import { Hono } from 'hono';
 import {
+  AutomationActionError,
+  normalizeAutomationActions,
   getAutomations,
   getAutomationById,
   createAutomation,
@@ -107,9 +109,12 @@ automations.post('/api/automations', async (c) => {
     if (!body.name || !body.eventType || !body.actions) {
       return c.json({ success: false, error: 'name, eventType, actions are required' }, 400);
     }
-    const urlCheck = checkWebhookActions(body.actions, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
+    // Normalize first so the destination check sees the same canonical shape
+    // that is saved (a legacy flat `url` must not skip the check).
+    const actions = normalizeAutomationActions(body.actions);
+    const urlCheck = checkWebhookActions(actions, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
     if (!urlCheck.allowed) return c.json({ success: false, error: 'webhook_url_invalid', reason: urlCheck.warnings[0] }, 400);
-    let item = await createAutomation(c.env.DB, body);
+    let item = await createAutomation(c.env.DB, { ...body, actions });
     // Save line_account_id if provided
     if (body.lineAccountId) {
       await c.env.DB.prepare(`UPDATE automations SET line_account_id = ? WHERE id = ?`)
@@ -134,6 +139,7 @@ automations.post('/api/automations', async (c) => {
       },
     }, 201);
   } catch (err) {
+    if (err instanceof AutomationActionError) return c.json({ success: false, error: err.message }, 400);
     console.error('POST /api/automations error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
@@ -144,10 +150,20 @@ automations.put('/api/automations/:id', async (c) => {
     const id = c.req.param('id');
     const body = await c.req.json();
     let actions = body.actions;
-    if (actions === undefined && body.isActive === true) {
+    if (actions !== undefined) {
+      // Same order as create: canonical shape first, destination check second.
+      actions = normalizeAutomationActions(actions);
+      body.actions = actions;
+    } else if (body.isActive === true) {
       const existing = await getAutomationById(c.env.DB, id);
       if (!existing) return c.json({ success: false, error: 'Not found' }, 404);
-      actions = JSON.parse(existing.actions);
+      // Stored rows may still be flat; check them in the shape the engine runs.
+      // A stored action that cannot be normalized is left as-is: it fails at
+      // run time and must not block toggling an existing rule.
+      const stored: unknown = JSON.parse(existing.actions);
+      actions = Array.isArray(stored)
+        ? stored.map((action) => { try { return normalizeAutomationActions([action])[0]; } catch { return action; } })
+        : stored;
     }
     const urlCheck = actions === undefined ? { allowed: true, warnings: [] } : checkWebhookActions(actions, { ...c.env, REQUEST_ORIGIN: new URL(c.req.url).origin });
     if (!urlCheck.allowed) return c.json({ success: false, error: 'webhook_url_invalid', reason: urlCheck.warnings[0] }, 400);
@@ -169,6 +185,7 @@ automations.put('/api/automations/:id', async (c) => {
       },
     });
   } catch (err) {
+    if (err instanceof AutomationActionError) return c.json({ success: false, error: err.message }, 400);
     console.error('PUT /api/automations/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }

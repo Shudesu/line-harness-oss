@@ -212,6 +212,13 @@ async function verifyCallerLineUserId(c: Context<Env>): Promise<string | null> {
   return null;
 }
 
+// 「有効」の値は、管理画面が 1/0、API 利用者が true/false を送る。どちらも受ける
+// （文字列の "1"/"0"/"true"/"false" も）。省略や解釈できない値は ON（従来どおりの既定）。
+export function toActiveFlag(value: unknown): 0 | 1 {
+  if (value === false || value === 0 || value === '0' || value === 'false') return 0;
+  return 1;
+}
+
 async function resolveAccountIdAdmin(c: Context<Env>): Promise<string | null> {
   return c.req.query('account_id') ?? null;
 }
@@ -630,6 +637,7 @@ booking.post('/api/booking/admin/menus', async (c) => {
     buffer_after_minutes?: number;
     base_price: number;
     sort_order?: number;
+    is_active?: boolean | number | string;
     auto_tag_id?: string | null;
   }>();
   const autoTagId = (b.auto_tag_id ?? '').trim() === '' ? null : (b.auto_tag_id as string);
@@ -645,8 +653,9 @@ booking.post('/api/booking/admin/menus', async (c) => {
     .prepare(
       `INSERT INTO menus
         (id, line_account_id, name, category_label, description,
-         duration_minutes, buffer_after_minutes, base_price, sort_order, auto_tag_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+         duration_minutes, buffer_after_minutes, base_price, sort_order, auto_tag_id,
+         is_active)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .bind(
       id,
@@ -659,6 +668,7 @@ booking.post('/api/booking/admin/menus', async (c) => {
       b.base_price,
       b.sort_order ?? 0,
       autoTagId,
+      toActiveFlag(b.is_active),
     )
     .run();
   return c.json({ id }, 201);
@@ -676,7 +686,7 @@ booking.put('/api/booking/admin/menus/:id', async (c) => {
     buffer_after_minutes?: number;
     base_price: number;
     sort_order?: number;
-    is_active?: boolean;
+    is_active?: boolean | number | string;
     auto_tag_id?: string | null;
   }>();
   // PUT は古いクライアントが auto_tag_id フィールドを送らない場合がある。`undefined` を
@@ -711,7 +721,7 @@ booking.put('/api/booking/admin/menus/:id', async (c) => {
         b.buffer_after_minutes ?? 0,
         b.base_price,
         b.sort_order ?? 0,
-        b.is_active === false ? 0 : 1,
+        toActiveFlag(b.is_active),
         autoTagId,
         id,
         accountId,
@@ -735,7 +745,7 @@ booking.put('/api/booking/admin/menus/:id', async (c) => {
         b.buffer_after_minutes ?? 0,
         b.base_price,
         b.sort_order ?? 0,
-        b.is_active === false ? 0 : 1,
+        toActiveFlag(b.is_active),
         id,
         accountId,
       )
@@ -990,14 +1000,15 @@ booking.post('/api/booking/admin/staff', async (c) => {
     bio?: string | null;
     sort_order?: number;
     is_designation_optional?: boolean;
+    is_active?: boolean | number | string;
   }>();
   const id = crypto.randomUUID();
   await c.env.DB
     .prepare(
       `INSERT INTO staff
         (id, line_account_id, name, display_name, role, profile_image_url, bio,
-         sort_order, is_designation_optional)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+         sort_order, is_designation_optional, is_active)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
     )
     .bind(
       id,
@@ -1009,6 +1020,7 @@ booking.post('/api/booking/admin/staff', async (c) => {
       b.bio ?? null,
       b.sort_order ?? 0,
       b.is_designation_optional ? 1 : 0,
+      toActiveFlag(b.is_active),
     )
     .run();
   return c.json({ id }, 201);
@@ -1026,7 +1038,7 @@ booking.put('/api/booking/admin/staff/:id', async (c) => {
     bio?: string | null;
     sort_order?: number;
     is_designation_optional?: boolean;
-    is_active?: boolean;
+    is_active?: boolean | number | string;
   }>();
   await c.env.DB
     .prepare(
@@ -1044,7 +1056,7 @@ booking.put('/api/booking/admin/staff/:id', async (c) => {
       b.bio ?? null,
       b.sort_order ?? 0,
       b.is_designation_optional ? 1 : 0,
-      b.is_active === false ? 0 : 1,
+      toActiveFlag(b.is_active),
       id,
       accountId,
     )

@@ -65,6 +65,28 @@ export async function getCurrentVersion(): Promise<CurrentVersion> {
   }
 }
 
+// `/admin/version` は無認証・ビルド時メタデータだけを返す読み取り専用の口で、
+// 1ページ内で複数の購読者（アップグレードバナーと sidebar のフッター版）が同じ
+// 答えを欲しがる。購読者ごとに叩くと同じ応答を2回取りに行くだけなので、
+// **取得中の1本**の Promise を共有する。
+//
+// 共有するのは取得中だけで、決着（成功・失敗とも）したら捨てる。成功した答えを
+// タブの寿命まで持ち続けると、同じタブでログイン画面を経て管理画面が再マウント
+// されたとき、その間に Worker が更新されていても古い版・ハッシュのままになり、
+// フッターが旧版を出し、バナーが適用済みの更新をもう一度案内してしまう。
+// 失敗も持ち越さない（一時的なネットワーク断をページ再読込まで引きずらない）。
+let currentVersionInFlight: Promise<CurrentVersion> | null = null
+
+export function getCurrentVersionCached(): Promise<CurrentVersion> {
+  if (!currentVersionInFlight) {
+    const p = getCurrentVersion().finally(() => {
+      if (currentVersionInFlight === p) currentVersionInFlight = null
+    })
+    currentVersionInFlight = p
+  }
+  return currentVersionInFlight
+}
+
 export async function getManifest(): Promise<Manifest & {signature?: {verified:boolean;kid?:string}}> {
   const r = await fetch(getManifestUrl(), { cache: 'no-store' })
   if (!r.ok) throw new Error(`manifest fetch failed ${r.status}`)

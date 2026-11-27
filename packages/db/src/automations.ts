@@ -25,6 +25,41 @@ export interface AutomationLogRow {
   created_at: string;
 }
 
+export class AutomationActionError extends Error {}
+
+/** Accept historical flat actions as well as the canonical {type, params} shape. */
+export function normalizeAutomationAction(value: unknown): { type: string; params: Record<string, string> } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AutomationActionError('action must be an object');
+  const input = value as Record<string, unknown>;
+  if (typeof input.type !== 'string') throw new AutomationActionError('action.type is required');
+  const fields: Record<string, string[]> = {
+    add_tag: ['tagId'], remove_tag: ['tagId'], start_scenario: ['scenarioId'],
+    send_message: ['messageType', 'content', 'template_id', 'altText'],
+    send_webhook: ['url'], switch_rich_menu: ['richMenuId'], remove_rich_menu: [], set_metadata: ['data'],
+  };
+  if (!Object.hasOwn(fields, input.type)) throw new AutomationActionError('Unknown action type: ' + input.type);
+  if (input.params !== undefined && (!input.params || typeof input.params !== 'object' || Array.isArray(input.params))) throw new AutomationActionError('action.params must be an object');
+  const nested = (input.params ?? {}) as Record<string, unknown>;
+  const params: Record<string, string> = {};
+  for (const key of fields[input.type]) {
+    if (nested[key] !== undefined && input[key] !== undefined && nested[key] !== input[key]) throw new AutomationActionError('Conflicting action field: ' + key);
+    const field = nested[key] ?? input[key];
+    if (field !== undefined) {
+      if (typeof field !== 'string') throw new AutomationActionError('action.' + key + ' must be a string');
+      params[key] = field;
+    }
+  }
+  const required = ({ add_tag: 'tagId', remove_tag: 'tagId', start_scenario: 'scenarioId', send_webhook: 'url', switch_rich_menu: 'richMenuId' } as Record<string, string>)[input.type];
+  if (required && !params[required]?.trim()) throw new AutomationActionError('action.' + required + ' is required');
+  if (input.type === 'send_message' && !params.template_id?.trim() && !params.content?.trim()) throw new AutomationActionError('send_message requires content or template_id');
+  return { type: input.type, params };
+}
+
+export function normalizeAutomationActions(actions: unknown) {
+  if (!Array.isArray(actions)) throw new AutomationActionError('actions must be an array');
+  return actions.map(normalizeAutomationAction);
+}
+
 // --- 自動化ルール ---
 
 export async function getAutomations(db: D1Database): Promise<AutomationRow[]> {
@@ -43,7 +78,7 @@ export async function createAutomation(
   const id = crypto.randomUUID();
   const now = jstNow();
   await db.prepare(`INSERT INTO automations (id, name, description, event_type, conditions, actions, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.name, input.description ?? null, input.eventType, JSON.stringify(input.conditions ?? {}), JSON.stringify(input.actions), input.priority ?? 0, now, now).run();
+    .bind(id, input.name, input.description ?? null, input.eventType, JSON.stringify(input.conditions ?? {}), JSON.stringify(normalizeAutomationActions(input.actions)), input.priority ?? 0, now, now).run();
   return (await getAutomationById(db, id))!;
 }
 
@@ -58,7 +93,7 @@ export async function updateAutomation(
   if (updates.description !== undefined) { sets.push('description = ?'); values.push(updates.description); }
   if (updates.eventType !== undefined) { sets.push('event_type = ?'); values.push(updates.eventType); }
   if (updates.conditions !== undefined) { sets.push('conditions = ?'); values.push(JSON.stringify(updates.conditions)); }
-  if (updates.actions !== undefined) { sets.push('actions = ?'); values.push(JSON.stringify(updates.actions)); }
+  if (updates.actions !== undefined) { sets.push('actions = ?'); values.push(JSON.stringify(normalizeAutomationActions(updates.actions))); }
   if (updates.isActive !== undefined) { sets.push('is_active = ?'); values.push(updates.isActive ? 1 : 0); }
   if (updates.priority !== undefined) { sets.push('priority = ?'); values.push(updates.priority); }
   if (sets.length === 0) return;
