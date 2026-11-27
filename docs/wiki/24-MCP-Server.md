@@ -76,9 +76,12 @@ node dist/index.js
 | `manage_broadcasts` | 配信管理（CRUD + セグメント配信） |
 | `manage_rich_menus` | リッチメニュー管理（list, delete, default） |
 | `manage_forms` | フォーム管理（CRUD） |
-| `manage_tracked_links` | トラッキングリンク管理（list, delete） |
+| `manage_tracked_links` | クリック計測リンク（`/t/`）の管理（list, update, delete） |
+| `manage_entry_routes` | 流入リンク（`/r/`）の管理（list, create, update, delete, funnel） |
 | `manage_staff` | スタッフ管理 |
 | `manage_ad_platforms` | 広告プラットフォーム管理 |
+
+`GET /api/entry-routes` で取得できる流入リンクの一覧は、`manage_entry_routes` を `action=list` で呼び出します。返された `id` は同じツールの `update`、`delete` に渡せます。
 
 ### Resources (MCP Resources)
 
