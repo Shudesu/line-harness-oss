@@ -202,7 +202,20 @@ export async function processBroadcastSend(
   // resumable segment queue so the executor delivers only to the matching
   // audience. Must run before the personalized/target branches, which would
   // otherwise overwrite segment_conditions with the plain target marker.
-  const segmentAudience = savedSegmentAudience(broadcast);
+  let segmentAudience = savedSegmentAudience(broadcast);
+  // A 'segment' target carries its full audience in segment_conditions and is
+  // only deliverable through the resumable queue (no inline broadcast path).
+  if (!segmentAudience && broadcast.target_type === 'segment') {
+    const rawConditions = (broadcast as unknown as Record<string, unknown>).segment_conditions;
+    if (typeof rawConditions !== 'string' || !rawConditions) {
+      throw new Error('Segment broadcast has no conditions; edit the broadcast conditions before sending');
+    }
+    try {
+      segmentAudience = JSON.parse(rawConditions);
+    } catch {
+      throw new Error('Saved segment conditions are invalid; edit the broadcast conditions before sending');
+    }
+  }
   if (segmentAudience) {
     const { total, missingName } = await countSegmentAudience(db, broadcast, segmentAudience);
     if (hasRecipientVariables(broadcast.message_content) && missingName > 0) {

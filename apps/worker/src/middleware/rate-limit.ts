@@ -124,9 +124,15 @@ const IP_CEILING_WINDOW = 60_000; // 1 min
 export async function rateLimitMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
   const path = new URL(c.req.url).pathname;
 
+  // Legacy /images/incoming-* keys are authenticated reads (see auth.ts), so
+  // they stay under the API limit; every other /images/ read is public.
+  let decodedPath = path;
+  try { decodedPath = decodeURIComponent(path); } catch { /* keep raw path */ }
+  const legacyIncomingImage = /^\/images\/incoming-[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)$/.test(decodedPath);
   const isPublicImageRead =
     (c.req.method === 'GET' || c.req.method === 'HEAD') &&
-    path.startsWith('/images/');
+    path.startsWith('/images/') &&
+    !legacyIncomingImage;
 
   // Skip rate limiting for docs / public static assets
   if (

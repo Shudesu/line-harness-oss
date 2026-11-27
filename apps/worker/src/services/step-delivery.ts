@@ -21,6 +21,7 @@ import {
 } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
+import { recordStepDeliveryError } from './step-delivery-errors.js';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 import { getQuotaUsage, quotaEnabled, type QuotaEnv } from './quota.js';
 
@@ -134,7 +135,30 @@ export function getLineApiErrorStatus(err: unknown): number | null {
 
 export function isPermanentLineDeliveryError(err: unknown): boolean {
   const status = getLineApiErrorStatus(err);
-  return status !== null && status >= 400 && status < 500 && ![408, 409, 429].includes(status);
+  if (status === 429) {
+    // A monthly-quota 429 will not clear on retry; it needs operator intervention.
+    // Other 429s (rate limiting) stay transient.
+    return /monthly limit|monthly quota/i.test((err as Error).message);
+  }
+  return status !== null && status >= 400 && status < 500 && ![408, 409].includes(status);
+}
+
+async function resolveDeliveryAccountId(db: D1Database, enrollmentId: string): Promise<string | null> {
+  try {
+    const row = await db
+      .prepare(
+        `SELECT COALESCE(s.line_account_id, f.line_account_id) AS line_account_id
+           FROM friend_scenarios fs
+           JOIN scenarios s ON s.id = fs.scenario_id
+           JOIN friends f ON f.id = fs.friend_id
+          WHERE fs.id = ?`,
+      )
+      .bind(enrollmentId)
+      .first<{ line_account_id: string | null }>();
+    return row?.line_account_id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function processStepDeliveries(
@@ -192,6 +216,7 @@ export async function processStepDeliveries(
       // 408/409/429 are transient and retain the existing 5-minute recovery.
       if (isPermanentLineDeliveryError(err)) {
         await pauseFriendScenarioDelivery(db, fs.id);
+        await recordStepDeliveryError(db, fs.id, err, await resolveDeliveryAccountId(db, fs.id));
         console.warn(
           `[step-delivery] paused enrollment=${fs.id} after permanent LINE ${getLineApiErrorStatus(err)}`,
         );
