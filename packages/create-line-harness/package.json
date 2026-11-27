@@ -33,6 +33,7 @@
   "dependencies": {
     "@clack/prompts": "^0.9.1",
     "@line-harness/update-engine": "workspace:^0.0.13",
+    "ci-info": "4.4.0",
     "execa": "^9.5.2",
     "picocolors": "^1.1.1"
   },
