@@ -1530,6 +1530,36 @@ const FOLLOWING_MILESTONES = [
   { eventType: 'friend_following_365d', days: 365, name: '継続フォロー1年' },
 ] as const;
 
+/**
+ * True unless `friends.metadata.do_not_contact` is set (alias `f`).
+ *
+ * Suppressing values, decided per JSON type because apps write this flag
+ * through different serializers:
+ * - JSON `true`
+ * - a number equal to 1, compared numerically — `1`, `1.0` and `1e0` all
+ *   count (a text comparison would see '1.0' and miss it)
+ * - the strings `"true"` / `"1"`, case-insensitive, after stripping
+ *   surrounding tab / LF / VT / FF / CR / space. SQLite's one-argument trim()
+ *   only removes spaces, so the character set is passed explicitly.
+ *
+ * Everything else (`false`, `0`, `null`, other strings, arrays/objects, a
+ * missing key, non-object metadata) leaves the friend eligible.
+ *
+ * `friends.metadata` has no json_valid CHECK, and json_type/json_extract raise
+ * on malformed JSON, which would abort the whole statement — one corrupt row
+ * would stop the 6-hour milestone job for every friend. The json_valid guard
+ * turns malformed metadata into NULL, i.e. "not suppressed".
+ */
+const FRIEND_METADATA_JSON_SQL = `CASE WHEN json_valid(f.metadata) THEN f.metadata END`;
+const FRIEND_DO_NOT_CONTACT_VALUE_SQL = `json_extract(${FRIEND_METADATA_JSON_SQL}, '$.do_not_contact')`;
+const FRIEND_CONTACTABLE_SQL = `(CASE json_type(${FRIEND_METADATA_JSON_SQL}, '$.do_not_contact')
+              WHEN 'true' THEN 1
+              WHEN 'integer' THEN ${FRIEND_DO_NOT_CONTACT_VALUE_SQL} = 1
+              WHEN 'real' THEN ${FRIEND_DO_NOT_CONTACT_VALUE_SQL} = 1
+              WHEN 'text' THEN lower(trim(${FRIEND_DO_NOT_CONTACT_VALUE_SQL}, char(9, 10, 11, 12, 13, 32))) IN ('1', 'true')
+              ELSE 0
+            END) = 0`;
+
 export interface FollowingMileageReconcileResult {
   eventsCreated: number;
   queued: number;
@@ -1539,6 +1569,14 @@ export interface FollowingMileageReconcileResult {
  * Materialize registration/continuous-follow milestones in bounded chunks.
  * Called on the existing 6-hour cron. Historic accounts are gradually caught
  * up without a full-table write spike; normal queue processing remains 5-minutely.
+ *
+ * Eligibility only checked `is_following`, so a friend who unfollowed nothing
+ * (still `is_following = 1`) but whose data a business app had already erased
+ * per a deletion/opt-out request kept getting new milestone rows written for
+ * them indefinitely — contradicting "all your data has been deleted" sent to
+ * that person. `metadata.do_not_contact` (a generic, app-set JSON flag; no
+ * core schema column) is checked here so any app honoring such a request can
+ * suppress all further writes for that friend without a migration.
  */
 export async function enqueueFollowingMileageMilestones(
   db: D1Database,
@@ -1561,6 +1599,10 @@ export async function enqueueFollowingMileageMilestones(
          AND julianday(?) - julianday(f.current_follow_started_at) >= ${milestone.days}`;
     const insertBinds = milestone.days === 0 ? [now, limit] : [now, now, limit];
 
+    // The CASE fixes the evaluation order: the primary-key probe for an
+    // existing event runs first, so a caught-up run does not parse metadata
+    // for friends whose milestone is already recorded. As plain AND terms
+    // SQLite evaluates the JSON predicate before the correlated subquery.
     const inserted = await db
       .prepare(
         `INSERT OR IGNORE INTO engagement_events
@@ -1576,9 +1618,10 @@ export async function enqueueFollowingMileageMilestones(
            FROM friends f
           WHERE f.is_following = 1
             AND ${eligibilitySql}
-            AND NOT EXISTS (
-              SELECT 1 FROM engagement_events ee WHERE ee.id = ${eventIdSql}
-            )
+            AND CASE
+                  WHEN EXISTS (SELECT 1 FROM engagement_events ee WHERE ee.id = ${eventIdSql}) THEN 0
+                  ELSE ${FRIEND_CONTACTABLE_SQL}
+                END
           ORDER BY ${anchorSql} ASC, f.id ASC
           LIMIT ?`,
       )
@@ -1586,6 +1629,10 @@ export async function enqueueFollowingMileageMilestones(
       .run();
     totals.eventsCreated += inserted.meta?.changes ?? 0;
 
+    // Also recovers events whose queue row was never written (a run that died
+    // between the two statements). The flag is re-read here so a friend who
+    // opted out in the meantime is not queued — and so not awarded — on the
+    // retry. Events whose friend row is gone keep the previous behaviour.
     const queued = await db
       .prepare(
         `INSERT OR IGNORE INTO mileage_event_queue
@@ -1596,6 +1643,11 @@ export async function enqueueFollowingMileageMilestones(
             AND ee.source = 'line_relationship'
             AND NOT EXISTS (
               SELECT 1 FROM mileage_event_queue q WHERE q.engagement_event_id = ee.id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM friends f
+               WHERE f.id = ee.actor_friend_id
+                 AND NOT (${FRIEND_CONTACTABLE_SQL})
             )
           ORDER BY ee.occurred_at ASC, ee.id ASC
           LIMIT ?`,
