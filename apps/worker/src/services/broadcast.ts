@@ -1,6 +1,6 @@
 import { claimBroadcastStart } from './broadcast-start-claim.js';
 import { buildMessages } from './message-group.js';
-import { countSegmentAudience, savedSegmentAudience } from './saved-segment.js';
+import { countSegmentAudience, parseSavedSegmentConditions, savedSegmentAudience } from './saved-segment.js';
 import { BroadcastDeliveryError, BROADCAST_RECORDING_ERROR, broadcastDeliveryFailure, isDefiniteLineRejection } from './broadcast-delivery-error.js';
 import { BroadcastSenderError, resolveBroadcastSender } from './broadcast-sender.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
@@ -206,14 +206,11 @@ export async function processBroadcastSend(
   // A 'segment' target carries its full audience in segment_conditions and is
   // only deliverable through the resumable queue (no inline broadcast path).
   if (!segmentAudience && broadcast.target_type === 'segment') {
-    const rawConditions = (broadcast as unknown as Record<string, unknown>).segment_conditions;
-    if (typeof rawConditions !== 'string' || !rawConditions) {
+    // Throws on malformed JSON/rules; null means "no filters", which must never
+    // widen to the whole account.
+    segmentAudience = parseSavedSegmentConditions((broadcast as unknown as Record<string, unknown>).segment_conditions);
+    if (!segmentAudience) {
       throw new Error('Segment broadcast has no conditions; edit the broadcast conditions before sending');
-    }
-    try {
-      segmentAudience = JSON.parse(rawConditions);
-    } catch {
-      throw new Error('Saved segment conditions are invalid; edit the broadcast conditions before sending');
     }
   }
   if (segmentAudience) {
