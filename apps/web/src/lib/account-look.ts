@@ -44,7 +44,7 @@ const ACCOUNT_SCOPED_PREFIXES = [
 
 // KIDOUインターンの LINE アカウント。数字はこのアカウント専用の画面
 export const INTERN_CHANNEL_ID = '2010069796'
-const INTERN_ONLY_PREFIXES = ['/intern-stats']
+const INTERN_ONLY_PREFIXES = ['/intern-stats', '/instagram-dm']
 
 /** KIDOUインターンの LINE を選んでいるか（アンケートなどインターン専用の部品を出すかの判定） */
 export function isInternAccount(account: { channelId: string } | null | undefined): boolean {
@@ -75,6 +75,6 @@ export type PageScope = 'account' | 'shared' | 'none'
 export function pageScope(pathname: string): PageScope {
   if (pathname === '/') return 'account'
   // 設定まわりと、KIDOUインターン専用の数字はアカウントの切替と関係しない（自動で送る文面・友だち追加リンクは選んだ LINE ごとに変わる）
-  if (['/accounts', '/staff', '/updates', '/friend-add-settings', '/password', '/intern-stats'].some((p) => pathname.startsWith(p))) return 'none'
+  if (['/accounts', '/staff', '/updates', '/friend-add-settings', '/password', '/intern-stats', '/instagram-dm'].some((p) => pathname.startsWith(p))) return 'none'
   return ACCOUNT_SCOPED_PREFIXES.some((p) => pathname.startsWith(p)) ? 'account' : 'shared'
 }

@@ -29,7 +29,7 @@ binding = "IMAGES"
 bucket_name = "line-harness-images"
 
 [triggers]
-crons = ["*/5 * * * *", "0 */6 * * *"]
+crons = ["* * * * *", "*/5 * * * *", "0 */6 * * *"]
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 5 self-update vars — consumed by /admin/update/*. Secrets
@@ -74,4 +74,4 @@ binding = "IMAGES"
 bucket_name = "line-harness-images"
 
 [env.production.triggers]
-crons = ["*/5 * * * *", "0 */6 * * *"]
+crons = ["* * * * *", "*/5 * * * *", "0 */6 * * *"]

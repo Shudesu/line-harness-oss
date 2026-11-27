@@ -227,6 +227,18 @@ export const RULES: Rule[] = [
   r(['GET', 'PUT'], '/api/intern/richmenus', internAccount),
   r(['POST'], '/api/intern/line-copy/templates', internAccount),
   r(['PUT', 'DELETE'], `/api/intern/line-copy/templates/${ID}`, internAccount),
+  // KIDOUインターンの Instagram 自動DM
+  r(['GET'], '/api/intern/instagram', internAccount),
+  r(['PUT'], '/api/intern/instagram/app', internAccount),
+  r(['POST'], '/api/intern/instagram/login', internAccount),
+  r(['POST'], '/api/intern/instagram/accounts', internAccount),
+  r(['PATCH', 'DELETE'], `/api/intern/instagram/accounts/${ID}`, internAccount),
+  r(['GET', 'POST'], `/api/intern/instagram/accounts/${ID}/rules`, internAccount),
+  r(['GET'], `/api/intern/instagram/accounts/${ID}/media`, internAccount),
+  r(['GET'], `/api/intern/instagram/accounts/${ID}/log`, internAccount),
+  r(['POST'], `/api/intern/instagram/accounts/${ID}/try`, internAccount),
+  r(['POST'], `/api/intern/instagram/accounts/${ID}/poll`, internAccount),
+  r(['PUT', 'DELETE'], `/api/intern/instagram/rules/${ID}`, internAccount),
   // Self / session — no account involved.
   r(['GET'], '/api/staff/me', global),
   r(['POST'], '/api/staff/me/password', global),

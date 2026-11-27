@@ -88,6 +88,8 @@ import { internStats } from './routes/intern-stats.js';
 import { screening } from './routes/screening.js';
 import { internCopy } from './routes/intern-copy.js';
 import { internRichMenus } from './routes/intern-richmenus.js';
+import { internInstagram } from './routes/intern-instagram.js';
+import { pollComments as pollInstagramComments } from './services/intern-instagram.js';
 import { isLinkPreviewBot } from './lib/og-bot.js';
 import { buildOgHtml } from './lib/og-html.js';
 import {
@@ -180,6 +182,7 @@ app.route('/', internStats);
 app.route('/', screening);
 app.route('/', internCopy);
 app.route('/', internRichMenus);
+app.route('/', internInstagram);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
@@ -864,6 +867,18 @@ async function scheduled(
   env: Env['Bindings'],
   _ctx: ExecutionContext,
 ): Promise<void> {
+  // Instagram 自動DM：知らせが届かないとき（Meta の審査前など）のための見回り（1分ごと）。
+  // 1分ごとの回ではこれだけ動かし、配信などほかの処理は従来どおり5分・6時間ごとの回で動かす
+  if (event.cron === '* * * * *') {
+    try {
+      const counts = await pollInstagramComments(env.DB, (url, init) => fetch(url, init));
+      if (Object.keys(counts).length) console.log('[intern-instagram] poll', JSON.stringify(counts));
+    } catch (e) {
+      console.error('intern-instagram poll error:', e);
+    }
+    return;
+  }
+
   // Get all active accounts from DB
   const dbAccounts = await getLineAccounts(env.DB);
 
