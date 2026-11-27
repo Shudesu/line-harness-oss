@@ -9,6 +9,7 @@
 
 import type { Context, Next } from 'hono';
 import type { Env } from '../index.js';
+import { safeDecode } from '../utils/safe-decode.js';
 
 // ---------------------------------------------------------------------------
 // Core rate-limit logic
@@ -124,9 +125,12 @@ const IP_CEILING_WINDOW = 60_000; // 1 min
 export async function rateLimitMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
   const path = new URL(c.req.url).pathname;
 
+  // /images/incoming-* は認証付きの旧受信画像URL（auth.ts の legacyIncoming）。
+  // 公開画像ではないので、キーの総当たりを防ぐため共通の回数制限に残す。
   const isPublicImageRead =
     (c.req.method === 'GET' || c.req.method === 'HEAD') &&
-    path.startsWith('/images/');
+    path.startsWith('/images/') &&
+    !safeDecode(path).startsWith('/images/incoming-');
 
   // Skip rate limiting for docs / public static assets
   if (

@@ -92,4 +92,19 @@ describe('public image rate limiting', () => {
       expect(lastStatus).toBe(429);
     }
   });
+  test('legacy authenticated /images/incoming-* stays rate limited (also when percent-encoded)', async () => {
+    const a = app();
+
+    for (const [path, ip] of [
+      ['/images/incoming-abc.jpg', '198.51.100.90'],
+      ['/images/%69ncoming-abc.jpg', '198.51.100.91'],
+    ] as const) {
+      let lastStatus = 0;
+      for (let i = 0; i < 101; i++) {
+        const res = await a.request(path, { headers: { 'cf-connecting-ip': ip } }, env);
+        lastStatus = res.status;
+      }
+      expect(lastStatus).toBe(429);
+    }
+  });
 });
