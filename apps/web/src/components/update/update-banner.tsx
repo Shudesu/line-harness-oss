@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  getCurrentVersion,
+  getCurrentVersionCached,
   getManifest,
   detectFork,
   findLatestUpgrade,
@@ -34,7 +34,7 @@ export function UpdateBanner() {
     let cancelled = false
     ;(async () => {
       try {
-        const current = await getCurrentVersion()
+        const current = await getCurrentVersionCached()
         if (cancelled) return
         // バージョン未埋め込みビルドでは manifest 照合自体が無意味なので
         // バナーを出さない (自前デプロイ運用では正常な状態)。
