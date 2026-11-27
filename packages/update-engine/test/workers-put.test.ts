@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { putWorkerScript, type WorkerBinding } from '../src/cf-api/workers.js';
+import { listWorkerBindings, putWorkerScript, type WorkerBinding } from '../src/cf-api/workers.js';
 
 const creds = { accountId: 'acc', apiToken: 'tok' };
 
@@ -110,28 +110,50 @@ describe('putWorkerScript metadata', () => {
     expect(metadata).not.toHaveProperty('compatibility_flags');
   });
 
-  // Regression: adoption/update flows re-send the bindings returned by
-  // GET /bindings verbatim. That list contains secret_text entries WITHOUT
-  // their values (CF never returns secret values), and the script upload
-  // API rejects a textless secret_text binding with error 10021
-  // "invalid or missing text property for binding <NAME>". Secrets must
-  // instead be carried over via metadata.keep_bindings.
-  it('drops textless secret_text bindings and inherits them via keep_bindings', async () => {
+  it('preserves write-only bindings when updating a Worker with assets', async () => {
+    const listedBindings = [
+      ...BINDINGS,
+      { type: 'secret_text', name: 'WORKER_URL' },
+      { type: 'secret_text', name: 'ADMIN_ORIGIN' },
+      { type: 'secret_key', name: 'SIGNING_KEY' },
+    ];
+    fetchMock.mockImplementationOnce(async (url: string, init: RequestInit) => {
+      expect(url).toMatch(/\/scripts\/w\/bindings$/);
+      expect(init.method).toBe('GET');
+      return Response.json({ success: true, result: listedBindings });
+    });
+    fetchMock.mockImplementationOnce(async (url: string, init: RequestInit) => {
+      expect(url).toMatch(/\/scripts\/w$/);
+      expect(init.method).toBe('PUT');
+      const metadataPart = (init.body as FormData).get('metadata') as Blob;
+      const metadata = JSON.parse(await metadataPart.text());
+      if (metadata.bindings.some((binding: WorkerBinding) =>
+        binding.type === 'secret_text' && typeof binding.text !== 'string'
+      )) {
+        return Response.json({
+          success: false,
+          errors: [{ code: 10021, message: 'invalid or missing text property' }],
+        }, { status: 400 });
+      }
+      expect(metadata.bindings).toEqual(BINDINGS);
+      expect(metadata.keep_bindings).toEqual(['secret_text', 'secret_key']);
+      expect(metadata.assets).toEqual({
+        jwt: 'assets-jwt',
+        config: { run_worker_first: true },
+      });
+      return Response.json({ success: true });
+    });
+
+    const bindings = await listWorkerBindings({ creds, scriptName: 'w' });
+    expect(bindings).toEqual(listedBindings);
     await putWorkerScript({
       creds,
       scriptName: 'w',
       scriptContent: Buffer.from('export default {}'),
-      bindings: [
-        ...BINDINGS,
-        { type: 'secret_text', name: 'ADMIN_ORIGIN' },
-        { type: 'secret_text', name: 'WORKER_URL' },
-        { type: 'secret_key', name: 'SIGNING_KEY' },
-      ],
+      bindings,
+      assets: { jwt: 'assets-jwt' },
     });
-
-    const metadata = await capturedMetadata(fetchMock);
-    expect(metadata.bindings).toEqual(BINDINGS);
-    expect(metadata.keep_bindings).toEqual(['secret_text', 'secret_key']);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('keeps secret_text bindings that carry an explicit text value', async () => {
