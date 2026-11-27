@@ -23,6 +23,7 @@ import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 import { getQuotaUsage, quotaEnabled, type QuotaEnv } from './quota.js';
+import { fireEvent } from './event-bus.js';
 
 /**
  * Replace template variables in message content.
@@ -432,11 +433,29 @@ async function processSingleDelivery(
 
   // 到達タグ付与 (advance / complete の後 = 再送が起きてもタグ付与は影響しない順序)
   // 失敗してもログに残すだけで配信フローは止めない。
+  // 新しくタグが付いたときだけ tag_change をイベントバスへ発火し、手動タグ付与
+  // (routes/friends.ts) と同じく automation (switch_rich_menu 等)・スコアリング・
+  // 外向き Webhook が到達タグでも動くようにする。すでに付いていた場合
+  // (INSERT OR IGNORE が no-op) は何も変わっていないので発火しない
+  // — friend-tag-attach.ts の自動付与経路と同じ規則。
   if (currentStep.on_reach_tag_id) {
     try {
-      await addTagToFriend(db, friend.id, currentStep.on_reach_tag_id);
+      const added = await addTagToFriend(db, friend.id, currentStep.on_reach_tag_id);
+      if (added) {
+        // 友だちがまだどのアカウントにも割り当てられていないときは、実際に配信した
+        // アカウントをイベントの所属にする (複数アカウント運用で automation の
+        // アカウント絞り込み・LINE アクションの認証情報が決まらなくなるのを防ぐ)。
+        // 割り当て済みならその友だち自身のアカウントが正。
+        await fireEvent(
+          db,
+          'tag_change',
+          { friendId: friend.id, eventData: { tagId: currentStep.on_reach_tag_id, action: 'add' } },
+          undefined,
+          friend.line_account_id ?? deliveryAccountId ?? undefined,
+        );
+      }
     } catch (err) {
-      console.error(`[scenario] tag attach failed step=${currentStep.id}:`, err);
+      console.error(`[scenario] reach tag attach / tag_change failed step=${currentStep.id}:`, err);
     }
   }
   return true;

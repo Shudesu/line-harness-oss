@@ -24,6 +24,8 @@ import {
   evaluateCondition,
 } from './step-delivery.js';
 import { decorateForFriendPush } from './auto-track.js';
+import { fireEvent } from './event-bus.js';
+import { resolveTagEventAccount, type TagAutomationDispatch } from './tag-automation-context.js';
 
 export interface ImmediatePushContext {
   defaultAccessToken: string;
@@ -76,6 +78,13 @@ export interface ImmediatePushOptions {
    * fence every same-flow race there.
    */
   skipCooldown?: boolean;
+  /**
+   * Tag-automation dispatch of the caller, when this push is itself a side
+   * effect of a tag change (friend-tag-attach). The reach tag's tag_change
+   * event joins it so the chain budget / cycle guard keep covering the whole
+   * cascade. Omitted = the event starts a fresh dispatch.
+   */
+  dispatch?: TagAutomationDispatch;
 }
 
 /**
@@ -225,12 +234,45 @@ export async function pushImmediateFirstStep(
       }
     };
 
+    // Reach tag + its tag_change event. Only a NEW attachment fires the event
+    // (addTagToFriend is INSERT OR IGNORE and reports whether a row was
+    // added): the cooldown branch below and the racer that actually sent the
+    // step both get here, and a friend may already carry the tag — in every
+    // one of those cases exactly one caller sees `added`, so automations /
+    // scoring / outgoing webhooks run once. Same rule as the automatic path in
+    // friend-tag-attach.ts; the event shape matches the manual route
+    // (routes/friends.ts). Failures are logged and never undo the delivery.
     const attachReachTag = async () => {
-      if (!firstStep.on_reach_tag_id) return;
+      const tagId = firstStep.on_reach_tag_id;
+      if (!tagId) return;
       try {
-        await addTagToFriend(db, friendId, firstStep.on_reach_tag_id);
+        const added = await addTagToFriend(db, friendId, tagId);
+        if (!added) return;
+        // LIFF/OAuth entry points run before the follow webhook wires
+        // friend.line_account_id; the caller-verified channel fills that gap
+        // (an assigned friend's own account stays authoritative).
+        // The tag row is already written, so a channel that cannot be resolved
+        // must not swallow the event (a later attempt would see `added` =
+        // false and never fire it) — fall back to the event bus's own
+        // per-friend resolution.
+        let eventAccountId: string | null | undefined;
+        if (ctx.accountChannelId) {
+          try {
+            eventAccountId = (await resolveTagEventAccount(db, friendId, undefined, ctx.accountChannelId)).accountId;
+          } catch (err) {
+            console.warn('[immediate-first-step] tag event account unresolved, using the friend default:', err);
+          }
+        }
+        await fireEvent(
+          db,
+          'tag_change',
+          { friendId, eventData: { tagId, action: 'add' } },
+          undefined,
+          eventAccountId,
+          options?.dispatch,
+        );
       } catch (err) {
-        console.error(`[immediate-first-step] tag attach failed step=${firstStep.id}:`, err);
+        console.error(`[immediate-first-step] reach tag attach / tag_change failed step=${firstStep.id}:`, err);
       }
     };
 
