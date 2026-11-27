@@ -1,20 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureAdminAuth, findMissingRequiredSecrets } from "../src/steps/admin-auth.js";
-import { wrangler } from "../src/lib/wrangler.js";
+import { wrangler, WranglerError, wranglerInteractive } from "../src/lib/wrangler.js";
+
+const ci = vi.hoisted(() => ({ enabled: false }));
+vi.mock("ci-info", () => ({ get isCI() { return ci.enabled; } }));
 
 const spinner = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn() }));
 vi.mock("@clack/prompts", () => ({ spinner: () => spinner, log: { warn: vi.fn() } }));
-vi.mock("../src/lib/wrangler.js", () => ({ wrangler: vi.fn() }));
+vi.mock("../src/lib/wrangler.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/lib/wrangler.js")>(),
+  wrangler: vi.fn(),
+  wranglerInteractive: vi.fn(),
+}));
 
 const listed = JSON.stringify([{ name: "ADMIN_ORIGIN" }, { name: "ADMIN_ALLOW_CROSS_SITE" }]);
 const options = { workerName: "offline", workerUrl: "https://private-worker.invalid", adminUrl: "https://private-admin.invalid" };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  ci.enabled = false;
   vi.mocked(wrangler).mockReset();
+  vi.mocked(wranglerInteractive).mockReset();
   for (const name of ["log", "warn", "error", "info"] as const) vi.spyOn(console, name).mockImplementation(() => {});
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("required admin auth verification", () => {
   it("accepts required names, extra names and a leading CLI banner", () => {
@@ -72,6 +84,46 @@ describe("required admin auth verification", () => {
     expect(wrangler).toHaveBeenNthCalledWith(5, ["versions", "deploy", "--name", "offline", "--yes"]);
     expect(wrangler).toHaveBeenNthCalledWith(6, ["secret", "list", "--name", "offline", "--format", "json"]);
     expect(spinner.stop).toHaveBeenCalledWith("管理画面の認証設定完了");
+  });
+
+  it.each([
+    { tty: true, isCI: false },
+    { tty: false, isCI: false },
+    { tty: true, isCI: true },
+  ])("handles a piped Wrangler auth error (TTY: $tty, CI: $isCI)", async ({ tty, isCI }) => {
+    ci.enabled = isCI;
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", undefined);
+    const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const stdoutTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: tty });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: tty });
+
+    try {
+      const authError = new WranglerError(
+        "Wrangler auth failed",
+        "In a non-interactive environment, it's necessary to set a CLOUDFLARE_API_TOKEN environment variable for wrangler to work.",
+      );
+      vi.mocked(wrangler).mockRejectedValueOnce(new Error("bulk unsupported")).mockRejectedValueOnce(authError)
+        .mockResolvedValueOnce("").mockResolvedValueOnce("").mockResolvedValueOnce("").mockResolvedValueOnce("")
+        .mockResolvedValueOnce(listed);
+
+      if (tty && !isCI) {
+        await configureAdminAuth(options);
+        expect(wranglerInteractive).toHaveBeenCalledTimes(1);
+        expect(wranglerInteractive).toHaveBeenCalledWith(["login"]);
+        expect(wrangler).toHaveBeenNthCalledWith(3, ...vi.mocked(wrangler).mock.calls[1]);
+        expect(wrangler).toHaveBeenNthCalledWith(7, ["secret", "list", "--name", "offline", "--format", "json"]);
+      } else {
+        await expect(configureAdminAuth(options)).rejects.toThrow("認証設定に失敗");
+        expect(wranglerInteractive).not.toHaveBeenCalled();
+        expect(wrangler).toHaveBeenCalledTimes(2);
+      }
+    } finally {
+      for (const [stream, descriptor] of [[process.stdin, stdinTTY], [process.stdout, stdoutTTY]] as const) {
+        if (descriptor) Object.defineProperty(stream, "isTTY", descriptor);
+        else Reflect.deleteProperty(stream, "isTTY");
+      }
+    }
   });
 
   it("sanitizes fallback write failures and leaves completion unset", async () => {

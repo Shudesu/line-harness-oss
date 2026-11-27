@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
-import { wrangler } from "../lib/wrangler.js";
+import { isCI } from "ci-info";
+import { wrangler, WranglerError, wranglerInteractive } from "../lib/wrangler.js";
 
 interface AdminAuthOptions {
   workerName: string;
@@ -36,17 +37,36 @@ export async function configureAdminAuth(options: AdminAuthOptions): Promise<voi
     secrets.WORKER_URL = options.workerUrl;
   }
 
+  let loginAttempted = false;
+  async function write(args: string[], input: string): Promise<void> {
+    const command = { input };
+    try {
+      await wrangler(args, command);
+    } catch (error) {
+      if (loginAttempted || isCI || process.env.CLOUDFLARE_API_TOKEN ||
+        !process.stdin.isTTY || !process.stdout.isTTY ||
+        !(error instanceof WranglerError) ||
+        !error.stderr.includes("In a non-interactive environment") ||
+        !error.stderr.includes("CLOUDFLARE_API_TOKEN")) {
+        throw error;
+      }
+
+      // Wrangler needs a terminal for OAuth login, while these writes use piped input.
+      loginAttempted = true;
+      s.stop("Cloudflare にログインが必要です");
+      await wranglerInteractive(["login"]);
+      s.start("管理画面の認証設定中...");
+      await wrangler(args, command);
+    }
+  }
+
   const jsonPayload = JSON.stringify(secrets);
   try {
     try {
-      await wrangler(["secret", "bulk", "--name", options.workerName], {
-        input: jsonPayload,
-      });
+      await write(["secret", "bulk", "--name", options.workerName], jsonPayload);
     } catch {
       for (const [name, value] of Object.entries(secrets)) {
-        await wrangler(["versions", "secret", "put", name, "--name", options.workerName], {
-          input: value,
-        });
+        await write(["versions", "secret", "put", name, "--name", options.workerName], value);
       }
       await wrangler(["versions", "deploy", "--name", options.workerName, "--yes"]);
     }

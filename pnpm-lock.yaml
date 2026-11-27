@@ -238,6 +238,9 @@ importers:
       '@line-harness/update-engine':
         specifier: workspace:^0.0.13
         version: link:../update-engine
+      ci-info:
+        specifier: 4.4.0
+        version: 4.4.0
       execa:
         specifier: ^9.5.2
         version: 9.6.1
@@ -2623,6 +2626,10 @@ packages:
 
   chownr@1.1.4:
     resolution: {integrity: sha512-jJ0bqzaylmJtVnNgzTeSOs8DPavpbYgEr/b0YL8/2GO3xJEhInFmhKMUnEJQjZumK7KXGFhUy89PrsJWlakBVg==}
+
+  ci-info@4.4.0:
+    resolution: {integrity: sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg==}
+    engines: {node: '>=8'}
 
   client-only@0.0.1:
     resolution: {integrity: sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==}
@@ -6278,6 +6285,8 @@ snapshots:
       readdirp: 4.1.2
 
   chownr@1.1.4: {}
+
+  ci-info@4.4.0: {}
 
   client-only@0.0.1: {}
 
