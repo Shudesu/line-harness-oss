@@ -148,6 +148,7 @@ function showFriendAdd(profile: { displayName: string; pictureUrl?: string }) {
             method: 'POST',
             body: JSON.stringify({
               idToken,
+              accessToken: liff.getAccessToken() ?? undefined,
               displayName: fp.displayName,
               existingUuid: getSavedUuid(),
               ref: getRef() || undefined,
@@ -261,6 +262,7 @@ async function linkAndAddFlow() {
       method: 'POST',
       body: JSON.stringify({
         idToken: rawIdToken,
+        accessToken: liff.getAccessToken() ?? undefined,
         displayName: profile.displayName,
         existingUuid: existingUuid,
         ref: ref,
@@ -386,6 +388,7 @@ async function initSalonBooking(): Promise<void> {
     method: 'POST',
     body: JSON.stringify({
       idToken,
+      accessToken: liff.getAccessToken() ?? undefined,
       displayName: profile.displayName,
       existingUuid,
       ref: ref || undefined,
@@ -461,6 +464,7 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
     method: 'POST',
     body: JSON.stringify({
       idToken,
+      accessToken: liff.getAccessToken() ?? undefined,
       displayName: profile.displayName,
       existingUuid,
       ref: ref || undefined,
@@ -529,6 +533,7 @@ async function initWebinar(): Promise<void> {
     method: 'POST',
     body: JSON.stringify({
       idToken,
+      accessToken: liff.getAccessToken() ?? undefined,
       displayName: profile.displayName,
       existingUuid,
       ref: ref || undefined,
@@ -593,6 +598,7 @@ async function initAffiliate(): Promise<void> {
       method: 'POST',
       body: JSON.stringify({
         idToken: liff.getIDToken(),
+        accessToken: liff.getAccessToken() ?? undefined,
         displayName: profile.displayName,
         existingUuid,
         ref: ref || undefined,

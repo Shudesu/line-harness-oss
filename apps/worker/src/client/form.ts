@@ -17,6 +17,7 @@ declare const liff: {
   login(opts?: { redirectUri?: string }): void;
   getProfile(): Promise<{ userId: string; displayName: string; pictureUrl?: string }>;
   getIDToken(): string | null;
+  getAccessToken(): string | null;
   isInClient(): boolean;
   closeWindow(): void;
 };
@@ -1105,6 +1106,7 @@ export async function initForm(formId: string | null): Promise<void> {
         method: 'POST',
         body: JSON.stringify({
           idToken: rawIdToken,
+          accessToken: liff.getAccessToken() ?? undefined,
           displayName: profile.displayName,
           existingUuid: state.friendId,
         }),

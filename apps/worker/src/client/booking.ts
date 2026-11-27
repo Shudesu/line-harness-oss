@@ -14,6 +14,7 @@ declare const liff: {
   login(opts?: { redirectUri?: string }): void;
   getProfile(): Promise<{ userId: string; displayName: string; pictureUrl?: string }>;
   getIDToken(): string | null;
+  getAccessToken(): string | null;
   getDecodedIDToken(): { sub: string; name?: string; email?: string; picture?: string } | null;
   isInClient(): boolean;
   closeWindow(): void;
@@ -440,6 +441,7 @@ export async function initBooking(): Promise<void> {
       method: 'POST',
       body: JSON.stringify({
         idToken: rawIdToken,
+        accessToken: liff.getAccessToken() ?? undefined,
         displayName: profile.displayName,
         existingUuid: existingUuid,
       }),

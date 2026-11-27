@@ -178,6 +178,14 @@ export interface UpsertFriendInput {
    * - 'rebind': overwrite — a follow event proves the user now follows it.
    */
   accountMode?: 'fill' | 'rebind';
+  /**
+   * Create the friend, but leave a row that already exists exactly as it is
+   * (profile, account, follow status and timestamps) and return it. For a
+   * caller that is not a follow event and may race one — /api/liff/link
+   * creating the row ahead of the follow webhook: whoever wrote the row first
+   * (a follow, or a follow and a later unfollow) holds the newer truth.
+   */
+  createOnly?: boolean;
 }
 
 export async function upsertFriend(
@@ -185,7 +193,7 @@ export async function upsertFriend(
   input: UpsertFriendInput,
 ): Promise<Friend> {
   const existing = await getFriendByLineUserId(db, input.lineUserId);
-  if (existing) return updateFriendOnUpsert(db, input, existing);
+  if (existing) return input.createOnly ? existing : updateFriendOnUpsert(db, input, existing);
 
   const now = jstNow();
   const id = crypto.randomUUID();
@@ -218,7 +226,7 @@ export async function upsertFriend(
 
   if (inserted.meta?.changes === 0) {
     const winner = await getFriendByLineUserId(db, input.lineUserId);
-    if (winner) return updateFriendOnUpsert(db, input, winner);
+    if (winner) return input.createOnly ? winner : updateFriendOnUpsert(db, input, winner);
   }
 
   return (await getFriendById(db, id))!;
