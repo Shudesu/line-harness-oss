@@ -5,7 +5,8 @@ import { getClient } from "../client.js";
 export function registerManageTrackedLinks(server: McpServer): void {
   server.tool(
     "manage_tracked_links",
-    "トラッキングリンクの管理操作。list: 一覧、update: 更新、delete: 削除。作成は create_tracked_link ツールを使用。",
+    "クリック計測用トラッキングリンク（/t/）の管理。list: 一覧、update: 更新、delete: 削除。作成は create_tracked_link を使用。" +
+      "流入リンク（/r/、entry routes）の一覧・更新・削除は manage_entry_routes を使用。",
     {
       action: z.enum(["list", "update", "delete"]).describe("Action to perform"),
       linkId: z.string().optional().describe("Tracked link ID (required for update/delete)"),
@@ -39,7 +40,14 @@ export function registerManageTrackedLinks(server: McpServer): void {
         const client = getClient();
         if (action === "list") {
           const links = await client.trackedLinks.list();
-          return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, trackedLinks: links }, null, 2) }] };
+          const result = {
+            success: true,
+            trackedLinks: links,
+            ...(links.length === 0
+              ? { _hint: "クリック計測リンク（/t/）はありません。流入リンク（/r/）の一覧は manage_entry_routes を action=list で呼び出してください。" }
+              : {}),
+          };
+          return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
         }
         if (action === "update") {
           if (!linkId) throw new Error("linkId is required for update");
