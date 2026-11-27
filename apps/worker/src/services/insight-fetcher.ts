@@ -24,14 +24,24 @@ export async function processInsightFetch(
   const pending = await getPendingInsights(db)
   if (pending.length === 0) return
 
+  const clientFor = async (accountId: string | null): Promise<LineClient> => {
+    if (!accountId) return defaultLineClient
+    const cached = lineClients.get(accountId)
+    if (cached) return cached
+    // Inactive accounts still own their historical insights. They are absent
+    // from the active client map, but must never fall back to another channel.
+    const account = await getLineAccountById(db, accountId)
+    if (!account) throw new Error('Insight LINE account not found')
+    const client = new LineClient(account.channel_access_token)
+    lineClients.set(accountId, client)
+    return client
+  }
+
   for (const item of pending) {
     try {
-      const client =
-        (item.lineAccountId && lineClients.get(item.lineAccountId)) ||
-        defaultLineClient
-
       if (item.lineRequestId) {
         // Broadcast — use message event insight
+        const client = await clientFor(item.lineAccountId)
         const response = (await client.getMessageEventInsight(
           item.lineRequestId,
         )) as Record<string, unknown>
@@ -107,6 +117,7 @@ export async function processInsightFetch(
         }
       } else if (item.aggregationUnit) {
         // Multicast (single-account tag) — use unit insight
+        const client = await clientFor(item.lineAccountId)
         const sentDate = item.sentAt.slice(0, 10).replace(/-/g, '')
         const response = (await client.getUnitInsight(
           item.aggregationUnit,

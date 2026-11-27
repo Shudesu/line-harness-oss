@@ -84,16 +84,6 @@ async function runScheduled(
     catch { console.warn('[ig-link] cleanup_failed'); }
   }
   await flushXGateEvents(env);
-  // Get all active accounts from DB
-  const dbAccounts = await getLineAccounts(env.DB);
-
-  // Build LineClient map for insight fetching (keyed by account id)
-  const lineClients = new Map<string, LineClient>();
-  for (const account of dbAccounts) {
-    if (account.is_active) {
-      lineClients.set(account.id, new LineClient(account.channel_access_token));
-    }
-  }
   const defaultLineClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
 
   // 配信系は1回だけ実行（内部でfriendのline_account_idから正しいlineClientを動的解決）
@@ -267,6 +257,14 @@ async function runScheduled(
 
   // Fetch broadcast insights (runs daily, self-throttled)
   try {
+    // Read credentials after the refresh earlier in this tick has completed.
+    const dbAccounts = await getLineAccounts(env.DB);
+    const lineClients = new Map<string, LineClient>();
+    for (const account of dbAccounts) {
+      if (account.is_active) {
+        lineClients.set(account.id, new LineClient(account.channel_access_token));
+      }
+    }
     await processInsightFetch(env.DB, lineClients, defaultLineClient);
   } catch (e) {
     console.error('Insight fetch error:', e);
