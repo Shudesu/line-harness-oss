@@ -227,7 +227,7 @@ export async function processBroadcastSend(
       throw new Error(`Cannot personalize broadcast: ${missingName} recipient(s) have no display name`);
     }
     await db.prepare(
-      `UPDATE broadcasts SET status = 'sending', batch_offset = 0, total_count = ? WHERE id = ?`,
+      `UPDATE broadcasts SET total_count = ? WHERE id = ? AND status = 'sending' AND batch_offset = 0`,
     ).bind(total, broadcast.id).run();
     return (await getBroadcastById(db, broadcastId))!;
   }

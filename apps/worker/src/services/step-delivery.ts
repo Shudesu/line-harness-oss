@@ -458,7 +458,9 @@ async function processSingleDelivery(
   if (currentStep.on_reach_tag_id) {
     try {
       const { attachTagAndFireSideEffects } = await import('./friend-tag-attach.js');
-      await attachTagAndFireSideEffects(db, friend.id, currentStep.on_reach_tag_id);
+      await attachTagAndFireSideEffects(db, friend.id, currentStep.on_reach_tag_id, undefined, {
+        lineAccountId: deliveryAccountId ?? null,
+      });
     } catch (err) {
       console.error(`[scenario] tag attach failed step=${currentStep.id}:`, err);
     }
