@@ -1,6 +1,6 @@
 import { claimBroadcastStart } from './broadcast-start-claim.js';
 import { buildMessages } from './message-group.js';
-import { countSegmentAudience, savedSegmentAudience } from './saved-segment.js';
+import { countSegmentAudience, parseSavedSegmentConditions, savedSegmentAudience } from './saved-segment.js';
 import { BroadcastDeliveryError, BROADCAST_RECORDING_ERROR, broadcastDeliveryFailure, isDefiniteLineRejection } from './broadcast-delivery-error.js';
 import { BroadcastSenderError, resolveBroadcastSender } from './broadcast-sender.js';
 import { extractFlexAltText } from '../utils/flex-alt-text.js';
@@ -213,6 +213,22 @@ export async function processBroadcastSend(
           SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
         WHERE id = ?`,
     ).bind(total, JSON.stringify(segmentAudience), broadcast.id).run();
+    return (await getBroadcastById(db, broadcastId))!;
+  }
+
+  // A scheduled segment broadcast carries its audience in segment_conditions;
+  // it can only be delivered through the resumable segment queue, never as a
+  // single broadcast/multicast. Queue it with the saved conditions unchanged.
+  if (broadcast.target_type === 'segment') {
+    const conditions = parseSavedSegmentConditions((broadcast as unknown as Record<string, unknown>).segment_conditions);
+    if (!conditions) throw new Error('Segment broadcast has no saved conditions');
+    const { total, missingName } = await countSegmentAudience(db, broadcast, conditions);
+    if (hasRecipientVariables(broadcast.message_content) && missingName > 0) {
+      throw new Error(`Cannot personalize broadcast: ${missingName} recipient(s) have no display name`);
+    }
+    await db.prepare(
+      `UPDATE broadcasts SET status = 'sending', batch_offset = 0, total_count = ? WHERE id = ?`,
+    ).bind(total, broadcast.id).run();
     return (await getBroadcastById(db, broadcastId))!;
   }
 

@@ -15,13 +15,13 @@ import {
   jstNow,
   computeNextDeliveryAt,
   resolveStepContent,
-  addTagToFriend,
   type DeliveryMode,
   type Friend,
 } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
+import { recordStepDeliveryError } from './step-delivery-errors.js';
 import { getQuotaUsage, quotaEnabled, type QuotaEnv } from './quota.js';
 
 /**
@@ -134,7 +134,29 @@ export function getLineApiErrorStatus(err: unknown): number | null {
 
 export function isPermanentLineDeliveryError(err: unknown): boolean {
   const status = getLineApiErrorStatus(err);
+  // Monthly message limit exhaustion is a 429 that retrying cannot fix until the
+  // LINE quota resets; other 429s (rate limit) stay transient.
+  if (status === 429 && err instanceof Error && /monthly limit|monthly quota/i.test(err.message)) return true;
   return status !== null && status >= 400 && status < 500 && ![408, 409, 429].includes(status);
+}
+
+/** Account the delivery resolves to: the scenario's account, else the friend's. Null when unknown. */
+async function resolveDiagnosticAccountId(db: D1Database, enrollmentId: string): Promise<string | null> {
+  try {
+    const row = await db
+      .prepare(
+        `SELECT COALESCE(s.line_account_id, f.line_account_id) AS line_account_id
+         FROM friend_scenarios fs
+         JOIN scenarios s ON s.id = fs.scenario_id
+         JOIN friends f ON f.id = fs.friend_id
+         WHERE fs.id = ?`,
+      )
+      .bind(enrollmentId)
+      .first<{ line_account_id: string | null }>();
+    return row?.line_account_id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function processStepDeliveries(
@@ -192,6 +214,7 @@ export async function processStepDeliveries(
       // 408/409/429 are transient and retain the existing 5-minute recovery.
       if (isPermanentLineDeliveryError(err)) {
         await pauseFriendScenarioDelivery(db, fs.id);
+        await recordStepDeliveryError(db, fs.id, err, await resolveDiagnosticAccountId(db, fs.id));
         console.warn(
           `[step-delivery] paused enrollment=${fs.id} after permanent LINE ${getLineApiErrorStatus(err)}`,
         );
@@ -434,7 +457,8 @@ async function processSingleDelivery(
   // 失敗してもログに残すだけで配信フローは止めない。
   if (currentStep.on_reach_tag_id) {
     try {
-      await addTagToFriend(db, friend.id, currentStep.on_reach_tag_id);
+      const { attachTagAndFireSideEffects } = await import('./friend-tag-attach.js');
+      await attachTagAndFireSideEffects(db, friend.id, currentStep.on_reach_tag_id);
     } catch (err) {
       console.error(`[scenario] tag attach failed step=${currentStep.id}:`, err);
     }
