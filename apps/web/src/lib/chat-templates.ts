@@ -45,6 +45,8 @@ export function insertTemplateText(
 /**
  * 文面に `{{name}}` などの差し込み変数が残っているか。個別チャットの手動送信では
  * 変数を置き換えないため、そのまま送るとお客さまに `{{name}}` が届いてしまう。
+ * 「複数・Flex」の下書き (JSON) もそのまま渡せる。JSON の構文に `{{` は現れないため、
+ * 一致するのは文字列の中に書かれた変数だけになる。
  */
 export function hasTemplateVariables(text: string): boolean {
   return /\{\{[^{}]+\}\}/.test(text)

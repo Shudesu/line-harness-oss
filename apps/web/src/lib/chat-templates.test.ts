@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { packMessageItems } from '@line-crm/shared'
 import { filterInsertableTemplates, hasTemplateVariables, insertTemplateText } from './chat-templates'
 
 const template = (id: string, overrides: Partial<{ name: string; category: string; messageType: string; messageContent: string }> = {}) => ({
@@ -67,5 +68,18 @@ describe('hasTemplateVariables', () => {
     expect(hasTemplateVariables('{name}')).toBe(false)
     expect(hasTemplateVariables('{{}}')).toBe(false)
     expect(hasTemplateVariables('{{ 未完')).toBe(false)
+  })
+
+  it('checks the text inside 複数・Flex drafts without matching JSON braces', () => {
+    const flex = (text: string) => JSON.stringify({ type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text }] } })
+    const group = (text: string, flexText = 'ご予約ありがとうございます') => packMessageItems([
+      { messageType: 'text', messageContent: text },
+      { messageType: 'flex', messageContent: flex(flexText) },
+    ]).messageContent
+    expect(hasTemplateVariables(group('{{name}}様'))).toBe(true)
+    expect(hasTemplateVariables(group('こんにちは', '{{name}}様'))).toBe(true)
+    expect(hasTemplateVariables(group('こんにちは'))).toBe(false)
+    expect(hasTemplateVariables(flex('{{name}}様'))).toBe(true)
+    expect(hasTemplateVariables(flex('こんにちは'))).toBe(false)
   })
 })

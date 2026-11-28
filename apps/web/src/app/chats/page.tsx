@@ -1294,8 +1294,9 @@ export default function ChatsPage() {
                   </fieldset>
                 </div>}
                 {/* 個別チャットの手動送信では {{name}} などの変数を置き換えないため、
-                    そのままお客さまに届く前に気づけるようにする */}
-                {!groupDraft && hasTemplateVariables(messageContent) && (
+                    そのままお客さまに届く前に気づけるようにする。「複数・Flex」に
+                    切り替えたあとは送信される下書き (groupDraft) の内容を確認する */}
+                {hasTemplateVariables(groupDraft?.messageContent ?? messageContent) && (
                   <p role="status" className="mb-2 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
                     {'手動の送信では {{name}} などの変数は置き換わりません。送信前にお客さまの名前などへ書き換えてください。'}
                   </p>
