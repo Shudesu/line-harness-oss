@@ -31,6 +31,7 @@ import {
 } from '../services/booking-idempotency.js';
 import { sendBookingNotification } from '../services/booking-notifier.js';
 import { insertConfirmationReminders } from '../services/booking-confirm.js';
+import { cancelMeetConsultation } from '../services/meet-consultation-reminders.js';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import {
   DEFAULT_ACCOUNT_SETTINGS,
@@ -1630,9 +1631,11 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
   const id = c.req.param('id');
   const b = await c.req.json<{ action: BookingAction }>();
   const row = await c.env.DB
-    .prepare(`SELECT id, status, starts_at FROM bookings WHERE id = ? AND line_account_id = ?`)
+    .prepare(
+      `SELECT id, status, starts_at, external_event_id FROM bookings WHERE id = ? AND line_account_id = ?`,
+    )
     .bind(id, accountId)
-    .first<{ id: string; status: BookingStatus; starts_at: string }>();
+    .first<{ id: string; status: BookingStatus; starts_at: string; external_event_id: string | null }>();
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!canTransition(row.status, b.action)) {
     return c.json({ error: 'invalid_transition' }, 409);
@@ -1681,6 +1684,17 @@ booking.patch('/api/booking/admin/requests/:id', async (c) => {
       )
       .bind(id)
       .run();
+    // オートウェビナーの即時予約は、予約の Google Calendar 予定 (external_event_id)
+    // に Meet 個別相談とそのリマインドを紐づけている。予約だけ取り消すと相談が
+    // confirmed のまま残り、取り消した相談の Meet 参加リンクが送られ続けるため、
+    // 相談とリマインドも一緒に取り消す。
+    if (row.external_event_id) {
+      try {
+        await cancelMeetConsultation(c.env.DB, row.external_event_id);
+      } catch (error) {
+        console.error('Meet consultation cancel failed:', error);
+      }
+    }
     c.executionCtx.waitUntil(
       removeBookingFromGoogle(c.env.DB, googleCredentials(c.env), id).catch((error) =>
         console.error('Google Calendar delete failed:', error),

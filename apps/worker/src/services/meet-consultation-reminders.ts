@@ -184,14 +184,18 @@ export async function registerMeetConsultation(
         .bind(crypto.randomUUID(), consultationId, item.kind, item.scheduledAt, nowIso, nowIso)
         .run();
     } else if (scheduleChanged || reminder.status === 'cancelled') {
+      // id は送信時の X-Line-Retry-Key でもある。日程・宛先・Meet URL が変わったのに
+      // 同じ id のまま送ると、LINE は 24時間以内の同じキーを受理済み (409) として扱い、
+      // 新しい内容は届かないまま sent になる。内容が変わるときは新しい id を振る。
+      // 内容が同じまま取り消し → 再登録した場合は、二重送信を防ぐため id を保つ。
       await db
         .prepare(
           `UPDATE meet_consultation_reminders
-              SET scheduled_at=?, status='pending', retry_count=0, sent_at=NULL,
+              SET id=?, scheduled_at=?, status='pending', retry_count=0, sent_at=NULL,
                   last_error=NULL, updated_at=?
             WHERE id=?`,
         )
-        .bind(item.scheduledAt, nowIso, reminder.id)
+        .bind(scheduleChanged ? crypto.randomUUID() : reminder.id, item.scheduledAt, nowIso, reminder.id)
         .run();
     }
   }
