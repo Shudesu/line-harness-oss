@@ -229,7 +229,7 @@ export async function pushImmediateFirstStep(
       try {
         // tag_change / tag_added を発火させる (単なる INSERT ではタグ起点のオートメーションが動かない)。
         const { attachTagAndFireSideEffects } = await import('./friend-tag-attach.js');
-        await attachTagAndFireSideEffects(db, friendId, firstStep.on_reach_tag_id, ctx);
+        await attachTagAndFireSideEffects(db, friendId, firstStep.on_reach_tag_id);
       } catch (err) {
         console.error(`[immediate-first-step] tag attach failed step=${firstStep.id}:`, err);
       }
