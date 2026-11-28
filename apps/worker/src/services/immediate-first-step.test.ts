@@ -37,6 +37,11 @@ const dbMocks = vi.hoisted(() => ({
 }));
 vi.mock('@line-crm/db', () => dbMocks);
 
+const tagAttachMocks = vi.hoisted(() => ({
+  attachTagAndFireSideEffects: vi.fn(async () => ({ added: true })),
+}));
+vi.mock('./friend-tag-attach.js', () => tagAttachMocks);
+
 const lineClientMock = vi.hoisted(() => ({
   pushMessage: vi.fn(),
   replyMessage: vi.fn(),
@@ -546,7 +551,9 @@ describe('on_reach_tag', () => {
     await pushImmediateFirstStep(db, 'friend-1', 'scn-1', ctx, {
       enrollment: { id: 'fs-1', current_step_order: 0 },
     });
-    expect(dbMocks.addTagToFriend).toHaveBeenCalledWith(db, 'friend-1', 'tag-9');
+    // plain INSERT ではなく tag_change まで発火する経路を使う
+    expect(tagAttachMocks.attachTagAndFireSideEffects).toHaveBeenCalledWith(db, 'friend-1', 'tag-9');
+    expect(dbMocks.addTagToFriend).not.toHaveBeenCalled();
   });
 });
 

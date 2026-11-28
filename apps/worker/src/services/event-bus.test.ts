@@ -227,6 +227,38 @@ describe('fireEvent — send_message action logging', () => {
   });
 });
 
+describe('legacy tag actions', () => {
+  it('executes flat and canonical tags and records invalid actions as failures', async () => {
+    vi.clearAllMocks();
+    const helpers = await import('@line-crm/db');
+    vi.mocked(helpers.getActiveAutomationsByEvent).mockResolvedValue([{
+      id: 'legacy', line_account_id: null, conditions: '{}',
+      actions: JSON.stringify([{ type: 'add_tag', tagId: 'one' }, { type: 'add_tag', params: { tagId: 'two' } }, { type: 'remove_tag' }]),
+    } as any]);
+    // main attaches tags through attachTagAndFireSideEffects (INSERT OR IGNORE
+    // INTO friend_tags) instead of addTagToFriend, so assert on that write.
+    const base = fakeDb({ capturedInserts: [] });
+    const tagWrites: unknown[][] = [];
+    const db = {
+      prepare(sql: string) {
+        const stmt = base.prepare(sql);
+        if (!sql.includes('INTO friend_tags')) return stmt;
+        return { ...stmt, bind(...args: unknown[]) { tagWrites.push(args); return stmt; } };
+      },
+    } as unknown as D1Database;
+    await fireEvent(db, 'follow', { friendId: 'f' });
+    expect(tagWrites.map((binds) => binds.slice(0, 2))).toEqual([['f', 'one'], ['f', 'two']]);
+    expect(helpers.removeTagFromFriend).not.toHaveBeenCalled();
+    expect(helpers.createAutomationLog).toHaveBeenCalledWith(db, expect.objectContaining({
+      status: 'partial',
+      actionsResult: JSON.stringify([
+        { action: 'add_tag', success: true },
+        { action: 'add_tag', success: true },
+        { action: 'remove_tag', success: false, error: 'action.tagId is required' },
+      ]),
+    }));
+  });
+});
 
 describe('outbound webhook policy reaches event dispatch', () => {
   beforeEach(async () => {

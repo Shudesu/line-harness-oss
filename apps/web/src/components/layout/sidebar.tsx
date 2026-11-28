@@ -15,8 +15,12 @@ import { PollingStatus } from '@/components/shared/polling-status'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
 import { getApiBase } from '@/lib/api-base'
 import { withBasePath } from '@/lib/base-path'
+import { useRunningVersion } from '@/hooks/use-running-version'
 
-const appVersion = process.env.APP_VERSION || '0.0.0'
+// ビルド時に焼いた既定値。`next.config.ts` が配布バンドル版（`BUNDLE_VERSION`）に
+// 揃えて埋める（`@/lib/app-version` 参照）。実際の表示は下の `useRunningVersion` が
+// 稼働中 Worker の `GET /admin/version` で上書きする。
+const buildAppVersion = process.env.APP_VERSION || '0.0.0'
 const appCommitSha = process.env.APP_COMMIT_SHA || 'local'
 const appBuildTime = process.env.APP_BUILD_TIME || ''
 const appBuildDate = appBuildTime ? appBuildTime.replace('T', ' ').replace(/\.\d{3}Z$/, 'Z') : ''
@@ -191,6 +195,8 @@ function NavIcon({ d }: { d: string }) {
 
 export default function Sidebar() {
   const pathname = usePathname()
+  // 稼働中 Worker の版（取れるまで・取れなければ焼き込み値）。
+  const appVersion = useRunningVersion(buildAppVersion)
   const [isOpen, setIsOpen] = useState(false)
   const [staffName, setStaffName] = useState<string | null>(null)
   const [staffRole, setStaffRole] = useState<string | null>(null)

@@ -15,6 +15,7 @@ import {
   applyScoring,
   getActiveAutomationsByEvent,
   createAutomationLog,
+  normalizeAutomationAction,
   removeTagFromFriend,
   enrollFriendInScenario,
   jstNow,
@@ -273,7 +274,22 @@ async function processAutomations(
 
       const results: Array<{ action: string; success: boolean; error?: string }> = [];
 
-      for (const [actionIndex, action] of actions.entries()) {
+      for (const [actionIndex, storedAction] of (actions as unknown[]).entries()) {
+        // Stored rows may hold the historical flat shape ({ type, tagId }).
+        // An action that cannot be normalized can never succeed, so it is
+        // recorded as a failure here and is not treated as a retryable send.
+        let action: ReturnType<typeof normalizeAutomationAction>;
+        try {
+          action = normalizeAutomationAction(storedAction);
+        } catch (err) {
+          const storedType = (storedAction as { type?: unknown } | null)?.type;
+          results.push({
+            action: typeof storedType === 'string' ? storedType : 'invalid',
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          continue;
+        }
         try {
           const sendId = operationId && action.type === 'send_message'
             ? await deriveIdempotentId(operationId, 'event-send', eventType, automation.id, String(actionIndex))

@@ -99,18 +99,21 @@ export async function assertSetupMileageHandoffCompatible(
     creds: { accountId: options.accountId ?? "", apiToken: "" },
     databaseId: options.databaseId,
   };
-  const tables = await execute({ ...base, sql: `SELECT
-    (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_line_harness_legacy_mileage_claims') AS claims_table,
-    (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mileage_event_queue') AS queue_table` });
+  // npx.cmd cannot reliably transport literal CR/LF inside a quoted --command
+  // argument. These fixed read-only probes can be composed on one line without
+  // rewriting migration SQL or changing its atomic execution unit.
+  const tables = await execute({ ...base, sql: "SELECT " +
+    "(SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_line_harness_legacy_mileage_claims') AS claims_table, " +
+    "(SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mileage_event_queue') AS queue_table" });
   const schema = tables.result[0].results[0];
   if (![0, 1].includes(schema?.claims_table) || ![0, 1].includes(schema?.queue_table)) {
     throw new Error("Cannot verify historical mileage handoff state; Worker deployment was stopped.");
   }
   if (schema.claims_table === 0) return;
   const pending = await execute({ ...base, sql: schema.queue_table === 1
-    ? `SELECT EXISTS(SELECT 1 FROM _line_harness_legacy_mileage_claims claim
-        LEFT JOIN mileage_event_queue queue ON queue.engagement_event_id = claim.engagement_event_id
-        WHERE queue.status IS NOT 'processed') AS unresolved`
+    ? "SELECT EXISTS(SELECT 1 FROM _line_harness_legacy_mileage_claims claim " +
+      "LEFT JOIN mileage_event_queue queue ON queue.engagement_event_id = claim.engagement_event_id " +
+      "WHERE queue.status IS NOT 'processed') AS unresolved"
     : "SELECT EXISTS(SELECT 1 FROM _line_harness_legacy_mileage_claims) AS unresolved" });
   const unresolved = pending.result[0].results[0]?.unresolved;
   if (unresolved !== 0 && unresolved !== 1) {
@@ -290,7 +293,7 @@ async function applySqlFile(
     }
     try {
       await runD1WithRetry(
-        ["d1", "execute", databaseName, "--remote", "--command", statement],
+        ["d1", "execute", databaseName, "--remote", "--command", head],
         contextLabel,
       );
       if (isAddColumn) addedColumn = true;
