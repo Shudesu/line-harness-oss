@@ -8,10 +8,12 @@ import { parseStickerMessageContent, stickerFallback } from '@line-crm/shared'
 import { api, fetchApi } from '@/lib/api'
 import { UNANSWERED_REFRESH_EVENT } from '@/lib/events'
 import { acknowledgeChatInList, shouldAcknowledgeOnOpen } from '@/lib/chat-status'
+import { hasTemplateVariables, insertTemplateText } from '@/lib/chat-templates'
 import { useAccount } from '@/contexts/account-context'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
+import TemplatePicker from '@/components/chats/template-picker'
 import MessageImage from '@/components/shared/message-image'
 import ImageUploader, { type ImageUploaderValue } from '@/components/shared/image-uploader'
 import { Button } from '@cloudflare/kumo/components/button'
@@ -823,6 +825,22 @@ export default function ChatsPage() {
     }
   }
 
+  // テンプレートの本文をカーソル位置 (選択範囲があれば置き換え) に入れる。送信はしない。
+  const handleInsertTemplate = (text: string) => {
+    const el = textareaRef.current
+    const start = el?.selectionStart ?? messageContent.length
+    const end = el?.selectionEnd ?? messageContent.length
+    const { value, cursor } = insertTemplateText(messageContent, text, start, end)
+    setMessageContent(value)
+    // 再描画で value が反映されたあとにカーソルを本文の直後へ戻す
+    requestAnimationFrame(() => {
+      const target = textareaRef.current
+      if (!target) return
+      target.focus()
+      target.setSelectionRange(cursor, cursor)
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     // IME変換確定のEnterでは送信しない
     if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) return
@@ -1275,6 +1293,13 @@ export default function ChatsPage() {
                     <MessageComposer key={selectedChatId} {...groupDraft} onChange={setGroupDraft} />
                   </fieldset>
                 </div>}
+                {/* 個別チャットの手動送信では {{name}} などの変数を置き換えないため、
+                    そのままお客さまに届く前に気づけるようにする */}
+                {!groupDraft && hasTemplateVariables(messageContent) && (
+                  <p role="status" className="mb-2 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+                    {'手動の送信では {{name}} などの変数は置き換わりません。送信前にお客さまの名前などへ書き換えてください。'}
+                  </p>
+                )}
                 {/* 標準的なチャットコンポーザー (Slack / ChatGPT 型):
                     1枚の枠の中に「上: textarea 全幅 / 下: ツールバー行」。
                     - textarea が幅いっぱい = クリックターゲット最大
@@ -1321,6 +1346,7 @@ export default function ChatsPage() {
                       if (!items.length) items.push({ messageType: 'text', messageContent: '' })
                       setGroupDraft(packMessageItems(items))
                     }}>複数・Flex</Button>}
+                    {!groupDraft && <TemplatePicker disabled={sending} onInsert={handleInsertTemplate} />}
                     <Button
                       type="button"
                       size="sm"
