@@ -1,3 +1,5 @@
+import { claimBroadcastStart } from '../services/broadcast-start-claim.js';
+import { editBroadcastSnapshot } from '../services/broadcast-edit-snapshot.js';
 import { createAuthorizedRouter } from '../middleware/authorized-router.js';
 import { validateMessageContent, parseMessageGroup, packMessageItems } from '@line-crm/shared';
 import { buildMessages } from '../services/message-group.js';
@@ -7,7 +9,6 @@ import {
   getBroadcasts,
   getBroadcastById,
   createBroadcast,
-  updateBroadcast,
   deleteBroadcast,
 } from '@line-crm/db';
 import type { Broadcast as DbBroadcast, BroadcastMessageType, BroadcastTargetType } from '@line-crm/db';
@@ -507,7 +508,7 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       statusUpdate = body.scheduledAt ? 'scheduled' : 'draft';
     }
 
-    const updated = await updateBroadcast(c.env.DB, id, {
+    const edited = await editBroadcastSnapshot(c.env.DB, existing, {
       title: body.title,
       message_type: body.messageType,
       message_content: body.messageContent,
@@ -516,45 +517,16 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       scheduled_at: body.scheduledAt,
       ...(body.trackLinks !== undefined ? { track_links: body.trackLinks ? 1 : 0 } : {}),
       ...(statusUpdate !== undefined ? { status: statusUpdate } : {}),
+      // Saved segment conditions are part of the delivery intent: write them in
+      // the same conditional statement as the rest of the edit.
+      ...(segmentUpdate !== undefined ? { segment_conditions: segmentUpdate } : {}),
     });
 
-    // 失敗 partial dedup broadcast を draft に戻して編集 → 再送するケースで、
-    // 残っていた resume 用 state を全部クリアして fresh campaign として送り直せる
-    // ようにする。
-    // - dedup_progress: 残すと過去 partial を skip して mixed delivery 事故
-    // - success_count: 残すと recover 経路の `success_count > 0 + dedup_progress=NULL`
-    //   排除条件にひっかかって永久に stuck になる (再 lock 後 crash で復旧不可)
-    // - failed_account_ids: 過去 attempt の失敗 mark を継承するのは misleading
-    // - batch_lock_at: stale lock 跡を残さない
-    // - sent_at: 念のため NULL に戻す。getQueuedBroadcasts / recoverStalledBroadcasts は
-    //   `sent_at IS NULL` を要求するので、過去 sent 値が残ると永久 stuck の元
-    // - aggregation_unit / line_request_id: 過去送信の insight 集計参照を残さない
-    await c.env.DB.prepare(
-      `UPDATE broadcasts SET
-         dedup_progress = NULL,
-         batch_lock_at = NULL,
-         success_count = 0,
-         failed_account_ids = NULL,
-         sent_at = NULL,
-         aggregation_unit = NULL,
-         line_request_id = NULL
-       WHERE id = ?`,
-    ).bind(id).run();
-
-    if (segmentUpdate !== undefined) {
-      await c.env.DB.prepare(`UPDATE broadcasts SET segment_conditions = ? WHERE id = ?`)
-        .bind(segmentUpdate, id).run();
+    if (!edited) {
+      return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
     }
-
-    // 過去 send の insight 行を削除する。createBroadcastInsight は idempotent で
-    // 既存行があれば skip する設計のため、削除しないと再送時に新しい pending
-    // insight が作られず getPendingInsights / GET /insight が古い metrics を返し続ける。
-    await c.env.DB.prepare(
-      `DELETE FROM broadcast_insights WHERE broadcast_id = ?`,
-    ).bind(id).run();
-
-    const fresh = segmentUpdate !== undefined ? await getBroadcastById(c.env.DB, id) : updated;
-    return c.json({ success: true, data: fresh ? serializeBroadcast(fresh) : null });
+    const updated = await getBroadcastById(c.env.DB, id);
+    return c.json({ success: true, data: updated ? serializeBroadcast(updated) : null });
   } catch (err) {
     console.error('PUT /api/broadcasts/:id error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
@@ -653,13 +625,11 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       if (quota.monthlyMessages.max > 0 && wouldExceedMonthlyQuota(quota, total)) {
         return c.json({ success: false, error: 'quota_exceeded', quota }, 403);
       }
-      const lockResult = await c.env.DB.prepare(
-        `UPDATE broadcasts
-            SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
-          WHERE id = ? AND status IN ('draft','scheduled')`,
-      ).bind(total, JSON.stringify(segmentAudience), id).run();
-      if (!lockResult.meta.changes) {
-        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      const claimed = await claimBroadcastStart(c.env.DB, existing, {
+        totalCount: total, segmentConditions: JSON.stringify(segmentAudience),
+      });
+      if (!claimed) {
+        return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
       }
       try {
         const ctx = c.executionCtx as ExecutionContext;
@@ -732,13 +702,11 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
             { type: 'tag_exists', value: existing.target_tag_id! },
           ] }
         : { operator: 'AND', rules: [{ type: 'is_following', value: true }] };
-      const lockResult = await c.env.DB.prepare(
-        `UPDATE broadcasts
-            SET status = 'sending', batch_offset = 0, total_count = ?, segment_conditions = ?
-          WHERE id = ? AND status IN ('draft','scheduled')`,
-      ).bind(total, JSON.stringify(conditions), id).run();
-      if (!lockResult.meta.changes) {
-        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      const claimed = await claimBroadcastStart(c.env.DB, existing, {
+        totalCount: total, segmentConditions: JSON.stringify(conditions),
+      });
+      if (!claimed) {
+        return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
       }
 
       try {
@@ -809,11 +777,9 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
         return c.json({ success: false, error: 'quota_exceeded', quota }, 403);
       }
 
-      const lockResult = await c.env.DB.prepare(
-        `UPDATE broadcasts SET status = 'sending', batch_offset = 0, total_count = ? WHERE id = ? AND status IN ('draft','scheduled')`
-      ).bind(projectedTotal, id).run();
-      if (!lockResult.meta.changes) {
-        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      const claimed = await claimBroadcastStart(c.env.DB, existing, { totalCount: projectedTotal });
+      if (!claimed) {
+        return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
       }
 
       // cron (5min) を待たず即時にバックグラウンド処理を起動する。waitUntil なら
@@ -850,11 +816,9 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       if (followingCount > 500) {
         // Atomic lock: status='draft'|'scheduled' のときだけ status='sending' に遷移
         const tagMarker = JSON.stringify({ operator: 'AND', rules: [{ type: 'is_following', value: true }, { type: 'tag_exists', value: existing.target_tag_id }] });
-        const lockResult = await c.env.DB.prepare(
-          `UPDATE broadcasts SET status = 'sending', batch_offset = 0, segment_conditions = ? WHERE id = ? AND status IN ('draft','scheduled')`
-        ).bind(tagMarker, id).run();
-        if (!lockResult.meta.changes) {
-          return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+        const claimed = await claimBroadcastStart(c.env.DB, existing, { segmentConditions: tagMarker });
+        if (!claimed) {
+          return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
         }
         const result = await getBroadcastById(c.env.DB, id);
         return c.json({ success: true, data: result ? serializeBroadcast(result) : null, queued: true, message: 'Broadcast queued for batch processing by Cron' }, 202);
@@ -865,27 +829,12 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     // accessToken 解決は lock 前に行う (setup 失敗時に status='sending' で stuck しないため、
     // 即時送信パスには recoverStalledBroadcasts がない)
 
-    // atomic lock — 'draft' と 'scheduled' を分けて単一 UPDATE で claim する。
-    // 各 UPDATE は単一 write statement なので read-then-write transaction の
-    // SQLITE_BUSY_SNAPSHOT を引き起こさず、claim 成功時の status も WHERE 句から
-    // 一意に確定する (rollback 時の status 復元に使用)。
-    let claimedStatus: 'draft' | 'scheduled' | null = null;
-    const draftClaim = await c.env.DB.prepare(
-      `UPDATE broadcasts SET status = 'sending' WHERE id = ? AND status = 'draft'`
-    ).bind(id).run();
-    if (draftClaim.meta.changes) {
-      claimedStatus = 'draft';
-    } else {
-      const schedClaim = await c.env.DB.prepare(
-        `UPDATE broadcasts SET status = 'sending' WHERE id = ? AND status = 'scheduled'`
-      ).bind(id).run();
-      if (schedClaim.meta.changes) {
-        claimedStatus = 'scheduled';
-      }
+    // The payload, audience and schedule must still match the preflight checks.
+    const claimed = await claimBroadcastStart(c.env.DB, existing);
+    if (!claimed) {
+      return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
     }
-    if (!claimedStatus) {
-      return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
-    }
+    const claimedStatus = existing.status;
 
     // processBroadcastSend は内部の try/catch で multicast 失敗を 'draft' に戻すが、
     // 冒頭 (updateBroadcastStatus / getBroadcastById / autoTrackContent / buildMessage) で
@@ -995,11 +944,11 @@ broadcasts.post('/api/broadcasts/:id/send-segment', async (c) => {
     }
 
     // Atomic lock: status='draft'|'scheduled' のときだけ status='sending' に遷移
-    const lockResult = await c.env.DB.prepare(
-      `UPDATE broadcasts SET status = 'sending', batch_offset = 0, segment_conditions = ? WHERE id = ? AND status IN ('draft','scheduled')`
-    ).bind(JSON.stringify(body.conditions), id).run();
-    if (!lockResult.meta.changes) {
-      return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+    const claimed = await claimBroadcastStart(c.env.DB, existing, {
+      segmentConditions: JSON.stringify(body.conditions),
+    });
+    if (!claimed) {
+      return c.json({ success: false, error: 'Broadcast changed or is already sending' }, 409);
     }
 
     const result = await getBroadcastById(c.env.DB, id);

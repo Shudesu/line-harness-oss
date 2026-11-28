@@ -322,3 +322,101 @@ describe('jstDayWindowUtc', () => {
     expect(jstDayWindowUtc('2026-11-09').startUtc).toBe('2026-11-08T15:00:00.000Z');
   });
 });
+
+// 「有効」の保存。管理画面は 1/0 を、API 利用者は true/false を送る。
+describe('is_active is stored as sent (staff / menus)', () => {
+  type Call = { sql: string; binds: unknown[] };
+
+  function recordingDb() {
+    const calls: Call[] = [];
+    const db = {
+      prepare: (sql: string) => ({
+        bind: (...binds: unknown[]) => {
+          calls.push({ sql, binds });
+          return {
+            first: async () => null,
+            all: async () => ({ results: [] }),
+            run: async () => ({ meta: { changes: 1 } }),
+          };
+        },
+      }),
+    };
+    return { db, calls };
+  }
+
+  // SQL の ? の並びから、指定した列に渡された値を取り出す。
+  function boundValue(call: Call, column: string): unknown {
+    const insert = call.sql.match(/INSERT INTO \w+\s*\(([^)]+)\)/);
+    if (insert) {
+      const columns = insert[1].split(',').map((s) => s.trim());
+      return columns.includes(column) ? call.binds[columns.indexOf(column)] : undefined;
+    }
+    const setClause = call.sql.slice(call.sql.indexOf('SET'), call.sql.indexOf('WHERE'));
+    const columns = [...setClause.matchAll(/(\w+)\s*=\s*\?/g)].map((m) => m[1]);
+    return columns.includes(column) ? call.binds[columns.indexOf(column)] : undefined;
+  }
+
+  async function send(method: 'POST' | 'PUT', path: string, body: Record<string, unknown>) {
+    const { db, calls } = recordingDb();
+    const { app, env } = makeApp(db);
+    const res = await app.request(
+      `${path}?account_id=acc1`,
+      { method, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
+      env,
+    );
+    const write = calls.find((c) => /^\s*(INSERT|UPDATE)/.test(c.sql));
+    return { status: res.status, stored: write ? boundValue(write, 'is_active') : undefined };
+  }
+
+  const staffBody = { name: '確認用', display_name: '確認用' };
+  const menuBody = { name: '確認用', duration_minutes: 30, base_price: 0 };
+  const off = [0, false, '0', 'false'];
+  const on = [1, true, '1', 'true'];
+
+  test.each(off)('PUT staff: %j is saved as OFF', async (value) => {
+    const r = await send('PUT', '/api/booking/admin/staff/s1', { ...staffBody, is_active: value });
+    expect(r).toEqual({ status: 200, stored: 0 });
+  });
+
+  test.each(on)('PUT staff: %j is saved as ON', async (value) => {
+    const r = await send('PUT', '/api/booking/admin/staff/s1', { ...staffBody, is_active: value });
+    expect(r).toEqual({ status: 200, stored: 1 });
+  });
+
+  test.each(off)('POST staff: %j creates the staff as OFF', async (value) => {
+    const r = await send('POST', '/api/booking/admin/staff', { ...staffBody, is_active: value });
+    expect(r).toEqual({ status: 201, stored: 0 });
+  });
+
+  test.each(on)('POST staff: %j creates the staff as ON', async (value) => {
+    const r = await send('POST', '/api/booking/admin/staff', { ...staffBody, is_active: value });
+    expect(r).toEqual({ status: 201, stored: 1 });
+  });
+
+  test('staff: omitted is_active keeps the default ON', async () => {
+    expect((await send('POST', '/api/booking/admin/staff', staffBody)).stored).toBe(1);
+    expect((await send('PUT', '/api/booking/admin/staff/s1', staffBody)).stored).toBe(1);
+  });
+
+  test.each(off)('PUT menu: %j is saved as OFF (with and without auto_tag_id)', async (value) => {
+    const withTag = await send('PUT', '/api/booking/admin/menus/m1', { ...menuBody, is_active: value, auto_tag_id: '' });
+    const withoutTag = await send('PUT', '/api/booking/admin/menus/m1', { ...menuBody, is_active: value });
+    expect(withTag).toEqual({ status: 200, stored: 0 });
+    expect(withoutTag).toEqual({ status: 200, stored: 0 });
+  });
+
+  test.each(on)('PUT menu: %j is saved as ON', async (value) => {
+    const r = await send('PUT', '/api/booking/admin/menus/m1', { ...menuBody, is_active: value });
+    expect(r).toEqual({ status: 200, stored: 1 });
+  });
+
+  test.each(off)('POST menu: %j creates the menu as OFF', async (value) => {
+    const r = await send('POST', '/api/booking/admin/menus', { ...menuBody, is_active: value });
+    expect(r).toEqual({ status: 201, stored: 0 });
+  });
+
+  test('menu: omitted is_active keeps the default ON', async () => {
+    expect((await send('POST', '/api/booking/admin/menus', menuBody)).stored).toBe(1);
+    expect((await send('PUT', '/api/booking/admin/menus/m1', menuBody)).stored).toBe(1);
+  });
+});

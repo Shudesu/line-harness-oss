@@ -1,4 +1,4 @@
-import { jstNow } from './utils.js';
+import { jstNow, toJstString } from './utils.js';
 export interface EntryRoute {
   id: string;
   ref_code: string;
@@ -316,4 +316,75 @@ export async function getRefTrackingStats(
     .bind(refCode)
     .first<{ ref_code: string; count: number }>();
   return row ?? { ref_code: refCode, count: 0 };
+}
+
+// ── Pending referral attribution (clicked before becoming a friend) ─────────
+// /api/liff/link runs BEFORE the follow webhook for first-time users, so there
+// is no friends row yet. The click is still recorded as a ref_tracking row with
+// friend_id = NULL, and the verified LINE userId is kept in source_url as an
+// internal marker (`liff-pending:<lineAccountId>:<lineUserId>`; the LIFF/OAuth
+// writers never set source_url otherwise). The follow webhook claims those
+// rows: friend_id is filled in and the marker cleared, so each row becomes an
+// ordinary ref_tracking touch of the friend. Uses existing columns only.
+
+/** Pending clicks older than this are not attributed (the click did not lead to the add). */
+export const PENDING_REF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PENDING_REF_MARKER = 'liff-pending:';
+
+export async function recordPendingRefClick(
+  db: D1Database,
+  input: { lineUserId: string; lineAccountId: string | null; refCode: string; entryRouteId: string | null },
+): Promise<void> {
+  await recordRefTracking(db, {
+    refCode: input.refCode,
+    friendId: null,
+    entryRouteId: input.entryRouteId,
+    sourceUrl: `${PENDING_REF_MARKER}${input.lineAccountId ?? ''}:${input.lineUserId}`,
+  });
+}
+
+/**
+ * Attaches this LINE user's fresh pending clicks to the friend and returns the
+ * latest ref (the click that led to the friend add), or null when none.
+ * Clicks parked for a different LINE account are left untouched.
+ * friends.ref_code stays first-touch.
+ */
+export async function claimPendingRefClicks(
+  db: D1Database,
+  lineUserId: string,
+  lineAccountId: string | null,
+  friendId: string,
+): Promise<string | null> {
+  const cutoff = toJstString(new Date(Date.now() - PENDING_REF_TTL_MS));
+  const rows = await db
+    .prepare(
+      `SELECT id, ref_code, source_url FROM ref_tracking
+       WHERE friend_id IS NULL AND source_url LIKE ? AND created_at >= ?
+       ORDER BY created_at DESC`,
+    )
+    .bind(`${PENDING_REF_MARKER}%:${lineUserId}`, cutoff)
+    .all<{ id: string; ref_code: string; source_url: string }>();
+  const mine = rows.results.filter((row) => {
+    const rest = row.source_url.slice(PENDING_REF_MARKER.length);
+    const sep = rest.lastIndexOf(':');
+    if (sep < 0 || rest.slice(sep + 1) !== lineUserId) return false;
+    const account = rest.slice(0, sep);
+    // アカウント未特定（既定アカウント）は未特定同士でだけ一致。別アカウントの保留行は取らない。
+    return account === (lineAccountId ?? '');
+  });
+  if (mine.length === 0) return null;
+  for (const row of mine) {
+    await db
+      .prepare(`UPDATE ref_tracking SET friend_id = ?, source_url = NULL WHERE id = ? AND friend_id IS NULL`)
+      .bind(friendId, row.id)
+      .run();
+  }
+  const latest = mine[0].ref_code;
+  await db
+    .prepare(
+      `UPDATE friends SET ref_code = COALESCE(ref_code, ?), last_ref_code = ?, last_ref_at = ? WHERE id = ?`,
+    )
+    .bind(latest, latest, jstNow(), friendId)
+    .run();
+  return latest;
 }

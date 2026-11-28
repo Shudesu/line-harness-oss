@@ -2,9 +2,20 @@ import type { NextConfig } from 'next'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { resolveBuildAppVersion } from './src/lib/app-version'
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'))
 const repoRoot = resolve(__dirname, '../..')
+
+// 配布版（Worker の `BUNDLE_VERSION`）を刻んだ `_version.ts`。まだ刻まれていない
+// （dev stub のまま）ことも普通にあるので、読めなくてもビルドは止めない。
+function readWorkerVersionModule(): string | null {
+  try {
+    return readFileSync(resolve(repoRoot, 'apps/worker/src/_version.ts'), 'utf-8')
+  } catch {
+    return null
+  }
+}
 
 function readGitSha(): string | null {
   try {
@@ -36,7 +47,14 @@ const nextConfig: NextConfig = {
   basePath: basePath || undefined,
   assetPrefix: basePath || undefined,
   env: {
-    APP_VERSION: pkg.version,
+    // ルート package.json ではなく配布バンドル版に揃える — 出所と優先順位は
+    // `src/lib/app-version.ts` の doc comment を参照。実行中 Worker の版は
+    // sidebar が `GET /admin/version` から読み直して上書きする。
+    APP_VERSION: resolveBuildAppVersion({
+      env: process.env,
+      versionModuleSource: readWorkerVersionModule(),
+      packageVersion: pkg.version,
+    }),
     APP_COMMIT_SHA: buildSha.slice(0, 12),
     APP_BUILD_TIME: buildTime,
     // API topology must be explicit in the emitted client bundle. Standard

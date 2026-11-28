@@ -597,3 +597,43 @@ describe('processStepDeliveries crash recovery', () => {
     expect(recoveryIdx).toBeLessThan(dueQueryIdx); // and ran first
   });
 });
+
+
+describe('monthly LINE quota exhaustion', () => {
+  it('requires intervention for monthly exhaustion but keeps transient 429 retryable', () => {
+    expect(isPermanentLineDeliveryError(new Error('LINE API error: 429 Too Many Requests — {"message":"You have reached your monthly limit."}'))).toBe(true);
+    expect(isPermanentLineDeliveryError(new Error('LINE API error: 429 Too Many Requests — {"message":"Rate limit exceeded"}'))).toBe(false);
+    expect(isPermanentLineDeliveryError(new Error('monthly limit'))).toBe(false);
+  });
+
+  it('pauses the failed enrollment without advancing or logging a sent message', async () => {
+    const writes: string[] = [];
+    const due = { id: 'enrollment', friend_id: 'friend', scenario_id: 'scenario', current_step_order: 1, status: 'active', next_delivery_at: '2026-01-01T00:00:00Z', started_at: '2026-01-01T00:00:00Z' };
+    const db = { prepare(sql: string) {
+      const stmt = { bind() { return stmt; },
+        async run() { writes.push(sql); return { meta: { changes: sql.includes("SET status = 'delivering'") ? 1 : 0 } }; },
+        async first() {
+          if (sql.includes('FROM friends')) return { id: 'friend', line_user_id: 'recipient', is_following: 1, line_account_id: null, metadata: '{}', user_id: null };
+          if (sql.includes('FROM scenarios')) return { delivery_mode: 'relative', line_account_id: null };
+          return null;
+        },
+        async all() {
+          if (sql.includes('FROM friend_scenarios')) return { results: [due] };
+          if (sql.includes('FROM scenario_steps')) return { results: [{ id: 'step-2', step_order: 2, message_type: 'text', message_content: 'hello', template_id: null, condition_type: null }] };
+          return { results: [] };
+        },
+      }; return stmt;
+    } } as unknown as D1Database;
+    const pushMessage = vi.fn().mockRejectedValue(new Error('LINE API error: 429 Too Many Requests — {"message":"You have reached your monthly limit."}'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await processStepDeliveries(db, { pushMessage } as unknown as LineClient);
+      expect(pushMessage).toHaveBeenCalledTimes(1);
+      expect(writes.some(sql => sql.includes("SET status = 'paused'"))).toBe(true);
+      expect(writes.some(sql => sql.includes('INSERT INTO notifications'))).toBe(true);
+      expect(writes.some(sql => sql.includes('INSERT INTO messages_log'))).toBe(false);
+      expect(writes.some(sql => sql.includes('SET current_step_order'))).toBe(false);
+    } finally { log.mockRestore(); warn.mockRestore(); }
+  });
+});

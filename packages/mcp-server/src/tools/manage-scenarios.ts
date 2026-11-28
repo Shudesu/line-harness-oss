@@ -5,7 +5,7 @@ import { getClient } from "../client.js";
 export function registerManageScenarios(server: McpServer): void {
   server.tool(
     "manage_scenarios",
-    "シナリオの管理操作。list: 一覧、get: 詳細（ステップ含む）、update: 更新、delete: 削除、add_step: ステップ追加、update_step: ステップ更新、delete_step: ステップ削除。",
+    "シナリオの管理操作。ステップの配信タイミングはシナリオの deliveryMode に従う（relative=delayMinutes / elapsed=offsetDays+offsetMinutes / absolute_time=offsetDays+deliveryTime \"HH:MM\" JST）。モードは create_scenario で決まり後から変更不可。list: 一覧、get: 詳細（ステップ含む）、update: 更新、delete: 削除、add_step: ステップ追加、update_step: ステップ更新、delete_step: ステップ削除。",
     {
       action: z
         .enum(["list", "get", "update", "delete", "add_step", "update_step", "delete_step"])
@@ -18,7 +18,10 @@ export function registerManageScenarios(server: McpServer): void {
       triggerTagId: z.string().nullable().optional().describe("Trigger tag ID (for update)"),
       isActive: z.boolean().optional().describe("Active status (for update)"),
       stepOrder: z.number().optional().describe("Step order number (for add_step, update_step)"),
-      delayMinutes: z.number().optional().describe("Delay in minutes (for add_step, update_step)"),
+      delayMinutes: z.number().optional().describe("relative モードのシナリオ用: 前ステップから何分後か (for add_step, update_step)"),
+      offsetDays: z.number().int().min(0).optional().describe("elapsed / absolute_time モード用: 購読開始から何日後か (for add_step, update_step)"),
+      offsetMinutes: z.number().int().min(0).max(1439).optional().describe("elapsed モード用: offsetDays に足す分 0..1439 (for add_step, update_step)"),
+      deliveryTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().describe("absolute_time モード用: 配信時刻 \"HH:MM\" (JST)。例 \"19:30\" (for add_step, update_step)"),
       messageType: z.enum(["text", "image", "flex"]).optional().describe("Message type (for add_step, update_step)"),
       messageContent: z.string().optional().describe("Message content (for add_step, update_step)"),
       conditionType: z
@@ -38,7 +41,7 @@ export function registerManageScenarios(server: McpServer): void {
       accountId: z.string().optional().describe("LINE account ID for list (uses default if omitted)"),
     },
     { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-    async ({ action, scenarioId, stepId, name, description, triggerType, triggerTagId, isActive, stepOrder, delayMinutes, messageType, messageContent, conditionType, conditionValue, nextStepOnFalse, templateId, onReachTagId, accountId }) => {
+    async ({ action, scenarioId, stepId, name, description, triggerType, triggerTagId, isActive, stepOrder, delayMinutes, offsetDays, offsetMinutes, deliveryTime, messageType, messageContent, conditionType, conditionValue, nextStepOnFalse, templateId, onReachTagId, accountId }) => {
       try {
         const client = getClient();
 
@@ -71,11 +74,19 @@ export function registerManageScenarios(server: McpServer): void {
         }
 
         if (action === "add_step") {
-          if (stepOrder === undefined || delayMinutes === undefined || !messageType || !messageContent) {
-            throw new Error("stepOrder, delayMinutes, messageType, messageContent are required for add_step");
+          if (stepOrder === undefined || !messageType || !messageContent) {
+            throw new Error("stepOrder, messageType, messageContent are required for add_step");
           }
+          if (delayMinutes === undefined && offsetDays === undefined) {
+            throw new Error("delayMinutes (relative) or offsetDays (+ offsetMinutes / deliveryTime) is required for add_step");
+          }
+          const schedule: Record<string, number | string> = {};
+          if (delayMinutes !== undefined) schedule.delayMinutes = delayMinutes;
+          if (offsetDays !== undefined) schedule.offsetDays = offsetDays;
+          if (offsetMinutes !== undefined) schedule.offsetMinutes = offsetMinutes;
+          if (deliveryTime !== undefined) schedule.deliveryTime = deliveryTime;
           const step = await client.scenarios.addStep(scenarioId, {
-            stepOrder, delayMinutes, messageType, messageContent,
+            stepOrder, ...schedule, messageType, messageContent,
             conditionType: conditionType ?? null, conditionValue: conditionValue ?? null, nextStepOnFalse: nextStepOnFalse ?? null,
             templateId: templateId ?? null, onReachTagId: onReachTagId ?? null,
           });
@@ -87,6 +98,9 @@ export function registerManageScenarios(server: McpServer): void {
           const input: Record<string, unknown> = {};
           if (stepOrder !== undefined) input.stepOrder = stepOrder;
           if (delayMinutes !== undefined) input.delayMinutes = delayMinutes;
+          if (offsetDays !== undefined) input.offsetDays = offsetDays;
+          if (offsetMinutes !== undefined) input.offsetMinutes = offsetMinutes;
+          if (deliveryTime !== undefined) input.deliveryTime = deliveryTime;
           if (messageType !== undefined) input.messageType = messageType;
           if (messageContent !== undefined) input.messageContent = messageContent;
           if (conditionType !== undefined) input.conditionType = conditionType;
