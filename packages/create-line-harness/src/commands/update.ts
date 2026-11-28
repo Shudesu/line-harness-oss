@@ -34,6 +34,7 @@ import {
   resolveInstalledWranglerConfig,
   type SavedInstallConfig,
 } from "../lib/installed-wrangler.js";
+import { setAccountId } from "../lib/wrangler.js";
 
 /** Must mirror apps/worker/wrangler.toml — the script upload API replaces
  *  metadata wholesale, so omitting this would strip nodejs_compat. */
@@ -496,6 +497,9 @@ export async function runUpdate(
     }
   }
   const cfg = resolved.value;
+  // Pin wrangler to the configured account so an OAuth login retry cannot
+  // select a different account than the one the update deploys to.
+  setAccountId(cfg.cfAccountId);
 
   // Version discovery is public; never send an unrelated admin secret.
   p.log.success(`プロジェクト: ${state.projectName ?? cfg.workerName}`);
