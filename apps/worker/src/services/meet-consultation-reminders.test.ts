@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { URL as NodeURL } from 'node:url';
+import { sqliteD1 } from '../test-support/sqlite-d1.js';
 import {
   calculateMeetReminderSchedule,
   processDueMeetConsultationReminders,
+  registerMeetConsultation,
   renderMeetReminderText,
 } from './meet-consultation-reminders.js';
 
@@ -101,5 +105,77 @@ describe('processDueMeetConsultationReminders', () => {
       '2026-08-09T00:00:00.000Z',
       '6db37bc2-f0c4-4fa8-baa6-5ec7069e1165',
     ]);
+  });
+});
+
+describe('registerMeetConsultation', () => {
+  const now = new Date('2026-08-08T00:00:00.000Z');
+  const input = {
+    externalEventId: 'google-event-1',
+    friendId: 'friend-1',
+    title: 'AI導入 個別相談',
+    startsAt: '2026-08-10T10:00:00.000Z',
+    endsAt: '2026-08-10T11:00:00.000Z',
+    meetUrl: 'https://meet.google.com/abc-defg-hij',
+  };
+
+  function setup() {
+    const { db, sqlite } = sqliteD1();
+    sqlite.exec(readFileSync(new NodeURL('../../../../packages/db/bootstrap.sql', import.meta.url), 'utf8'));
+    sqlite
+      .prepare('INSERT INTO friends(id,line_user_id,display_name,is_following) VALUES(?,?,?,1)')
+      .run('friend-1', 'U-meet', 'Meet Friend');
+    const reminders = () => sqlite
+      .prepare('SELECT id, kind, scheduled_at, status FROM meet_consultation_reminders ORDER BY kind')
+      .all() as Array<{ id: string; kind: string; scheduled_at: string; status: string }>;
+    return { db, sqlite, reminders };
+  }
+
+  // id は X-Line-Retry-Key として使われる。同じ id で新しい日時を送ると、
+  // LINE が受理済み (409) と答え、新しい日時が届かないまま sent になる (#440)。
+  it('gives rescheduled reminders a new id so LINE does not dedupe the new date', async () => {
+    const { db, sqlite, reminders } = setup();
+    await registerMeetConsultation(db, input, now);
+    const before = reminders();
+    sqlite.prepare("UPDATE meet_consultation_reminders SET status='sent', sent_at=?").run(now.toISOString());
+
+    await registerMeetConsultation(db, {
+      ...input,
+      startsAt: '2026-08-11T10:00:00.000Z',
+      endsAt: '2026-08-11T11:00:00.000Z',
+    }, now);
+
+    const after = reminders();
+    expect(after.map((r) => [r.kind, r.scheduled_at, r.status])).toEqual([
+      ['day_before', '2026-08-10T10:00:00.000Z', 'pending'],
+      ['hour_before', '2026-08-11T09:00:00.000Z', 'pending'],
+    ]);
+    for (const reminder of after) {
+      expect(before.map((r) => r.id)).not.toContain(reminder.id);
+    }
+  });
+
+  it('keeps the id when an unchanged consultation is registered again after cancellation', async () => {
+    const { db, sqlite, reminders } = setup();
+    await registerMeetConsultation(db, input, now);
+    const before = reminders();
+    sqlite.prepare("UPDATE meet_consultation_reminders SET status='cancelled'").run();
+
+    await registerMeetConsultation(db, input, now);
+
+    const after = reminders();
+    expect(after.map((r) => r.status)).toEqual(['pending', 'pending']);
+    expect(after.map((r) => r.id)).toEqual(before.map((r) => r.id));
+  });
+
+  it('does not touch reminders when the same schedule is registered again', async () => {
+    const { db, sqlite, reminders } = setup();
+    await registerMeetConsultation(db, input, now);
+    sqlite.prepare("UPDATE meet_consultation_reminders SET status='sent'").run();
+    const before = reminders();
+
+    await registerMeetConsultation(db, input, now);
+
+    expect(reminders()).toEqual(before);
   });
 });
